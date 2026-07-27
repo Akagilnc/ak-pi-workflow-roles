@@ -170,24 +170,24 @@ test("judge role accepts valid examples of all three verdict shapes", async () =
   assert.deepEqual(audited, verdicts);
 });
 
-test("judge preserves an optional advisory request on every verdict", async () => {
+test("judge preserves an optional advisory note on every verdict", async () => {
   const { tool } = await startJudge(async () => ({ status: "pass" }));
   const verdicts = [
-    { judgeStatus: "converged", request: "Archive the accepted evidence." },
+    { judgeStatus: "converged", note: "Archive the accepted evidence." },
     {
       judgeStatus: "continue",
       fix: { summary: "Repair the live defect." },
-      request: "Keep the fresh test output with the repair record.",
+      note: "Keep the fresh test output with the repair record.",
     },
     {
       judgeStatus: "escalate",
       decisionGate: { question: "Choose a policy", options: ["A"] },
-      request: "Include the trade-off note for whoever decides.",
+      note: "Include the trade-off note for whoever decides.",
     },
   ];
 
   for (const [index, verdict] of verdicts.entries()) {
-    const id = `request-${index}`;
+    const id = `note-${index}`;
     const result = await tool.execute(
       id,
       verdict,
@@ -195,7 +195,7 @@ test("judge preserves an optional advisory request on every verdict", async () =
       undefined,
       toolCallContext([{ id, arguments: verdict }]),
     );
-    assert.equal(result.details.request, verdict.request);
+    assert.equal(result.details.note, verdict.note);
   }
 });
 
@@ -475,8 +475,8 @@ test("judge role rejects mixed and blank verdict shapes before soul audit", asyn
   const cases: Array<[string, Record<string, unknown>]> = [
     ["converged with fix", { judgeStatus: "converged", fix: { summary: "x" } }],
     ["converged with gate", { judgeStatus: "converged", decisionGate: gate }],
-    ["converged with unknown field", { judgeStatus: "converged", note: "extra" }],
-    ["converged with blank request", { judgeStatus: "converged", request: " \n" }],
+    ["converged with unknown field", { judgeStatus: "converged", memo: "extra" }],
+    ["converged with blank note", { judgeStatus: "converged", note: " \n" }],
     ["continue without fix", { judgeStatus: "continue" }],
     ["continue with blank summary", { judgeStatus: "continue", fix: { summary: " \n" } }],
     ["continue with extra fix field", { judgeStatus: "continue", fix: { summary: "x", note: "extra" } }],
@@ -499,7 +499,7 @@ test("judge role rejects mixed and blank verdict shapes before soul audit", asyn
           undefined,
           toolCallContext([{ id, arguments: verdict }]),
         ),
-        /Judge (converged|continue|escalate|request)/,
+        /Judge (converged|continue|escalate|note)/,
       );
     });
   }
