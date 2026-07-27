@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Usage } from "@earendil-works/pi-ai";
-
 import {
   createReviewerExecutionLedger,
   type ReviewerAgentPersistedEvidence,
   type ReviewerAgentResult,
+  type ReviewerUsage,
 } from "../src/reviewer-execution-ledger.ts";
 import type { ReviewerSkillEvidence } from "../src/reviewer-skill.ts";
 
@@ -163,6 +162,45 @@ test("all invalid provenance is rejected before a child can start", () => {
   );
 });
 
+test("runtime Agent arguments must match first and repeated persisted observations", () => {
+  for (const observation of ["first", "repeated"] as const) {
+    const ledger = createReviewerExecutionLedger();
+    const persisted = assistant("entry", [{
+      id: "axis",
+      arguments: args("persisted"),
+    }]);
+    if (observation === "repeated") {
+      ledger.beginAgentCall("axis", args("persisted"), persisted);
+    }
+
+    let failure: unknown;
+    assert.throws(() => {
+      try {
+        ledger.beginAgentCall("axis", args("runtime"), persisted);
+      } catch (error) {
+        failure = error;
+        throw error;
+      }
+    }, /runtime arguments.*disagree.*persisted/i);
+    assert.deepEqual(
+      (failure as { reviewerAgentAttempt?: unknown }).reviewerAgentAttempt,
+      {
+        id: "axis",
+        description: observation === "first" ? "runtime" : "persisted",
+        prompt: observation === "first"
+          ? "runtime prompt"
+          : "persisted prompt",
+        status: "failed",
+        diagnostics: (failure as Error).message,
+      },
+    );
+    assert.throws(
+      () => ledger.recordForAudit("refused"),
+      /infrastructure previously failed.*runtime arguments.*disagree/i,
+    );
+  }
+});
+
 test("identical Pi start and execute observations are idempotent", () => {
   const ledger = createReviewerExecutionLedger();
   ledger.recordSkillExpansion(skill());
@@ -183,12 +221,53 @@ test("attempts have exactly one legal running to terminal lifecycle", () => {
   assert.ok(Object.isFrozen(attempt));
   assert.throws(() => successful.completeAgentCall("axis", success("again")), /running.*successful|already.*successful/i);
   assert.throws(() => successful.failAgentCall("axis", new Error("late failure")), /running.*successful|already.*successful/i);
+  let successfulReplay: unknown;
+  assert.throws(() => {
+    try {
+      successful.beginAgentCall("axis", args("axis"), assistant("entry", [
+        { id: "axis", arguments: args("axis") },
+      ]));
+    } catch (error) {
+      successfulReplay = error;
+      throw error;
+    }
+  }, /lifecycle.*already successful/i);
+  assert.equal(
+    (successfulReplay as { reviewerAgentAttempt?: unknown }).reviewerAgentAttempt,
+    undefined,
+  );
+  assert.equal(attempt.status, "successful");
+  assert.equal(attempt.report, "done");
+  assert.throws(() => successful.recordForAudit("refused"), /infrastructure previously failed.*already successful/i);
 
   const failed = beginOne();
   const failure = failed.failAgentCall("axis", new Error("child failed"));
   assert.match(failure.message, /child failed/);
   assert.equal(failure.reviewerAgentAttempt.status, "failed");
   assert.throws(() => failed.failAgentCall("axis", new Error("again")), /running.*failed|already.*failed/i);
+  let failedReplay: unknown;
+  assert.throws(() => {
+    try {
+      failed.beginAgentCall("axis", args("axis"), assistant("entry", [
+        { id: "axis", arguments: args("axis") },
+      ]));
+    } catch (error) {
+      failedReplay = error;
+      throw error;
+    }
+  }, /lifecycle.*already failed/i);
+  assert.equal(
+    (failedReplay as { reviewerAgentAttempt?: unknown }).reviewerAgentAttempt,
+    undefined,
+  );
+  assert.equal(failure.reviewerAgentAttempt.status, "failed");
+  assert.equal(failure.reviewerAgentAttempt.diagnostics, "child failed");
+
+  const nonError = beginOne("non-error");
+  const wrapped = nonError.failAgentCall("non-error", "child string failure");
+  assert.ok(wrapped instanceof Error);
+  assert.notEqual(wrapped, "child string failure");
+  assert.equal(wrapped.message, "child string failure");
 
   const blank = beginOne();
   assert.throws(() => blank.completeAgentCall("axis", success("   ")), /blank child report/);
@@ -224,11 +303,13 @@ test("successful evidence is defensively owned and each audit record is deeply i
   const persistedArgs = args("persisted");
   const calls = [{ id: "axis", arguments: persistedArgs }];
   const evidence = assistant("entry", calls);
-  const resultUsage: Usage = {
+  const resultUsage: ReviewerUsage = {
     input: 3,
     output: 5,
     cacheRead: 7,
     cacheWrite: 11,
+    cacheWrite1h: 2,
+    reasoning: 4,
     totalTokens: 26,
     cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
   };
@@ -247,7 +328,7 @@ test("successful evidence is defensively owned and each audit record is deeply i
 
   ledger.recordSkillExpansion(callerSkill);
   ledger.recordSkillExpansion({ ...callerSkill });
-  ledger.beginAgentCall("axis", args("runtime"), evidence);
+  ledger.beginAgentCall("axis", args("persisted"), evidence);
   const details = ledger.completeAgentCall("axis", result);
 
   callerSkill.location = "/mutated";
@@ -255,12 +336,16 @@ test("successful evidence is defensively owned and each audit record is deeply i
   calls[0]!.id = "mutated-id";
   result.report = "mutated report";
   resultUsage.input = 999;
+  resultUsage.cacheWrite1h = 999;
+  resultUsage.reasoning = 999;
   resultUsage.cost.total = 999;
   refs["refs/heads/main"] = "mutated-ref";
   disposition.retained = "/mutated-workspace";
 
   assert.equal(details.report, "original report");
   assert.equal(details.usage?.input, 3);
+  assert.equal(details.usage?.cacheWrite1h, 2);
+  assert.equal(details.usage?.reasoning, 4);
   assert.equal(details.usage?.cost.total, 10);
   assert.equal(details.targetSnapshot?.refs["refs/heads/main"], "abc123");
   assert.deepEqual(details.workspaceDisposition, { retained: "/tmp/review-workspace" });
@@ -273,6 +358,8 @@ test("successful evidence is defensively owned and each audit record is deeply i
   assert.throws(() => { (first.agentAttempts[0]!.targetSnapshot!.refs as any)["refs/heads/main"] = "evil"; }, TypeError);
   assert.throws(() => { (first.agentAttempts[0]!.workspaceDisposition as any).retained = "evil"; }, TypeError);
   assert.equal(first.agentAttempts[0]?.report, "original report");
+  assert.equal(first.agentAttempts[0]?.usage?.cacheWrite1h, 2);
+  assert.equal(first.agentAttempts[0]?.usage?.reasoning, 4);
   assert.equal(first.agentAttempts[0]?.usage?.cost.total, 10);
   assert.equal(first.agentAttempts[0]?.targetSnapshot?.refs["refs/heads/main"], "abc123");
 
@@ -313,6 +400,40 @@ test("fatal failure diagnostics and evidence are detached and block both receipt
     assert.equal(infrastructure.recordInfrastructureFailure(original), original);
     assert.throws(() => infrastructure.recordForAudit(status), /infrastructure previously failed: cleanup failed/);
   }
+
+  const stringLedger = createReviewerExecutionLedger();
+  const stringFailure = "audit string failure";
+  assert.equal(
+    stringLedger.recordInfrastructureFailure(stringFailure),
+    stringFailure,
+  );
+  assert.throws(
+    () => stringLedger.recordForAudit("refused"),
+    /infrastructure previously failed: audit string failure/,
+  );
+
+  const objectLedger = createReviewerExecutionLedger();
+  const snapshot = {
+    repositoryRoot: "/repo",
+    targetHead: "original-head",
+    refs: { "refs/heads/main": "original-head" },
+  };
+  const disposition = { retained: "/original-workspace" };
+  const sentinel = {
+    label: "cleanup sentinel failure",
+    targetSnapshot: snapshot,
+    workspaceDisposition: disposition,
+    toString() { return this.label; },
+  };
+  assert.equal(objectLedger.recordInfrastructureFailure(sentinel), sentinel);
+  sentinel.label = "mutated diagnostic";
+  snapshot.targetHead = "mutated-head";
+  snapshot.refs["refs/heads/main"] = "mutated-head";
+  disposition.retained = "/mutated-workspace";
+  assert.throws(
+    () => objectLedger.recordForAudit("refused"),
+    /infrastructure previously failed: cleanup sentinel failure/,
+  );
 });
 
 test("bash results pair by call ID in invocation order", () => {
