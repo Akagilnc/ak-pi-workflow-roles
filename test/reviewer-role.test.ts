@@ -181,7 +181,26 @@ test("reviewer preserves leading indentation and terminal newline in prompts and
 });
 
 test("completed requires exact native Skill provenance and successful Agent evidence", async () => {
-  const { handlers, tools, audits } = extension();
+  const successfulUsage: Usage = {
+    input: 13,
+    output: 17,
+    cacheRead: 19,
+    cacheWrite: 23,
+    totalTokens: 72,
+    cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+  };
+  const { handlers, tools, audits } = extension({
+    runReviewerAgent: async () => ({
+      report: "axis report",
+      usage: successfulUsage,
+      targetSnapshot: {
+        repositoryRoot: "/reviewed/repository",
+        targetHead: "abc123",
+        refs: { "refs/heads/main": "abc123" },
+      },
+      workspaceDisposition: { retained: "/tmp/retained-review" },
+    }),
+  });
   await handlers.get("session_start")?.({}, {});
   const output = { status: "completed", report: "## Standards\nDone." };
   const outputTool = tools.get(REVIEWER_OUTPUT_TOOL_NAME);
@@ -207,7 +226,19 @@ test("completed requires exact native Skill provenance and successful Agent evid
     axisContext,
   );
   assert.equal(agentResult.content[0].text, "axis report");
-  assert.deepEqual(agentResult.usage, usage);
+  assert.deepEqual(agentResult.usage, successfulUsage);
+  assert.equal(agentResult.details.report, "axis report");
+  assert.deepEqual(agentResult.details.usage, successfulUsage);
+  assert.equal(agentResult.details.targetSnapshot.targetHead, "abc123");
+  assert.deepEqual(agentResult.details.targetSnapshot.refs, {
+    "refs/heads/main": "abc123",
+  });
+  assert.deepEqual(agentResult.details.workspaceDisposition, {
+    retained: "/tmp/retained-review",
+  });
+  assert.ok(Object.isFrozen(agentResult.details));
+  assert.ok(Object.isFrozen(agentResult.details.usage.cost));
+  assert.ok(Object.isFrozen(agentResult.details.targetSnapshot.refs));
 
   const accepted = await outputTool.execute(
     "done",
@@ -221,6 +252,16 @@ test("completed requires exact native Skill provenance and successful Agent evid
   assert.equal(audits.length, 1);
   assert.equal(audits[0]?.candidate.status, "completed");
   assert.equal(audits[0]?.record.agentAttempts.length, 1);
+  assert.equal(audits[0]?.record.agentAttempts[0]?.report, "axis report");
+  assert.deepEqual(audits[0]?.record.agentAttempts[0]?.usage, successfulUsage);
+  assert.equal(audits[0]?.record.targetSnapshot?.targetHead, "abc123");
+  assert.deepEqual(audits[0]?.record.targetSnapshot?.refs, {
+    "refs/heads/main": "abc123",
+  });
+  assert.deepEqual(
+    audits[0]?.record.agentAttempts[0]?.workspaceDisposition,
+    { retained: "/tmp/retained-review" },
+  );
   assert.deepEqual(audits[0]?.record.agentInvocationBatches, [{
     assistantSessionEntryId: axisContext.sessionManager.getLeafEntry()?.id,
     executionMode: "parallel",
@@ -432,6 +473,182 @@ test("missing or malformed Agent leaf provenance aborts before child start", asy
   }
 });
 
+test("bash call and reverse result events remain paired by ID in audit order", async () => {
+  const { handlers, tools, audits } = extension();
+  await handlers.get("session_start")?.({}, {});
+  handlers.get("tool_call")?.({
+    toolName: "bash",
+    toolCallId: "bash-first",
+    input: { command: "git status --short" },
+  }, {});
+  handlers.get("tool_call")?.({
+    toolName: "bash",
+    toolCallId: "bash-second",
+    input: { command: "git diff --check" },
+  }, {});
+  handlers.get("tool_result")?.({
+    toolName: "bash",
+    toolCallId: "bash-second",
+    content: [{ type: "text", text: "clean" }],
+    isError: false,
+  }, {});
+  handlers.get("tool_result")?.({
+    toolName: "bash",
+    toolCallId: "unknown",
+    content: [{ type: "text", text: "ignored" }],
+    isError: true,
+  }, {});
+  handlers.get("tool_result")?.({
+    toolName: "bash",
+    toolCallId: "bash-first",
+    content: [{ type: "text", text: " M file" }],
+    isError: true,
+  }, {});
+
+  await tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+    "done",
+    { status: "refused", report: "Bash evidence establishes the refusal." },
+    undefined,
+    undefined,
+    context("done"),
+  );
+  assert.deepEqual(audits[0]?.record.bashEvidence, [
+    {
+      toolCallId: "bash-first",
+      command: "git status --short",
+      result: " M file",
+      isError: true,
+    },
+    {
+      toolCallId: "bash-second",
+      command: "git diff --check",
+      result: "clean",
+      isError: false,
+    },
+  ]);
+});
+
+test("auditor mutation cannot alter a fresh immutable revise resubmission record", async () => {
+  const seen: ReviewerAuditInput["record"][] = [];
+  let calls = 0;
+  const { handlers, tools } = extension({
+    runReviewerAgent: async () => ({
+      report: "immutable report",
+      usage: {
+        ...usage,
+        cost: { ...usage.cost, total: 7 },
+      },
+      targetSnapshot: {
+        repositoryRoot: "/repo",
+        targetHead: "fixed-head",
+        refs: { "refs/heads/main": "fixed-head" },
+      },
+      workspaceDisposition: { retained: "/tmp/fixed-workspace" },
+    }),
+    auditReviewerCompliance: async (input: ReviewerAuditInput) => {
+      calls += 1;
+      seen.push(input.record);
+      assert.ok(Object.isFrozen(input.record));
+      assert.ok(Object.isFrozen(input.record.agentAttempts[0]?.usage?.cost));
+      assert.throws(() => {
+        (input.record.agentAttempts[0]!.targetSnapshot!.refs as any)[
+          "refs/heads/main"
+        ] = "auditor mutation";
+      }, TypeError);
+      assert.throws(() => {
+        (input.record.agentAttempts[0]!.workspaceDisposition as any).retained =
+          "auditor mutation";
+      }, TypeError);
+      assert.equal(
+        input.record.agentAttempts[0]?.targetSnapshot?.refs["refs/heads/main"],
+        "fixed-head",
+      );
+      return calls === 1
+        ? { status: "revise" as const, violations: ["Resubmit unchanged evidence"] }
+        : { status: "pass" as const };
+    },
+  });
+  await handlers.get("session_start")?.({}, {});
+  await establishExpansion(handlers);
+  await tools.get(AGENT_TOOL_NAME).execute(
+    "axis",
+    { subagent_type: "general-purpose", description: "Axis", prompt: "Inspect." },
+    undefined,
+    undefined,
+    context("axis", AGENT_TOOL_NAME),
+  );
+  const candidate = { status: "completed", report: "Immutable review." };
+  await assert.rejects(
+    tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+      "first", candidate, undefined, undefined, context("first"),
+    ),
+    /Resubmit unchanged evidence/,
+  );
+  const accepted = await tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+    "second", candidate, undefined, undefined, context("second"),
+  );
+
+  assert.equal(accepted.terminate, true);
+  assert.equal(calls, 2);
+  assert.notEqual(seen[0], seen[1]);
+  assert.notEqual(seen[0]?.agentAttempts, seen[1]?.agentAttempts);
+  assert.equal(seen[1]?.agentAttempts[0]?.report, "immutable report");
+  assert.equal(seen[1]?.agentAttempts[0]?.usage?.cost.total, 7);
+  assert.equal(
+    seen[1]?.agentAttempts[0]?.targetSnapshot?.refs["refs/heads/main"],
+    "fixed-head",
+  );
+  assert.deepEqual(seen[1]?.agentAttempts[0]?.workspaceDisposition, {
+    retained: "/tmp/fixed-workspace",
+  });
+});
+
+test("all representable unsettled, failed, and orphan completion states stop before audit", async () => {
+  for (const scenario of ["running", "failed", "orphan"] as const) {
+    let audits = 0;
+    const fixture = extension({
+      auditReviewerCompliance: async () => {
+        audits += 1;
+        return { status: "pass" as const };
+      },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    await establishExpansion(fixture.handlers);
+    const agentContext = context("axis", AGENT_TOOL_NAME);
+    if (scenario !== "orphan") {
+      fixture.handlers.get("tool_execution_start")?.({
+        toolCallId: "axis",
+        toolName: AGENT_TOOL_NAME,
+        args: { description: "Axis", prompt: "Inspect." },
+      }, agentContext);
+    }
+    if (scenario !== "running") {
+      fixture.handlers.get("tool_execution_end")?.({
+        toolCallId: scenario === "orphan" ? "orphan" : "axis",
+        toolName: AGENT_TOOL_NAME,
+        isError: true,
+        result: { content: [{ type: "text", text: "schema rejected" }] },
+      }, {});
+    }
+
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        "done",
+        { status: "completed", report: "must not audit" },
+        undefined,
+        undefined,
+        context("done"),
+      ),
+      scenario === "running"
+        ? /running attempts: axis/
+        : scenario === "failed"
+          ? /failed attempts: axis: schema rejected/
+          : /extra attempts: orphan/,
+    );
+    assert.equal(audits, 0, `${scenario} stops before audit`);
+  }
+});
+
 test("refused can be audited before Skill or Agent and revise is resubmittable", async () => {
   let calls = 0;
   const { handlers, tools } = extension({
@@ -471,6 +688,112 @@ test("Reviewer cleanup failure is fatal before a receipt can be accepted", async
     /snapshot cleanup failed/,
   );
   assert.equal(aborts, 1);
+});
+
+test("a refusal cannot turn prior fatal Skill, Agent, audit, or cleanup state into a receipt", async () => {
+  {
+    let audits = 0;
+    const fixture = extension({
+      auditReviewerCompliance: async () => {
+        audits += 1;
+        return { status: "pass" as const };
+      },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    await fixture.handlers.get("input")?.({ text: "request" }, {});
+    await assert.rejects(
+      async () => fixture.handlers.get("before_agent_start")?.(
+        { systemPrompt: "BASE", prompt: "not the native expansion" },
+        { abort() {}, mode: "tui" },
+      ),
+      /canonical native code-review Skill expansion/,
+    );
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        "skill-refusal",
+        { status: "refused", report: "must remain fatal" },
+        undefined,
+        undefined,
+        context("skill-refusal"),
+      ),
+      /infrastructure previously failed/,
+    );
+    assert.equal(audits, 0);
+  }
+
+  {
+    let audits = 0;
+    const fixture = extension({
+      runReviewerAgent: async () => { throw new Error("child infrastructure failed"); },
+      auditReviewerCompliance: async () => {
+        audits += 1;
+        return { status: "pass" as const };
+      },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    await establishExpansion(fixture.handlers);
+    await assert.rejects(
+      fixture.tools.get(AGENT_TOOL_NAME).execute(
+        "fatal-agent",
+        { subagent_type: "general-purpose", description: "Axis", prompt: "Inspect." },
+        undefined,
+        undefined,
+        context("fatal-agent", AGENT_TOOL_NAME),
+      ),
+      /child infrastructure failed/,
+    );
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        "agent-refusal",
+        { status: "refused", report: "must remain fatal" },
+        undefined,
+        undefined,
+        context("agent-refusal"),
+      ),
+      /infrastructure previously failed/,
+    );
+    assert.equal(audits, 0);
+  }
+
+  for (const stage of ["audit", "cleanup"] as const) {
+    let audits = 0;
+    const fixture = extension({
+      auditReviewerCompliance: async () => {
+        audits += 1;
+        if (stage === "audit") throw new Error("audit infrastructure failed");
+        return { status: "pass" as const };
+      },
+      ...(stage === "cleanup"
+        ? {
+            shutdownReviewerAgent: async () => {
+              throw new Error("cleanup infrastructure failed");
+            },
+          }
+        : {}),
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        `${stage}-first`,
+        { status: "refused", report: "first submission reaches fatal seam" },
+        undefined,
+        undefined,
+        context(`${stage}-first`),
+      ),
+      new RegExp(`${stage} infrastructure failed`),
+    );
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        `${stage}-second`,
+        { status: "refused", report: "must remain fatal" },
+        undefined,
+        undefined,
+        context(`${stage}-second`),
+      ),
+      /infrastructure previously failed/,
+    );
+    assert.equal(audits, 1, `${stage} fatal state blocks resubmission before audit`);
+  }
 });
 
 test("copied, partial, alternate-path, and later Skill blocks do not establish provenance", async () => {
