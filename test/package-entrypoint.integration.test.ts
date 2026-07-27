@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   InMemoryCredentialStore,
@@ -30,6 +32,7 @@ import {
 import { SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
 
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
+const execFileAsync = promisify(execFile);
 const siblingTool = defineTool({
   name: "integration_sibling",
   label: "Integration Sibling",
@@ -60,6 +63,33 @@ function packageEntrypoint(manifest: {
   assert.deepEqual(manifest.pi?.extensions, ["./extensions/role-runtime.ts"]);
   return resolve(packageRoot, manifest.pi.extensions[0]!);
 }
+
+test("packaged CLI help exposes the complete fixer phase contract", async () => {
+  const manifest = JSON.parse(
+    await readFile(resolve(packageRoot, "package.json"), "utf8"),
+  ) as { files?: string[]; pi?: { extensions?: string[] } };
+  const { stdout } = await execFileAsync(
+    resolve(packageRoot, "node_modules/.bin/pi"),
+    [
+      "--no-extensions",
+      "-e",
+      packageEntrypoint(manifest),
+      "--ak-role",
+      "fixer",
+      "--help",
+    ],
+    { cwd: packageRoot },
+  );
+  const extensionHelp = stdout.match(
+    /Extension CLI Flags:\n([\s\S]*?)\n\nExamples:/,
+  )?.[1];
+
+  assert.ok(extensionHelp, "Pi renders extension CLI flags");
+  assert.match(
+    extensionHelp,
+    /--ak-fixer-phase <value>\s+Fixer phase: plan \(plan only; no edits or commits\) or apply \(execute the approved plan, verify, and commit when repaired\)/,
+  );
+});
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = JSON.parse(
