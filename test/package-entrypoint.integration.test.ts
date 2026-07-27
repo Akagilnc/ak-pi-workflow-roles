@@ -65,6 +65,19 @@ function packageEntrypoint(manifest: {
   return resolve(packageRoot, manifest.pi.extensions[0]!);
 }
 
+test("packaged CLI help exposes all four roles and Reviewer task input", async () => {
+  const manifest = JSON.parse(
+    await readFile(resolve(packageRoot, "package.json"), "utf8"),
+  ) as { files?: string[]; pi?: { extensions?: string[] } };
+  const { stdout } = await execFileAsync(
+    resolve(packageRoot, "node_modules/.bin/pi"),
+    ["--no-extensions", "-e", packageEntrypoint(manifest), "--help"],
+    { cwd: packageRoot },
+  );
+  assert.match(stdout, /--ak-role <value>\s+Activate a packaged workflow role: judge, fixer, coder, or reviewer/);
+  assert.match(stdout, /--ak-review-task <value>\s+Opaque Markdown review task assigned to the reviewer role/);
+});
+
 test("packaged CLI help exposes the complete fixer phase contract", async () => {
   const manifest = JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8"),

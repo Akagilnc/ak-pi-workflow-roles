@@ -9,6 +9,9 @@
 - **Judge(判官)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。
 - **Fixer(修复工)**:以 `plan`(只规划)或 `apply`(施工)阶段处理判官修理包的角色。经具名交卷工具报告 `planned`/`completed`/`refused`;git commit 是供判官查证的客观证据,不是完整回执。
 - **Coder(实现者)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 经 Pi 原生 `/skill:tdd` 调用 canonical Matt TDD;自查三连证据留在 report 供判官审理,两者都不进入 Soul。Coder 回执不以新 commit 为无条件前提,拒绝可零 commit 直接交判官裁决。
+- **Reviewer(评审者)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
+- **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
+- **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。
 - **Soul 合规审计(Soul-compliance audit)**:交卷被接受前的第二次模型调用,只审「判官是否可证地按 soul 办了案」,不得替换判官的实质裁决。
 - **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。
 - **编排器(Orchestrator)**:包外的交通系统——起各角色 Pi 进程、递材料、按三态判词走边。它只读回执,不定义交卷形状。
