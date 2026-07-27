@@ -1,0 +1,28 @@
+{
+  "name": "@ak/pi-workflow-roles",
+  "version": "0.1.0",
+  "description": "Soul-bound workflow roles for Pi",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "files": ["extensions", "src", "souls", "README.md"],
+  "scripts": {
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": ["./extensions/role-runtime.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "latest",
+    "@earendil-works/pi-coding-agent": "latest",
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typebox": "latest",
+    "typescript": "latest"
+  }
+}
