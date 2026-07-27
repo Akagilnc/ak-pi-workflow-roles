@@ -377,10 +377,18 @@ function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
   throw error;
 }
 
+type CapturedReviewerAgentInvocationBatch = {
+  batch: ReviewerAgentInvocationBatch;
+  calls: readonly {
+    id: string;
+    arguments: unknown;
+  }[];
+};
+
 function captureReviewerAgentInvocationBatch(
   toolCallId: string,
   ctx: ExtensionContext,
-): ReviewerAgentInvocationBatch {
+): CapturedReviewerAgentInvocationBatch {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (
     leaf?.type !== "message" ||
@@ -391,11 +399,12 @@ function captureReviewerAgentInvocationBatch(
       "Reviewer Agent invocation provenance failed: the persisted session leaf is not an assistant message",
     );
   }
-  const agentToolCallIds = leaf.message.content.flatMap((part) =>
+  const calls = leaf.message.content.flatMap((part) =>
     part.type === "toolCall" && part.name === AGENT_TOOL_NAME
-      ? [part.id]
+      ? [{ id: part.id, arguments: part.arguments }]
       : [],
   );
+  const agentToolCallIds = calls.map((call) => call.id);
   if (agentToolCallIds.filter((id) => id === toolCallId).length !== 1) {
     throw new Error(
       `Reviewer Agent invocation provenance failed: current call ${toolCallId} does not occur exactly once in the persisted assistant message`,
@@ -406,11 +415,38 @@ function captureReviewerAgentInvocationBatch(
       "Reviewer Agent invocation provenance failed: persisted sibling Agent call IDs are not unique",
     );
   }
-  return Object.freeze({
-    assistantSessionEntryId: leaf.id,
-    executionMode: "parallel" as const,
-    agentToolCallIds: Object.freeze([...agentToolCallIds]),
-  });
+  return {
+    batch: Object.freeze({
+      assistantSessionEntryId: leaf.id,
+      executionMode: "parallel" as const,
+      agentToolCallIds: Object.freeze([...agentToolCallIds]),
+    }),
+    calls: Object.freeze(calls.map((call) => Object.freeze({ ...call }))),
+  };
+}
+
+function reviewerAgentArgument(
+  value: unknown,
+  key: "description" | "prompt",
+): string {
+  return isRecord(value) && typeof value[key] === "string" ? value[key] : "";
+}
+
+function toolExecutionDiagnostic(result: unknown): string {
+  if (isRecord(result) && Array.isArray(result["content"])) {
+    const text = result["content"]
+      .filter(
+        (part): part is { type: "text"; text: string } =>
+          isRecord(part) &&
+          part["type"] === "text" &&
+          typeof part["text"] === "string",
+      )
+      .map((part) => part.text)
+      .join("\n")
+      .trim();
+    if (text.length > 0) return text;
+  }
+  return typeof result === "string" ? result : String(result);
 }
 
 export function createRoleRuntimeExtension(
@@ -433,6 +469,148 @@ export function createRoleRuntimeExtension(
     const reviewerBashEvidence: ReviewerBashEvidence[] = [];
     let reviewerInfrastructureFailure: string | undefined;
     let activeRole: "judge" | "fixer" | "coder" | "reviewer" | undefined;
+
+    const ensureReviewerAgentAttempt = (
+      id: string,
+      rawArguments: unknown,
+    ): ReviewerAgentAttempt => {
+      const matches = reviewerAgentAttempts.filter((attempt) => attempt.id === id);
+      if (matches.length > 1) {
+        throw new Error(
+          `Reviewer Agent invocation provenance failed: Agent attempt ID ${id} is not unique`,
+        );
+      }
+      const existing = matches[0];
+      if (existing !== undefined) return existing;
+      const attempt: ReviewerAgentAttempt = {
+        id,
+        description: reviewerAgentArgument(rawArguments, "description"),
+        prompt: reviewerAgentArgument(rawArguments, "prompt"),
+        status: "running",
+      };
+      reviewerAgentAttempts.push(attempt);
+      return attempt;
+    };
+
+    const reconcileReviewerAgentInvocationBatch = (
+      toolCallId: string,
+      rawArguments: unknown,
+      ctx: ExtensionContext,
+    ): ReviewerAgentAttempt => {
+      const currentAttempt = ensureReviewerAgentAttempt(
+        toolCallId,
+        rawArguments,
+      );
+      const captured = captureReviewerAgentInvocationBatch(toolCallId, ctx);
+      const existingBatch = reviewerAgentInvocationBatches.find(
+        (candidate) =>
+          candidate.assistantSessionEntryId ===
+          captured.batch.assistantSessionEntryId,
+      );
+      if (existingBatch === undefined) {
+        reviewerAgentInvocationBatches.push(captured.batch);
+      } else if (
+        existingBatch.executionMode !== captured.batch.executionMode ||
+        JSON.stringify(existingBatch.agentToolCallIds) !==
+          JSON.stringify(captured.batch.agentToolCallIds)
+      ) {
+        throw new Error(
+          `Reviewer Agent invocation provenance failed: conflicting batch evidence for assistant session entry ${captured.batch.assistantSessionEntryId}`,
+        );
+      }
+      for (const call of captured.calls) {
+        ensureReviewerAgentAttempt(call.id, call.arguments);
+      }
+      return currentAttempt;
+    };
+
+    const failReviewerAgentAttempt = (
+      error: unknown,
+      attempt: ReviewerAgentAttempt,
+      ctx: ExtensionContext,
+    ): never => {
+      attempt.status = "failed";
+      attempt.diagnostics =
+        error instanceof Error ? error.message : String(error);
+      reviewerInfrastructureFailure = attempt.diagnostics;
+      if (isRecord(error)) {
+        const disposition = error["workspaceDisposition"];
+        if (
+          disposition === "deleted" ||
+          (isRecord(disposition) &&
+            typeof disposition["retained"] === "string")
+        ) {
+          attempt.workspaceDisposition =
+            disposition as ReviewerWorkspaceDisposition;
+        }
+        const snapshot = error["targetSnapshot"];
+        if (isRecord(snapshot)) {
+          attempt.targetSnapshot = snapshot as ReviewerTargetSnapshot;
+        }
+      }
+      const failure =
+        error instanceof Error ? error : new Error(String(error));
+      Object.assign(failure, {
+        reviewerAgentAttempt: { ...attempt },
+      });
+      failInfrastructure(failure, ctx);
+    };
+
+    const requireSuccessfulReviewerAgentReconciliation = (): void => {
+      const persistedIds = reviewerAgentInvocationBatches.flatMap(
+        (batch) => batch.agentToolCallIds,
+      );
+      if (persistedIds.length === 0) {
+        throw new Error(
+          "Reviewer completed requires at least one successful Agent call",
+        );
+      }
+      const attemptIds = reviewerAgentAttempts.map((attempt) => attempt.id);
+      const persistedUnique = new Set(persistedIds);
+      const attemptUnique = new Set(attemptIds);
+      const missing = [...persistedUnique].filter(
+        (id) => !attemptUnique.has(id),
+      );
+      const extras = [...attemptUnique].filter(
+        (id) => !persistedUnique.has(id),
+      );
+      const failed = reviewerAgentAttempts.filter(
+        (attempt) => attempt.status === "failed",
+      );
+      const running = reviewerAgentAttempts.filter(
+        (attempt) => attempt.status === "running",
+      );
+      if (
+        persistedUnique.size !== persistedIds.length ||
+        attemptUnique.size !== attemptIds.length ||
+        persistedIds.length !== attemptIds.length ||
+        missing.length > 0 ||
+        extras.length > 0 ||
+        failed.length > 0 ||
+        running.length > 0 ||
+        reviewerAgentAttempts.some(
+          (attempt) => attempt.status !== "successful",
+        )
+      ) {
+        const failedDiagnostics = failed.map(
+          (attempt) =>
+            `${attempt.id}: ${attempt.diagnostics ?? "failed without diagnostics"}`,
+        );
+        throw new Error(
+          [
+            "Reviewer completed requires persisted Agent call IDs and attempts to form a non-empty exact one-to-one match with every Agent call successful and settled",
+            missing.length === 0 ? "" : `missing attempts: ${missing.join(", ")}`,
+            extras.length === 0 ? "" : `extra attempts: ${extras.join(", ")}`,
+            running.length === 0
+              ? ""
+              : `running attempts: ${running.map((attempt) => attempt.id).join(", ")}`,
+            failedDiagnostics.length === 0
+              ? ""
+              : `failed attempts: ${failedDiagnostics.join("; ")}`,
+          ].filter((part) => part.length > 0).join("; "),
+        );
+      }
+    };
     let judgeToolRegistered = false;
     let fixerToolRegistered = false;
     let coderToolRegistered = false;
@@ -543,31 +721,11 @@ export function createRoleRuntimeExtension(
             ) {
               throw new Error("Reviewer task and canonical Skill were not loaded");
             }
-            const attempt: ReviewerAgentAttempt = {
-              id: toolCallId,
-              description: parameters.description,
-              prompt: parameters.prompt,
-              status: "running",
-            };
-            reviewerAgentAttempts.push(attempt);
+            const attempt = ensureReviewerAgentAttempt(toolCallId, parameters);
             try {
-              const batch = captureReviewerAgentInvocationBatch(toolCallId, ctx);
-              const existingBatch = reviewerAgentInvocationBatches.find(
-                (candidate) =>
-                  candidate.assistantSessionEntryId ===
-                  batch.assistantSessionEntryId,
-              );
-              if (existingBatch === undefined) {
-                reviewerAgentInvocationBatches.push(batch);
-              } else if (
-                existingBatch.executionMode !== batch.executionMode ||
-                JSON.stringify(existingBatch.agentToolCallIds) !==
-                  JSON.stringify(batch.agentToolCallIds)
-              ) {
-                throw new Error(
-                  `Reviewer Agent invocation provenance failed: conflicting batch evidence for assistant session entry ${batch.assistantSessionEntryId}`,
-                );
-              }
+              reconcileReviewerAgentInvocationBatch(toolCallId, parameters, ctx);
+              attempt.description = parameters.description;
+              attempt.prompt = parameters.prompt;
               const result = await dependencies.runReviewerAgent(
                 {
                   description: parameters.description,
@@ -593,30 +751,7 @@ export function createRoleRuntimeExtension(
                 ...(result.usage === undefined ? {} : { usage: result.usage }),
               };
             } catch (error) {
-              attempt.status = "failed";
-              attempt.diagnostics =
-                error instanceof Error ? error.message : String(error);
-              reviewerInfrastructureFailure = attempt.diagnostics;
-              if (isRecord(error)) {
-                const disposition = error["workspaceDisposition"];
-                if (
-                  disposition === "deleted" ||
-                  (isRecord(disposition) &&
-                    typeof disposition["retained"] === "string")
-                ) {
-                  attempt.workspaceDisposition = disposition as ReviewerWorkspaceDisposition;
-                }
-                const snapshot = error["targetSnapshot"];
-                if (isRecord(snapshot)) {
-                  attempt.targetSnapshot = snapshot as ReviewerTargetSnapshot;
-                }
-              }
-              const failure =
-                error instanceof Error ? error : new Error(String(error));
-              Object.assign(failure, {
-                reviewerAgentAttempt: { ...attempt },
-              });
-              failInfrastructure(failure, ctx);
+              return failReviewerAgentAttempt(error, attempt, ctx);
             }
           },
         });
@@ -662,25 +797,7 @@ export function createRoleRuntimeExtension(
                   "Reviewer completed requires exact native code-review Skill expansion evidence",
                 );
               }
-              if (
-                reviewerAgentAttempts.length === 0 ||
-                !reviewerAgentAttempts.some(
-                  (attempt) => attempt.status === "successful",
-                )
-              ) {
-                throw new Error(
-                  "Reviewer completed requires at least one successful Agent call",
-                );
-              }
-              if (
-                reviewerAgentAttempts.some(
-                  (attempt) => attempt.status !== "successful",
-                )
-              ) {
-                throw new Error(
-                  "Reviewer completed requires every attempted Agent call to be successful and settled",
-                );
-              }
+              requireSuccessfulReviewerAgentReconciliation();
             }
             const targetSnapshot = reviewerAgentAttempts.find(
               (attempt) => attempt.targetSnapshot !== undefined,
@@ -991,6 +1108,35 @@ export function createRoleRuntimeExtension(
         text: `/skill:tdd ${event.text}`,
         ...(event.images === undefined ? {} : { images: event.images }),
       };
+    });
+
+    pi.on("tool_execution_start", (event, ctx) => {
+      if (activeRole !== "reviewer" || event.toolName !== AGENT_TOOL_NAME) {
+        return;
+      }
+      const attempt = ensureReviewerAgentAttempt(event.toolCallId, event.args);
+      try {
+        reconcileReviewerAgentInvocationBatch(
+          event.toolCallId,
+          event.args,
+          ctx,
+        );
+      } catch (error) {
+        failReviewerAgentAttempt(error, attempt, ctx);
+      }
+    });
+
+    pi.on("tool_execution_end", (event) => {
+      if (
+        activeRole !== "reviewer" ||
+        event.toolName !== AGENT_TOOL_NAME ||
+        !event.isError
+      ) {
+        return;
+      }
+      const attempt = ensureReviewerAgentAttempt(event.toolCallId, undefined);
+      attempt.status = "failed";
+      attempt.diagnostics = toolExecutionDiagnostic(event.result);
     });
 
     pi.on("tool_call", (event) => {
