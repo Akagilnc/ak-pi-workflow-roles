@@ -21,8 +21,8 @@
   放在拥有该不变式的 seam，并保持最小。
 - **修类不修点**：被点名位置只是样本。共享根因时修不变式，但不得借机扩大到
   修理包和 authority 之外。
-- 如果修理包与 authority 冲突、事实已不成立或无法安全完成，停止且明确报告
-  证据；不要制造空提交。由调用 Action 以失败处理，而不是你自创判官状态。
+- 如果修理包与 authority 冲突、事实已不成立或无法安全完成，不要制造空提交；
+  通过 `ak_fixer_output` 返回 `refused`，在 report 中写清依据和证据，交判官复判。
 
 ## 自验与提交
 
@@ -33,5 +33,15 @@
    前缀契约，commit body 说明修了哪些根因、哪些 finding 已经正确或无法采纳。
 5. 退出前确认新 HEAD 是开工 HEAD 的严格 forward descendant。
 
-成功证据是 Git 中的新 forward commit，不是散文口令。你不直连 reviewer，也不
-决定 `converged`；调用 Flow 会把新 HEAD 交给 fresh review，再由判官复判。
+## 交卷
+
+最终只调用一次 `ak_fixer_output`：
+
+- 全部采纳完成 → `status: "completed"`；
+- 全部或部分抗辩 → `status: "refused"`；部分已修可同时自报 commitSha；
+- report 始终写完整 Markdown：修了什么、拒绝什么、证据与验证；
+- 创建了 commit 就自报 commitSha。它是给判官查证的证词，不是机械真相；
+- 你不输出 escalate。需要 owner 决策时写进 refused report，由判官决定是否叫人。
+
+Git 中的新 forward commit 是修复证据，不是完整角色输出。你不直连 reviewer，也不
+决定 `converged`；调用 Flow 转运 report、Git 历史和 fresh review，再由判官复判。

@@ -6,6 +6,7 @@ import type {
 import { Type, type Static } from "typebox";
 
 export const JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
+export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
 
 const judgeVerdictSchema = Type.Object(
   {
@@ -29,7 +30,23 @@ const judgeVerdictSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const fixerOutputSchema = Type.Object(
+  {
+    status: StringEnum(["completed", "refused"] as const),
+    report: Type.String({ minLength: 1 }),
+    commitSha: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+
 type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
+type FixerOutputParameters = Static<typeof fixerOutputSchema>;
+
+export type FixerOutput = {
+  status: "completed" | "refused";
+  report: string;
+  commitSha?: string;
+};
 
 export type JudgeVerdict =
   | { judgeStatus: "converged" }
@@ -52,6 +69,34 @@ function hasExactKeys(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateFixerOutput(output: FixerOutputParameters): FixerOutput {
+  if (!isRecord(output)) {
+    throw new Error("Fixer output must be an object");
+  }
+  const expectedKeys =
+    output.commitSha === undefined
+      ? ["status", "report"]
+      : ["status", "report", "commitSha"];
+  if (
+    !hasExactKeys(output, expectedKeys) ||
+    (output.status !== "completed" && output.status !== "refused") ||
+    typeof output.report !== "string" ||
+    output.report.trim().length === 0 ||
+    (output.commitSha !== undefined &&
+      (typeof output.commitSha !== "string" ||
+        output.commitSha.trim().length === 0))
+  ) {
+    throw new Error(
+      "Fixer output requires completed|refused, a non-blank report, and an optional non-blank commitSha",
+    );
+  }
+  return {
+    status: output.status,
+    report: output.report,
+    ...(output.commitSha === undefined ? {} : { commitSha: output.commitSha }),
+  };
 }
 
 function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
@@ -147,6 +192,7 @@ export type SoulAuditResult =
 export type RoleRuntimeDependencies = {
   loadJudgeSoul(): Promise<string>;
   loadFixerSoul?(): Promise<string>;
+  loadFixPacket?(path: string): Promise<string>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
     input: SoulAuditInput,
@@ -159,11 +205,17 @@ export function createRoleRuntimeExtension(
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
     let activeSoul: string | undefined;
+    let activeFixPacket: string | undefined;
     let activeRole: "judge" | "fixer" | undefined;
     let judgeToolRegistered = false;
+    let fixerToolRegistered = false;
 
     pi.registerFlag("ak-role", {
       description: "Activate a packaged workflow role",
+      type: "string",
+    });
+    pi.registerFlag("ak-fix-packet", {
+      description: "Markdown repair packet assigned to the fixer role",
       type: "string",
     });
 
@@ -186,7 +238,48 @@ export function createRoleRuntimeExtension(
         const roleLabel = role === "judge" ? "Judge" : "Fixer";
         throw new Error(`${roleLabel} soul is empty`);
       }
-      if (role !== "judge" || judgeToolRegistered) return;
+
+      if (role === "fixer") {
+        const packetPath = pi.getFlag("ak-fix-packet");
+        if (typeof packetPath !== "string" || packetPath.trim().length === 0) {
+          throw new Error("Fixer role requires --ak-fix-packet");
+        }
+        if (dependencies.loadFixPacket === undefined) {
+          throw new Error("Fixer packet loader is not configured");
+        }
+        activeFixPacket = (await dependencies.loadFixPacket(packetPath)).trim();
+        if (activeFixPacket.length === 0) {
+          throw new Error("Fixer repair packet is empty");
+        }
+        if (fixerToolRegistered) return;
+        fixerToolRegistered = true;
+        pi.registerTool({
+          name: FIXER_OUTPUT_TOOL_NAME,
+          label: "Fixer Output",
+          description:
+            "Report whether the assigned repair was completed or refused. commitSha is advisory evidence for the judge.",
+          promptSnippet: "Submit the final fixer report",
+          promptGuidelines: [
+            `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
+            `${FIXER_OUTPUT_TOOL_NAME} never escalates; explain any requested owner decision in report for the judge to adjudicate.`,
+          ],
+          parameters: fixerOutputSchema,
+          async execute(_toolCallId, parameters) {
+            if (activeRole !== "fixer" || activeFixPacket === undefined) {
+              throw new Error("Fixer repair packet was not loaded");
+            }
+            const output = validateFixerOutput(parameters);
+            return {
+              content: [{ type: "text" as const, text: "Fixer report accepted" }],
+              details: output,
+              terminate: true as const,
+            };
+          },
+        });
+        return;
+      }
+
+      if (judgeToolRegistered) return;
       judgeToolRegistered = true;
 
       pi.registerTool({
@@ -233,8 +326,12 @@ export function createRoleRuntimeExtension(
       if (activeSoul === undefined) {
         throw new Error(`${activeRole} soul was not loaded`);
       }
+      const fixPacketSection =
+        activeRole === "fixer"
+          ? `\n\n<fix_packet>\n${activeFixPacket ?? ""}\n</fix_packet>`
+          : "";
       return {
-        systemPrompt: `${event.systemPrompt}\n\n<${activeRole}_soul>\n${activeSoul}\n</${activeRole}_soul>`,
+        systemPrompt: `${event.systemPrompt}\n\n<${activeRole}_soul>\n${activeSoul}\n</${activeRole}_soul>${fixPacketSection}`,
       };
     });
   };

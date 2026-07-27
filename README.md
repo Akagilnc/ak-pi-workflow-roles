@@ -41,13 +41,21 @@ The caller should treat the successful `ak_judge_output` tool result as the auth
 
 ## Fixer
 
-The fixer role loads `souls/fixer.md`, applies the judge-authored repair packet, runs the repository's required checks, and creates a new forward commit without amending history:
+The fixer role loads `souls/fixer.md` plus the judge-authored Markdown repair packet, then repairs/tests or returns an evidence-bearing refusal:
 
 ```bash
-pi --ak-role fixer -p "Apply this judge repair packet: ..."
+pi --ak-role fixer \
+  --ak-fix-packet /path/to/fix-packet.md \
+  -p "Apply the assigned repair packet."
 ```
 
-The caller owns the mechanical Git gate: the new HEAD must be a strict forward descendant of the prior HEAD. Fixer emits no judge status; fresh review and the judge decide convergence.
+Fixer terminates through `ak_fixer_output`:
+
+```json
+{"status":"completed|refused","report":"Markdown report","commitSha":"optional self-report"}
+```
+
+`commitSha` is advisory evidence for the judge, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence and the judge decides whether to escalate. The caller transports the report, live Git history, and any fresh review back to the judge.
 
 ## Verdict contract
 
