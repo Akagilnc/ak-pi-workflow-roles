@@ -20,9 +20,6 @@ const fixerSoulPath = fileURLToPath(
 const coderSoulPath = fileURLToPath(
   new URL("../souls/coder.md", import.meta.url),
 );
-const coderQualitySkillPath = fileURLToPath(
-  new URL("../skills/coder-quality/SKILL.md", import.meta.url),
-);
 
 function transcriptFromContext(ctx: ExtensionContext): string {
   const context = buildSessionContext(
@@ -38,7 +35,6 @@ export default createRoleRuntimeExtension({
   loadFixPacket: (path) => readFile(path, "utf8"),
   loadCoderSoul: () => readFile(coderSoulPath, "utf8"),
   loadCoderTask: (path) => readFile(path, "utf8"),
-  loadCoderQualitySkill: () => readFile(coderQualitySkillPath, "utf8"),
   transcriptFromContext,
   auditSoulCompliance: createPiSoulAuditor(),
 });

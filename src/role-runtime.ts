@@ -238,7 +238,6 @@ export type RoleRuntimeDependencies = {
   loadFixPacket?(path: string): Promise<string>;
   loadCoderSoul?(): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
-  loadCoderQualitySkill?(): Promise<string>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
     input: SoulAuditInput,
@@ -255,7 +254,7 @@ export function createRoleRuntimeExtension(
     let activeFixerPhase: WorkerPhase | undefined;
     let activeCoderTask: string | undefined;
     let activeCoderPhase: WorkerPhase | undefined;
-    let activeCoderQualitySkill: string | undefined;
+    let coderTddInvocationInjected = false;
     let activeRole: "judge" | "fixer" | "coder" | undefined;
     let judgeToolRegistered = false;
     let fixerToolRegistered = false;
@@ -326,17 +325,6 @@ export function createRoleRuntimeExtension(
         if (activeCoderTask.length === 0) {
           throw new Error("Coder task is empty");
         }
-        if (phase === "apply") {
-          if (dependencies.loadCoderQualitySkill === undefined) {
-            throw new Error("Coder quality skill loader is not configured");
-          }
-          activeCoderQualitySkill = (
-            await dependencies.loadCoderQualitySkill()
-          ).trim();
-          if (activeCoderQualitySkill.length === 0) {
-            throw new Error("Coder quality skill is empty");
-          }
-        }
         if (coderToolRegistered) return;
         coderToolRegistered = true;
         pi.registerTool({
@@ -349,6 +337,7 @@ export function createRoleRuntimeExtension(
             `Use ${CODER_OUTPUT_TOOL_NAME} as the final action for the coder role.`,
             `${CODER_OUTPUT_TOOL_NAME} never escalates; explain authority or task conflicts in report for the judge to adjudicate.`,
             "plan permits planned|refused; apply permits completed|refused.",
+            "A completed apply report must preserve evidence for TDD, the same-pattern check, introduced-regression check, and behavior-fact check.",
           ],
           parameters: workerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
@@ -370,6 +359,17 @@ export function createRoleRuntimeExtension(
               activeCoderPhase,
               "Coder",
             );
+            if (
+              activeCoderPhase === "apply" &&
+              output.status === "completed" &&
+              !/<skill name="tdd"\s/.test(
+                dependencies.transcriptFromContext(ctx),
+              )
+            ) {
+              throw new Error(
+                "Coder completed requires the Matt tdd skill to be expanded through Pi /skill:tdd",
+              );
+            }
             return {
               content: [{ type: "text" as const, text: "Coder report accepted" }],
               details: output,
@@ -512,6 +512,25 @@ export function createRoleRuntimeExtension(
       );
     });
 
+    pi.on("input", (event) => {
+      if (
+        activeRole !== "coder" ||
+        activeCoderPhase !== "apply" ||
+        coderTddInvocationInjected
+      ) {
+        return { action: "continue" as const };
+      }
+      coderTddInvocationInjected = true;
+      if (event.text.startsWith("/skill:tdd")) {
+        return { action: "continue" as const };
+      }
+      return {
+        action: "transform" as const,
+        text: `/skill:tdd ${event.text}`,
+        ...(event.images === undefined ? {} : { images: event.images }),
+      };
+    });
+
     pi.on("before_agent_start", (event) => {
       if (activeRole === undefined) return;
       if (activeSoul === undefined) {
@@ -521,7 +540,7 @@ export function createRoleRuntimeExtension(
         activeRole === "fixer"
           ? `\n\n<fixer_phase>\n${activeFixerPhase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${activeFixPacket ?? ""}\n</fix_packet>`
           : activeRole === "coder"
-            ? `\n\n<coder_phase>\n${activeCoderPhase ?? ""}\n</coder_phase>\n\n<coder_task>\n${activeCoderTask ?? ""}\n</coder_task>${activeCoderQualitySkill === undefined ? "" : `\n\n<coder_quality_skill>\n${activeCoderQualitySkill}\n</coder_quality_skill>`}`
+            ? `\n\n<coder_phase>\n${activeCoderPhase ?? ""}\n</coder_phase>\n\n<coder_task>\n${activeCoderTask ?? ""}\n</coder_task>`
             : "";
       return {
         systemPrompt: `${event.systemPrompt}\n\n<${activeRole}_soul>\n${activeSoul}\n</${activeRole}_soul>${roleInputSection}`,

@@ -4,14 +4,13 @@
   "description": "Soul-bound workflow roles for Pi",
   "type": "module",
   "keywords": ["pi-package"],
-  "files": ["extensions", "src", "souls", "skills", "README.md"],
+  "files": ["extensions", "src", "souls", "README.md"],
   "scripts": {
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "pi": {
-    "extensions": ["./extensions/role-runtime.ts"],
-    "skills": ["./skills"]
+    "extensions": ["./extensions/role-runtime.ts"]
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

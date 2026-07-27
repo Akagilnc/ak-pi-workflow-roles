@@ -294,7 +294,6 @@ test("judge role fails before adjudication when its soul is empty", async () => 
 
 test("coder plan loads its task without construction skill and returns planned", async () => {
   const loadedTasks: string[] = [];
-  let qualityLoads = 0;
   const harness = extensionHarness("coder", {
     "ak-coder-task": "/materials/task.md",
     "ak-coder-phase": "plan",
@@ -305,10 +304,6 @@ test("coder plan loads its task without construction skill and returns planned",
     loadCoderTask: async (path) => {
       loadedTasks.push(path);
       return "IMPLEMENT THE VERTICAL SLICE";
-    },
-    loadCoderQualitySkill: async () => {
-      qualityLoads += 1;
-      return "TDD AND SELF-CHECK";
     },
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
@@ -321,7 +316,6 @@ test("coder plan loads its task without construction skill and returns planned",
   );
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
   assert.deepEqual(loadedTasks, ["/materials/task.md"]);
-  assert.equal(qualityLoads, 0);
   assert.match(prompt, /CODER LAW/);
   assert.match(prompt, /<coder_phase>\s*plan/);
   assert.match(prompt, /IMPLEMENT THE VERTICAL SLICE/);
@@ -352,7 +346,8 @@ test("coder plan loads its task without construction skill and returns planned",
   );
 });
 
-test("coder apply auto-loads quality skill and permits completion or refusal without a commit claim", async () => {
+test("coder apply invokes native tdd and requires expansion evidence only for completion", async () => {
+  let transcript = "";
   const harness = extensionHarness("coder", {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
@@ -361,37 +356,70 @@ test("coder apply auto-loads quality skill and permits completion or refusal wit
     loadJudgeSoul: async () => "JUDGE LAW",
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
-    loadCoderQualitySkill: async () => "MANDATORY TDD\nMANDATORY SELF-CHECK THREE",
-    transcriptFromContext: () => "",
+    transcriptFromContext: () => transcript,
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
 
   await harness.handlers.get("session_start")?.({}, {});
+  const inputResult = await harness.handlers.get("input")?.(
+    { text: "Apply the approved plan.", source: "interactive" },
+    {},
+  );
+  assert.deepEqual(inputResult, {
+    action: "transform",
+    text: "/skill:tdd Apply the approved plan.",
+  });
   const promptResult = await harness.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE" },
     {},
   );
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
   assert.match(prompt, /<coder_phase>\s*apply/);
-  assert.match(prompt, /MANDATORY TDD/);
-  assert.match(prompt, /MANDATORY SELF-CHECK THREE/);
+  assert.doesNotMatch(prompt, /coder_quality_skill/);
 
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
-  for (const [index, output] of [
-    { status: "completed", report: "Implemented and verified the slice." },
-    { status: "refused", report: "The assignment contradicts its authority." },
-  ].entries()) {
-    const id = `coder-${index}`;
-    const result = await tool.execute(
-      id,
-      output,
+  const completed = {
+    status: "completed",
+    report: "TDD evidence and self-check three are recorded here.",
+  };
+  await assert.rejects(
+    tool.execute(
+      "coder-no-tdd",
+      completed,
       undefined,
       undefined,
-      toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
-    );
-    assert.deepEqual(result.details, output);
-  }
+      toolCallContext([{ id: "coder-no-tdd", name: CODER_OUTPUT_TOOL_NAME }]),
+    ),
+    /completed requires the Matt tdd skill to be expanded/i,
+  );
+
+  transcript = '<skill name="tdd" location="/home/.agents/skills/tdd/SKILL.md">';
+  const accepted = await tool.execute(
+    "coder-completed",
+    completed,
+    undefined,
+    undefined,
+    toolCallContext([
+      { id: "coder-completed", name: CODER_OUTPUT_TOOL_NAME },
+    ]),
+  );
+  assert.deepEqual(accepted.details, completed);
+
+  transcript = "";
+  const refused = {
+    status: "refused",
+    report: "The assignment contradicts its authority.",
+  };
+  const refusal = await tool.execute(
+    "coder-refused",
+    refused,
+    undefined,
+    undefined,
+    toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]),
+  );
+  assert.deepEqual(refusal.details, refused);
+
   await assert.rejects(
     tool.execute(
       "coder-planned",
@@ -407,7 +435,7 @@ test("coder apply auto-loads quality skill and permits completion or refusal wit
   await assert.rejects(
     tool.execute(
       "coder-mixed",
-      { status: "completed", report: "Ambiguous batch." },
+      completed,
       undefined,
       undefined,
       toolCallContext([
