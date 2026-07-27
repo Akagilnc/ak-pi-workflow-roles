@@ -17,6 +17,7 @@ const judgeVerdictSchema = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    request: Type.Optional(Type.String({ minLength: 1 })),
     decisionGate: Type.Optional(
       Type.Object(
         {
@@ -48,13 +49,17 @@ export type FixerOutput = {
   commitSha?: string;
 };
 
-export type JudgeVerdict =
-  | { judgeStatus: "converged" }
-  | { judgeStatus: "continue"; fix: { summary: string } }
-  | {
-      judgeStatus: "escalate";
-      decisionGate: { question: string; options: string[] };
-    };
+type AdvisoryRequest = { request?: string };
+
+export type JudgeVerdict = AdvisoryRequest &
+  (
+    | { judgeStatus: "converged" }
+    | { judgeStatus: "continue"; fix: { summary: string } }
+    | {
+        judgeStatus: "escalate";
+        decisionGate: { question: string; options: string[] };
+      }
+  );
 
 function hasExactKeys(
   value: Record<string, unknown>,
@@ -119,17 +124,27 @@ function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   if (!isRecord(verdict)) {
     throw new Error("Judge verdict must be an object");
   }
+  if (
+    verdict.request !== undefined &&
+    (typeof verdict.request !== "string" || verdict.request.trim().length === 0)
+  ) {
+    throw new Error("Judge request must be a non-blank string when provided");
+  }
+  const withOptionalRequest = (keys: string[]): string[] =>
+    verdict.request === undefined ? keys : [...keys, "request"];
+  const request =
+    verdict.request === undefined ? {} : { request: verdict.request };
 
   if (verdict.judgeStatus === "converged") {
-    if (!hasExactKeys(verdict, ["judgeStatus"])) {
+    if (!hasExactKeys(verdict, withOptionalRequest(["judgeStatus"]))) {
       throw new Error("Judge converged forbids fix and decisionGate");
     }
-    return { judgeStatus: "converged" };
+    return { judgeStatus: "converged", ...request };
   }
 
   if (verdict.judgeStatus === "continue") {
     if (
-      !hasExactKeys(verdict, ["judgeStatus", "fix"]) ||
+      !hasExactKeys(verdict, withOptionalRequest(["judgeStatus", "fix"])) ||
       !isRecord(verdict.fix) ||
       !hasExactKeys(verdict.fix, ["summary"]) ||
       typeof verdict.fix.summary !== "string" ||
@@ -142,13 +157,17 @@ function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
     return {
       judgeStatus: "continue",
       fix: { summary: verdict.fix.summary },
+      ...request,
     };
   }
 
   if (verdict.judgeStatus === "escalate") {
     const gate = verdict.decisionGate;
     if (
-      !hasExactKeys(verdict, ["judgeStatus", "decisionGate"]) ||
+      !hasExactKeys(
+        verdict,
+        withOptionalRequest(["judgeStatus", "decisionGate"]),
+      ) ||
       !isRecord(gate) ||
       !hasExactKeys(gate, ["question", "options"]) ||
       typeof gate.question !== "string" ||
@@ -167,6 +186,7 @@ function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
     return {
       judgeStatus: "escalate",
       decisionGate: { question: gate.question, options: [...gate.options] },
+      ...request,
     };
   }
 
