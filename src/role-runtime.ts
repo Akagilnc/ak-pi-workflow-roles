@@ -1,6 +1,15 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
+import type { CollectorClock } from "./collector-evidence.ts";
+import type { CollectorGitHubTransport } from "./collector-github.ts";
+import {
+  COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_WAIT_TOOL,
+  createCollectorRoleRuntime,
+} from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import {
   createJudgeRoleRuntime,
@@ -36,6 +45,12 @@ export {
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
+export {
+  COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_OUTPUT_TOOL,
+  COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_WAIT_TOOL,
+} from "./collector-role.ts";
 export type {
   ReviewerAgentAttempt,
   ReviewerAgentInvocationBatch,
@@ -46,6 +61,9 @@ export type {
   ReviewerUsage,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
+export type { CollectorReceipt } from "./collector-receipt.ts";
+export type { CollectorGitHubTransport } from "./collector-github.ts";
+export type { CollectorClock } from "./collector-evidence.ts";
 
 export type RoleRuntimeDependencies = {
   loadJudgeSoul(): Promise<string>;
@@ -55,6 +73,10 @@ export type RoleRuntimeDependencies = {
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
   loadReviewerTask?(path: string): Promise<string>;
+  loadCollectorSoul?(): Promise<string>;
+  createCollectorTransport?(): CollectorGitHubTransport;
+  createCollectorClock?(): CollectorClock;
+  collectorPackageExtensionPath?: string;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -86,7 +108,7 @@ export function createRoleRuntimeExtension(
   return (pi) => {
     pi.registerFlag("ak-role", {
       description:
-        "Activate a packaged workflow role: judge, fixer, coder, or reviewer",
+        "Activate a packaged workflow role: judge, fixer, coder, reviewer, or collector",
       type: "string",
     });
 
@@ -185,13 +207,39 @@ export function createRoleRuntimeExtension(
       },
       hostActions,
     );
+    const collector = createCollectorRoleRuntime(
+      pi,
+      {
+        async loadSoul() {
+          if (dependencies.loadCollectorSoul === undefined) {
+            throw new Error("collector soul loader is not configured");
+          }
+          return dependencies.loadCollectorSoul();
+        },
+        createTransport() {
+          if (dependencies.createCollectorTransport === undefined) {
+            throw new Error("Collector GitHub transport is not configured");
+          }
+          return dependencies.createCollectorTransport();
+        },
+        ...(dependencies.createCollectorClock === undefined
+          ? {}
+          : { createClock: dependencies.createCollectorClock }),
+        ...(dependencies.collectorPackageExtensionPath === undefined
+          ? {}
+          : {
+            packageExtensionPath: dependencies.collectorPackageExtensionPath,
+          }),
+      },
+      hostActions,
+    );
 
-    pi.on("session_start", async (_event, ctx) => {
+    pi.on("session_start", async (event, ctx) => {
       const role = pi.getFlag("ak-role");
       if (role === undefined) return;
       if (
         role !== "judge" && role !== "fixer" && role !== "coder" &&
-        role !== "reviewer"
+        role !== "reviewer" && role !== "collector"
       ) {
         throw new Error(`Unsupported workflow role: ${String(role)}`);
       }
@@ -207,6 +255,9 @@ export function createRoleRuntimeExtension(
           return;
         case "reviewer":
           await reviewer.activate(ctx);
+          return;
+        case "collector":
+          await collector.activate(ctx, event);
           return;
       }
     });

@@ -104,7 +104,7 @@ export interface InProcessPiOptions {
   extensionFactories?: InlineExtension[];
   additionalSkillPaths?: string[];
   systemPrompt: string;
-  mode: "print" | "tui";
+  mode: "print" | "tui" | "json";
   flags: Record<string, string>;
   noTools?: "all" | "builtin";
   customTools?: ToolDefinition[];
