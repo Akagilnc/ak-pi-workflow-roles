@@ -14,6 +14,9 @@ import { createPiSoulAuditor } from "../src/soul-auditor.ts";
 const judgeSoulPath = fileURLToPath(
   new URL("../souls/judge.md", import.meta.url),
 );
+const fixerSoulPath = fileURLToPath(
+  new URL("../souls/fixer.md", import.meta.url),
+);
 
 function transcriptFromContext(ctx: ExtensionContext): string {
   const context = buildSessionContext(
@@ -25,6 +28,7 @@ function transcriptFromContext(ctx: ExtensionContext): string {
 
 export default createRoleRuntimeExtension({
   loadJudgeSoul: () => readFile(judgeSoulPath, "utf8"),
+  loadFixerSoul: () => readFile(fixerSoulPath, "utf8"),
   transcriptFromContext,
   auditSoulCompliance: createPiSoulAuditor(),
 });

@@ -43,6 +43,7 @@ export type SoulAuditResult =
 
 export type RoleRuntimeDependencies = {
   loadJudgeSoul(): Promise<string>;
+  loadFixerSoul?(): Promise<string>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
     input: SoulAuditInput,
@@ -54,7 +55,8 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
-    let soul: string | undefined;
+    let activeSoul: string | undefined;
+    let activeRole: "judge" | "fixer" | undefined;
     let judgeToolRegistered = false;
 
     pi.registerFlag("ak-role", {
@@ -63,13 +65,25 @@ export function createRoleRuntimeExtension(
     });
 
     pi.on("session_start", async () => {
-      if (pi.getFlag("ak-role") !== "judge") return;
-
-      soul = (await dependencies.loadJudgeSoul()).trim();
-      if (soul.length === 0) {
-        throw new Error("Judge soul is empty");
+      const role = pi.getFlag("ak-role");
+      if (role === undefined) return;
+      if (role !== "judge" && role !== "fixer") {
+        throw new Error(`Unsupported workflow role: ${String(role)}`);
       }
-      if (judgeToolRegistered) return;
+      activeRole = role;
+      const loadSoul =
+        role === "judge"
+          ? dependencies.loadJudgeSoul
+          : dependencies.loadFixerSoul;
+      if (loadSoul === undefined) {
+        throw new Error(`${role} soul loader is not configured`);
+      }
+      activeSoul = (await loadSoul()).trim();
+      if (activeSoul.length === 0) {
+        const roleLabel = role === "judge" ? "Judge" : "Fixer";
+        throw new Error(`${roleLabel} soul is empty`);
+      }
+      if (role !== "judge" || judgeToolRegistered) return;
       judgeToolRegistered = true;
 
       pi.registerTool({
@@ -83,7 +97,7 @@ export function createRoleRuntimeExtension(
         ],
         parameters: judgeVerdictSchema,
         async execute(_toolCallId, verdict, signal, _onUpdate, ctx) {
-          if (soul === undefined) {
+          if (activeRole !== "judge" || activeSoul === undefined) {
             throw new Error("Judge soul was not loaded");
           }
           if (
@@ -100,7 +114,7 @@ export function createRoleRuntimeExtension(
           }
           const audit = await dependencies.auditSoulCompliance(
             {
-              soul,
+              soul: activeSoul,
               transcript: dependencies.transcriptFromContext(ctx),
               verdict,
             },
@@ -122,12 +136,12 @@ export function createRoleRuntimeExtension(
     });
 
     pi.on("before_agent_start", (event) => {
-      if (pi.getFlag("ak-role") !== "judge") return;
-      if (soul === undefined) {
-        throw new Error("Judge soul was not loaded");
+      if (activeRole === undefined) return;
+      if (activeSoul === undefined) {
+        throw new Error(`${activeRole} soul was not loaded`);
       }
       return {
-        systemPrompt: `${event.systemPrompt}\n\n<judge_soul>\n${soul}\n</judge_soul>`,
+        systemPrompt: `${event.systemPrompt}\n\n<${activeRole}_soul>\n${activeSoul}\n</${activeRole}_soul>`,
       };
     });
   };
