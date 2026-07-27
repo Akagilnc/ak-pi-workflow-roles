@@ -32,7 +32,7 @@ const judgeVerdictSchema = Type.Object(
 
 const fixerOutputSchema = Type.Object(
   {
-    status: StringEnum(["completed", "refused"] as const),
+    status: StringEnum(["planned", "completed", "refused"] as const),
     report: Type.String({ minLength: 1 }),
     commitSha: Type.Optional(Type.String({ minLength: 1 })),
   },
@@ -43,7 +43,7 @@ type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
 type FixerOutputParameters = Static<typeof fixerOutputSchema>;
 
 export type FixerOutput = {
-  status: "completed" | "refused";
+  status: "planned" | "completed" | "refused";
   report: string;
   commitSha?: string;
 };
@@ -71,7 +71,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validateFixerOutput(output: FixerOutputParameters): FixerOutput {
+type FixerPhase = "plan" | "apply";
+
+function validateFixerOutput(
+  output: FixerOutputParameters,
+  phase: FixerPhase,
+): FixerOutput {
   if (!isRecord(output)) {
     throw new Error("Fixer output must be an object");
   }
@@ -81,7 +86,9 @@ function validateFixerOutput(output: FixerOutputParameters): FixerOutput {
       : ["status", "report", "commitSha"];
   if (
     !hasExactKeys(output, expectedKeys) ||
-    (output.status !== "completed" && output.status !== "refused") ||
+    (output.status !== "planned" &&
+      output.status !== "completed" &&
+      output.status !== "refused") ||
     typeof output.report !== "string" ||
     output.report.trim().length === 0 ||
     (output.commitSha !== undefined &&
@@ -89,8 +96,17 @@ function validateFixerOutput(output: FixerOutputParameters): FixerOutput {
         output.commitSha.trim().length === 0))
   ) {
     throw new Error(
-      "Fixer output requires completed|refused, a non-blank report, and an optional non-blank commitSha",
+      "Fixer output requires planned|completed|refused, a non-blank report, and an optional non-blank commitSha",
     );
+  }
+  if (phase === "plan" && output.status === "completed") {
+    throw new Error("Fixer plan phase permits only planned or refused");
+  }
+  if (phase === "apply" && output.status === "planned") {
+    throw new Error("Fixer apply phase permits only completed or refused");
+  }
+  if (output.status === "planned" && output.commitSha !== undefined) {
+    throw new Error("Fixer planned output forbids commitSha");
   }
   return {
     status: output.status,
@@ -206,6 +222,7 @@ export function createRoleRuntimeExtension(
   return (pi) => {
     let activeSoul: string | undefined;
     let activeFixPacket: string | undefined;
+    let activeFixerPhase: FixerPhase | undefined;
     let activeRole: "judge" | "fixer" | undefined;
     let judgeToolRegistered = false;
     let fixerToolRegistered = false;
@@ -216,6 +233,11 @@ export function createRoleRuntimeExtension(
     });
     pi.registerFlag("ak-fix-packet", {
       description: "Markdown repair packet assigned to the fixer role",
+      type: "string",
+    });
+    pi.registerFlag("ak-fixer-phase", {
+      description:
+        "Fixer phase: plan (plan only; no edits/commit) or apply (execute the approved plan)",
       type: "string",
     });
 
@@ -240,6 +262,13 @@ export function createRoleRuntimeExtension(
       }
 
       if (role === "fixer") {
+        const phase = pi.getFlag("ak-fixer-phase");
+        if (phase !== "plan" && phase !== "apply") {
+          throw new Error(
+            "Fixer role requires --ak-fixer-phase plan|apply; no other phase is supported",
+          );
+        }
+        activeFixerPhase = phase;
         const packetPath = pi.getFlag("ak-fix-packet");
         if (typeof packetPath !== "string" || packetPath.trim().length === 0) {
           throw new Error("Fixer role requires --ak-fix-packet");
@@ -257,18 +286,23 @@ export function createRoleRuntimeExtension(
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "Fixer Output",
           description:
-            "Report whether the assigned repair was completed or refused. commitSha is advisory evidence for the judge.",
+            "Submit a plan, completion, or refusal for the active fixer phase. commitSha is advisory evidence for the judge.",
           promptSnippet: "Submit the final fixer report",
           promptGuidelines: [
             `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
             `${FIXER_OUTPUT_TOOL_NAME} never escalates; explain any requested owner decision in report for the judge to adjudicate.`,
+            "plan permits planned|refused; apply permits completed|refused.",
           ],
           parameters: fixerOutputSchema,
           async execute(_toolCallId, parameters) {
-            if (activeRole !== "fixer" || activeFixPacket === undefined) {
-              throw new Error("Fixer repair packet was not loaded");
+            if (
+              activeRole !== "fixer" ||
+              activeFixPacket === undefined ||
+              activeFixerPhase === undefined
+            ) {
+              throw new Error("Fixer repair packet and phase were not loaded");
             }
-            const output = validateFixerOutput(parameters);
+            const output = validateFixerOutput(parameters, activeFixerPhase);
             return {
               content: [{ type: "text" as const, text: "Fixer report accepted" }],
               details: output,
@@ -328,7 +362,7 @@ export function createRoleRuntimeExtension(
       }
       const fixPacketSection =
         activeRole === "fixer"
-          ? `\n\n<fix_packet>\n${activeFixPacket ?? ""}\n</fix_packet>`
+          ? `\n\n<fixer_phase>\n${activeFixerPhase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${activeFixPacket ?? ""}\n</fix_packet>`
           : "";
       return {
         systemPrompt: `${event.systemPrompt}\n\n<${activeRole}_soul>\n${activeSoul}\n</${activeRole}_soul>${fixPacketSection}`,

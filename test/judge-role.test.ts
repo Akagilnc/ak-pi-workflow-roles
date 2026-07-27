@@ -198,6 +198,7 @@ test("fixer role loads its Markdown packet and returns a thin report envelope", 
   const loadedPaths: string[] = [];
   const harness = extensionHarness("fixer", {
     "ak-fix-packet": "/materials/fix.md",
+    "ak-fixer-phase": "apply",
   });
   const extension = createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
@@ -242,6 +243,56 @@ test("fixer role loads its Markdown packet and returns a thin report envelope", 
       report: "The requested guard contradicts the authority.",
       commitSha: "abc123",
     },
+  );
+});
+
+test("fixer plan phase accepts plans but rejects construction receipts", async () => {
+  const harness = extensionHarness("fixer", {
+    "ak-fix-packet": "/materials/fix.md",
+    "ak-fixer-phase": "plan",
+  });
+  const extension = createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadFixerSoul: async () => "FIXER LAW",
+    loadFixPacket: async () => "REPAIR PACKET",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  });
+
+  extension(harness.pi as ExtensionAPI);
+  await harness.handlers.get("session_start")?.({}, {});
+  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+
+  assert.deepEqual(
+    (await tool.execute(
+      "plan-call",
+      { status: "planned", report: "Plan the smallest repair." },
+      undefined,
+      undefined,
+      {},
+    )).details,
+    { status: "planned", report: "Plan the smallest repair." },
+  );
+  await assert.rejects(
+    tool.execute(
+      "completed-call",
+      { status: "completed", report: "Implemented it." },
+      undefined,
+      undefined,
+      {},
+    ),
+    /plan phase.*planned|refused/i,
+  );
+  await assert.rejects(
+    tool.execute(
+      "commit-call",
+      { status: "planned", report: "Plan only.", commitSha: "abc123" },
+      undefined,
+      undefined,
+      {},
+    ),
+    /planned.*commitSha/i,
   );
 });
 
