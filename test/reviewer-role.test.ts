@@ -157,12 +157,13 @@ test("completed requires exact native Skill provenance and successful Agent evid
   );
 
   const agent = tools.get(AGENT_TOOL_NAME);
+  const axisContext = context("axis-1", AGENT_TOOL_NAME);
   const agentResult = await agent.execute(
     "axis-1",
     { subagent_type: "general-purpose", description: "Standards", prompt: "Inspect the pinned diff." },
     undefined,
     undefined,
-    context("axis-1", AGENT_TOOL_NAME),
+    axisContext,
   );
   assert.equal(agentResult.content[0].text, "axis report");
   assert.deepEqual(agentResult.usage, usage);
@@ -179,6 +180,131 @@ test("completed requires exact native Skill provenance and successful Agent evid
   assert.equal(audits.length, 1);
   assert.equal(audits[0]?.candidate.status, "completed");
   assert.equal(audits[0]?.record.agentAttempts.length, 1);
+  assert.deepEqual(audits[0]?.record.agentInvocationBatches, [{
+    assistantSessionEntryId: axisContext.sessionManager.getLeafEntry()?.id,
+    executionMode: "parallel",
+    agentToolCallIds: ["axis-1"],
+  }]);
+});
+
+test("Agent calls preserve same-message batches and isolate separate assistant entries", async () => {
+  const { handlers, tools, audits } = extension();
+  await handlers.get("session_start")?.({}, {});
+  await establishExpansion(handlers);
+  const agent = tools.get(AGENT_TOOL_NAME);
+  const shared = context("axis-a", AGENT_TOOL_NAME, [
+    { id: "axis-a", name: AGENT_TOOL_NAME },
+    { id: "axis-b", name: AGENT_TOOL_NAME },
+  ]);
+  const sharedEntryId = shared.sessionManager.getLeafEntry()?.id;
+  await agent.execute(
+    "axis-a",
+    { subagent_type: "general-purpose", description: "A", prompt: "A" },
+    undefined,
+    undefined,
+    shared,
+  );
+  await agent.execute(
+    "axis-b",
+    { subagent_type: "general-purpose", description: "B", prompt: "B" },
+    undefined,
+    undefined,
+    shared,
+  );
+  const later = context("later", AGENT_TOOL_NAME);
+  const laterEntryId = later.sessionManager.getLeafEntry()?.id;
+  await agent.execute(
+    "later",
+    { subagent_type: "general-purpose", description: "Later", prompt: "Later" },
+    undefined,
+    undefined,
+    later,
+  );
+  await tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+    "done",
+    { status: "completed", report: "review" },
+    undefined,
+    undefined,
+    context("done"),
+  );
+
+  assert.deepEqual(audits[0]?.record.agentInvocationBatches, [
+    {
+      assistantSessionEntryId: sharedEntryId,
+      executionMode: "parallel",
+      agentToolCallIds: ["axis-a", "axis-b"],
+    },
+    {
+      assistantSessionEntryId: laterEntryId,
+      executionMode: "parallel",
+      agentToolCallIds: ["later"],
+    },
+  ]);
+});
+
+test("missing or malformed Agent leaf provenance aborts before child start", async () => {
+  for (const scenario of ["missing", "malformed"] as const) {
+    let childStarts = 0;
+    let audits = 0;
+    const fixture = extension({
+      runReviewerAgent: async () => {
+        childStarts += 1;
+        return { report: "impossible", workspaceDisposition: "deleted" };
+      },
+      auditReviewerCompliance: async () => {
+        audits += 1;
+        return { status: "pass" as const };
+      },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    const sessionManager = SessionManager.inMemory();
+    if (scenario === "malformed") {
+      sessionManager.appendMessage({
+        role: "user",
+        content: "not an assistant tool-call message",
+        timestamp: Date.now(),
+      });
+    }
+    let aborts = 0;
+    const ctx = {
+      sessionManager,
+      abort() { aborts += 1; },
+      mode: "tui",
+    } as unknown as ExtensionContext;
+    let recorded: unknown;
+    await assert.rejects(
+      async () => {
+        try {
+          await fixture.tools.get(AGENT_TOOL_NAME).execute(
+            `bad-${scenario}`,
+            {
+              subagent_type: "general-purpose",
+              description: scenario,
+              prompt: scenario,
+            },
+            undefined,
+            undefined,
+            ctx,
+          );
+        } catch (error) {
+          recorded = (error as { reviewerAgentAttempt?: unknown })
+            .reviewerAgentAttempt;
+          throw error;
+        }
+      },
+      /persisted session leaf is not an assistant message/,
+    );
+    assert.equal(aborts, 1);
+    assert.equal(childStarts, 0);
+    assert.equal(audits, 0);
+    assert.deepEqual(recorded, {
+      id: `bad-${scenario}`,
+      description: scenario,
+      prompt: scenario,
+      status: "failed",
+      diagnostics: "Reviewer Agent invocation provenance failed: the persisted session leaf is not an assistant message",
+    });
+  }
 });
 
 test("refused can be audited before Skill or Agent and revise is resubmittable", async () => {

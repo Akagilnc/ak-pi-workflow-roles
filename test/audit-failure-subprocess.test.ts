@@ -60,17 +60,21 @@ async function runCli(mode: "print" | "json") {
   }
 }
 
+type ReviewerFailureStage =
+  | "child-preparation"
+  | "child-provider"
+  | "child-session"
+  | "child-malformed-output"
+  | "audit-auth"
+  | "audit-provider"
+  | "audit-malformed-decision";
+
 async function runReviewerCli(
   mode: "print" | "json",
-  failure: "child" | "audit",
+  stage: ReviewerFailureStage,
 ) {
   const agentDir = await mkdtemp(resolve(tmpdir(), "ak-reviewer-fatal-cli-"));
-  const provider = failure === "child"
-    ? "ak-reviewer-child-failure"
-    : "ak-reviewer-audit-failure";
-  const fixture = failure === "child"
-    ? "reviewer-child-failure-provider.ts"
-    : "reviewer-audit-failure-provider.ts";
+  const cwd = stage === "child-preparation" ? agentDir : packageRoot;
   const args = [
     "--no-extensions",
     "--no-skills",
@@ -83,13 +87,13 @@ async function runReviewerCli(
     "-e",
     resolve(packageRoot, "extensions/role-runtime.ts"),
     "-e",
-    resolve(packageRoot, `test/fixtures/${fixture}`),
+    resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
     "--ak-role",
     "reviewer",
     "--ak-review-task",
     resolve(packageRoot, "test/fixtures/reviewer-task.md"),
     "--provider",
-    provider,
+    "ak-reviewer-failure",
     "--model",
     "faux-1",
     ...(mode === "print" ? ["-p", "Review."] : ["--mode", "json", "Review."]),
@@ -98,8 +102,13 @@ async function runReviewerCli(
     return await new Promise<{ code: number | null; stdout: string; stderr: string }>(
       (resolveResult, reject) => {
         const child = spawn(piCli, args, {
-          cwd: packageRoot,
-          env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" },
+          cwd,
+          env: {
+            ...process.env,
+            AK_REVIEWER_FAILURE_STAGE: stage,
+            PI_CODING_AGENT_DIR: agentDir,
+            PI_OFFLINE: "1",
+          },
           stdio: ["ignore", "pipe", "pipe"],
         });
         let stdout = "";
@@ -132,16 +141,88 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
   }
 });
 
-test("Reviewer child and audit infrastructure failures abort print and JSON without refusal", async () => {
-  for (const failure of ["child", "audit"] as const) {
+test("every mandated Reviewer fatal stage aborts print and JSON at its intended seam", async () => {
+  const rows: Array<{
+    stage: ReviewerFailureStage;
+    marker: RegExp;
+    calls: number;
+    tool: "Agent" | "ak_reviewer_output";
+  }> = [
+    {
+      stage: "child-preparation",
+      marker: /not a git repository/i,
+      calls: 1,
+      tool: "Agent",
+    },
+    {
+      stage: "child-provider",
+      marker: /Reviewer Agent provider not found/,
+      calls: 1,
+      tool: "Agent",
+    },
+    {
+      stage: "child-session",
+      marker: /INJECTED_REVIEWER_CHILD_SESSION_FAILURE/,
+      calls: 2,
+      tool: "Agent",
+    },
+    {
+      stage: "child-malformed-output",
+      marker: /Reviewer Agent returned a blank child report/,
+      calls: 2,
+      tool: "Agent",
+    },
+    {
+      stage: "audit-auth",
+      marker: /INJECTED_REVIEWER_AUDIT_AUTH_FAILURE/,
+      calls: 1,
+      tool: "ak_reviewer_output",
+    },
+    {
+      stage: "audit-provider",
+      marker: /Reviewer compliance audit provider not found/,
+      calls: 1,
+      tool: "ak_reviewer_output",
+    },
+    {
+      stage: "audit-malformed-decision",
+      marker: /invalid reviewer audit decision/,
+      calls: 2,
+      tool: "ak_reviewer_output",
+    },
+  ];
+  for (const row of rows) {
     for (const mode of ["print", "json"] as const) {
-      const result = await runReviewerCli(mode, failure);
-      assert.equal(result.code, 1, `${failure}/${mode} exits nonzero`);
+      const result = await runReviewerCli(mode, row.stage);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      assert.equal(result.code, 1, `${row.stage}/${mode} exits nonzero`);
+      assert.match(combined, row.marker, `${row.stage}/${mode} reached its stage`);
+      assert.match(combined, /Request was aborted|"stopReason":"aborted"/);
+      assert.match(
+        result.stderr,
+        new RegExp(`REVIEWER_FAILURE_PROVIDER_CALLS=${row.calls}(?:\\D|$)`),
+        `${row.stage}/${mode} made exactly ${row.calls} provider calls`,
+      );
       assert.doesNotMatch(result.stdout, /Reviewer report accepted/);
-      assert.doesNotMatch(result.stdout, /FORBIDDEN INFRASTRUCTURE REFUSAL/);
-      assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
+      assert.doesNotMatch(combined, /FORBIDDEN INFRASTRUCTURE REFUSAL/);
+      assert.doesNotMatch(combined, /FORBIDDEN LATER SUCCESS PROSE/);
       if (mode === "json") {
-        assert.match(result.stdout, /"stopReason":"aborted"/);
+        const events = result.stdout
+          .split("\n")
+          .filter((line) => line.trim().startsWith("{"))
+          .map((line) => JSON.parse(line));
+        const erroredTool = events.find((event) =>
+          event.type === "message_end" &&
+          event.message?.role === "toolResult" &&
+          event.message.toolName === row.tool &&
+          event.message.isError === true
+        );
+        assert.ok(erroredTool, `${row.stage} marks ${row.tool} isError:true`);
+        assert.ok(events.some((event) =>
+          event.type === "message_end" &&
+          event.message?.role === "assistant" &&
+          event.message.stopReason === "aborted"
+        ));
       }
     }
   }

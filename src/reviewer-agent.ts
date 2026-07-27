@@ -298,36 +298,46 @@ async function createChildRuntime(
     credentials: new InMemoryCredentialStore(),
     modelsPath: null,
   });
-  const provider = Object.assign(
-    Object.create(Object.getPrototypeOf(parentProvider)) as Provider,
-    parentProvider,
-    {
-      auth: {
-        apiKey: {
-          name: "Inherited Reviewer Agent authentication",
-          async resolve() {
-            return {
-              auth: {
-                ...(dispatch.auth.apiKey === undefined
-                  ? {}
-                  : { apiKey: dispatch.auth.apiKey }),
-                ...(dispatch.auth.headers === undefined
-                  ? {}
-                  : { headers: dispatch.auth.headers }),
-                ...(dispatch.model.baseUrl === undefined
-                  ? {}
-                  : { baseUrl: dispatch.model.baseUrl }),
-              },
-              ...(dispatch.auth.env === undefined
+  const provider: Provider = {
+    id: parentProvider.id,
+    name: parentProvider.name,
+    ...(parentProvider.baseUrl === undefined
+      ? {}
+      : { baseUrl: parentProvider.baseUrl }),
+    ...(parentProvider.headers === undefined
+      ? {}
+      : { headers: parentProvider.headers }),
+    auth: {
+      apiKey: {
+        name: "Inherited Reviewer Agent authentication",
+        async resolve() {
+          return {
+            auth: {
+              ...(dispatch.auth.apiKey === undefined
                 ? {}
-                : { env: dispatch.auth.env }),
-            };
-          },
+                : { apiKey: dispatch.auth.apiKey }),
+              ...(dispatch.auth.headers === undefined
+                ? {}
+                : { headers: dispatch.auth.headers }),
+              ...(dispatch.model.baseUrl === undefined
+                ? {}
+                : { baseUrl: dispatch.model.baseUrl }),
+            },
+            ...(dispatch.auth.env === undefined
+              ? {}
+              : { env: dispatch.auth.env }),
+          };
         },
       },
-      getModels() { return [dispatch.model]; },
     },
-  );
+    getModels() { return [dispatch.model]; },
+    stream(model, childContext, options) {
+      return parentProvider.stream(model, childContext, options);
+    },
+    streamSimple(model, childContext, options) {
+      return parentProvider.streamSimple(model, childContext, options);
+    },
+  };
   runtime.registerNativeProvider(provider);
   return { runtime, model: dispatch.model };
 }

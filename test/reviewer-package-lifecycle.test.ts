@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,12 +23,9 @@ import {
   stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 
-import {
-  AGENT_TOOL_NAME,
-  REVIEWER_OUTPUT_TOOL_NAME,
-} from "../src/role-runtime.ts";
-import { REVIEWER_AUDIT_TOOL_NAME } from "../src/reviewer-auditor.ts";
-
+const AGENT_TOOL_NAME = "Agent";
+const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
+const REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
 const exec = promisify(execFile);
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 
@@ -43,16 +40,43 @@ function textOfUser(context: Context): string {
         .join("\n");
 }
 
-test("installed npm tarball runs native Reviewer expansion through parallel Agents and audit correction", async () => {
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  return (await exec("git", ["-C", cwd, ...args])).stdout.trim();
+}
+
+function structuredRecord(context: Context): any {
+  const match = textOfUser(context).match(
+    /<structured_execution_record>([\s\S]*?)<\/structured_execution_record>/,
+  );
+  assert.ok(match, "auditor request contains a structured execution record");
+  return JSON.parse(match[1]!);
+}
+
+test("installed npm tarball runs native Reviewer expansion in an independent consumer repository", async () => {
   const temp = await mkdtemp(resolve(tmpdir(), "ak-reviewer-package-"));
   const fixture = resolve(temp, "fixture");
-  const agentDir = resolve(temp, "agent");
+  const agentDir = resolve(fixture, ".pi-agent");
   const canonicalSkillPath = await realpath(
     resolve(homedir(), ".agents/skills/code-review/SKILL.md"),
   );
   const canonicalRaw = await readFile(canonicalSkillPath, "utf8");
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
   try {
+    await mkdir(fixture, { recursive: true });
+    const consumerRoot = await realpath(fixture);
+    await git(fixture, "init");
+    await git(fixture, "config", "user.email", "consumer@example.com");
+    await git(fixture, "config", "user.name", "Consumer");
+    await writeFile(resolve(fixture, "consumer.txt"), "base\n");
+    await git(fixture, "add", "consumer.txt");
+    await git(fixture, "commit", "-m", "consumer base");
+    const base = await git(fixture, "rev-parse", "HEAD");
+    await git(fixture, "branch", "review-base", base);
+    await git(fixture, "tag", "review-base", base);
+    await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
+    await git(fixture, "commit", "-am", "consumer reviewed change");
+    const reviewedHead = await git(fixture, "rev-parse", "HEAD");
+
     const pack = JSON.parse((await exec(
       "npm",
       ["pack", "--json", "--pack-destination", temp],
@@ -68,7 +92,7 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
     })).stdout;
     assert.doesNotMatch(archiveText, /Mysterious Name|Under 400 words|Feature Envy/);
 
-    await writeFile(resolve(temp, "package.json"), JSON.stringify({
+    await writeFile(resolve(fixture, "package.json"), JSON.stringify({
       private: true,
       dependencies: {
         "@ak/pi-workflow-roles": `file:${tarball}`,
@@ -78,15 +102,15 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
       },
     }));
     await exec("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], {
-      cwd: temp,
+      cwd: fixture,
       maxBuffer: 5 * 1024 * 1024,
     });
-    const installedRoot = resolve(temp, "node_modules/@ak/pi-workflow-roles");
+    const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");
     const installedEntrypoint = resolve(installedRoot, "extensions/role-runtime.ts");
-    await writeFile(resolve(temp, "review-task.md"), [
+    await writeFile(resolve(fixture, "review-task.md"), [
       "# Fixed review task",
       "",
-      "Review the current HEAD against HEAD~1.",
+      "Review the consumer repository's current HEAD against HEAD~1.",
       "There is no separate spec.",
     ].join("\n"));
 
@@ -98,11 +122,36 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
     let parentContext: Context | undefined;
     const childContexts: Context[] = [];
     const auditContexts: Context[] = [];
-    let childStarts = 0;
-    let releaseChildren!: () => void;
-    const childBarrier = new Promise<void>((resolveBarrier) => {
-      releaseChildren = resolveBarrier;
+    let activeChildren = 0;
+    let peakChildren = 0;
+    let axisStarts = 0;
+    let releaseAxes!: () => void;
+    const axisBarrier = new Promise<void>((resolveBarrier) => {
+      releaseAxes = resolveBarrier;
     });
+    const axisResponse = (report: string) => async (context: Context) => {
+      childContexts.push(context);
+      activeChildren += 1;
+      peakChildren = Math.max(peakChildren, activeChildren);
+      axisStarts += 1;
+      if (axisStarts === 2) releaseAxes();
+      let timeout: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          axisBarrier,
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(() => {
+              releaseAxes();
+              reject(new Error("REVIEWER_PARALLELISM_TIMEOUT: sibling Agent did not overlap"));
+            }, 2_000);
+          }),
+        ]);
+        return fauxAssistantMessage(report);
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+        activeChildren -= 1;
+      }
+    };
     const candidate = {
       status: "completed" as const,
       report: "## Standards\nAxis report.\n\n## Spec\nNo spec available.",
@@ -111,6 +160,47 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
       status: "completed" as const,
       report: "## Standards\nStandards child report preserved.\n\n## Spec\nNo spec available.\n\nStandards: 0; Spec: skipped.",
     };
+    let auditCalls = 0;
+    let sessionManager: SessionManager;
+    const assertBatchEvidence = (context: Context) => {
+      const record = structuredRecord(context);
+      const entries = sessionManager.getEntries();
+      const assistantEntryFor = (toolCallId: string) => entries.find((entry) =>
+        entry.type === "message" &&
+        entry.message.role === "assistant" &&
+        entry.message.content.some((part) =>
+          part.type === "toolCall" && part.id === toolCallId
+        )
+      );
+      const axisEntry = assistantEntryFor("standards-leg");
+      const specEntry = assistantEntryFor("spec-leg");
+      const laterEntry = assistantEntryFor("followup-leg");
+      assert.ok(axisEntry && specEntry && laterEntry);
+      assert.equal(axisEntry.id, specEntry.id);
+      assert.notEqual(axisEntry.id, laterEntry.id);
+      assert.deepEqual(record.agentInvocationBatches, [
+        {
+          assistantSessionEntryId: axisEntry.id,
+          executionMode: "parallel",
+          agentToolCallIds: ["standards-leg", "spec-leg"],
+        },
+        {
+          assistantSessionEntryId: laterEntry.id,
+          executionMode: "parallel",
+          agentToolCallIds: ["followup-leg"],
+        },
+      ]);
+      assert.deepEqual(
+        record.agentInvocationBatches.map((batch: any) => batch.assistantSessionEntryId),
+        [axisEntry.id, laterEntry.id],
+      );
+      for (const attempt of record.agentAttempts) {
+        assert.equal(attempt.targetSnapshot.repositoryRoot, consumerRoot);
+        assert.equal(attempt.targetSnapshot.targetHead, reviewedHead);
+        assert.notEqual(attempt.targetSnapshot.repositoryRoot, packageRoot);
+      }
+    };
+
     faux.setResponses([
       (context) => {
         parentContext = context;
@@ -127,20 +217,28 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
           }, { id: "spec-leg" }),
         ], { stopReason: "toolUse" });
       },
-      ...["Standards child report.", "No spec available."].map((report) =>
-        async (context: Context) => {
-          childContexts.push(context);
-          childStarts += 1;
-          if (childStarts === 2) releaseChildren();
-          await childBarrier;
-          return fauxAssistantMessage(report);
-        }),
+      axisResponse("Standards child report."),
+      axisResponse("No spec available."),
+      fauxAssistantMessage(
+        fauxToolCall(AGENT_TOOL_NAME, {
+          subagent_type: "general-purpose",
+          description: "Traceability follow-up",
+          prompt: "Confirm the pinned consumer HEAD.",
+        }, { id: "followup-leg" }),
+        { stopReason: "toolUse" },
+      ),
+      (context) => {
+        childContexts.push(context);
+        return fauxAssistantMessage("Pinned consumer HEAD confirmed.");
+      },
       fauxAssistantMessage(
         fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, candidate, { id: "candidate" }),
         { stopReason: "toolUse" },
       ),
       (context) => {
         auditContexts.push(context);
+        assertBatchEvidence(context);
+        auditCalls += 1;
         return fauxAssistantMessage(
           fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, {
             status: "revise",
@@ -155,6 +253,8 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
       ),
       (context) => {
         auditContexts.push(context);
+        assertBatchEvidence(context);
+        auditCalls += 1;
         return fauxAssistantMessage(
           fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, {
             status: "pass",
@@ -184,7 +284,7 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
       retry: { enabled: false },
     });
     const loader = new DefaultResourceLoader({
-      cwd: packageRoot,
+      cwd: fixture,
       agentDir,
       settingsManager: settings,
       additionalExtensionPaths: [installedEntrypoint],
@@ -198,9 +298,9 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
     });
     await loader.reload();
     assert.deepEqual(loader.getExtensions().errors, []);
-    const sessionManager = SessionManager.inMemory(packageRoot);
+    sessionManager = SessionManager.inMemory(fixture);
     ({ session } = await createAgentSession({
-      cwd: packageRoot,
+      cwd: fixture,
       agentDir,
       model,
       thinkingLevel: "off",
@@ -212,13 +312,18 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
     session.extensionRunner.setFlagValue("ak-role", "reviewer");
     session.extensionRunner.setFlagValue(
       "ak-review-task",
-      resolve(temp, "review-task.md"),
+      resolve(fixture, "review-task.md"),
     );
     await session.bindExtensions({ mode: "print" });
     assert.deepEqual(
       session.agent.state.tools.map((tool) => tool.name),
       ["read", "grep", "find", "ls", "bash", AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME],
     );
+    const before = {
+      bytes: await readFile(resolve(fixture, "consumer.txt"), "utf8"),
+      head: await git(fixture, "rev-parse", "HEAD"),
+      refs: await git(fixture, "show-ref"),
+    };
 
     await session.prompt("Review this fixed point.");
 
@@ -226,8 +331,10 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
     const expanded = textOfUser(parentContext);
     assert.ok(expanded.includes(`<skill name="code-review" location="${canonicalSkillPath}">`));
     assert.ok(expanded.includes(stripFrontmatter(canonicalRaw).trim()));
-    assert.equal(childContexts.length, 2);
-    assert.notEqual(childContexts[0], childContexts[1]);
+    assert.equal(childContexts.length, 3);
+    assert.equal(peakChildren, 2);
+    assert.equal(axisStarts, 2);
+    assert.equal(activeChildren, 0);
     for (const child of childContexts) {
       assert.deepEqual(child.tools?.map((tool) => tool.name), [
         "read", "grep", "find", "ls", "bash", "write", "edit",
@@ -238,20 +345,19 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
       entry.message.role === "toolResult" &&
       entry.message.toolName === AGENT_TOOL_NAME
     );
-    assert.equal(agentResults.length, 2);
+    assert.equal(agentResults.length, 3);
     for (const entry of agentResults) {
       assert.ok(entry.type === "message" && entry.message.role === "toolResult");
       assert.ok((entry.message.usage?.totalTokens ?? 0) > 0);
+      assert.equal((entry.message.details as any).targetSnapshot.repositoryRoot, consumerRoot);
+      assert.equal((entry.message.details as any).targetSnapshot.targetHead, reviewedHead);
     }
+    assert.equal(auditCalls, 2);
     assert.equal(auditContexts.length, 2);
     assert.deepEqual(auditContexts[0]?.tools?.map((tool) => tool.name), [
       REVIEWER_AUDIT_TOOL_NAME,
     ]);
-    const auditRecord = textOfUser(auditContexts[0]!);
-    assert.match(auditRecord, /canonical_code_review_skill/);
-    assert.match(auditRecord, /standards-leg/);
-    assert.match(auditRecord, /spec-leg/);
-    assert.match(auditRecord, /candidate_receipt/);
+    assert.match(textOfUser(auditContexts[0]!), /canonical_code_review_skill/);
     const first = sessionManager.getEntries().find((entry) =>
       entry.type === "message" &&
       entry.message.role === "toolResult" &&
@@ -267,6 +373,12 @@ test("installed npm tarball runs native Reviewer expansion through parallel Agen
     assert.ok(accepted?.type === "message" && accepted.message.role === "toolResult");
     assert.equal(accepted.message.isError, false);
     assert.deepEqual(accepted.message.details, corrected);
+    assert.deepEqual({
+      bytes: await readFile(resolve(fixture, "consumer.txt"), "utf8"),
+      head: await git(fixture, "rev-parse", "HEAD"),
+      refs: await git(fixture, "show-ref"),
+    }, before);
+    assert.equal(reviewedHead, await git(fixture, "rev-parse", "HEAD"));
     assert.equal(faux.getPendingResponseCount(), 0);
   } finally {
     if (session !== undefined) {

@@ -17,8 +17,23 @@ const input = {
   soul: "Reviewer law",
   canonicalSkill: "complete raw canonical Skill",
   task: "opaque task",
-  record: { bashEvidence: [], agentAttempts: [] },
-  candidate: { status: "refused" as const, report: "Target cannot be established." },
+  record: {
+    bashEvidence: [],
+    agentAttempts: [{
+      id: "standards-leg",
+      description: "Standards",
+      prompt: "Inspect the pinned diff",
+      status: "successful" as const,
+      report: "No findings",
+      workspaceDisposition: "deleted" as const,
+    }],
+    agentInvocationBatches: [{
+      assistantSessionEntryId: "019fa2b3-session-entry",
+      executionMode: "parallel" as const,
+      agentToolCallIds: ["standards-leg", "spec-leg"],
+    }],
+  },
+  candidate: { status: "completed" as const, report: "No findings." },
 };
 
 const context = {
@@ -46,11 +61,30 @@ test("Reviewer auditor receives complete method inputs and has only its decision
     "Reviewer law",
     "complete raw canonical Skill",
     "opaque task",
-    "Target cannot be established",
+    "No findings",
+    "019fa2b3-session-entry",
+    "parallel",
+    "standards-leg",
+    "spec-leg",
   ]) assert.match(serialized, new RegExp(expected));
+  assert.match(
+    textOfAuditContext(seen),
+    /"agentInvocationBatches":\[\{"assistantSessionEntryId":"019fa2b3-session-entry","executionMode":"parallel","agentToolCallIds":\["standards-leg","spec-leg"\]\}\]/,
+  );
   assert.match(seen?.systemPrompt ?? "", /not a second substantive reviewer/i);
   assert.match(seen?.systemPrompt ?? "", /Do not discover findings, rerank axes/i);
 });
+
+function textOfAuditContext(seen: Context | undefined): string {
+  const user = seen?.messages.find((message) => message.role === "user");
+  if (user?.role !== "user") return "";
+  return typeof user.content === "string"
+    ? user.content
+    : user.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+}
 
 test("Reviewer auditor preserves active-provider authentication failures", async () => {
   const unavailable = {

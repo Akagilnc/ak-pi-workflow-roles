@@ -11,7 +11,11 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
+  type Api,
   type Context,
+  type Model,
+  type Provider,
+  type SimpleStreamOptions,
   type StreamOptions,
 } from "@earendil-works/pi-ai";
 import {
@@ -196,6 +200,97 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
       refs: await git(source.root, "show-ref"),
       status: await git(source.root, "status", "--porcelain"),
     }, before);
+  } finally {
+    await runner.shutdown();
+    await rm(source.root, { recursive: true, force: true });
+  }
+});
+
+test("Reviewer child provider delegates class-private streams to the original receiver", async () => {
+  const source = await repository();
+  const faux = fauxProvider({
+    api: "ak-review-private-provider",
+    provider: "ak-review-private-provider",
+    tokenSize: { min: 1000, max: 1000 },
+  });
+  faux.setResponses([fauxAssistantMessage("private provider report")]);
+  const originalModel = {
+    ...faux.getModel(),
+    baseUrl: "https://default.invalid",
+  };
+  const dispatches: Array<Record<string, unknown>> = [];
+
+  class PrivateProvider implements Provider {
+    readonly id = faux.provider.id;
+    readonly name = faux.provider.name;
+    readonly auth: Provider["auth"] = {
+      apiKey: {
+        name: "Private provider auth",
+        async resolve() {
+          return {
+            auth: {
+              apiKey: "private-secret",
+              headers: { "x-private": "yes" },
+              baseUrl: "https://private-resolved.invalid",
+            },
+            env: { PRIVATE_TENANT: "test" },
+          };
+        },
+      },
+    };
+    #delegate: Provider = faux.provider;
+
+    getModels(): readonly Model<Api>[] { return [originalModel]; }
+
+    stream(model: Model<Api>, childContext: Context, options?: StreamOptions) {
+      dispatches.push({
+        baseUrl: model.baseUrl,
+        apiKey: options?.apiKey,
+        headers: options?.headers,
+        env: options?.env,
+      });
+      return this.#delegate.stream(model, childContext, options);
+    }
+
+    streamSimple(
+      model: Model<Api>,
+      childContext: Context,
+      options?: SimpleStreamOptions,
+    ) {
+      dispatches.push({
+        baseUrl: model.baseUrl,
+        apiKey: options?.apiKey,
+        headers: options?.headers,
+        env: options?.env,
+      });
+      return this.#delegate.streamSimple(model, childContext, options);
+    }
+  }
+
+  const runtime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+  });
+  runtime.registerNativeProvider(new PrivateProvider());
+  const context = {
+    cwd: source.root,
+    model: originalModel,
+    thinkingLevel: "off",
+    modelRegistry: new ModelRegistry(runtime),
+  } as unknown as ExtensionContext;
+  const runner = createReviewerAgentRunner();
+  try {
+    const result = await runner.runReviewerAgent(
+      { description: "Standards", prompt: "Inspect private provider dispatch" },
+      { context },
+    );
+    assert.equal(result.report, "private provider report");
+    assert.deepEqual(dispatches, [{
+      baseUrl: "https://private-resolved.invalid",
+      apiKey: "private-secret",
+      headers: { "x-private": "yes" },
+      env: { PRIVATE_TENANT: "test" },
+    }]);
   } finally {
     await runner.shutdown();
     await rm(source.root, { recursive: true, force: true });
