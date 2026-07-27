@@ -41,27 +41,29 @@ function auditResponse(
 }
 
 function auditContext(
-  auth:
+  resolution:
     | {
-        ok: true;
-        apiKey?: string;
-        headers?: Record<string, string>;
+        auth: {
+          apiKey?: string;
+          headers?: Record<string, string>;
+          baseUrl?: string;
+        };
         env?: Record<string, string>;
       }
-    | { ok: false; error: string } = {
-    ok: true,
-    apiKey: "secret",
-    headers: {},
+    | undefined = {
+    auth: { apiKey: "secret", headers: {} },
     env: {},
   },
+  authError?: Error,
 ) {
   const model = { provider: "test", id: "auditor" };
   return {
     model,
     modelRegistry: {
-      async getApiKeyAndHeaders(received: unknown) {
-        assert.equal(received, model);
-        return auth;
+      async getProviderAuth(received: unknown) {
+        assert.equal(received, model.provider);
+        if (authError) throw authError;
+        return resolution;
       },
     },
   } as unknown as ExtensionContext;
@@ -156,7 +158,7 @@ test("Pi soul auditor supports successful keyless provider authentication", asyn
 
   assert.equal(
     (await auditor(auditInput, {
-      context: auditContext({ ok: true, headers: { "x-test": "yes" } }),
+      context: auditContext({ auth: { headers: { "x-test": "yes" } } }),
     })).status,
     "pass",
   );
@@ -165,7 +167,7 @@ test("Pi soul auditor supports successful keyless provider authentication", asyn
 });
 
 test("Pi soul auditor preserves authentication failures", async () => {
-  const context = auditContext({ ok: false, error: "login expired" });
+  const context = auditContext(undefined, new Error("login expired"));
   const auditor = createPiSoulAuditor(async () =>
     auditResponse({ status: "pass", violations: [] }),
   );

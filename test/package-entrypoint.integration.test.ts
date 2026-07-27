@@ -58,7 +58,7 @@ function packageEntrypoint(manifest: {
   return resolve(packageRoot, manifest.pi.extensions[0]!);
 }
 
-test("packaged judge crosses Pi's loader, schema, persisted batch, audit, and termination boundaries offline", async () => {
+test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
   const manifest = JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8"),
   ) as { files?: string[]; pi?: { extensions?: string[] } };
@@ -69,11 +69,35 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, audit, and te
     provider: "ak-role-offline",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const defaultBaseUrl = "https://default.invalid/v1";
+  const resolvedBaseUrl = "https://tenant.invalid/v1";
+  const activeModel = { ...faux.getModel(), baseUrl: defaultBaseUrl };
+  const authResolvedProvider = {
+    ...faux.provider,
+    auth: {
+      apiKey: {
+        name: "Integration resolved authentication",
+        async resolve() {
+          return {
+            auth: {
+              apiKey: "resolved-secret",
+              headers: { "x-resolved-auth": "yes" },
+              baseUrl: resolvedBaseUrl,
+            },
+            env: { RESOLVED_TENANT: "integration" },
+          };
+        },
+      },
+    },
+    getModels() {
+      return [activeModel];
+    },
+  };
   const modelRuntime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
     modelsPath: null,
   });
-  modelRuntime.registerNativeProvider(faux.provider);
+  modelRuntime.registerNativeProvider(authResolvedProvider);
 
   const loader = new DefaultResourceLoader({
     cwd: packageRoot,
@@ -92,7 +116,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, audit, and te
   const { session, extensionsResult } = await createAgentSession({
     cwd: packageRoot,
     agentDir,
-    model: faux.getModel(),
+    model: activeModel,
     modelRuntime,
     resourceLoader: loader,
     sessionManager,
@@ -209,6 +233,14 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, audit, and te
 
     let judgeContext: Context | undefined;
     let auditContext: Context | undefined;
+    let auditDispatch:
+      | {
+          baseUrl: string | undefined;
+          apiKey: string | undefined;
+          headers: Record<string, string | null> | undefined;
+          env: Record<string, string> | undefined;
+        }
+      | undefined;
     faux.setResponses([
       (context) => {
         judgeContext = context;
@@ -221,8 +253,14 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, audit, and te
           { stopReason: "toolUse" },
         );
       },
-      (context) => {
+      (context, requestOptions, _state, requestModel) => {
         auditContext = context;
+        auditDispatch = {
+          baseUrl: requestModel.baseUrl,
+          apiKey: requestOptions?.apiKey,
+          headers: requestOptions?.headers,
+          env: requestOptions?.env,
+        };
         return fauxAssistantMessage(
           fauxToolCall(
             SOUL_AUDIT_TOOL_NAME,
@@ -245,6 +283,13 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, audit, and te
     );
     const seenAuditContext = auditContext as Context | undefined;
     assert.ok(seenAuditContext);
+    assert.notEqual(activeModel.baseUrl, resolvedBaseUrl);
+    assert.deepEqual(auditDispatch, {
+      baseUrl: resolvedBaseUrl,
+      apiKey: "resolved-secret",
+      headers: { "x-resolved-auth": "yes" },
+      env: { RESOLVED_TENANT: "integration" },
+    });
     const auditInput = seenAuditContext.messages.find(
       (message) => message.role === "user",
     );
