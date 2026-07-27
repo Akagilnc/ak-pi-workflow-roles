@@ -173,13 +173,15 @@ function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   throw new Error("Judge verdict has an invalid status");
 }
 
-function requireSingletonJudgeCall(
+function requireSingletonSubmissionCall(
   toolCallId: string,
+  expectedToolName: string,
+  roleLabel: "Judge" | "Fixer",
   ctx: ExtensionContext,
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("Judge output must be the sole final tool call");
+    throw new Error(`${roleLabel} output must be the sole final tool call`);
   }
   const calls = leaf.message.content.filter(
     (part) => part.type === "toolCall",
@@ -189,9 +191,9 @@ function requireSingletonJudgeCall(
     calls.length !== 1 ||
     call === undefined ||
     call.id !== toolCallId ||
-    call.name !== JUDGE_OUTPUT_TOOL_NAME
+    call.name !== expectedToolName
   ) {
-    throw new Error("Judge output must be the sole final tool call");
+    throw new Error(`${roleLabel} output must be the sole final tool call`);
   }
 }
 
@@ -294,7 +296,7 @@ export function createRoleRuntimeExtension(
             "plan permits planned|refused; apply permits completed|refused.",
           ],
           parameters: fixerOutputSchema,
-          async execute(_toolCallId, parameters) {
+          async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
             if (
               activeRole !== "fixer" ||
               activeFixPacket === undefined ||
@@ -302,6 +304,12 @@ export function createRoleRuntimeExtension(
             ) {
               throw new Error("Fixer repair packet and phase were not loaded");
             }
+            requireSingletonSubmissionCall(
+              toolCallId,
+              FIXER_OUTPUT_TOOL_NAME,
+              "Fixer",
+              ctx,
+            );
             const output = validateFixerOutput(parameters, activeFixerPhase);
             return {
               content: [{ type: "text" as const, text: "Fixer report accepted" }],
@@ -330,16 +338,30 @@ export function createRoleRuntimeExtension(
           if (activeRole !== "judge" || activeSoul === undefined) {
             throw new Error("Judge soul was not loaded");
           }
-          requireSingletonJudgeCall(toolCallId, ctx);
-          const verdict = validateVerdict(parameters);
-          const audit = await dependencies.auditSoulCompliance(
-            {
-              soul: activeSoul,
-              transcript: dependencies.transcriptFromContext(ctx),
-              verdict,
-            },
-            signal === undefined ? { context: ctx } : { context: ctx, signal },
+          requireSingletonSubmissionCall(
+            toolCallId,
+            JUDGE_OUTPUT_TOOL_NAME,
+            "Judge",
+            ctx,
           );
+          const verdict = validateVerdict(parameters);
+          let audit: SoulAuditResult;
+          try {
+            audit = await dependencies.auditSoulCompliance(
+              {
+                soul: activeSoul,
+                transcript: dependencies.transcriptFromContext(ctx),
+                verdict,
+              },
+              signal === undefined ? { context: ctx } : { context: ctx, signal },
+            );
+          } catch (error) {
+            ctx.abort();
+            if (ctx.mode === "print" || ctx.mode === "json") {
+              process.exitCode = 1;
+            }
+            throw error;
+          }
           if (audit.status === "revise") {
             throw new Error(
               `Judge verdict violates its soul: ${audit.violations.join("; ")}`,
@@ -353,6 +375,20 @@ export function createRoleRuntimeExtension(
           };
         },
       });
+
+      const registeredTools = new Set(
+        pi.getAllTools().map((tool) => tool.name),
+      );
+      pi.setActiveTools(
+        [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "bash",
+          JUDGE_OUTPUT_TOOL_NAME,
+        ].filter((name) => registeredTools.has(name)),
+      );
     });
 
     pi.on("before_agent_start", (event) => {

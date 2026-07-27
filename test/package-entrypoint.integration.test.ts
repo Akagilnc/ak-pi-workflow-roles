@@ -23,7 +23,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { JUDGE_OUTPUT_TOOL_NAME } from "../src/role-runtime.ts";
+import {
+  FIXER_OUTPUT_TOOL_NAME,
+  JUDGE_OUTPUT_TOOL_NAME,
+} from "../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
 
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
@@ -144,22 +147,20 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
     thinkingLevel: "off",
   });
 
-  const lifecycle: string[] = [];
-  const unsubscribe = session.subscribe((event) => {
-    if (event.type === "tool_execution_start") {
-      lifecycle.push(`start:${event.toolName}`);
-    } else if (event.type === "tool_execution_end") {
-      lifecycle.push(`end:${event.toolName}:${event.isError ? "error" : "ok"}`);
-    }
-  });
-
   try {
     assert.equal(extensionsResult.extensions.length, 1);
     session.extensionRunner.setFlagValue("ak-role", "judge");
     await session.bindExtensions({ mode: "print" });
-    assert.ok(
-      session.agent.state.tools.some((tool) => tool.name === JUDGE_OUTPUT_TOOL_NAME),
-      "session_start dynamically registers the packaged judge tool",
+    assert.deepEqual(
+      session.agent.state.tools.map((tool) => tool.name),
+      ["read", "grep", "find", "ls", "bash", JUDGE_OUTPUT_TOOL_NAME],
+      "Judge activation keeps exactly the registered evidence tools and output",
+    );
+    assert.equal(
+      session.agent.state.tools.some((tool) =>
+        ["write", "edit", "integration_sibling"].includes(tool.name),
+      ),
+      false,
     );
 
     faux.setResponses([
@@ -188,63 +189,6 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
     assert.equal(schemaResult.message.isError, true);
     assert.match(textOf(schemaResult.message), /unexpected|additional propert/i);
     assert.equal(faux.state.callCount, 2, "schema rejection never invokes the audit model");
-
-    lifecycle.length = 0;
-    faux.setResponses([
-      fauxAssistantMessage(
-        [
-          fauxToolCall(
-            JUDGE_OUTPUT_TOOL_NAME,
-            { judgeStatus: "converged" },
-            { id: "parallel-judge" },
-          ),
-          fauxToolCall("integration_sibling", {}, { id: "parallel-sibling" }),
-        ],
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("parallel rejection observed"),
-    ]);
-    await session.prompt("Exercise a parallel sibling call.");
-
-    const parallelAssistant = sessionManager.getEntries().find(
-      (entry) =>
-        entry.type === "message" &&
-        entry.message.role === "assistant" &&
-        entry.message.content.some(
-          (part) => part.type === "toolCall" && part.id === "parallel-judge",
-        ),
-    );
-    assert.ok(parallelAssistant?.type === "message");
-    assert.equal(parallelAssistant.message.role, "assistant");
-    assert.deepEqual(
-      parallelAssistant.message.content
-        .filter((part) => part.type === "toolCall")
-        .map((part) => part.id),
-      ["parallel-judge", "parallel-sibling"],
-      "Pi persists the complete assistant batch before tool execution",
-    );
-
-    const parallelResults: ToolResultMessage[] = [];
-    for (const entry of sessionManager.getEntries()) {
-      if (
-        entry.type === "message" &&
-        entry.message.role === "toolResult" &&
-        ["parallel-judge", "parallel-sibling"].includes(
-          entry.message.toolCallId,
-        )
-      ) {
-        parallelResults.push(entry.message);
-      }
-    }
-    assert.equal(parallelResults.length, 2);
-    assert.match(textOf(parallelResults[0]!), /sole final tool call/);
-    assert.equal(parallelResults[0]!.isError, true);
-    assert.equal(parallelResults[1]!.isError, false);
-    assert.deepEqual(lifecycle.slice(0, 2), [
-      `start:${JUDGE_OUTPUT_TOOL_NAME}`,
-      "start:integration_sibling",
-    ]);
-    assert.equal(faux.state.callCount, 4, "sibling rejection never invokes the audit model");
 
     let judgeContext: Context | undefined;
     let auditContext: Context | undefined;
@@ -334,7 +278,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
     assert.equal(acceptedResult.message.role, "toolResult");
     assert.equal(acceptedResult.message.isError, false);
     assert.deepEqual(acceptedResult.message.details, { judgeStatus: "converged" });
-    assert.equal(faux.state.callCount, 6);
+    assert.equal(faux.state.callCount, 4);
     assert.equal(faux.getPendingResponseCount(), 0);
     assert.equal(
       sessionManager
@@ -351,7 +295,122 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
       "terminate ends the real Pi lifecycle without a follow-up provider turn",
     );
   } finally {
-    unsubscribe();
+    session.dispose();
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("packaged fixer enforces singleton output without inheriting Judge tool narrowing", async () => {
+  const manifest = JSON.parse(
+    await readFile(resolve(packageRoot, "package.json"), "utf8"),
+  ) as { files?: string[]; pi?: { extensions?: string[] } };
+  const agentDir = await mkdtemp(resolve(tmpdir(), "ak-fixer-integration-"));
+  const packetPath = resolve(agentDir, "fix-packet.md");
+  await writeFile(packetPath, "# Approved repair\n\nApply it.");
+  const faux = fauxProvider({
+    api: "ak-fixer-offline",
+    provider: "ak-fixer-offline",
+    tokenSize: { min: 1000, max: 1000 },
+  });
+  const activeModel = faux.getModel();
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: resolve(agentDir, "models.json"),
+  });
+  modelRuntime.registerNativeProvider({
+    ...faux.provider,
+    auth: {
+      apiKey: {
+        name: "Fixer integration auth",
+        async resolve() {
+          return { auth: { apiKey: "offline" } };
+        },
+      },
+    },
+  });
+  const loader = new DefaultResourceLoader({
+    cwd: packageRoot,
+    agentDir,
+    additionalExtensionPaths: [packageEntrypoint(manifest)],
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    systemPrompt: "FIXER INTEGRATION BASE PROMPT",
+  });
+  await loader.reload();
+  const sessionManager = SessionManager.inMemory(packageRoot);
+  const { session } = await createAgentSession({
+    cwd: packageRoot,
+    agentDir,
+    model: activeModel,
+    modelRuntime,
+    resourceLoader: loader,
+    sessionManager,
+    settingsManager: SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false },
+    }),
+    customTools: [siblingTool],
+    thinkingLevel: "off",
+  });
+
+  try {
+    session.extensionRunner.setFlagValue("ak-role", "fixer");
+    session.extensionRunner.setFlagValue("ak-fixer-phase", "apply");
+    session.extensionRunner.setFlagValue("ak-fix-packet", packetPath);
+    await session.bindExtensions({ mode: "print" });
+    const activeNames = session.agent.state.tools.map((tool) => tool.name);
+    for (const name of [
+      "read",
+      "bash",
+      "edit",
+      "write",
+      "integration_sibling",
+      FIXER_OUTPUT_TOOL_NAME,
+    ]) {
+      assert.ok(activeNames.includes(name), `${name} remains active for Fixer`);
+    }
+
+    const output = { status: "completed", report: "Repaired and verified." };
+    faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, { id: "mixed-fixer" }),
+          fauxToolCall("integration_sibling", {}, { id: "mixed-sibling" }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("singleton rejection observed"),
+    ]);
+    await session.prompt("Reject a mixed final batch.");
+    const mixed = sessionManager.getEntries().find(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolCallId === "mixed-fixer",
+    );
+    assert.ok(mixed?.type === "message" && mixed.message.role === "toolResult");
+    assert.equal(mixed.message.isError, true);
+    assert.match(textOf(mixed.message), /sole final tool call/);
+
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, { id: "sole-fixer" }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    await session.prompt("Accept a sole Fixer output.");
+    const accepted = sessionManager.getEntries().find(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolCallId === "sole-fixer",
+    );
+    assert.ok(accepted?.type === "message" && accepted.message.role === "toolResult");
+    assert.equal(accepted.message.isError, false);
+    assert.deepEqual(accepted.message.details, output);
+  } finally {
     session.dispose();
     await rm(agentDir, { recursive: true, force: true });
   }
