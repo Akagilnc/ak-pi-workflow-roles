@@ -69,7 +69,11 @@ function harness() {
 function context(
   id: string,
   name = REVIEWER_OUTPUT_TOOL_NAME,
-  calls: Array<{ id: string; name: string }> = [{ id, name }],
+  calls: Array<{
+    id: string;
+    name: string;
+    arguments?: Record<string, unknown>;
+  }> = [{ id, name }],
 ): ExtensionContext {
   const sessionManager = SessionManager.inMemory();
   const message: AssistantMessage = {
@@ -78,7 +82,7 @@ function context(
       type: "toolCall" as const,
       id: call.id,
       name: call.name,
-      arguments: {},
+      arguments: call.arguments ?? {},
     })),
     api: "openai-responses",
     provider: "test",
@@ -217,10 +221,19 @@ test("completed requires exact native Skill provenance and successful Agent evid
   );
 
   const agent = tools.get(AGENT_TOOL_NAME);
-  const axisContext = context("axis-1", AGENT_TOOL_NAME);
+  const axisParameters = {
+    subagent_type: "general-purpose",
+    description: "Standards",
+    prompt: "Inspect the pinned diff.",
+  };
+  const axisContext = context("axis-1", AGENT_TOOL_NAME, [{
+    id: "axis-1",
+    name: AGENT_TOOL_NAME,
+    arguments: axisParameters,
+  }]);
   const agentResult = await agent.execute(
     "axis-1",
-    { subagent_type: "general-purpose", description: "Standards", prompt: "Inspect the pinned diff." },
+    axisParameters,
     undefined,
     undefined,
     axisContext,
@@ -275,8 +288,24 @@ test("Agent calls preserve same-message batches and isolate separate assistant e
   await establishExpansion(handlers);
   const agent = tools.get(AGENT_TOOL_NAME);
   const shared = context("axis-a", AGENT_TOOL_NAME, [
-    { id: "axis-a", name: AGENT_TOOL_NAME },
-    { id: "axis-b", name: AGENT_TOOL_NAME },
+    {
+      id: "axis-a",
+      name: AGENT_TOOL_NAME,
+      arguments: {
+        subagent_type: "general-purpose",
+        description: "A",
+        prompt: "A",
+      },
+    },
+    {
+      id: "axis-b",
+      name: AGENT_TOOL_NAME,
+      arguments: {
+        subagent_type: "general-purpose",
+        description: "B",
+        prompt: "B",
+      },
+    },
   ]);
   const sharedEntryId = shared.sessionManager.getLeafEntry()?.id;
   await agent.execute(
@@ -293,7 +322,15 @@ test("Agent calls preserve same-message batches and isolate separate assistant e
     undefined,
     shared,
   );
-  const later = context("later", AGENT_TOOL_NAME);
+  const later = context("later", AGENT_TOOL_NAME, [{
+    id: "later",
+    name: AGENT_TOOL_NAME,
+    arguments: {
+      subagent_type: "general-purpose",
+      description: "Later",
+      prompt: "Later",
+    },
+  }]);
   const laterEntryId = later.sessionManager.getLeafEntry()?.id;
   await agent.execute(
     "later",
@@ -342,10 +379,22 @@ test("duplicate and conflicting Agent batch provenance fail before child start o
     const ctx = context("boundary", AGENT_TOOL_NAME,
       scenario === "duplicate"
         ? [
-            { id: "boundary", name: AGENT_TOOL_NAME },
-            { id: "boundary", name: AGENT_TOOL_NAME },
+            {
+              id: "boundary",
+              name: AGENT_TOOL_NAME,
+              arguments: { description: scenario, prompt: scenario },
+            },
+            {
+              id: "boundary",
+              name: AGENT_TOOL_NAME,
+              arguments: { description: scenario, prompt: scenario },
+            },
           ]
-        : [{ id: "boundary", name: AGENT_TOOL_NAME }],
+        : [{
+            id: "boundary",
+            name: AGENT_TOOL_NAME,
+            arguments: { description: "first", prompt: "first" },
+          }],
     );
     let aborts = 0;
     (ctx as any).abort = () => { aborts += 1; };
@@ -398,6 +447,158 @@ test("duplicate and conflicting Agent batch provenance fail before child start o
       fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
         "done",
         { status: "completed", report: "must not be accepted" },
+        undefined,
+        undefined,
+        context("done"),
+      ),
+      /infrastructure previously failed/,
+    );
+    assert.equal(audits, 0);
+  }
+});
+
+test("first and start/execute Agent argument conflicts abort before child dispatch", async () => {
+  for (const observation of ["first", "start-execute"] as const) {
+    let childStarts = 0;
+    let audits = 0;
+    const fixture = extension({
+      runReviewerAgent: async () => {
+        childStarts += 1;
+        return { report: "must not run", workspaceDisposition: "deleted" };
+      },
+      auditReviewerCompliance: async () => {
+        audits += 1;
+        return { status: "pass" as const };
+      },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    const persistedArguments = {
+      subagent_type: "general-purpose",
+      description: "Persisted",
+      prompt: "Persisted prompt",
+    };
+    const ctx = context("axis", AGENT_TOOL_NAME, [{
+      id: "axis",
+      name: AGENT_TOOL_NAME,
+      arguments: persistedArguments,
+    }]);
+    let aborts = 0;
+    (ctx as any).abort = () => { aborts += 1; };
+    if (observation === "start-execute") {
+      await fixture.handlers.get("tool_execution_start")?.({
+        toolCallId: "axis",
+        toolName: AGENT_TOOL_NAME,
+        args: persistedArguments,
+      }, ctx);
+    }
+
+    await assert.rejects(
+      fixture.tools.get(AGENT_TOOL_NAME).execute(
+        "axis",
+        {
+          subagent_type: "general-purpose",
+          description: "Runtime",
+          prompt: "Runtime prompt",
+        },
+        undefined,
+        undefined,
+        ctx,
+      ),
+      /runtime arguments.*disagree.*persisted/i,
+    );
+    assert.equal(aborts, 1);
+    assert.equal(childStarts, 0);
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        "done",
+        { status: "refused", report: "the conflict is fatal" },
+        undefined,
+        undefined,
+        context("done"),
+      ),
+      /infrastructure previously failed.*runtime arguments.*disagree/i,
+    );
+    assert.equal(audits, 0);
+  }
+});
+
+test("successful and failed terminal Agent replay never starts another child", async () => {
+  for (const terminal of ["successful", "failed"] as const) {
+    let childStarts = 0;
+    let audits = 0;
+    const fixture = extension({
+      runReviewerAgent: async () => {
+        childStarts += 1;
+        if (terminal === "failed") throw new Error("child failed once");
+        return { report: "finished once", workspaceDisposition: "deleted" };
+      },
+      auditReviewerCompliance: async () => {
+        audits += 1;
+        return { status: "pass" as const };
+      },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    const parameters = {
+      subagent_type: "general-purpose",
+      description: "Axis",
+      prompt: "Inspect once.",
+    };
+    const ctx = context("axis", AGENT_TOOL_NAME, [{
+      id: "axis",
+      name: AGENT_TOOL_NAME,
+      arguments: parameters,
+    }]);
+    let aborts = 0;
+    (ctx as any).abort = () => { aborts += 1; };
+    let terminalAttempt: unknown;
+    if (terminal === "successful") {
+      const result = await fixture.tools.get(AGENT_TOOL_NAME).execute(
+        "axis", parameters, undefined, undefined, ctx,
+      );
+      terminalAttempt = result.details;
+    } else {
+      await assert.rejects(
+        async () => {
+          try {
+            await fixture.tools.get(AGENT_TOOL_NAME).execute(
+              "axis", parameters, undefined, undefined, ctx,
+            );
+          } catch (error) {
+            terminalAttempt = (error as { reviewerAgentAttempt?: unknown })
+              .reviewerAgentAttempt;
+            throw error;
+          }
+        },
+        /child failed once/,
+      );
+    }
+    assert.equal((terminalAttempt as { status?: unknown }).status, terminal);
+
+    let replayError: unknown;
+    await assert.rejects(
+      async () => {
+        try {
+          await fixture.tools.get(AGENT_TOOL_NAME).execute(
+            "axis", parameters, undefined, undefined, ctx,
+          );
+        } catch (error) {
+          replayError = error;
+          throw error;
+        }
+      },
+      new RegExp(`lifecycle.*already ${terminal}`, "i"),
+    );
+    assert.equal(
+      (replayError as { reviewerAgentAttempt?: unknown }).reviewerAgentAttempt,
+      undefined,
+    );
+    assert.equal((terminalAttempt as { status?: unknown }).status, terminal);
+    assert.equal(childStarts, 1);
+    assert.equal(aborts, terminal === "successful" ? 1 : 2);
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        "done",
+        { status: "refused", report: "terminal replay remains fatal" },
         undefined,
         undefined,
         context("done"),
@@ -570,12 +771,21 @@ test("auditor mutation cannot alter a fresh immutable revise resubmission record
   });
   await handlers.get("session_start")?.({}, {});
   await establishExpansion(handlers);
+  const axisParameters = {
+    subagent_type: "general-purpose",
+    description: "Axis",
+    prompt: "Inspect.",
+  };
   await tools.get(AGENT_TOOL_NAME).execute(
     "axis",
-    { subagent_type: "general-purpose", description: "Axis", prompt: "Inspect." },
+    axisParameters,
     undefined,
     undefined,
-    context("axis", AGENT_TOOL_NAME),
+    context("axis", AGENT_TOOL_NAME, [{
+      id: "axis",
+      name: AGENT_TOOL_NAME,
+      arguments: axisParameters,
+    }]),
   );
   const candidate = { status: "completed", report: "Immutable review." };
   await assert.rejects(
@@ -614,7 +824,11 @@ test("all representable unsettled, failed, and orphan completion states stop bef
     });
     await fixture.handlers.get("session_start")?.({}, {});
     await establishExpansion(fixture.handlers);
-    const agentContext = context("axis", AGENT_TOOL_NAME);
+    const agentContext = context("axis", AGENT_TOOL_NAME, [{
+      id: "axis",
+      name: AGENT_TOOL_NAME,
+      arguments: { description: "Axis", prompt: "Inspect." },
+    }]);
     if (scenario !== "orphan") {
       fixture.handlers.get("tool_execution_start")?.({
         toolCallId: "axis",
@@ -690,6 +904,58 @@ test("Reviewer cleanup failure is fatal before a receipt can be accepted", async
   assert.equal(aborts, 1);
 });
 
+test("audit and cleanup infrastructure preserve exact non-Error throw identity", async () => {
+  const auditFailure = "audit string sentinel";
+  {
+    let aborts = 0;
+    const fixture = extension({
+      auditReviewerCompliance: async () => { throw auditFailure; },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    const ctx = context("audit-identity");
+    (ctx as any).abort = () => { aborts += 1; };
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        "audit-identity",
+        { status: "refused", report: "reach the audit adapter" },
+        undefined,
+        undefined,
+        ctx,
+      ),
+      (error) => {
+        assert.equal(error, auditFailure);
+        return true;
+      },
+    );
+    assert.equal(aborts, 1);
+  }
+
+  const cleanupFailure = { kind: "cleanup sentinel" };
+  {
+    let aborts = 0;
+    const fixture = extension({
+      shutdownReviewerAgent: async () => { throw cleanupFailure; },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    const ctx = context("cleanup-identity");
+    (ctx as any).abort = () => { aborts += 1; };
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        "cleanup-identity",
+        { status: "refused", report: "reach the cleanup adapter" },
+        undefined,
+        undefined,
+        ctx,
+      ),
+      (error) => {
+        assert.equal(error, cleanupFailure);
+        return true;
+      },
+    );
+    assert.equal(aborts, 1);
+  }
+});
+
 test("a refusal cannot turn prior fatal Skill, Agent, audit, or cleanup state into a receipt", async () => {
   {
     let audits = 0;
@@ -738,7 +1004,15 @@ test("a refusal cannot turn prior fatal Skill, Agent, audit, or cleanup state in
         { subagent_type: "general-purpose", description: "Axis", prompt: "Inspect." },
         undefined,
         undefined,
-        context("fatal-agent", AGENT_TOOL_NAME),
+        context("fatal-agent", AGENT_TOOL_NAME, [{
+          id: "fatal-agent",
+          name: AGENT_TOOL_NAME,
+          arguments: {
+            subagent_type: "general-purpose",
+            description: "Axis",
+            prompt: "Inspect.",
+          },
+        }]),
       ),
       /child infrastructure failed/,
     );

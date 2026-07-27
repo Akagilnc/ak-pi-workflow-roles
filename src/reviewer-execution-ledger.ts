@@ -1,6 +1,21 @@
-import type { Usage } from "@earendil-works/pi-ai";
-
 import type { ReviewerSkillEvidence } from "./reviewer-skill.ts";
+
+export type ReviewerUsage = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cacheWrite1h?: number;
+  reasoning?: number;
+  totalTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+};
 
 export type ReviewerTargetSnapshot = {
   repositoryRoot: string;
@@ -14,7 +29,7 @@ export type ReviewerWorkspaceDisposition =
 
 export type ReviewerAgentResult = {
   report: string;
-  usage?: Usage;
+  usage?: ReviewerUsage;
   targetSnapshot?: ReviewerTargetSnapshot;
   workspaceDisposition: ReviewerWorkspaceDisposition;
 };
@@ -26,7 +41,7 @@ export type ReviewerAgentAttempt = {
   status: "running" | "successful" | "failed";
   targetSnapshot?: ReviewerTargetSnapshot;
   report?: string;
-  usage?: Usage;
+  usage?: ReviewerUsage;
   diagnostics?: string;
   workspaceDisposition?: ReviewerWorkspaceDisposition;
 };
@@ -84,7 +99,7 @@ export type ReviewerExecutionLedger = {
     result: string,
     isError: boolean,
   ): void;
-  recordInfrastructureFailure(error: unknown): Error;
+  recordInfrastructureFailure<T>(error: T): T;
   recordForAudit(status: "completed" | "refused"): ReviewerExecutionRecord;
 };
 
@@ -149,12 +164,16 @@ function sameSkill(left: ReviewerSkillEvidence, right: ReviewerSkillEvidence): b
     left.userMessage === right.userMessage;
 }
 
-function cloneUsage(usage: Usage): Usage {
+function cloneUsage(usage: ReviewerUsage): ReviewerUsage {
   return {
     input: usage.input,
     output: usage.output,
     cacheRead: usage.cacheRead,
     cacheWrite: usage.cacheWrite,
+    ...(usage.cacheWrite1h === undefined
+      ? {}
+      : { cacheWrite1h: usage.cacheWrite1h }),
+    ...(usage.reasoning === undefined ? {} : { reasoning: usage.reasoning }),
     totalTokens: usage.totalTokens,
     cost: {
       input: usage.cost.input,
@@ -216,7 +235,7 @@ function freezeSkill(evidence: ReviewerSkillEvidence): ReviewerSkillEvidence {
   return Object.freeze(cloneSkill(evidence));
 }
 
-function freezeUsage(usage: Usage): Usage {
+function freezeUsage(usage: ReviewerUsage): ReviewerUsage {
   const copy = cloneUsage(usage);
   Object.freeze(copy.cost);
   return Object.freeze(copy);
@@ -291,19 +310,15 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     };
   };
 
-  const createAttempt = (
-    id: string,
-    rawArguments: unknown,
-  ): MutableAttempt => {
-    const captured = captureCall(id, rawArguments);
+  const createAttempt = (call: CapturedCall): MutableAttempt => {
     const attempt: MutableAttempt = {
-      id,
-      description: captured.description,
-      prompt: captured.prompt,
+      id: call.id,
+      description: call.description,
+      prompt: call.prompt,
       status: "running",
     };
-    attempts.set(id, attempt);
-    attemptOrder.push(id);
+    attempts.set(call.id, attempt);
+    attemptOrder.push(call.id);
     return attempt;
   };
 
@@ -351,7 +366,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     captureInfrastructureFailure(message, failure);
     let attempt = attempts.get(callId);
     if (attempt === undefined) {
-      attempt = createAttempt(callId, rawArguments);
+      attempt = createAttempt(captureCall(callId, rawArguments));
     }
     if (attempt.status === "running") {
       settleFailed(attempt, message, failure);
@@ -428,6 +443,28 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       }
     }
 
+    const persistedCurrent = capturedCalls.find((call) => call.id === callId)!;
+    const runtimeCurrent = captureCall(callId, rawArguments);
+    if (
+      runtimeCurrent.description !== persistedCurrent.description ||
+      runtimeCurrent.prompt !== persistedCurrent.prompt
+    ) {
+      provenanceFailure(
+        callId,
+        rawArguments,
+        `Reviewer Agent invocation provenance failed: runtime arguments for current call ${callId} disagree with the persisted assistant message`,
+      );
+    }
+
+    const existingAttempt = attempts.get(callId);
+    if (existingAttempt !== undefined && existingAttempt.status !== "running") {
+      provenanceFailure(
+        callId,
+        rawArguments,
+        `Reviewer Agent invocation lifecycle failed: attempt ${callId} is already ${existingAttempt.status}`,
+      );
+    }
+
     if (existingBatch === undefined) {
       const batch: CapturedBatch = {
         entryId: persistedEvidence.entryId,
@@ -438,22 +475,12 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       for (const call of batch.calls) {
         persistedEntryByCallId.set(call.id, batch.entryId);
         if (!attempts.has(call.id)) {
-          createAttempt(
-            call.id,
-            call.id === callId ? rawArguments : {
-              description: call.description,
-              prompt: call.prompt,
-            },
-          );
+          createAttempt(call);
         }
       }
     }
 
-    const current = requireAttempt(callId);
-    if (current.status === "running") {
-      current.description = argument(rawArguments, "description");
-      current.prompt = argument(rawArguments, "prompt");
-    }
+    requireRunning(callId);
   };
 
   const completeAgentCall = (
@@ -490,7 +517,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
   const rejectAgentCall = (callId: string, toolResult: string): void => {
     let attempt = attempts.get(callId);
     if (attempt === undefined) {
-      attempt = createAttempt(callId, undefined);
+      attempt = createAttempt(captureCall(callId, undefined));
     }
     if (attempt.status === "running") {
       settleFailed(attempt, toolResult, undefined);
@@ -519,10 +546,10 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     evidence.isError = isError;
   };
 
-  const recordInfrastructureFailure = (error: unknown): Error => {
-    const failure = captureError(error);
-    captureInfrastructureFailure(failure.message, error);
-    return failure;
+  const recordInfrastructureFailure = <T>(error: T): T => {
+    const diagnostics = error instanceof Error ? error.message : String(error);
+    captureInfrastructureFailure(diagnostics, error);
+    return error;
   };
 
   const recordForAudit = (

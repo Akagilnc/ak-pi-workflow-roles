@@ -20,6 +20,7 @@ export type {
   ReviewerBashEvidence,
   ReviewerExecutionRecord,
   ReviewerTargetSnapshot,
+  ReviewerUsage,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
 import type { CanonicalReviewerSkill } from "./reviewer-skill.ts";
