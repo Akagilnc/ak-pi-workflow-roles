@@ -108,10 +108,22 @@ export function createPiSoulAuditor(
     if (model === undefined) {
       throw new Error("Soul compliance audit requires an active model");
     }
-    const auth = await options.context.modelRegistry.getApiKeyAndHeaders(model);
-    if (!auth.ok) {
-      throw new Error(`Soul compliance audit authentication failed: ${auth.error}`);
+    const resolution = await options.context.modelRegistry
+      .getProviderAuth(model.provider)
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Soul compliance audit authentication failed: ${message}`, {
+          cause: error,
+        });
+      });
+    if (resolution === undefined) {
+      throw new Error(
+        `Soul compliance audit authentication failed: provider is not configured: ${model.provider}`,
+      );
     }
+    const auditModel = resolution.auth.baseUrl
+      ? { ...model, baseUrl: resolution.auth.baseUrl }
+      : model;
 
     const completeAudit =
       runCompletion ??
@@ -127,7 +139,7 @@ export function createPiSoulAuditor(
         return provider.stream(auditModel, auditContext, auditOptions).result();
       });
     const response = await completeAudit(
-      model,
+      auditModel,
       {
         systemPrompt: [
           "You are a procedural compliance auditor, not a second judge.",
@@ -160,9 +172,13 @@ export function createPiSoulAuditor(
         tools: [auditDecisionTool],
       },
       {
-        ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
-        ...(auth.headers === undefined ? {} : { headers: auth.headers }),
-        ...(auth.env === undefined ? {} : { env: auth.env }),
+        ...(resolution.auth.apiKey === undefined
+          ? {}
+          : { apiKey: resolution.auth.apiKey }),
+        ...(resolution.auth.headers === undefined
+          ? {}
+          : { headers: resolution.auth.headers }),
+        ...(resolution.env === undefined ? {} : { env: resolution.env }),
         maxTokens: 2048,
         cacheRetention: "none",
         sessionId: uuidv7(),
