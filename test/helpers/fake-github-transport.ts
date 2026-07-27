@@ -12,6 +12,11 @@ import type {
 export type FakeGitHubState = {
   user: GitHubUser;
   pullRequest: GitHubPullRequest;
+  /**
+   * Optional per-call pull sequence for terminal-reread tests.
+   * Call N returns sequence[min(N-1, last)].
+   */
+  pullRequestSequence?: GitHubPullRequest[];
   reviews: GitHubReview[];
   issueComments: GitHubIssueComment[];
   reviewComments: GitHubReviewComment[];
@@ -80,6 +85,13 @@ export function createFakeGitHubTransport(
     async getPullRequest() {
       calls.pull += 1;
       if (state.failNext?.pull) throw state.failNext.pull;
+      if (state.pullRequestSequence && state.pullRequestSequence.length > 0) {
+        const index = Math.min(
+          calls.pull - 1,
+          state.pullRequestSequence.length - 1,
+        );
+        return state.pullRequestSequence[index]!;
+      }
       return state.pullRequest;
     },
     async listPullRequestReviews() {

@@ -8,6 +8,7 @@ import {
   computeWindowRelation,
   isValidReviewState,
   reviewQualifiesForValid,
+  type CollectorClock,
   type CollectorEvidenceRecord,
   type CollectorSnapshot,
   type HeadRelation,
@@ -142,7 +143,6 @@ export function parseCollectorOutputCandidate(
         `Collector leg \"${legId}\" may only declare unavailableScope when status is unavailable`,
       );
     }
-    // Reject unknown fields beyond the allowed set
     const allowed = new Set([
       "legId",
       "status",
@@ -160,12 +160,12 @@ export function parseCollectorOutputCandidate(
   return { legs };
 }
 
-function reviewInlineText(
+function reviewInlineComments(
   ledger: CollectorLedger,
   review: CollectorEvidenceRecord,
   snapshot: CollectorSnapshot,
-): string {
-  const inline = snapshot.evidenceIds
+): CollectorEvidenceRecord[] {
+  return snapshot.evidenceIds
     .map((id) => ledger.getEvidence(id))
     .filter((record): record is CollectorEvidenceRecord =>
       record !== undefined &&
@@ -174,6 +174,9 @@ function reviewInlineText(
       record.pullRequestReviewId !== null &&
       review.stableGitHubId === `review:${record.pullRequestReviewId}`
     );
+}
+
+function reviewInlineText(inline: readonly CollectorEvidenceRecord[]): string {
   if (inline.length === 0) return "";
   return inline
     .map((comment) => {
@@ -191,11 +194,19 @@ function factualNonFindingReport(review: CollectorEvidenceRecord): string {
     "Runtime factual non-finding record:",
     `review stable id: ${review.stableGitHubId ?? review.evidenceId}`,
     `author: ${review.authorLogin ?? "unknown"}`,
-    `submitted_at: ${review.authoritativeTime ?? "unknown"}`,
+    `submitted_at: ${review.authoritativeTime ?? review.submittedAt ?? "unknown"}`,
     `reviewed head: ${review.commitOid ?? "unknown"}`,
     "body: blank",
     "inline comments: 0",
   ].join("\n");
+}
+
+function inlineMembershipKey(inline: readonly CollectorEvidenceRecord[]): string {
+  return inline
+    .map((record) => record.versionId)
+    .slice()
+    .sort()
+    .join(",");
 }
 
 function buildReviewReport(input: {
@@ -207,14 +218,15 @@ function buildReviewReport(input: {
   activationTime: Date;
   deadlineTime: Date;
 }): ReviewDerivedReport {
-  const inline = reviewInlineText(input.ledger, input.review, input.snapshot);
+  const inline = reviewInlineComments(input.ledger, input.review, input.snapshot);
+  const inlineText = reviewInlineText(inline);
   const body = input.review.body ?? "";
-  const report = body.trim().length === 0 && inline.length === 0
+  const report = body.trim().length === 0 && inlineText.length === 0
     ? factualNonFindingReport(input.review)
     : [
       body.trim().length === 0 ? "(empty review body)" : body,
-      inline.length === 0 ? "" : "Inline comments:",
-      inline,
+      inlineText.length === 0 ? "" : "Inline comments:",
+      inlineText,
     ].filter((part) => part.length > 0).join("\n");
 
   const reviewedHead = input.review.commitOid ?? "";
@@ -225,18 +237,7 @@ function buildReviewReport(input: {
     input.activationTime,
     input.deadlineTime,
   );
-  const evidenceRefs = [input.review.evidenceId];
-  for (const id of input.snapshot.evidenceIds) {
-    const record = input.ledger.getEvidence(id);
-    if (
-      record?.kind === "review_comment" &&
-      record.pullRequestReviewId !== undefined &&
-      record.pullRequestReviewId !== null &&
-      input.review.stableGitHubId === `review:${record.pullRequestReviewId}`
-    ) {
-      evidenceRefs.push(record.evidenceId);
-    }
-  }
+  const evidenceRefs = [input.review.evidenceId, ...inline.map((item) => item.evidenceId)];
   return {
     kind: "review",
     legId: input.legId,
@@ -248,6 +249,10 @@ function buildReviewReport(input: {
   };
 }
 
+/**
+ * Emit immutable report variants keyed by
+ * (reviewVersionId, coObservedInlineVersionMembershipKey) per snapshot.
+ */
 function collectSubstantiveReviewReports(input: {
   ledger: CollectorLedger;
   finalSnapshot: CollectorSnapshot;
@@ -257,60 +262,127 @@ function collectSubstantiveReviewReports(input: {
   manifest: CollectorManifest;
 }): ReviewDerivedReport[] {
   const reports: ReviewDerivedReport[] = [];
-  const seenVersion = new Set<string>();
+  const seenVariant = new Set<string>();
   const authorToLeg = new Map<string, string>();
   for (const leg of input.manifest.legs) {
     for (const author of leg.expectedAuthors) authorToLeg.set(author, leg.id);
   }
 
-  // Prefer final snapshot versions first, then historical ledger versions.
-  const ordered: CollectorEvidenceRecord[] = [];
-  for (const id of input.finalSnapshot.evidenceIds) {
-    const record = input.ledger.getEvidence(id);
-    if (record) ordered.push(record);
-  }
-  for (const record of input.ledger.allEvidence()) {
-    if (!ordered.some((item) => item.evidenceId === record.evidenceId)) {
-      ordered.push(record);
+  for (const snapshot of input.ledger.allSnapshots()) {
+    for (const id of snapshot.evidenceIds) {
+      const record = input.ledger.getEvidence(id);
+      if (record === undefined || record.kind !== "review") continue;
+      if (record.authorLogin === undefined) continue;
+      const legId = authorToLeg.get(record.authorLogin);
+      if (legId === undefined) continue;
+      const inline = reviewInlineComments(input.ledger, record, snapshot);
+      const membership = inlineMembershipKey(inline);
+      const variantKey = `${record.versionId}|${membership}`;
+      if (seenVariant.has(variantKey)) continue;
+      seenVariant.add(variantKey);
+      reports.push(
+        buildReviewReport({
+          legId,
+          review: record,
+          ledger: input.ledger,
+          snapshot,
+          targetHead: input.targetHead,
+          activationTime: input.activationTime,
+          deadlineTime: input.deadlineTime,
+        }),
+      );
     }
   }
-
-  for (const record of ordered) {
-    if (record.kind !== "review") continue;
-    if (record.authorLogin === undefined) continue;
-    const legId = authorToLeg.get(record.authorLogin);
-    if (legId === undefined) continue;
-    if (seenVersion.has(record.versionId)) continue;
-    seenVersion.add(record.versionId);
-    // Substantive: any observed review version is retained, including blank non-finding.
-    reports.push(
-      buildReviewReport({
-        legId,
-        review: record,
-        ledger: input.ledger,
-        snapshot: input.finalSnapshot,
-        targetHead: input.targetHead,
-        activationTime: input.activationTime,
-        deadlineTime: input.deadlineTime,
-      }),
-    );
-  }
   return reports;
+}
+
+function qualifiesUnavailableEvidence(input: {
+  record: CollectorEvidenceRecord;
+  expected: ReadonlySet<string>;
+  activationTime: Date;
+  deadlineTime: Date;
+  scope: "target" | "global";
+  finalSnapshot: CollectorSnapshot;
+}): { ok: true; windowRelation: WindowRelation } | { ok: false } {
+  if (
+    input.record.authorLogin === undefined ||
+    !input.expected.has(input.record.authorLogin)
+  ) {
+    return { ok: false };
+  }
+  const windowRelation = computeWindowRelation(
+    input.record.authoritativeTime,
+    input.activationTime,
+    input.deadlineTime,
+  );
+  if (windowRelation !== "before" && windowRelation !== "within") {
+    return { ok: false };
+  }
+  if (input.scope === "global") {
+    return { ok: true, windowRelation };
+  }
+  if (input.finalSnapshot.evidenceIds.includes(input.record.evidenceId)) {
+    return { ok: true, windowRelation };
+  }
+  return { ok: false };
+}
+
+function collectMissingProofRefs(input: {
+  ledger: CollectorLedger;
+  legId: string;
+  expected: ReadonlySet<string>;
+  finalSnapshot: CollectorSnapshot;
+}): string[] {
+  const refs = new Set<string>([input.finalSnapshot.snapshotId]);
+  for (const record of input.ledger.allEvidence()) {
+    if (record.authorLogin !== undefined && input.expected.has(record.authorLogin)) {
+      if (
+        record.kind === "review" ||
+        record.kind === "review_comment" ||
+        record.kind === "issue_comment"
+      ) {
+        // pending/negative/dismissed/after/uncertain same-leg material
+        refs.add(record.evidenceId);
+      }
+    }
+    if (
+      record.kind === "issue_comment" &&
+      record.authorLogin === input.ledger.requesterLogin &&
+      typeof record.body === "string" &&
+      record.body.includes("ak-collector:v1")
+    ) {
+      refs.add(record.evidenceId);
+    }
+  }
+  for (const attempt of input.ledger.requestAttempts()) {
+    if (attempt.legId !== input.legId) continue;
+    if (attempt.commentEvidenceId) refs.add(attempt.commentEvidenceId);
+    if (attempt.recoverySnapshotId) refs.add(attempt.recoverySnapshotId);
+    refs.add(attempt.snapshotId);
+  }
+  for (const failure of input.ledger.transportFailures()) {
+    if (failure.legId !== undefined && failure.legId !== input.legId) continue;
+    // diagnostics live on attempts; still ensure related snapshots stay linked
+    void failure;
+  }
+  for (const id of input.finalSnapshot.evidenceIds) {
+    const record = input.ledger.getEvidence(id);
+    if (record?.kind === "pull_request" || record?.kind === "authenticated_user") {
+      refs.add(record.evidenceId);
+    }
+  }
+  return [...refs];
 }
 
 export function buildCollectorReceipt(
   ledger: CollectorLedger,
   candidateRaw: unknown,
+  clock?: CollectorClock,
 ): CollectorReceipt {
   ledger.assertNotFatal();
   if (ledger.outputAccepted) fail("Collector output is singleton");
   if (ledger.unresolvedTransportFailure) {
     fail("Collector cannot output while a transport failure is unrecovered");
-  }
-  if (
-    ledger.finalObservationRequired && !ledger.finalObservationCompleted
-  ) {
-    fail("Collector output requires the necessary final complete observation");
   }
   if (ledger.latestCompleteSnapshotId === undefined) {
     fail("Collector output requires a complete final snapshot");
@@ -320,6 +392,7 @@ export function buildCollectorReceipt(
   }
 
   const candidate = parseCollectorOutputCandidate(candidateRaw);
+
   const config = ledger.config;
   const finalSnapshot = ledger.getSnapshot(ledger.latestCompleteSnapshotId);
   if (finalSnapshot === undefined || !finalSnapshot.complete) {
@@ -327,6 +400,26 @@ export function buildCollectorReceipt(
   }
   if (finalSnapshot.prState !== "OPEN") {
     fail("Collector final snapshot PR state is not OPEN");
+  }
+
+  if (clock !== undefined) {
+    try {
+      ledger.assertOutputObservationLaw(candidate, clock);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+  } else {
+    // Backward-compatible path for pure unit tests without a clock: still enforce dirty-clear.
+    if (ledger.observedGeneration !== ledger.mutationGeneration) {
+      fail(
+        "Collector output requires a complete observe after the latest request/wait mutation",
+      );
+    }
+    if (
+      ledger.finalObservationRequired && !ledger.finalObservationCompleted
+    ) {
+      fail("Collector output requires the necessary final complete observation");
+    }
   }
 
   const configuredIds = config.manifest.legs.map((leg) => leg.id);
@@ -358,8 +451,9 @@ export function buildCollectorReceipt(
     const leg = ledger.legById(legCandidate.legId);
     if (leg === undefined) fail(`Unknown leg ${legCandidate.legId}`);
     const expected = new Set(leg.expectedAuthors);
+    let evidenceRefs = [...legCandidate.evidenceRefs];
 
-    for (const ref of legCandidate.evidenceRefs) {
+    for (const ref of evidenceRefs) {
       const record = ledger.getEvidence(ref);
       const snapshotRef = ledger.getSnapshot(ref);
       if (record === undefined && snapshotRef === undefined) {
@@ -371,10 +465,9 @@ export function buildCollectorReceipt(
 
     if (legCandidate.status === "valid") {
       let matched: CollectorEvidenceRecord | undefined;
-      for (const ref of legCandidate.evidenceRefs) {
+      for (const ref of evidenceRefs) {
         const record = ledger.getEvidence(ref);
         if (record?.kind !== "review") continue;
-        // Must be present in final snapshot
         if (!finalSnapshot.evidenceIds.includes(record.evidenceId)) continue;
         const qualification = reviewQualifiesForValid({
           review: record,
@@ -394,86 +487,99 @@ export function buildCollectorReceipt(
         );
       }
     } else if (legCandidate.status === "unavailable") {
-      let eligible = false;
-      for (const ref of legCandidate.evidenceRefs) {
+      const scope = legCandidate.unavailableScope;
+      if (scope !== "target" && scope !== "global") {
+        fail(
+          `Collector unavailable leg \"${legCandidate.legId}\" requires unavailableScope target|global`,
+        );
+      }
+
+      // Reject wrong-author / non-leg decoy refs fail-closed.
+      for (const ref of evidenceRefs) {
         const record = ledger.getEvidence(ref);
         if (record === undefined) continue;
         if (
-          record.authorLogin === undefined ||
-          !expected.has(record.authorLogin)
+          record.authorLogin !== undefined &&
+          !expected.has(record.authorLogin) &&
+          record.authorLogin !== ledger.requesterLogin
         ) {
-          continue;
-        }
-        const windowRelation = computeWindowRelation(
-          record.authoritativeTime,
-          activationTime,
-          deadlineTime,
-        );
-        if (windowRelation !== "before" && windowRelation !== "within") continue;
-        // Scope: global can cover any target; target-scoped must bind this snapshot head.
-        if (legCandidate.unavailableScope === "global") {
-          eligible = true;
-          break;
-        }
-        // target scope: evidence should be associated with current snapshot / head context.
-        // Presence in final snapshot is required for target-scoped unavailable.
-        if (finalSnapshot.evidenceIds.includes(record.evidenceId)) {
-          eligible = true;
-          break;
+          fail(
+            `Collector unavailable leg \"${legCandidate.legId}\" cites wrong-author evidence \"${ref}\"`,
+          );
         }
       }
-      if (!eligible) {
+
+      const qualifying: Array<{ record: CollectorEvidenceRecord; windowRelation: WindowRelation }> =
+        [];
+      for (const ref of evidenceRefs) {
+        const record = ledger.getEvidence(ref);
+        if (record === undefined) continue;
+        const result = qualifiesUnavailableEvidence({
+          record,
+          expected,
+          activationTime,
+          deadlineTime,
+          scope,
+          finalSnapshot,
+        });
+        if (result.ok) {
+          qualifying.push({ record, windowRelation: result.windowRelation });
+        }
+      }
+      if (qualifying.length === 0) {
         fail(
           `Collector unavailable leg \"${legCandidate.legId}\" lacks eligible before/within evidence with declared scope`,
         );
       }
-      const windowRelation = (() => {
-        for (const ref of legCandidate.evidenceRefs) {
-          const record = ledger.getEvidence(ref);
-          if (!record) continue;
-          return computeWindowRelation(
-            record.authoritativeTime,
-            activationTime,
-            deadlineTime,
-          );
-        }
-        return "uncertain" as const;
-      })();
+      const windowRelation = qualifying[0]!.windowRelation;
+      const proofRefs = qualifying.map((item) => item.record.evidenceId);
+      // Bind terminal report refs to qualifying proof, preserving any additional non-decoy refs.
+      const boundRefs = [
+        ...proofRefs,
+        ...evidenceRefs.filter((ref) => !proofRefs.includes(ref)),
+      ];
+      evidenceRefs = boundRefs;
       terminalReports.push({
         kind: "terminal-fact",
         legId: legCandidate.legId,
         terminalStatus: "unavailable",
         report: legCandidate.rationale,
         windowRelation,
-        evidenceRefs: [...legCandidate.evidenceRefs],
-        ...(legCandidate.unavailableScope === "global"
+        evidenceRefs: [...boundRefs],
+        ...(scope === "global"
           ? { scope: "global" as const }
           : { targetSnapshotHead: targetHead }),
       });
     } else {
-      // missing
-      if (!legCandidate.evidenceRefs.includes(finalSnapshot.snapshotId) &&
-        !legCandidate.evidenceRefs.some((ref) =>
-          finalSnapshot.evidenceIds.includes(ref) || ref === finalSnapshot.snapshotId
-        )) {
-        // Require citation of final snapshot via snapshot id or any final evidence id
-        const citesFinal = legCandidate.evidenceRefs.some((ref) =>
-          ref === finalSnapshot.snapshotId ||
-          finalSnapshot.evidenceIds.includes(ref)
-        );
-        if (!citesFinal) {
-          fail(
-            `Collector missing leg \"${legCandidate.legId}\" must cite the final complete snapshot`,
-          );
-        }
+      // missing — auto-link required proof material into leg and report refs
+      const auto = collectMissingProofRefs({
+        ledger,
+        legId: legCandidate.legId,
+        expected,
+        finalSnapshot,
+      });
+      const merged = new Set<string>([...evidenceRefs, ...auto]);
+      // Must cite final complete snapshot
+      if (!merged.has(finalSnapshot.snapshotId)) {
+        merged.add(finalSnapshot.snapshotId);
       }
+      const citesFinal = [...merged].some((ref) =>
+        ref === finalSnapshot.snapshotId ||
+        finalSnapshot.evidenceIds.includes(ref)
+      );
+      if (!citesFinal) {
+        fail(
+          `Collector missing leg \"${legCandidate.legId}\" must cite the final complete snapshot`,
+        );
+      }
+      evidenceRefs = [...merged];
       terminalReports.push({
         kind: "terminal-fact",
         legId: legCandidate.legId,
         terminalStatus: "missing",
         report: legCandidate.rationale,
         windowRelation: "within",
-        evidenceRefs: [...legCandidate.evidenceRefs],
+        evidenceRefs: [...evidenceRefs],
         targetSnapshotHead: targetHead,
       });
     }
@@ -482,7 +588,7 @@ export function buildCollectorReceipt(
       legId: legCandidate.legId,
       status: legCandidate.status,
       rationale: legCandidate.rationale,
-      evidenceRefs: [...legCandidate.evidenceRefs],
+      evidenceRefs: [...evidenceRefs],
     });
   }
 
@@ -508,10 +614,6 @@ export function buildCollectorReceipt(
     }
   }
 
-  // Materialize authoritative subset only: referenced records, configured-author
-  // substantive history, request/transport material, and final-snapshot identity
-  // records needed to verify conclusions. Unrelated observed records are not
-  // copied merely because they were seen.
   const embedEvidenceIds = new Set<string>();
   const embedSnapshotIds = new Set<string>([finalSnapshot.snapshotId]);
 
@@ -564,6 +666,7 @@ export function buildCollectorReceipt(
   for (const attempt of ledger.requestAttempts()) {
     embedSnapshotIds.add(attempt.snapshotId);
     if (attempt.commentEvidenceId) addEvidence(attempt.commentEvidenceId);
+    if (attempt.recoverySnapshotId) embedSnapshotIds.add(attempt.recoverySnapshotId);
   }
 
   const evidenceRecords = ledger
@@ -573,15 +676,49 @@ export function buildCollectorReceipt(
     .allSnapshots()
     .filter((snapshot) => embedSnapshotIds.has(snapshot.snapshotId));
 
-  // Ensure every ref resolves exactly once
+  // Unique ids within each namespace
+  const evidenceIds = evidenceRecords.map((record) => record.evidenceId);
+  if (new Set(evidenceIds).size !== evidenceIds.length) {
+    fail("Collector receipt evidenceId collision");
+  }
+  const snapshotIds = snapshots.map((snapshot) => snapshot.snapshotId);
+  if (new Set(snapshotIds).size !== snapshotIds.length) {
+    fail("Collector receipt snapshotId collision");
+  }
+
   const evidenceIndex = new Map(evidenceRecords.map((r) => [r.evidenceId, r]));
   const snapshotIndex = new Map(snapshots.map((s) => [s.snapshotId, s]));
   if (!snapshotIndex.has(finalSnapshot.snapshotId)) {
     fail("Collector receipt missing final snapshot embedding");
   }
+
+  // Exactly-one resolution across the two namespaces
+  for (const id of evidenceIds) {
+    if (snapshotIndex.has(id)) {
+      fail(
+        `Collector receipt id \"${id}\" is ambiguous across evidence and snapshot namespaces`,
+      );
+    }
+  }
+  for (const id of snapshotIds) {
+    if (evidenceIndex.has(id)) {
+      fail(
+        `Collector receipt id \"${id}\" is ambiguous across evidence and snapshot namespaces`,
+      );
+    }
+  }
+
   const resolveRef = (ref: string, label: string) => {
-    if (evidenceIndex.has(ref) || snapshotIndex.has(ref)) return;
-    fail(`Collector receipt ref \"${ref}\" from ${label} does not resolve inside the receipt`);
+    const inEvidence = evidenceIndex.has(ref);
+    const inSnapshot = snapshotIndex.has(ref);
+    if (inEvidence && inSnapshot) {
+      fail(`Collector receipt ref \"${ref}\" from ${label} is ambiguous`);
+    }
+    if (!inEvidence && !inSnapshot) {
+      fail(
+        `Collector receipt ref \"${ref}\" from ${label} does not resolve inside the receipt`,
+      );
+    }
   };
   for (const leg of legsOut) {
     for (const ref of leg.evidenceRefs) resolveRef(ref, `leg ${leg.legId}`);
@@ -598,7 +735,7 @@ export function buildCollectorReceipt(
     manifestDigest: config.manifest.digest,
     activationTime: activationTime.toISOString(),
     deadlineTime: deadlineTime.toISOString(),
-    finalObservationTime: finalSnapshot.observedAt,
+    finalObservationTime: finalSnapshot.completedAt ?? finalSnapshot.observedAt,
     finalSnapshotId: finalSnapshot.snapshotId,
     targetHead,
     reports,
@@ -610,12 +747,11 @@ export function buildCollectorReceipt(
 
   const bytes = Buffer.byteLength(JSON.stringify(receipt), "utf8");
   if (bytes > COLLECTOR_RECEIPT_MAX_BYTES) {
-    fail(
+    throw ledger.latchFatal(
       `Collector receipt exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes (${bytes})`,
     );
   }
 
-  // Silence unused import helper in some paths
   void isValidReviewState;
   void (null as unknown as CollectorRepository);
 

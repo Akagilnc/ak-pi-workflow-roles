@@ -76,13 +76,17 @@ function imagesOfUser(context: Context): ImageContent[] {
   );
 }
 
-function clockAt(startWall: string): CollectorClock {
+function clockAt(startWall: string): CollectorClock & { advance(ms: number): void } {
   let mono = 0;
   let wall = new Date(startWall);
   return {
     wallNow: () => new Date(wall),
     monoNow: () => mono,
     async sleep(ms) {
+      mono += ms;
+      wall = new Date(wall.getTime() + ms);
+    },
+    advance(ms) {
       mono += ms;
       wall = new Date(wall.getTime() + ms);
     },
@@ -247,7 +251,7 @@ test("collector replaces first input entirely, strips images, and rejects later 
         const reviewEvidenceId = observeDetails.evidence.find((item) =>
           item.kind === "review"
         )!.evidenceId;
-        assert.equal(transport.calls.pull, 1);
+        assert.ok(transport.calls.pull >= 2, "observe performs terminal PR reread");
         assert.ok(reviewEvidenceId.length > 0);
 
         // Later input must fail closed without provider dispatch.
@@ -449,6 +453,370 @@ test("collector rejects parallel operational siblings and mixed output batches",
           true,
         );
         assert.equal(transport.calls.pull, 0);
+        assert.equal(process.exitCode, 1);
+      });
+    } finally {
+      process.exitCode = previousExit;
+    }
+  });
+});
+
+async function runCollectorSession(input: {
+  home: string;
+  agentDir: string;
+  legs: string;
+  transport: ReturnType<typeof createFakeGitHubTransport>;
+  clock: CollectorClock & { advance?(ms: number): void };
+  responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
+  api: string;
+}): Promise<{ exitCode: number | undefined }> {
+  const faux = fauxProvider({
+    api: input.api,
+    provider: input.api,
+    tokenSize: { min: 1000, max: 1000 },
+  });
+  const previousExit = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    await withInProcessPi({
+      cwd: input.home,
+      agentDir: input.agentDir,
+      faux,
+      modelsPath: null,
+      extensionFactories: [createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "judge",
+        loadCollectorSoul: async () => COLLECTOR_SOUL,
+        createCollectorTransport: () => input.transport,
+        createCollectorClock: () => input.clock,
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+      })],
+      noExtensions: true,
+      systemPrompt: "BASE",
+      mode: "print",
+      flags: {
+        "ak-role": "collector",
+        "ak-collector-repo": "acme/widgets",
+        "ak-collector-pr": "1",
+        "ak-collector-legs": input.legs,
+      },
+      noTools: "builtin",
+    }, async ({ session }) => {
+      faux.setResponses(input.responses);
+      await session.prompt("start");
+    });
+    return { exitCode: process.exitCode };
+  } finally {
+    process.exitCode = previousExit;
+  }
+}
+
+test("collector same-session batch provenance matrix freezes transport after fatal", async () => {
+  await withHermeticHome({ prefix: "ak-collector-batch-matrix-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+
+    // valid → invalid: T1 observe ok, T2 observe+wait fatal, counters freeze
+    {
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull({ headOid: "h1" }),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      });
+      const result = await runCollectorSession({
+        home,
+        agentDir,
+        legs,
+        transport,
+        clock: clockAt("2024-01-01T00:00:00Z"),
+        api: "ak-collector-v-inv",
+        responses: [
+          fauxAssistantMessage(
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-ok" }),
+            { stopReason: "toolUse" },
+          ),
+          fauxAssistantMessage([
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-2" }),
+            fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: 10 }, { id: "wait-2" }),
+          ], { stopReason: "toolUse" }),
+          fauxAssistantMessage("done"),
+        ],
+      });
+      assert.ok(transport.calls.pull >= 2);
+      const frozenPull = transport.calls.pull;
+      const frozenCreate = transport.calls.create;
+      assert.equal(transport.calls.create, 0);
+      assert.equal(result.exitCode, 1);
+      assert.equal(transport.calls.pull, frozenPull);
+      assert.equal(transport.calls.create, frozenCreate);
+    }
+
+    // invalid → valid: T1 unknown sibling, T2 sole observe still zero after fatal
+    {
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull(),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      });
+      const result = await runCollectorSession({
+        home,
+        agentDir,
+        legs,
+        transport,
+        clock: clockAt("2024-01-01T00:00:00Z"),
+        api: "ak-collector-inv-v",
+        responses: [
+          fauxAssistantMessage([
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
+            fauxToolCall("unknown_tool", {}, { id: "unk" }),
+          ], { stopReason: "toolUse" }),
+          fauxAssistantMessage(
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-later" }),
+            { stopReason: "toolUse" },
+          ),
+          fauxAssistantMessage("done"),
+        ],
+      });
+      assert.equal(transport.calls.pull, 0);
+      assert.equal(transport.calls.create, 0);
+      assert.equal(result.exitCode, 1);
+    }
+
+    // invalid → invalid
+    {
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull(),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      });
+      await runCollectorSession({
+        home,
+        agentDir,
+        legs,
+        transport,
+        clock: clockAt("2024-01-01T00:00:00Z"),
+        api: "ak-collector-inv-inv",
+        responses: [
+          fauxAssistantMessage([
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "a" }),
+            fauxToolCall(COLLECTOR_REQUEST_TOOL, {
+              legId: "codex",
+              snapshotId: "x",
+            }, { id: "b" }),
+          ], { stopReason: "toolUse" }),
+          fauxAssistantMessage([
+            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
+              legs: [{
+                legId: "codex",
+                status: "missing",
+                rationale: "a",
+                evidenceRefs: ["s"],
+              }],
+            }, { id: "o1" }),
+            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
+              legs: [{
+                legId: "codex",
+                status: "missing",
+                rationale: "b",
+                evidenceRefs: ["s"],
+              }],
+            }, { id: "o2" }),
+          ], { stopReason: "toolUse" }),
+          fauxAssistantMessage("done"),
+        ],
+      });
+      assert.equal(transport.calls.pull, 0);
+      assert.equal(transport.calls.create, 0);
+    }
+
+    // operational + output same batch
+    {
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull(),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      });
+      await runCollectorSession({
+        home,
+        agentDir,
+        legs,
+        transport,
+        clock: clockAt("2024-01-01T00:00:00Z"),
+        api: "ak-collector-op-out",
+        responses: [
+          fauxAssistantMessage([
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
+            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
+              legs: [{
+                legId: "codex",
+                status: "missing",
+                rationale: "x",
+                evidenceRefs: ["s"],
+              }],
+            }, { id: "out" }),
+          ], { stopReason: "toolUse" }),
+          fauxAssistantMessage("done"),
+        ],
+      });
+      assert.equal(transport.calls.pull, 0);
+    }
+
+    // unknown-sibling: observe must not execute
+    {
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull(),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      });
+      const result = await runCollectorSession({
+        home,
+        agentDir,
+        legs,
+        transport,
+        clock: clockAt("2024-01-01T00:00:00Z"),
+        api: "ak-collector-unknown-sib",
+        responses: [
+          fauxAssistantMessage([
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
+            fauxToolCall("unknown_tool", { x: 1 }, { id: "bad" }),
+          ], { stopReason: "toolUse" }),
+          fauxAssistantMessage("done"),
+        ],
+      });
+      assert.equal(transport.calls.pull, 0);
+      assert.equal(result.exitCode, 1);
+    }
+
+    // sole schema-invalid observe
+    {
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull(),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      });
+      const result = await runCollectorSession({
+        home,
+        agentDir,
+        legs,
+        transport,
+        clock: clockAt("2024-01-01T00:00:00Z"),
+        api: "ak-collector-schema-inv",
+        responses: [
+          fauxAssistantMessage(
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, { nope: true }, { id: "bad-obs" }),
+            { stopReason: "toolUse" },
+          ),
+          fauxAssistantMessage("done"),
+        ],
+      });
+      assert.equal(transport.calls.pull, 0);
+      assert.equal(result.exitCode, 1);
+    }
+
+    // valid + schema-invalid sibling
+    {
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull(),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      });
+      const result = await runCollectorSession({
+        home,
+        agentDir,
+        legs,
+        transport,
+        clock: clockAt("2024-01-01T00:00:00Z"),
+        api: "ak-collector-valid-schema-inv",
+        responses: [
+          fauxAssistantMessage([
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "good" }),
+            fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: -1 }, { id: "bad" }),
+          ], { stopReason: "toolUse" }),
+          fauxAssistantMessage("done"),
+        ],
+      });
+      assert.equal(transport.calls.pull, 0);
+      assert.equal(result.exitCode, 1);
+    }
+  });
+});
+
+test("collector startup fails closed on required tool collision with zero GitHub calls", async () => {
+  await withHermeticHome({ prefix: "ak-collector-collision-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const faux = fauxProvider({
+      api: "ak-collector-collision",
+      provider: "ak-collector-collision",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+    faux.setResponses([fauxAssistantMessage("should not run")]);
+    const previousExit = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await withInProcessPi({
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        extensionFactories: [
+          (pi) => {
+            pi.registerTool({
+              name: COLLECTOR_OBSERVE_TOOL,
+              label: "Collision Observe",
+              description: "colliding pre-registered tool",
+              parameters: { type: "object", properties: {} },
+              async execute() {
+                return {
+                  content: [{ type: "text" as const, text: "nope" }],
+                  details: {},
+                };
+              },
+            });
+          },
+          createRoleRuntimeExtension({
+            loadJudgeSoul: async () => "judge",
+            loadCollectorSoul: async () => COLLECTOR_SOUL,
+            createCollectorTransport: () => transport,
+            createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
+            transcriptFromContext: () => "",
+            auditSoulCompliance: async () => ({ status: "pass" }),
+          }),
+        ],
+        noExtensions: true,
+        systemPrompt: "BASE",
+        mode: "print",
+        flags: {
+          "ak-role": "collector",
+          "ak-collector-repo": "acme/widgets",
+          "ak-collector-pr": "1",
+          "ak-collector-legs": legs,
+        },
+        noTools: "builtin",
+      }, async ({ session }) => {
+        await session.prompt("start");
+        assert.equal(transport.calls.pull, 0);
+        assert.equal(transport.calls.user, 0);
+        assert.equal(faux.getPendingResponseCount(), 1);
         assert.equal(process.exitCode, 1);
       });
     } finally {
