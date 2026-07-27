@@ -9,6 +9,6 @@
 - **Judge(判官)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。
 - **Fixer(修复工)**:以 `plan`(只规划)或 `apply`(施工)阶段处理判官修理包的角色。经具名交卷工具报告 `planned`/`completed`/`refused`;git commit 是供判官查证的客观证据,不是完整回执。
 - **Soul 合规审计(Soul-compliance audit)**:交卷被接受前的第二次模型调用,只审「判官是否可证地按 soul 办了案」,不得替换判官的实质裁决。
-- **绑定(Binding)**:调用方 per-invocation 注入的机械校验值(如判官的目标 head)。绑定在场则交卷 fail-closed;不在场(standalone)则对应字段自由。
+- **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。
 - **编排器(Orchestrator)**:包外的交通系统——起各角色 Pi 进程、递材料、按三态判词走边。它只读回执,不定义交卷形状。
 - **三态判词**:`converged` / `continue` / `escalate`。环境/工具链故障不是判词,以非零退出走故障通道。
