@@ -7,6 +7,7 @@ import { Type, type Static } from "typebox";
 
 export const JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
+export const CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
 
 const judgeVerdictSchema = Type.Object(
   {
@@ -31,7 +32,7 @@ const judgeVerdictSchema = Type.Object(
   { additionalProperties: false },
 );
 
-const fixerOutputSchema = Type.Object(
+const workerOutputSchema = Type.Object(
   {
     status: StringEnum(["planned", "completed", "refused"] as const),
     report: Type.String({ minLength: 1 }),
@@ -41,13 +42,16 @@ const fixerOutputSchema = Type.Object(
 );
 
 type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
-type FixerOutputParameters = Static<typeof fixerOutputSchema>;
+type WorkerOutputParameters = Static<typeof workerOutputSchema>;
 
-export type FixerOutput = {
+export type WorkerOutput = {
   status: "planned" | "completed" | "refused";
   report: string;
   commitSha?: string;
 };
+
+export type FixerOutput = WorkerOutput;
+export type CoderOutput = WorkerOutput;
 
 type AdvisoryNote = { note?: string };
 
@@ -76,14 +80,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-type FixerPhase = "plan" | "apply";
+type WorkerPhase = "plan" | "apply";
+type WorkerRoleLabel = "Coder" | "Fixer";
 
-function validateFixerOutput(
-  output: FixerOutputParameters,
-  phase: FixerPhase,
-): FixerOutput {
+function validateWorkerOutput(
+  output: WorkerOutputParameters,
+  phase: WorkerPhase,
+  roleLabel: WorkerRoleLabel,
+): WorkerOutput {
   if (!isRecord(output)) {
-    throw new Error("Fixer output must be an object");
+    throw new Error(`${roleLabel} output must be an object`);
   }
   const expectedKeys =
     output.commitSha === undefined
@@ -101,17 +107,17 @@ function validateFixerOutput(
         output.commitSha.trim().length === 0))
   ) {
     throw new Error(
-      "Fixer output requires planned|completed|refused, a non-blank report, and an optional non-blank commitSha",
+      `${roleLabel} output requires planned|completed|refused, a non-blank report, and an optional non-blank commitSha`,
     );
   }
   if (phase === "plan" && output.status === "completed") {
-    throw new Error("Fixer plan phase permits only planned or refused");
+    throw new Error(`${roleLabel} plan phase permits only planned or refused`);
   }
   if (phase === "apply" && output.status === "planned") {
-    throw new Error("Fixer apply phase permits only completed or refused");
+    throw new Error(`${roleLabel} apply phase permits only completed or refused`);
   }
   if (output.status === "planned" && output.commitSha !== undefined) {
-    throw new Error("Fixer planned output forbids commitSha");
+    throw new Error(`${roleLabel} planned output forbids commitSha`);
   }
   return {
     status: output.status,
@@ -195,7 +201,7 @@ function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
 function requireSingletonSubmissionCall(
   toolCallId: string,
   expectedToolName: string,
-  roleLabel: "Judge" | "Fixer",
+  roleLabel: "Judge" | WorkerRoleLabel,
   ctx: ExtensionContext,
 ): void {
   const leaf = ctx.sessionManager.getLeafEntry();
@@ -230,6 +236,9 @@ export type RoleRuntimeDependencies = {
   loadJudgeSoul(): Promise<string>;
   loadFixerSoul?(): Promise<string>;
   loadFixPacket?(path: string): Promise<string>;
+  loadCoderSoul?(): Promise<string>;
+  loadCoderTask?(path: string): Promise<string>;
+  loadCoderQualitySkill?(): Promise<string>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
     input: SoulAuditInput,
@@ -243,10 +252,14 @@ export function createRoleRuntimeExtension(
   return (pi) => {
     let activeSoul: string | undefined;
     let activeFixPacket: string | undefined;
-    let activeFixerPhase: FixerPhase | undefined;
-    let activeRole: "judge" | "fixer" | undefined;
+    let activeFixerPhase: WorkerPhase | undefined;
+    let activeCoderTask: string | undefined;
+    let activeCoderPhase: WorkerPhase | undefined;
+    let activeCoderQualitySkill: string | undefined;
+    let activeRole: "judge" | "fixer" | "coder" | undefined;
     let judgeToolRegistered = false;
     let fixerToolRegistered = false;
+    let coderToolRegistered = false;
 
     pi.registerFlag("ak-role", {
       description: "Activate a packaged workflow role",
@@ -261,25 +274,110 @@ export function createRoleRuntimeExtension(
         "Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
       type: "string",
     });
+    pi.registerFlag("ak-coder-task", {
+      description: "Markdown task assigned to the coder role",
+      type: "string",
+    });
+    pi.registerFlag("ak-coder-phase", {
+      description:
+        "Coder phase: plan (inspect and propose an implementation plan; no edits or commits) or apply (execute the approved plan and verify the first implementation)",
+      type: "string",
+    });
 
     pi.on("session_start", async () => {
       const role = pi.getFlag("ak-role");
       if (role === undefined) return;
-      if (role !== "judge" && role !== "fixer") {
+      if (role !== "judge" && role !== "fixer" && role !== "coder") {
         throw new Error(`Unsupported workflow role: ${String(role)}`);
       }
       activeRole = role;
       const loadSoul =
         role === "judge"
           ? dependencies.loadJudgeSoul
-          : dependencies.loadFixerSoul;
+          : role === "fixer"
+            ? dependencies.loadFixerSoul
+            : dependencies.loadCoderSoul;
       if (loadSoul === undefined) {
         throw new Error(`${role} soul loader is not configured`);
       }
       activeSoul = (await loadSoul()).trim();
       if (activeSoul.length === 0) {
-        const roleLabel = role === "judge" ? "Judge" : "Fixer";
+        const roleLabel =
+          role === "judge" ? "Judge" : role === "fixer" ? "Fixer" : "Coder";
         throw new Error(`${roleLabel} soul is empty`);
+      }
+
+      if (role === "coder") {
+        const phase = pi.getFlag("ak-coder-phase");
+        if (phase !== "plan" && phase !== "apply") {
+          throw new Error(
+            "Coder role requires --ak-coder-phase plan|apply; no other phase is supported",
+          );
+        }
+        activeCoderPhase = phase;
+        const taskPath = pi.getFlag("ak-coder-task");
+        if (typeof taskPath !== "string" || taskPath.trim().length === 0) {
+          throw new Error("Coder role requires --ak-coder-task");
+        }
+        if (dependencies.loadCoderTask === undefined) {
+          throw new Error("Coder task loader is not configured");
+        }
+        activeCoderTask = (await dependencies.loadCoderTask(taskPath)).trim();
+        if (activeCoderTask.length === 0) {
+          throw new Error("Coder task is empty");
+        }
+        if (phase === "apply") {
+          if (dependencies.loadCoderQualitySkill === undefined) {
+            throw new Error("Coder quality skill loader is not configured");
+          }
+          activeCoderQualitySkill = (
+            await dependencies.loadCoderQualitySkill()
+          ).trim();
+          if (activeCoderQualitySkill.length === 0) {
+            throw new Error("Coder quality skill is empty");
+          }
+        }
+        if (coderToolRegistered) return;
+        coderToolRegistered = true;
+        pi.registerTool({
+          name: CODER_OUTPUT_TOOL_NAME,
+          label: "Coder Output",
+          description:
+            "Submit a plan, completion, or evidence-bearing refusal for the active coder phase. commitSha is advisory evidence for the judge.",
+          promptSnippet: "Submit the final coder report",
+          promptGuidelines: [
+            `Use ${CODER_OUTPUT_TOOL_NAME} as the final action for the coder role.`,
+            `${CODER_OUTPUT_TOOL_NAME} never escalates; explain authority or task conflicts in report for the judge to adjudicate.`,
+            "plan permits planned|refused; apply permits completed|refused.",
+          ],
+          parameters: workerOutputSchema,
+          async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
+            if (
+              activeRole !== "coder" ||
+              activeCoderTask === undefined ||
+              activeCoderPhase === undefined
+            ) {
+              throw new Error("Coder task and phase were not loaded");
+            }
+            requireSingletonSubmissionCall(
+              toolCallId,
+              CODER_OUTPUT_TOOL_NAME,
+              "Coder",
+              ctx,
+            );
+            const output = validateWorkerOutput(
+              parameters,
+              activeCoderPhase,
+              "Coder",
+            );
+            return {
+              content: [{ type: "text" as const, text: "Coder report accepted" }],
+              details: output,
+              terminate: true as const,
+            };
+          },
+        });
+        return;
       }
 
       if (role === "fixer") {
@@ -314,7 +412,7 @@ export function createRoleRuntimeExtension(
             `${FIXER_OUTPUT_TOOL_NAME} never escalates; explain any requested owner decision in report for the judge to adjudicate.`,
             "plan permits planned|refused; apply permits completed|refused.",
           ],
-          parameters: fixerOutputSchema,
+          parameters: workerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
             if (
               activeRole !== "fixer" ||
@@ -329,7 +427,11 @@ export function createRoleRuntimeExtension(
               "Fixer",
               ctx,
             );
-            const output = validateFixerOutput(parameters, activeFixerPhase);
+            const output = validateWorkerOutput(
+              parameters,
+              activeFixerPhase,
+              "Fixer",
+            );
             return {
               content: [{ type: "text" as const, text: "Fixer report accepted" }],
               details: output,
@@ -415,12 +517,14 @@ export function createRoleRuntimeExtension(
       if (activeSoul === undefined) {
         throw new Error(`${activeRole} soul was not loaded`);
       }
-      const fixPacketSection =
+      const roleInputSection =
         activeRole === "fixer"
           ? `\n\n<fixer_phase>\n${activeFixerPhase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${activeFixPacket ?? ""}\n</fix_packet>`
-          : "";
+          : activeRole === "coder"
+            ? `\n\n<coder_phase>\n${activeCoderPhase ?? ""}\n</coder_phase>\n\n<coder_task>\n${activeCoderTask ?? ""}\n</coder_task>${activeCoderQualitySkill === undefined ? "" : `\n\n<coder_quality_skill>\n${activeCoderQualitySkill}\n</coder_quality_skill>`}`
+            : "";
       return {
-        systemPrompt: `${event.systemPrompt}\n\n<${activeRole}_soul>\n${activeSoul}\n</${activeRole}_soul>${fixPacketSection}`,
+        systemPrompt: `${event.systemPrompt}\n\n<${activeRole}_soul>\n${activeSoul}\n</${activeRole}_soul>${roleInputSection}`,
       };
     });
   };

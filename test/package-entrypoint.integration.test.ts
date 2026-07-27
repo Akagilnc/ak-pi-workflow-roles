@@ -26,6 +26,7 @@ import {
 import { Type } from "typebox";
 
 import {
+  CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
 } from "../src/role-runtime.ts";
@@ -56,11 +57,13 @@ function textOf(message: ToolResultMessage): string {
 
 function packageEntrypoint(manifest: {
   files?: string[];
-  pi?: { extensions?: string[] };
+  pi?: { extensions?: string[]; skills?: string[] };
 }): string {
   assert.ok(manifest.files?.includes("extensions"));
   assert.ok(manifest.files?.includes("souls"));
+  assert.ok(manifest.files?.includes("skills"));
   assert.deepEqual(manifest.pi?.extensions, ["./extensions/role-runtime.ts"]);
+  assert.deepEqual(manifest.pi?.skills, ["./skills"]);
   return resolve(packageRoot, manifest.pi.extensions[0]!);
 }
 
@@ -324,6 +327,123 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
       1,
       "terminate ends the real Pi lifecycle without a follow-up provider turn",
     );
+  } finally {
+    session.dispose();
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("packaged coder apply auto-loads its complete quality skill and can refuse without a commit", async () => {
+  const manifest = JSON.parse(
+    await readFile(resolve(packageRoot, "package.json"), "utf8"),
+  ) as {
+    files?: string[];
+    pi?: { extensions?: string[]; skills?: string[] };
+  };
+  const coderSoul = (await readFile(resolve(packageRoot, "souls/coder.md"), "utf8")).trim();
+  const qualitySkill = (
+    await readFile(resolve(packageRoot, "skills/coder-quality/SKILL.md"), "utf8")
+  ).trim();
+  const agentDir = await mkdtemp(resolve(tmpdir(), "ak-coder-integration-"));
+  const taskPath = resolve(agentDir, "approved-task.md");
+  const task = "# Approved task\n\nImplement the first vertical slice.";
+  await writeFile(taskPath, task);
+  const faux = fauxProvider({
+    api: "ak-coder-offline",
+    provider: "ak-coder-offline",
+    tokenSize: { min: 1000, max: 1000 },
+  });
+  const activeModel = faux.getModel();
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: resolve(agentDir, "models.json"),
+  });
+  modelRuntime.registerNativeProvider({
+    ...faux.provider,
+    auth: {
+      apiKey: {
+        name: "Coder integration auth",
+        async resolve() {
+          return { auth: { apiKey: "offline" } };
+        },
+      },
+    },
+  });
+  const loader = new DefaultResourceLoader({
+    cwd: packageRoot,
+    agentDir,
+    additionalExtensionPaths: [packageEntrypoint(manifest)],
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    systemPrompt: "CODER INTEGRATION BASE PROMPT",
+  });
+  await loader.reload();
+  const sessionManager = SessionManager.inMemory(packageRoot);
+  const { session } = await createAgentSession({
+    cwd: packageRoot,
+    agentDir,
+    model: activeModel,
+    modelRuntime,
+    resourceLoader: loader,
+    sessionManager,
+    settingsManager: SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false },
+    }),
+    customTools: [siblingTool],
+    thinkingLevel: "off",
+  });
+
+  try {
+    session.extensionRunner.setFlagValue("ak-role", "coder");
+    session.extensionRunner.setFlagValue("ak-coder-phase", "apply");
+    session.extensionRunner.setFlagValue("ak-coder-task", taskPath);
+    await session.bindExtensions({ mode: "print" });
+    assert.ok(
+      session.agent.state.tools.some((tool) => tool.name === CODER_OUTPUT_TOOL_NAME),
+    );
+    assert.ok(
+      session.agent.state.tools.some((tool) => tool.name === "write"),
+      "Coder keeps construction tools",
+    );
+
+    let coderContext: Context | undefined;
+    const output = {
+      status: "refused",
+      report: "The approved task contradicts the current authority.",
+    };
+    faux.setResponses([
+      (context) => {
+        coderContext = context;
+        return fauxAssistantMessage(
+          fauxToolCall(CODER_OUTPUT_TOOL_NAME, output, { id: "coder-refused" }),
+          { stopReason: "toolUse" },
+        );
+      },
+    ]);
+    await session.prompt("Apply or refuse the approved task.");
+
+    const seenContext = coderContext as Context | undefined;
+    assert.ok(seenContext);
+    assert.ok(seenContext.systemPrompt?.includes(`<coder_soul>\n${coderSoul}\n</coder_soul>`));
+    assert.ok(seenContext.systemPrompt?.includes(`<coder_task>\n${task}\n</coder_task>`));
+    assert.ok(
+      seenContext.systemPrompt?.includes(
+        `<coder_quality_skill>\n${qualitySkill}\n</coder_quality_skill>`,
+      ),
+      "apply receives the complete quality skill even when Pi skill discovery is disabled",
+    );
+    const accepted = sessionManager.getEntries().find(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolCallId === "coder-refused",
+    );
+    assert.ok(accepted?.type === "message" && accepted.message.role === "toolResult");
+    assert.equal(accepted.message.isError, false);
+    assert.deepEqual(accepted.message.details, output);
   } finally {
     session.dispose();
     await rm(agentDir, { recursive: true, force: true });

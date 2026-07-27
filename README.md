@@ -1,6 +1,6 @@
 # @ak/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge` and `fixer`.
+Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, and `coder`.
 
 ## Judge
 
@@ -73,6 +73,37 @@ Fixer terminates through `ak_fixer_output`:
 ```
 
 `planned` cannot carry `commitSha`. Otherwise `commitSha` is advisory evidence for the judge, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence and the judge decides whether to escalate. The caller transports the report, live Git history, and any fresh review back to the judge.
+
+## Coder
+
+Coder handles first implementation in two explicit phases:
+
+| `--ak-coder-phase` | Meaning | Legal success status |
+| --- | --- | --- |
+| `plan` | Inspect the task and propose an implementation plan; do not edit or commit | `planned` |
+| `apply` | Execute the Judge-approved plan and verify the first implementation | `completed` |
+
+Either phase may return `refused` with authority and current-code evidence. A refusal does not require a commit and returns to the Judge for adjudication; Coder never emits `escalate`.
+
+```bash
+pi --ak-role coder \
+  --ak-coder-phase plan \
+  --ak-coder-task /path/to/task.md \
+  -p "Prepare the implementation plan."
+
+pi --ak-role coder \
+  --ak-coder-phase apply \
+  --ak-coder-task /path/to/approved-plan.md \
+  -p "Apply the approved implementation plan."
+```
+
+Coder terminates through `ak_coder_output` with the same thin worker envelope:
+
+```json
+{"status":"planned|completed|refused","report":"Markdown report","commitSha":"optional self-report"}
+```
+
+During `apply`, the runtime automatically loads the complete bundled `ak-coder-quality` Skill even when normal Pi skill discovery is disabled. The Skill owns vertical TDD, repository verification, and the same-pattern / introduced-regression / behavior-fact self-check three. These methods stay out of the short Coder Soul. `commitSha` remains advisory evidence rather than a hard package gate.
 
 ## Verdict contract
 
