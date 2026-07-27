@@ -1,4 +1,6 @@
-import type { ReviewerSkillEvidence } from "./reviewer-skill.ts";
+import type { CanonicalSkillEvidence } from "./canonical-skill-binding.ts";
+
+type ReviewerSkillEvidence = CanonicalSkillEvidence<"code-review">;
 
 export type ReviewerUsage = {
   input: number;

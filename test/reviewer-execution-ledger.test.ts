@@ -7,7 +7,9 @@ import {
   type ReviewerAgentResult,
   type ReviewerUsage,
 } from "../src/reviewer-execution-ledger.ts";
-import type { ReviewerSkillEvidence } from "../src/reviewer-skill.ts";
+import type { CanonicalSkillEvidence } from "../src/canonical-skill-binding.ts";
+
+type ReviewerSkillEvidence = CanonicalSkillEvidence<"code-review">;
 
 const skill = (): ReviewerSkillEvidence => ({
   name: "code-review",
@@ -331,7 +333,7 @@ test("successful evidence is defensively owned and each audit record is deeply i
   ledger.beginAgentCall("axis", args("persisted"), evidence);
   const details = ledger.completeAgentCall("axis", result);
 
-  callerSkill.location = "/mutated";
+  (callerSkill as { location: string }).location = "/mutated";
   persistedArgs.description = "mutated persisted description";
   calls[0]!.id = "mutated-id";
   result.report = "mutated report";

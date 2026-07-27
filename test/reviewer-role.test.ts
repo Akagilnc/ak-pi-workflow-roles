@@ -28,7 +28,10 @@ import {
   createRoleRuntimeExtension,
   type ReviewerAuditInput,
 } from "../src/role-runtime.ts";
-import type { CanonicalReviewerSkill } from "../src/reviewer-skill.ts";
+import type {
+  CanonicalSkillBinding,
+  CanonicalSkillSnapshot,
+} from "../src/canonical-skill-binding.ts";
 
 const usage = {
   input: 1,
@@ -39,12 +42,33 @@ const usage = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 } satisfies Usage;
 
-const canonicalSkill: CanonicalReviewerSkill = {
+const canonicalSkill: CanonicalSkillSnapshot = {
   raw: "---\nname: code-review\ndescription: review\n---\n\n# Canonical review",
   path: "/home/test/.agents/skills/code-review/SKILL.md",
   baseDir: "/home/test/.agents/skills/code-review",
   body: "# Canonical review",
 };
+
+function reviewerBinding(
+  snapshot: CanonicalSkillSnapshot = canonicalSkill,
+): CanonicalSkillBinding<"code-review"> {
+  return {
+    name: "code-review",
+    snapshot,
+    invocation(originalRequest) {
+      return `/skill:code-review ${originalRequest}`;
+    },
+    captureExpansion(prompt, originalRequest) {
+      const content =
+        `References are relative to ${snapshot.baseDir}.\n\n${snapshot.body}`;
+      const expected =
+        `<skill name="code-review" location="${snapshot.path}">\n${content}\n</skill>\n\n${originalRequest}`;
+      return prompt === expected
+        ? { name: "code-review", location: snapshot.path, content, userMessage: originalRequest }
+        : undefined;
+    },
+  };
+}
 
 function harness() {
   const handlers = new Map<string, (event: any, ctx: any) => any>();
@@ -106,7 +130,7 @@ function extension(overrides: Record<string, unknown> = {}) {
     loadJudgeSoul: async () => "judge",
     loadReviewerSoul: async () => "REVIEWER LAW",
     loadReviewerTask: async () => "# Opaque request\nReview fixed point main.",
-    loadCanonicalReviewerSkill: async () => canonicalSkill,
+    loadCanonicalSkillBinding: async () => reviewerBinding(),
     runReviewerAgent: async () => ({
       report: "axis report",
       usage,
@@ -263,6 +287,13 @@ test("completed requires exact native Skill provenance and successful Agent evid
   assert.equal(accepted.terminate, true);
   assert.deepEqual(accepted.details, output);
   assert.equal(audits.length, 1);
+  assert.equal(audits[0]?.canonicalSkill, canonicalSkill.raw);
+  assert.deepEqual(audits[0]?.record.skillEvidence, {
+    name: "code-review",
+    location: canonicalSkill.path,
+    content: `References are relative to ${canonicalSkill.baseDir}.\n\n${canonicalSkill.body}`,
+    userMessage: "Review the requested fixed point.",
+  });
   assert.equal(audits[0]?.candidate.status, "completed");
   assert.equal(audits[0]?.record.agentAttempts.length, 1);
   assert.equal(audits[0]?.record.agentAttempts[0]?.report, "axis report");
@@ -1071,11 +1102,17 @@ test("a refusal cannot turn prior fatal Skill, Agent, audit, or cleanup state in
 });
 
 test("copied, partial, alternate-path, and later Skill blocks do not establish provenance", async () => {
-  for (const prompt of [
+  const exact = `<skill name="code-review" location="${canonicalSkill.path}">\nReferences are relative to ${canonicalSkill.baseDir}.\n\n${canonicalSkill.body}\n</skill>\n\nrequest`;
+  const malformedPrompts = [
     `<skill name="code-review" location="${canonicalSkill.path}">\n${canonicalSkill.body}\n</skill>\n\nrequest`,
     `<skill name="code-review" location="/tmp/copy/SKILL.md">\nReferences are relative to /tmp/copy.\n\n${canonicalSkill.body}\n</skill>\n\nrequest`,
     `<skill name="code-review" location="${canonicalSkill.path}">\nReferences are relative to ${canonicalSkill.baseDir}.\n\n# Canonical\n</skill>\n\nrequest`,
-  ]) {
+    exact.replace('name="code-review"', 'name="tdd"'),
+    exact.replace("\n\nrequest", "\n\na different request"),
+    `task prose\n${exact}`,
+    `${exact}\nassistant prose`,
+  ];
+  for (const prompt of malformedPrompts) {
     const { handlers } = extension();
     await handlers.get("session_start")?.({}, {});
     await handlers.get("input")?.({ text: "request" }, {});
@@ -1089,6 +1126,31 @@ test("copied, partial, alternate-path, and later Skill blocks do not establish p
     );
     assert.equal(aborts, 1);
   }
+
+  const later = extension();
+  await later.handlers.get("session_start")?.({}, {});
+  await later.handlers.get("input")?.({ text: "request" }, {});
+  await assert.rejects(
+    async () => later.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: malformedPrompts[0] },
+      { abort() {}, mode: "tui" },
+    ),
+    /canonical native code-review skill expansion/i,
+  );
+  await later.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: exact },
+    { abort() {}, mode: "tui" },
+  );
+  await assert.rejects(
+    later.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+      "later-refusal",
+      { status: "refused", report: "Later evidence cannot repair provenance." },
+      undefined,
+      undefined,
+      context("later-refusal"),
+    ),
+    /infrastructure previously failed/i,
+  );
 });
 
 test("real Pi rejects completed when a schema-invalid Agent sibling never enters execute", async () => {
@@ -1168,7 +1230,7 @@ test("real Pi rejects completed when a schema-invalid Agent sibling never enters
         loadJudgeSoul: async () => "judge",
         loadReviewerSoul: async () => "reviewer",
         loadReviewerTask: async () => "# Review task\nReview the fixed point.",
-        loadCanonicalReviewerSkill: async () => ({
+        loadCanonicalSkillBinding: async () => reviewerBinding({
           raw: rawSkill,
           path: canonicalPath,
           baseDir: dirname(canonicalPath),

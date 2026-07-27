@@ -8,6 +8,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -22,6 +23,36 @@ type Tool = {
   name: string;
   execute: (...args: any[]) => Promise<any>;
 };
+
+const tddPath = "/home/test/.agents/skills/tdd/SKILL.md";
+const tddBaseDir = "/home/test/.agents/skills/tdd";
+const tddBody = "# Canonical TDD\n\nRun red then green.";
+const tddContent = `References are relative to ${tddBaseDir}.\n\n${tddBody}`;
+
+function tddBinding(): CanonicalSkillBinding<"tdd"> {
+  return {
+    name: "tdd",
+    snapshot: {
+      raw: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}`,
+      path: tddPath,
+      baseDir: tddBaseDir,
+      body: tddBody,
+    },
+    invocation(originalRequest) {
+      return `/skill:tdd ${originalRequest}`;
+    },
+    captureExpansion(prompt, originalRequest) {
+      const exact = `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>\n\n${originalRequest}`;
+      return prompt === exact
+        ? { name: "tdd", location: tddPath, content: tddContent, userMessage: originalRequest }
+        : undefined;
+    },
+  };
+}
+
+function expandedTdd(request: string): string {
+  return `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>\n\n${request}`;
+}
 
 const usage = {
   input: 1,
@@ -294,6 +325,7 @@ test("judge role fails before adjudication when its soul is empty", async () => 
 
 test("coder plan loads its task without construction skill and returns planned", async () => {
   const loadedTasks: string[] = [];
+  let bindingLoads = 0;
   const harness = extensionHarness("coder", {
     "ak-coder-task": "/materials/task.md",
     "ak-coder-phase": "plan",
@@ -304,6 +336,10 @@ test("coder plan loads its task without construction skill and returns planned",
     loadCoderTask: async (path) => {
       loadedTasks.push(path);
       return "IMPLEMENT THE VERTICAL SLICE";
+    },
+    loadCanonicalSkillBinding: async () => {
+      bindingLoads += 1;
+      return tddBinding();
     },
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
@@ -316,6 +352,14 @@ test("coder plan loads its task without construction skill and returns planned",
   );
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
   assert.deepEqual(loadedTasks, ["/materials/task.md"]);
+  assert.equal(bindingLoads, 0);
+  assert.deepEqual(
+    await harness.handlers.get("input")?.(
+      { text: "Plan the approved seam.", source: "interactive" },
+      {},
+    ),
+    { action: "continue" },
+  );
   assert.match(prompt, /CODER LAW/);
   assert.match(prompt, /<coder_phase>\s*plan/);
   assert.match(prompt, /IMPLEMENT THE VERTICAL SLICE/);
@@ -346,94 +390,146 @@ test("coder plan loads its task without construction skill and returns planned",
   );
 });
 
-test("coder apply invokes native tdd and requires expansion evidence only for completion", async () => {
-  let transcript = "";
-  const harness = extensionHarness("coder", {
-    "ak-coder-task": "/materials/approved.md",
-    "ak-coder-phase": "apply",
-  });
-  createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadCoderSoul: async () => "CODER LAW",
-    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
-    transcriptFromContext: () => transcript,
-    auditSoulCompliance: async () => ({ status: "pass" }),
-  })(harness.pi as ExtensionAPI);
-
-  await harness.handlers.get("session_start")?.({}, {});
-  const inputResult = await harness.handlers.get("input")?.(
-    { text: "Apply the approved plan.", source: "interactive" },
-    {},
-  );
-  assert.deepEqual(inputResult, {
-    action: "transform",
-    text: "/skill:tdd Apply the approved plan.",
-  });
-  const promptResult = await harness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE" },
-    {},
-  );
-  const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
-  assert.match(prompt, /<coder_phase>\s*apply/);
-  assert.doesNotMatch(prompt, /coder_quality_skill/);
-
-  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
+test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
+  const request = "Apply the approved plan.";
   const completed = {
     status: "completed",
     report: "TDD evidence and self-check three are recorded here.",
   };
-  await assert.rejects(
-    tool.execute(
-      "coder-no-tdd",
+  const start = async () => {
+    const harness = extensionHarness("coder", {
+      "ak-coder-task": "/materials/approved.md",
+      "ak-coder-phase": "apply",
+    });
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "JUDGE LAW",
+      loadCoderSoul: async () => "CODER LAW",
+      loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
+      loadCanonicalSkillBinding: async () => tddBinding(),
+      transcriptFromContext: () => '<skill name="tdd" location="/copied/transcript">',
+      auditSoulCompliance: async () => ({ status: "pass" }),
+    })(harness.pi as ExtensionAPI);
+    await harness.handlers.get("session_start")?.({}, {});
+    return harness;
+  };
+  const submitCompleted = async (harness: Awaited<ReturnType<typeof start>>, id: string) => {
+    const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    return tool.execute(
+      id,
       completed,
       undefined,
       undefined,
-      toolCallContext([{ id: "coder-no-tdd", name: CODER_OUTPUT_TOOL_NAME }]),
+      toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
+    );
+  };
+
+  const acceptedHarness = await start();
+  assert.deepEqual(
+    await acceptedHarness.handlers.get("input")?.(
+      { text: request, source: "interactive", images: [{ type: "image", data: "fixture" }] },
+      {},
     ),
+    {
+      action: "transform",
+      text: `/skill:tdd ${request}`,
+      images: [{ type: "image", data: "fixture" }],
+    },
+  );
+  assert.deepEqual(
+    await acceptedHarness.handlers.get("input")?.(
+      { text: "A later message must not reinvoke TDD." },
+      {},
+    ),
+    { action: "continue" },
+  );
+  const promptResult = await acceptedHarness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: expandedTdd(request) },
+    { abort() {}, mode: "tui" },
+  );
+  const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
+  assert.match(prompt, /<coder_phase>\s*apply/);
+  assert.doesNotMatch(prompt, /coder_quality_skill/);
+  assert.deepEqual((await submitCompleted(acceptedHarness, "accepted")).details, completed);
+
+  const malformedPrompts = [
+    '<skill name="tdd" location="/copied/transcript">',
+    `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>\n\n${request}\nassistant prose`,
+    expandedTdd(request).replace(tddBody, "# Canonical TDD"),
+    expandedTdd(request).replace(tddPath, "/alternate/tdd/SKILL.md"),
+    expandedTdd(request).replace('name="tdd"', 'name="code-review"'),
+    expandedTdd(request).replace(request, "A different request."),
+    `task prose\n${expandedTdd(request)}`,
+  ];
+  for (const [index, malformed] of malformedPrompts.entries()) {
+    const harness = await start();
+    await harness.handlers.get("input")?.({ text: request }, {});
+    await harness.handlers.get("before_agent_start")?.(
+      { systemPrompt: "BASE", prompt: malformed },
+      { abort() {}, mode: "tui" },
+    );
+    await assert.rejects(
+      submitCompleted(harness, `malformed-${index}`),
+      /completed requires the Matt tdd skill to be expanded/i,
+    );
+  }
+
+  const laterHarness = await start();
+  await laterHarness.handlers.get("input")?.({ text: request }, {});
+  await laterHarness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: "not the expansion" },
+    { abort() {}, mode: "tui" },
+  );
+  await laterHarness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: expandedTdd(request) },
+    { abort() {}, mode: "tui" },
+  );
+  await assert.rejects(
+    submitCompleted(laterHarness, "later"),
     /completed requires the Matt tdd skill to be expanded/i,
   );
 
-  transcript = '<skill name="tdd" location="/home/.agents/skills/tdd/SKILL.md">';
-  const accepted = await tool.execute(
-    "coder-completed",
-    completed,
-    undefined,
-    undefined,
-    toolCallContext([
-      { id: "coder-completed", name: CODER_OUTPUT_TOOL_NAME },
-    ]),
+  const prefixedHarness = await start();
+  assert.deepEqual(
+    await prefixedHarness.handlers.get("input")?.(
+      { text: `/skill:tdd ${request}` },
+      {},
+    ),
+    { action: "continue" },
   );
-  assert.deepEqual(accepted.details, completed);
+  await prefixedHarness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: expandedTdd(request) },
+    { abort() {}, mode: "tui" },
+  );
+  assert.deepEqual((await submitCompleted(prefixedHarness, "prefixed")).details, completed);
 
-  transcript = "";
+  const refusedHarness = await start();
+  await refusedHarness.handlers.get("input")?.({ text: request }, {});
   const refused = {
     status: "refused",
     report: "The assignment contradicts its authority.",
   };
-  const refusal = await tool.execute(
+  const refusalTool = refusedHarness.tools.get(CODER_OUTPUT_TOOL_NAME);
+  assert.ok(refusalTool);
+  assert.deepEqual((await refusalTool.execute(
     "coder-refused",
     refused,
     undefined,
     undefined,
     toolCallContext([{ id: "coder-refused", name: CODER_OUTPUT_TOOL_NAME }]),
-  );
-  assert.deepEqual(refusal.details, refused);
-
+  )).details, refused);
   await assert.rejects(
-    tool.execute(
+    refusalTool.execute(
       "coder-planned",
       { status: "planned", report: "Planning after approval." },
       undefined,
       undefined,
-      toolCallContext([
-        { id: "coder-planned", name: CODER_OUTPUT_TOOL_NAME },
-      ]),
+      toolCallContext([{ id: "coder-planned", name: CODER_OUTPUT_TOOL_NAME }]),
     ),
     /Coder apply phase permits only completed or refused/,
   );
   await assert.rejects(
-    tool.execute(
+    refusalTool.execute(
       "coder-mixed",
       completed,
       undefined,

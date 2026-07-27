@@ -22,6 +22,8 @@ import {
   SessionManager,
   SettingsManager,
   defineTool,
+  parseSkillBlock,
+  stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -345,17 +347,18 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
   }
 });
 
-test("packaged coder apply expands the canonical Matt tdd skill and gates completion on transcript evidence", async () => {
+test("packaged coder apply proves the immediately following canonical native tdd expansion", async () => {
   const manifest = JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8"),
   ) as { files?: string[]; pi?: { extensions?: string[] } };
   const coderSoul = (await readFile(resolve(packageRoot, "souls/coder.md"), "utf8")).trim();
   const agentDir = await mkdtemp(resolve(tmpdir(), "ak-coder-integration-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = agentDir;
   const { path: tddSkillPath, raw: tddSkillRaw } = await writeTestSkill(
     agentDir,
     "tdd",
   );
-  const tddSkill = tddSkillRaw.trim();
   const taskPath = resolve(agentDir, "approved-task.md");
   const task = "# Approved task\n\nImplement the first vertical slice.";
   await writeFile(taskPath, task);
@@ -452,8 +455,12 @@ test("packaged coder apply expands the canonical Matt tdd skill and gates comple
             .filter((part) => part.type === "text")
             .map((part) => part.text)
             .join("\n");
-    assert.ok(userText.includes(`<skill name="tdd" location="${tddSkillPath}">`));
-    assert.ok(userText.includes(tddSkill.replace(/^---[\s\S]*?---\s*/, "").trim()));
+    assert.deepEqual(parseSkillBlock(userText), {
+      name: "tdd",
+      location: tddSkillPath,
+      content: `References are relative to ${dirname(tddSkillPath)}.\n\n${stripFrontmatter(tddSkillRaw).trim()}`,
+      userMessage: "Apply or refuse the approved task.",
+    });
     const accepted = sessionManager.getEntries().find(
       (entry) =>
         entry.type === "message" &&
@@ -465,6 +472,8 @@ test("packaged coder apply expands the canonical Matt tdd skill and gates comple
     assert.deepEqual(accepted.message.details, output);
   } finally {
     session.dispose();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     await rm(agentDir, { recursive: true, force: true });
   }
 });
