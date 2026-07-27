@@ -113,6 +113,26 @@ test("judge role fails before adjudication when its soul is empty", async () => 
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 });
 
+test("fixer role injects its own soul without exposing judge output", async () => {
+  const harness = extensionHarness("fixer");
+  const extension = createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadFixerSoul: async () => "FIXER LAW\nCreate one forward commit.",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  });
+
+  extension(harness.pi as ExtensionAPI);
+  await harness.handlers.get("session_start")?.({}, {});
+  const promptResult = await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE SYSTEM PROMPT" },
+    {},
+  );
+
+  assert.match((promptResult as { systemPrompt: string }).systemPrompt, /FIXER LAW/);
+  assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
+});
+
 test("judge role rejects incomplete status-specific verdicts before soul audit", async () => {
   let auditCalls = 0;
   const harness = extensionHarness("judge");
