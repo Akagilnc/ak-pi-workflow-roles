@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,6 +131,69 @@ async function runReviewerCli(
   }
 }
 
+async function runCoderSkillFailureCli(
+  mode: "print" | "json",
+  fixture: "missing" | "unreadable" | "empty",
+) {
+  const home = await mkdtemp(resolve(tmpdir(), "ak-coder-skill-fatal-cli-"));
+  const skillPath = resolve(home, ".agents/skills/tdd/SKILL.md");
+  const taskPath = resolve(home, "coder-task.md");
+  await writeFile(taskPath, "# Approved task\n\nApply the approved slice.\n");
+  if (fixture === "unreadable") {
+    await mkdir(skillPath, { recursive: true });
+  } else if (fixture === "empty") {
+    await mkdir(dirname(skillPath), { recursive: true });
+    await writeFile(skillPath, "---\nname: tdd\ndescription: empty fixture\n---\n\n");
+  }
+  const args = [
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--no-session",
+    "-e",
+    resolve(packageRoot, "extensions/role-runtime.ts"),
+    "-e",
+    resolve(packageRoot, "test/fixtures/coder-skill-failure-provider.ts"),
+    "--ak-role",
+    "coder",
+    "--ak-coder-phase",
+    "apply",
+    "--ak-coder-task",
+    taskPath,
+    "--provider",
+    "ak-coder-skill-failure",
+    "--model",
+    "faux-1",
+    ...(mode === "print" ? ["-p", "Apply."] : ["--mode", "json", "Apply."]),
+  ];
+  try {
+    return await new Promise<{ code: number | null; stdout: string; stderr: string }>(
+      (resolveResult, reject) => {
+        const child = spawn(piCli, args, {
+          cwd: packageRoot,
+          env: {
+            ...process.env,
+            HOME: home,
+            PI_CODING_AGENT_DIR: resolve(home, ".pi-agent"),
+            PI_OFFLINE: "1",
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+        child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+        child.on("error", reject);
+        child.on("close", (code) => resolveResult({ code, stdout, stderr }));
+      },
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
 test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
   for (const mode of ["print", "json"] as const) {
     const result = await runCli(mode);
@@ -144,6 +207,39 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
         /"toolName":"ak_judge_output".*"isError":true/,
       );
       assert.match(result.stdout, /"stopReason":"aborted"/);
+    }
+  }
+});
+
+test("unavailable canonical tdd is infrastructure failure in print and JSON", async () => {
+  for (const fixture of ["missing", "unreadable", "empty"] as const) {
+    for (const mode of ["print", "json"] as const) {
+      const result = await runCoderSkillFailureCli(mode, fixture);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      assert.equal(result.code, 1, `${fixture}/${mode} exits nonzero`);
+      assert.match(combined, /Canonical tdd Skill|Coder canonical tdd Skill binding was not initialized/);
+      assert.doesNotMatch(combined, /Coder report accepted/);
+      if (mode === "json") {
+        const events = result.stdout
+          .split("\n")
+          .filter((line) => line.trim().startsWith("{"))
+          .map((line) => JSON.parse(line));
+        const outputResults = events.filter((event) =>
+          event.type === "message_end" &&
+          event.message?.role === "toolResult" &&
+          event.message.toolName === "ak_coder_output"
+        );
+        assert.equal(
+          outputResults.some((event) => event.message.isError === false),
+          false,
+          `${fixture}/${mode} has no accepted Coder output`,
+        );
+        assert.equal(
+          outputResults.some((event) => event.message.details?.status !== undefined),
+          false,
+          `${fixture}/${mode} does not encode infrastructure as a receipt status`,
+        );
+      }
     }
   }
 });

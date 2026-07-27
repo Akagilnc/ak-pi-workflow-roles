@@ -11,7 +11,7 @@ import {
 
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
 import { createPiReviewerAuditor } from "../src/reviewer-auditor.ts";
-import { loadCanonicalReviewerSkill } from "../src/reviewer-skill.ts";
+import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { createPiSoulAuditor } from "../src/soul-auditor.ts";
 
@@ -38,7 +38,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadCoderTask: (path) => readFile(path, "utf8"),
     loadReviewerSoul: () => readFile(reviewerSoulPath, "utf8"),
     loadReviewerTask: (path) => readFile(path, "utf8"),
-    loadCanonicalReviewerSkill,
+    loadCanonicalSkillBinding,
     runReviewerAgent: reviewerAgent.runReviewerAgent,
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext,

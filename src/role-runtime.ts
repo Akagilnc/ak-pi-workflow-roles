@@ -23,8 +23,10 @@ export type {
   ReviewerUsage,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
-import type { CanonicalReviewerSkill } from "./reviewer-skill.ts";
-import { captureCanonicalReviewerSkillExpansion } from "./reviewer-skill.ts";
+import type {
+  AnyCanonicalSkillBinding,
+  CanonicalSkillBinding,
+} from "./canonical-skill-binding.ts";
 
 export const JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
@@ -310,7 +312,9 @@ export type RoleRuntimeDependencies = {
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
   loadReviewerTask?(path: string): Promise<string>;
-  loadCanonicalReviewerSkill?(): Promise<CanonicalReviewerSkill>;
+  loadCanonicalSkillBinding?(
+    name: "tdd" | "code-review",
+  ): Promise<AnyCanonicalSkillBinding>;
   runReviewerAgent?(
     input: {
       description: string;
@@ -386,9 +390,13 @@ export function createRoleRuntimeExtension(
     let activeFixerPhase: WorkerPhase | undefined;
     let activeCoderTask: string | undefined;
     let activeCoderPhase: WorkerPhase | undefined;
+    let activeCoderBinding: CanonicalSkillBinding<"tdd"> | undefined;
     let coderTddInvocationInjected = false;
+    let coderOriginalRequest: string | undefined;
+    let coderExpansionPending = false;
+    let coderExpansionCaptured = false;
     let activeReviewerTask: string | undefined;
-    let activeReviewerSkill: CanonicalReviewerSkill | undefined;
+    let activeReviewerBinding: CanonicalSkillBinding<"code-review"> | undefined;
     let reviewerOriginalRequest: string | undefined;
     let reviewerExpansionPending = false;
     const reviewerLedger = createReviewerExecutionLedger();
@@ -469,7 +477,7 @@ export function createRoleRuntimeExtension(
         }
         if (
           dependencies.loadReviewerTask === undefined ||
-          dependencies.loadCanonicalReviewerSkill === undefined ||
+          dependencies.loadCanonicalSkillBinding === undefined ||
           dependencies.runReviewerAgent === undefined ||
           dependencies.auditReviewerCompliance === undefined
         ) {
@@ -480,7 +488,15 @@ export function createRoleRuntimeExtension(
           throw new Error("Reviewer task is empty");
         }
         activeReviewerTask = rawReviewerTask;
-        activeReviewerSkill = await dependencies.loadCanonicalReviewerSkill();
+        const reviewerBinding = await dependencies.loadCanonicalSkillBinding(
+          "code-review",
+        );
+        if (reviewerBinding.name !== "code-review") {
+          throw new Error(
+            "Canonical Skill binding loader returned tdd for code-review",
+          );
+        }
+        activeReviewerBinding = reviewerBinding;
         if (reviewerToolsRegistered) return;
         reviewerToolsRegistered = true;
 
@@ -499,7 +515,7 @@ export function createRoleRuntimeExtension(
             if (
               activeRole !== "reviewer" ||
               activeReviewerTask === undefined ||
-              activeReviewerSkill === undefined ||
+              activeReviewerBinding === undefined ||
               dependencies.runReviewerAgent === undefined
             ) {
               throw new Error("Reviewer task and canonical Skill were not loaded");
@@ -555,7 +571,7 @@ export function createRoleRuntimeExtension(
               activeRole !== "reviewer" ||
               activeSoul === undefined ||
               activeReviewerTask === undefined ||
-              activeReviewerSkill === undefined ||
+              activeReviewerBinding === undefined ||
               dependencies.auditReviewerCompliance === undefined
             ) {
               throw new Error("Reviewer inputs were not loaded");
@@ -584,7 +600,7 @@ export function createRoleRuntimeExtension(
               audit = await dependencies.auditReviewerCompliance(
                 {
                   soul: activeSoul,
-                  canonicalSkill: activeReviewerSkill.raw,
+                  canonicalSkill: activeReviewerBinding.snapshot.raw,
                   task: activeReviewerTask,
                   record,
                   candidate: output,
@@ -657,6 +673,18 @@ export function createRoleRuntimeExtension(
         if (activeCoderTask.length === 0) {
           throw new Error("Coder task is empty");
         }
+        if (phase === "apply") {
+          if (dependencies.loadCanonicalSkillBinding === undefined) {
+            throw new Error("Coder canonical Skill binding loader is not configured");
+          }
+          const coderBinding = await dependencies.loadCanonicalSkillBinding("tdd");
+          if (coderBinding.name !== "tdd") {
+            throw new Error(
+              "Canonical Skill binding loader returned code-review for tdd",
+            );
+          }
+          activeCoderBinding = coderBinding;
+        }
         if (coderToolRegistered) return;
         coderToolRegistered = true;
         pi.registerTool({
@@ -694,9 +722,7 @@ export function createRoleRuntimeExtension(
             if (
               activeCoderPhase === "apply" &&
               output.status === "completed" &&
-              !/<skill name="tdd"\s/.test(
-                dependencies.transcriptFromContext(ctx),
-              )
+              !coderExpansionCaptured
             ) {
               throw new Error(
                 "Coder completed requires the Matt tdd skill to be expanded through Pi /skill:tdd",
@@ -853,7 +879,8 @@ export function createRoleRuntimeExtension(
         reviewerExpansionPending = true;
         return {
           action: "transform" as const,
-          text: `/skill:code-review ${event.text}`,
+          text: activeReviewerBinding?.invocation(event.text) ??
+            `/skill:code-review ${event.text}`,
           ...(event.images === undefined ? {} : { images: event.images }),
         };
       }
@@ -865,12 +892,16 @@ export function createRoleRuntimeExtension(
         return { action: "continue" as const };
       }
       coderTddInvocationInjected = true;
+      coderExpansionPending = true;
       if (event.text.startsWith("/skill:tdd")) {
+        coderOriginalRequest = event.text.slice("/skill:tdd".length).trim();
         return { action: "continue" as const };
       }
+      coderOriginalRequest = event.text.trim();
       return {
         action: "transform" as const,
-        text: `/skill:tdd ${event.text}`,
+        text: activeCoderBinding?.invocation(event.text) ??
+          `/skill:tdd ${event.text}`,
         ...(event.images === undefined ? {} : { images: event.images }),
       };
     });
@@ -943,21 +974,37 @@ export function createRoleRuntimeExtension(
       if (activeSoul === undefined) {
         throw new Error(`${activeRole} soul was not loaded`);
       }
+      if (activeRole === "coder" && activeCoderPhase === "apply") {
+        if (activeCoderBinding === undefined) {
+          failInfrastructure(
+            new Error("Coder canonical tdd Skill binding was not initialized"),
+            ctx,
+          );
+        }
+        if (coderExpansionPending) {
+          coderExpansionPending = false;
+          if (coderOriginalRequest !== undefined) {
+            coderExpansionCaptured = activeCoderBinding.captureExpansion(
+              event.prompt,
+              coderOriginalRequest,
+            ) !== undefined;
+          }
+        }
+      }
       if (activeRole === "reviewer" && reviewerExpansionPending) {
         reviewerExpansionPending = false;
         try {
           if (
-            activeReviewerSkill === undefined ||
+            activeReviewerBinding === undefined ||
             reviewerOriginalRequest === undefined
           ) {
             throw new Error(
               "Reviewer canonical Skill binding was not initialized",
             );
           }
-          const evidence = captureCanonicalReviewerSkillExpansion(
+          const evidence = activeReviewerBinding.captureExpansion(
             event.prompt,
             reviewerOriginalRequest,
-            activeReviewerSkill,
           );
           if (evidence === undefined) {
             throw new Error(
