@@ -71,13 +71,21 @@ export async function loadCanonicalSkillBinding(
     },
     captureExpansion(prompt, originalRequest) {
       const parsed = parseSkillBlock(prompt);
-      const expectedContent =
-        `References are relative to ${snapshot.baseDir}.\n\n${snapshot.body}`;
+      const matchedPath =
+        parsed?.location === configuredPath
+          ? configuredPath
+          : parsed?.location === snapshot.path
+            ? snapshot.path
+            : undefined;
+      const expectedContent = matchedPath === undefined
+        ? undefined
+        : `References are relative to ${dirname(matchedPath)}.\n\n${snapshot.body}`;
+      const userMessage = parsed?.userMessage ?? "";
       if (
         parsed?.name !== name ||
-        parsed.location !== snapshot.path ||
+        matchedPath === undefined ||
         parsed.content !== expectedContent ||
-        parsed.userMessage !== originalRequest
+        userMessage !== originalRequest
       ) {
         return undefined;
       }
@@ -85,7 +93,7 @@ export async function loadCanonicalSkillBinding(
         name,
         location: parsed.location,
         content: parsed.content,
-        userMessage: parsed.userMessage,
+        userMessage,
       });
     },
   };
