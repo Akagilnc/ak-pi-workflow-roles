@@ -7,7 +7,6 @@ import {
   type Model,
   type ProviderStreamOptions,
 } from "@earendil-works/pi-ai";
-import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -102,8 +101,7 @@ function readAuditDecision(response: AssistantMessage): SoulAuditResult {
 }
 
 export function createPiSoulAuditor(
-  runCompletion: AuditCompletion = (model, context, options) =>
-    complete(model, context, options),
+  runCompletion?: AuditCompletion,
 ): (input: SoulAuditInput, options: SoulAuditOptions) => Promise<SoulAuditResult> {
   return async (input, options) => {
     const model = options.context.model;
@@ -115,7 +113,20 @@ export function createPiSoulAuditor(
       throw new Error(`Soul compliance audit authentication failed: ${auth.error}`);
     }
 
-    const response = await runCompletion(
+    const completeAudit =
+      runCompletion ??
+      ((auditModel: Model<Api>, auditContext: Context, auditOptions: ProviderStreamOptions) => {
+        const provider = options.context.modelRegistry.getProvider(
+          auditModel.provider,
+        );
+        if (provider === undefined) {
+          throw new Error(
+            `Soul compliance audit provider not found: ${auditModel.provider}`,
+          );
+        }
+        return provider.stream(auditModel, auditContext, auditOptions).result();
+      });
+    const response = await completeAudit(
       model,
       {
         systemPrompt: [
