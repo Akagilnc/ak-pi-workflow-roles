@@ -65,6 +65,22 @@ function auditContext(
         if (authError) throw authError;
         return resolution;
       },
+      async getApiKeyAndHeaders(received: unknown) {
+        assert.equal(received, model);
+        if (resolution === undefined) {
+          return { ok: false as const, error: "provider is not configured" };
+        }
+        return {
+          ok: true as const,
+          ...(resolution.auth.apiKey === undefined
+            ? {}
+            : { apiKey: resolution.auth.apiKey }),
+          ...(resolution.auth.headers === undefined
+            ? {}
+            : { headers: resolution.auth.headers }),
+          ...(resolution.env === undefined ? {} : { env: resolution.env }),
+        };
+      },
     },
   } as unknown as ExtensionContext;
 }
