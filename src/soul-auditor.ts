@@ -2,7 +2,6 @@ import {
   StringEnum,
   uuidv7,
   type Api,
-  type AssistantMessage,
   type Context,
   type Model,
   type ProviderStreamOptions,
@@ -10,67 +9,19 @@ import {
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import type {
-  SoulAuditInput,
-  SoulAuditResult,
-} from "./role-runtime.ts";
+import {
+  prepareComplianceDispatch,
+  readComplianceDecision,
+  type ComplianceCompletion,
+} from "./compliance-transport.ts";
+import type { SoulAuditInput, SoulAuditResult } from "./role-runtime.ts";
 
 export const SOUL_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
-
-type AuditCompletion = (
-  model: Model<Api>,
-  context: Context,
-  options: ProviderStreamOptions,
-) => Promise<AssistantMessage>;
 
 export type SoulAuditOptions = {
   context: ExtensionContext;
   signal?: AbortSignal;
 };
-
-type AuditDispatch = {
-  model: Model<Api>;
-  auth: {
-    apiKey?: string;
-    headers?: Record<string, string>;
-    env?: Record<string, string>;
-  };
-};
-
-async function prepareAuditDispatch(
-  model: Model<Api>,
-  context: ExtensionContext,
-): Promise<AuditDispatch> {
-  const resolution = await context.modelRegistry
-    .getProviderAuth(model.provider)
-    .catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Soul compliance audit authentication failed: ${message}`, {
-        cause: error,
-      });
-    });
-  if (resolution === undefined) {
-    throw new Error(
-      `Soul compliance audit authentication failed: provider is not configured: ${model.provider}`,
-    );
-  }
-
-  const auth = await context.modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok) {
-    throw new Error(`Soul compliance audit authentication failed: ${auth.error}`);
-  }
-
-  return {
-    model: resolution.auth.baseUrl
-      ? { ...model, baseUrl: resolution.auth.baseUrl }
-      : model,
-    auth: {
-      ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
-      ...(auth.headers === undefined ? {} : { headers: auth.headers }),
-      ...(auth.env === undefined ? {} : { env: auth.env }),
-    },
-  };
-}
 
 const auditDecisionTool = {
   name: SOUL_AUDIT_TOOL_NAME,
@@ -89,71 +40,19 @@ const auditDecisionTool = {
   },
 };
 
-function readAuditDecision(response: AssistantMessage): SoulAuditResult {
-  const calls = response.content.filter(
-    (part) => part.type === "toolCall",
-  );
-  const call = calls[0];
-  if (
-    calls.length !== 1 ||
-    call?.type !== "toolCall" ||
-    call.name !== SOUL_AUDIT_TOOL_NAME
-  ) {
-    throw new Error(
-      "invalid soul audit decision: expected exactly one decision tool call",
-    );
-  }
-
-  const arguments_: unknown = call.arguments;
-  if (
-    typeof arguments_ !== "object" ||
-    arguments_ === null ||
-    Array.isArray(arguments_)
-  ) {
-    throw new Error("invalid soul audit decision: arguments must be an object");
-  }
-  const decision = arguments_ as Record<string, unknown>;
-  const keys = Object.keys(decision);
-  if (
-    keys.length !== 2 ||
-    !keys.includes("status") ||
-    !keys.includes("violations")
-  ) {
-    throw new Error("invalid soul audit decision: arguments must have exact keys");
-  }
-
-  const status = decision["status"];
-  const violations = decision["violations"];
-  if (
-    !Array.isArray(violations) ||
-    !violations.every(
-      (value): value is string =>
-        typeof value === "string" && value.trim().length > 0,
-    )
-  ) {
-    throw new Error("invalid soul audit decision: violations must be non-blank strings");
-  }
-  if (status === "pass" && violations.length === 0) {
-    return { status: "pass", usage: response.usage };
-  }
-  if (status === "revise" && violations.length > 0) {
-    return { status: "revise", violations, usage: response.usage };
-  }
-  throw new Error(
-    "invalid soul audit decision: pass requires no violations and revise requires violations",
-  );
-}
-
 export function createPiSoulAuditor(
-  runCompletion?: AuditCompletion,
+  runCompletion?: ComplianceCompletion,
 ): (input: SoulAuditInput, options: SoulAuditOptions) => Promise<SoulAuditResult> {
   return async (input, options) => {
     const model = options.context.model;
     if (model === undefined) {
       throw new Error("Soul compliance audit requires an active model");
     }
-    const dispatch = await prepareAuditDispatch(model, options.context);
-
+    const dispatch = await prepareComplianceDispatch(
+      model,
+      options.context,
+      "Soul compliance audit",
+    );
     const completeAudit =
       runCompletion ??
       ((auditModel: Model<Api>, auditContext: Context, auditOptions: ProviderStreamOptions) => {
@@ -208,7 +107,10 @@ export function createPiSoulAuditor(
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       },
     );
-
-    return readAuditDecision(response);
+    return readComplianceDecision(
+      response,
+      SOUL_AUDIT_TOOL_NAME,
+      "invalid soul audit decision",
+    );
   };
 }

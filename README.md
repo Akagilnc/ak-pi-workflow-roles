@@ -1,6 +1,6 @@
 # @ak/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, and `coder`.
+Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, and `reviewer`.
 
 ## Judge
 
@@ -108,6 +108,32 @@ Coder terminates through `ak_coder_output` with the same thin worker envelope:
 During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd`. Use `--no-skills --skill ~/.agents/skills/tdd/SKILL.md` to bind the canonical Matt TDD skill without name collisions. A `completed` receipt is rejected unless the session transcript contains Pi's expanded `<skill name="tdd" ...>` block; an evidence-bearing `refused` receipt does not require TDD or a commit.
 
 The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the Judge. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate.
+
+## Reviewer
+
+Reviewer performs a fixed-target, two-axis code review through the canonical external Skill at `~/.agents/skills/code-review/SKILL.md`. The package does not bundle or reproduce that method. Bind it explicitly and provide one non-empty opaque Markdown task:
+
+```bash
+pi --no-skills \
+  --skill ~/.agents/skills/code-review/SKILL.md \
+  --ak-role reviewer \
+  --ak-review-task /path/to/review-task.md \
+  -p "Review the requested fixed point."
+```
+
+The runtime transforms the first input through native `/skill:code-review` and verifies the complete expanded content against the canonical activation snapshot. Reviewer uses the active model/provider/auth and does not promise cross-model diversity.
+
+The parent tool surface is narrowed to registered `read`, `grep`, `find`, `ls`, `bash`, `Agent`, and `ak_reviewer_output`. Each `Agent` call runs in-process with an independent history and writable temporary clone detached at one session-pinned target. Source heads, tags, and remote-tracking refs are preserved in every clone, while usable remotes are removed. Children may create probes and fixtures but must distinguish them from reviewed-target facts; successful workspaces are deleted and useful failure state is retained diagnostically. This is operational isolation, not hostile-code security. Supply a sandbox or container when security isolation is required.
+
+Reviewer terminates with this exact receipt:
+
+```json
+{"status":"completed|refused","report":"non-empty Markdown"}
+```
+
+`completed` means the requested review was completed; it says nothing about findings, approval, routing, mergeability, or the next role. `refused` is an evidenced inability to establish the review target, authority, or factual premise. Infrastructure failures instead abort the action and exit nonzero. Both statuses undergo a separate active-model, no-operational-tool method-compliance audit; `revise` permits corrected resubmission.
+
+`reviewer-cmr` is reserved terminology for a possible future AK CMR cross-model-panel role. It is not implemented and Reviewer exposes no panel or model-selection machinery.
 
 ## Verdict contract
 
