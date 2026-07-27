@@ -29,6 +29,7 @@ function transcriptFromContext(ctx: ExtensionContext): string {
 export default createRoleRuntimeExtension({
   loadJudgeSoul: () => readFile(judgeSoulPath, "utf8"),
   loadFixerSoul: () => readFile(fixerSoulPath, "utf8"),
+  loadFixPacket: (path) => readFile(path, "utf8"),
   transcriptFromContext,
   auditSoulCompliance: createPiSoulAuditor(),
 });

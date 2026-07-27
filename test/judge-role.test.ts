@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+  FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
   createRoleRuntimeExtension,
   type JudgeVerdict,
@@ -30,7 +31,10 @@ const usage = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 } satisfies Usage;
 
-function extensionHarness(role: string | undefined) {
+function extensionHarness(
+  role: string | undefined,
+  extraFlags: Readonly<Record<string, string>> = {},
+) {
   const handlers = new Map<string, Handler>();
   const tools = new Map<string, Tool>();
   const flags = new Map<string, unknown>();
@@ -39,7 +43,8 @@ function extensionHarness(role: string | undefined) {
       flags.set(name, options);
     },
     getFlag(name: string) {
-      return name === "ak-role" ? role : undefined;
+      if (name === "ak-role") return role;
+      return extraFlags[name];
     },
     on(name: string, handler: Handler) {
       handlers.set(name, handler);
@@ -189,11 +194,18 @@ test("judge role fails before adjudication when its soul is empty", async () => 
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 });
 
-test("fixer role injects its own soul without exposing judge output", async () => {
-  const harness = extensionHarness("fixer");
+test("fixer role loads its Markdown packet and returns a thin report envelope", async () => {
+  const loadedPaths: string[] = [];
+  const harness = extensionHarness("fixer", {
+    "ak-fix-packet": "/materials/fix.md",
+  });
   const extension = createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW\nCreate one forward commit.",
+    loadFixPacket: async (path) => {
+      loadedPaths.push(path);
+      return "REPAIR PACKET\nFix the live findings.";
+    },
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   });
@@ -205,8 +217,32 @@ test("fixer role injects its own soul without exposing judge output", async () =
     {},
   );
 
-  assert.match((promptResult as { systemPrompt: string }).systemPrompt, /FIXER LAW/);
+  assert.deepEqual(loadedPaths, ["/materials/fix.md"]);
+  const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
+  assert.match(prompt, /FIXER LAW/);
+  assert.match(prompt, /REPAIR PACKET/);
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
+
+  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  assert.deepEqual(
+    (await tool.execute(
+      "fixer-call",
+      {
+        status: "refused",
+        report: "The requested guard contradicts the authority.",
+        commitSha: "abc123",
+      },
+      undefined,
+      undefined,
+      {},
+    )).details,
+    {
+      status: "refused",
+      report: "The requested guard contradicts the authority.",
+      commitSha: "abc123",
+    },
+  );
 });
 
 test("judge role rejects mixed and blank verdict shapes before soul audit", async (t) => {
