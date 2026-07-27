@@ -22,6 +22,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { createReviewerRoleRuntime } from "../src/reviewer-role.ts";
 import {
   AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
@@ -73,6 +74,7 @@ function reviewerBinding(
 function harness() {
   const handlers = new Map<string, (event: any, ctx: any) => any>();
   const tools = new Map<string, any>();
+  const registeredFlags: Array<[string, unknown]> = [];
   const activeToolSets: string[][] = [];
   const all = new Set(["read", "grep", "find", "ls", "bash", "write", "edit", "other"]);
   const flags: Record<string, string> = {
@@ -80,14 +82,14 @@ function harness() {
     "ak-review-task": "/task.md",
   };
   const pi = {
-    registerFlag() {},
+    registerFlag(name: string, options: unknown) { registeredFlags.push([name, options]); },
     getFlag(name: string) { return flags[name]; },
     on(name: string, fn: (event: any, ctx: any) => any) { handlers.set(name, fn); },
     registerTool(tool: any) { tools.set(tool.name, tool); all.add(tool.name); },
     getAllTools() { return [...all].map((name) => ({ name })); },
     setActiveTools(names: string[]) { activeToolSets.push(names); },
   };
-  return { pi, handlers, tools, activeToolSets };
+  return { pi, handlers, tools, activeToolSets, registeredFlags };
 }
 
 function context(
@@ -159,6 +161,44 @@ async function establishExpansion(handlers: Map<string, (event: any, ctx: any) =
   }, { abort() {}, mode: "tui" });
 }
 
+test("focused Reviewer controller owns its flag, tools, hooks, narrowing, and prompt", async () => {
+  const h = harness();
+  const runtime = createReviewerRoleRuntime(
+    h.pi as unknown as ExtensionAPI,
+    {
+      loadSoul: async () => " REVIEWER LAW ",
+      loadTask: async () => "RAW TASK\n",
+      loadCanonicalSkillBinding: async () => reviewerBinding(),
+      runAgent: async () => ({ report: "axis", workspaceDisposition: "deleted" }),
+      auditCompliance: async () => ({ status: "pass" }),
+    },
+    { failInfrastructure(error) { throw error; } },
+  );
+
+  await runtime.activate();
+
+  assert.deepEqual(h.registeredFlags, [["ak-review-task", {
+    description: "Opaque Markdown review task assigned to the reviewer role",
+    type: "string",
+  }]]);
+  assert.deepEqual([...h.tools.keys()], [AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME]);
+  assert.deepEqual(h.activeToolSets, [[
+    "read", "grep", "find", "ls", "bash", AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME,
+  ]]);
+  for (const hook of [
+    "input", "before_agent_start", "tool_execution_start", "tool_execution_end",
+    "tool_call", "tool_result", "session_shutdown",
+  ]) assert.ok(h.handlers.has(hook), hook);
+  const prompt = await h.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: "idle" },
+    {},
+  );
+  assert.equal(
+    prompt.systemPrompt,
+    "BASE\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<review_task>\nRAW TASK\n\n</review_task>",
+  );
+});
+
 test("reviewer loads opaque input and exposes only its exact seven-tool surface", async () => {
   const { handlers, tools, activeToolSets } = extension();
   await handlers.get("session_start")?.({}, {});
@@ -172,8 +212,35 @@ test("reviewer loads opaque input and exposes only its exact seven-tool surface"
   );
   assert.match(prompt.systemPrompt, /REVIEWER LAW/);
   assert.match(prompt.systemPrompt, /# Opaque request/);
-  assert.ok(tools.has(AGENT_TOOL_NAME));
-  assert.ok(tools.has(REVIEWER_OUTPUT_TOOL_NAME));
+  assert.deepEqual([...tools.keys()], [AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME]);
+  assert.deepEqual({
+    label: tools.get(AGENT_TOOL_NAME).label,
+    description: tools.get(AGENT_TOOL_NAME).description,
+    promptSnippet: tools.get(AGENT_TOOL_NAME).promptSnippet,
+    promptGuidelines: tools.get(AGENT_TOOL_NAME).promptGuidelines,
+    executionMode: tools.get(AGENT_TOOL_NAME).executionMode,
+  }, {
+    label: "Agent",
+    description: "Run one general-purpose review leg in an isolated writable clone at the pinned reviewed target.",
+    promptSnippet: "Run an isolated review leg",
+    promptGuidelines: [
+      "Use Agent for the independent review legs required by the expanded canonical code-review Skill.",
+    ],
+    executionMode: "parallel",
+  });
+  assert.deepEqual({
+    label: tools.get(REVIEWER_OUTPUT_TOOL_NAME).label,
+    description: tools.get(REVIEWER_OUTPUT_TOOL_NAME).description,
+    promptSnippet: tools.get(REVIEWER_OUTPUT_TOOL_NAME).promptSnippet,
+    promptGuidelines: tools.get(REVIEWER_OUTPUT_TOOL_NAME).promptGuidelines,
+  }, {
+    label: "Reviewer Output",
+    description: "Submit the completed review or an evidence-bearing refusal. Method compliance is audited before acceptance.",
+    promptSnippet: "Submit the final Reviewer receipt",
+    promptGuidelines: [
+      `Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action for the reviewer role.`,
+    ],
+  });
   assert.equal(tools.get(AGENT_TOOL_NAME).executionMode, "parallel");
   assert.deepEqual(Object.keys(tools.get(AGENT_TOOL_NAME).parameters.properties), [
     "subagent_type", "description", "prompt",
@@ -1325,6 +1392,165 @@ test("real Pi rejects completed when a schema-invalid Agent sibling never enters
   }
 });
 
+test("Reviewer lifecycle chronology preserves Skill, Agent, bash, audit, cleanup, and termination", async () => {
+  const chronology: string[] = [];
+  const baseBinding = reviewerBinding();
+  const fixture = extension({
+    loadReviewerSoul: async () => { chronology.push("load soul"); return "reviewer"; },
+    loadReviewerTask: async () => { chronology.push("load task"); return "raw task"; },
+    loadCanonicalSkillBinding: async () => {
+      chronology.push("load binding");
+      return {
+        ...baseBinding,
+        invocation(request: string) {
+          chronology.push("Skill invocation");
+          return baseBinding.invocation(request);
+        },
+        captureExpansion(prompt: string, request: string) {
+          chronology.push("Skill capture");
+          return baseBinding.captureExpansion(prompt, request);
+        },
+      };
+    },
+    runReviewerAgent: async () => {
+      chronology.push("child result");
+      return { report: "axis report", usage, workspaceDisposition: "deleted" };
+    },
+    auditReviewerCompliance: async (input: ReviewerAuditInput) => {
+      chronology.push("output validation and audit");
+      assert.equal(input.record.skillEvidence?.name, "code-review");
+      assert.equal(input.record.agentAttempts[0]?.status, "successful");
+      assert.deepEqual(input.record.bashEvidence, [{
+        toolCallId: "bash-proof",
+        command: "git diff --check",
+        result: "clean",
+        isError: false,
+      }]);
+      return { status: "pass" as const, usage };
+    },
+    shutdownReviewerAgent: async () => { chronology.push("shutdown"); },
+  });
+  await fixture.handlers.get("session_start")?.({}, {});
+  const request = "Review the requested fixed point.";
+  await fixture.handlers.get("input")?.({ text: request }, {});
+  await fixture.handlers.get("before_agent_start")?.({
+    systemPrompt: "BASE",
+    prompt: `<skill name="code-review" location="${canonicalSkill.path}">\nReferences are relative to ${canonicalSkill.baseDir}.\n\n${canonicalSkill.body}\n</skill>\n\n${request}`,
+  }, { abort() {}, mode: "tui" });
+  const parameters = {
+    subagent_type: "general-purpose",
+    description: "Chronology",
+    prompt: "Inspect.",
+  };
+  const agentContext = context("chronology-agent", AGENT_TOOL_NAME, [{
+    id: "chronology-agent",
+    name: AGENT_TOOL_NAME,
+    arguments: parameters,
+  }]);
+  await fixture.handlers.get("tool_execution_start")?.({
+    toolCallId: "chronology-agent",
+    toolName: AGENT_TOOL_NAME,
+    args: parameters,
+  }, agentContext);
+  await fixture.tools.get(AGENT_TOOL_NAME).execute(
+    "chronology-agent", parameters, undefined, undefined, agentContext,
+  );
+  await fixture.handlers.get("tool_execution_end")?.({
+    toolCallId: "chronology-agent",
+    toolName: AGENT_TOOL_NAME,
+    isError: false,
+    result: "axis report",
+  }, {});
+  await fixture.handlers.get("tool_call")?.({
+    toolName: "bash",
+    toolCallId: "bash-proof",
+    input: { command: "git diff --check" },
+  }, {});
+  await fixture.handlers.get("tool_result")?.({
+    toolName: "bash",
+    toolCallId: "bash-proof",
+    content: [{ type: "text", text: "clean" }],
+    isError: false,
+  }, {});
+  const accepted = await fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+    "chronology-output",
+    { status: "completed", report: "Chronological evidence." },
+    undefined,
+    undefined,
+    context("chronology-output"),
+  );
+
+  assert.deepEqual(chronology, [
+    "load soul",
+    "load task",
+    "load binding",
+    "Skill invocation",
+    "Skill capture",
+    "child result",
+    "output validation and audit",
+    "shutdown",
+  ]);
+  assert.deepEqual(accepted.content, [{ type: "text", text: "Reviewer report accepted" }]);
+  assert.deepEqual(accepted.usage, usage);
+  assert.equal(accepted.terminate, true);
+});
+
+test("Reviewer output accepts both statuses and rejects malformed or unknown envelopes before audit", async () => {
+  let audits = 0;
+  const fixture = extension({
+    auditReviewerCompliance: async () => {
+      audits += 1;
+      return { status: "pass" as const };
+    },
+  });
+  await fixture.handlers.get("session_start")?.({}, {});
+  const tool = fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME);
+  for (const [index, output] of [
+    { status: "completed", report: "Completed evidence." },
+    { status: "refused", report: "Refusal evidence." },
+  ].entries()) {
+    if (output.status === "completed") {
+      await establishExpansion(fixture.handlers);
+      const parameters = {
+        subagent_type: "general-purpose",
+        description: "Axis",
+        prompt: "Inspect.",
+      };
+      await fixture.tools.get(AGENT_TOOL_NAME).execute(
+        "legal-axis",
+        parameters,
+        undefined,
+        undefined,
+        context("legal-axis", AGENT_TOOL_NAME, [{
+          id: "legal-axis", name: AGENT_TOOL_NAME, arguments: parameters,
+        }]),
+      );
+    }
+    const id = `legal-${index}`;
+    assert.deepEqual((await tool.execute(
+      id, output, undefined, undefined, context(id),
+    )).details, output);
+  }
+  assert.equal(audits, 2);
+
+  const malformed: unknown[] = [
+    null,
+    [],
+    { status: "unknown", report: "evidence" },
+    { status: "refused", report: " \n" },
+    { status: "refused" },
+    { status: "refused", report: "evidence", route: "judge" },
+  ];
+  for (const [index, output] of malformed.entries()) {
+    const id = `malformed-reviewer-${index}`;
+    await assert.rejects(
+      tool.execute(id, output, undefined, undefined, context(id)),
+      /Reviewer output requires/,
+    );
+  }
+  assert.equal(audits, 2);
+});
+
 test("Reviewer schema is a thin exact non-routing envelope and output must be sole", async () => {
   const { handlers, tools } = extension();
   await handlers.get("session_start")?.({}, {});
@@ -1333,17 +1559,29 @@ test("Reviewer schema is a thin exact non-routing envelope and output must be so
   assert.equal(schema.additionalProperties, false);
 
   const tool = tools.get(REVIEWER_OUTPUT_TOOL_NAME);
-  await assert.rejects(
-    tool.execute(
-      "mixed",
-      { status: "refused", report: "No authority." },
-      undefined,
-      undefined,
-      context("mixed", REVIEWER_OUTPUT_TOOL_NAME, [
-        { id: "mixed", name: REVIEWER_OUTPUT_TOOL_NAME },
-        { id: "other", name: "read" },
-      ]),
-    ),
-    /sole final tool call/,
-  );
+  for (const ctx of [
+    context("mixed", REVIEWER_OUTPUT_TOOL_NAME, [
+      { id: "mixed", name: REVIEWER_OUTPUT_TOOL_NAME },
+      { id: "other", name: "read" },
+    ]),
+    context("missing", REVIEWER_OUTPUT_TOOL_NAME, []),
+    context("wrong-id"),
+    context("wrong-name", "read"),
+    (() => ({
+      sessionManager: SessionManager.inMemory(),
+      abort() {},
+      mode: "tui",
+    } as unknown as ExtensionContext))(),
+  ]) {
+    await assert.rejects(
+      tool.execute(
+        "mixed",
+        { status: "refused", report: "No authority." },
+        undefined,
+        undefined,
+        ctx,
+      ),
+      /sole final tool call/,
+    );
+  }
 });

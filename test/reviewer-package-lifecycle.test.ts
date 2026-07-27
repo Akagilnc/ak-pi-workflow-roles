@@ -88,10 +88,25 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
     )).stdout) as Array<{ filename: string; files: Array<{ path: string }> }>;
     const tarball = resolve(temp, pack[0]!.filename);
     const paths = pack[0]!.files.map((file) => file.path);
-    assert.ok(paths.includes("souls/reviewer.md"));
-    assert.ok(paths.includes("src/reviewer-agent.ts"));
-    assert.ok(paths.includes("src/reviewer-execution-ledger.ts"));
-    assert.ok(paths.includes("src/canonical-skill-binding.ts"));
+    assert.deepEqual(paths, [
+      "README.md",
+      "extensions/role-runtime.ts",
+      "package.json",
+      "souls/coder.md",
+      "souls/fixer.md",
+      "souls/judge.md",
+      "souls/reviewer.md",
+      "src/canonical-skill-binding.ts",
+      "src/compliance-transport.ts",
+      "src/judge-role.ts",
+      "src/reviewer-agent.ts",
+      "src/reviewer-auditor.ts",
+      "src/reviewer-execution-ledger.ts",
+      "src/reviewer-role.ts",
+      "src/role-runtime.ts",
+      "src/soul-auditor.ts",
+      "src/worker-role.ts",
+    ]);
     assert.equal(paths.includes("src/reviewer-skill.ts"), false);
     assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
     const archiveText = (await exec("tar", ["-xOf", tarball], {

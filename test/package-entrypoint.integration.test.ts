@@ -101,11 +101,14 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
     /Extension CLI Flags:\n([\s\S]*?)\n\nExamples:/,
   )?.[1];
 
-  assert.ok(extensionHelp, "Pi renders extension CLI flags");
-  assert.match(
-    extensionHelp,
-    /--ak-fixer-phase <value>\s+Fixer phase: plan \(inspect and propose a repair plan; no edits or commits\) or apply \(execute the approved plan, verify, and commit when repaired\)/,
-  );
+  assert.equal(extensionHelp, [
+    "  --ak-role <value>           Activate a packaged workflow role: judge, fixer, coder, or reviewer",
+    "  --ak-fix-packet <value>     Markdown repair packet assigned to the fixer role",
+    "  --ak-fixer-phase <value>    Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
+    "  --ak-coder-task <value>     Markdown task assigned to the coder role",
+    "  --ak-coder-phase <value>    Coder phase: plan (inspect and propose an implementation plan; no edits or commits) or apply (execute the approved plan and verify the first implementation)",
+    "  --ak-review-task <value>    Opaque Markdown review task assigned to the reviewer role",
+  ].join("\n") + "\n");
 });
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
