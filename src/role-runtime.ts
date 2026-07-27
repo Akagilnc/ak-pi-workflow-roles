@@ -239,7 +239,7 @@ export function createRoleRuntimeExtension(
     });
     pi.registerFlag("ak-fixer-phase", {
       description:
-        "Fixer phase: plan (plan only; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
+        "Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
       type: "string",
     });
 

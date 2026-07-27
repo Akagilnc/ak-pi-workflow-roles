@@ -87,7 +87,7 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
   assert.ok(extensionHelp, "Pi renders extension CLI flags");
   assert.match(
     extensionHelp,
-    /--ak-fixer-phase <value>\s+Fixer phase: plan \(plan only; no edits or commits\) or apply \(execute the approved plan, verify, and commit when repaired\)/,
+    /--ak-fixer-phase <value>\s+Fixer phase: plan \(inspect and propose a repair plan; no edits or commits\) or apply \(execute the approved plan, verify, and commit when repaired\)/,
   );
 });
 
