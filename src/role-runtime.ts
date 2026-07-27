@@ -693,10 +693,11 @@ export function createRoleRuntimeExtension(
         ) {
           throw new Error("Reviewer runtime dependencies are not configured");
         }
-        activeReviewerTask = (await dependencies.loadReviewerTask(taskPath)).trim();
-        if (activeReviewerTask.length === 0) {
+        const rawReviewerTask = await dependencies.loadReviewerTask(taskPath);
+        if (rawReviewerTask.trim().length === 0) {
           throw new Error("Reviewer task is empty");
         }
+        activeReviewerTask = rawReviewerTask;
         activeReviewerSkill = await dependencies.loadCanonicalReviewerSkill();
         if (reviewerToolsRegistered) return;
         reviewerToolsRegistered = true;

@@ -153,6 +153,33 @@ test("reviewer loads opaque input and exposes only its exact seven-tool surface"
   assert.equal(tools.get(AGENT_TOOL_NAME).parameters.additionalProperties, false);
 });
 
+test("reviewer preserves leading indentation and terminal newline in prompts and audits", async () => {
+  const rawTask = "    # Opaque request\nReview fixed point main.\n";
+  const { handlers, tools, audits } = extension({
+    loadReviewerTask: async () => rawTask,
+  });
+  await handlers.get("session_start")?.({}, {});
+
+  const prompt = await handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: "review" },
+    {},
+  );
+  assert.equal(
+    prompt.systemPrompt,
+    `BASE\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<review_task>\n${rawTask}\n</review_task>`,
+  );
+
+  await tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+    "done",
+    { status: "refused", report: "The target cannot be established." },
+    undefined,
+    undefined,
+    context("done"),
+  );
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0]?.task, rawTask);
+});
+
 test("completed requires exact native Skill provenance and successful Agent evidence", async () => {
   const { handlers, tools, audits } = extension();
   await handlers.get("session_start")?.({}, {});

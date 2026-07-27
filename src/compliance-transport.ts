@@ -1,12 +1,15 @@
-import type {
-  Api,
-  AssistantMessage,
-  Context,
-  Model,
-  ProviderStreamOptions,
-  Usage,
+import {
+  StringEnum,
+  uuidv7,
+  type Api,
+  type AssistantMessage,
+  type Context,
+  type Model,
+  type ProviderStreamOptions,
+  type Usage,
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 export type ComplianceCompletion = (
   model: Model<Api>,
@@ -26,6 +29,27 @@ export type ComplianceDispatch = {
     env?: Record<string, string>;
   };
 };
+
+export function createComplianceDecisionTool(
+  name: string,
+  description: string,
+) {
+  return {
+    name,
+    description,
+    parameters: Type.Object(
+      {
+        status: StringEnum(["pass", "revise"] as const),
+        violations: Type.Array(Type.String({ minLength: 1 })),
+      },
+      { additionalProperties: false },
+    ),
+    constrainedSampling: {
+      type: "json_schema" as const,
+      strict: "prefer" as const,
+    },
+  };
+}
 
 export async function prepareComplianceDispatch(
   model: Model<Api>,
@@ -113,5 +137,65 @@ export function readComplianceDecision(
   }
   throw new Error(
     `${invalidLabel}: pass requires no violations and revise requires violations`,
+  );
+}
+
+export async function runComplianceAudit(options: {
+  tool: ReturnType<typeof createComplianceDecisionTool>;
+  systemPrompt: string;
+  serializedInput: string;
+  roleLabel: string;
+  invalidDecisionLabel: string;
+  runCompletion?: ComplianceCompletion;
+  context: ExtensionContext;
+  signal?: AbortSignal;
+}): Promise<ComplianceDecision> {
+  const model = options.context.model;
+  if (model === undefined) {
+    throw new Error(`${options.roleLabel} requires an active model`);
+  }
+  const dispatch = await prepareComplianceDispatch(
+    model,
+    options.context,
+    options.roleLabel,
+  );
+  const complete =
+    options.runCompletion ??
+    ((auditModel: Model<Api>, context: Context, request: ProviderStreamOptions) => {
+      const provider = options.context.modelRegistry.getProvider(
+        auditModel.provider,
+      );
+      if (provider === undefined) {
+        throw new Error(
+          `${options.roleLabel} provider not found: ${auditModel.provider}`,
+        );
+      }
+      return provider.stream(auditModel, context, request).result();
+    });
+  const response = await complete(
+    dispatch.model,
+    {
+      systemPrompt: options.systemPrompt,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: options.serializedInput }],
+          timestamp: Date.now(),
+        },
+      ],
+      tools: [options.tool],
+    },
+    {
+      ...dispatch.auth,
+      maxTokens: 2048,
+      cacheRetention: "none",
+      sessionId: uuidv7(),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    },
+  );
+  return readComplianceDecision(
+    response,
+    options.tool.name,
+    options.invalidDecisionLabel,
   );
 }

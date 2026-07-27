@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+import { writeTestSkill } from "./helpers/test-skill.ts";
 
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const piCli = resolve(packageRoot, "node_modules/.bin/pi");
@@ -74,12 +76,16 @@ async function runReviewerCli(
   stage: ReviewerFailureStage,
 ) {
   const agentDir = await mkdtemp(resolve(tmpdir(), "ak-reviewer-fatal-cli-"));
+  const { path: canonicalSkillPath } = await writeTestSkill(
+    agentDir,
+    "code-review",
+  );
   const cwd = stage === "child-preparation" ? agentDir : packageRoot;
   const args = [
     "--no-extensions",
     "--no-skills",
     "--skill",
-    resolve(homedir(), ".agents/skills/code-review/SKILL.md"),
+    canonicalSkillPath,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
@@ -105,6 +111,7 @@ async function runReviewerCli(
           cwd,
           env: {
             ...process.env,
+            HOME: agentDir,
             AK_REVIEWER_FAILURE_STAGE: stage,
             PI_CODING_AGENT_DIR: agentDir,
             PI_OFFLINE: "1",
