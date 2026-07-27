@@ -80,7 +80,7 @@ Fixer terminates through `ak_fixer_output`:
 - `continue` with non-empty `fix.summary`
 - `escalate` with `decisionGate.question` and non-empty `decisionGate.options`
 
-Any verdict may additionally carry an optional non-empty `request` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields. It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
+Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields. It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
 
 Workflow ordering and routing belong to a separate orchestrator.
 
