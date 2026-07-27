@@ -90,6 +90,7 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
     const paths = pack[0]!.files.map((file) => file.path);
     assert.ok(paths.includes("souls/reviewer.md"));
     assert.ok(paths.includes("src/reviewer-agent.ts"));
+    assert.ok(paths.includes("src/reviewer-execution-ledger.ts"));
     assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
     const archiveText = (await exec("tar", ["-xOf", tarball], {
       maxBuffer: 5 * 1024 * 1024,

@@ -6,10 +6,23 @@ import type {
 import { Type, type Static } from "typebox";
 
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import type {
-  CanonicalReviewerSkill,
-  ReviewerSkillEvidence,
-} from "./reviewer-skill.ts";
+import {
+  createReviewerExecutionLedger,
+  type ReviewerAgentAttempt,
+  type ReviewerAgentPersistedEvidence,
+  type ReviewerAgentResult,
+  type ReviewerExecutionRecord,
+} from "./reviewer-execution-ledger.ts";
+export type {
+  ReviewerAgentAttempt,
+  ReviewerAgentInvocationBatch,
+  ReviewerAgentResult,
+  ReviewerBashEvidence,
+  ReviewerExecutionRecord,
+  ReviewerTargetSnapshot,
+  ReviewerWorkspaceDisposition,
+} from "./reviewer-execution-ledger.ts";
+import type { CanonicalReviewerSkill } from "./reviewer-skill.ts";
 import { captureCanonicalReviewerSkillExpansion } from "./reviewer-skill.ts";
 
 export const JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
@@ -82,56 +95,6 @@ export type CoderOutput = WorkerOutput;
 export type ReviewerOutput = {
   status: "completed" | "refused";
   report: string;
-};
-
-export type ReviewerTargetSnapshot = {
-  repositoryRoot: string;
-  targetHead: string;
-  refs: Readonly<Record<string, string>>;
-};
-
-export type ReviewerWorkspaceDisposition =
-  | "deleted"
-  | { retained: string };
-
-export type ReviewerAgentResult = {
-  report: string;
-  usage?: Usage;
-  targetSnapshot?: ReviewerTargetSnapshot;
-  workspaceDisposition: ReviewerWorkspaceDisposition;
-};
-
-export type ReviewerAgentAttempt = {
-  id: string;
-  description: string;
-  prompt: string;
-  status: "running" | "successful" | "failed";
-  targetSnapshot?: ReviewerTargetSnapshot;
-  report?: string;
-  usage?: Usage;
-  diagnostics?: string;
-  workspaceDisposition?: ReviewerWorkspaceDisposition;
-};
-
-export type ReviewerAgentInvocationBatch = {
-  assistantSessionEntryId: string;
-  executionMode: "parallel";
-  agentToolCallIds: readonly string[];
-};
-
-export type ReviewerBashEvidence = {
-  toolCallId: string;
-  command: string;
-  result?: string;
-  isError?: boolean;
-};
-
-export type ReviewerExecutionRecord = {
-  skillEvidence?: ReviewerSkillEvidence;
-  targetSnapshot?: ReviewerTargetSnapshot;
-  bashEvidence: ReviewerBashEvidence[];
-  agentAttempts: ReviewerAgentAttempt[];
-  agentInvocationBatches: ReviewerAgentInvocationBatch[];
 };
 
 export type ReviewerAuditInput = {
@@ -377,59 +340,23 @@ function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
   throw error;
 }
 
-type CapturedReviewerAgentInvocationBatch = {
-  batch: ReviewerAgentInvocationBatch;
-  calls: readonly {
-    id: string;
-    arguments: unknown;
-  }[];
-};
-
-function captureReviewerAgentInvocationBatch(
-  toolCallId: string,
+function reviewerAgentPersistedEvidence(
   ctx: ExtensionContext,
-): CapturedReviewerAgentInvocationBatch {
+): ReviewerAgentPersistedEvidence {
   const leaf = ctx.sessionManager.getLeafEntry();
-  if (
-    leaf?.type !== "message" ||
-    leaf.message.role !== "assistant" ||
-    !Array.isArray(leaf.message.content)
-  ) {
-    throw new Error(
-      "Reviewer Agent invocation provenance failed: the persisted session leaf is not an assistant message",
-    );
-  }
-  const calls = leaf.message.content.flatMap((part) =>
-    part.type === "toolCall" && part.name === AGENT_TOOL_NAME
-      ? [{ id: part.id, arguments: part.arguments }]
-      : [],
-  );
-  const agentToolCallIds = calls.map((call) => call.id);
-  if (agentToolCallIds.filter((id) => id === toolCallId).length !== 1) {
-    throw new Error(
-      `Reviewer Agent invocation provenance failed: current call ${toolCallId} does not occur exactly once in the persisted assistant message`,
-    );
-  }
-  if (new Set(agentToolCallIds).size !== agentToolCallIds.length) {
-    throw new Error(
-      "Reviewer Agent invocation provenance failed: persisted sibling Agent call IDs are not unique",
-    );
+  if (leaf === undefined) return { kind: "unavailable" };
+  if (leaf.type !== "message" || leaf.message.role !== "assistant") {
+    return { kind: "non-assistant" };
   }
   return {
-    batch: Object.freeze({
-      assistantSessionEntryId: leaf.id,
-      executionMode: "parallel" as const,
-      agentToolCallIds: Object.freeze([...agentToolCallIds]),
-    }),
-    calls: Object.freeze(calls.map((call) => Object.freeze({ ...call }))),
+    kind: "assistant",
+    entryId: leaf.id,
+    calls: leaf.message.content.flatMap((part) =>
+      part.type === "toolCall" && part.name === AGENT_TOOL_NAME
+        ? [{ id: part.id, arguments: part.arguments }]
+        : [],
+    ),
   };
-}
-
-function reviewerAgentArgument(
-  value: unknown,
-  key: "description" | "prompt",
-): string {
-  return isRecord(value) && typeof value[key] === "string" ? value[key] : "";
 }
 
 function toolExecutionDiagnostic(result: unknown): string {
@@ -463,154 +390,8 @@ export function createRoleRuntimeExtension(
     let activeReviewerSkill: CanonicalReviewerSkill | undefined;
     let reviewerOriginalRequest: string | undefined;
     let reviewerExpansionPending = false;
-    let reviewerSkillEvidence: ReviewerSkillEvidence | undefined;
-    const reviewerAgentAttempts: ReviewerAgentAttempt[] = [];
-    const reviewerAgentInvocationBatches: ReviewerAgentInvocationBatch[] = [];
-    const reviewerBashEvidence: ReviewerBashEvidence[] = [];
-    let reviewerInfrastructureFailure: string | undefined;
+    const reviewerLedger = createReviewerExecutionLedger();
     let activeRole: "judge" | "fixer" | "coder" | "reviewer" | undefined;
-
-    const ensureReviewerAgentAttempt = (
-      id: string,
-      rawArguments: unknown,
-    ): ReviewerAgentAttempt => {
-      const matches = reviewerAgentAttempts.filter((attempt) => attempt.id === id);
-      if (matches.length > 1) {
-        throw new Error(
-          `Reviewer Agent invocation provenance failed: Agent attempt ID ${id} is not unique`,
-        );
-      }
-      const existing = matches[0];
-      if (existing !== undefined) return existing;
-      const attempt: ReviewerAgentAttempt = {
-        id,
-        description: reviewerAgentArgument(rawArguments, "description"),
-        prompt: reviewerAgentArgument(rawArguments, "prompt"),
-        status: "running",
-      };
-      reviewerAgentAttempts.push(attempt);
-      return attempt;
-    };
-
-    const reconcileReviewerAgentInvocationBatch = (
-      toolCallId: string,
-      rawArguments: unknown,
-      ctx: ExtensionContext,
-    ): ReviewerAgentAttempt => {
-      const currentAttempt = ensureReviewerAgentAttempt(
-        toolCallId,
-        rawArguments,
-      );
-      const captured = captureReviewerAgentInvocationBatch(toolCallId, ctx);
-      const existingBatch = reviewerAgentInvocationBatches.find(
-        (candidate) =>
-          candidate.assistantSessionEntryId ===
-          captured.batch.assistantSessionEntryId,
-      );
-      if (existingBatch === undefined) {
-        reviewerAgentInvocationBatches.push(captured.batch);
-      } else if (
-        existingBatch.executionMode !== captured.batch.executionMode ||
-        JSON.stringify(existingBatch.agentToolCallIds) !==
-          JSON.stringify(captured.batch.agentToolCallIds)
-      ) {
-        throw new Error(
-          `Reviewer Agent invocation provenance failed: conflicting batch evidence for assistant session entry ${captured.batch.assistantSessionEntryId}`,
-        );
-      }
-      for (const call of captured.calls) {
-        ensureReviewerAgentAttempt(call.id, call.arguments);
-      }
-      return currentAttempt;
-    };
-
-    const failReviewerAgentAttempt = (
-      error: unknown,
-      attempt: ReviewerAgentAttempt,
-      ctx: ExtensionContext,
-    ): never => {
-      attempt.status = "failed";
-      attempt.diagnostics =
-        error instanceof Error ? error.message : String(error);
-      reviewerInfrastructureFailure = attempt.diagnostics;
-      if (isRecord(error)) {
-        const disposition = error["workspaceDisposition"];
-        if (
-          disposition === "deleted" ||
-          (isRecord(disposition) &&
-            typeof disposition["retained"] === "string")
-        ) {
-          attempt.workspaceDisposition =
-            disposition as ReviewerWorkspaceDisposition;
-        }
-        const snapshot = error["targetSnapshot"];
-        if (isRecord(snapshot)) {
-          attempt.targetSnapshot = snapshot as ReviewerTargetSnapshot;
-        }
-      }
-      const failure =
-        error instanceof Error ? error : new Error(String(error));
-      Object.assign(failure, {
-        reviewerAgentAttempt: { ...attempt },
-      });
-      failInfrastructure(failure, ctx);
-    };
-
-    const requireSuccessfulReviewerAgentReconciliation = (): void => {
-      const persistedIds = reviewerAgentInvocationBatches.flatMap(
-        (batch) => batch.agentToolCallIds,
-      );
-      if (persistedIds.length === 0) {
-        throw new Error(
-          "Reviewer completed requires at least one successful Agent call",
-        );
-      }
-      const attemptIds = reviewerAgentAttempts.map((attempt) => attempt.id);
-      const persistedUnique = new Set(persistedIds);
-      const attemptUnique = new Set(attemptIds);
-      const missing = [...persistedUnique].filter(
-        (id) => !attemptUnique.has(id),
-      );
-      const extras = [...attemptUnique].filter(
-        (id) => !persistedUnique.has(id),
-      );
-      const failed = reviewerAgentAttempts.filter(
-        (attempt) => attempt.status === "failed",
-      );
-      const running = reviewerAgentAttempts.filter(
-        (attempt) => attempt.status === "running",
-      );
-      if (
-        persistedUnique.size !== persistedIds.length ||
-        attemptUnique.size !== attemptIds.length ||
-        persistedIds.length !== attemptIds.length ||
-        missing.length > 0 ||
-        extras.length > 0 ||
-        failed.length > 0 ||
-        running.length > 0 ||
-        reviewerAgentAttempts.some(
-          (attempt) => attempt.status !== "successful",
-        )
-      ) {
-        const failedDiagnostics = failed.map(
-          (attempt) =>
-            `${attempt.id}: ${attempt.diagnostics ?? "failed without diagnostics"}`,
-        );
-        throw new Error(
-          [
-            "Reviewer completed requires persisted Agent call IDs and attempts to form a non-empty exact one-to-one match with every Agent call successful and settled",
-            missing.length === 0 ? "" : `missing attempts: ${missing.join(", ")}`,
-            extras.length === 0 ? "" : `extra attempts: ${extras.join(", ")}`,
-            running.length === 0
-              ? ""
-              : `running attempts: ${running.map((attempt) => attempt.id).join(", ")}`,
-            failedDiagnostics.length === 0
-              ? ""
-              : `failed attempts: ${failedDiagnostics.join("; ")}`,
-          ].filter((part) => part.length > 0).join("; "),
-        );
-      }
-    };
     let judgeToolRegistered = false;
     let fixerToolRegistered = false;
     let coderToolRegistered = false;
@@ -722,12 +503,19 @@ export function createRoleRuntimeExtension(
             ) {
               throw new Error("Reviewer task and canonical Skill were not loaded");
             }
-            const attempt = ensureReviewerAgentAttempt(toolCallId, parameters);
             try {
-              reconcileReviewerAgentInvocationBatch(toolCallId, parameters, ctx);
-              attempt.description = parameters.description;
-              attempt.prompt = parameters.prompt;
-              const result = await dependencies.runReviewerAgent(
+              reviewerLedger.beginAgentCall(
+                toolCallId,
+                parameters,
+                reviewerAgentPersistedEvidence(ctx),
+              );
+            } catch (error) {
+              failInfrastructure(error, ctx);
+            }
+            let result: ReviewerAgentResult;
+            let details: ReviewerAgentAttempt;
+            try {
+              result = await dependencies.runReviewerAgent(
                 {
                   description: parameters.description,
                   prompt: parameters.prompt,
@@ -736,24 +524,18 @@ export function createRoleRuntimeExtension(
                   ? { context: ctx }
                   : { context: ctx, signal },
               );
-              if (result.report.trim().length === 0) {
-                throw new Error("Reviewer Agent returned a blank child report");
-              }
-              attempt.status = "successful";
-              attempt.report = result.report;
-              attempt.workspaceDisposition = result.workspaceDisposition;
-              if (result.usage !== undefined) attempt.usage = result.usage;
-              if (result.targetSnapshot !== undefined) {
-                attempt.targetSnapshot = result.targetSnapshot;
-              }
-              return {
-                content: [{ type: "text" as const, text: result.report }],
-                details: { ...attempt },
-                ...(result.usage === undefined ? {} : { usage: result.usage }),
-              };
+              details = reviewerLedger.completeAgentCall(toolCallId, result);
             } catch (error) {
-              return failReviewerAgentAttempt(error, attempt, ctx);
+              failInfrastructure(
+                reviewerLedger.failAgentCall(toolCallId, error),
+                ctx,
+              );
             }
+            return {
+              content: [{ type: "text" as const, text: result.report }],
+              details,
+              ...(result.usage === undefined ? {} : { usage: result.usage }),
+            };
           },
         });
 
@@ -777,14 +559,6 @@ export function createRoleRuntimeExtension(
             ) {
               throw new Error("Reviewer inputs were not loaded");
             }
-            if (reviewerInfrastructureFailure !== undefined) {
-              failInfrastructure(
-                new Error(
-                  `Reviewer infrastructure previously failed: ${reviewerInfrastructureFailure}`,
-                ),
-                ctx,
-              );
-            }
             requireSingletonSubmissionCall(
               toolCallId,
               REVIEWER_OUTPUT_TOOL_NAME,
@@ -792,31 +566,18 @@ export function createRoleRuntimeExtension(
               ctx,
             );
             const output = validateReviewerOutput(parameters);
-            if (output.status === "completed") {
-              if (reviewerSkillEvidence === undefined) {
-                throw new Error(
-                  "Reviewer completed requires exact native code-review Skill expansion evidence",
-                );
+            let record: ReviewerExecutionRecord;
+            try {
+              record = reviewerLedger.recordForAudit(output.status);
+            } catch (error) {
+              if (
+                isRecord(error) &&
+                error["fatalReviewerInfrastructure"] === true
+              ) {
+                failInfrastructure(error, ctx);
               }
-              requireSuccessfulReviewerAgentReconciliation();
+              throw error;
             }
-            const targetSnapshot = reviewerAgentAttempts.find(
-              (attempt) => attempt.targetSnapshot !== undefined,
-            )?.targetSnapshot;
-            const record: ReviewerExecutionRecord = {
-              ...(reviewerSkillEvidence === undefined
-                ? {}
-                : { skillEvidence: reviewerSkillEvidence }),
-              ...(targetSnapshot === undefined ? {} : { targetSnapshot }),
-              bashEvidence: reviewerBashEvidence.map((evidence) => ({ ...evidence })),
-              agentAttempts: reviewerAgentAttempts.map((attempt) => ({ ...attempt })),
-              agentInvocationBatches: reviewerAgentInvocationBatches.map(
-                (batch) => ({
-                  ...batch,
-                  agentToolCallIds: [...batch.agentToolCallIds],
-                }),
-              ),
-            };
             let audit: ComplianceDecision;
             try {
               audit = await dependencies.auditReviewerCompliance(
@@ -832,9 +593,10 @@ export function createRoleRuntimeExtension(
                   : { context: ctx, signal },
               );
             } catch (error) {
-              reviewerInfrastructureFailure =
-                error instanceof Error ? error.message : String(error);
-              failInfrastructure(error, ctx);
+              failInfrastructure(
+                reviewerLedger.recordInfrastructureFailure(error),
+                ctx,
+              );
             }
             if (audit.status === "revise") {
               throw new Error(
@@ -844,9 +606,10 @@ export function createRoleRuntimeExtension(
             try {
               await dependencies.shutdownReviewerAgent?.();
             } catch (error) {
-              reviewerInfrastructureFailure =
-                error instanceof Error ? error.message : String(error);
-              failInfrastructure(error, ctx);
+              failInfrastructure(
+                reviewerLedger.recordInfrastructureFailure(error),
+                ctx,
+              );
             }
             return {
               content: [{ type: "text" as const, text: "Reviewer report accepted" }],
@@ -1115,15 +878,14 @@ export function createRoleRuntimeExtension(
       if (activeRole !== "reviewer" || event.toolName !== AGENT_TOOL_NAME) {
         return;
       }
-      const attempt = ensureReviewerAgentAttempt(event.toolCallId, event.args);
       try {
-        reconcileReviewerAgentInvocationBatch(
+        reviewerLedger.beginAgentCall(
           event.toolCallId,
           event.args,
-          ctx,
+          reviewerAgentPersistedEvidence(ctx),
         );
       } catch (error) {
-        failReviewerAgentAttempt(error, attempt, ctx);
+        failInfrastructure(error, ctx);
       }
     });
 
@@ -1135,9 +897,10 @@ export function createRoleRuntimeExtension(
       ) {
         return;
       }
-      const attempt = ensureReviewerAgentAttempt(event.toolCallId, undefined);
-      attempt.status = "failed";
-      attempt.diagnostics = toolExecutionDiagnostic(event.result);
+      reviewerLedger.rejectAgentCall(
+        event.toolCallId,
+        toolExecutionDiagnostic(event.result),
+      );
     });
 
     pi.on("tool_call", (event) => {
@@ -1146,29 +909,31 @@ export function createRoleRuntimeExtension(
         event.toolName === "bash" &&
         typeof event.input["command"] === "string"
       ) {
-        reviewerBashEvidence.push({
-          toolCallId: event.toolCallId,
-          command: event.input["command"],
-        });
+        reviewerLedger.recordBashCall(
+          event.toolCallId,
+          event.input["command"],
+        );
       }
     });
 
     pi.on("tool_result", (event) => {
       if (activeRole !== "reviewer" || event.toolName !== "bash") return;
-      const evidence = reviewerBashEvidence.find(
-        (item) => item.toolCallId === event.toolCallId,
+      reviewerLedger.recordBashResult(
+        event.toolCallId,
+        event.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n"),
+        event.isError,
       );
-      if (evidence === undefined) return;
-      evidence.result = event.content
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("\n");
-      evidence.isError = event.isError;
     });
 
     pi.on("session_shutdown", async () => {
-      if (activeRole === "reviewer") {
+      if (activeRole !== "reviewer") return;
+      try {
         await dependencies.shutdownReviewerAgent?.();
+      } catch (error) {
+        throw reviewerLedger.recordInfrastructureFailure(error);
       }
     });
 
@@ -1179,26 +944,32 @@ export function createRoleRuntimeExtension(
       }
       if (activeRole === "reviewer" && reviewerExpansionPending) {
         reviewerExpansionPending = false;
-        if (
-          activeReviewerSkill === undefined ||
-          reviewerOriginalRequest === undefined
-        ) {
+        try {
+          if (
+            activeReviewerSkill === undefined ||
+            reviewerOriginalRequest === undefined
+          ) {
+            throw new Error(
+              "Reviewer canonical Skill binding was not initialized",
+            );
+          }
+          const evidence = captureCanonicalReviewerSkillExpansion(
+            event.prompt,
+            reviewerOriginalRequest,
+            activeReviewerSkill,
+          );
+          if (evidence === undefined) {
+            throw new Error(
+              "Reviewer first prompt did not contain the canonical native code-review Skill expansion",
+            );
+          }
+          reviewerLedger.recordSkillExpansion(evidence);
+        } catch (error) {
           failInfrastructure(
-            new Error("Reviewer canonical Skill binding was not initialized"),
+            reviewerLedger.recordInfrastructureFailure(error),
             ctx,
           );
         }
-        const evidence = captureCanonicalReviewerSkillExpansion(
-          event.prompt,
-          reviewerOriginalRequest,
-          activeReviewerSkill,
-        );
-        if (evidence === undefined) {
-          reviewerInfrastructureFailure =
-            "Reviewer first prompt did not contain the canonical native code-review Skill expansion";
-          failInfrastructure(new Error(reviewerInfrastructureFailure), ctx);
-        }
-        reviewerSkillEvidence = evidence;
       }
       const roleInputSection =
         activeRole === "fixer"

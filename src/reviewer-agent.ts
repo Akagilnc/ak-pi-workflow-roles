@@ -24,7 +24,7 @@ import type {
   ReviewerAgentResult,
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
-} from "./role-runtime.ts";
+} from "./reviewer-execution-ledger.ts";
 
 const CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
 const REVIEW_REF_PREFIXES = ["refs/heads", "refs/tags", "refs/remotes"];
