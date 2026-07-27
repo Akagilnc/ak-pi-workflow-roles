@@ -113,6 +113,12 @@ export type ReviewerAgentAttempt = {
   workspaceDisposition?: ReviewerWorkspaceDisposition;
 };
 
+export type ReviewerAgentInvocationBatch = {
+  assistantSessionEntryId: string;
+  executionMode: "parallel";
+  agentToolCallIds: readonly string[];
+};
+
 export type ReviewerBashEvidence = {
   toolCallId: string;
   command: string;
@@ -125,6 +131,7 @@ export type ReviewerExecutionRecord = {
   targetSnapshot?: ReviewerTargetSnapshot;
   bashEvidence: ReviewerBashEvidence[];
   agentAttempts: ReviewerAgentAttempt[];
+  agentInvocationBatches: ReviewerAgentInvocationBatch[];
 };
 
 export type ReviewerAuditInput = {
@@ -370,6 +377,42 @@ function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
   throw error;
 }
 
+function captureReviewerAgentInvocationBatch(
+  toolCallId: string,
+  ctx: ExtensionContext,
+): ReviewerAgentInvocationBatch {
+  const leaf = ctx.sessionManager.getLeafEntry();
+  if (
+    leaf?.type !== "message" ||
+    leaf.message.role !== "assistant" ||
+    !Array.isArray(leaf.message.content)
+  ) {
+    throw new Error(
+      "Reviewer Agent invocation provenance failed: the persisted session leaf is not an assistant message",
+    );
+  }
+  const agentToolCallIds = leaf.message.content.flatMap((part) =>
+    part.type === "toolCall" && part.name === AGENT_TOOL_NAME
+      ? [part.id]
+      : [],
+  );
+  if (agentToolCallIds.filter((id) => id === toolCallId).length !== 1) {
+    throw new Error(
+      `Reviewer Agent invocation provenance failed: current call ${toolCallId} does not occur exactly once in the persisted assistant message`,
+    );
+  }
+  if (new Set(agentToolCallIds).size !== agentToolCallIds.length) {
+    throw new Error(
+      "Reviewer Agent invocation provenance failed: persisted sibling Agent call IDs are not unique",
+    );
+  }
+  return Object.freeze({
+    assistantSessionEntryId: leaf.id,
+    executionMode: "parallel" as const,
+    agentToolCallIds: Object.freeze([...agentToolCallIds]),
+  });
+}
+
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (pi: ExtensionAPI) => void {
@@ -386,6 +429,7 @@ export function createRoleRuntimeExtension(
     let reviewerExpansionPending = false;
     let reviewerSkillEvidence: ReviewerSkillEvidence | undefined;
     const reviewerAgentAttempts: ReviewerAgentAttempt[] = [];
+    const reviewerAgentInvocationBatches: ReviewerAgentInvocationBatch[] = [];
     const reviewerBashEvidence: ReviewerBashEvidence[] = [];
     let reviewerInfrastructureFailure: string | undefined;
     let activeRole: "judge" | "fixer" | "coder" | "reviewer" | undefined;
@@ -507,6 +551,23 @@ export function createRoleRuntimeExtension(
             };
             reviewerAgentAttempts.push(attempt);
             try {
+              const batch = captureReviewerAgentInvocationBatch(toolCallId, ctx);
+              const existingBatch = reviewerAgentInvocationBatches.find(
+                (candidate) =>
+                  candidate.assistantSessionEntryId ===
+                  batch.assistantSessionEntryId,
+              );
+              if (existingBatch === undefined) {
+                reviewerAgentInvocationBatches.push(batch);
+              } else if (
+                existingBatch.executionMode !== batch.executionMode ||
+                JSON.stringify(existingBatch.agentToolCallIds) !==
+                  JSON.stringify(batch.agentToolCallIds)
+              ) {
+                throw new Error(
+                  `Reviewer Agent invocation provenance failed: conflicting batch evidence for assistant session entry ${batch.assistantSessionEntryId}`,
+                );
+              }
               const result = await dependencies.runReviewerAgent(
                 {
                   description: parameters.description,
@@ -550,7 +611,12 @@ export function createRoleRuntimeExtension(
                   attempt.targetSnapshot = snapshot as ReviewerTargetSnapshot;
                 }
               }
-              failInfrastructure(error, ctx);
+              const failure =
+                error instanceof Error ? error : new Error(String(error));
+              Object.assign(failure, {
+                reviewerAgentAttempt: { ...attempt },
+              });
+              failInfrastructure(failure, ctx);
             }
           },
         });
@@ -626,6 +692,12 @@ export function createRoleRuntimeExtension(
               ...(targetSnapshot === undefined ? {} : { targetSnapshot }),
               bashEvidence: reviewerBashEvidence.map((evidence) => ({ ...evidence })),
               agentAttempts: reviewerAgentAttempts.map((attempt) => ({ ...attempt })),
+              agentInvocationBatches: reviewerAgentInvocationBatches.map(
+                (batch) => ({
+                  ...batch,
+                  agentToolCallIds: [...batch.agentToolCallIds],
+                }),
+              ),
             };
             let audit: ComplianceDecision;
             try {
