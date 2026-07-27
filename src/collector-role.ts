@@ -23,7 +23,7 @@ import {
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
   type CollectorLedger,
-  type CollectorToolCallPart,
+  type CollectorRawToolCallPart,
 } from "./collector-ledger.ts";
 import {
   buildCollectorReceipt,
@@ -109,23 +109,22 @@ type CollectorActivation = {
   clock: CollectorClock;
 };
 
-function toolCallPartsFromMessage(message: {
+/** Pass every raw toolCall part, including malformed id/name/arguments. */
+function rawToolCallPartsFromMessage(message: {
   role?: string;
   content?: unknown;
-}): CollectorToolCallPart[] {
+}): CollectorRawToolCallPart[] {
   if (message.role !== "assistant" || !Array.isArray(message.content)) return [];
   return message.content.flatMap((part: unknown) => {
     if (
       typeof part === "object" &&
       part !== null &&
-      (part as { type?: string }).type === "toolCall" &&
-      typeof (part as { id?: unknown }).id === "string" &&
-      typeof (part as { name?: unknown }).name === "string"
+      (part as { type?: string }).type === "toolCall"
     ) {
       return [{
         type: "toolCall" as const,
-        id: (part as { id: string }).id,
-        name: (part as { name: string }).name,
+        id: (part as { id?: unknown }).id,
+        name: (part as { name?: unknown }).name,
         arguments: (part as { arguments?: unknown }).arguments,
       }];
     }
@@ -306,7 +305,7 @@ export function createCollectorRoleRuntime(
     pi.on("message_end", (event, ctx) => {
       if (activationInvalid || activation === undefined) return;
       if (event.message.role !== "assistant") return;
-      const calls = toolCallPartsFromMessage(event.message);
+      const calls = rawToolCallPartsFromMessage(event.message);
       if (calls.length === 0) return;
       const decision = activation.ledger.evaluateBatch(calls);
       if (!decision.allow) {
@@ -501,6 +500,7 @@ export function createCollectorRoleRuntime(
           const receipt: CollectorReceipt = buildCollectorReceipt(
             activation.ledger,
             params,
+            activation.clock,
           );
           activation.ledger.markOutputAccepted();
           activation.ledger.completeOperational(toolCallId);
@@ -582,6 +582,15 @@ export function createCollectorRoleRuntime(
               ambientCommands.map((c) => c.name).join(", ")
             }`,
           );
+        }
+
+        // Fail closed if a required name is already occupied before Collector registers.
+        const preExisting = pi.getAllTools();
+        for (const required of COLLECTOR_REQUIRED_TOOLS) {
+          const prior = preExisting.filter((tool) => tool.name === required);
+          if (prior.length > 0) {
+            throw new Error(`Collector required tool name collision: ${required}`);
+          }
         }
 
         registerTools();

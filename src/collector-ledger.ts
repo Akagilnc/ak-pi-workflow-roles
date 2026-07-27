@@ -1,26 +1,28 @@
 import type { CollectorManifest, CollectorRepository } from "./collector-config.ts";
 import {
+  applyEvidenceVersionHistory,
   assignWindowRelations,
   COLLECTOR_ELIGIBILITY_MS,
   COLLECTOR_RECEIPT_MAX_BYTES,
   COLLECTOR_SNAPSHOT_MAX_BYTES,
-  type CollectorClock,
-  type CollectorEvidenceRecord,
-  type CollectorSnapshot,
   measureNormalizedBytes,
   normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
   normalizePullRequestEvidence,
   normalizeReviewCommentEvidence,
   normalizeReviewEvidence,
+  reviewQualifiesForValid,
   sha256Text,
+  type CollectorClock,
+  type CollectorEvidenceRecord,
+  type CollectorSnapshot,
 } from "./collector-evidence.ts";
 import {
   buildCollectorRequestBody,
   type CollectorGitHubTransport,
   type GitHubPageDiagnostics,
+  type GitHubPullRequest,
 } from "./collector-github.ts";
-
 export const COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
 export const COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 export const COLLECTOR_WAIT_TOOL = "ak_collector_wait";
@@ -34,12 +36,24 @@ export const COLLECTOR_OPERATIONAL_TOOLS = [
 
 export type CollectorOperationalTool = (typeof COLLECTOR_OPERATIONAL_TOOLS)[number];
 
+/** Raw finalized tool-call candidate, including malformed id/name/arguments. */
+export type CollectorRawToolCallPart = {
+  type: "toolCall";
+  id?: unknown;
+  name?: unknown;
+  arguments?: unknown;
+};
+
 export type CollectorToolCallPart = {
   type: "toolCall";
   id: string;
   name: string;
   arguments?: unknown;
 };
+
+export type PermittedBatch =
+  | { kind: "operational"; callId: string; name: CollectorOperationalTool }
+  | { kind: "output"; callId: string; name: typeof COLLECTOR_OUTPUT_TOOL };
 
 export type CollectorRequestAttempt = {
   attemptId: string;
@@ -52,6 +66,8 @@ export type CollectorRequestAttempt = {
   status: "started" | "succeeded" | "rejected" | "ambiguous_loss" | "recovered";
   responseDiagnostics?: string;
   commentEvidenceId?: string;
+  /** Snapshot whose observation first established the authenticated marker. */
+  recoverySnapshotId?: string;
 };
 
 export type CollectorWaitRecord = {
@@ -94,15 +110,24 @@ export type CollectorLedger = {
   readonly finalObservationRequired: boolean;
   readonly finalObservationCompleted: boolean;
   readonly unresolvedTransportFailure: boolean;
+  readonly mutationGeneration: number;
+  readonly observedGeneration: number;
+  readonly permittedBatch: PermittedBatch | undefined;
 
   latchFatal(reason: string): Error;
   assertNotFatal(): void;
   recordActivation(clock: CollectorClock): void;
-  evaluateBatch(calls: readonly CollectorToolCallPart[]): { allow: true } | { allow: false; reason: string };
+  evaluateBatch(
+    calls: readonly CollectorRawToolCallPart[],
+  ): { allow: true; permitted: PermittedBatch } | { allow: false; reason: string };
   beginOperational(toolName: string, toolCallId: string): void;
   completeOperational(toolCallId: string): void;
   markOutputAccepted(): void;
   noteCutoffObserved(): void;
+  assertOutputObservationLaw(
+    candidate: { legs: ReadonlyArray<{ status: string }> },
+    clock: CollectorClock,
+  ): void;
 
   observe(
     transport: CollectorGitHubTransport,
@@ -145,6 +170,211 @@ function isCollectorTool(name: string): boolean {
   return isOperationalTool(name) || name === COLLECTOR_OUTPUT_TOOL;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+/** Validate Collector tool argument shapes at batch-classification time. */
+export function collectorToolArgumentsValid(
+  name: string,
+  args: unknown,
+): boolean {
+  if (name === COLLECTOR_OBSERVE_TOOL) {
+    if (args === undefined) return true;
+    if (!isPlainObject(args)) return false;
+    return Object.keys(args).length === 0;
+  }
+  if (name === COLLECTOR_REQUEST_TOOL) {
+    if (!isPlainObject(args)) return false;
+    if (!nonEmptyString(args["legId"]) || !nonEmptyString(args["snapshotId"])) {
+      return false;
+    }
+    return Object.keys(args).every((key) => key === "legId" || key === "snapshotId");
+  }
+  if (name === COLLECTOR_WAIT_TOOL) {
+    if (!isPlainObject(args)) return false;
+    const durationMs = args["durationMs"];
+    if (
+      typeof durationMs !== "number" ||
+      !Number.isSafeInteger(durationMs) ||
+      durationMs < 1 ||
+      durationMs > COLLECTOR_ELIGIBILITY_MS
+    ) {
+      return false;
+    }
+    return Object.keys(args).every((key) => key === "durationMs");
+  }
+  if (name === COLLECTOR_OUTPUT_TOOL) {
+    if (!isPlainObject(args)) return false;
+    if (!Array.isArray(args["legs"]) || args["legs"].length < 1) return false;
+    if (Object.keys(args).some((key) => key !== "legs")) return false;
+    for (const leg of args["legs"]) {
+      if (!isPlainObject(leg)) return false;
+      if (!nonEmptyString(leg["legId"])) return false;
+      if (
+        leg["status"] !== "valid" &&
+        leg["status"] !== "unavailable" &&
+        leg["status"] !== "missing"
+      ) {
+        return false;
+      }
+      if (typeof leg["rationale"] !== "string" || leg["rationale"].trim().length === 0) {
+        return false;
+      }
+      if (
+        !Array.isArray(leg["evidenceRefs"]) ||
+        leg["evidenceRefs"].length < 1 ||
+        leg["evidenceRefs"].some((ref) => !nonEmptyString(ref))
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+type ClassifiedCall =
+  | { kind: "malformed"; reason: string }
+  | { kind: "illegal"; reason: string; id?: string; name?: string }
+  | {
+    kind: "operational";
+    callId: string;
+    name: CollectorOperationalTool;
+  }
+  | { kind: "output"; callId: string };
+
+export function classifyRawToolCall(part: CollectorRawToolCallPart): ClassifiedCall {
+  if (part.type !== "toolCall") {
+    return { kind: "malformed", reason: "content part is not a toolCall" };
+  }
+  if (!nonEmptyString(part.id) || !nonEmptyString(part.name)) {
+    return {
+      kind: "malformed",
+      reason: "toolCall missing string id or name",
+    };
+  }
+  const callId = part.id;
+  const name = part.name;
+  if (!isCollectorTool(name)) {
+    return {
+      kind: "illegal",
+      reason: `non-Collector sibling tool ${name}`,
+      id: callId,
+      name,
+    };
+  }
+  if (!collectorToolArgumentsValid(name, part.arguments)) {
+    return {
+      kind: "illegal",
+      reason: `schema-invalid arguments for ${name}`,
+      id: callId,
+      name,
+    };
+  }
+  if (name === COLLECTOR_OUTPUT_TOOL) {
+    return { kind: "output", callId };
+  }
+  return {
+    kind: "operational",
+    callId,
+    name: name as CollectorOperationalTool,
+  };
+}
+
+/**
+ * Authoritative finalized-message batch classifier.
+ * Walks every raw toolCall candidate; malformed/unknown/schema-invalid poison the batch.
+ */
+export function classifyCollectorBatch(
+  calls: readonly CollectorRawToolCallPart[],
+  options: {
+    outputAccepted: boolean;
+    hasCompletedOperationalOrSnapshot: boolean;
+  },
+):
+  | { allow: true; permitted: PermittedBatch }
+  | { allow: false; reason: string } {
+  if (calls.length === 0) {
+    return {
+      allow: false,
+      reason: "Collector batch contains no toolCall parts",
+    };
+  }
+
+  const classified = calls.map((call) => classifyRawToolCall(call));
+  for (const item of classified) {
+    if (item.kind === "malformed") {
+      return {
+        allow: false,
+        reason: `Collector batch poisoned by malformed toolCall: ${item.reason}`,
+      };
+    }
+    if (item.kind === "illegal") {
+      return {
+        allow: false,
+        reason: `Collector batch illegal: ${item.reason}`,
+      };
+    }
+  }
+
+  const operational = classified.filter(
+    (item): item is Extract<ClassifiedCall, { kind: "operational" }> =>
+      item.kind === "operational",
+  );
+  const outputs = classified.filter(
+    (item): item is Extract<ClassifiedCall, { kind: "output" }> =>
+      item.kind === "output",
+  );
+
+  if (operational.length === 1 && outputs.length === 0 && classified.length === 1) {
+    const only = operational[0]!;
+    return {
+      allow: true,
+      permitted: {
+        kind: "operational",
+        callId: only.callId,
+        name: only.name,
+      },
+    };
+  }
+
+  if (outputs.length === 1 && operational.length === 0 && classified.length === 1) {
+    if (options.outputAccepted) {
+      return {
+        allow: false,
+        reason: "Collector output already accepted; second output is illegal",
+      };
+    }
+    if (!options.hasCompletedOperationalOrSnapshot) {
+      return {
+        allow: false,
+        reason:
+          "Collector output requires a prior completed operational result in this invocation",
+      };
+    }
+    const only = outputs[0]!;
+    return {
+      allow: true,
+      permitted: {
+        kind: "output",
+        callId: only.callId,
+        name: COLLECTOR_OUTPUT_TOOL,
+      },
+    };
+  }
+
+  return {
+    allow: false,
+    reason:
+      "Collector permits exactly one schema-valid operational call (observe|request|wait) per assistant batch, or a sole later schema-valid output call",
+  };
+}
+
 export function createCollectorLedger(config: CollectorConfigState): CollectorLedger {
   let fatal = false;
   let fatalReason: string | undefined;
@@ -158,9 +388,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
   let finalObservationRequired = false;
   let finalObservationCompleted = false;
   let activeOperationalCallId: string | undefined;
-  let lastAssistantBatchKey: string | undefined;
-  let lastAssistantBatchFatal = false;
+  let permittedBatch: PermittedBatch | undefined;
   let operationalCompletedSinceOutputPermit = false;
+  let mutationGeneration = 0;
+  let observedGeneration = 0;
 
   const evidenceById = new Map<string, CollectorEvidenceRecord>();
   const evidenceByVersion = new Map<string, string>();
@@ -178,6 +409,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
   const latchFatal = (reason: string): Error => {
     fatal = true;
     fatalReason = reason;
+    permittedBatch = undefined;
     const error = new Error(reason);
     Object.assign(error, { collectorFatal: true });
     return error;
@@ -229,6 +461,23 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     }
   };
 
+  const prIdentity = (pr: GitHubPullRequest): string => `${pr.state}|${pr.headOid}`;
+
+  const fetchObserveSurfaces = async (
+    transport: CollectorGitHubTransport,
+  ) => {
+    const owner = config.repository.owner;
+    const repo = config.repository.repo;
+    const prNumber = config.prNumber;
+    const user = await transport.getAuthenticatedUser();
+    const prInitial = await transport.getPullRequest({ owner, repo, prNumber });
+    const reviews = await transport.listPullRequestReviews({ owner, repo, prNumber });
+    const issueComments = await transport.listIssueComments({ owner, repo, prNumber });
+    const reviewComments = await transport.listReviewComments({ owner, repo, prNumber });
+    const prTerminal = await transport.getPullRequest({ owner, repo, prNumber });
+    return { user, prInitial, reviews, issueComments, reviewComments, prTerminal };
+  };
+
   const ledger: CollectorLedger = {
     get config() {
       return config;
@@ -272,6 +521,15 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     get unresolvedTransportFailure() {
       return transportFailures.some((failure) => !failure.recovered);
     },
+    get mutationGeneration() {
+      return mutationGeneration;
+    },
+    get observedGeneration() {
+      return observedGeneration;
+    },
+    get permittedBatch() {
+      return permittedBatch;
+    },
 
     latchFatal,
     assertNotFatal,
@@ -286,62 +544,66 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     },
 
     evaluateBatch(calls) {
-      assertNotFatal();
-      const collectorCalls = calls.filter((call) => isCollectorTool(call.name));
-      const operational = collectorCalls.filter((call) => isOperationalTool(call.name));
-      const outputs = collectorCalls.filter((call) => call.name === COLLECTOR_OUTPUT_TOOL);
-      const key = calls.map((call) => `${call.id}:${call.name}`).join("|");
-      lastAssistantBatchKey = key;
-
-      const legalOperational =
-        operational.length === 1 && outputs.length === 0 && collectorCalls.length === 1;
-      const legalOutput =
-        outputs.length === 1 && operational.length === 0 && collectorCalls.length === 1;
-
-      if (legalOperational) {
-        lastAssistantBatchFatal = false;
-        return { allow: true };
+      if (fatal) {
+        return {
+          allow: false,
+          reason: fatalReason ?? "Collector is in fatal state",
+        };
       }
-      if (legalOutput) {
-        if (!operationalCompletedSinceOutputPermit && snapshots.length === 0) {
-          lastAssistantBatchFatal = true;
-          return {
-            allow: false,
-            reason:
-              "Collector output requires a prior completed operational result in this invocation",
-          };
-        }
-        lastAssistantBatchFatal = false;
-        return { allow: true };
+      const decision = classifyCollectorBatch(calls, {
+        outputAccepted,
+        hasCompletedOperationalOrSnapshot:
+          operationalCompletedSinceOutputPermit || snapshots.length > 0,
+      });
+      if (!decision.allow) {
+        latchFatal(decision.reason);
+        return decision;
       }
-
-      lastAssistantBatchFatal = true;
-      const reason =
-        "Collector permits exactly one operational call (observe|request|wait) per assistant batch, or a sole later output call";
-      latchFatal(reason);
-      return { allow: false, reason };
+      permittedBatch = decision.permitted;
+      return decision;
     },
 
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
-      if (lastAssistantBatchFatal) {
-        throw latchFatal("Collector rejected the assistant batch before execution");
+      if (permittedBatch === undefined) {
+        throw latchFatal(
+          "Collector rejected tool execution without a permitted assistant batch",
+        );
       }
-      if (outputAccepted) {
+      if (outputAccepted && toolName !== COLLECTOR_OUTPUT_TOOL) {
         throw latchFatal("Collector output already accepted; no further operations");
       }
       // Idempotent for the same call across tool_call preflight and execute.
       if (activeOperationalCallId === toolCallId) {
         return;
       }
-      if (activeOperationalCallId !== undefined) {
+      if (activeOperationalCallId !== undefined && activeOperationalCallId !== toolCallId) {
         throw latchFatal("Collector operational call already active");
       }
+
       if (toolName === COLLECTOR_OUTPUT_TOOL) {
+        if (
+          permittedBatch.kind !== "output" ||
+          permittedBatch.callId !== toolCallId
+        ) {
+          throw latchFatal(
+            "Collector output call does not match the permitted batch",
+          );
+        }
         return;
       }
+
       if (!isOperationalTool(toolName)) {
         throw latchFatal(`Unknown Collector tool ${toolName}`);
+      }
+      if (
+        permittedBatch.kind !== "operational" ||
+        permittedBatch.callId !== toolCallId ||
+        permittedBatch.name !== toolName
+      ) {
+        throw latchFatal(
+          "Collector operational call does not match the permitted batch",
+        );
       }
       activeOperationalCallId = toolCallId;
     },
@@ -363,6 +625,48 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       finalObservationRequired = true;
     },
 
+    assertOutputObservationLaw(candidate, clock) {
+      assertNotFatal();
+      if (activationTime === undefined || deadlineTime === undefined || deadlineMono === undefined) {
+        throw new Error("Collector output requires activation timeline");
+      }
+      if (latestCompleteSnapshotId === undefined) {
+        throw new Error("Collector output requires a complete final snapshot");
+      }
+      if (observedGeneration !== mutationGeneration) {
+        throw new Error(
+          "Collector output requires a complete observe after the latest request/wait mutation",
+        );
+      }
+      const snapshot = snapshots.find((item) => item.snapshotId === latestCompleteSnapshotId);
+      if (snapshot === undefined || !snapshot.complete) {
+        throw new Error("Collector final snapshot is missing or incomplete");
+      }
+
+      const mono = monoNowOrThrow(clock);
+      const atOrAfterCutoff = mono >= deadlineMono;
+      const hasMissing = candidate.legs.some((leg) => leg.status === "missing");
+
+      if (!atOrAfterCutoff && hasMissing) {
+        throw new Error(
+          "Collector missing status is forbidden before the eligibility cutoff",
+        );
+      }
+
+      if (atOrAfterCutoff) {
+        finalObservationRequired = true;
+        if (
+          snapshot.completedMono === undefined ||
+          snapshot.completedMono < deadlineMono
+        ) {
+          throw new Error(
+            "Collector output at/after cutoff requires a complete observation finished at or after the cutoff",
+          );
+        }
+        finalObservationCompleted = true;
+      }
+    },
+
     async observe(transport, clock) {
       assertNotFatal();
       if (activationTime === undefined) {
@@ -374,25 +678,21 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         finalObservationRequired = true;
       }
 
-      const owner = config.repository.owner;
-      const repo = config.repository.repo;
-      const prNumber = config.prNumber;
-
-      let user;
-      let pr;
-      let reviews;
-      let issueComments;
-      let reviewComments;
+      let surfaces;
       try {
-        user = await transport.getAuthenticatedUser();
-        pr = await transport.getPullRequest({ owner, repo, prNumber });
-        reviews = await transport.listPullRequestReviews({ owner, repo, prNumber });
-        issueComments = await transport.listIssueComments({ owner, repo, prNumber });
-        reviewComments = await transport.listReviewComments({ owner, repo, prNumber });
+        surfaces = await fetchObserveSurfaces(transport);
+        if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
+          // Retry full surfaces once; bind only the consistent terminal read.
+          surfaces = await fetchObserveSurfaces(transport);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw latchFatal(`Collector observe failed: ${message}`);
       }
+
+      // Always bind terminal PR identity fields.
+      const pr = surfaces.prTerminal;
+      const { user, reviews, issueComments, reviewComments } = surfaces;
 
       requesterLogin = user.login.toLowerCase();
 
@@ -415,6 +715,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         pendingRecords.push(normalizeReviewCommentEvidence(comment, observedAt));
       }
 
+      applyEvidenceVersionHistory(pendingRecords, [...evidenceById.values()]);
       assignWindowRelations(pendingRecords, activationTime, deadlineTime);
 
       const normalizedByteLength = measureNormalizedBytes(pendingRecords);
@@ -430,6 +731,12 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         const stored = storeEvidence(record);
         storedIds.push(stored.evidenceId);
       }
+
+      const completedAt = clock.wallNow().toISOString();
+      const completedMono = clock.monoNow();
+      const snapshotId = sha256Text(
+        `${completedAt}:${pr.headOid}:${storedIds.join(",")}`,
+      ).slice(0, 16);
 
       // Recover ambiguous request markers if present.
       for (const failure of transportFailures) {
@@ -451,19 +758,19 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           if (attempt) {
             attempt.status = "recovered";
             attempt.commentEvidenceId = found.evidenceId;
+            attempt.recoverySnapshotId = snapshotId;
           }
         }
       }
 
-      const snapshotId = sha256Text(
-        `${observedAt}:${pr.headOid}:${storedIds.join(",")}`,
-      ).slice(0, 16);
       const snapshot: CollectorSnapshot = {
         snapshotId,
         observedAt,
+        completedAt,
+        completedMono,
         host: "github.com",
         repository: config.repository.canonical,
-        prNumber,
+        prNumber: config.prNumber,
         prState: pr.state,
         headOid: pr.headOid,
         complete: true,
@@ -473,10 +780,12 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       };
       snapshots.push(snapshot);
       latestCompleteSnapshotId = snapshotId;
-      if (finalObservationRequired) {
+      observedGeneration = mutationGeneration;
+      if (finalObservationRequired && completedMono >= (deadlineMono ?? 0)) {
+        finalObservationCompleted = true;
+      } else if (cutoff) {
         finalObservationCompleted = true;
       }
-      // Request/wait invalidate finality only when performed after this; observe refreshes latest.
       assertMaterializationWithinBound("invocation ledger");
 
       const modelView = buildObserveModelView({
@@ -492,7 +801,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
     async request(input, transport, clock) {
       assertNotFatal();
-      if (activationTime === undefined) {
+      if (activationTime === undefined || deadlineTime === undefined) {
         throw latchFatal("Collector request requires activation");
       }
       if (pastCutoff(clock)) {
@@ -522,20 +831,18 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal("Collector cannot request on a non-OPEN pull request snapshot");
       }
 
-      // Existing exact-head qualifying review means no request (objective precheck).
+      // Existing exact-head qualifying review means no request (same law as receipt valid).
       const expected = new Set(leg.expectedAuthors);
       const hasQualifying = snapshot.evidenceIds.some((id) => {
         const record = evidenceById.get(id);
         if (record === undefined || record.kind !== "review") return false;
-        if (record.authorLogin === undefined || !expected.has(record.authorLogin)) return false;
-        if (
-          record.state !== "APPROVED" &&
-          record.state !== "CHANGES_REQUESTED" &&
-          record.state !== "COMMENTED"
-        ) {
-          return false;
-        }
-        return record.commitOid === snapshot.headOid;
+        return reviewQualifiesForValid({
+          review: record,
+          expectedAuthors: expected,
+          targetHead: snapshot.headOid,
+          activationTime: activationTime!,
+          deadlineTime: deadlineTime!,
+        }).ok;
       });
       if (hasQualifying) {
         throw new Error(
@@ -543,7 +850,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         );
       }
 
-      // Authenticated same-marker request already present => no duplicate.
       const { body, marker } = buildCollectorRequestBody({
         configuredBody: leg.requestBody,
         manifestDigest: config.manifest.digest,
@@ -589,8 +895,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       };
       attempts.push(attempt);
       attemptKeys.add(attemptKey);
-      // Request invalidates finality.
-      finalObservationCompleted = false;
 
       const result = await transport.createIssueComment({
         owner: config.repository.owner,
@@ -598,6 +902,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         prNumber: config.prNumber,
         body,
       });
+
+      // Successful or ambiguous request completion dirties observation generation.
+      mutationGeneration += 1;
+      finalObservationCompleted = false;
 
       if (result.kind === "success") {
         const record = storeEvidence(
@@ -668,11 +976,12 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       const effectiveMs = Math.min(input.durationMs, remaining);
       const startedAt = clock.wallNow().toISOString();
       const waitId = sha256Text(`wait:${startedAt}:${effectiveMs}`).slice(0, 16);
-      finalObservationCompleted = false;
       await clock.sleep(effectiveMs, signal);
       const endedAt = clock.wallNow().toISOString();
       const cutoffReached = pastCutoff(clock);
       if (cutoffReached) finalObservationRequired = true;
+      mutationGeneration += 1;
+      finalObservationCompleted = false;
       const record: CollectorWaitRecord = {
         waitId,
         requestedMs: input.durationMs,
@@ -723,8 +1032,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     assertMaterializationWithinBound,
   };
 
-  // silence unused in case
-  void lastAssistantBatchKey;
   return ledger;
 }
 
@@ -754,6 +1061,7 @@ function buildObserveModelView(input: {
   return {
     snapshotId: input.snapshot.snapshotId,
     observedAt: input.snapshot.observedAt,
+    completedAt: input.snapshot.completedAt,
     prState: input.snapshot.prState,
     headOid: input.snapshot.headOid,
     complete: input.snapshot.complete,
@@ -778,6 +1086,7 @@ function buildObserveModelView(input: {
       observedHead: attempt.observedHead,
       status: attempt.status,
       marker: attempt.marker,
+      recoverySnapshotId: attempt.recoverySnapshotId,
     })),
   };
 }
