@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -57,13 +57,11 @@ function textOf(message: ToolResultMessage): string {
 
 function packageEntrypoint(manifest: {
   files?: string[];
-  pi?: { extensions?: string[]; skills?: string[] };
+  pi?: { extensions?: string[] };
 }): string {
   assert.ok(manifest.files?.includes("extensions"));
   assert.ok(manifest.files?.includes("souls"));
-  assert.ok(manifest.files?.includes("skills"));
   assert.deepEqual(manifest.pi?.extensions, ["./extensions/role-runtime.ts"]);
-  assert.deepEqual(manifest.pi?.skills, ["./skills"]);
   return resolve(packageRoot, manifest.pi.extensions[0]!);
 }
 
@@ -333,17 +331,13 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
   }
 });
 
-test("packaged coder apply auto-loads its complete quality skill and can refuse without a commit", async () => {
+test("packaged coder apply expands the canonical Matt tdd skill and gates completion on transcript evidence", async () => {
   const manifest = JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8"),
-  ) as {
-    files?: string[];
-    pi?: { extensions?: string[]; skills?: string[] };
-  };
+  ) as { files?: string[]; pi?: { extensions?: string[] } };
   const coderSoul = (await readFile(resolve(packageRoot, "souls/coder.md"), "utf8")).trim();
-  const qualitySkill = (
-    await readFile(resolve(packageRoot, "skills/coder-quality/SKILL.md"), "utf8")
-  ).trim();
+  const tddSkillPath = resolve(homedir(), ".agents/skills/tdd/SKILL.md");
+  const tddSkill = (await readFile(tddSkillPath, "utf8")).trim();
   const agentDir = await mkdtemp(resolve(tmpdir(), "ak-coder-integration-"));
   const taskPath = resolve(agentDir, "approved-task.md");
   const task = "# Approved task\n\nImplement the first vertical slice.";
@@ -373,6 +367,7 @@ test("packaged coder apply auto-loads its complete quality skill and can refuse 
     cwd: packageRoot,
     agentDir,
     additionalExtensionPaths: [packageEntrypoint(manifest)],
+    additionalSkillPaths: [tddSkillPath],
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
@@ -411,14 +406,15 @@ test("packaged coder apply auto-loads its complete quality skill and can refuse 
 
     let coderContext: Context | undefined;
     const output = {
-      status: "refused",
-      report: "The approved task contradicts the current authority.",
+      status: "completed",
+      report:
+        "TDD red/green evidence; same-pattern, introduced-regression, and behavior-fact checks complete.",
     };
     faux.setResponses([
       (context) => {
         coderContext = context;
         return fauxAssistantMessage(
-          fauxToolCall(CODER_OUTPUT_TOOL_NAME, output, { id: "coder-refused" }),
+          fauxToolCall(CODER_OUTPUT_TOOL_NAME, output, { id: "coder-completed" }),
           { stopReason: "toolUse" },
         );
       },
@@ -429,17 +425,23 @@ test("packaged coder apply auto-loads its complete quality skill and can refuse 
     assert.ok(seenContext);
     assert.ok(seenContext.systemPrompt?.includes(`<coder_soul>\n${coderSoul}\n</coder_soul>`));
     assert.ok(seenContext.systemPrompt?.includes(`<coder_task>\n${task}\n</coder_task>`));
-    assert.ok(
-      seenContext.systemPrompt?.includes(
-        `<coder_quality_skill>\n${qualitySkill}\n</coder_quality_skill>`,
-      ),
-      "apply receives the complete quality skill even when Pi skill discovery is disabled",
-    );
+    assert.equal(seenContext.systemPrompt?.includes("coder_quality_skill"), false);
+    const userMessage = seenContext.messages.find((message) => message.role === "user");
+    assert.ok(userMessage?.role === "user");
+    const userText =
+      typeof userMessage.content === "string"
+        ? userMessage.content
+        : userMessage.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
+    assert.ok(userText.includes(`<skill name="tdd" location="${tddSkillPath}">`));
+    assert.ok(userText.includes(tddSkill.replace(/^---[\s\S]*?---\s*/, "").trim()));
     const accepted = sessionManager.getEntries().find(
       (entry) =>
         entry.type === "message" &&
         entry.message.role === "toolResult" &&
-        entry.message.toolCallId === "coder-refused",
+        entry.message.toolCallId === "coder-completed",
     );
     assert.ok(accepted?.type === "message" && accepted.message.role === "toolResult");
     assert.equal(accepted.message.isError, false);

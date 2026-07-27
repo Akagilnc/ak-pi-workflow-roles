@@ -91,7 +91,9 @@ pi --ak-role coder \
   --ak-coder-task /path/to/task.md \
   -p "Prepare the implementation plan."
 
-pi --ak-role coder \
+pi --no-skills \
+  --skill ~/.agents/skills/tdd/SKILL.md \
+  --ak-role coder \
   --ak-coder-phase apply \
   --ak-coder-task /path/to/approved-plan.md \
   -p "Apply the approved implementation plan."
@@ -103,7 +105,9 @@ Coder terminates through `ak_coder_output` with the same thin worker envelope:
 {"status":"planned|completed|refused","report":"Markdown report","commitSha":"optional self-report"}
 ```
 
-During `apply`, the runtime automatically loads the complete bundled `ak-coder-quality` Skill even when normal Pi skill discovery is disabled. The Skill owns vertical TDD, repository verification, and the same-pattern / introduced-regression / behavior-fact self-check three. These methods stay out of the short Coder Soul. `commitSha` remains advisory evidence rather than a hard package gate.
+During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd`. Use `--no-skills --skill ~/.agents/skills/tdd/SKILL.md` to bind the canonical Matt TDD skill without name collisions. A `completed` receipt is rejected unless the session transcript contains Pi's expanded `<skill name="tdd" ...>` block; an evidence-bearing `refused` receipt does not require TDD or a commit.
+
+The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the Judge. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate.
 
 ## Verdict contract
 
