@@ -254,7 +254,6 @@ test("focused Fixer and Coder controllers own their flags and distinct lifecycle
       loadSoul: async () => "FIXER LAW",
       loadPacket: async () => "PACKET",
     },
-    { failInfrastructure(error) { throw error; } },
   );
   assert.deepEqual([...fixer.flags.keys()], ["ak-fix-packet", "ak-fixer-phase"]);
   await fixerRuntime.activate();

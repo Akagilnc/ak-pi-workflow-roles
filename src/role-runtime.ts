@@ -116,7 +116,6 @@ export function createRoleRuntimeExtension(
           return dependencies.loadFixPacket(path);
         },
       },
-      hostActions,
     );
     const coder = createCoderRoleRuntime(
       pi,
