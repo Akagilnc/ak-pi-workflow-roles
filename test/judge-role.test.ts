@@ -163,7 +163,7 @@ test("stable factory registers all six flags in exact help order and stays inert
 
   assert.deepEqual([...harness.flags], [
     ["ak-role", {
-      description: "Activate a packaged workflow role: judge, fixer, coder, or reviewer",
+      description: "Activate a packaged workflow role: judge, fixer, coder, reviewer, or collector",
       type: "string",
     }],
     ["ak-fix-packet", {
@@ -184,6 +184,18 @@ test("stable factory registers all six flags in exact help order and stays inert
     }],
     ["ak-review-task", {
       description: "Opaque Markdown review task assigned to the reviewer role",
+      type: "string",
+    }],
+    ["ak-collector-repo", {
+      description: "GitHub owner/repo target for the collector role (github.com only; conservative ASCII grammar)",
+      type: "string",
+    }],
+    ["ak-collector-pr", {
+      description: "Positive safe-integer pull request number for the collector role",
+      type: "string",
+    }],
+    ["ak-collector-legs", {
+      description: "Path to the Collector v1 leg manifest JSON file",
       type: "string",
     }],
   ]);

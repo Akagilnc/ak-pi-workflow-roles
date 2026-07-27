@@ -61,7 +61,7 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
   return resolvePackageEntrypoint(manifest);
 }
 
-test("packaged CLI help exposes all four roles and Reviewer task input", async () => {
+test("packaged CLI help exposes all five roles and Reviewer/Collector inputs", async () => {
   const manifest = await loadRawPackageManifest();
   const result = await runPiSubprocess(
     ["--no-extensions", "-e", packageEntrypoint(manifest), "--help"],
@@ -70,7 +70,7 @@ test("packaged CLI help exposes all four roles and Reviewer task input", async (
   assert.equal(result.code, 0);
   assert.match(
     result.stdout,
-    /--ak-role <value>\s+Activate a packaged workflow role: judge, fixer, coder, or reviewer/,
+    /--ak-role <value>\s+Activate a packaged workflow role: judge, fixer, coder, reviewer, or collector/,
   );
   assert.match(
     result.stdout,
@@ -99,12 +99,15 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
   assert.equal(
     extensionHelp,
     [
-      "  --ak-role <value>           Activate a packaged workflow role: judge, fixer, coder, or reviewer",
+      "  --ak-role <value>           Activate a packaged workflow role: judge, fixer, coder, reviewer, or collector",
       "  --ak-fix-packet <value>     Markdown repair packet assigned to the fixer role",
       "  --ak-fixer-phase <value>    Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
       "  --ak-coder-task <value>     Markdown task assigned to the coder role",
       "  --ak-coder-phase <value>    Coder phase: plan (inspect and propose an implementation plan; no edits or commits) or apply (execute the approved plan and verify the first implementation)",
       "  --ak-review-task <value>    Opaque Markdown review task assigned to the reviewer role",
+      "  --ak-collector-repo <value> GitHub owner/repo target for the collector role (github.com only; conservative ASCII grammar)",
+      "  --ak-collector-pr <value>   Positive safe-integer pull request number for the collector role",
+      "  --ak-collector-legs <value> Path to the Collector v1 leg manifest JSON file",
     ].join("\n") + "\n",
   );
 });
