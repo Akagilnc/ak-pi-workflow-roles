@@ -47,29 +47,58 @@ const auditDecisionTool = {
 };
 
 function readAuditDecision(response: AssistantMessage): SoulAuditResult {
-  const call = response.content.find(
-    (part) =>
-      part.type === "toolCall" && part.name === SOUL_AUDIT_TOOL_NAME,
+  const calls = response.content.filter(
+    (part) => part.type === "toolCall",
   );
-  if (call === undefined || call.type !== "toolCall") {
-    throw new Error("invalid soul audit decision: missing decision tool call");
+  const call = calls[0];
+  if (
+    calls.length !== 1 ||
+    call?.type !== "toolCall" ||
+    call.name !== SOUL_AUDIT_TOOL_NAME
+  ) {
+    throw new Error(
+      "invalid soul audit decision: expected exactly one decision tool call",
+    );
   }
-  const status = call.arguments["status"];
-  const rawViolations = call.arguments["violations"];
-  const violations = Array.isArray(rawViolations)
-    ? rawViolations.filter(
-        (value): value is string =>
-          typeof value === "string" && value.trim().length > 0,
-      )
-    : [];
 
-  if (status === "pass") {
+  const arguments_: unknown = call.arguments;
+  if (
+    typeof arguments_ !== "object" ||
+    arguments_ === null ||
+    Array.isArray(arguments_)
+  ) {
+    throw new Error("invalid soul audit decision: arguments must be an object");
+  }
+  const decision = arguments_ as Record<string, unknown>;
+  const keys = Object.keys(decision);
+  if (
+    keys.length !== 2 ||
+    !keys.includes("status") ||
+    !keys.includes("violations")
+  ) {
+    throw new Error("invalid soul audit decision: arguments must have exact keys");
+  }
+
+  const status = decision["status"];
+  const violations = decision["violations"];
+  if (
+    !Array.isArray(violations) ||
+    !violations.every(
+      (value): value is string =>
+        typeof value === "string" && value.trim().length > 0,
+    )
+  ) {
+    throw new Error("invalid soul audit decision: violations must be non-blank strings");
+  }
+  if (status === "pass" && violations.length === 0) {
     return { status: "pass", usage: response.usage };
   }
   if (status === "revise" && violations.length > 0) {
     return { status: "revise", violations, usage: response.usage };
   }
-  throw new Error("invalid soul audit decision: expected pass or non-empty revise");
+  throw new Error(
+    "invalid soul audit decision: pass requires no violations and revise requires violations",
+  );
 }
 
 export function createPiSoulAuditor(
@@ -84,11 +113,6 @@ export function createPiSoulAuditor(
     const auth = await options.context.modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok) {
       throw new Error(`Soul compliance audit authentication failed: ${auth.error}`);
-    }
-    if (!auth.apiKey) {
-      throw new Error(
-        `Soul compliance audit has no API key for ${model.provider}`,
-      );
     }
 
     const response = await runCompletion(
@@ -125,7 +149,7 @@ export function createPiSoulAuditor(
         tools: [auditDecisionTool],
       },
       {
-        apiKey: auth.apiKey,
+        ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
         ...(auth.headers === undefined ? {} : { headers: auth.headers }),
         ...(auth.env === undefined ? {} : { env: auth.env }),
         maxTokens: 2048,

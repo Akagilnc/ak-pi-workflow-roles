@@ -29,7 +29,110 @@ const judgeVerdictSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export type JudgeVerdict = Static<typeof judgeVerdictSchema>;
+type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
+
+export type JudgeVerdict =
+  | { judgeStatus: "converged" }
+  | { judgeStatus: "continue"; fix: { summary: string } }
+  | {
+      judgeStatus: "escalate";
+      decisionGate: { question: string; options: string[] };
+    };
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const keys = Object.keys(value);
+  return (
+    keys.length === expected.length &&
+    expected.every((key) => Object.hasOwn(value, key))
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
+  if (!isRecord(verdict)) {
+    throw new Error("Judge verdict must be an object");
+  }
+
+  if (verdict.judgeStatus === "converged") {
+    if (!hasExactKeys(verdict, ["judgeStatus"])) {
+      throw new Error("Judge converged forbids fix and decisionGate");
+    }
+    return { judgeStatus: "converged" };
+  }
+
+  if (verdict.judgeStatus === "continue") {
+    if (
+      !hasExactKeys(verdict, ["judgeStatus", "fix"]) ||
+      !isRecord(verdict.fix) ||
+      !hasExactKeys(verdict.fix, ["summary"]) ||
+      typeof verdict.fix.summary !== "string" ||
+      verdict.fix.summary.trim().length === 0
+    ) {
+      throw new Error(
+        "Judge continue requires only a non-blank fix.summary",
+      );
+    }
+    return {
+      judgeStatus: "continue",
+      fix: { summary: verdict.fix.summary },
+    };
+  }
+
+  if (verdict.judgeStatus === "escalate") {
+    const gate = verdict.decisionGate;
+    if (
+      !hasExactKeys(verdict, ["judgeStatus", "decisionGate"]) ||
+      !isRecord(gate) ||
+      !hasExactKeys(gate, ["question", "options"]) ||
+      typeof gate.question !== "string" ||
+      gate.question.trim().length === 0 ||
+      !Array.isArray(gate.options) ||
+      gate.options.length === 0 ||
+      !gate.options.every(
+        (option) =>
+          typeof option === "string" && option.trim().length > 0,
+      )
+    ) {
+      throw new Error(
+        "Judge escalate requires only a non-blank decisionGate question and options",
+      );
+    }
+    return {
+      judgeStatus: "escalate",
+      decisionGate: { question: gate.question, options: [...gate.options] },
+    };
+  }
+
+  throw new Error("Judge verdict has an invalid status");
+}
+
+function requireSingletonJudgeCall(
+  toolCallId: string,
+  ctx: ExtensionContext,
+): void {
+  const leaf = ctx.sessionManager.getLeafEntry();
+  if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
+    throw new Error("Judge output must be the sole final tool call");
+  }
+  const calls = leaf.message.content.filter(
+    (part) => part.type === "toolCall",
+  );
+  const call = calls[0];
+  if (
+    calls.length !== 1 ||
+    call === undefined ||
+    call.id !== toolCallId ||
+    call.name !== JUDGE_OUTPUT_TOOL_NAME
+  ) {
+    throw new Error("Judge output must be the sole final tool call");
+  }
+}
 
 export type SoulAuditInput = {
   soul: string;
@@ -96,22 +199,12 @@ export function createRoleRuntimeExtension(
           `Use ${JUDGE_OUTPUT_TOOL_NAME} as the final action for the judge role.`,
         ],
         parameters: judgeVerdictSchema,
-        async execute(_toolCallId, verdict, signal, _onUpdate, ctx) {
+        async execute(toolCallId, parameters, signal, _onUpdate, ctx) {
           if (activeRole !== "judge" || activeSoul === undefined) {
             throw new Error("Judge soul was not loaded");
           }
-          if (
-            verdict.judgeStatus === "continue" &&
-            (verdict.fix === undefined || verdict.fix.summary.trim().length === 0)
-          ) {
-            throw new Error("Judge continue requires fix.summary");
-          }
-          if (
-            verdict.judgeStatus === "escalate" &&
-            verdict.decisionGate === undefined
-          ) {
-            throw new Error("Judge escalate requires decisionGate");
-          }
+          requireSingletonJudgeCall(toolCallId, ctx);
+          const verdict = validateVerdict(parameters);
           const audit = await dependencies.auditSoulCompliance(
             {
               soul: activeSoul,
