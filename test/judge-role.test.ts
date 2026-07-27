@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+  CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
   createRoleRuntimeExtension,
@@ -289,6 +290,133 @@ test("judge role fails before adjudication when its soul is empty", async () => 
     /Judge soul is empty/,
   );
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
+});
+
+test("coder plan loads its task without construction skill and returns planned", async () => {
+  const loadedTasks: string[] = [];
+  let qualityLoads = 0;
+  const harness = extensionHarness("coder", {
+    "ak-coder-task": "/materials/task.md",
+    "ak-coder-phase": "plan",
+  });
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadCoderSoul: async () => "CODER LAW",
+    loadCoderTask: async (path) => {
+      loadedTasks.push(path);
+      return "IMPLEMENT THE VERTICAL SLICE";
+    },
+    loadCoderQualitySkill: async () => {
+      qualityLoads += 1;
+      return "TDD AND SELF-CHECK";
+    },
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(harness.pi as ExtensionAPI);
+
+  await harness.handlers.get("session_start")?.({}, {});
+  const promptResult = await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE" },
+    {},
+  );
+  const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
+  assert.deepEqual(loadedTasks, ["/materials/task.md"]);
+  assert.equal(qualityLoads, 0);
+  assert.match(prompt, /CODER LAW/);
+  assert.match(prompt, /<coder_phase>\s*plan/);
+  assert.match(prompt, /IMPLEMENT THE VERTICAL SLICE/);
+  assert.doesNotMatch(prompt, /TDD AND SELF-CHECK/);
+
+  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  const output = { status: "planned", report: "Plan the public seam first." };
+  const result = await tool.execute(
+    "coder",
+    output,
+    undefined,
+    undefined,
+    toolCallContext([{ id: "coder", name: CODER_OUTPUT_TOOL_NAME }]),
+  );
+  assert.deepEqual(result.details, output);
+  await assert.rejects(
+    tool.execute(
+      "coder-completed",
+      { status: "completed", report: "Constructed too early." },
+      undefined,
+      undefined,
+      toolCallContext([
+        { id: "coder-completed", name: CODER_OUTPUT_TOOL_NAME },
+      ]),
+    ),
+    /Coder plan phase permits only planned or refused/,
+  );
+});
+
+test("coder apply auto-loads quality skill and permits completion or refusal without a commit claim", async () => {
+  const harness = extensionHarness("coder", {
+    "ak-coder-task": "/materials/approved.md",
+    "ak-coder-phase": "apply",
+  });
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadCoderSoul: async () => "CODER LAW",
+    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
+    loadCoderQualitySkill: async () => "MANDATORY TDD\nMANDATORY SELF-CHECK THREE",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(harness.pi as ExtensionAPI);
+
+  await harness.handlers.get("session_start")?.({}, {});
+  const promptResult = await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE" },
+    {},
+  );
+  const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
+  assert.match(prompt, /<coder_phase>\s*apply/);
+  assert.match(prompt, /MANDATORY TDD/);
+  assert.match(prompt, /MANDATORY SELF-CHECK THREE/);
+
+  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  for (const [index, output] of [
+    { status: "completed", report: "Implemented and verified the slice." },
+    { status: "refused", report: "The assignment contradicts its authority." },
+  ].entries()) {
+    const id = `coder-${index}`;
+    const result = await tool.execute(
+      id,
+      output,
+      undefined,
+      undefined,
+      toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }]),
+    );
+    assert.deepEqual(result.details, output);
+  }
+  await assert.rejects(
+    tool.execute(
+      "coder-planned",
+      { status: "planned", report: "Planning after approval." },
+      undefined,
+      undefined,
+      toolCallContext([
+        { id: "coder-planned", name: CODER_OUTPUT_TOOL_NAME },
+      ]),
+    ),
+    /Coder apply phase permits only completed or refused/,
+  );
+  await assert.rejects(
+    tool.execute(
+      "coder-mixed",
+      { status: "completed", report: "Ambiguous batch." },
+      undefined,
+      undefined,
+      toolCallContext([
+        { id: "coder-mixed", name: CODER_OUTPUT_TOOL_NAME },
+        { id: "sibling", name: "read" },
+      ]),
+    ),
+    /Coder output must be the sole final tool call/,
+  );
 });
 
 test("fixer role loads its Markdown packet and returns a thin report envelope", async () => {
