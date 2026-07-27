@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, resolve } from "node:path";
 import test from "node:test";
 
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import {
+  InMemoryCredentialStore,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+  type AssistantMessage,
+  type Usage,
+} from "@earendil-works/pi-ai";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRuntime,
   SessionManager,
+  SettingsManager,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -242,6 +256,90 @@ test("Agent calls preserve same-message batches and isolate separate assistant e
   ]);
 });
 
+test("duplicate and conflicting Agent batch provenance fail before child start or receipt", async () => {
+  for (const scenario of ["duplicate", "conflicting"] as const) {
+    let childStarts = 0;
+    let audits = 0;
+    const fixture = extension({
+      runReviewerAgent: async () => {
+        childStarts += 1;
+        return { report: "impossible", workspaceDisposition: "deleted" };
+      },
+      auditReviewerCompliance: async () => {
+        audits += 1;
+        return { status: "pass" as const };
+      },
+    });
+    await fixture.handlers.get("session_start")?.({}, {});
+    const ctx = context("boundary", AGENT_TOOL_NAME,
+      scenario === "duplicate"
+        ? [
+            { id: "boundary", name: AGENT_TOOL_NAME },
+            { id: "boundary", name: AGENT_TOOL_NAME },
+          ]
+        : [{ id: "boundary", name: AGENT_TOOL_NAME }],
+    );
+    let aborts = 0;
+    (ctx as any).abort = () => { aborts += 1; };
+    let recorded: any;
+
+    if (scenario === "conflicting") {
+      await fixture.handlers.get("tool_execution_start")?.({
+        toolCallId: "boundary",
+        toolName: AGENT_TOOL_NAME,
+        args: { description: "first", prompt: "first" },
+      }, ctx);
+      const leaf = ctx.sessionManager.getLeafEntry();
+      assert.ok(leaf?.type === "message" && leaf.message.role === "assistant");
+      leaf.message.content.push({
+        type: "toolCall",
+        id: "later-sibling",
+        name: AGENT_TOOL_NAME,
+        arguments: {},
+      });
+    }
+
+    await assert.rejects(
+      async () => {
+        try {
+          await fixture.handlers.get("tool_execution_start")?.({
+            toolCallId: "boundary",
+            toolName: AGENT_TOOL_NAME,
+            args: { description: scenario, prompt: scenario },
+          }, ctx);
+        } catch (error) {
+          recorded = (error as { reviewerAgentAttempt?: unknown })
+            .reviewerAgentAttempt;
+          throw error;
+        }
+      },
+      scenario === "duplicate"
+        ? /does not occur exactly once|not unique/
+        : /conflicting batch evidence/,
+    );
+    assert.equal(aborts, 1);
+    assert.equal(childStarts, 0);
+    assert.equal(audits, 0);
+    assert.equal(recorded.id, "boundary");
+    assert.equal(recorded.status, "failed");
+    assert.match(recorded.diagnostics, scenario === "duplicate"
+      ? /does not occur exactly once|not unique/
+      : /conflicting batch evidence/);
+
+    await assert.rejects(
+      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+        "done",
+        { status: "completed", report: "must not be accepted" },
+        undefined,
+        undefined,
+        context("done"),
+      ),
+      /infrastructure previously failed/,
+    );
+    assert.equal(audits, 0);
+  }
+});
+
 test("missing or malformed Agent leaf provenance aborts before child start", async () => {
   for (const scenario of ["missing", "malformed"] as const) {
     let childStarts = 0;
@@ -366,6 +464,178 @@ test("copied, partial, alternate-path, and later Skill blocks do not establish p
       /canonical native code-review skill expansion/i,
     );
     assert.equal(aborts, 1);
+  }
+});
+
+test("real Pi rejects completed when a schema-invalid Agent sibling never enters execute", async () => {
+  const temp = await mkdtemp(resolve(tmpdir(), "ak-reviewer-malformed-sibling-"));
+  const agentDir = resolve(temp, ".pi-agent");
+  const skillDir = resolve(temp, "code-review");
+  const skillPath = resolve(skillDir, "SKILL.md");
+  const taskPath = resolve(temp, "review-task.md");
+  const rawSkill = [
+    "---",
+    "name: code-review",
+    "description: review",
+    "---",
+    "",
+    "# Canonical review",
+  ].join("\n");
+  let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+  let childStarts = 0;
+  let audits = 0;
+  try {
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(skillPath, rawSkill);
+    await writeFile(taskPath, "# Review task\nReview the fixed point.\n");
+    const canonicalPath = await realpath(skillPath);
+    const faux = fauxProvider({
+      api: "ak-reviewer-malformed-sibling",
+      provider: "ak-reviewer-malformed-sibling",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall(AGENT_TOOL_NAME, {
+          subagent_type: "general-purpose",
+          description: "Valid leg",
+          prompt: "Inspect the fixed point.",
+        }, { id: "valid-leg" }),
+        fauxToolCall(AGENT_TOOL_NAME, {
+          subagent_type: "general-purpose",
+          description: "Invalid leg",
+          prompt: "This must fail schema validation.",
+          unexpected: true,
+        }, { id: "invalid-leg" }),
+      ], { stopReason: "toolUse" }),
+      fauxAssistantMessage(
+        fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, {
+          status: "completed",
+          report: "An always-pass auditor must not accept this.",
+        }, { id: "completed-after-invalid" }),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("Completion was rejected before audit."),
+    ]);
+    const model = faux.getModel();
+    const runtime = await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsPath: null,
+    });
+    runtime.registerNativeProvider({
+      ...faux.provider,
+      auth: {
+        apiKey: {
+          name: "Malformed sibling test auth",
+          async resolve() { return { auth: { apiKey: "offline" } }; },
+        },
+      },
+      getModels() { return [model]; },
+    });
+    const settings = SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false },
+    });
+    const loader = new DefaultResourceLoader({
+      cwd: temp,
+      agentDir,
+      settingsManager: settings,
+      extensionFactories: [createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "judge",
+        loadReviewerSoul: async () => "reviewer",
+        loadReviewerTask: async () => "# Review task\nReview the fixed point.",
+        loadCanonicalReviewerSkill: async () => ({
+          raw: rawSkill,
+          path: canonicalPath,
+          baseDir: dirname(canonicalPath),
+          body: "# Canonical review",
+        }),
+        runReviewerAgent: async () => {
+          childStarts += 1;
+          return { report: "valid report", workspaceDisposition: "deleted" };
+        },
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        auditReviewerCompliance: async () => {
+          audits += 1;
+          return { status: "pass" };
+        },
+      })],
+      additionalSkillPaths: [canonicalPath],
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      systemPrompt: "REVIEWER TEST BASE",
+    });
+    await loader.reload();
+    assert.deepEqual(loader.getExtensions().errors, []);
+    const sessionManager = SessionManager.inMemory(temp);
+    ({ session } = await createAgentSession({
+      cwd: temp,
+      agentDir,
+      model,
+      thinkingLevel: "off",
+      modelRuntime: runtime,
+      resourceLoader: loader,
+      sessionManager,
+      settingsManager: settings,
+      noTools: "builtin",
+    }));
+    session.extensionRunner.setFlagValue("ak-role", "reviewer");
+    session.extensionRunner.setFlagValue("ak-review-task", taskPath);
+    await session.bindExtensions({ mode: "tui" });
+
+    await session.prompt("Review this fixed point.");
+
+    const toolResults = sessionManager.getEntries().filter((entry) =>
+      entry.type === "message" && entry.message.role === "toolResult"
+    );
+    const resultFor = (id: string) => toolResults.find((entry) =>
+      entry.type === "message" &&
+      entry.message.role === "toolResult" &&
+      entry.message.toolCallId === id
+    );
+    const valid = resultFor("valid-leg");
+    const invalid = resultFor("invalid-leg");
+    const completed = resultFor("completed-after-invalid");
+    assert.ok(valid?.type === "message" && valid.message.role === "toolResult");
+    assert.equal(valid.message.isError, false);
+    assert.ok(invalid?.type === "message" && invalid.message.role === "toolResult");
+    assert.equal(invalid.message.isError, true);
+    const invalidText = invalid.message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+    assert.match(invalidText, /unexpected|additional propert/i);
+    assert.ok(completed?.type === "message" && completed.message.role === "toolResult");
+    assert.equal(completed.message.isError, true);
+    const completedText = completed.message.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+    assert.match(completedText, /exact one-to-one match/);
+    assert.match(completedText, /invalid-leg/);
+    assert.match(completedText, /unexpected|additional propert/i);
+    assert.equal(childStarts, 1, "only the schema-valid sibling reaches execute");
+    assert.equal(audits, 0, "completion reconciliation runs before the auditor");
+    assert.equal(
+      toolResults.some((entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === REVIEWER_OUTPUT_TOOL_NAME &&
+        !entry.message.isError
+      ),
+      false,
+    );
+    assert.equal(faux.getPendingResponseCount(), 0);
+  } finally {
+    if (session !== undefined) {
+      await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      session.dispose();
+    }
+    await rm(temp, { recursive: true, force: true });
   }
 });
 
