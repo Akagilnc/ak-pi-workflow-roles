@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,9 +93,24 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
       return [activeModel];
     },
   };
+  const modelsPath = resolve(agentDir, "models.json");
+  await writeFile(
+    modelsPath,
+    JSON.stringify({
+      providers: {
+        [activeModel.provider]: {
+          modelOverrides: {
+            [activeModel.id]: {
+              headers: { "x-model-route": "audit-tenant" },
+            },
+          },
+        },
+      },
+    }),
+  );
   const modelRuntime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
-    modelsPath: null,
+    modelsPath,
   });
   modelRuntime.registerNativeProvider(authResolvedProvider);
 
@@ -287,7 +302,10 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
     assert.deepEqual(auditDispatch, {
       baseUrl: resolvedBaseUrl,
       apiKey: "resolved-secret",
-      headers: { "x-resolved-auth": "yes" },
+      headers: {
+        "x-resolved-auth": "yes",
+        "x-model-route": "audit-tenant",
+      },
       env: { RESOLVED_TENANT: "integration" },
     });
     const auditInput = seenAuditContext.messages.find(

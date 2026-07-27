@@ -28,6 +28,50 @@ export type SoulAuditOptions = {
   signal?: AbortSignal;
 };
 
+type AuditDispatch = {
+  model: Model<Api>;
+  auth: {
+    apiKey?: string;
+    headers?: Record<string, string>;
+    env?: Record<string, string>;
+  };
+};
+
+async function prepareAuditDispatch(
+  model: Model<Api>,
+  context: ExtensionContext,
+): Promise<AuditDispatch> {
+  const resolution = await context.modelRegistry
+    .getProviderAuth(model.provider)
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Soul compliance audit authentication failed: ${message}`, {
+        cause: error,
+      });
+    });
+  if (resolution === undefined) {
+    throw new Error(
+      `Soul compliance audit authentication failed: provider is not configured: ${model.provider}`,
+    );
+  }
+
+  const auth = await context.modelRegistry.getApiKeyAndHeaders(model);
+  if (!auth.ok) {
+    throw new Error(`Soul compliance audit authentication failed: ${auth.error}`);
+  }
+
+  return {
+    model: resolution.auth.baseUrl
+      ? { ...model, baseUrl: resolution.auth.baseUrl }
+      : model,
+    auth: {
+      ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
+      ...(auth.headers === undefined ? {} : { headers: auth.headers }),
+      ...(auth.env === undefined ? {} : { env: auth.env }),
+    },
+  };
+}
+
 const auditDecisionTool = {
   name: SOUL_AUDIT_TOOL_NAME,
   description:
@@ -108,22 +152,7 @@ export function createPiSoulAuditor(
     if (model === undefined) {
       throw new Error("Soul compliance audit requires an active model");
     }
-    const resolution = await options.context.modelRegistry
-      .getProviderAuth(model.provider)
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Soul compliance audit authentication failed: ${message}`, {
-          cause: error,
-        });
-      });
-    if (resolution === undefined) {
-      throw new Error(
-        `Soul compliance audit authentication failed: provider is not configured: ${model.provider}`,
-      );
-    }
-    const auditModel = resolution.auth.baseUrl
-      ? { ...model, baseUrl: resolution.auth.baseUrl }
-      : model;
+    const dispatch = await prepareAuditDispatch(model, options.context);
 
     const completeAudit =
       runCompletion ??
@@ -139,7 +168,7 @@ export function createPiSoulAuditor(
         return provider.stream(auditModel, auditContext, auditOptions).result();
       });
     const response = await completeAudit(
-      auditModel,
+      dispatch.model,
       {
         systemPrompt: [
           "You are a procedural compliance auditor, not a second judge.",
@@ -172,13 +201,7 @@ export function createPiSoulAuditor(
         tools: [auditDecisionTool],
       },
       {
-        ...(resolution.auth.apiKey === undefined
-          ? {}
-          : { apiKey: resolution.auth.apiKey }),
-        ...(resolution.auth.headers === undefined
-          ? {}
-          : { headers: resolution.auth.headers }),
-        ...(resolution.env === undefined ? {} : { env: resolution.env }),
+        ...dispatch.auth,
         maxTokens: 2048,
         cacheRetention: "none",
         sessionId: uuidv7(),
