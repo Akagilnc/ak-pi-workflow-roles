@@ -43,19 +43,34 @@ The caller should treat the successful `ak_judge_output` tool result as the auth
 
 The fixer role loads `souls/fixer.md` plus the judge-authored Markdown repair packet, then repairs/tests or returns an evidence-bearing refusal:
 
+The CLI advertises the complete phase vocabulary in `pi --ak-role fixer --help`:
+
+| `--ak-fixer-phase` | Meaning | Legal success status |
+| --- | --- | --- |
+| `plan` | Inspect and propose a repair plan; do not edit or commit | `planned` |
+| `apply` | Execute the approved plan, verify, and commit when repaired | `completed` |
+
+There is no third phase. Either phase may return `refused` with evidence.
+
 ```bash
 pi --ak-role fixer \
+  --ak-fixer-phase plan \
   --ak-fix-packet /path/to/fix-packet.md \
-  -p "Apply the assigned repair packet."
+  -p "Prepare the repair plan."
+
+pi --ak-role fixer \
+  --ak-fixer-phase apply \
+  --ak-fix-packet /path/to/approved-fix.md \
+  -p "Apply the approved repair plan."
 ```
 
 Fixer terminates through `ak_fixer_output`:
 
 ```json
-{"status":"completed|refused","report":"Markdown report","commitSha":"optional self-report"}
+{"status":"planned|completed|refused","report":"Markdown report","commitSha":"optional self-report"}
 ```
 
-`commitSha` is advisory evidence for the judge, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence and the judge decides whether to escalate. The caller transports the report, live Git history, and any fresh review back to the judge.
+`planned` cannot carry `commitSha`. Otherwise `commitSha` is advisory evidence for the judge, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence and the judge decides whether to escalate. The caller transports the report, live Git history, and any fresh review back to the judge.
 
 ## Verdict contract
 
