@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -31,6 +31,7 @@ import {
   JUDGE_OUTPUT_TOOL_NAME,
 } from "../src/role-runtime.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
+import { writeTestSkill } from "./helpers/test-skill.ts";
 
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const execFileAsync = promisify(execFile);
@@ -349,9 +350,12 @@ test("packaged coder apply expands the canonical Matt tdd skill and gates comple
     await readFile(resolve(packageRoot, "package.json"), "utf8"),
   ) as { files?: string[]; pi?: { extensions?: string[] } };
   const coderSoul = (await readFile(resolve(packageRoot, "souls/coder.md"), "utf8")).trim();
-  const tddSkillPath = resolve(homedir(), ".agents/skills/tdd/SKILL.md");
-  const tddSkill = (await readFile(tddSkillPath, "utf8")).trim();
   const agentDir = await mkdtemp(resolve(tmpdir(), "ak-coder-integration-"));
+  const { path: tddSkillPath, raw: tddSkillRaw } = await writeTestSkill(
+    agentDir,
+    "tdd",
+  );
+  const tddSkill = tddSkillRaw.trim();
   const taskPath = resolve(agentDir, "approved-task.md");
   const task = "# Approved task\n\nImplement the first vertical slice.";
   await writeFile(taskPath, task);

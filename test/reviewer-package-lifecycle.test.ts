@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -22,6 +22,8 @@ import {
   SettingsManager,
   stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
+
+import { writeTestSkill } from "./helpers/test-skill.ts";
 
 const AGENT_TOOL_NAME = "Agent";
 const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
@@ -56,12 +58,14 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
   const temp = await mkdtemp(resolve(tmpdir(), "ak-reviewer-package-"));
   const fixture = resolve(temp, "fixture");
   const agentDir = resolve(fixture, ".pi-agent");
-  const canonicalSkillPath = await realpath(
-    resolve(homedir(), ".agents/skills/code-review/SKILL.md"),
-  );
-  const canonicalRaw = await readFile(canonicalSkillPath, "utf8");
+  const previousHome = process.env.HOME;
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
   try {
+    process.env.HOME = temp;
+    const { path: canonicalSkillPath, raw: canonicalRaw } = await writeTestSkill(
+      temp,
+      "code-review",
+    );
     await mkdir(fixture, { recursive: true });
     const consumerRoot = await realpath(fixture);
     await git(fixture, "init");
@@ -385,6 +389,8 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
       await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       session.dispose();
     }
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     await rm(temp, { recursive: true, force: true });
   }
 });
