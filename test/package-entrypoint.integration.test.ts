@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -355,10 +355,13 @@ test("packaged coder apply proves the immediately following canonical native tdd
   const agentDir = await mkdtemp(resolve(tmpdir(), "ak-coder-integration-"));
   const previousHome = process.env.HOME;
   process.env.HOME = agentDir;
-  const { path: tddSkillPath, raw: tddSkillRaw } = await writeTestSkill(
-    agentDir,
+  const { path: tddSkillTargetPath, raw: tddSkillRaw } = await writeTestSkill(
+    resolve(agentDir, "owned-target"),
     "tdd",
   );
+  const tddSkillPath = resolve(agentDir, ".agents/skills/tdd/SKILL.md");
+  await mkdir(dirname(tddSkillPath), { recursive: true });
+  await symlink(tddSkillTargetPath, tddSkillPath);
   const taskPath = resolve(agentDir, "approved-task.md");
   const task = "# Approved task\n\nImplement the first vertical slice.";
   await writeFile(taskPath, task);
@@ -439,7 +442,7 @@ test("packaged coder apply proves the immediately following canonical native tdd
         );
       },
     ]);
-    await session.prompt("Apply or refuse the approved task.");
+    await session.prompt("/skill:tdd");
 
     const seenContext = coderContext as Context | undefined;
     assert.ok(seenContext);
@@ -455,11 +458,16 @@ test("packaged coder apply proves the immediately following canonical native tdd
             .filter((part) => part.type === "text")
             .map((part) => part.text)
             .join("\n");
+    assert.equal(
+      (userText.match(/<skill name="tdd"/g) ?? []).length,
+      1,
+      "Pi emits one native Skill block for the pre-prefixed command",
+    );
     assert.deepEqual(parseSkillBlock(userText), {
       name: "tdd",
       location: tddSkillPath,
       content: `References are relative to ${dirname(tddSkillPath)}.\n\n${stripFrontmatter(tddSkillRaw).trim()}`,
-      userMessage: "Apply or refuse the approved task.",
+      userMessage: undefined,
     });
     const accepted = sessionManager.getEntries().find(
       (entry) =>

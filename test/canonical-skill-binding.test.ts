@@ -31,7 +31,7 @@ async function writeConfiguredSkill(
   return realpath(path);
 }
 
-test("canonical binding resolves and snapshots the configured Skill", async () => {
+test("canonical binding snapshots the configured Skill and accepts only its native pathname spellings", async () => {
   await withHome(async (home) => {
     const configuredDir = resolve(home, ".agents/skills/tdd");
     const targetDir = resolve(home, "owned-fixture");
@@ -50,21 +50,69 @@ test("canonical binding resolves and snapshots the configured Skill", async () =
     await mkdir(configuredDir, { recursive: true });
     await mkdir(targetDir, { recursive: true });
     await writeFile(targetPath, raw);
-    await symlink(targetPath, resolve(configuredDir, "SKILL.md"));
+    const configuredPath = resolve(configuredDir, "SKILL.md");
+    await symlink(targetPath, configuredPath);
 
     const binding = await loadCanonicalSkillBinding("tdd");
     const canonicalPath = await realpath(targetPath);
+    const body = "# Fixture TDD\n\nRun one red-green slice.";
 
     assert.equal(binding.name, "tdd");
     assert.deepEqual(binding.snapshot, {
       raw,
       path: canonicalPath,
       baseDir: dirname(canonicalPath),
-      body: "# Fixture TDD\n\nRun one red-green slice.",
+      body,
     });
     assert.equal(binding.invocation("Implement the approved slice."), "/skill:tdd Implement the approved slice.");
     assert.ok(Object.isFrozen(binding));
     assert.ok(Object.isFrozen(binding.snapshot));
+
+    const request = "Implement the approved slice.";
+    const configuredContent = `References are relative to ${dirname(configuredPath)}.\n\n${body}`;
+    const resolvedContent = `References are relative to ${dirname(canonicalPath)}.\n\n${body}`;
+    const configuredExpansion = `<skill name="tdd" location="${configuredPath}">\n${configuredContent}\n</skill>\n\n${request}`;
+    const resolvedExpansion = `<skill name="tdd" location="${canonicalPath}">\n${resolvedContent}\n</skill>\n\n${request}`;
+
+    assert.deepEqual(binding.captureExpansion(configuredExpansion, request), {
+      name: "tdd",
+      location: configuredPath,
+      content: configuredContent,
+      userMessage: request,
+    });
+    assert.deepEqual(binding.captureExpansion(resolvedExpansion, request), {
+      name: "tdd",
+      location: canonicalPath,
+      content: resolvedContent,
+      userMessage: request,
+    });
+    assert.deepEqual(
+      binding.captureExpansion(
+        `<skill name="tdd" location="${configuredPath}">\n${configuredContent}\n</skill>`,
+        "",
+      ),
+      {
+        name: "tdd",
+        location: configuredPath,
+        content: configuredContent,
+        userMessage: "",
+      },
+    );
+    assert.equal(
+      binding.captureExpansion(
+        configuredExpansion.replace(configuredContent, resolvedContent),
+        request,
+      ),
+      undefined,
+    );
+    assert.equal(
+      binding.captureExpansion(
+        resolvedExpansion.replace(resolvedContent, configuredContent),
+        request,
+      ),
+      undefined,
+    );
+
     await writeFile(targetPath, raw.replace("Run one red-green slice.", "Changed after activation."));
     const reloaded = await loadCanonicalSkillBinding("tdd");
     assert.notEqual(reloaded.snapshot, binding.snapshot);
