@@ -2,72 +2,65 @@
 
 Research snapshot: 2026-07-28
 
-## Decision summary
+## How to read this document
 
-Collector must adapt to documented reviewer protocols rather than require every reviewer to emit a GitHub `PullRequestReview`.
+| Layer | Authority |
+| --- | --- |
+| **Accepted policy** | Thin rationale only — cite [ADR 0011](../adr/0011-collector-adapts-to-documented-reviewer-protocols.md) |
+| **Current v1 (implemented)** | Package truth today — cite schema, transport, and receipt rules |
+| **Observations (non-normative)** | Dated positive object anchors; mutable; not terminal law |
+| **Future sketches (unaccepted)** | Design ideas only; not usable contracts |
 
-The providers studied expose different completion surfaces:
+Do not promote observations or sketches into package behavior without a separate accepted decision, first-party documentation support, and captured fixtures.
 
-| Protocol | Findings | No findings | Unavailable | Best HEAD binding |
-| --- | --- | --- | --- | --- |
-| Hosted Codex | Submitted review plus inline review comments | PR-level `+1` reaction and, in observed runs, an issue comment naming the reviewed commit | No documented structured form found | Findings: review `commit_id`. No findings: provider-attested short SHA plus a HEAD-stable request/observation bracket; no structured SHA exists. |
-| CodeRabbit | Reviews, inline comments, and walkthrough text | No documented zero-findings field | Documented rate-limit comment plus passing `Review rate limited` check; other review errors use the progress surface | Check-run `head_sha`, or a commit status queried at the literal SHA; reviews/comments additionally carry commit fields. |
-| Cursor Bugbot | HEAD-bound check plus review/inline findings | `Cursor Bugbot` check with `conclusion: success` | `neutral` is overloaded; check output distinguishes findings, cancellation, internal error, and observed quota failures | Check-run `head_sha`; enterprise analytics additionally exposes `commit_sha`. |
+## Accepted policy
 
-A provider's operational completion and its findings outcome are separate facts. A completed review may contain findings; `valid` must not mean “clean.”
+See [ADR 0011](../adr/0011-collector-adapts-to-documented-reviewer-protocols.md): Collector should adapt to each reviewer’s documented completion forms rather than require every leg to emit a GitHub `PullRequestReview`.
 
-## Why one universal review-object rule fails
+This research note does not add design. Profiles, extended transport, and multi-state operation models remain unaccepted.
 
-GitHub PR conversation comments are issue comments and have no commit field. Reactions identify a parent PR/comment and actor but have no commit field. By contrast:
+## Current v1 (implemented)
 
-- submitted pull-request reviews expose `commit_id`;
-- inline review comments expose review and commit provenance;
-- check runs expose `head_sha`, status, conclusion, app, and output;
-- commit statuses can be queried at a literal SHA.
+Truth sources (cite only; do not restate as redesign):
 
-The Collector v1 rule accepted only submitted reviews with `commit_id`. That is strong for providers that always create reviews, but hosted Codex does not do so for every successful no-findings run. Requiring that shape turns a real provider conclusion into `missing`.
+- [`schemas/collector-legs-v1.schema.json`](../../schemas/collector-legs-v1.schema.json)
+- Collector GitHub transport and ledger code under `src/collector-github.ts` (and related ledger helpers)
+- Receipt / tool-schema / role status rules under `src/collector-receipt.ts`, `src/collector-tool-schemas.ts`, `src/collector-role.ts`
 
-GitHub API references:
+Facts that hold today:
 
-- [Pull request reviews](https://docs.github.com/en/rest/pulls/reviews)
-- [Pull request review comments](https://docs.github.com/en/rest/pulls/comments)
-- [Issue and PR comments](https://docs.github.com/en/rest/issues/comments)
-- [Reactions](https://docs.github.com/en/rest/reactions/reactions)
-- [Check runs](https://docs.github.com/en/rest/checks/runs)
-- [Commit statuses](https://docs.github.com/en/rest/commits/statuses)
+- **Manifest shape:** `version` + `legs[{ id, expectedAuthors, request? }]` only. There is **no** `protocol` field.
+- **Transport surfaces:** user, pull request, submitted reviews, issue comments, and review comments only. v1 does **not** collect reactions, check runs, or commit statuses as ledger transport.
+- **`valid`:** a qualifying submitted review whose `commit_id` matches the exact target HEAD (plus existing cite rules).
+- **Submitted leg statuses:** `valid` | `unavailable` | `missing` only.
+- **`pending`:** internal/semantic only; never a submitted receipt status. Collector has no submitted `refused` or `completed` status.
 
-## Hosted Codex
+A provider’s operational completion and its findings outcome remain separate facts even under future designs: a completed review may contain findings; `valid` must not mean “clean.”
 
-OpenAI documents `@codex review` as the hosted trigger and describes a standard GitHub review. Its generated GitHub boilerplate says that suggestions produce comments while no suggestions produce a thumbs-up reaction.
+## Observations (non-normative)
 
-Primary sources:
+Positive durable object anchors only. Live GitHub objects can mutate or disappear; these are research evidence, not terminal rules. Negative absences without captured fixtures are omitted.
+
+### Hosted Codex — documented surfaces
+
+OpenAI documents `@codex review` as the hosted trigger and describes a standard GitHub review. Primary sources:
 
 - [OpenAI: GitHub code review](https://developers.openai.com/codex/integrations/github/)
 - [OpenAI: Codex GitHub Action](https://developers.openai.com/codex/github-action/)
 
-The hosted connector and `openai/codex-action` are different protocols. An Action's check, output schema, checkout ref, and posted comment are repository-defined and cannot be treated as the hosted connector's fixed result format.
+The hosted connector and `openai/codex-action` are different protocols. An Action’s check, output schema, checkout ref, and posted comment are repository-defined and cannot be treated as the hosted connector’s fixed result format.
 
-### Observed on roles PR #5
+### Hosted Codex — PR #5 positive observation @ `c73bf31…`
 
-Findings runs created `COMMENTED` reviews whose full `commit_id` matched the requested HEAD and whose inline comments joined through `pull_request_review_id`.
+| Object | Durable anchor |
+| --- | --- |
+| PR container | https://github.com/Akagilnc/ak-pi-workflow-roles/pull/5 |
+| Target commit | `c73bf31a3d22815b26b9a33a5d28fd1f242f5701` |
+| Issue comment (positive) | API id `5102352848` · https://github.com/Akagilnc/ak-pi-workflow-roles/pull/5#issuecomment-5102352848 · `chatgpt-codex-connector[bot]` · `2026-07-28T09:27:54Z` · body includes `Didn't find any major issues` and `Reviewed commit: c73bf31a3d` |
 
-The no-findings run for `c73bf31a3d22815b26b9a33a5d28fd1f242f5701` created:
+**Observation only.** This comment is not a documented native terminal form, not profile-authorized, and not structured full-SHA binding. The comment is mutable. Do not treat it as package law.
 
-1. a PR-level `+1` reaction by `chatgpt-codex-connector[bot]`; and
-2. an issue comment saying `Didn't find any major issues` and `Reviewed commit: c73bf31a3d`.
-
-It created no `PullRequestReview` and no Codex check run. The conclusion is real provider evidence, but its commit binding is provider-attested prose rather than a structured full SHA. The comment is mutable and the reaction is deletable.
-
-A Codex protocol profile should therefore:
-
-- prefer exact submitted-review `commit_id` evidence;
-- accept the documented no-findings native form only from the configured bot/app;
-- resolve the stated SHA prefix uniquely to the target HEAD;
-- require request/observation timestamps and a stable PR HEAD bracket;
-- preserve the raw comment and reaction and disclose the weaker binding kind;
-- never reinterpret “no major issues” as GitHub approval or merge readiness.
-
-## CodeRabbit
+### CodeRabbit — documented surfaces
 
 CodeRabbit documents automatic and manual review triggers, including `@coderabbitai review` and `@coderabbitai full review`. Its default `reviews.review_progress` publishes progress through a GitHub check run; `reviews.commit_status` is the legacy status mirror when progress is disabled.
 
@@ -81,22 +74,24 @@ Primary sources:
 
 The docs do not define a stable machine-readable zero-findings count. Check/status success proves operational completion, not necessarily absence of findings. Approval is optional and can follow resolution of earlier findings, so it is not a universal clean-review signal.
 
-A CodeRabbit protocol profile should:
+### CodeRabbit — PR #4 multi-surface demo (non-normative)
 
-- bind completion through a configured CodeRabbit check run's `head_sha`, or through its latest commit status queried at the exact target SHA;
-- collect same-HEAD reviews and inline comments as findings/report evidence;
-- distinguish the documented passing `Review rate limited` check from a completed review;
-- treat walkthrough comments as report data, not sole HEAD proof;
-- avoid inferring “clean” merely from zero new comments or a successful progress check.
+| Object | Durable anchor |
+| --- | --- |
+| PR container | https://github.com/Akagilnc/ak-pi-workflow-roles/pull/4 |
+| Walkthrough issue comment | API id `5099890151` · https://github.com/Akagilnc/ak-pi-workflow-roles/pull/4#issuecomment-5099890151 · `coderabbitai[bot]` · `2026-07-28T04:18:36Z` |
+| Pull request review | Review id `4793700581` · `COMMENTED` · `commit_id: c5f75b63415bf24b8a2318ef8744a60d255eb135` · `2026-07-28T04:24:49Z` · https://github.com/Akagilnc/ak-pi-workflow-roles/pull/4#pullrequestreview-4793700581 |
+| Inline review comment | id `3662760359` · `pull_request_review_id: 4793700581` · https://github.com/Akagilnc/ak-pi-workflow-roles/pull/4#discussion_r3662760359 · `2026-07-28T04:24:48Z` |
+| Commit status | id `51192757994` · `context: CodeRabbit` · `state: success` · `2026-07-28T04:24:51Z` · on `c5f75b63415bf24b8a2318ef8744a60d255eb135` |
 
-On PR #4, CodeRabbit demonstrated all three relevant surfaces: a `CodeRabbit` status, a mutable walkthrough issue comment, and a `COMMENTED` review with an exact `commit_id` plus an inline actionable finding.
+Optional secondary (later pass, only if text mentions it): review `4797137516`; discussion `3665422516`; statuses `51213941087` / `51214696930`.
 
-## Cursor Bugbot
+### Cursor Bugbot — documented surfaces
 
-Cursor documents that every run publishes a `Cursor Bugbot` check. Its conclusions are:
+Cursor documents that every run publishes a `Cursor Bugbot` check. Documented conclusions:
 
 - `success`: no issues and no unresolved earlier Bugbot comments;
-- `neutral`: findings, cancellation by a newer commit, or internal error;
+- `neutral`: overloaded (docs group findings, cancellation by a newer commit, or internal error under this conclusion);
 - `failure`: findings when fail-on-unresolved-issues is enabled.
 
 Primary sources:
@@ -104,23 +99,46 @@ Primary sources:
 - [Cursor Bugbot: how it works and CI statuses](https://cursor.com/docs/bugbot#how-it-works)
 - [Cursor Bugbot API](https://cursor.com/docs/bugbot#api)
 
-The enterprise API's completed-review records expose `commit_sha`, `bugs_found`, and findings. On ordinary GitHub installations, the check run is the strongest completion source.
+The enterprise API’s completed-review records expose `commit_sha`, `bugs_found`, and findings as **documented API fields**. They are not by themselves a GitHub-check discriminator for ordinary installations. On ordinary GitHub installations, the check run is the strongest completion source among documented surfaces.
 
-A Cursor protocol profile should:
+**Not established:** reliable discrimination of `neutral` subtypes solely via check output text. Treat any such reading as unsupported until first-party docs and fixtures say otherwise.
 
-- select the configured Cursor app's completed `Cursor Bugbot` check with `head_sha === targetHead`;
-- classify `success` as the documented no-issues outcome;
-- inspect structured check output and same-HEAD reviews for overloaded `neutral` outcomes;
-- identify quota/internal-error/cancellation as unavailable rather than findings or clean completion;
-- re-read PR HEAD before certification.
+### Cursor Bugbot — PR #5 quota observation @ `c73bf31…`
 
-Observed quota runs in this repository used a HEAD-bound neutral check plus an issue comment saying usage limit was reached. The comment alone is not HEAD-bound; the check is.
+| Object | Durable anchor |
+| --- | --- |
+| Usage-limit issue comment | API id `5102308579` · https://github.com/Akagilnc/ak-pi-workflow-roles/pull/5#issuecomment-5102308579 · `cursor[bot]` · `2026-07-28T09:23:40Z` |
+| Check run | id `90233500616` · `Cursor Bugbot` · `conclusion: neutral` · `head_sha: c73bf31a3d22815b26b9a33a5d28fd1f242f5701` · https://github.com/Akagilnc/ak-pi-workflow-roles/runs/90233500616 |
 
-## Collector design requirements
+**Observation only.** The pair (HEAD-bound neutral check + usage-limit comment) was observed in this repository. Observed check output titles are not stable discriminators. The comment alone is not HEAD-bound; the check is.
 
-### Explicit protocol, no guessing
+### Platform object semantics (explanation only)
 
-Each manifest leg should select a bundled, versioned protocol explicitly, for example:
+GitHub PR conversation comments are issue comments and have no commit field. Reactions identify a parent PR/comment and actor but have no commit field. By contrast:
+
+- submitted pull-request reviews expose `commit_id`;
+- inline review comments expose review and commit provenance;
+- check runs expose `head_sha`, status, conclusion, app, and output;
+- commit statuses can be queried at a literal SHA.
+
+These are platform facts that explain why providers differ. They do **not** imply that Collector v1 transport implements reactions, checks, or statuses.
+
+GitHub API references:
+
+- [Pull request reviews](https://docs.github.com/en/rest/pulls/reviews)
+- [Pull request review comments](https://docs.github.com/en/rest/pulls/comments)
+- [Issue and PR comments](https://docs.github.com/en/rest/issues/comments)
+- [Reactions](https://docs.github.com/en/rest/reactions/reactions)
+- [Check runs](https://docs.github.com/en/rest/checks/runs)
+- [Commit statuses](https://docs.github.com/en/rest/commits/statuses)
+
+## Future sketches (unaccepted / unimplemented)
+
+> **Not usable contracts.** Nothing below ships with ADR 0011 or current v1. Any bundled profile would need first-party documentation support **and** captured GitHub API fixtures for every accepted terminal form before becoming package law. Undocumented observed forms may be preserved as evidence but must not silently become normative terminal rules.
+
+### Protocol profiles + manifest `protocol` field
+
+Sketch only — v1 has no `protocol`:
 
 ```json
 {
@@ -131,35 +149,34 @@ Each manifest leg should select a bundled, versioned protocol explicitly, for ex
 }
 ```
 
-Other initial profiles can be `coderabbit-github-v1` and `cursor-bugbot-github-v1`. Collector must not infer a profile from bot names or repository contents.
+Other initial profile names under discussion: `coderabbit-github-v1`, `cursor-bugbot-github-v1`. Collector must not infer a profile from bot names or repository contents.
 
-### Shared evidence capabilities
+### Extended transport
 
-Profiles should interpret a common set of immutable ledger surfaces rather than each owning transport:
+Future profiles might interpret additional immutable ledger surfaces (reactions, check runs, commit statuses) on top of a shared complete/paginated GitHub transport. A protocol profile would own only trigger rules and evidence interpretation. **Not implemented in v1.**
 
-- pull-request snapshots;
-- issue comments and immutable observed versions;
-- submitted reviews and inline review comments;
-- PR/issue/comment reactions;
-- check runs;
-- commit statuses.
+### Multi-state operation model + binding-kind split
 
-The GitHub transport remains shared and complete/paginated. A protocol profile owns only trigger rules and evidence interpretation.
+A future receipt might keep these concepts distinct:
 
-### Separate facts in the receipt
-
-The receipt should keep these concepts distinct:
-
-1. **operation state:** pending, completed, unavailable, or missing;
+1. **operation state** (design sketch; not v1 submitted statuses);
 2. **review outcome:** findings, no findings, or unspecified;
 3. **binding kind:** exact structured SHA or provider-attested HEAD;
 4. **evidence provenance:** author/app, IDs, timestamps, immutable observed versions, and cited snapshot.
 
-This preserves honesty where a provider's documented native completion lacks structured SHA binding.
+This is unaccepted design, not current receipt shape.
 
-### Head movement and mutation
+### Former “profile should therefore” bullets (sketch only)
 
-For every profile:
+**Hosted Codex (sketch):** prefer exact submitted-review `commit_id` evidence; accept a documented no-findings native form only from the configured bot/app **after** first-party support and fixtures exist; resolve any stated SHA prefix uniquely to the target HEAD; require request/observation timestamps and a stable PR HEAD bracket; preserve raw evidence and disclose weaker binding kinds; never reinterpret prose such as “no major issues” as GitHub approval or merge readiness.
+
+**CodeRabbit (sketch):** bind completion through a configured CodeRabbit check run’s `head_sha`, or through its latest commit status queried at the exact target SHA; collect same-HEAD reviews and inline comments as findings/report evidence; distinguish the documented passing `Review rate limited` check from a completed review; treat walkthrough comments as report data, not sole HEAD proof; avoid inferring “clean” merely from zero new comments or a successful progress check.
+
+**Cursor (sketch):** select the configured Cursor app’s completed `Cursor Bugbot` check with `head_sha === targetHead`; classify `success` as the documented no-issues outcome; only classify overloaded `neutral` subtypes when structured evidence and fixtures support it; identify quota/internal-error/cancellation as unavailable rather than findings or clean completion; re-read PR HEAD before certification.
+
+### Head movement and mutation (sketch discipline)
+
+For every future profile:
 
 - record target HEAD before the request;
 - bracket requests and terminal observations with PR snapshots;
@@ -167,12 +184,3 @@ For every profile:
 - restart or remain missing after HEAD movement;
 - preserve prior-head reports;
 - preserve first-observed content versions because comments, reviews, reactions, checks, and statuses have different mutation/deletion behavior.
-
-### Documentation is necessary but not sufficient
-
-First-party docs define supported behavior, but often omit stable app IDs, check names, exact payload schemas, or trigger-to-run correlation IDs. Every bundled profile therefore needs both:
-
-- citations to the provider's documented behavior; and
-- captured GitHub API contract fixtures for every accepted terminal form.
-
-Undocumented observed forms may be preserved as evidence but must not silently become normative terminal rules.
