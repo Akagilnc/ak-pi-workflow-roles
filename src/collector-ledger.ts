@@ -1,3 +1,5 @@
+import Value from "typebox/value";
+
 import type { CollectorManifest, CollectorRepository } from "./collector-config.ts";
 import {
   applyEvidenceVersionHistory,
@@ -23,6 +25,12 @@ import {
   type GitHubPageDiagnostics,
   type GitHubPullRequest,
 } from "./collector-github.ts";
+import {
+  collectorObserveArgsSchema,
+  collectorOutputArgsSchema,
+  collectorRequestArgsSchema,
+  collectorWaitArgsSchema,
+} from "./collector-tool-schemas.ts";
 export const COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
 export const COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 export const COLLECTOR_WAIT_TOOL = "ak_collector_wait";
@@ -170,10 +178,6 @@ function isCollectorTool(name: string): boolean {
   return isOperationalTool(name) || name === COLLECTOR_OUTPUT_TOOL;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
@@ -183,59 +187,20 @@ export function collectorToolArgumentsValid(
   name: string,
   args: unknown,
 ): boolean {
-  if (name === COLLECTOR_OBSERVE_TOOL) {
-    if (args === undefined) return true;
-    if (!isPlainObject(args)) return false;
-    return Object.keys(args).length === 0;
-  }
-  if (name === COLLECTOR_REQUEST_TOOL) {
-    if (!isPlainObject(args)) return false;
-    if (!nonEmptyString(args["legId"]) || !nonEmptyString(args["snapshotId"])) {
+  // Residual envelope: reject missing/null args before schema check.
+  if (args === undefined || args === null) return false;
+  switch (name) {
+    case COLLECTOR_OBSERVE_TOOL:
+      return Value.Check(collectorObserveArgsSchema, args);
+    case COLLECTOR_REQUEST_TOOL:
+      return Value.Check(collectorRequestArgsSchema, args);
+    case COLLECTOR_WAIT_TOOL:
+      return Value.Check(collectorWaitArgsSchema, args);
+    case COLLECTOR_OUTPUT_TOOL:
+      return Value.Check(collectorOutputArgsSchema, args);
+    default:
       return false;
-    }
-    return Object.keys(args).every((key) => key === "legId" || key === "snapshotId");
   }
-  if (name === COLLECTOR_WAIT_TOOL) {
-    if (!isPlainObject(args)) return false;
-    const durationMs = args["durationMs"];
-    if (
-      typeof durationMs !== "number" ||
-      !Number.isSafeInteger(durationMs) ||
-      durationMs < 1 ||
-      durationMs > COLLECTOR_ELIGIBILITY_MS
-    ) {
-      return false;
-    }
-    return Object.keys(args).every((key) => key === "durationMs");
-  }
-  if (name === COLLECTOR_OUTPUT_TOOL) {
-    if (!isPlainObject(args)) return false;
-    if (!Array.isArray(args["legs"]) || args["legs"].length < 1) return false;
-    if (Object.keys(args).some((key) => key !== "legs")) return false;
-    for (const leg of args["legs"]) {
-      if (!isPlainObject(leg)) return false;
-      if (!nonEmptyString(leg["legId"])) return false;
-      if (
-        leg["status"] !== "valid" &&
-        leg["status"] !== "unavailable" &&
-        leg["status"] !== "missing"
-      ) {
-        return false;
-      }
-      if (typeof leg["rationale"] !== "string" || leg["rationale"].trim().length === 0) {
-        return false;
-      }
-      if (
-        !Array.isArray(leg["evidenceRefs"]) ||
-        leg["evidenceRefs"].length < 1 ||
-        leg["evidenceRefs"].some((ref) => !nonEmptyString(ref))
-      ) {
-        return false;
-      }
-    }
-    return true;
-  }
-  return false;
 }
 
 type ClassifiedCall =
