@@ -352,13 +352,18 @@ export function normalizeReviewCommentEvidence(
 }
 
 /**
- * Ledger history step: first distinct review version may keep submitted_at;
- * every later distinct review version without a GitHub version timestamp is uncertain.
- * Comments keep their own updated_at per version (null if missing).
+ * Ledger history step: first distinct review version may keep submitted_at
+ * only when firstObservedAt is a valid timestamp at or before the eligibility
+ * deadline; after-deadline first sightings and unparseable firstObservedAt fail
+ * closed to null (no submitted_at backdate). Every later distinct review version
+ * without a GitHub version timestamp is uncertain. Known versionIds reuse the
+ * stored authoritative clock including null. Comments keep their own updated_at
+ * per version (null if missing).
  */
 export function applyEvidenceVersionHistory(
   pending: CollectorEvidenceRecord[],
   priorEvidence: readonly CollectorEvidenceRecord[],
+  deadlineTime: Date,
 ): void {
   const versionsByStable = new Map<string, Set<string>>();
   const add = (stableIdValue: string, versionId: string) => {
@@ -398,8 +403,15 @@ export function applyEvidenceVersionHistory(
         // Reviews have no GitHub-supplied per-edit timestamp.
         record.authoritativeTime = null;
       } else {
-        // First submission version may use submitted_at.
-        record.authoritativeTime = record.submittedAt ?? null;
+        // First submission version may use submitted_at only when first seen
+        // at/before the eligibility deadline; after-cutoff first sighting
+        // must not backdate via submitted_at.
+        const firstMs = Date.parse(record.firstObservedAt);
+        if (!Number.isFinite(firstMs) || firstMs > deadlineTime.getTime()) {
+          record.authoritativeTime = null;
+        } else {
+          record.authoritativeTime = record.submittedAt ?? null;
+        }
       }
     } else if (
       record.kind === "issue_comment" ||

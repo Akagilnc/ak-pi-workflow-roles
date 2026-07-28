@@ -1039,17 +1039,64 @@ test("digest mutation flips versionId for enumerated stored fields", () => {
   assert.notEqual(r1.versionId, r3.versionId);
 });
 
-test("applyEvidenceVersionHistory first review keeps submitted_at", () => {
+test("applyEvidenceVersionHistory first review keeps submitted_at at/before deadline", () => {
+  const deadline = new Date("2024-01-01T00:25:00Z");
   const review = normalizeReviewEvidence(
     sampleReview({
       id: 9,
       userLogin: "codexbot",
       submittedAt: "2024-01-01T00:00:00Z",
     }),
-    "obs",
+    "2024-01-01T00:25:00Z", // firstObservedAt == deadline boundary
   );
-  applyEvidenceVersionHistory([review], []);
+  applyEvidenceVersionHistory([review], [], deadline);
   assert.equal(review.authoritativeTime, "2024-01-01T00:00:00Z");
+});
+
+test("applyEvidenceVersionHistory after-deadline first review nulls authoritativeTime", () => {
+  const deadline = new Date("2024-01-01T00:25:00Z");
+  const late = normalizeReviewEvidence(
+    sampleReview({
+      id: 30,
+      userLogin: "codexbot",
+      state: "APPROVED",
+      body: "late first sighting",
+      commitId: "head-c",
+      submittedAt: "2024-01-01T00:00:00Z",
+    }),
+    "2024-01-01T00:26:00Z",
+  );
+  applyEvidenceVersionHistory([late], [], deadline);
+  assert.equal(late.authoritativeTime, null);
+
+  const invalid = normalizeReviewEvidence(
+    sampleReview({
+      id: 31,
+      userLogin: "codexbot",
+      submittedAt: "2024-01-01T00:00:00Z",
+    }),
+    "not-a-timestamp",
+  );
+  applyEvidenceVersionHistory([invalid], [], deadline);
+  assert.equal(invalid.authoritativeTime, null);
+
+  // Known-version null reuse (R5): same versionId reuses stored null.
+  const again = normalizeReviewEvidence(
+    sampleReview({
+      id: 30,
+      userLogin: "codexbot",
+      state: "APPROVED",
+      body: "late first sighting",
+      commitId: "head-c",
+      submittedAt: "2024-01-01T00:00:00Z",
+    }),
+    "2024-01-01T00:27:00Z",
+  );
+  assert.equal(again.versionId, late.versionId);
+  // Simulate raw re-normalization that would otherwise re-apply submitted_at.
+  again.authoritativeTime = again.submittedAt ?? null;
+  applyEvidenceVersionHistory([again], [late], deadline);
+  assert.equal(again.authoritativeTime, null);
 });
 
 test("8 MiB snapshot boundary: measured MAX accept and MAX+1 fail", async () => {
@@ -1063,7 +1110,11 @@ test("8 MiB snapshot boundary: measured MAX accept and MAX+1 fail", async () => 
         observedAt,
       ),
     ];
-    applyEvidenceVersionHistory(records, []);
+    applyEvidenceVersionHistory(
+      records,
+      [],
+      new Date("2024-01-01T00:15:00Z"),
+    );
     assignWindowRelations(
       records,
       new Date("2024-01-01T00:00:00Z"),

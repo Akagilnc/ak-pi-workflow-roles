@@ -151,6 +151,7 @@ export type CollectorLedger = {
     input: { legId: string; snapshotId: string },
     transport: CollectorGitHubTransport,
     clock: CollectorClock,
+    signal?: AbortSignal,
   ): Promise<unknown>;
 
   wait(
@@ -744,7 +745,11 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         pendingRecords.push(normalizeReviewCommentEvidence(comment, observedAt));
       }
 
-      applyEvidenceVersionHistory(pendingRecords, [...evidenceById.values()]);
+      applyEvidenceVersionHistory(
+        pendingRecords,
+        [...evidenceById.values()],
+        deadlineTime!,
+      );
       assignWindowRelations(pendingRecords, activationTime, deadlineTime);
 
       const normalizedByteLength = measureNormalizedBytes(pendingRecords);
@@ -836,7 +841,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       return { snapshot, modelView };
     },
 
-    async request(input, transport, clock) {
+    async request(input, transport, clock, signal) {
       assertNotFatal();
       if (activationTime === undefined || deadlineTime === undefined) {
         throw latchFatal("Collector request requires activation");
@@ -938,6 +943,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         repo: config.repository.repo,
         prNumber: config.prNumber,
         body,
+        ...(signal === undefined ? {} : { signal }),
       });
 
       // Successful or ambiguous request completion dirties observation generation.

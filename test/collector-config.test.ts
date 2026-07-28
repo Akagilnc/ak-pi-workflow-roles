@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
 import {
   COLLECTOR_LEGS_SCHEMA,
+  COLLECTOR_REQUEST_BODY_MAX_BYTES,
   loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
@@ -116,12 +117,28 @@ test("PR number accepts only positive safe integers", () => {
   }
 });
 
-test("manifest schema file matches the packaged machine-readable contract", () => {
+test("manifest schema file matches the packaged machine-readable contract", async () => {
   assert.equal(COLLECTOR_LEGS_SCHEMA.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.equal(COLLECTOR_LEGS_SCHEMA.type, "object");
   assert.equal((COLLECTOR_LEGS_SCHEMA as { additionalProperties?: boolean }).additionalProperties, false);
   assert.deepEqual(COLLECTOR_LEGS_SCHEMA.required, ["version", "legs"]);
   assert.equal(COLLECTOR_LEGS_SCHEMA.properties.version.const, 1);
+  const bodySchema =
+    COLLECTOR_LEGS_SCHEMA.properties.legs.items.properties.request.properties.body;
+  assert.equal(bodySchema.minLength, 1);
+  // Pattern must be the two-char string backslash-S (JSON Schema \\S).
+  assert.equal(bodySchema.pattern, "\u005cS");
+  assert.equal(bodySchema.pattern.length, 2);
+  assert.equal(bodySchema.pattern.charCodeAt(0), 0x5c);
+  assert.equal(bodySchema["x-maxUtf8Bytes"], COLLECTOR_REQUEST_BODY_MAX_BYTES);
+  assert.equal(COLLECTOR_REQUEST_BODY_MAX_BYTES, 60_000);
+  const file = JSON.parse(
+    await readFile(
+      resolve("schemas/collector-legs-v1.schema.json"),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(file, JSON.parse(JSON.stringify(COLLECTOR_LEGS_SCHEMA)));
 });
 
 test("manifest loads, normalizes authors, and digests canonical JSON stably", async () => {
@@ -264,6 +281,14 @@ test("request body enforces trim-non-empty content and exact 60_000 UTF-8 byte b
     legs: [{ id: "a", expectedAuthors: ["x"], request: { body: over } }],
   }), "over-body.json");
   await assert.rejects(() => loadCollectorManifest(overPath), /60,?000|byte/i);
+
+  const wsPath = await writeManifest(dir, validManifest({
+    legs: [{ id: "a", expectedAuthors: ["x"], request: { body: "   " } }],
+  }), "ws-body.json");
+  await assert.rejects(
+    () => loadCollectorManifest(wsPath),
+    /trim-non-empty|body/i,
+  );
 });
 
 test("loadCollectorManifest does not invoke any transport or provider side effects", async () => {

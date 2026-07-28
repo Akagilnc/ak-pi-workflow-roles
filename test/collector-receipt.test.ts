@@ -799,7 +799,8 @@ test("global unavailable covers new head; target rejects H1-established comment 
     /unavailable|scope|eligible|establishment/i,
   );
 
-  // Same evidence first established on final HEAD accepts as target.
+  // Headless issue_comment never proves target (no synthetic HEAD binder);
+  // same evidence still qualifies for global.
   const ledger3 = createCollectorLedger(baseConfig());
   const clock3 = clockAt("2024-01-01T00:10:00Z");
   ledger3.recordActivation(clock3);
@@ -812,7 +813,6 @@ test("global unavailable covers new head; target rejects H1-established comment 
         id: 3,
         userLogin: "codexbot",
         body: "decline on final head",
-        createdAt: "2024-01-01T00:11:00Z",
         updatedAt: "2024-01-01T00:11:00Z",
       }),
     ],
@@ -820,18 +820,323 @@ test("global unavailable covers new head; target rejects H1-established comment 
   });
   await ledger3.observe(t3, clock3);
   const onFinal = ledger3.allEvidence().find((i) => i.kind === "issue_comment")!;
-  const targetOk = buildCollectorReceipt(ledger3, {
+  assert.throws(
+    () => buildCollectorReceipt(ledger3, {
+      legs: [{
+        legId: "codex",
+        status: "unavailable",
+        rationale: "headless cannot prove target",
+        evidenceRefs: [onFinal.evidenceId],
+        unavailableScope: "target",
+      }],
+    }, clock3),
+    /unavailable|scope|eligible|target/i,
+  );
+  const globalOk = buildCollectorReceipt(ledger3, {
     legs: [{
       legId: "codex",
       status: "unavailable",
-      rationale: "target decline on establishment head",
+      rationale: "headless still proves global",
       evidenceRefs: [onFinal.evidenceId],
-      unavailableScope: "target",
+      unavailableScope: "global",
     }],
   }, clock3);
-  const targetTerminal = targetOk.reports.find((r) => r.kind === "terminal-fact");
-  assert.ok(targetTerminal && targetTerminal.kind === "terminal-fact");
-  assert.equal(targetTerminal.targetSnapshotHead, "head-b");
+  assert.equal(globalOk.legs[0]?.status, "unavailable");
+  const globalTerm = globalOk.reports.find((r) => r.kind === "terminal-fact");
+  assert.ok(globalTerm && globalTerm.kind === "terminal-fact");
+  assert.equal(globalTerm.scope, "global");
+});
+
+test("target unavailable requires exact-head review or review_comment; stale carried HEAD rejects", async () => {
+  // Stale review first seen on final HEAD still rejects target (carried commitOid).
+  {
+    const clock = clockAt("2024-01-01T00:10:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "head-b" }),
+      reviews: [
+        sampleReview({
+          id: 10,
+          userLogin: "codexbot",
+          state: "COMMENTED",
+          body: "decline on old head",
+          commitId: "head-a",
+          submittedAt: "2024-01-01T00:11:00Z",
+        }),
+      ],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const ledger = createCollectorLedger(baseConfig());
+    ledger.recordActivation(clock);
+    await ledger.observe(transport, clock);
+    const staleReview = ledger.allEvidence().find((i) =>
+      i.kind === "review" && i.body === "decline on old head"
+    )!;
+    assert.throws(
+      () => buildCollectorReceipt(ledger, {
+        legs: [{
+          legId: "codex",
+          status: "unavailable",
+          rationale: "stale carried head cannot prove target",
+          evidenceRefs: [staleReview.evidenceId],
+          unavailableScope: "target",
+        }],
+      }, clock),
+      /unavailable|scope|eligible|target/i,
+    );
+  }
+
+  // Stale review_comment rejects target.
+  {
+    const clock = clockAt("2024-01-01T00:10:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "head-b" }),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [
+        sampleReviewComment({
+          id: 20,
+          userLogin: "codexbot",
+          body: "inline decline stale",
+          commitId: "head-a",
+          pullRequestReviewId: 10,
+          updatedAt: "2024-01-01T00:11:00Z",
+        }),
+      ],
+    });
+    const ledger = createCollectorLedger(baseConfig());
+    ledger.recordActivation(clock);
+    await ledger.observe(transport, clock);
+    const staleInline = ledger.allEvidence().find((i) =>
+      i.kind === "review_comment" && i.body === "inline decline stale"
+    )!;
+    assert.throws(
+      () => buildCollectorReceipt(ledger, {
+        legs: [{
+          legId: "codex",
+          status: "unavailable",
+          rationale: "stale inline cannot prove target",
+          evidenceRefs: [staleInline.evidenceId],
+          unavailableScope: "target",
+        }],
+      }, clock),
+      /unavailable|scope|eligible|target/i,
+    );
+  }
+
+  // Exact-head review proves target. Use PENDING so R1 valid-precedence does not fire.
+  {
+    const clock = clockAt("2024-01-01T00:10:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "head-b" }),
+      reviews: [
+        sampleReview({
+          id: 11,
+          userLogin: "codexbot",
+          state: "PENDING",
+          body: "decline on target head",
+          commitId: "head-b",
+          submittedAt: "2024-01-01T00:11:00Z",
+        }),
+      ],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const ledger = createCollectorLedger(baseConfig());
+    ledger.recordActivation(clock);
+    await ledger.observe(transport, clock);
+    const exactReview = ledger.allEvidence().find((i) =>
+      i.kind === "review" && i.body === "decline on target head"
+    )!;
+    const receipt = buildCollectorReceipt(ledger, {
+      legs: [{
+        legId: "codex",
+        status: "unavailable",
+        rationale: "exact-head target decline",
+        evidenceRefs: [exactReview.evidenceId],
+        unavailableScope: "target",
+      }],
+    }, clock);
+    assert.equal(receipt.legs[0]?.status, "unavailable");
+    const term = receipt.reports.find((r) => r.kind === "terminal-fact");
+    assert.ok(term && term.kind === "terminal-fact");
+    assert.equal(term.targetSnapshotHead, "head-b");
+  }
+
+  // Exact-head review_comment proves target (no qualifying valid review present).
+  {
+    const clock = clockAt("2024-01-01T00:10:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "head-b" }),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [
+        sampleReviewComment({
+          id: 21,
+          userLogin: "codexbot",
+          body: "inline decline target",
+          commitId: "head-b",
+          pullRequestReviewId: 11,
+          updatedAt: "2024-01-01T00:11:00Z",
+        }),
+      ],
+    });
+    const ledger = createCollectorLedger(baseConfig());
+    ledger.recordActivation(clock);
+    await ledger.observe(transport, clock);
+    const exactInline = ledger.allEvidence().find((i) =>
+      i.kind === "review_comment" && i.body === "inline decline target"
+    )!;
+    const receipt = buildCollectorReceipt(ledger, {
+      legs: [{
+        legId: "codex",
+        status: "unavailable",
+        rationale: "exact-head inline target decline",
+        evidenceRefs: [exactInline.evidenceId],
+        unavailableScope: "target",
+      }],
+    }, clock);
+    assert.equal(receipt.legs[0]?.status, "unavailable");
+    const term = receipt.reports.find((r) => r.kind === "terminal-fact");
+    assert.ok(term && term.kind === "terminal-fact");
+    assert.equal(term.targetSnapshotHead, "head-b");
+  }
+});
+
+test("intruder inline sharing pullRequestReviewId is excluded from report attachment", async () => {
+  const clock = clockAt("2024-01-01T00:10:00Z");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-c" }),
+    reviews: [
+      sampleReview({
+        id: 1,
+        userLogin: "codexbot",
+        state: "CHANGES_REQUESTED",
+        body: "parent review body",
+        commitId: "head-c",
+        submittedAt: "2024-01-01T00:11:00Z",
+      }),
+    ],
+    issueComments: [],
+    reviewComments: [
+      sampleReviewComment({
+        id: 50,
+        userLogin: "intruder",
+        body: "intruder inline should not attach",
+        pullRequestReviewId: 1,
+        commitId: "head-c",
+        path: "src/a.ts",
+        line: 10,
+        updatedAt: "2024-01-01T00:11:00Z",
+      }),
+      sampleReviewComment({
+        id: 51,
+        userLogin: "codexbot",
+        body: "owned inline stays",
+        pullRequestReviewId: 1,
+        commitId: "head-c",
+        path: "src/b.ts",
+        line: 3,
+        updatedAt: "2024-01-01T00:11:00Z",
+      }),
+    ],
+  });
+  const ledger = createCollectorLedger(baseConfig());
+  ledger.recordActivation(clock);
+  await ledger.observe(transport, clock);
+  const intruder = ledger.allEvidence().find((i) =>
+    i.kind === "review_comment" && i.body === "intruder inline should not attach"
+  )!;
+  const owned = ledger.allEvidence().find((i) =>
+    i.kind === "review_comment" && i.body === "owned inline stays"
+  )!;
+  const parent = ledger.allEvidence().find((i) =>
+    i.kind === "review" && i.body === "parent review body"
+  )!;
+  assert.ok(intruder);
+  assert.ok(
+    ledger.getSnapshot(ledger.latestCompleteSnapshotId!)!.evidenceIds.includes(
+      intruder.evidenceId,
+    ),
+    "intruder retained in snapshot evidenceIds",
+  );
+
+  const receipt = buildCollectorReceipt(ledger, {
+    legs: [{
+      legId: "codex",
+      status: "valid",
+      rationale: "owned review only",
+      // Valid cites only the parent review; inline attachment is report-derived.
+      evidenceRefs: [parent.evidenceId],
+    }],
+  }, clock);
+  const reviewReport = receipt.reports.find((r) => r.kind === "review");
+  assert.ok(reviewReport && reviewReport.kind === "review");
+  assert.match(reviewReport.report, /parent review body/);
+  assert.match(reviewReport.report, /owned inline stays/);
+  assert.doesNotMatch(reviewReport.report, /intruder inline/);
+  assert.ok(!reviewReport.evidenceRefs.includes(intruder.evidenceId));
+  assert.ok(reviewReport.evidenceRefs.includes(owned.evidenceId));
+  assert.ok(reviewReport.evidenceRefs.includes(parent.evidenceId));
+  assert.ok(
+    ledger.allEvidence().some((i) => i.evidenceId === intruder.evidenceId),
+    "intruder still in allEvidence",
+  );
+});
+
+test("after-deadline first observation of review cannot prove valid or unavailable", async () => {
+  const clock = clockAt("2024-01-01T00:10:00Z");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-c" }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger(baseConfig());
+  ledger.recordActivation(clock);
+  // Advance past eligibility cutoff (activation + 15m = 00:25) before first observe.
+  clock.advance(16 * 60 * 1000); // wall now 00:26
+  transport.state.reviews = [
+    sampleReview({
+      id: 30,
+      userLogin: "codexbot",
+      state: "APPROVED",
+      body: "late first sighting",
+      commitId: "head-c",
+      submittedAt: "2024-01-01T00:00:00Z",
+    }),
+  ];
+  await ledger.observe(transport, clock);
+  const late = ledger.allEvidence().find((i) =>
+    i.kind === "review" && i.body === "late first sighting"
+  )!;
+  assert.equal(late.authoritativeTime, null);
+  assert.equal(late.windowRelation, "uncertain");
+
+  assert.throws(() => buildCollectorReceipt(ledger, {
+    legs: [{
+      legId: "codex",
+      status: "unavailable",
+      rationale: "late first seen cannot prove",
+      evidenceRefs: [late.evidenceId],
+      unavailableScope: "global",
+    }],
+  }, clock), /unavailable|eligible|window|uncertain/i);
+
+  assert.throws(() => buildCollectorReceipt(ledger, {
+    legs: [{
+      legId: "codex",
+      status: "valid",
+      rationale: "late first seen cannot prove valid",
+      evidenceRefs: [late.evidenceId],
+    }],
+  }, clock), /valid|qualifying|window|head/i);
 });
 
 test("recovery attempt embeds recoverySnapshotId in receipt", async () => {

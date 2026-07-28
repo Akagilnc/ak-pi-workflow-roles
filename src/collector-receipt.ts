@@ -134,7 +134,9 @@ function reviewInlineComments(
       record.kind === "review_comment" &&
       record.pullRequestReviewId !== undefined &&
       record.pullRequestReviewId !== null &&
-      review.stableGitHubId === `review:${record.pullRequestReviewId}`
+      review.stableGitHubId === `review:${record.pullRequestReviewId}` &&
+      // Report attachment only: same-author ownership; raw ledger retains intruders.
+      record.authorLogin === review.authorLogin
     );
 }
 
@@ -264,19 +266,6 @@ function collectSubstantiveReviewReports(input: {
   return reports;
 }
 
-/** First chronological snapshot that established the evidence id → that HEAD. */
-function establishedHeadFor(
-  ledger: CollectorLedger,
-  evidenceId: string,
-): string | undefined {
-  for (const snapshot of ledger.allSnapshots()) {
-    if (snapshot.evidenceIds.includes(evidenceId)) {
-      return snapshot.headOid;
-    }
-  }
-  return undefined;
-}
-
 function finalHasQualifyingValidReview(input: {
   ledger: CollectorLedger;
   leg: { expectedAuthors: readonly string[] };
@@ -311,7 +300,6 @@ function qualifiesUnavailableEvidence(input: {
   deadlineTime: Date;
   scope: "target" | "global";
   targetHead: string;
-  ledger: CollectorLedger;
 }): { ok: true; windowRelation: WindowRelation } | { ok: false } {
   if (
     input.record.authorLogin === undefined ||
@@ -328,13 +316,22 @@ function qualifiesUnavailableEvidence(input: {
     return { ok: false };
   }
   if (input.scope === "global") {
+    // Global is kind-agnostic: author + before/within only.
     return { ok: true, windowRelation };
   }
-  // Target scope binds to establishment HEAD, not final membership alone.
-  if (establishedHeadFor(input.ledger, input.record.evidenceId) === input.targetHead) {
-    return { ok: true, windowRelation };
+  // Target scope: only review / review_comment whose carried commitOid exactly
+  // equals targetHead. issue_comment never proves target (no synthetic binder).
+  if (input.record.kind !== "review" && input.record.kind !== "review_comment") {
+    return { ok: false };
   }
-  return { ok: false };
+  if (
+    input.record.commitOid === undefined ||
+    input.record.commitOid === null ||
+    input.record.commitOid !== input.targetHead
+  ) {
+    return { ok: false };
+  }
+  return { ok: true, windowRelation };
 }
 
 /**
@@ -595,7 +592,6 @@ export function buildCollectorReceipt(
           deadlineTime,
           scope,
           targetHead,
-          ledger,
         });
         if (!result.ok) {
           if (

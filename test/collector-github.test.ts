@@ -729,6 +729,262 @@ test("R10 multi-page pagination stops before retaining oversize normalized budge
   assert.equal(pagesFetched < 3, true);
 });
 
+test("2xx POST parse/normalization failures map to ambiguous_loss; non-2xx rejected", async () => {
+  const shapes: Array<{ label: string; bodyText: string }> = [
+    { label: "malformed JSON", bodyText: "not-json{" },
+    { label: "truncated JSON", bodyText: '{"id":1,"user":{"login":' },
+    {
+      label: "missing required fields",
+      bodyText: JSON.stringify({
+        user: { login: "collector-bot" },
+        body: "x",
+      }),
+    },
+  ];
+  for (const shape of shapes) {
+    const runner = async () => ({
+      status: 201,
+      headers: {},
+      bodyText: shape.bodyText,
+    });
+    const transport = createGhCollectorGitHubTransport(runner);
+    const lost = await transport.createIssueComment({
+      owner: "a",
+      repo: "b",
+      prNumber: 1,
+      body: "hello",
+    });
+    assert.equal(lost.kind, "ambiguous_loss", shape.label);
+  }
+
+  const rejectedRunner = async () => ({
+    status: 422,
+    headers: {},
+    bodyText: '{"message":"validation failed"}',
+  });
+  const rejectedTransport = createGhCollectorGitHubTransport(rejectedRunner);
+  const rejected = await rejectedTransport.createIssueComment({
+    owner: "a",
+    repo: "b",
+    prNumber: 1,
+    body: "hello",
+  });
+  assert.equal(rejected.kind, "rejected");
+});
+
+test("2xx parse ambiguous_loss recovers via marker observe without second POST", async () => {
+  let postCount = 0;
+  let markerBody = "";
+  const runner = async (
+    args: string[],
+    options?: { stdin?: string },
+  ) => {
+    const joined = args.join(" ");
+    if (args.includes("POST") || /\s-X\s+POST\b/.test(` ${joined} `)) {
+      postCount += 1;
+      markerBody = options?.stdin ?? "";
+      return {
+        status: 201,
+        headers: {},
+        bodyText: "not-json{",
+      };
+    }
+    const path = args.find((arg) => arg.startsWith("/")) ?? "";
+    if (path === "/user") {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({ login: "collector-bot" }),
+      };
+    }
+    if (path.includes("/pulls/1") && !path.includes("reviews") && !path.includes("comments")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          number: 1,
+          state: "open",
+          head: { sha: "head-a" },
+          html_url: "https://github.com/acme/widgets/pull/1",
+        }),
+      };
+    }
+    if (path.includes("/reviews")) {
+      return { status: 200, headers: {}, bodyText: "[]" };
+    }
+    if (path.includes("/issues/1/comments")) {
+      if (postCount === 0) {
+        return { status: 200, headers: {}, bodyText: "[]" };
+      }
+      const parsed = JSON.parse(markerBody) as { body: string };
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify([{
+          id: 99,
+          user: { login: "collector-bot" },
+          body: parsed.body,
+          created_at: "2024-01-01T00:00:00Z",
+          updated_at: "2024-01-01T00:00:00Z",
+          html_url: "https://github.com/acme/widgets/pull/1#issuecomment-99",
+        }]),
+      };
+    }
+    if (path.includes("/pulls/1/comments")) {
+      return { status: 200, headers: {}, bodyText: "[]" };
+    }
+    throw new Error(`unexpected path ${path}`);
+  };
+  const transport = createGhCollectorGitHubTransport(runner);
+  const ledger = createCollectorLedger({
+    repository: {
+      display: "Acme/Widgets",
+      canonical: "acme/widgets",
+      owner: "acme",
+      repo: "widgets",
+    },
+    prNumber: 1,
+    manifest: {
+      version: 1,
+      legs: [{
+        id: "codex",
+        expectedAuthors: ["codexbot"],
+        requestBody: "Please review.",
+      }],
+      canonicalJson: "{}\n",
+      digest: "d".repeat(64),
+      sourcePath: "/tmp/legs.json",
+    },
+  });
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  ledger.recordActivation(clock);
+  const first = await ledger.observe(transport, clock);
+  const req = await ledger.request(
+    { legId: "codex", snapshotId: first.snapshot.snapshotId },
+    transport,
+    clock,
+  ) as { status: string };
+  assert.equal(req.status, "ambiguous_loss");
+  assert.equal(postCount, 1);
+  await ledger.observe(transport, clock);
+  const attempt = ledger.requestAttempts().find((item) => item.status === "recovered");
+  assert.ok(attempt);
+  assert.equal(postCount, 1, "recovery must not repost");
+});
+
+test("request-path AbortSignal cancels hung POST child without rejected attempt", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ak-gh-post-abort-"));
+  const pidFile = join(stateDir, "pid.txt");
+  const script = `#!/usr/bin/env bash
+set -euo pipefail
+prev=""
+is_post=0
+for arg in "$@"; do
+  if [[ "$prev" == "-X" && "$arg" == "POST" ]]; then
+    is_post=1
+  fi
+  prev="$arg"
+done
+if [[ "$is_post" -eq 1 ]]; then
+  echo "$$" > ${JSON.stringify(pidFile)}
+  sleep 30
+  printf 'HTTP/1.1 201 Created\\r\\ncontent-type: application/json\\r\\n\\r\\n{"id":1}'
+  exit 0
+fi
+path=""
+for arg in "$@"; do
+  if [[ "$arg" == /* ]]; then path="$arg"; fi
+done
+http() {
+  local body="$1"
+  printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n%s' "$body"
+}
+if [[ "$path" == *"/user" ]]; then
+  http '{"login":"collector-bot"}'; exit 0
+fi
+if [[ "$path" == *"/pulls/1"* && "$path" != *reviews* && "$path" != *comments* ]]; then
+  http '{"number":1,"state":"open","head":{"sha":"head-a"},"html_url":"https://github.com/acme/widgets/pull/1"}'; exit 0
+fi
+if [[ "$path" == *"/reviews"* || "$path" == *"/comments"* ]]; then
+  http '[]'; exit 0
+fi
+echo "unexpected $*" >&2; exit 2
+`;
+  await withPathGhStub(script, async () => {
+    const runner = createGhApiRunner();
+    const transport = createGhCollectorGitHubTransport(runner);
+    const ledger = createCollectorLedger({
+      repository: {
+        display: "Acme/Widgets",
+        canonical: "acme/widgets",
+        owner: "acme",
+        repo: "widgets",
+      },
+      prNumber: 1,
+      manifest: {
+        version: 1,
+        legs: [{
+          id: "codex",
+          expectedAuthors: ["codexbot"],
+          requestBody: "Please review.",
+        }],
+        canonicalJson: "{}\n",
+        digest: "f".repeat(64),
+        sourcePath: "/tmp/legs.json",
+      },
+    });
+    const clock = clockAt("2024-01-01T00:00:00Z");
+    ledger.recordActivation(clock);
+    const first = await ledger.observe(transport, clock);
+    const controller = new AbortController();
+    const pending = ledger.request(
+      { legId: "codex", snapshotId: first.snapshot.snapshotId },
+      transport,
+      clock,
+      controller.signal,
+    );
+    // Wait until POST child records its PID.
+    let pid = 0;
+    for (let i = 0; i < 50; i += 1) {
+      try {
+        const text = await (await import("node:fs/promises")).readFile(pidFile, "utf8");
+        pid = Number(text.trim());
+        if (Number.isSafeInteger(pid) && pid > 0) break;
+      } catch {
+        // not yet
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(pid > 0, "POST child recorded pid");
+    controller.abort(new Error("request canceled"));
+    await assert.rejects(() => pending, /abort|cancel/i);
+    // Child must be dead; ESRCH means gone.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    assert.equal(alive, false, "POST child must be killed");
+    const attempts = ledger.requestAttempts();
+    assert.equal(attempts.length, 1);
+    assert.notEqual(attempts[0]?.status, "rejected");
+    assert.notEqual(attempts[0]?.status, "ambiguous_loss");
+    assert.notEqual(attempts[0]?.status, "succeeded");
+    assert.notEqual(attempts[0]?.status, "recovered");
+    // Process-local one-shot retained: second request at same HEAD fails.
+    await assert.rejects(
+      () => ledger.request(
+        { legId: "codex", snapshotId: first.snapshot.snapshotId },
+        transport,
+        clock,
+      ),
+      /already used|process-local/i,
+    );
+  });
+});
+
 test("R11 hung gh child aborted through runner settles once and kills child", async () => {
   const script = `#!/usr/bin/env bash
 set -euo pipefail

@@ -514,10 +514,19 @@ export function createGhCollectorGitHubTransport(
             : { stdin: JSON.stringify({ body: input.body }), signal: input.signal },
         );
         if (response.status >= 200 && response.status < 300) {
-          return {
-            kind: "success",
-            comment: normalizeIssueComment(parseJson(response.bodyText, path)),
-          };
+          // 2xx means the comment may already exist; parse/normalize failure is
+          // ambiguous_loss so ledger marker recovery can resolve without repost.
+          try {
+            return {
+              kind: "success",
+              comment: normalizeIssueComment(parseJson(response.bodyText, path)),
+            };
+          } catch (error) {
+            return {
+              kind: "ambiguous_loss",
+              diagnostics: error instanceof Error ? error.message : String(error),
+            };
+          }
         }
         return {
           kind: "rejected",
@@ -534,7 +543,7 @@ export function createGhCollectorGitHubTransport(
         // Abort must surface as cancellation, not a rejected comment result.
         if (
           (isRecord(error) && error["name"] === "AbortError") ||
-          (error instanceof Error && /abort/i.test(error.message))
+          (error instanceof Error && /abort|cancel/i.test(error.message))
         ) {
           throw error;
         }
