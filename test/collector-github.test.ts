@@ -957,12 +957,14 @@ echo "unexpected $*" >&2; exit 2
     }
     assert.ok(pid > 0, "POST child recorded pid");
     controller.abort(abortReason);
-    // Surface original reason text (Error or non-Error); do not require abort|cancel wording.
+    // Exact abort-reason identity (Error, tagged Error, or non-Error).
     await assert.rejects(
       () => pending,
       (error: unknown) => {
-        const text = error instanceof Error ? error.message : String(error);
-        assert.match(text, new RegExp(reasonText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        assert.ok(
+          Object.is(error, abortReason),
+          `must rethrow exact abort reason identity (${reasonText})`,
+        );
         return true;
       },
     );
@@ -977,10 +979,7 @@ echo "unexpected $*" >&2; exit 2
     assert.equal(alive, false, "POST child must be killed");
     const attempts = ledger.requestAttempts();
     assert.equal(attempts.length, 1);
-    assert.notEqual(attempts[0]?.status, "rejected");
-    assert.notEqual(attempts[0]?.status, "ambiguous_loss");
-    assert.notEqual(attempts[0]?.status, "succeeded");
-    assert.notEqual(attempts[0]?.status, "recovered");
+    assert.equal(attempts[0]?.status, "started");
     // Process-local one-shot retained: second request at same HEAD fails.
     await assert.rejects(
       () => ledger.request(
@@ -1009,6 +1008,31 @@ test("request-path abort with deadline exceeded Error cancels without rejected a
 
 test("request-path abort with non-Error reason cancels without rejected attempt", async () => {
   await assertHungPostRequestCancellation("stop now", "stop now");
+});
+
+test("request-path abort with tagged ambiguousGhFailure reason preserves identity over ambiguous_loss", async () => {
+  const abortReason = Object.assign(new Error("deadline exceeded"), {
+    ambiguousGhFailure: true,
+  });
+  await assertHungPostRequestCancellation(abortReason, "deadline exceeded");
+});
+
+test("non-aborted AbortError+ambiguousGhFailure remains ambiguous_loss", async () => {
+  const tagged = Object.assign(new Error("gh api failed without parseable HTTP"), {
+    name: "AbortError",
+    ambiguousGhFailure: true,
+  });
+  const runner = async () => {
+    throw tagged;
+  };
+  const transport = createGhCollectorGitHubTransport(runner);
+  const result = await transport.createIssueComment({
+    owner: "a",
+    repo: "b",
+    prNumber: 1,
+    body: "hello",
+  });
+  assert.equal(result.kind, "ambiguous_loss");
 });
 
 test("R11 hung gh child aborted through runner settles once and kills child", async () => {
