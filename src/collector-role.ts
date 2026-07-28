@@ -159,15 +159,17 @@ export function createCollectorRoleRuntime(
 
   pi.registerFlag("ak-collector-repo", {
     description:
-      "GitHub owner/repo target for the collector role (github.com only; conservative ASCII grammar)",
+      "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",
     type: "string",
   });
   pi.registerFlag("ak-collector-pr", {
-    description: "Positive safe-integer pull request number for the collector role",
+    description:
+      "Positive safe-integer pull request number for Collector. Supported profile: --no-skills, --no-extensions with only the explicit Collector package extension, no prompt templates/context files, one print/JSON prompt",
     type: "string",
   });
   pi.registerFlag("ak-collector-legs", {
-    description: "Path to the Collector v1 leg manifest JSON file",
+    description:
+      "Path to the Collector v1 leg manifest JSON file. Pi 0.82.1 late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
     type: "string",
   });
 

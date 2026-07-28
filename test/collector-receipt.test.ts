@@ -1049,7 +1049,6 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
   assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, { x: 1 }), false);
 
   for (const [label, raw] of invalids) {
-    if (raw === null) continue;
     assert.equal(
       collectorToolArgumentsValid(COLLECTOR_OUTPUT_TOOL, raw),
       false,
@@ -1066,7 +1065,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
     );
     assert.equal(batch.allow, false, `batch ${label}`);
   }
-  // observe envelope at classify: undefined|null illegal; {} legal shape
+  // observe envelope at classify: undefined|null illegal; {} legal sole operational
   for (const bad of [undefined, null]) {
     const batch = classifyCollectorBatch(
       [{
@@ -1079,11 +1078,20 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
     );
     assert.equal(batch.allow, false, `observe ${String(bad)}`);
   }
-  // Empty-object observe is schema-valid (batch may still deny for other laws).
-  assert.equal(
-    collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, {}),
-    true,
+  const observeEmpty = classifyCollectorBatch(
+    [{
+      type: "toolCall",
+      id: "obs-ok",
+      name: COLLECTOR_OBSERVE_TOOL,
+      arguments: {},
+    }],
+    { outputAccepted: false, hasCompletedOperationalOrSnapshot: false },
   );
+  assert.equal(observeEmpty.allow, true, "observe {} legal");
+  assert.ok(observeEmpty.allow);
+  assert.equal(observeEmpty.permitted.kind, "operational");
+  assert.equal(observeEmpty.permitted.name, COLLECTOR_OBSERVE_TOOL);
+  assert.equal(observeEmpty.permitted.callId, "obs-ok");
 });
 
 // ---------------------------------------------------------------------------
