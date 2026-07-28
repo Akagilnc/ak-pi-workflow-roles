@@ -368,11 +368,11 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       name: FIXER_OUTPUT_TOOL_NAME,
       metadata: {
         label: "Fixer Output",
-        description: "Submit a plan, completion, or refusal for the active fixer phase. commitSha is advisory evidence for the judge.",
+        description: "Submit a plan, completion, or refusal for the active fixer phase. commitSha is advisory evidence for the caller.",
         promptSnippet: "Submit the final fixer report",
         promptGuidelines: [
           `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
-          `${FIXER_OUTPUT_TOOL_NAME} never escalates; explain any requested owner decision in report for the judge to adjudicate.`,
+          `${FIXER_OUTPUT_TOOL_NAME} never escalates; explain any requested owner decision in report for the caller to dispose.`,
           "plan permits planned|refused; apply permits completed|refused.",
         ],
       },
@@ -390,11 +390,11 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       name: CODER_OUTPUT_TOOL_NAME,
       metadata: {
         label: "Coder Output",
-        description: "Submit a plan, completion, or evidence-bearing refusal for the active coder phase. commitSha is advisory evidence for the judge.",
+        description: "Submit a plan, completion, or evidence-bearing refusal for the active coder phase. commitSha is advisory evidence for the caller.",
         promptSnippet: "Submit the final coder report",
         promptGuidelines: [
           `Use ${CODER_OUTPUT_TOOL_NAME} as the final action for the coder role.`,
-          `${CODER_OUTPUT_TOOL_NAME} never escalates; explain authority or task conflicts in report for the judge to adjudicate.`,
+          `${CODER_OUTPUT_TOOL_NAME} never escalates; explain authority or task conflicts in report for the caller to dispose.`,
           "plan permits planned|refused; apply permits completed|refused.",
           "A completed apply report must preserve evidence for TDD, the same-pattern check, introduced-regression check, and behavior-fact check.",
         ],
