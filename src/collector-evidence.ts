@@ -423,6 +423,39 @@ export function measureNormalizedBytes(records: readonly CollectorEvidenceRecord
   return Buffer.byteLength(JSON.stringify(records), "utf8");
 }
 
+/**
+ * Observation-scoped incremental retain budget over the same normalized record
+ * shape measured by {@link measureNormalizedBytes}. Does not apply window/history
+ * mutations; the final observe gate remains the exact authority.
+ */
+export function createSnapshotByteBudget(
+  maxBytes: number = COLLECTOR_SNAPSHOT_MAX_BYTES,
+): {
+  retain(records: readonly CollectorEvidenceRecord[]): void;
+} {
+  const retained: CollectorEvidenceRecord[] = [];
+  return {
+    retain(records: readonly CollectorEvidenceRecord[]): void {
+      if (records.length === 0) return;
+      const candidate =
+        retained.length === 0 ? records.slice() : retained.concat(records);
+      const bytes = measureNormalizedBytes(candidate);
+      if (bytes > maxBytes) {
+        throw Object.assign(
+          new Error(
+            `Collector snapshot exceeded ${maxBytes} UTF-8 bytes (${bytes})`,
+          ),
+          {
+            githubSizeFailure: true,
+            normalizedByteLength: bytes,
+          },
+        );
+      }
+      retained.push(...records);
+    },
+  };
+}
+
 export function assignWindowRelations(
   records: CollectorEvidenceRecord[],
   activationTime: Date | undefined,

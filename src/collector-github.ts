@@ -1,7 +1,5 @@
 import { spawn } from "node:child_process";
 
-import { COLLECTOR_SNAPSHOT_MAX_BYTES } from "./collector-evidence.ts";
-
 export type GitHubPullRequest = {
   number: number;
   state: string;
@@ -98,18 +96,22 @@ export type CollectorGitHubTransport = {
     repo: string;
     prNumber: number;
     signal?: AbortSignal;
+    /** Charge observation budget before aggregate append / next-page fetch. */
+    retainPage?: (items: GitHubReview[]) => void;
   }): Promise<{ items: GitHubReview[]; pages: GitHubPageDiagnostics[] }>;
   listIssueComments(input: {
     owner: string;
     repo: string;
     prNumber: number;
     signal?: AbortSignal;
+    retainPage?: (items: GitHubIssueComment[]) => void;
   }): Promise<{ items: GitHubIssueComment[]; pages: GitHubPageDiagnostics[] }>;
   listReviewComments(input: {
     owner: string;
     repo: string;
     prNumber: number;
     signal?: AbortSignal;
+    retainPage?: (items: GitHubReviewComment[]) => void;
   }): Promise<{ items: GitHubReviewComment[]; pages: GitHubPageDiagnostics[] }>;
   createIssueComment(input: {
     owner: string;
@@ -377,13 +379,16 @@ export function createGhCollectorGitHubTransport(
   async function paginate<T>(
     path: string,
     mapItem: (raw: unknown) => T,
-    signal?: AbortSignal,
+    options: {
+      signal?: AbortSignal;
+      retainPage?: (items: T[]) => void;
+    } = {},
   ): Promise<{ items: T[]; pages: GitHubPageDiagnostics[] }> {
+    const { signal, retainPage } = options;
     const items: T[] = [];
     const pages: GitHubPageDiagnostics[] = [];
     let nextPath: string | undefined = path;
     let page = 1;
-    let retainedBytes = 0;
     const seen = new Set<string>();
     while (nextPath !== undefined) {
       if (signal?.aborted) {
@@ -415,28 +420,16 @@ export function createGhCollectorGitHubTransport(
           { githubStatus: response.status, page: diagnostics },
         );
       }
-      // Incremental retained-payload budget before unbounded page retention.
-      retainedBytes += Buffer.byteLength(response.bodyText, "utf8");
-      if (retainedBytes > COLLECTOR_SNAPSHOT_MAX_BYTES) {
-        throw Object.assign(
-          new Error(
-            `GitHub pagination retained payload exceeded ${COLLECTOR_SNAPSHOT_MAX_BYTES} UTF-8 bytes (${retainedBytes}) on ${nextPath}`,
-          ),
-          {
-            githubSizeFailure: true,
-            retainedBytes,
-            page: diagnostics,
-            pagesFetched: page,
-          },
-        );
-      }
       const parsed = parseJson(response.bodyText, nextPath);
       if (!Array.isArray(parsed)) {
         throw new Error(`GitHub API ${nextPath} did not return a JSON array`);
       }
       diagnostics.itemCount = parsed.length;
       pages.push(diagnostics);
-      for (const entry of parsed) items.push(mapItem(entry));
+      const pageItems = parsed.map((entry) => mapItem(entry));
+      // Observation budget hook: charge before aggregate append / next-page fetch.
+      retainPage?.(pageItems);
+      for (const item of pageItems) items.push(item);
       const nextUrl = parseLinkNext(response.headers["link"]);
       if (nextUrl === undefined) {
         nextPath = undefined;
@@ -486,19 +479,28 @@ export function createGhCollectorGitHubTransport(
     async listPullRequestReviews(input) {
       const path =
         `/repos/${input.owner}/${input.repo}/pulls/${input.prNumber}/reviews?per_page=100`;
-      return await paginate(path, normalizeReview, input.signal);
+      return await paginate(path, normalizeReview, {
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+        ...(input.retainPage === undefined ? {} : { retainPage: input.retainPage }),
+      });
     },
 
     async listIssueComments(input) {
       const path =
         `/repos/${input.owner}/${input.repo}/issues/${input.prNumber}/comments?per_page=100`;
-      return await paginate(path, normalizeIssueComment, input.signal);
+      return await paginate(path, normalizeIssueComment, {
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+        ...(input.retainPage === undefined ? {} : { retainPage: input.retainPage }),
+      });
     },
 
     async listReviewComments(input) {
       const path =
         `/repos/${input.owner}/${input.repo}/pulls/${input.prNumber}/comments?per_page=100`;
-      return await paginate(path, normalizeReviewComment, input.signal);
+      return await paginate(path, normalizeReviewComment, {
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+        ...(input.retainPage === undefined ? {} : { retainPage: input.retainPage }),
+      });
     },
 
     async createIssueComment(input) {

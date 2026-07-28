@@ -17,10 +17,17 @@ import {
 import { createCollectorLedger } from "../src/collector-ledger.ts";
 import {
   COLLECTOR_SNAPSHOT_MAX_BYTES,
+  createSnapshotByteBudget,
   normalizeAuthenticatedUserEvidence,
+  normalizePullRequestEvidence,
+  normalizeReviewEvidence,
   reviewQualifiesForValid,
   type CollectorClock,
 } from "../src/collector-evidence.ts";
+import {
+  samplePull,
+  sampleUser,
+} from "./helpers/fake-github-transport.ts";
 import { buildCollectorReceipt } from "../src/collector-receipt.ts";
 
 function clockAt(startWall: string): CollectorClock & { advance(ms: number): void } {
@@ -575,9 +582,17 @@ test("R8 authenticated_user retained raw is login+id only", () => {
   assert.equal(JSON.stringify(record.raw).includes("plan"), false);
 });
 
-test("R10 multi-page pagination stops before retaining oversize payload", async () => {
+test("R10 multi-page pagination stops before retaining oversize normalized budget", async () => {
   let pagesFetched = 0;
-  const fat = "x".repeat(Math.floor(COLLECTOR_SNAPSHOT_MAX_BYTES * 0.6));
+  // Body sized so each page alone is under budget, but page1+page2 cumulative
+  // normalized records (body + raw.body) exceed the shared 8 MiB gate.
+  const fat = "x".repeat(Math.floor(COLLECTOR_SNAPSHOT_MAX_BYTES * 0.3));
+  const observedAt = "2024-01-01T00:00:00.000Z";
+  const budget = createSnapshotByteBudget();
+  budget.retain([
+    normalizeAuthenticatedUserEvidence(sampleUser(), observedAt),
+    normalizePullRequestEvidence(samplePull(), observedAt),
+  ]);
   const runner = async (args: string[]) => {
     if (!args.some((arg) => arg.includes("/reviews"))) {
       return { status: 200, headers: {}, bodyText: "[]" };
@@ -623,7 +638,7 @@ test("R10 multi-page pagination stops before retaining oversize payload", async 
         ]),
       };
     }
-    // Must not reach page 3 (would materialize ~1.8x budget).
+    // Must not reach page 3.
     return {
       status: 200,
       headers: {},
@@ -642,8 +657,18 @@ test("R10 multi-page pagination stops before retaining oversize payload", async 
   };
   const transport = createGhCollectorGitHubTransport(runner);
   await assert.rejects(
-    () => transport.listPullRequestReviews({ owner: "a", repo: "b", prNumber: 1 }),
-    /retained payload exceeded|size|8/i,
+    () =>
+      transport.listPullRequestReviews({
+        owner: "a",
+        repo: "b",
+        prNumber: 1,
+        retainPage: (items) => {
+          budget.retain(
+            items.map((item) => normalizeReviewEvidence(item, observedAt)),
+          );
+        },
+      }),
+    /snapshot exceeded|UTF-8 bytes|8/i,
   );
   assert.ok(pagesFetched <= 2, `stopped before all pages; fetched=${pagesFetched}`);
   assert.equal(pagesFetched < 3, true);

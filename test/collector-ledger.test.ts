@@ -23,7 +23,10 @@ import {
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
 } from "../src/collector-ledger.ts";
-import { buildCollectorRequestMarker } from "../src/collector-github.ts";
+import {
+  buildCollectorRequestMarker,
+  createGhCollectorGitHubTransport,
+} from "../src/collector-github.ts";
 import { buildCollectorReceipt } from "../src/collector-receipt.ts";
 import {
   createFakeGitHubTransport,
@@ -529,6 +532,172 @@ test("snapshot and ledger size bounds fail loudly without truncation", async () 
   await assert.rejects(() => ledger.observe(transport, clock), /8|snapshot|bytes/i);
   assert.equal(ledger.fatal, true);
   assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
+});
+
+test("R10 cross-surface normalized budget rejects before later surfaces and terminal PR", async () => {
+  // ~2.2 MiB bodies: each surface alone normalizes under 8 MiB (body+raw),
+  // but cumulative reviews + issue-comments exceeds; review-comments and the
+  // terminal PR bracket must not run.
+  const body = "x".repeat(Math.floor(2.2 * 1024 * 1024));
+  let pullCalls = 0;
+  let reviewCalls = 0;
+  let issueCommentCalls = 0;
+  let reviewCommentCalls = 0;
+  const runner = async (args: string[]) => {
+    const path = String(args[args.length - 1] ?? "");
+    if (path === "/user" || args.includes("/user")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({ login: "collector-bot", id: 1 }),
+      };
+    }
+    if (path.includes("/reviews")) {
+      reviewCalls += 1;
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify([
+          {
+            id: 1,
+            user: { login: "reviewer" },
+            state: "COMMENTED",
+            body,
+            commit_id: "aaa111",
+            submitted_at: "2024-01-01T00:05:00Z",
+            html_url: "https://example.test/r1",
+          },
+        ]),
+      };
+    }
+    if (path.includes("/issues/") && path.includes("/comments")) {
+      issueCommentCalls += 1;
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify([
+          {
+            id: 2,
+            user: { login: "commenter" },
+            body,
+            created_at: "2024-01-01T00:01:00Z",
+            updated_at: "2024-01-01T00:01:00Z",
+            html_url: "https://example.test/c1",
+          },
+        ]),
+      };
+    }
+    if (path.includes("/pulls/") && path.includes("/comments")) {
+      reviewCommentCalls += 1;
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify([
+          {
+            id: 3,
+            user: { login: "inline" },
+            body,
+            path: "src/a.ts",
+            line: 1,
+            original_line: 1,
+            side: "RIGHT",
+            position: 1,
+            original_position: 1,
+            commit_id: "aaa111",
+            original_commit_id: "aaa111",
+            pull_request_review_id: 1,
+            created_at: "2024-01-01T00:05:00Z",
+            updated_at: "2024-01-01T00:05:00Z",
+            html_url: "https://example.test/rc1",
+          },
+        ]),
+      };
+    }
+    if (path.includes("/pulls/")) {
+      pullCalls += 1;
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          number: 7,
+          state: "open",
+          head: { sha: "aaa111" },
+          updated_at: "2024-01-01T00:00:00Z",
+          html_url: "https://github.com/acme/widgets/pull/7",
+        }),
+      };
+    }
+    throw new Error(`unexpected gh api args: ${args.join(" ")}`);
+  };
+  const transport = createGhCollectorGitHubTransport(runner);
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+  await assert.rejects(
+    () => ledger.observe(transport, clock),
+    /snapshot exceeded|UTF-8 bytes|8/i,
+  );
+  assert.equal(ledger.fatal, true);
+  assert.equal(ledger.latestCompleteSnapshotId, undefined);
+  assert.equal(reviewCalls, 1);
+  assert.equal(issueCommentCalls, 1);
+  assert.equal(reviewCommentCalls, 0);
+  assert.equal(pullCalls, 1, "terminal PR bracket must not run after budget exceed");
+});
+
+test("R10 intra-surface multi-page normalized budget stops before later pages/surfaces", async () => {
+  // body+raw ≈ 2×; page1 under budget, page1+page2 over.
+  const fat = "x".repeat(Math.floor(COLLECTOR_SNAPSHOT_MAX_BYTES * 0.3));
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull(),
+    reviews: [],
+    reviewPages: [
+      [
+        sampleReview({
+          id: 1,
+          userLogin: "a",
+          body: fat,
+          raw: { id: 1, body: fat },
+        }),
+      ],
+      [
+        sampleReview({
+          id: 2,
+          userLogin: "b",
+          body: fat,
+          raw: { id: 2, body: fat },
+        }),
+      ],
+      [
+        sampleReview({
+          id: 3,
+          userLogin: "c",
+          body: fat,
+          raw: { id: 3, body: fat },
+        }),
+      ],
+    ],
+    issueComments: [
+      sampleIssueComment({ id: 99, userLogin: "later", body: "must-not-fetch" }),
+    ],
+    reviewComments: [
+      sampleReviewComment({ id: 98, userLogin: "later", body: "must-not-fetch" }),
+    ],
+  });
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+  await assert.rejects(
+    () => ledger.observe(transport, clock),
+    /snapshot exceeded|UTF-8 bytes|8/i,
+  );
+  assert.equal(ledger.fatal, true);
+  assert.equal(ledger.latestCompleteSnapshotId, undefined);
+  assert.equal(transport.calls.reviews, 1);
+  assert.equal(transport.calls.issueComments, 0);
+  assert.equal(transport.calls.reviewComments, 0);
+  assert.equal(transport.calls.pull, 1);
 });
 
 test("HEAD move permits a new-head request once", async () => {
