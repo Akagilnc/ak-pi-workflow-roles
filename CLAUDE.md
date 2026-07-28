@@ -35,3 +35,7 @@
 - 增加阶段或调用方式不自动意味着复制一套角色方法。
 - 发现同一规则跨 Soul/schema/runtime/README 重复时，保留在拥有该语义的最深层，其余删除或只留必要引用。
 - Soul review 必须检查两件事：必要原则是否缺失，以及非 Soul 内容是否混入。
+
+## Probe lifecycle
+
+A probe is temporary evidence. After its evidence purpose is disposed, either delete it or graduate its behavior exactly once into the regression suite owned by the affected seam, then delete the scratch copy. Only a bare-seam probe that ordinary tests cannot reach may remain under `test/adjudication/`. Do not keep duplicate permanent shapes of the same probe behavior.
