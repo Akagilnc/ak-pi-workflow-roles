@@ -259,16 +259,34 @@ function extractMaterialsReadText(
 }
 
 function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
-  // Accept only a completed call chain bound by non-empty toolCallId:
-  // assistant-issued toolCall → matching execution start → agreeing terminal(s).
-  const issuedArgsById = new Map<string, unknown>();
-  const startArgsById = new Map<string, unknown>();
-  const terminalsById = new Map<
-    string,
-    Array<{ contentText: string; details: JudgeDetails }>
-  >();
+  // Accept only an unambiguous ordered lifecycle per non-empty toolCallId:
+  // exactly one assistant-issued toolCall → exactly one matching start →
+  // ≥1 agreeing terminal(s), with strict row order call < start < terminals.
+  // Same-id replay/conflict (multiple calls or starts) rejects; no last-write.
+  type IssuedEvent = { index: number; args: unknown };
+  type StartEvent = { index: number; args: unknown };
+  type TerminalEvent = {
+    index: number;
+    contentText: string;
+    details: JudgeDetails;
+  };
+  type IdLifecycle = {
+    issued: IssuedEvent[];
+    starts: StartEvent[];
+    terminals: TerminalEvent[];
+  };
+
+  const byId = new Map<string, IdLifecycle>();
+  const lifecycleFor = (toolCallId: string): IdLifecycle => {
+    const existing = byId.get(toolCallId);
+    if (existing) return existing;
+    const created: IdLifecycle = { issued: [], starts: [], terminals: [] };
+    byId.set(toolCallId, created);
+    return created;
+  };
 
   const pushTerminal = (
+    index: number,
     toolCallId: unknown,
     isError: unknown,
     content: unknown,
@@ -280,12 +298,15 @@ function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
     const text = contentTextFromUnknown(content);
     if (!text.includes("Judge verdict accepted")) return;
     if (!details || typeof details !== "object" || Array.isArray(details)) return;
-    const list = terminalsById.get(toolCallId) ?? [];
-    list.push({ contentText: text, details: details as JudgeDetails });
-    terminalsById.set(toolCallId, list);
+    lifecycleFor(toolCallId).terminals.push({
+      index,
+      contentText: text,
+      details: details as JudgeDetails,
+    });
   };
 
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
     if (!row || typeof row !== "object") continue;
     const record = row as Record<string, unknown>;
 
@@ -309,7 +330,7 @@ function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
           const args = (part as { arguments?: unknown }).arguments;
           if (typeof id !== "string" || id.trim().length === 0) continue;
           if (!args || typeof args !== "object" || Array.isArray(args)) continue;
-          issuedArgsById.set(id, args);
+          lifecycleFor(id).issued.push({ index: i, args });
         }
       }
     }
@@ -323,7 +344,10 @@ function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
       typeof record.args === "object" &&
       !Array.isArray(record.args)
     ) {
-      startArgsById.set(record.toolCallId, record.args);
+      lifecycleFor(record.toolCallId).starts.push({
+        index: i,
+        args: record.args,
+      });
       continue;
     }
 
@@ -335,6 +359,7 @@ function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
       if (!result || typeof result !== "object") continue;
       const resultRecord = result as Record<string, unknown>;
       pushTerminal(
+        i,
         record.toolCallId,
         record.isError,
         resultRecord.content,
@@ -354,6 +379,7 @@ function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
         message.toolName === "ak_judge_output"
       ) {
         pushTerminal(
+          i,
           message.toolCallId,
           message.isError,
           message.content,
@@ -364,13 +390,21 @@ function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
   }
 
   const accepted: AcceptedOutput[] = [];
-  for (const [toolCallId, terminals] of terminalsById) {
-    if (terminals.length === 0) continue;
+  for (const [toolCallId, lifecycle] of byId) {
+    const { issued, starts, terminals } = lifecycle;
+    // Exactly one issuance and one start; reject same-id replay/conflict.
+    if (issued.length !== 1 || starts.length !== 1 || terminals.length === 0) {
+      continue;
+    }
 
-    const issuedArgs = issuedArgsById.get(toolCallId);
-    const startArgs = startArgsById.get(toolCallId);
-    if (issuedArgs === undefined || startArgs === undefined) continue;
-    if (!isDeepStrictEqual(issuedArgs, startArgs)) continue;
+    const soleIssued = issued[0]!;
+    const soleStart = starts[0]!;
+    if (!(soleIssued.index < soleStart.index)) continue;
+    if (!terminals.every((terminal) => terminal.index > soleStart.index)) {
+      continue;
+    }
+
+    if (!isDeepStrictEqual(soleIssued.args, soleStart.args)) continue;
 
     // All terminal representations for one id must agree; disagreement rejects.
     const [first, ...rest] = terminals;
@@ -384,7 +418,7 @@ function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
       continue;
     }
 
-    if (!isDeepStrictEqual(first!.details, issuedArgs)) continue;
+    if (!isDeepStrictEqual(first!.details, soleIssued.args)) continue;
 
     accepted.push({
       toolCallId,
@@ -748,6 +782,54 @@ test("acceptance parser rejects terminal details that diverge from issued argume
     syntheticAssistantCall("call-details-drift", issued),
     syntheticExecutionStart("call-details-drift", issued),
     syntheticAcceptedEnd("call-details-drift", false, terminal),
+  ];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser rejects out-of-order terminal before call and start", () => {
+  const details = acceptedDetails();
+  const rows = [
+    syntheticAcceptedEnd("call-order-terminal-first", false, details),
+    syntheticAssistantCall("call-order-terminal-first", details),
+    syntheticExecutionStart("call-order-terminal-first", details),
+  ];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser rejects out-of-order start before call", () => {
+  const details = acceptedDetails();
+  const rows = [
+    syntheticExecutionStart("call-order-start-first", details),
+    syntheticAssistantCall("call-order-start-first", details),
+    syntheticAcceptedEnd("call-order-start-first", false, details),
+  ];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser rejects conflicting or replayed assistant calls for one id", () => {
+  const first = acceptedDetails("continue");
+  const second = acceptedDetails("converged");
+  const rows = [
+    syntheticAssistantCall("call-replayed", first),
+    syntheticAssistantCall("call-replayed", second),
+    syntheticExecutionStart("call-replayed", second),
+    syntheticAcceptedEnd("call-replayed", false, second),
+  ];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser rejects conflicting or replayed starts for one id", () => {
+  const first = acceptedDetails("continue");
+  const second = acceptedDetails("converged");
+  const rows = [
+    syntheticAssistantCall("start-replayed", second),
+    syntheticExecutionStart("start-replayed", first),
+    syntheticExecutionStart("start-replayed", second),
+    syntheticAcceptedEnd("start-replayed", false, second),
   ];
   const accepted = extractAcceptedJudgeOutputs(rows);
   assert.equal(accepted.length, 0);
