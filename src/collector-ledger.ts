@@ -720,6 +720,12 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal(`Collector observe failed: ${message}`);
       }
 
+      // First-sighting trust must not predate actual surface observation.
+      // Observe-start may be before cutoff while surfaces arrive after; stamp
+      // evidence firstObservedAt only once surfaces are in hand (budget retain
+      // during fetch may keep the temporary start stamp).
+      const firstObservedAt = clock.wallNow().toISOString();
+
       // Always bind terminal PR identity fields.
       const pr = surfaces.prTerminal;
       const { user, reviews, issueComments, reviewComments } = surfaces;
@@ -733,16 +739,16 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       ];
 
       const pendingRecords: CollectorEvidenceRecord[] = [];
-      pendingRecords.push(normalizeAuthenticatedUserEvidence(user, observedAt));
-      pendingRecords.push(normalizePullRequestEvidence(pr, observedAt));
+      pendingRecords.push(normalizeAuthenticatedUserEvidence(user, firstObservedAt));
+      pendingRecords.push(normalizePullRequestEvidence(pr, firstObservedAt));
       for (const review of reviews.items) {
-        pendingRecords.push(normalizeReviewEvidence(review, observedAt));
+        pendingRecords.push(normalizeReviewEvidence(review, firstObservedAt));
       }
       for (const comment of issueComments.items) {
-        pendingRecords.push(normalizeIssueCommentEvidence(comment, observedAt));
+        pendingRecords.push(normalizeIssueCommentEvidence(comment, firstObservedAt));
       }
       for (const comment of reviewComments.items) {
-        pendingRecords.push(normalizeReviewCommentEvidence(comment, observedAt));
+        pendingRecords.push(normalizeReviewCommentEvidence(comment, firstObservedAt));
       }
 
       applyEvidenceVersionHistory(

@@ -540,10 +540,11 @@ export function createGhCollectorGitHubTransport(
             diagnostics: error instanceof Error ? error.message : String(error),
           };
         }
-        // Abort must surface as cancellation, not a rejected comment result.
+        // Cancellation is signal state (not reason-text matching). AbortError
+        // name remains a non-signal belt only.
         if (
-          (isRecord(error) && error["name"] === "AbortError") ||
-          (error instanceof Error && /abort|cancel/i.test(error.message))
+          input.signal?.aborted ||
+          (isRecord(error) && error["name"] === "AbortError")
         ) {
           throw error;
         }

@@ -1139,6 +1139,79 @@ test("after-deadline first observation of review cannot prove valid or unavailab
   }, clock), /valid|qualifying|window|head/i);
 });
 
+test("observe start-before finish-after cutoff newly appearing review cannot prove valid", async () => {
+  // activation 00:10 → deadline 00:25; observe starts 00:24:59 empty, mid-fetch
+  // crosses cutoff and injects a new review; first-sighting must be conservative.
+  const clock = clockAt("2024-01-01T00:10:00Z");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-c" }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const originalListReviews = transport.listPullRequestReviews.bind(transport);
+  let reviewListCount = 0;
+  transport.listPullRequestReviews = async (input) => {
+    reviewListCount += 1;
+    if (reviewListCount === 1) {
+      // Observe already started at 00:24:59; surfaces arrive after deadline.
+      clock.advance(2_000); // 00:25:01
+      transport.state.reviews = [
+        sampleReview({
+          id: 40,
+          userLogin: "codexbot",
+          state: "APPROVED",
+          body: "appeared mid-observe after cutoff",
+          commitId: "head-c",
+          submittedAt: "2024-01-01T00:00:00Z",
+        }),
+      ];
+    }
+    return originalListReviews(input);
+  };
+
+  const ledger = createCollectorLedger(baseConfig());
+  ledger.recordActivation(clock);
+  // Start observe just before eligibility cutoff (activation + 15m = 00:25).
+  clock.advance(14 * 60 * 1000 + 59_000); // wall now 00:24:59
+  assert.equal(clock.wallNow().toISOString(), "2024-01-01T00:24:59.000Z");
+  const { snapshot } = await ledger.observe(transport, clock);
+  assert.ok(Date.parse(snapshot.observedAt) < Date.parse("2024-01-01T00:25:00.000Z"));
+  assert.ok(Date.parse(snapshot.completedAt) > Date.parse("2024-01-01T00:25:00.000Z"));
+
+  const late = ledger.allEvidence().find((item) =>
+    item.kind === "review" && item.body === "appeared mid-observe after cutoff"
+  )!;
+  assert.ok(late, "review must be stored");
+  assert.ok(
+    Date.parse(late.firstObservedAt) > Date.parse("2024-01-01T00:25:00.000Z"),
+    `firstObservedAt must be after deadline, got ${late.firstObservedAt}`,
+  );
+  assert.equal(late.authoritativeTime, null);
+  assert.notEqual(late.windowRelation, "before");
+  assert.notEqual(late.windowRelation, "within");
+
+  assert.throws(() => buildCollectorReceipt(ledger, {
+    legs: [{
+      legId: "codex",
+      status: "valid",
+      rationale: "mid-observe after-cutoff first sighting cannot prove valid",
+      evidenceRefs: [late.evidenceId],
+    }],
+  }, clock), /valid|qualifying|window|head/i);
+
+  assert.throws(() => buildCollectorReceipt(ledger, {
+    legs: [{
+      legId: "codex",
+      status: "unavailable",
+      rationale: "mid-observe after-cutoff first sighting cannot prove unavailable",
+      evidenceRefs: [late.evidenceId],
+      unavailableScope: "global",
+    }],
+  }, clock), /unavailable|eligible|window|uncertain/i);
+});
+
 test("recovery attempt embeds recoverySnapshotId in receipt", async () => {
   const clock = clockAt("2024-01-01T00:00:00Z");
   const transport = createFakeGitHubTransport({
