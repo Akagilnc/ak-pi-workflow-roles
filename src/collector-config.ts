@@ -40,7 +40,12 @@ export const COLLECTOR_LEGS_SCHEMA = {
             additionalProperties: false,
             required: ["body"],
             properties: {
-              body: { type: "string", minLength: 1 },
+              body: {
+                type: "string",
+                minLength: 1,
+                pattern: "\\S",
+                "x-maxUtf8Bytes": COLLECTOR_REQUEST_BODY_MAX_BYTES,
+              },
             },
           },
         },

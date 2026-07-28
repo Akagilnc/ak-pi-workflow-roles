@@ -398,7 +398,7 @@ export function createCollectorRoleRuntime(
         "Call ak_collector_request only with a configured request-capable legId and the latest snapshotId.",
       ],
       parameters: requestSchema,
-      async execute(toolCallId, params: RequestParams, _signal, _onUpdate, ctx) {
+      async execute(toolCallId, params: RequestParams, signal, _onUpdate, ctx) {
         if (activationInvalid || activation === undefined) {
           throw new Error(activationError ?? "Collector is not activated");
         }
@@ -408,6 +408,7 @@ export function createCollectorRoleRuntime(
             params,
             activation.transport,
             activation.clock,
+            signal,
           );
           activation.ledger.completeOperational(toolCallId);
           return {
