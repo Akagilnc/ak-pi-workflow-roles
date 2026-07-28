@@ -13,6 +13,22 @@ import type {
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
 export const CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
 
+/** Exact case-sensitive substring literals blocked on Fixer bash only. */
+const FIXER_BASH_FORBIDDEN_LITERALS = [
+  "rm -rf",
+  "git reset --hard",
+  "git clean",
+  "git checkout --",
+] as const;
+
+function matchFixerBashForbiddenLiteral(
+  command: string,
+): (typeof FIXER_BASH_FORBIDDEN_LITERALS)[number] | undefined {
+  return FIXER_BASH_FORBIDDEN_LITERALS.find((literal) =>
+    command.includes(literal)
+  );
+}
+
 const workerOutputSchema = Type.Object(
   {
     status: StringEnum(["planned", "completed", "refused"] as const),
@@ -191,6 +207,18 @@ export function createFixerRoleRuntime(
               terminate: true as const,
             };
           },
+        });
+        pi.on("tool_call", (event) => {
+          if (event.toolName !== "bash") return;
+          const command = event.input["command"];
+          if (typeof command !== "string") return;
+          const matched = matchFixerBashForbiddenLiteral(command);
+          if (matched === undefined) return;
+          return {
+            block: true,
+            reason:
+              `Fixer blocked bash command containing forbidden literal: ${matched}`,
+          };
         });
         pi.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error("Fixer soul was not loaded");
