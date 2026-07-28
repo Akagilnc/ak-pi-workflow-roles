@@ -22,8 +22,7 @@ truth, acceptance, or freshness.
 ## Planned changes — five readiness facts
 
 For **each** proposed change, record exactly these five facts. Do not demand
-fixture pseudocode or blanket `file:line` here. Local Apply-decidable mechanics
-are Apply obligations, not invented plan blockers.
+fixture pseudocode or blanket `file:line` here.
 
 ### Change P1
 

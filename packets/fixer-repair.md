@@ -17,14 +17,17 @@ explicitly changes that public contract.
 
 ## Identity seal
 
+This packet’s repository-relative path and exact-byte SHA-256 belong in the
+**external contributor trail**, not inside the packet bytes (a self-digest
+cannot seal the bytes that contain it).
+
 | Field | Value |
 | --- | --- |
-| This packet path (repository-relative) | |
-| SHA-256 of exact bytes | |
 | Related authority materials (path + SHA-256), if any | |
 | Related plan / prior artifacts (path + SHA-256), if any | |
 
-A digest seals identity only—not truth, acceptance, or freshness.
+In-packet path + SHA-256 entries identify separately sealed related artifacts
+only. A digest seals identity only—not truth, acceptance, or freshness.
 
 ## Repair scope
 
