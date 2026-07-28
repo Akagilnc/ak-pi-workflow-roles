@@ -43,7 +43,7 @@ The caller should treat the successful `ak_judge_output` tool result as the auth
 
 ## Fixer
 
-The fixer role loads `souls/fixer.md` plus the judge-authored Markdown repair packet, then repairs/tests or returns an evidence-bearing refusal:
+The fixer role loads `souls/fixer.md` plus the caller-supplied Markdown repair packet, then repairs/tests or returns an evidence-bearing refusal:
 
 The CLI advertises the complete phase vocabulary in `pi --ak-role fixer --help`:
 
@@ -72,7 +72,7 @@ Fixer terminates through `ak_fixer_output`:
 {"status":"planned|completed|refused","report":"Markdown report","commitSha":"optional self-report"}
 ```
 
-`planned` cannot carry `commitSha`. Otherwise `commitSha` is advisory evidence for the judge, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence and the judge decides whether to escalate. The caller transports the report, live Git history, and any fresh review back to the judge.
+`planned` cannot carry `commitSha`. Otherwise `commitSha` is advisory evidence for the caller, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence for the caller to dispose. The caller owns the next step after the receipt (and may or may not involve Judge).
 
 ## Coder
 
@@ -81,9 +81,9 @@ Coder handles first implementation in two explicit phases:
 | `--ak-coder-phase` | Meaning | Legal success status |
 | --- | --- | --- |
 | `plan` | Inspect the task and propose an implementation plan; do not edit or commit | `planned` |
-| `apply` | Execute the Judge-approved plan and verify the first implementation | `completed` |
+| `apply` | Execute the approved plan and verify the first implementation | `completed` |
 
-Either phase may return `refused` with authority and current-code evidence. A refusal does not require a commit and returns to the Judge for adjudication; Coder never emits `escalate`.
+Either phase may return `refused` with authority and current-code evidence. A refusal does not require a commit and returns to the caller for disposition; Coder never emits `escalate`.
 
 ```bash
 pi --ak-role coder \
@@ -107,7 +107,7 @@ Coder terminates through `ak_coder_output` with the same thin worker envelope:
 
 During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd`. Use `--no-skills --skill ~/.agents/skills/tdd/SKILL.md` to bind the canonical Matt TDD skill without name collisions. A `completed` receipt is rejected unless the immediately following prompt proves Pi's exact native expansion of the complete canonical TDD Skill and original request; an evidence-bearing `refused` receipt does not require that proof or a commit.
 
-The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the Judge. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate.
+The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the caller. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate.
 
 ## Reviewer
 
@@ -178,7 +178,7 @@ Failure channels (non-zero, no receipt) include malformed/unsupported config or 
 
 Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields. It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
 
-Workflow ordering and routing belong to a separate orchestrator.
+Workflow ordering and routing are caller-owned. A separate orchestrator is optional infrastructure, not a package requirement.
 
 ## Development
 
