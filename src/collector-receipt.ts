@@ -1,3 +1,5 @@
+import Value from "typebox/value";
+
 import {
   COLLECTOR_HOST,
   type CollectorManifest,
@@ -18,6 +20,7 @@ import type {
   CollectorLedger,
   CollectorRequestAttempt,
 } from "./collector-ledger.ts";
+import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
 
 export type CollectorLegStatus = "valid" | "unavailable" | "missing";
 
@@ -94,70 +97,97 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function parseCollectorOutputCandidate(
   raw: unknown,
 ): CollectorOutputCandidate {
-  if (!isRecord(raw) || !Array.isArray(raw["legs"])) {
-    fail("Collector output requires a legs array");
-  }
-  const keys = Object.keys(raw);
-  if (keys.length !== 1 || keys[0] !== "legs") {
-    fail("Collector output accepts only the legs field");
-  }
-  const legs: CollectorLegCandidate[] = [];
-  for (const entry of raw["legs"]) {
-    if (!isRecord(entry)) fail("Collector output leg must be an object");
-    const legId = entry["legId"];
-    const status = entry["status"];
-    const rationale = entry["rationale"];
-    const evidenceRefs = entry["evidenceRefs"];
-    if (typeof legId !== "string" || legId.length === 0) {
-      fail("Collector output legId must be a non-empty string");
+  if (!Value.Check(collectorOutputArgsSchema, raw)) {
+    // Diagnostic detail for unit callers; schema is the sole acceptance owner.
+    if (!isRecord(raw) || !Array.isArray(raw["legs"])) {
+      fail("Collector output requires a legs array");
     }
-    if (status !== "valid" && status !== "unavailable" && status !== "missing") {
-      fail(`Collector output status for \"${legId}\" must be valid|unavailable|missing`);
+    const keys = Object.keys(raw);
+    if (keys.some((key) => key !== "legs")) {
+      fail("Collector output accepts only the legs field");
     }
-    if (typeof rationale !== "string" || rationale.trim().length === 0) {
-      fail(`Collector output rationale for \"${legId}\" must be non-blank`);
-    }
-    if (
-      !Array.isArray(evidenceRefs) ||
-      evidenceRefs.length === 0 ||
-      evidenceRefs.some((ref) => typeof ref !== "string" || ref.length === 0)
-    ) {
-      fail(`Collector output evidenceRefs for \"${legId}\" must be a non-empty string array`);
-    }
-    const candidate: CollectorLegCandidate = {
-      legId,
-      status,
-      rationale,
-      evidenceRefs: evidenceRefs as string[],
-    };
-    if (status === "unavailable") {
-      const scope = entry["unavailableScope"];
-      if (scope !== "target" && scope !== "global") {
+    for (const entry of raw["legs"]) {
+      if (!isRecord(entry)) fail("Collector output leg must be an object");
+      const legId = typeof entry["legId"] === "string" ? entry["legId"] : "?";
+      const status = entry["status"];
+      if (status !== "valid" && status !== "unavailable" && status !== "missing") {
         fail(
-          `Collector unavailable leg \"${legId}\" requires unavailableScope target|global`,
+          `Collector output status for \"${legId}\" must be valid|unavailable|missing`,
         );
       }
-      candidate.unavailableScope = scope;
-    } else if (Object.hasOwn(entry, "unavailableScope")) {
-      fail(
-        `Collector leg \"${legId}\" may only declare unavailableScope when status is unavailable`,
-      );
-    }
-    const allowed = new Set([
-      "legId",
-      "status",
-      "rationale",
-      "evidenceRefs",
-      ...(candidate.unavailableScope === undefined ? [] : ["unavailableScope"]),
-    ]);
-    for (const key of Object.keys(entry)) {
-      if (!allowed.has(key)) {
-        fail(`Collector output leg \"${legId}\" has unknown field \"${key}\"`);
+      if (
+        typeof entry["rationale"] !== "string" ||
+        entry["rationale"].trim().length === 0 ||
+        !/\S/.test(entry["rationale"])
+      ) {
+        fail(`Collector output rationale for \"${legId}\" must be non-blank`);
+      }
+      const evidenceRefs = entry["evidenceRefs"];
+      if (
+        !Array.isArray(evidenceRefs) ||
+        evidenceRefs.length === 0 ||
+        evidenceRefs.some((ref) => typeof ref !== "string" || ref.length === 0)
+      ) {
+        fail(
+          `Collector output evidenceRefs for \"${legId}\" must be a non-empty string array`,
+        );
+      }
+      if (status === "unavailable") {
+        const scope = entry["unavailableScope"];
+        if (scope !== "target" && scope !== "global") {
+          fail(
+            `Collector unavailable leg \"${legId}\" requires unavailableScope target|global`,
+          );
+        }
+      } else if (Object.hasOwn(entry, "unavailableScope")) {
+        fail(
+          `Collector leg \"${legId}\" may only declare unavailableScope when status is unavailable`,
+        );
+      }
+      const allowed = new Set([
+        "legId",
+        "status",
+        "rationale",
+        "evidenceRefs",
+        ...(status === "unavailable" ? ["unavailableScope"] : []),
+      ]);
+      for (const key of Object.keys(entry)) {
+        if (!allowed.has(key)) {
+          fail(`Collector output leg \"${legId}\" has unknown field \"${key}\"`);
+        }
       }
     }
-    legs.push(candidate);
+    fail("Collector output failed schema validation");
   }
-  return { legs };
+  const checked = raw as {
+    legs: Array<{
+      legId: string;
+      status: CollectorLegStatus;
+      rationale: string;
+      evidenceRefs: string[];
+      unavailableScope?: "target" | "global";
+    }>;
+  };
+  return {
+    legs: checked.legs.map((leg) => {
+      const candidate: CollectorLegCandidate = {
+        legId: leg.legId,
+        status: leg.status,
+        rationale: leg.rationale,
+        evidenceRefs: [...leg.evidenceRefs],
+      };
+      if (leg.status === "unavailable") {
+        const scope = leg.unavailableScope;
+        if (scope !== "target" && scope !== "global") {
+          fail(
+            `Collector unavailable leg "${leg.legId}" requires unavailableScope target|global`,
+          );
+        }
+        candidate.unavailableScope = scope;
+      }
+      return candidate;
+    }),
+  };
 }
 
 function reviewInlineComments(
@@ -327,51 +357,98 @@ function qualifiesUnavailableEvidence(input: {
   return { ok: false };
 }
 
+/**
+ * Latest chronological same-leg attempt that succeeded or recovered with
+ * at least one of commentEvidenceId / recoverySnapshotId present.
+ */
+function latestRelevantAttempt(
+  ledger: CollectorLedger,
+  legId: string,
+): CollectorRequestAttempt | undefined {
+  let latest: CollectorRequestAttempt | undefined;
+  for (const attempt of ledger.requestAttempts()) {
+    if (attempt.legId !== legId) continue;
+    if (attempt.status !== "succeeded" && attempt.status !== "recovered") continue;
+    if (
+      typeof attempt.commentEvidenceId !== "string" &&
+      typeof attempt.recoverySnapshotId !== "string"
+    ) {
+      continue;
+    }
+    latest = attempt;
+  }
+  return latest;
+}
+
+/** Auto-link only the latest relevant attempt's present proof ids (+ final snapshot). */
 function collectMissingProofRefs(input: {
+  ledger: CollectorLedger;
+  legId: string;
+  finalSnapshot: CollectorSnapshot;
+}): string[] {
+  const refs = new Set<string>([input.finalSnapshot.snapshotId]);
+  const latest = latestRelevantAttempt(input.ledger, input.legId);
+  if (latest !== undefined) {
+    if (typeof latest.commentEvidenceId === "string") {
+      refs.add(latest.commentEvidenceId);
+    }
+    refs.add(latest.snapshotId);
+    if (typeof latest.recoverySnapshotId === "string") {
+      refs.add(latest.recoverySnapshotId);
+    }
+  }
+  return [...refs];
+}
+
+/** Missing model cites are fail-closed to this allow-list. */
+function missingCiteAllowed(input: {
+  ref: string;
   ledger: CollectorLedger;
   legId: string;
   expected: ReadonlySet<string>;
   finalSnapshot: CollectorSnapshot;
-}): string[] {
-  const refs = new Set<string>([input.finalSnapshot.snapshotId]);
-  for (const record of input.ledger.allEvidence()) {
-    if (record.authorLogin !== undefined && input.expected.has(record.authorLogin)) {
-      if (
-        record.kind === "review" ||
-        record.kind === "review_comment" ||
-        record.kind === "issue_comment"
-      ) {
-        // pending/negative/dismissed/after/uncertain same-leg material
-        refs.add(record.evidenceId);
-      }
+}): boolean {
+  if (input.ref === input.finalSnapshot.snapshotId) return true;
+
+  const record = input.ledger.getEvidence(input.ref);
+  if (record !== undefined) {
+    if (
+      (record.kind === "pull_request" || record.kind === "authenticated_user") &&
+      input.finalSnapshot.evidenceIds.includes(record.evidenceId)
+    ) {
+      return true;
     }
+    if (
+      record.authorLogin !== undefined &&
+      input.expected.has(record.authorLogin) &&
+      (record.kind === "review" ||
+        record.kind === "review_comment" ||
+        record.kind === "issue_comment")
+    ) {
+      return true;
+    }
+    // Marker-joined same-leg requester comments only (no independent v1 parser).
     if (
       record.kind === "issue_comment" &&
       record.authorLogin === input.ledger.requesterLogin &&
-      typeof record.body === "string" &&
-      record.body.includes("ak-collector:v1")
+      typeof record.body === "string"
     ) {
-      refs.add(record.evidenceId);
+      for (const attempt of input.ledger.requestAttempts()) {
+        if (attempt.legId !== input.legId) continue;
+        if (record.body.includes(attempt.marker)) return true;
+      }
     }
   }
+
   for (const attempt of input.ledger.requestAttempts()) {
     if (attempt.legId !== input.legId) continue;
-    if (attempt.commentEvidenceId) refs.add(attempt.commentEvidenceId);
-    if (attempt.recoverySnapshotId) refs.add(attempt.recoverySnapshotId);
-    refs.add(attempt.snapshotId);
+    if (attempt.snapshotId === input.ref) return true;
+    if (attempt.commentEvidenceId === input.ref) return true;
+    if (attempt.recoverySnapshotId === input.ref) return true;
   }
-  for (const failure of input.ledger.transportFailures()) {
-    if (failure.legId !== undefined && failure.legId !== input.legId) continue;
-    // diagnostics live on attempts; still ensure related snapshots stay linked
-    void failure;
-  }
-  for (const id of input.finalSnapshot.evidenceIds) {
-    const record = input.ledger.getEvidence(id);
-    if (record?.kind === "pull_request" || record?.kind === "authenticated_user") {
-      refs.add(record.evidenceId);
-    }
-  }
-  return [...refs];
+
+  // Transport failures never enter leg/report refs.
+  return false;
 }
 
 export function buildCollectorReceipt(
@@ -494,26 +571,16 @@ export function buildCollectorReceipt(
         );
       }
 
-      // Reject wrong-author / non-leg decoy refs fail-closed.
-      for (const ref of evidenceRefs) {
-        const record = ledger.getEvidence(ref);
-        if (record === undefined) continue;
-        if (
-          record.authorLogin !== undefined &&
-          !expected.has(record.authorLogin) &&
-          record.authorLogin !== ledger.requesterLogin
-        ) {
-          fail(
-            `Collector unavailable leg \"${legCandidate.legId}\" cites wrong-author evidence \"${ref}\"`,
-          );
-        }
-      }
-
+      // Every model cite must independently qualify; bind only qualifying proof.
       const qualifying: Array<{ record: CollectorEvidenceRecord; windowRelation: WindowRelation }> =
         [];
       for (const ref of evidenceRefs) {
         const record = ledger.getEvidence(ref);
-        if (record === undefined) continue;
+        if (record === undefined) {
+          fail(
+            `Collector unavailable leg \"${legCandidate.legId}\" cites non-qualifying evidence \"${ref}\"`,
+          );
+        }
         const result = qualifiesUnavailableEvidence({
           record,
           expected,
@@ -522,9 +589,20 @@ export function buildCollectorReceipt(
           scope,
           finalSnapshot,
         });
-        if (result.ok) {
-          qualifying.push({ record, windowRelation: result.windowRelation });
+        if (!result.ok) {
+          if (
+            record.authorLogin !== undefined &&
+            !expected.has(record.authorLogin)
+          ) {
+            fail(
+              `Collector unavailable leg \"${legCandidate.legId}\" cites wrong-author evidence \"${ref}\"`,
+            );
+          }
+          fail(
+            `Collector unavailable leg \"${legCandidate.legId}\" cites non-eligible evidence \"${ref}\"`,
+          );
         }
+        qualifying.push({ record, windowRelation: result.windowRelation });
       }
       if (qualifying.length === 0) {
         fail(
@@ -533,33 +611,41 @@ export function buildCollectorReceipt(
       }
       const windowRelation = qualifying[0]!.windowRelation;
       const proofRefs = qualifying.map((item) => item.record.evidenceId);
-      // Bind terminal report refs to qualifying proof, preserving any additional non-decoy refs.
-      const boundRefs = [
-        ...proofRefs,
-        ...evidenceRefs.filter((ref) => !proofRefs.includes(ref)),
-      ];
-      evidenceRefs = boundRefs;
+      evidenceRefs = [...proofRefs];
       terminalReports.push({
         kind: "terminal-fact",
         legId: legCandidate.legId,
         terminalStatus: "unavailable",
         report: legCandidate.rationale,
         windowRelation,
-        evidenceRefs: [...boundRefs],
+        evidenceRefs: [...proofRefs],
         ...(scope === "global"
           ? { scope: "global" as const }
           : { targetSnapshotHead: targetHead }),
       });
     } else {
-      // missing — auto-link required proof material into leg and report refs
+      // missing — validate model cites, auto-link only latestRelevant attempt proof
+      for (const ref of evidenceRefs) {
+        if (
+          !missingCiteAllowed({
+            ref,
+            ledger,
+            legId: legCandidate.legId,
+            expected,
+            finalSnapshot,
+          })
+        ) {
+          fail(
+            `Collector missing leg \"${legCandidate.legId}\" cites disallowed evidence \"${ref}\"`,
+          );
+        }
+      }
       const auto = collectMissingProofRefs({
         ledger,
         legId: legCandidate.legId,
-        expected,
         finalSnapshot,
       });
       const merged = new Set<string>([...evidenceRefs, ...auto]);
-      // Must cite final complete snapshot
       if (!merged.has(finalSnapshot.snapshotId)) {
         merged.add(finalSnapshot.snapshotId);
       }

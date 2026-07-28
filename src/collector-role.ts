@@ -2,7 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import type { Static } from "typebox";
 
 import {
   loadCollectorManifest,
@@ -29,6 +29,12 @@ import {
   buildCollectorReceipt,
   type CollectorReceipt,
 } from "./collector-receipt.ts";
+import {
+  collectorObserveArgsSchema,
+  collectorOutputArgsSchema,
+  collectorRequestArgsSchema,
+  collectorWaitArgsSchema,
+} from "./collector-tool-schemas.ts";
 
 export {
   COLLECTOR_OBSERVE_TOOL,
@@ -47,42 +53,10 @@ export const COLLECTOR_REQUIRED_TOOLS = [
   COLLECTOR_OUTPUT_TOOL,
 ] as const;
 
-const observeSchema = Type.Object({}, { additionalProperties: false });
-const requestSchema = Type.Object(
-  {
-    legId: Type.String({ minLength: 1 }),
-    snapshotId: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
-const waitSchema = Type.Object(
-  {
-    durationMs: Type.Integer({ minimum: 1, maximum: 900_000 }),
-  },
-  { additionalProperties: false },
-);
-const outputLegSchema = Type.Object(
-  {
-    legId: Type.String({ minLength: 1 }),
-    status: Type.Union([
-      Type.Literal("valid"),
-      Type.Literal("unavailable"),
-      Type.Literal("missing"),
-    ]),
-    rationale: Type.String({ minLength: 1 }),
-    evidenceRefs: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-    unavailableScope: Type.Optional(
-      Type.Union([Type.Literal("target"), Type.Literal("global")]),
-    ),
-  },
-  { additionalProperties: false },
-);
-const outputSchema = Type.Object(
-  {
-    legs: Type.Array(outputLegSchema, { minItems: 1 }),
-  },
-  { additionalProperties: false },
-);
+const observeSchema = collectorObserveArgsSchema;
+const requestSchema = collectorRequestArgsSchema;
+const waitSchema = collectorWaitArgsSchema;
+const outputSchema = collectorOutputArgsSchema;
 
 type RequestParams = Static<typeof requestSchema>;
 type WaitParams = Static<typeof waitSchema>;

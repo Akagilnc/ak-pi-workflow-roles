@@ -103,6 +103,12 @@ export interface InProcessPiOptions {
   additionalExtensionPaths?: string[];
   extensionFactories?: InlineExtension[];
   additionalSkillPaths?: string[];
+  /** When set, forwarded to DefaultResourceLoader; default remains true. */
+  noSkills?: boolean;
+  /** When set, forwarded to DefaultResourceLoader; default remains true. */
+  noContextFiles?: boolean;
+  skillsOverride?: ConstructorParameters<typeof DefaultResourceLoader>[0]["skillsOverride"];
+  appendSystemPrompt?: string[];
   systemPrompt: string;
   mode: "print" | "tui" | "json";
   flags: Record<string, string>;
@@ -171,10 +177,20 @@ export async function withInProcessPi<T>(
     ...(options.noExtensions === undefined
       ? {}
       : { noExtensions: options.noExtensions }),
-    noSkills: true,
+    noSkills: options.noSkills === false || options.noSkills === true
+      ? options.noSkills
+      : true,
     noPromptTemplates: true,
     noThemes: true,
-    noContextFiles: true,
+    noContextFiles: options.noContextFiles === false || options.noContextFiles === true
+      ? options.noContextFiles
+      : true,
+    ...(options.skillsOverride === undefined
+      ? {}
+      : { skillsOverride: options.skillsOverride }),
+    ...(options.appendSystemPrompt === undefined
+      ? {}
+      : { appendSystemPrompt: options.appendSystemPrompt }),
     systemPrompt: options.systemPrompt,
   });
   await loader.reload();

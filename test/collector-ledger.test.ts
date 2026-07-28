@@ -3,10 +3,14 @@ import test from "node:test";
 
 import {
   applyEvidenceVersionHistory,
+  assignWindowRelations,
   COLLECTOR_RECEIPT_MAX_BYTES,
   COLLECTOR_SNAPSHOT_MAX_BYTES,
   computeWindowRelation,
+  measureNormalizedBytes,
+  normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
+  normalizePullRequestEvidence,
   normalizeReviewCommentEvidence,
   normalizeReviewEvidence,
   type CollectorClock,
@@ -758,20 +762,78 @@ test("applyEvidenceVersionHistory first review keeps submitted_at", () => {
   assert.equal(review.authoritativeTime, "2024-01-01T00:00:00Z");
 });
 
-test("8 MiB snapshot boundary: max accept, max+1 fail", async () => {
-  // Build a body such that normalized JSON is just over / under is hard;
-  // assert the law uses > max (reject max+1 style) via oversized body.
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const over = "y".repeat(COLLECTOR_SNAPSHOT_MAX_BYTES + 1);
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull(),
-    reviews: [sampleReview({ id: 1, userLogin: "codexbot", body: over })],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-  await assert.rejects(() => ledger.observe(transport, clock), /bytes/i);
-  assert.equal(ledger.fatal, true);
+test("8 MiB snapshot boundary: measured MAX accept and MAX+1 fail", async () => {
+  function measureSnapshotBytes(body: string): number {
+    const observedAt = "2024-01-01T00:00:00.000Z";
+    const records = [
+      normalizeAuthenticatedUserEvidence(sampleUser(), observedAt),
+      normalizePullRequestEvidence(samplePull(), observedAt),
+      normalizeReviewEvidence(
+        sampleReview({ id: 1, userLogin: "codexbot", body, raw: {} }),
+        observedAt,
+      ),
+    ];
+    applyEvidenceVersionHistory(records, []);
+    assignWindowRelations(
+      records,
+      new Date("2024-01-01T00:00:00Z"),
+      new Date("2024-01-01T00:15:00Z"),
+    );
+    return measureNormalizedBytes(records);
+  }
+
+  const MAX = COLLECTOR_SNAPSHOT_MAX_BYTES;
+  const base = measureSnapshotBytes("");
+  const padMax = "x".repeat(MAX - base);
+  const padMax1 = "x".repeat(MAX - base + 1);
+  assert.equal(measureSnapshotBytes(padMax), MAX);
+  assert.equal(measureSnapshotBytes(padMax1), MAX + 1);
+
+  // Accept path
+  {
+    const clock = clockAt("2024-01-01T00:00:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [
+        sampleReview({
+          id: 1,
+          userLogin: "codexbot",
+          body: padMax,
+          raw: {},
+        }),
+      ],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const ledger = createCollectorLedger(config());
+    ledger.recordActivation(clock);
+    const { snapshot } = await ledger.observe(transport, clock);
+    assert.equal(ledger.fatal, false);
+    assert.equal(snapshot.normalizedByteLength, MAX);
+    assert.equal(snapshot.complete, true);
+  }
+
+  // Reject path
+  {
+    const clock = clockAt("2024-01-01T00:00:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [
+        sampleReview({
+          id: 1,
+          userLogin: "codexbot",
+          body: padMax1,
+          raw: {},
+        }),
+      ],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const ledger = createCollectorLedger(config());
+    ledger.recordActivation(clock);
+    await assert.rejects(() => ledger.observe(transport, clock), /bytes|snapshot/i);
+    assert.equal(ledger.fatal, true);
+  }
 });
