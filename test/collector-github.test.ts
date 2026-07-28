@@ -1035,6 +1035,72 @@ test("non-aborted AbortError+ambiguousGhFailure remains ambiguous_loss", async (
   assert.equal(result.kind, "ambiguous_loss");
 });
 
+test("createGhApiRunner stdin EPIPE settles once without uncaughtException", async () => {
+  // Child exits immediately without reading stdin; large write must not crash
+  // the process via uncaught write EPIPE.
+  const script = `#!/usr/bin/env bash
+exit 1
+`;
+  await withPathGhStub(script, async () => {
+    const runner = createGhApiRunner();
+    let uncaught = 0;
+    const onUncaught = () => {
+      uncaught += 1;
+    };
+    process.on("uncaughtException", onUncaught);
+    try {
+      await assert.rejects(
+        () =>
+          runner(
+            ["api", "--hostname", "github.com", "--include", "-X", "POST", "/repos/a/b/issues/1/comments", "--input", "-"],
+            { stdin: "x".repeat(32 << 20) },
+          ),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.equal(
+            (error as Error & { ambiguousGhFailure?: boolean }).ambiguousGhFailure,
+            true,
+          );
+          return true;
+        },
+      );
+      // Allow any deferred stream errors a tick to surface if unhandled.
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(uncaught, 0);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+  });
+});
+
+test("createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss", async () => {
+  const script = `#!/usr/bin/env bash
+exit 1
+`;
+  await withPathGhStub(script, async () => {
+    let uncaught = 0;
+    const onUncaught = () => {
+      uncaught += 1;
+    };
+    process.on("uncaughtException", onUncaught);
+    try {
+      const runner = createGhApiRunner();
+      const transport = createGhCollectorGitHubTransport(runner);
+      const result = await transport.createIssueComment({
+        owner: "a",
+        repo: "b",
+        prNumber: 1,
+        body: "x".repeat(32 << 20),
+      });
+      assert.equal(result.kind, "ambiguous_loss");
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(uncaught, 0);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+  });
+});
+
 test("R11 hung gh child aborted through runner settles once and kills child", async () => {
   const script = `#!/usr/bin/env bash
 set -euo pipefail

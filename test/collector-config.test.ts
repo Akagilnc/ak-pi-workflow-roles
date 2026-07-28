@@ -132,6 +132,19 @@ test("manifest schema file matches the packaged machine-readable contract", asyn
   assert.equal(bodySchema.pattern.charCodeAt(0), 0x5c);
   assert.equal(bodySchema["x-maxUtf8Bytes"], COLLECTOR_REQUEST_BODY_MAX_BYTES);
   assert.equal(COLLECTOR_REQUEST_BODY_MAX_BYTES, 60_000);
+  const authorItemSchema =
+    COLLECTOR_LEGS_SCHEMA.properties.legs.items.properties.expectedAuthors.items;
+  assert.equal(authorItemSchema.minLength, 1);
+  assert.equal(authorItemSchema.pattern, "\u005cS");
+  assert.equal(authorItemSchema.pattern.length, 2);
+  assert.equal(authorItemSchema.pattern.charCodeAt(0), 0x5c);
+  // Behavioral schema oracle: pattern rejects whitespace-only; accepts nonblank
+  // (including surrounding spaces — trim remains runtime authority).
+  const authorPattern = new RegExp(authorItemSchema.pattern);
+  assert.equal(authorPattern.test("   "), false);
+  assert.equal(authorPattern.test(""), false);
+  assert.equal(authorPattern.test("CodexBot"), true);
+  assert.equal(authorPattern.test(" CodexBot "), true);
   const file = JSON.parse(
     await readFile(
       resolve("schemas/collector-legs-v1.schema.json"),
