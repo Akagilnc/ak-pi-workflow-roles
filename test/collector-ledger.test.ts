@@ -656,6 +656,62 @@ test("terminal PR reread binds terminal HEAD and retries on drift", async () => 
   assert.equal(prEvidence?.commitOid, "head-b");
 });
 
+test("repeated PR identity drift after retry fails closed without certifying", async () => {
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-a" }),
+    pullRequestSequence: [
+      // first bracket drifts A→B
+      samplePull({ headOid: "head-a" }),
+      samplePull({ headOid: "head-b" }),
+      // retry still drifts C→D
+      samplePull({ headOid: "head-c" }),
+      samplePull({ headOid: "head-d" }),
+    ],
+    reviews: [
+      sampleReview({
+        id: 1,
+        userLogin: "codexbot",
+        body: "must not be stored on repeated drift",
+        commitId: "head-a",
+      }),
+    ],
+    issueComments: [
+      sampleIssueComment({
+        id: 9,
+        userLogin: "alice",
+        body: "must not be stored either",
+      }),
+    ],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+  await assert.rejects(
+    () => ledger.observe(transport, clock),
+    /observe failed|drift/i,
+  );
+  assert.equal(transport.calls.pull, 4, "exactly one full-surface retry (two PR reads per pass)");
+  assert.equal(ledger.fatal, true);
+  assert.match(ledger.fatalReason ?? "", /observe failed|drift/i);
+  assert.equal(ledger.allEvidence().length, 0);
+  assert.equal(ledger.allSnapshots().length, 0);
+  assert.equal(ledger.latestCompleteSnapshotId, undefined);
+  assert.throws(
+    () =>
+      buildCollectorReceipt(ledger, {
+        legs: [{
+          legId: "codex",
+          status: "missing",
+          rationale: "none",
+          evidenceRefs: [],
+        }],
+      }, clock),
+    /observe failed|drift|complete final snapshot/i,
+  );
+});
+
 test("version history: later review edit without timestamp is uncertain", async () => {
   const clock = clockAt("2024-01-01T00:10:00Z");
   const transport = createFakeGitHubTransport({
