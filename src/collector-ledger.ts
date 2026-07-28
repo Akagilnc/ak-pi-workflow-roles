@@ -140,6 +140,7 @@ export type CollectorLedger = {
   observe(
     transport: CollectorGitHubTransport,
     clock: CollectorClock,
+    signal?: AbortSignal,
   ): Promise<{
     snapshot: CollectorSnapshot;
     modelView: unknown;
@@ -426,20 +427,48 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     }
   };
 
-  const prIdentity = (pr: GitHubPullRequest): string => `${pr.state}|${pr.headOid}`;
+  const prIdentity = (pr: GitHubPullRequest): string =>
+    `${pr.state}|${pr.headOid}|${pr.updatedAt ?? ""}`;
 
   const fetchObserveSurfaces = async (
     transport: CollectorGitHubTransport,
+    signal?: AbortSignal,
   ) => {
     const owner = config.repository.owner;
     const repo = config.repository.repo;
     const prNumber = config.prNumber;
-    const user = await transport.getAuthenticatedUser();
-    const prInitial = await transport.getPullRequest({ owner, repo, prNumber });
-    const reviews = await transport.listPullRequestReviews({ owner, repo, prNumber });
-    const issueComments = await transport.listIssueComments({ owner, repo, prNumber });
-    const reviewComments = await transport.listReviewComments({ owner, repo, prNumber });
-    const prTerminal = await transport.getPullRequest({ owner, repo, prNumber });
+    const signalOpt = signal === undefined ? {} : { signal };
+    const user = await transport.getAuthenticatedUser(signalOpt);
+    const prInitial = await transport.getPullRequest({
+      owner,
+      repo,
+      prNumber,
+      ...signalOpt,
+    });
+    const reviews = await transport.listPullRequestReviews({
+      owner,
+      repo,
+      prNumber,
+      ...signalOpt,
+    });
+    const issueComments = await transport.listIssueComments({
+      owner,
+      repo,
+      prNumber,
+      ...signalOpt,
+    });
+    const reviewComments = await transport.listReviewComments({
+      owner,
+      repo,
+      prNumber,
+      ...signalOpt,
+    });
+    const prTerminal = await transport.getPullRequest({
+      owner,
+      repo,
+      prNumber,
+      ...signalOpt,
+    });
     return { user, prInitial, reviews, issueComments, reviewComments, prTerminal };
   };
 
@@ -632,10 +661,19 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       }
     },
 
-    async observe(transport, clock) {
+    async observe(transport, clock, signal) {
       assertNotFatal();
       if (activationTime === undefined) {
         throw latchFatal("Collector observe requires activation");
+      }
+      if (signal?.aborted) {
+        throw latchFatal(
+          `Collector observe failed: ${
+            signal.reason instanceof Error
+              ? signal.reason.message
+              : String(signal.reason ?? "aborted")
+          }`,
+        );
       }
       const observedAt = clock.wallNow().toISOString();
       const cutoff = pastCutoff(clock);
@@ -645,10 +683,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       let surfaces;
       try {
-        surfaces = await fetchObserveSurfaces(transport);
+        surfaces = await fetchObserveSurfaces(transport, signal);
         if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
           // Retry full surfaces once; bind only a consistent terminal read.
-          surfaces = await fetchObserveSurfaces(transport);
+          surfaces = await fetchObserveSurfaces(transport, signal);
           if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
             throw new Error(
               `PR identity drifted across observe bracket after retry (${prIdentity(surfaces.prInitial)} → ${prIdentity(surfaces.prTerminal)})`,
@@ -701,6 +739,14 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         const stored = storeEvidence(record);
         storedIds.push(stored.evidenceId);
       }
+      // Project modelView from canonical stored snapshot records (not mutable pending).
+      const storedRecords = storedIds.map((id) => {
+        const stored = evidenceById.get(id);
+        if (stored === undefined) {
+          throw latchFatal(`Collector observe lost stored evidence ${id}`);
+        }
+        return stored;
+      });
 
       const completedAt = clock.wallNow().toISOString();
       const completedMono = clock.monoNow();
@@ -712,7 +758,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       for (const failure of transportFailures) {
         if (failure.recovered || failure.kind !== "ambiguous_request_loss") continue;
         if (failure.marker === undefined || failure.legId === undefined) continue;
-        const found = pendingRecords.find((record) =>
+        const found = storedRecords.find((record) =>
           record.kind === "issue_comment" &&
           record.authorLogin === requesterLogin &&
           typeof record.body === "string" &&
@@ -760,7 +806,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       const modelView = buildObserveModelView({
         snapshot,
-        records: pendingRecords,
+        records: storedRecords,
         configuredAuthors,
         requesterLogin,
         attempts,
@@ -1050,7 +1096,8 @@ function buildObserveModelView(input: {
       commitOid: record.commitOid,
       htmlUrl: record.htmlUrl,
       path: record.path,
-      line: record.line,
+      // Single display fallback: current line, else originalLine.
+      line: record.line ?? record.originalLine,
       side: record.side,
       authoritativeTime: record.authoritativeTime,
       windowRelation: record.windowRelation,

@@ -958,3 +958,159 @@ test("8 MiB snapshot boundary: measured MAX accept and MAX+1 fail", async () => 
     assert.equal(ledger.fatal, true);
   }
 });
+
+
+test("R5 third observation of unchanged edited review keeps null/uncertain in modelView and store", async () => {
+  const clock = clockAt("2024-01-01T00:10:00Z");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-c" }),
+    reviews: [
+      sampleReview({
+        id: 1,
+        userLogin: "codexbot",
+        state: "APPROVED",
+        body: "body A",
+        commitId: "head-c",
+        submittedAt: "2024-01-01T00:00:00Z",
+      }),
+    ],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+  await ledger.observe(transport, clock);
+
+  transport.state.reviews = [
+    sampleReview({
+      id: 1,
+      userLogin: "codexbot",
+      state: "CHANGES_REQUESTED",
+      body: "edited body B",
+      commitId: "head-c",
+      submittedAt: "2024-01-01T00:00:00Z",
+    }),
+  ];
+  const second = await ledger.observe(transport, clock);
+  const edited = ledger.allEvidence().find((item) =>
+    item.kind === "review" && item.body === "edited body B"
+  )!;
+  assert.equal(edited.authoritativeTime, null);
+  assert.equal(edited.windowRelation, "uncertain");
+  const secondView = second.modelView as {
+    evidence: Array<{ body?: string; authoritativeTime?: string | null; windowRelation?: string }>;
+  };
+  const secondRow = secondView.evidence.find((row) => row.body === "edited body B");
+  assert.ok(secondRow);
+  assert.equal(secondRow.authoritativeTime, null);
+  assert.equal(secondRow.windowRelation, "uncertain");
+
+  // Third observe: GitHub still returns the same edited version + submitted_at.
+  const third = await ledger.observe(transport, clock);
+  const still = ledger.allEvidence().find((item) =>
+    item.kind === "review" && item.body === "edited body B"
+  )!;
+  assert.equal(still.authoritativeTime, null);
+  assert.equal(still.windowRelation, "uncertain");
+  const thirdView = third.modelView as {
+    evidence: Array<{ body?: string; authoritativeTime?: string | null; windowRelation?: string }>;
+  };
+  const thirdRow = thirdView.evidence.find((row) => row.body === "edited body B");
+  assert.ok(thirdRow);
+  assert.equal(thirdRow.authoritativeTime, null);
+  assert.equal(thirdRow.windowRelation, "uncertain");
+});
+
+test("R9 updatedAt churn forces full-surface retry and fails closed on repeated drift", async () => {
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  // Stable state/HEAD; updatedAt changes across the first bracket → retry.
+  // On retry, review appears and identity stabilizes.
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:00:00Z" }),
+    pullRequestSequence: [
+      samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:00:00Z" }),
+      samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:01:00Z" }),
+      // retry bracket stable
+      samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:01:00Z" }),
+      samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:01:00Z" }),
+    ],
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  // Inject review only after first full pass (2 PR reads + surfaces).
+  const originalReviews = transport.listPullRequestReviews.bind(transport);
+  let reviewCalls = 0;
+  transport.listPullRequestReviews = async (input) => {
+    reviewCalls += 1;
+    if (reviewCalls >= 2) {
+      transport.state.reviews = [
+        sampleReview({
+          id: 7,
+          userLogin: "codexbot",
+          body: "appeared on retry",
+          commitId: "head-a",
+          submittedAt: "2024-01-01T00:00:30Z",
+        }),
+      ];
+    }
+    return await originalReviews(input);
+  };
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+  const { snapshot, modelView } = await ledger.observe(transport, clock);
+  assert.equal(snapshot.headOid, "head-a");
+  assert.ok(transport.calls.pull >= 4, "updatedAt drift triggers full retry");
+  const view = modelView as { evidence: Array<{ body?: string }> };
+  assert.ok(view.evidence.some((row) => row.body === "appeared on retry"));
+
+  // Repeated updatedAt churn fails closed without certifying.
+  const clock2 = clockAt("2024-01-01T00:00:00Z");
+  const t2 = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-a", updatedAt: "t0" }),
+    pullRequestSequence: [
+      samplePull({ headOid: "head-a", updatedAt: "t0" }),
+      samplePull({ headOid: "head-a", updatedAt: "t1" }),
+      samplePull({ headOid: "head-a", updatedAt: "t2" }),
+      samplePull({ headOid: "head-a", updatedAt: "t3" }),
+    ],
+    reviews: [
+      sampleReview({
+        id: 1,
+        userLogin: "codexbot",
+        body: "must not certify",
+        commitId: "head-a",
+      }),
+    ],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger2 = createCollectorLedger(config());
+  ledger2.recordActivation(clock2);
+  await assert.rejects(() => ledger2.observe(t2, clock2), /observe failed|drift/i);
+  assert.equal(t2.calls.pull, 4);
+  assert.equal(ledger2.fatal, true);
+  assert.equal(ledger2.latestCompleteSnapshotId, undefined);
+  assert.equal(ledger2.allSnapshots().length, 0);
+});
+
+test("R9 stable state+HEAD+updatedAt still single pass (2 PR reads)", async () => {
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({
+      headOid: "head-a",
+      updatedAt: "2024-01-01T00:00:00Z",
+    }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+  await ledger.observe(transport, clock);
+  assert.equal(transport.calls.pull, 2);
+});

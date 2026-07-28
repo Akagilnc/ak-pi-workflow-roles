@@ -46,6 +46,8 @@ export type CollectorEvidenceRecord = {
   htmlUrl?: string;
   path?: string;
   line?: number | null;
+  /** Outdated inline location when current line is null. */
+  originalLine?: number | null;
   side?: string | null;
   position?: number | null;
   pullRequestReviewId?: number | null;
@@ -183,23 +185,29 @@ export function normalizeAuthenticatedUserEvidence(
   user: GitHubUser,
   observedAt: string,
 ): CollectorEvidenceRecord {
+  const login = user.login.toLowerCase();
+  const rawId = (user.raw as { id?: unknown } | undefined)?.id;
+  const stableNumericOrStringId =
+    typeof rawId === "number" || typeof rawId === "string" ? rawId : undefined;
+  // Retain only correlation identity — never the full /user profile.
+  const retainedRaw: { login: string; id?: number | string } = { login };
+  if (stableNumericOrStringId !== undefined) {
+    retainedRaw.id = stableNumericOrStringId;
+  }
   const contentDigest = versionDigest({
-    login: user.login.toLowerCase(),
-    ...(typeof (user.raw as { id?: unknown } | undefined)?.id === "number" ||
-      typeof (user.raw as { id?: unknown } | undefined)?.id === "string"
-      ? { id: (user.raw as { id: number | string }).id }
-      : {}),
+    login,
+    ...(stableNumericOrStringId !== undefined ? { id: stableNumericOrStringId } : {}),
   });
-  const versionId = `user:${user.login.toLowerCase()}:${contentDigest.slice(0, 12)}`;
+  const versionId = `user:${login}:${contentDigest.slice(0, 12)}`;
   return {
     evidenceId: evidenceIdFor("authenticated_user", versionId),
     kind: "authenticated_user",
-    stableGitHubId: stableId("user", user.login.toLowerCase()),
+    stableGitHubId: stableId("user", login),
     versionId,
     contentDigest,
-    authorLogin: user.login.toLowerCase(),
+    authorLogin: login,
     firstObservedAt: observedAt,
-    raw: user.raw,
+    raw: retainedRaw,
   };
 }
 
@@ -234,7 +242,10 @@ export function normalizeReviewEvidence(
   review: GitHubReview,
   observedAt: string,
 ): CollectorEvidenceRecord {
-  const authorLogin = review.userLogin.toLowerCase();
+  const authorLogin =
+    review.userLogin === null || review.userLogin === undefined
+      ? undefined
+      : review.userLogin.toLowerCase();
   const contentDigest = versionDigest({
     id: review.id,
     state: review.state,
@@ -242,7 +253,7 @@ export function normalizeReviewEvidence(
     commitId: review.commitId,
     submittedAt: review.submittedAt,
     htmlUrl: review.htmlUrl,
-    userLogin: authorLogin,
+    userLogin: authorLogin ?? null,
   });
   const versionId = `review:${review.id}:${contentDigest.slice(0, 12)}`;
   return {
@@ -251,7 +262,7 @@ export function normalizeReviewEvidence(
     stableGitHubId: stableId("review", review.id),
     versionId,
     contentDigest,
-    authorLogin,
+    ...(authorLogin === undefined ? {} : { authorLogin }),
     state: review.state,
     body: review.body,
     commitOid: review.commitId,
@@ -268,12 +279,15 @@ export function normalizeIssueCommentEvidence(
   comment: GitHubIssueComment,
   observedAt: string,
 ): CollectorEvidenceRecord {
-  const authorLogin = comment.userLogin.toLowerCase();
+  const authorLogin =
+    comment.userLogin === null || comment.userLogin === undefined
+      ? undefined
+      : comment.userLogin.toLowerCase();
   const contentDigest = versionDigest({
     id: comment.id,
     body: comment.body,
     updatedAt: comment.updatedAt,
-    userLogin: authorLogin,
+    userLogin: authorLogin ?? null,
     htmlUrl: comment.htmlUrl,
   });
   const versionId = `issue_comment:${comment.id}:${contentDigest.slice(0, 12)}`;
@@ -283,7 +297,7 @@ export function normalizeIssueCommentEvidence(
     stableGitHubId: stableId("issue_comment", comment.id),
     versionId,
     contentDigest,
-    authorLogin,
+    ...(authorLogin === undefined ? {} : { authorLogin }),
     body: comment.body,
     htmlUrl: comment.htmlUrl,
     authoritativeTime: comment.updatedAt ?? null,
@@ -296,18 +310,22 @@ export function normalizeReviewCommentEvidence(
   comment: GitHubReviewComment,
   observedAt: string,
 ): CollectorEvidenceRecord {
-  const authorLogin = comment.userLogin.toLowerCase();
+  const authorLogin =
+    comment.userLogin === null || comment.userLogin === undefined
+      ? undefined
+      : comment.userLogin.toLowerCase();
   const contentDigest = versionDigest({
     id: comment.id,
     body: comment.body,
     path: comment.path,
     line: comment.line,
+    originalLine: comment.originalLine,
     side: comment.side,
     position: comment.position,
     updatedAt: comment.updatedAt,
     commitId: comment.commitId,
     pullRequestReviewId: comment.pullRequestReviewId,
-    userLogin: authorLogin,
+    userLogin: authorLogin ?? null,
     htmlUrl: comment.htmlUrl,
   });
   const versionId = `review_comment:${comment.id}:${contentDigest.slice(0, 12)}`;
@@ -317,12 +335,13 @@ export function normalizeReviewCommentEvidence(
     stableGitHubId: stableId("review_comment", comment.id),
     versionId,
     contentDigest,
-    authorLogin,
+    ...(authorLogin === undefined ? {} : { authorLogin }),
     body: comment.body,
     commitOid: comment.commitId,
     htmlUrl: comment.htmlUrl,
     path: comment.path,
     line: comment.line,
+    originalLine: comment.originalLine,
     side: comment.side,
     position: comment.position,
     pullRequestReviewId: comment.pullRequestReviewId,
@@ -355,6 +374,11 @@ export function applyEvidenceVersionHistory(
       add(record.stableGitHubId, record.versionId);
     }
   }
+  const priorByVersionId = new Map<string, CollectorEvidenceRecord>();
+  for (const record of priorEvidence) {
+    priorByVersionId.set(record.versionId, record);
+  }
+
   for (const record of pending) {
     if (record.stableGitHubId === undefined) continue;
     const priorVersions = versionsByStable.get(record.stableGitHubId) ?? new Set<string>();
@@ -364,10 +388,16 @@ export function applyEvidenceVersionHistory(
     );
 
     if (record.kind === "review") {
-      if (isNewVersion && hadEarlierDistinctVersion) {
+      if (!isNewVersion) {
+        // Known versionId must keep the previously stored authoritative clock.
+        const prior = priorByVersionId.get(record.versionId);
+        if (prior !== undefined) {
+          record.authoritativeTime = prior.authoritativeTime ?? null;
+        }
+      } else if (hadEarlierDistinctVersion) {
         // Reviews have no GitHub-supplied per-edit timestamp.
         record.authoritativeTime = null;
-      } else if (isNewVersion && !hadEarlierDistinctVersion) {
+      } else {
         // First submission version may use submitted_at.
         record.authoritativeTime = record.submittedAt ?? null;
       }
