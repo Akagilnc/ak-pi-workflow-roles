@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -258,35 +259,73 @@ function extractMaterialsReadText(
 }
 
 function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
-  // Merge stream + message representations of the same toolCallId.
-  const byId = new Map<string, AcceptedOutput>();
+  // Accept only a completed call chain bound by non-empty toolCallId:
+  // assistant-issued toolCall → matching execution start → agreeing terminal(s).
+  const issuedArgsById = new Map<string, unknown>();
+  const startArgsById = new Map<string, unknown>();
+  const terminalsById = new Map<
+    string,
+    Array<{ contentText: string; details: JudgeDetails }>
+  >();
 
-  const consider = (raw: {
-    toolCallId: unknown;
-    isError: unknown;
-    content: unknown;
-    details: unknown;
-  }): void => {
+  const pushTerminal = (
+    toolCallId: unknown,
+    isError: unknown,
+    content: unknown,
+    details: unknown,
+  ): void => {
     // Explicit success only — missing/undefined isError does not count.
-    if (raw.isError !== false) return;
-    if (typeof raw.toolCallId !== "string" || raw.toolCallId.trim().length === 0) {
-      return;
-    }
-    const text = contentTextFromUnknown(raw.content);
+    if (isError !== false) return;
+    if (typeof toolCallId !== "string" || toolCallId.trim().length === 0) return;
+    const text = contentTextFromUnknown(content);
     if (!text.includes("Judge verdict accepted")) return;
-    if (!raw.details || typeof raw.details !== "object") return;
-
-    byId.set(raw.toolCallId, {
-      toolCallId: raw.toolCallId,
-      isError: false,
-      contentText: text,
-      details: raw.details as JudgeDetails,
-    });
+    if (!details || typeof details !== "object" || Array.isArray(details)) return;
+    const list = terminalsById.get(toolCallId) ?? [];
+    list.push({ contentText: text, details: details as JudgeDetails });
+    terminalsById.set(toolCallId, list);
   };
 
   for (const row of rows) {
     if (!row || typeof row !== "object") continue;
     const record = row as Record<string, unknown>;
+
+    if (
+      record.type === "message_end" &&
+      record.message &&
+      typeof record.message === "object"
+    ) {
+      const message = record.message as Record<string, unknown>;
+      if (message.role === "assistant" && Array.isArray(message.content)) {
+        for (const part of message.content) {
+          if (
+            !part ||
+            typeof part !== "object" ||
+            (part as { type?: string }).type !== "toolCall" ||
+            (part as { name?: string }).name !== "ak_judge_output"
+          ) {
+            continue;
+          }
+          const id = (part as { id?: unknown }).id;
+          const args = (part as { arguments?: unknown }).arguments;
+          if (typeof id !== "string" || id.trim().length === 0) continue;
+          if (!args || typeof args !== "object" || Array.isArray(args)) continue;
+          issuedArgsById.set(id, args);
+        }
+      }
+    }
+
+    if (
+      record.type === "tool_execution_start" &&
+      record.toolName === "ak_judge_output" &&
+      typeof record.toolCallId === "string" &&
+      record.toolCallId.trim().length > 0 &&
+      record.args &&
+      typeof record.args === "object" &&
+      !Array.isArray(record.args)
+    ) {
+      startArgsById.set(record.toolCallId, record.args);
+      continue;
+    }
 
     if (
       record.type === "tool_execution_end" &&
@@ -295,47 +334,67 @@ function extractAcceptedJudgeOutputs(rows: unknown[]): AcceptedOutput[] {
       const result = record.result;
       if (!result || typeof result !== "object") continue;
       const resultRecord = result as Record<string, unknown>;
-      consider({
-        toolCallId: record.toolCallId,
-        isError: record.isError,
-        content: resultRecord.content,
-        details: resultRecord.details,
-      });
+      pushTerminal(
+        record.toolCallId,
+        record.isError,
+        resultRecord.content,
+        resultRecord.details,
+      );
       continue;
     }
 
-    if (record.type === "message" && record.message && typeof record.message === "object") {
+    if (
+      (record.type === "message" || record.type === "message_end") &&
+      record.message &&
+      typeof record.message === "object"
+    ) {
       const message = record.message as Record<string, unknown>;
       if (
         message.role === "toolResult" &&
         message.toolName === "ak_judge_output"
       ) {
-        consider({
-          toolCallId: message.toolCallId,
-          isError: message.isError,
-          content: message.content,
-          details: message.details,
-        });
-      }
-    }
-
-    if (record.type === "message_end" && record.message && typeof record.message === "object") {
-      const message = record.message as Record<string, unknown>;
-      if (
-        message.role === "toolResult" &&
-        message.toolName === "ak_judge_output"
-      ) {
-        consider({
-          toolCallId: message.toolCallId,
-          isError: message.isError,
-          content: message.content,
-          details: message.details,
-        });
+        pushTerminal(
+          message.toolCallId,
+          message.isError,
+          message.content,
+          message.details,
+        );
       }
     }
   }
 
-  return [...byId.values()];
+  const accepted: AcceptedOutput[] = [];
+  for (const [toolCallId, terminals] of terminalsById) {
+    if (terminals.length === 0) continue;
+
+    const issuedArgs = issuedArgsById.get(toolCallId);
+    const startArgs = startArgsById.get(toolCallId);
+    if (issuedArgs === undefined || startArgs === undefined) continue;
+    if (!isDeepStrictEqual(issuedArgs, startArgs)) continue;
+
+    // All terminal representations for one id must agree; disagreement rejects.
+    const [first, ...rest] = terminals;
+    if (
+      rest.some(
+        (terminal) =>
+          !isDeepStrictEqual(terminal.details, first!.details) ||
+          terminal.contentText !== first!.contentText,
+      )
+    ) {
+      continue;
+    }
+
+    if (!isDeepStrictEqual(first!.details, issuedArgs)) continue;
+
+    accepted.push({
+      toolCallId,
+      isError: false,
+      contentText: first!.contentText,
+      details: first!.details,
+    });
+  }
+
+  return accepted;
 }
 
 function sessionContainsSoul(sessionText: string, soulText: string): boolean {
@@ -472,14 +531,50 @@ async function loadBundle(name: string) {
   return { dir, materials, prompt, expected, meta, receipt, sessionText, soulText };
 }
 
-function acceptedDetails(): JudgeDetails {
+function acceptedDetails(status: string = "converged"): JudgeDetails {
   return {
-    judgeStatus: "converged",
+    judgeStatus: status,
     note: "synthetic",
   };
 }
 
-function syntheticAcceptedEnd(toolCallId: string, isError: unknown): unknown {
+function syntheticAssistantCall(
+  toolCallId: string,
+  details: JudgeDetails = acceptedDetails(),
+): unknown {
+  return {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: toolCallId,
+          name: "ak_judge_output",
+          arguments: details,
+        },
+      ],
+    },
+  };
+}
+
+function syntheticExecutionStart(
+  toolCallId: string,
+  details: JudgeDetails = acceptedDetails(),
+): unknown {
+  return {
+    type: "tool_execution_start",
+    toolName: "ak_judge_output",
+    toolCallId,
+    args: details,
+  };
+}
+
+function syntheticAcceptedEnd(
+  toolCallId: string,
+  isError: unknown,
+  details: JudgeDetails = acceptedDetails(),
+): unknown {
   return {
     type: "tool_execution_end",
     toolName: "ak_judge_output",
@@ -487,9 +582,38 @@ function syntheticAcceptedEnd(toolCallId: string, isError: unknown): unknown {
     isError,
     result: {
       content: [{ type: "text", text: "Judge verdict accepted" }],
-      details: acceptedDetails(),
+      details,
     },
   };
+}
+
+function syntheticAcceptedMessageEnd(
+  toolCallId: string,
+  details: JudgeDetails = acceptedDetails(),
+): unknown {
+  return {
+    type: "message_end",
+    message: {
+      role: "toolResult",
+      toolName: "ak_judge_output",
+      toolCallId,
+      isError: false,
+      content: [{ type: "text", text: "Judge verdict accepted" }],
+      details,
+    },
+  };
+}
+
+function syntheticBoundAcceptedChain(
+  toolCallId: string,
+  details: JudgeDetails = acceptedDetails(),
+): unknown[] {
+  return [
+    syntheticAssistantCall(toolCallId, details),
+    syntheticExecutionStart(toolCallId, details),
+    syntheticAcceptedEnd(toolCallId, false, details),
+    syntheticAcceptedMessageEnd(toolCallId, details),
+  ];
 }
 
 test("judge posture fixture bundles are present", async () => {
@@ -568,16 +692,72 @@ test("posture oracle refuses receipt-only trust without JSONL acceptance", async
   assert.equal(accepted.length, 0);
 });
 
-test("acceptance parser rejects missing isError even with accepted text", () => {
-  const rows = [syntheticAcceptedEnd("call-missing-flag", undefined)];
+test("acceptance parser rejects orphan terminal without assistant call and start", () => {
+  const rows = [syntheticAcceptedEnd("orphan-end", false)];
   const accepted = extractAcceptedJudgeOutputs(rows);
   assert.equal(accepted.length, 0);
 });
 
-test("acceptance parser rejects two distinct toolCallIds with identical details", () => {
+test("acceptance parser rejects orphan toolResult message without call chain", () => {
+  const rows = [syntheticAcceptedMessageEnd("orphan-message")];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser rejects missing isError even with full bind chain", () => {
+  const details = acceptedDetails();
   const rows = [
-    syntheticAcceptedEnd("call-a", false),
-    syntheticAcceptedEnd("call-b", false),
+    syntheticAssistantCall("call-missing-flag", details),
+    syntheticExecutionStart("call-missing-flag", details),
+    syntheticAcceptedEnd("call-missing-flag", undefined, details),
+  ];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser rejects same-id terminals with conflicting details", () => {
+  const early = acceptedDetails("continue");
+  const late = acceptedDetails("converged");
+  const rows = [
+    syntheticAssistantCall("call-conflict", early),
+    syntheticExecutionStart("call-conflict", early),
+    syntheticAcceptedEnd("call-conflict", false, early),
+    syntheticAcceptedMessageEnd("call-conflict", late),
+  ];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser rejects call/start argument mismatch", () => {
+  const issued = acceptedDetails("continue");
+  const started = acceptedDetails("converged");
+  const rows = [
+    syntheticAssistantCall("call-mismatch", issued),
+    syntheticExecutionStart("call-mismatch", started),
+    syntheticAcceptedEnd("call-mismatch", false, issued),
+    syntheticAcceptedMessageEnd("call-mismatch", issued),
+  ];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser rejects terminal details that diverge from issued arguments", () => {
+  const issued = acceptedDetails("continue");
+  const terminal = acceptedDetails("converged");
+  const rows = [
+    syntheticAssistantCall("call-details-drift", issued),
+    syntheticExecutionStart("call-details-drift", issued),
+    syntheticAcceptedEnd("call-details-drift", false, terminal),
+  ];
+  const accepted = extractAcceptedJudgeOutputs(rows);
+  assert.equal(accepted.length, 0);
+});
+
+test("acceptance parser keeps two distinct fully-bound ids with identical details", () => {
+  const details = acceptedDetails();
+  const rows = [
+    ...syntheticBoundAcceptedChain("call-a", details),
+    ...syntheticBoundAcceptedChain("call-b", details),
   ];
   const accepted = extractAcceptedJudgeOutputs(rows);
   assert.equal(accepted.length, 2);
@@ -585,34 +765,13 @@ test("acceptance parser rejects two distinct toolCallIds with identical details"
   assert.notEqual(accepted.length, 1);
 });
 
-test("acceptance parser merges stream and message_end for the same toolCallId", () => {
+test("acceptance parser binds full chain and merges agreeing terminals for one id", () => {
   const details = acceptedDetails();
-  const rows = [
-    {
-      type: "tool_execution_end",
-      toolName: "ak_judge_output",
-      toolCallId: "call-same",
-      isError: false,
-      result: {
-        content: [{ type: "text", text: "Judge verdict accepted" }],
-        details,
-      },
-    },
-    {
-      type: "message_end",
-      message: {
-        role: "toolResult",
-        toolName: "ak_judge_output",
-        toolCallId: "call-same",
-        isError: false,
-        content: [{ type: "text", text: "Judge verdict accepted" }],
-        details,
-      },
-    },
-  ];
+  const rows = syntheticBoundAcceptedChain("call-same", details);
   const accepted = extractAcceptedJudgeOutputs(rows);
   assert.equal(accepted.length, 1);
   assert.equal(accepted[0]!.toolCallId, "call-same");
+  assert.deepEqual(accepted[0]!.details, details);
 });
 
 test("JSONL bind/neutrality refuses coached user prompt against neutral static input", () => {
