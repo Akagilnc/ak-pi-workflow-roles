@@ -142,9 +142,15 @@ function reviewInlineText(inline: readonly CollectorEvidenceRecord[]): string {
   if (inline.length === 0) return "";
   return inline
     .map((comment) => {
+      const line =
+        comment.line !== null && comment.line !== undefined
+          ? comment.line
+          : comment.originalLine !== null && comment.originalLine !== undefined
+            ? comment.originalLine
+            : undefined;
       const loc = [
         comment.path ?? "?",
-        comment.line === null || comment.line === undefined ? "?" : String(comment.line),
+        line === undefined ? "?" : String(line),
       ].join(":");
       return `- ${loc}: ${comment.body ?? ""}`;
     })
@@ -258,13 +264,54 @@ function collectSubstantiveReviewReports(input: {
   return reports;
 }
 
+/** First chronological snapshot that established the evidence id → that HEAD. */
+function establishedHeadFor(
+  ledger: CollectorLedger,
+  evidenceId: string,
+): string | undefined {
+  for (const snapshot of ledger.allSnapshots()) {
+    if (snapshot.evidenceIds.includes(evidenceId)) {
+      return snapshot.headOid;
+    }
+  }
+  return undefined;
+}
+
+function finalHasQualifyingValidReview(input: {
+  ledger: CollectorLedger;
+  leg: { expectedAuthors: readonly string[] };
+  finalSnapshot: CollectorSnapshot;
+  targetHead: string;
+  activationTime: Date;
+  deadlineTime: Date;
+}): boolean {
+  const expected = new Set(input.leg.expectedAuthors);
+  for (const id of input.finalSnapshot.evidenceIds) {
+    const record = input.ledger.getEvidence(id);
+    if (record === undefined || record.kind !== "review") continue;
+    if (
+      reviewQualifiesForValid({
+        review: record,
+        expectedAuthors: expected,
+        targetHead: input.targetHead,
+        activationTime: input.activationTime,
+        deadlineTime: input.deadlineTime,
+      }).ok
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function qualifiesUnavailableEvidence(input: {
   record: CollectorEvidenceRecord;
   expected: ReadonlySet<string>;
   activationTime: Date;
   deadlineTime: Date;
   scope: "target" | "global";
-  finalSnapshot: CollectorSnapshot;
+  targetHead: string;
+  ledger: CollectorLedger;
 }): { ok: true; windowRelation: WindowRelation } | { ok: false } {
   if (
     input.record.authorLogin === undefined ||
@@ -283,7 +330,8 @@ function qualifiesUnavailableEvidence(input: {
   if (input.scope === "global") {
     return { ok: true, windowRelation };
   }
-  if (input.finalSnapshot.evidenceIds.includes(input.record.evidenceId)) {
+  // Target scope binds to establishment HEAD, not final membership alone.
+  if (establishedHeadFor(input.ledger, input.record.evidenceId) === input.targetHead) {
     return { ok: true, windowRelation };
   }
   return { ok: false };
@@ -473,11 +521,20 @@ export function buildCollectorReceipt(
     }
 
     if (legCandidate.status === "valid") {
-      let matched: CollectorEvidenceRecord | undefined;
+      // Every model cite must independently qualify for this leg on the final snapshot.
+      const qualifying: CollectorEvidenceRecord[] = [];
       for (const ref of evidenceRefs) {
         const record = ledger.getEvidence(ref);
-        if (record?.kind !== "review") continue;
-        if (!finalSnapshot.evidenceIds.includes(record.evidenceId)) continue;
+        if (record === undefined || record.kind !== "review") {
+          fail(
+            `Collector valid leg \"${legCandidate.legId}\" cites non-qualifying evidence \"${ref}\"`,
+          );
+        }
+        if (!finalSnapshot.evidenceIds.includes(record.evidenceId)) {
+          fail(
+            `Collector valid leg \"${legCandidate.legId}\" cites non-final-snapshot evidence \"${ref}\"`,
+          );
+        }
         const qualification = reviewQualifiesForValid({
           review: record,
           expectedAuthors: expected,
@@ -485,17 +542,35 @@ export function buildCollectorReceipt(
           activationTime,
           deadlineTime,
         });
-        if (qualification.ok) {
-          matched = record;
-          break;
+        if (!qualification.ok) {
+          fail(
+            `Collector valid leg \"${legCandidate.legId}\" cites non-qualifying exact-head evidence \"${ref}\"`,
+          );
         }
+        qualifying.push(record);
       }
-      if (matched === undefined) {
+      if (qualifying.length === 0) {
         fail(
           `Collector valid leg \"${legCandidate.legId}\" lacks a qualifying latest-snapshot review for target HEAD`,
         );
       }
+      evidenceRefs = qualifying.map((record) => record.evidenceId);
     } else if (legCandidate.status === "unavailable") {
+      // Terminal statuses lose to exact-HEAD qualifying valid proof on final snapshot.
+      if (
+        finalHasQualifyingValidReview({
+          ledger,
+          leg,
+          finalSnapshot,
+          targetHead,
+          activationTime,
+          deadlineTime,
+        })
+      ) {
+        fail(
+          `Collector unavailable leg \"${legCandidate.legId}\" rejected: final snapshot has a qualifying exact-head valid review`,
+        );
+      }
       const scope = legCandidate.unavailableScope;
       if (scope !== "target" && scope !== "global") {
         fail(
@@ -519,7 +594,8 @@ export function buildCollectorReceipt(
           activationTime,
           deadlineTime,
           scope,
-          finalSnapshot,
+          targetHead,
+          ledger,
         });
         if (!result.ok) {
           if (
@@ -556,6 +632,21 @@ export function buildCollectorReceipt(
           : { targetSnapshotHead: targetHead }),
       });
     } else {
+      // Terminal statuses lose to exact-HEAD qualifying valid proof on final snapshot.
+      if (
+        finalHasQualifyingValidReview({
+          ledger,
+          leg,
+          finalSnapshot,
+          targetHead,
+          activationTime,
+          deadlineTime,
+        })
+      ) {
+        fail(
+          `Collector missing leg \"${legCandidate.legId}\" rejected: final snapshot has a qualifying exact-head valid review`,
+        );
+      }
       // missing — validate model cites, auto-link only latestRelevant attempt proof
       for (const ref of evidenceRefs) {
         if (
@@ -632,67 +723,9 @@ export function buildCollectorReceipt(
     }
   }
 
-  const embedEvidenceIds = new Set<string>();
-  const embedSnapshotIds = new Set<string>([finalSnapshot.snapshotId]);
-
-  const addEvidence = (id: string) => {
-    if (ledger.getEvidence(id)) embedEvidenceIds.add(id);
-    if (ledger.getSnapshot(id)) embedSnapshotIds.add(id);
-  };
-
-  for (const leg of legsOut) {
-    for (const ref of leg.evidenceRefs) addEvidence(ref);
-  }
-  for (const report of reports) {
-    for (const ref of report.evidenceRefs) addEvidence(ref);
-  }
-
-  for (const id of finalSnapshot.evidenceIds) {
-    const record = ledger.getEvidence(id);
-    if (record === undefined) continue;
-    if (record.kind === "pull_request" || record.kind === "authenticated_user") {
-      embedEvidenceIds.add(record.evidenceId);
-    }
-  }
-
-  for (const record of ledger.allEvidence()) {
-    if (
-      record.authorLogin !== undefined &&
-      ledger.configuredAuthorLogins().has(record.authorLogin)
-    ) {
-      if (
-        record.kind === "review" ||
-        record.kind === "review_comment" ||
-        record.kind === "issue_comment"
-      ) {
-        embedEvidenceIds.add(record.evidenceId);
-      }
-    }
-    if (record.kind === "request_attempt" || record.kind === "transport") {
-      embedEvidenceIds.add(record.evidenceId);
-    }
-    if (
-      record.kind === "issue_comment" &&
-      record.authorLogin === ledger.requesterLogin &&
-      typeof record.body === "string" &&
-      record.body.includes("ak-collector:v1")
-    ) {
-      embedEvidenceIds.add(record.evidenceId);
-    }
-  }
-
-  for (const attempt of ledger.requestAttempts()) {
-    embedSnapshotIds.add(attempt.snapshotId);
-    if (attempt.commentEvidenceId) addEvidence(attempt.commentEvidenceId);
-    if (attempt.recoverySnapshotId) embedSnapshotIds.add(attempt.recoverySnapshotId);
-  }
-
-  const evidenceRecords = ledger
-    .allEvidence()
-    .filter((record) => embedEvidenceIds.has(record.evidenceId));
-  const snapshots = ledger
-    .allSnapshots()
-    .filter((snapshot) => embedSnapshotIds.has(snapshot.snapshotId));
+  // Full ledger embed — no selective subset. Invocation already bounds size.
+  const evidenceRecords = [...ledger.allEvidence()];
+  const snapshots = [...ledger.allSnapshots()];
 
   // Unique ids within each namespace
   const evidenceIds = evidenceRecords.map((record) => record.evidenceId);
@@ -743,6 +776,12 @@ export function buildCollectorReceipt(
   }
   for (const report of reports) {
     for (const ref of report.evidenceRefs) resolveRef(ref, `report ${report.legId}`);
+  }
+  // Transitive closure: every included snapshot evidence id must resolve.
+  for (const snapshot of snapshots) {
+    for (const id of snapshot.evidenceIds) {
+      resolveRef(id, `snapshot ${snapshot.snapshotId} evidenceIds`);
+    }
   }
 
   const receipt: CollectorReceipt = {

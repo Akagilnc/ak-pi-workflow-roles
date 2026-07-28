@@ -9,19 +9,31 @@ import {
   buildCollectorRequestMarker,
   createGhApiRunner,
   createGhCollectorGitHubTransport,
+  normalizeIssueComment,
   normalizePullRequest,
   normalizeReview,
+  normalizeReviewComment,
 } from "../src/collector-github.ts";
 import { createCollectorLedger } from "../src/collector-ledger.ts";
-import type { CollectorClock } from "../src/collector-evidence.ts";
+import {
+  COLLECTOR_SNAPSHOT_MAX_BYTES,
+  normalizeAuthenticatedUserEvidence,
+  reviewQualifiesForValid,
+  type CollectorClock,
+} from "../src/collector-evidence.ts";
+import { buildCollectorReceipt } from "../src/collector-receipt.ts";
 
-function clockAt(startWall: string): CollectorClock {
+function clockAt(startWall: string): CollectorClock & { advance(ms: number): void } {
   let mono = 0;
   let wall = new Date(startWall);
   return {
     wallNow: () => new Date(wall),
     monoNow: () => mono,
     async sleep(ms) {
+      mono += ms;
+      wall = new Date(wall.getTime() + ms);
+    },
+    advance(ms) {
       mono += ms;
       wall = new Date(wall.getTime() + ms);
     },
@@ -364,5 +376,346 @@ echo "unexpected $*" >&2; exit 2
     const attempt = ledger.requestAttempts().find((item) => item.status === "recovered");
     assert.ok(attempt);
     assert.equal(attempt.recoverySnapshotId, second.snapshot.snapshotId);
+  });
+});
+
+
+test("R6 null user on review/issue comment/review comment preserves record and never qualifies", async () => {
+  const review = normalizeReview({
+    id: 1,
+    user: null,
+    state: "APPROVED",
+    body: "ghost approve",
+    commit_id: "abc",
+    submitted_at: "2024-01-01T00:00:00Z",
+    html_url: "https://example.test/r/1",
+  });
+  assert.equal(review.userLogin, null);
+
+  const issue = normalizeIssueComment({
+    id: 2,
+    user: null,
+    body: "ghost comment",
+    created_at: "2024-01-01T00:00:00Z",
+    updated_at: "2024-01-01T00:00:00Z",
+    html_url: "https://example.test/c/2",
+  });
+  assert.equal(issue.userLogin, null);
+
+  const inline = normalizeReviewComment({
+    id: 3,
+    user: null,
+    body: "ghost inline",
+    path: "src/a.ts",
+    line: 1,
+    original_line: 1,
+    created_at: "2024-01-01T00:00:00Z",
+    updated_at: "2024-01-01T00:00:00Z",
+    html_url: "https://example.test/rc/3",
+    pull_request_review_id: 1,
+  });
+  assert.equal(inline.userLogin, null);
+
+  const clock = clockAt("2024-01-01T00:10:00Z");
+  let page = 0;
+  const runner = async (args: string[]) => {
+    const pathArg = args.find((arg) => arg.startsWith("/")) ?? "";
+    if (pathArg.includes("/user")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({ login: "collector-bot", id: 1 }),
+      };
+    }
+    if (
+      pathArg.includes("/pulls/1") &&
+      !pathArg.includes("reviews") &&
+      !pathArg.includes("comments")
+    ) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          number: 1,
+          state: "open",
+          head: { sha: "head-c" },
+          updated_at: "2024-01-01T00:00:00Z",
+          html_url: "https://github.com/a/b/pull/1",
+        }),
+      };
+    }
+    if (pathArg.includes("/reviews")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify([{
+          id: 11,
+          user: null,
+          state: "APPROVED",
+          body: "tombstone review",
+          commit_id: "head-c",
+          submitted_at: "2024-01-01T00:00:00Z",
+          html_url: "https://example.test/r/11",
+        }]),
+      };
+    }
+    if (pathArg.includes("/issues/1/comments")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify([{
+          id: 12,
+          user: null,
+          body: "tombstone issue",
+          created_at: "2024-01-01T00:00:00Z",
+          updated_at: "2024-01-01T00:00:00Z",
+          html_url: "https://example.test/c/12",
+        }]),
+      };
+    }
+    if (pathArg.includes("/pulls/1/comments")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify([{
+          id: 13,
+          user: null,
+          body: "tombstone inline",
+          path: "src/a.ts",
+          line: 4,
+          original_line: 4,
+          created_at: "2024-01-01T00:00:00Z",
+          updated_at: "2024-01-01T00:00:00Z",
+          html_url: "https://example.test/rc/13",
+          pull_request_review_id: 11,
+        }]),
+      };
+    }
+    page += 1;
+    throw new Error(`unexpected ${args.join(" ")}`);
+  };
+  const transport = createGhCollectorGitHubTransport(runner);
+  const ledger = createCollectorLedger({
+    repository: {
+      display: "A/B",
+      canonical: "a/b",
+      owner: "a",
+      repo: "b",
+    },
+    prNumber: 1,
+    manifest: {
+      version: 1,
+      legs: [{
+        id: "codex",
+        expectedAuthors: ["codexbot"],
+        requestBody: "Please review.",
+      }],
+      canonicalJson: "{}\n",
+      digest: "d".repeat(64),
+      sourcePath: "/tmp/legs.json",
+    },
+  });
+  ledger.recordActivation(clock);
+  await ledger.observe(transport, clock);
+  const stored = ledger.allEvidence().filter((item) =>
+    item.kind === "review" ||
+    item.kind === "issue_comment" ||
+    item.kind === "review_comment"
+  );
+  assert.equal(stored.length, 3);
+  for (const row of stored) {
+    assert.equal(row.authorLogin, undefined);
+  }
+  const tombstoneReview = stored.find((item) => item.kind === "review")!;
+  assert.equal(
+    reviewQualifiesForValid({
+      review: tombstoneReview,
+      expectedAuthors: new Set(["codexbot"]),
+      targetHead: "head-c",
+      activationTime: new Date("2024-01-01T00:10:00Z"),
+      deadlineTime: new Date("2024-01-01T00:25:00Z"),
+    }).ok,
+    false,
+  );
+  clock.advance(16 * 60 * 1000);
+  await ledger.observe(transport, clock);
+  assert.throws(
+    () => buildCollectorReceipt(ledger, {
+      legs: [{
+        legId: "codex",
+        status: "valid",
+        rationale: "ghost",
+        evidenceRefs: [tombstoneReview.evidenceId],
+      }],
+    }, clock),
+    /qualifying|valid/i,
+  );
+  void page;
+});
+
+test("R8 authenticated_user retained raw is login+id only", () => {
+  const record = normalizeAuthenticatedUserEvidence(
+    {
+      login: "Collector-Bot",
+      raw: {
+        login: "Collector-Bot",
+        id: 42,
+        email: "secret@example.com",
+        plan: { name: "pro" },
+        company: "Acme",
+      },
+    },
+    "2024-01-01T00:00:00Z",
+  );
+  assert.deepEqual(record.raw, { login: "collector-bot", id: 42 });
+  assert.equal(
+    JSON.stringify(record.raw).includes("secret@example.com"),
+    false,
+  );
+  assert.equal(JSON.stringify(record.raw).includes("plan"), false);
+});
+
+test("R10 multi-page pagination stops before retaining oversize payload", async () => {
+  let pagesFetched = 0;
+  const fat = "x".repeat(Math.floor(COLLECTOR_SNAPSHOT_MAX_BYTES * 0.6));
+  const runner = async (args: string[]) => {
+    if (!args.some((arg) => arg.includes("/reviews"))) {
+      return { status: 200, headers: {}, bodyText: "[]" };
+    }
+    pagesFetched += 1;
+    if (pagesFetched === 1) {
+      return {
+        status: 200,
+        headers: {
+          link:
+            '<https://api.github.com/repos/a/b/pulls/1/reviews?page=2>; rel="next"',
+        },
+        bodyText: JSON.stringify([
+          {
+            id: 1,
+            user: { login: "a" },
+            state: "COMMENTED",
+            body: fat,
+            commit_id: "h",
+            submitted_at: "2024-01-01T00:00:00Z",
+            html_url: "https://example.test/1",
+          },
+        ]),
+      };
+    }
+    if (pagesFetched === 2) {
+      return {
+        status: 200,
+        headers: {
+          link:
+            '<https://api.github.com/repos/a/b/pulls/1/reviews?page=3>; rel="next"',
+        },
+        bodyText: JSON.stringify([
+          {
+            id: 2,
+            user: { login: "b" },
+            state: "COMMENTED",
+            body: fat,
+            commit_id: "h",
+            submitted_at: "2024-01-01T00:00:00Z",
+            html_url: "https://example.test/2",
+          },
+        ]),
+      };
+    }
+    // Must not reach page 3 (would materialize ~1.8x budget).
+    return {
+      status: 200,
+      headers: {},
+      bodyText: JSON.stringify([
+        {
+          id: 3,
+          user: { login: "c" },
+          state: "COMMENTED",
+          body: fat,
+          commit_id: "h",
+          submitted_at: "2024-01-01T00:00:00Z",
+          html_url: "https://example.test/3",
+        },
+      ]),
+    };
+  };
+  const transport = createGhCollectorGitHubTransport(runner);
+  await assert.rejects(
+    () => transport.listPullRequestReviews({ owner: "a", repo: "b", prNumber: 1 }),
+    /retained payload exceeded|size|8/i,
+  );
+  assert.ok(pagesFetched <= 2, `stopped before all pages; fetched=${pagesFetched}`);
+  assert.equal(pagesFetched < 3, true);
+});
+
+test("R11 hung gh child aborted through runner settles once and kills child", async () => {
+  const script = `#!/usr/bin/env bash
+set -euo pipefail
+# Hang until killed — owned-child cancellation fixture.
+sleep 30
+printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{"login":"late"}'
+`
+  await withPathGhStub(script, async () => {
+    const runner = createGhApiRunner();
+    const controller = new AbortController();
+    const pending = runner(
+      ["api", "--hostname", "github.com", "--include", "-X", "GET", "/user"],
+      { signal: controller.signal },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    controller.abort(new Error("observe canceled"));
+    await assert.rejects(() => pending, /abort|cancel/i);
+  });
+});
+
+test("R11 observe abort through ledger does not certify a snapshot", async () => {
+  const script = `#!/usr/bin/env bash
+set -euo pipefail
+path=""; prev=""
+for arg in "$@"; do
+  if [[ "$arg" == /* ]]; then path="$arg"; fi
+  prev="$arg"
+done
+if [[ "$path" == *"/user" ]]; then
+  sleep 30
+  printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{"login":"collector-bot"}'
+  exit 0
+fi
+printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{}'
+exit 0
+`
+  await withPathGhStub(script, async () => {
+    const runner = createGhApiRunner();
+    const transport = createGhCollectorGitHubTransport(runner);
+    const ledger = createCollectorLedger({
+      repository: {
+        display: "A/B",
+        canonical: "a/b",
+        owner: "a",
+        repo: "b",
+      },
+      prNumber: 1,
+      manifest: {
+        version: 1,
+        legs: [{
+          id: "codex",
+          expectedAuthors: ["codexbot"],
+          requestBody: "Please review.",
+        }],
+        canonicalJson: "{}\n",
+        digest: "e".repeat(64),
+        sourcePath: "/tmp/legs.json",
+      },
+    });
+    const clock = clockAt("2024-01-01T00:00:00Z");
+    ledger.recordActivation(clock);
+    const controller = new AbortController();
+    const pending = ledger.observe(transport, clock, controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    controller.abort(new Error("observe canceled"));
+    await assert.rejects(() => pending, /observe failed|abort|cancel/i);
+    assert.equal(ledger.latestCompleteSnapshotId, undefined);
+    assert.equal(ledger.allSnapshots().length, 0);
   });
 });

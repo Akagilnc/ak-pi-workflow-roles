@@ -359,7 +359,7 @@ export function createCollectorRoleRuntime(
         "Call ak_collector_observe with no arguments to refresh the latest complete snapshot.",
       ],
       parameters: observeSchema,
-      async execute(toolCallId, _params, _signal, _onUpdate, ctx) {
+      async execute(toolCallId, _params, signal, _onUpdate, ctx) {
         if (activationInvalid || activation === undefined) {
           throw new Error(activationError ?? "Collector is not activated");
         }
@@ -368,6 +368,7 @@ export function createCollectorRoleRuntime(
           const { snapshot, modelView } = await activation.ledger.observe(
             activation.transport,
             activation.clock,
+            signal,
           );
           activation.ledger.completeOperational(toolCallId);
           if (snapshot.prState !== "OPEN") {
