@@ -97,6 +97,34 @@ function extractUserPromptText(rows: unknown[]): string {
   return "";
 }
 
+function extractUniqueAssistantProvenance(
+  rows: unknown[],
+): { provider: string; model: string } {
+  // Completed assistant message_end only — stream deltas / message_update are not trust root.
+  const pairs = new Map<string, { provider: string; model: string }>();
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    if (record.type !== "message_end" || !record.message || typeof record.message !== "object") {
+      continue;
+    }
+    const message = record.message as Record<string, unknown>;
+    if (message.role !== "assistant") continue;
+    const provider = message.provider;
+    const model = message.model;
+    if (typeof provider !== "string" || provider.trim().length === 0) continue;
+    if (typeof model !== "string" || model.trim().length === 0) continue;
+    pairs.set(`${provider}\0${model}`, { provider, model });
+  }
+  assert.ok(pairs.size > 0, "JSONL must expose at least one completed assistant provider/model pair");
+  assert.equal(
+    pairs.size,
+    1,
+    `JSONL must expose exactly one distinct assistant provider/model pair, found ${pairs.size}`,
+  );
+  return [...pairs.values()][0]!;
+}
+
 function extractMaterialsPathFromPrompt(promptText: string): string | undefined {
   const patterns = [
     /Materials path[^:\n]*:\s*(\S+)/i,
@@ -502,6 +530,10 @@ for (const bundleName of ["r-block", "r-ready"] as const) {
 
     assertNoPostureFlags(bundle.sessionText, bundle.meta);
     assert.equal(bundle.meta.akRole, "judge");
+
+    const provenance = extractUniqueAssistantProvenance(rows);
+    assert.equal(bundle.meta.provider, provenance.provider);
+    assert.equal(bundle.meta.model, provenance.model);
 
     assertDirection(sole.details, bundle.expected);
 
