@@ -4,7 +4,7 @@
   "description": "Soul-bound workflow roles for Pi",
   "type": "module",
   "keywords": ["pi-package"],
-  "files": ["extensions", "src", "souls", "README.md"],
+  "files": ["extensions", "src", "souls", "schemas", "README.md"],
   "scripts": {
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
