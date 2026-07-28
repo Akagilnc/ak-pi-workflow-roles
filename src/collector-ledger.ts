@@ -722,9 +722,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       // First-sighting trust must not predate actual surface observation.
       // Observe-start may be before cutoff while surfaces arrive after; stamp
-      // evidence firstObservedAt only once surfaces are in hand (budget retain
-      // during fetch may keep the temporary start stamp).
-      const firstObservedAt = clock.wallNow().toISOString();
+      // evidence wall metadata and mono trust only once surfaces are in hand
+      // (budget retain during fetch may keep the temporary start stamp).
+      const firstObservedAt = clock.wallNow().toISOString(); // metadata
+      const firstObservedMono = monoNowOrThrow(clock); // trust
 
       // Always bind terminal PR identity fields.
       const pr = surfaces.prTerminal;
@@ -754,7 +755,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       applyEvidenceVersionHistory(
         pendingRecords,
         [...evidenceById.values()],
-        deadlineTime!,
+        { deadlineMono: deadlineMono!, firstObservedMono },
       );
       assignWindowRelations(pendingRecords, activationTime, deadlineTime);
 

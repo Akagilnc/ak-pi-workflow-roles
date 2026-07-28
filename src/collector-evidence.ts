@@ -353,17 +353,20 @@ export function normalizeReviewCommentEvidence(
 
 /**
  * Ledger history step: first distinct review version may keep submitted_at
- * only when firstObservedAt is a valid timestamp at or before the eligibility
- * deadline; after-deadline first sightings and unparseable firstObservedAt fail
- * closed to null (no submitted_at backdate). Every later distinct review version
- * without a GitHub version timestamp is uncertain. Known versionIds reuse the
- * stored authoritative clock including null. Comments keep their own updated_at
- * per version (null if missing).
+ * only when surface-completion mono is at or before deadlineMono; after-deadline
+ * first sightings and non-finite mono fail closed to null (no submitted_at
+ * backdate). Wall firstObservedAt is receipt/metadata only. Every later distinct
+ * review version without a GitHub version timestamp is uncertain. Known
+ * versionIds reuse the stored authoritative clock including null. Comments keep
+ * their own updated_at per version (null if missing).
  */
 export function applyEvidenceVersionHistory(
   pending: CollectorEvidenceRecord[],
   priorEvidence: readonly CollectorEvidenceRecord[],
-  deadlineTime: Date,
+  cutoff: {
+    deadlineMono: number;
+    firstObservedMono: number;
+  },
 ): void {
   const versionsByStable = new Map<string, Set<string>>();
   const add = (stableIdValue: string, versionId: string) => {
@@ -403,11 +406,16 @@ export function applyEvidenceVersionHistory(
         // Reviews have no GitHub-supplied per-edit timestamp.
         record.authoritativeTime = null;
       } else {
-        // First submission version may use submitted_at only when first seen
-        // at/before the eligibility deadline; after-cutoff first sighting
-        // must not backdate via submitted_at.
-        const firstMs = Date.parse(record.firstObservedAt);
-        if (!Number.isFinite(firstMs) || firstMs > deadlineTime.getTime()) {
+        // First submission version may use submitted_at only when surface
+        // completion mono is at/before deadlineMono; after-cutoff first
+        // sighting must not backdate via submitted_at. Wall firstObservedAt
+        // is metadata only and must not gate trust.
+        const { deadlineMono, firstObservedMono } = cutoff;
+        if (
+          !Number.isFinite(deadlineMono) ||
+          !Number.isFinite(firstObservedMono) ||
+          firstObservedMono > deadlineMono
+        ) {
           record.authoritativeTime = null;
         } else {
           record.authoritativeTime = record.submittedAt ?? null;

@@ -319,6 +319,17 @@ export function createGhApiRunner(
       child.on("error", (error) => {
         settle(() => reject(error));
       });
+      // Attach before write/end so early child exit cannot raise uncaught EPIPE.
+      child.stdin.on("error", (error) => {
+        settle(() => {
+          if (signal?.aborted) {
+            reject(signal.reason ?? new Error("aborted"));
+            return;
+          }
+          const err = error instanceof Error ? error : new Error(String(error));
+          reject(Object.assign(err, { ambiguousGhFailure: true }));
+        });
+      });
       if (runOptions.stdin !== undefined) {
         child.stdin.write(runOptions.stdin);
       }

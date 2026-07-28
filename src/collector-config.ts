@@ -33,7 +33,7 @@ export const COLLECTOR_LEGS_SCHEMA = {
           expectedAuthors: {
             type: "array",
             minItems: 1,
-            items: { type: "string", minLength: 1 },
+            items: { type: "string", minLength: 1, pattern: "\\S" },
           },
           request: {
             type: "object",
