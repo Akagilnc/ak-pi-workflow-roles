@@ -534,18 +534,19 @@ export function createGhCollectorGitHubTransport(
           diagnostics: `HTTP ${response.status}: ${response.bodyText.slice(0, 500)}`,
         };
       } catch (error) {
+        // Signal state is authoritative cancel; rethrow exact caught value.
+        if (input.signal?.aborted) {
+          throw error;
+        }
+        // Non-aborted transport tag only (after signal).
         if (isRecord(error) && error["ambiguousGhFailure"] === true) {
           return {
             kind: "ambiguous_loss",
             diagnostics: error instanceof Error ? error.message : String(error),
           };
         }
-        // Cancellation is signal state (not reason-text matching). AbortError
-        // name remains a non-signal belt only.
-        if (
-          input.signal?.aborted ||
-          (isRecord(error) && error["name"] === "AbortError")
-        ) {
+        // Non-signal AbortError belt only (after tag).
+        if (isRecord(error) && error["name"] === "AbortError") {
           throw error;
         }
         return {
