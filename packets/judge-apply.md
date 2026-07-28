@@ -23,15 +23,15 @@ acceptance, or freshness.
 
 | Kind | Full SHA | Meaning |
 | --- | --- | --- |
-| **Target commit** (required for code/apply facts) | | Complete code state under claim |
-| **Range base** (only if a range is claimed) | | Inclusive-exclusive base of reviewed delta |
-| **Range target** (only if a range is claimed) | | Target tip of reviewed delta |
+| **Target commit** (required for code/apply facts) | | Complete snapshot under claim |
+| **Range base** (only if a range is claimed) | | Base snapshot from which the reviewed delta starts |
+| **Range target** (only if a range is claimed) | | Target snapshot at which that delta ends |
 
 Distinguish carefully:
 
 - **path + SHA-256** → exact bytes of a named artifact
-- **full target commit SHA** → complete code snapshot
-- **full base + target SHAs** → reviewed delta only
+- **full target commit SHA** → complete code snapshot under claim
+- **full base + target SHAs** → identify only the reviewed delta (not a commit-set membership rule or range syntax)
 - **tests / seam / boundary observations** → behavioral evidence
 
 None of these alone proves truth or acceptance.
