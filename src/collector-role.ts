@@ -377,7 +377,7 @@ export function createCollectorRoleRuntime(
           return {
             content: [{
               type: "text" as const,
-              text: `Observed snapshot ${snapshot.snapshotId} at ${snapshot.headOid} (${snapshot.prState})`,
+              text: JSON.stringify(modelView),
             }],
             details: modelView,
           };
