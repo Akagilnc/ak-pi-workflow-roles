@@ -943,7 +943,13 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       }
 
       const remaining = remainingMs(clock);
-      const effectiveMs = Math.min(input.durationMs, remaining);
+      // Single-wait runtime cadence cap (v2 §6 / §9); schema max stays 15m.
+      const COLLECTOR_SINGLE_WAIT_MAX_MS = 300_000;
+      const effectiveMs = Math.min(
+        input.durationMs,
+        remaining,
+        COLLECTOR_SINGLE_WAIT_MAX_MS,
+      );
       const startedAt = clock.wallNow().toISOString();
       const waitId = sha256Text(`wait:${startedAt}:${effectiveMs}`).slice(0, 16);
       await clock.sleep(effectiveMs, signal);

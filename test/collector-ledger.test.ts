@@ -360,7 +360,71 @@ test("request enforces process-local once, observe-only, marker body, and cutoff
   assert.equal(ledger.finalObservationRequired, true);
 });
 
-test("wait caps to remaining eligibility and rejects after cutoff", async () => {
+test("wait caps a single call to five minutes when remaining eligibility is ample", async () => {
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+
+  const capped = await ledger.wait({ durationMs: 900_000 }, clock) as {
+    requestedMs: number;
+    effectiveMs: number;
+    remainingMsAfter: number;
+    cutoffReached: boolean;
+  };
+  assert.equal(capped.requestedMs, 900_000);
+  assert.equal(capped.effectiveMs, 300_000);
+  assert.equal(capped.remainingMsAfter, 600_000);
+  assert.equal(capped.cutoffReached, false);
+
+  const [record] = ledger.waits();
+  assert.equal(record?.requestedMs, 900_000);
+  assert.equal(record?.effectiveMs, 300_000);
+  assert.equal(record?.cutoffReached, false);
+
+  const shorter = await ledger.wait({ durationMs: 120_000 }, clock) as {
+    requestedMs: number;
+    effectiveMs: number;
+    remainingMsAfter: number;
+    cutoffReached: boolean;
+  };
+  assert.equal(shorter.requestedMs, 120_000);
+  assert.equal(shorter.effectiveMs, 120_000);
+  assert.equal(shorter.remainingMsAfter, 480_000);
+  assert.equal(shorter.cutoffReached, false);
+});
+
+test("wait PR4 shape caps to five minutes so re-observe still fits before deadline", async () => {
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+  // Remaining ≈ 762_388 ms (eligibility 900_000 − elapsed 137_612).
+  clock.advance(137_612);
+
+  const result = await ledger.wait({ durationMs: 900_000 }, clock) as {
+    requestedMs: number;
+    effectiveMs: number;
+    remainingMsAfter: number;
+    cutoffReached: boolean;
+  };
+  assert.equal(result.requestedMs, 900_000);
+  assert.equal(result.effectiveMs, 300_000);
+  assert.equal(result.remainingMsAfter, 462_388);
+  assert.equal(result.cutoffReached, false);
+
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-a" }),
+    reviews: [],
+    reviewComments: [],
+    issueComments: [],
+  });
+  const { snapshot } = await ledger.observe(transport, clock);
+  assert.ok(ledger.deadlineMono !== undefined);
+  assert.ok(snapshot.completedMono !== undefined);
+  assert.ok(snapshot.completedMono! < ledger.deadlineMono!);
+});
+
+test("wait caps to remaining eligibility near cutoff and rejects after cutoff", async () => {
   const clock = clockAt("2024-01-01T00:00:00Z");
   const ledger = createCollectorLedger(config());
   ledger.recordActivation(clock);
@@ -369,6 +433,7 @@ test("wait caps to remaining eligibility and rejects after cutoff", async () => 
     effectiveMs: number;
     cutoffReached: boolean;
   };
+  // Remaining (60_000) is below the five-minute single-wait cap, so remaining wins.
   assert.equal(result.effectiveMs, 60_000);
   assert.equal(result.cutoffReached, true);
   assert.equal(ledger.mutationGeneration, 1);
