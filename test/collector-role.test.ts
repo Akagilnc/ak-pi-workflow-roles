@@ -24,6 +24,8 @@ import {
   COLLECTOR_RECEIPT_MAX_BYTES,
   type CollectorClock,
 } from "../src/collector-evidence.ts";
+import { loadCollectorManifest } from "../src/collector-config.ts";
+import { buildCollectorRequestMarker } from "../src/collector-github.ts";
 import { createCollectorLedger } from "../src/collector-ledger.ts";
 import { buildCollectorReceipt } from "../src/collector-receipt.ts";
 import {
@@ -117,6 +119,40 @@ function toolResultDetails(sessionManager: {
   );
   assert.ok(entry, `missing successful ${toolName} result`);
   return entry.message.details;
+}
+
+/** Provider-visible toolResult text only — never read host-only details. */
+function toolResultContentText(message: {
+  content?: unknown;
+}): string {
+  const content = message.content;
+  if (typeof content === "string") return content;
+  assert.ok(Array.isArray(content), "toolResult content must be text parts");
+  return content
+    .filter((part: { type?: string }) => part.type === "text")
+    .map((part: { text?: string }) => part.text ?? "")
+    .join("");
+}
+
+type ObserveModelViewFromContent = {
+  snapshotId: string;
+  headOid: string;
+  prState: string;
+  evidence: Array<{
+    evidenceId: string;
+    kind: string;
+    authorLogin?: string;
+    state?: string;
+    body?: string;
+    commitOid?: string;
+  }>;
+  requestAttempts: unknown[];
+};
+
+function parseObserveModelViewFromContent(message: {
+  content?: unknown;
+}): ObserveModelViewFromContent {
+  return JSON.parse(toolResultContentText(message)) as ObserveModelViewFromContent;
 }
 
 test("collector activation fails closed for unsupported mode and missing flags without GitHub calls", async () => {
@@ -398,6 +434,284 @@ test("collector immediate all-valid path through observe and singleton output", 
           ),
         );
         assert.equal(process.exitCode === undefined || process.exitCode === 0, true);
+      });
+    } finally {
+      process.exitCode = previousExit;
+    }
+  });
+});
+
+test("observe content exposes exact-head qualifying review for content-only valid path", async () => {
+  await withHermeticHome({ prefix: "ak-collector-obs-content-valid-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "abc" }),
+      reviews: [
+        sampleReview({
+          id: 42,
+          userLogin: "codexbot",
+          state: "COMMENTED",
+          body: "",
+          commitId: "abc",
+          submittedAt: "2024-01-01T00:00:00Z",
+        }),
+        sampleReview({
+          id: 99,
+          userLogin: "unrelated-bot",
+          state: "APPROVED",
+          body: "noise",
+          commitId: "abc",
+          submittedAt: "2024-01-01T00:00:00Z",
+        }),
+      ],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const faux = fauxProvider({
+      api: "ak-collector-obs-content-valid",
+      provider: "ak-collector-obs-content-valid",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+    const previousExit = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await withInProcessPi({
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        extensionFactories: [createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "judge",
+          loadCollectorSoul: async () => COLLECTOR_SOUL,
+          createCollectorTransport: () => transport,
+          createCollectorClock: () => clockAt("2024-01-01T00:10:00Z"),
+          transcriptFromContext: () => "",
+          auditSoulCompliance: async () => ({ status: "pass" }),
+        })],
+        noExtensions: true,
+        systemPrompt: "BASE",
+        mode: "json",
+        flags: {
+          "ak-role": "collector",
+          "ak-collector-repo": "acme/widgets",
+          "ak-collector-pr": "1",
+          "ak-collector-legs": legs,
+        },
+        noTools: "builtin",
+      }, async ({ session, sessionManager }) => {
+        let contentView: ObserveModelViewFromContent | undefined;
+        faux.setResponses([
+          fauxAssistantMessage(
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
+            { stopReason: "toolUse" },
+          ),
+          (context) => {
+            const prior = [...context.messages].reverse().find((message) =>
+              message.role === "toolResult"
+            );
+            assert.ok(prior, "observe toolResult must be present");
+            contentView = parseObserveModelViewFromContent(prior);
+            assert.ok(contentView.snapshotId.length > 0);
+            assert.equal(contentView.headOid, "abc");
+            const review = contentView.evidence.find((item) => item.kind === "review");
+            assert.ok(review, "content must expose configured-author review");
+            assert.equal(review.authorLogin, "codexbot");
+            assert.equal(review.state, "COMMENTED");
+            assert.equal(review.commitOid, "abc");
+            assert.ok(review.evidenceId.length > 0);
+            assert.equal(
+              contentView.evidence.some((item) => item.authorLogin === "unrelated-bot"),
+              false,
+              "unrelated-author evidence must stay filtered out of modelView",
+            );
+            return fauxAssistantMessage(
+              fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
+                legs: [{
+                  legId: "codex",
+                  status: "valid",
+                  rationale: "blank commented review on exact head from content",
+                  evidenceRefs: [review.evidenceId],
+                }],
+              }, { id: "out" }),
+              { stopReason: "toolUse" },
+            );
+          },
+        ]);
+        await session.prompt("kickoff");
+
+        assert.ok(contentView);
+        const detailsView = toolResultDetails(sessionManager, COLLECTOR_OBSERVE_TOOL);
+        assert.deepEqual(
+          JSON.parse(JSON.stringify(detailsView)),
+          JSON.parse(JSON.stringify(contentView)),
+          "content JSON must be the same projection as details",
+        );
+
+        const output = [...sessionManager.getEntries()].reverse().find((entry) =>
+          entry.type === "message" &&
+          entry.message.role === "toolResult" &&
+          entry.message.toolName === COLLECTOR_OUTPUT_TOOL
+        );
+        assert.ok(output?.type === "message");
+        assert.equal((output as { message: { isError?: boolean } }).message.isError, false);
+        const details = (output as { message: { details: { legs: Array<{ status: string }> } } })
+          .message.details;
+        assert.equal(details.legs[0]?.status, "valid");
+        assert.equal(transport.calls.create, 0);
+        assert.equal(process.exitCode === undefined || process.exitCode === 0, true);
+      });
+    } finally {
+      process.exitCode = previousExit;
+    }
+  });
+});
+
+test("observe content exposes authenticated request-marker so wait/missing path never creates", async () => {
+  await withHermeticHome({ prefix: "ak-collector-obs-content-marker-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+    const manifest = await loadCollectorManifest(legs);
+    const headOid = "head-m";
+    const marker = buildCollectorRequestMarker({
+      manifestDigest: manifest.digest,
+      legId: "codex",
+      headOid,
+    });
+    const markerBody = `Please review.\n${marker}\n`;
+    const transport = createFakeGitHubTransport({
+      user: sampleUser("collector-bot"),
+      pullRequest: samplePull({ headOid }),
+      reviews: [],
+      issueComments: [
+        sampleIssueComment({
+          id: 77,
+          userLogin: "collector-bot",
+          body: markerBody,
+          createdAt: "2024-01-01T00:01:00Z",
+          updatedAt: "2024-01-01T00:01:00Z",
+        }),
+        sampleIssueComment({
+          id: 78,
+          userLogin: "stranger",
+          body: "unrelated noise with ak-collector:v1 decoy",
+          createdAt: "2024-01-01T00:01:00Z",
+          updatedAt: "2024-01-01T00:01:00Z",
+        }),
+      ],
+      reviewComments: [],
+    });
+    const clock = clockAt("2024-01-01T00:00:00Z");
+    const faux = fauxProvider({
+      api: "ak-collector-obs-content-marker",
+      provider: "ak-collector-obs-content-marker",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+    const previousExit = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await withInProcessPi({
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        extensionFactories: [createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "judge",
+          loadCollectorSoul: async () => COLLECTOR_SOUL,
+          createCollectorTransport: () => transport,
+          createCollectorClock: () => clock,
+          transcriptFromContext: () => "",
+          auditSoulCompliance: async () => ({ status: "pass" }),
+        })],
+        noExtensions: true,
+        systemPrompt: "BASE",
+        mode: "print",
+        flags: {
+          "ak-role": "collector",
+          "ak-collector-repo": "acme/widgets",
+          "ak-collector-pr": "1",
+          "ak-collector-legs": legs,
+        },
+        noTools: "builtin",
+      }, async ({ session, sessionManager }) => {
+        faux.setResponses([
+          fauxAssistantMessage(
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs1" }),
+            { stopReason: "toolUse" },
+          ),
+          (context) => {
+            const prior = [...context.messages].reverse().find((message) =>
+              message.role === "toolResult"
+            );
+            assert.ok(prior);
+            const view = parseObserveModelViewFromContent(prior);
+            assert.equal(view.headOid, headOid);
+            assert.ok(view.snapshotId.length > 0);
+            const markerEvidence = view.evidence.find((item) =>
+              item.kind === "issue_comment" &&
+              typeof item.body === "string" &&
+              item.body.includes(marker)
+            );
+            assert.ok(markerEvidence, "content must expose authenticated same-head marker");
+            assert.equal(markerEvidence.authorLogin, "collector-bot");
+            assert.ok(markerEvidence.evidenceId.length > 0);
+            assert.equal(
+              view.evidence.some((item) => item.authorLogin === "stranger"),
+              false,
+              "unrelated-author comment must stay filtered",
+            );
+            // Model sees the marker → wait, never request.
+            return fauxAssistantMessage(
+              fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: 60_000 }, { id: "wait1" }),
+              { stopReason: "toolUse" },
+            );
+          },
+          () => {
+            clock.advance(16 * 60 * 1000);
+            return fauxAssistantMessage(
+              fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs2" }),
+              { stopReason: "toolUse" },
+            );
+          },
+          (context) => {
+            const prior = [...context.messages].reverse().find((message) =>
+              message.role === "toolResult"
+            );
+            assert.ok(prior);
+            const view = parseObserveModelViewFromContent(prior);
+            assert.ok(view.snapshotId.length > 0);
+            return fauxAssistantMessage(
+              fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
+                legs: [{
+                  legId: "codex",
+                  status: "missing",
+                  rationale: "authenticated marker present but no qualifying review by cutoff",
+                  evidenceRefs: [view.snapshotId],
+                }],
+              }, { id: "out" }),
+              { stopReason: "toolUse" },
+            );
+          },
+        ]);
+        await session.prompt("start");
+
+        const output = [...sessionManager.getEntries()].reverse().find((entry) =>
+          entry.type === "message" &&
+          entry.message.role === "toolResult" &&
+          entry.message.toolName === COLLECTOR_OUTPUT_TOOL
+        );
+        assert.ok(output?.type === "message");
+        assert.equal((output as { message: { isError?: boolean } }).message.isError, false);
+        const details = (output as { message: { details: { legs: Array<{ status: string }> } } })
+          .message.details;
+        assert.equal(details.legs[0]?.status, "missing");
+        assert.equal(transport.calls.create, 0);
+
+        const requestCalls = sessionManager.getEntries().filter((entry) =>
+          entry.type === "message" &&
+          entry.message.role === "toolResult" &&
+          entry.message.toolName === COLLECTOR_REQUEST_TOOL
+        );
+        assert.equal(requestCalls.length, 0);
       });
     } finally {
       process.exitCode = previousExit;
