@@ -7,10 +7,12 @@ It is **not** packaged workflow authority, not a generic role-ordering rule, not
 a transition machine, not package memory, not a mechanical gate, and not a
 runtime budget. Callers outside this repository owe it nothing (ADR 0010).
 
-Verdicts live in receipts and the development trail—never in filenames.
-Restart or compaction recovery is manual rereading of that trail; no package
-resume semantics arise. Timeout guidance remains docket-dependent and creates no
-runtime budget.
+Each role verdict/judgment exists only in that role’s typed submission-tool
+Receipt. A development-trail entry may preserve or cite the Receipt but is not
+itself a verdict and cannot replace the Receipt. Filenames never carry
+verdicts. Restart or compaction recovery is manual rereading of that trail; no
+package resume semantics arise. Timeout guidance remains docket-dependent and
+creates no runtime budget.
 
 ## Canonical manual record sequence
 
@@ -20,17 +22,19 @@ be omitted only with an **explicit disposition** recorded in the trail.
 1. **Seal authority inputs** — instantiate or cite authority materials with
    repository-relative path + SHA-256 of exact bytes (see
    `packets/judge-authority.md`).
-2. **Record any authority judgment** — preserve the judgment receipt/trail entry
-   against the sealed inputs. Filename is not the verdict.
+2. **Record any authority judgment** — preserve/cite the Authority typed Receipt
+   in the trail against the sealed inputs. The trail entry is not the verdict
+   and cannot replace the Receipt. Filename is not the verdict.
 3. **Seal a construction plan** — bind sealed authority identity and record
    Behavior / Owner / Red / Green / Scope for each proposed change (see
    `packets/judge-plan.md`).
 4. **Preserve construction receipt / commit / test evidence** — keep the worker
    report, full target commit SHA, and test evidence that the construction
    actually produced.
-5. **Record Apply judgment** — preserve Apply judgment against sealed
-   authority/plan identities and the committed target (see
-   `packets/judge-apply.md`).
+5. **Record Apply judgment** — preserve/cite the Apply typed Receipt in the
+   trail against sealed authority/plan identities and the committed target (see
+   `packets/judge-apply.md`). The trail entry is not the verdict and cannot
+   replace the Receipt.
 6. **Preserve independent review and per-finding adjudication** — bind each
    finding/disposition to sealed authority, a fixed reviewed range (full base
    and target SHAs), and current facts (see `packets/judge-review.md`).
@@ -43,8 +47,8 @@ be omitted only with an **explicit disposition** recorded in the trail.
 
 ## Artifact preservation rules
 
-- An **accepted** artifact is preserved with its exact bytes, digest, and
-  receipt/trail entry.
+- An **accepted** artifact is preserved with its exact bytes, digest, and any
+  typed Receipt preserved or cited in the trail.
 - **Amendment or replacement** is a forward commit and new digest, with explicit
   disposition of the prior artifact. Do not rewrite history in place.
 - Digests seal identity only—they do not prove truth, acceptance, or freshness.
