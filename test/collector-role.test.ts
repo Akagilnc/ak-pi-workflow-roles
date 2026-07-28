@@ -1002,13 +1002,40 @@ test("F1 registered collector tool schemas are the singular TypeBox owner", asyn
       assert.equal(tools.get(COLLECTOR_REQUEST_TOOL)?.parameters, collectorRequestArgsSchema);
       assert.equal(tools.get(COLLECTOR_WAIT_TOOL)?.parameters, collectorWaitArgsSchema);
       assert.equal(tools.get(COLLECTOR_OUTPUT_TOOL)?.parameters, collectorOutputArgsSchema);
-      // Discriminated: unavailableScope not optional on a shared object
       const output = collectorOutputArgsSchema as {
-        properties?: { legs?: { items?: { anyOf?: unknown[] } } };
+        properties?: {
+          legs?: {
+            items?: {
+              anyOf?: Array<{
+                additionalProperties?: boolean;
+                required?: string[];
+                properties?: {
+                  status?: { const?: string };
+                  unavailableScope?: unknown;
+                };
+              }>;
+            };
+          };
+        };
       };
-      assert.ok(
-        (output as { properties?: { legs?: unknown } }).properties?.legs !== undefined,
+      const variants = output.properties?.legs?.items?.anyOf;
+      assert.ok(Array.isArray(variants));
+      assert.equal(variants!.length, 3);
+      const byStatus = new Map(
+        variants!.map((v) => [v.properties?.status?.const, v]),
       );
+      for (const status of ["valid", "unavailable", "missing"] as const) {
+        const variant = byStatus.get(status);
+        assert.ok(variant, `missing ${status} variant`);
+        assert.equal(variant!.additionalProperties, false);
+        if (status === "unavailable") {
+          assert.ok(variant!.properties?.unavailableScope !== undefined);
+          assert.ok(variant!.required?.includes("unavailableScope"));
+        } else {
+          assert.equal(variant!.properties?.unavailableScope, undefined);
+          assert.equal(variant!.required?.includes("unavailableScope") ?? false, false);
+        }
+      }
       void tools;
     });
   });
@@ -1139,13 +1166,11 @@ test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", asyn
           fauxAssistantMessage("done"),
         ],
       });
-      assert.equal(transport.calls.pull, 0, row.name);
-      assert.equal(transport.calls.user, 0, row.name);
-      assert.equal(transport.calls.create, 0, row.name);
+      assertZeroGitHub(transport, row.name);
       assert.equal(result.exitCode, 1, row.name);
     }
 
-    // valid + invalid sibling
+    // real-Pi sibling = valid operational observe + invalid output
     {
       const transport = createFakeGitHubTransport({
         user: sampleUser(),
@@ -1163,14 +1188,7 @@ test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", asyn
         api: "ak-collector-f1-sibling",
         responses: [
           fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-              legs: [{
-                legId: "codex",
-                status: "missing",
-                rationale: "ok shape",
-                evidenceRefs: ["s"],
-              }],
-            }, { id: "good-shape" }),
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-ok" }),
             fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
               legs: [{
                 legId: "codex",
@@ -1183,44 +1201,127 @@ test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", asyn
           fauxAssistantMessage("done"),
         ],
       });
-      assert.equal(transport.calls.pull, 0);
-      assert.equal(transport.calls.create, 0);
+      assertZeroGitHub(transport, "observe+invalid-output sibling");
       assert.equal(result.exitCode, 1);
     }
 
   });
 });
 
-test("F1 controls: well-formed missing/unavailable/multiline not schema-denied", async () => {
-  await withHermeticHome({ prefix: "ak-collector-f1-ctrl-" }, async ({ agentDir, home }) => {
+function assertZeroGitHub(
+  transport: ReturnType<typeof createFakeGitHubTransport>,
+  label: string,
+): void {
+  assert.equal(transport.calls.user, 0, `${label} user`);
+  assert.equal(transport.calls.pull, 0, `${label} pull`);
+  assert.equal(transport.calls.reviews, 0, `${label} reviews`);
+  assert.equal(transport.calls.issueComments, 0, `${label} issueComments`);
+  assert.equal(transport.calls.reviewComments, 0, `${label} reviewComments`);
+  assert.equal(transport.calls.create, 0, `${label} create`);
+}
+
+async function runSchemaAcceptedControl(input: {
+  home: string;
+  agentDir: string;
+  legs: string;
+  api: string;
+  transport: ReturnType<typeof createFakeGitHubTransport>;
+  clock: ReturnType<typeof clockAt>;
+  /** Optional clock advance after observe (e.g. past eligibility cutoff for missing). */
+  afterObserve?: () => void;
+  buildOutput: (details: {
+    snapshotId: string;
+    evidence: Array<{ evidenceId: string; kind: string; authorLogin?: string }>;
+  }) => Record<string, unknown>;
+}): Promise<void> {
+  const faux = fauxProvider({
+    api: input.api,
+    provider: input.api,
+    tokenSize: { min: 1000, max: 1000 },
+  });
+  const previousExit = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    await withInProcessPi({
+      cwd: input.home,
+      agentDir: input.agentDir,
+      faux,
+      modelsPath: null,
+      extensionFactories: [createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "judge",
+        loadCollectorSoul: async () => COLLECTOR_SOUL,
+        createCollectorTransport: () => input.transport,
+        createCollectorClock: () => input.clock,
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+      })],
+      noExtensions: true,
+      systemPrompt: "BASE",
+      mode: "print",
+      flags: {
+        "ak-role": "collector",
+        "ak-collector-repo": "acme/widgets",
+        "ak-collector-pr": "1",
+        "ak-collector-legs": input.legs,
+      },
+      noTools: "builtin",
+    }, async ({ session, sessionManager }) => {
+      faux.setResponses([
+        fauxAssistantMessage(
+          fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
+          { stopReason: "toolUse" },
+        ),
+        (context) => {
+          const prior = [...context.messages].reverse().find((m) =>
+            m.role === "toolResult"
+          ) as {
+            details?: {
+              snapshotId?: string;
+              evidence?: Array<{ evidenceId: string; kind: string; authorLogin?: string }>;
+            };
+          } | undefined;
+          const snap = prior?.details?.snapshotId;
+          const evidence = prior?.details?.evidence;
+          assert.ok(snap && evidence);
+          input.afterObserve?.();
+          return fauxAssistantMessage(
+            fauxToolCall(
+              COLLECTOR_OUTPUT_TOOL,
+              input.buildOutput({ snapshotId: snap, evidence }),
+              { id: "out" },
+            ),
+            { stopReason: "toolUse" },
+          );
+        },
+      ]);
+      await session.prompt("start");
+      const output = [...sessionManager.getEntries()].reverse().find((entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === COLLECTOR_OUTPUT_TOOL
+      );
+      assert.ok(output?.type === "message");
+      assert.equal((output as { message: { isError?: boolean } }).message.isError, false);
+    });
+  } finally {
+    process.exitCode = previousExit;
+  }
+}
+
+test("F1 control: well-formed missing is schema-accepted", async () => {
+  await withHermeticHome({ prefix: "ak-collector-f1-missing-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
-    const clock = clockAt("2024-01-01T00:10:00Z");
+    const clock = clockAt("2024-01-01T00:00:00Z");
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull({ headOid: "h1" }),
-      reviews: [
-        sampleReview({
-          id: 1,
-          userLogin: "codexbot",
-          state: "APPROVED",
-          commitId: "h1",
-          submittedAt: "2024-01-01T00:00:00Z",
-        }),
-      ],
-      issueComments: [
-        sampleIssueComment({
-          id: 2,
-          userLogin: "codexbot",
-          body: "I decline",
-          createdAt: "2024-01-01T00:00:00Z",
-          updatedAt: "2024-01-01T00:00:00Z",
-        }),
-      ],
+      reviews: [],
+      issueComments: [],
       reviewComments: [],
     });
     const faux = fauxProvider({
-      api: "ak-collector-f1-ctrl",
-      provider: "ak-collector-f1-ctrl",
+      api: "ak-collector-f1-missing",
+      provider: "ak-collector-f1-missing",
       tokenSize: { min: 1000, max: 1000 },
     });
     const previousExit = process.exitCode;
@@ -1252,31 +1353,32 @@ test("F1 controls: well-formed missing/unavailable/multiline not schema-denied",
       }, async ({ session, sessionManager }) => {
         faux.setResponses([
           fauxAssistantMessage(
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs1" }),
             { stopReason: "toolUse" },
           ),
+          () => {
+            // Past eligibility cutoff; require a complete post-cutoff observe.
+            clock.advance(16 * 60 * 1000);
+            return fauxAssistantMessage(
+              fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs2" }),
+              { stopReason: "toolUse" },
+            );
+          },
           (context) => {
             const prior = [...context.messages].reverse().find((m) =>
               m.role === "toolResult"
             ) as {
-              details?: {
-                snapshotId?: string;
-                evidence?: Array<{ evidenceId: string; kind: string; authorLogin?: string }>;
-              };
+              details?: { snapshotId?: string };
             } | undefined;
             const snap = prior?.details?.snapshotId;
-            const decline = prior?.details?.evidence?.find((e) =>
-              e.kind === "issue_comment"
-            )?.evidenceId;
-            assert.ok(snap && decline);
+            assert.ok(snap);
             return fauxAssistantMessage(
               fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
                 legs: [{
                   legId: "codex",
-                  status: "unavailable",
-                  rationale: "line1\nline2 declined",
-                  evidenceRefs: [decline],
-                  unavailableScope: "global",
+                  status: "missing",
+                  rationale: "no qualifying review on current head",
+                  evidenceRefs: [snap],
                 }],
               }, { id: "out" }),
               { stopReason: "toolUse" },
@@ -1290,12 +1392,103 @@ test("F1 controls: well-formed missing/unavailable/multiline not schema-denied",
           entry.message.toolName === COLLECTOR_OUTPUT_TOOL
         );
         assert.ok(output?.type === "message");
-        assert.equal((output as any).message.isError, false);
-        assert.ok(transport.calls.pull >= 2);
+        assert.equal(
+          (output as { message: { isError?: boolean } }).message.isError,
+          false,
+        );
       });
     } finally {
       process.exitCode = previousExit;
     }
+    assert.ok(transport.calls.pull >= 2);
+  });
+});
+
+test("F1 control: well-formed unavailable is schema-accepted", async () => {
+  await withHermeticHome({ prefix: "ak-collector-f1-unavail-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+    const clock = clockAt("2024-01-01T00:10:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "h1" }),
+      reviews: [],
+      issueComments: [
+        sampleIssueComment({
+          id: 2,
+          userLogin: "codexbot",
+          body: "I decline",
+          createdAt: "2024-01-01T00:00:00Z",
+          updatedAt: "2024-01-01T00:00:00Z",
+        }),
+      ],
+      reviewComments: [],
+    });
+    await runSchemaAcceptedControl({
+      home,
+      agentDir,
+      legs,
+      api: "ak-collector-f1-unavail",
+      transport,
+      clock,
+      buildOutput: ({ evidence }) => {
+        const decline = evidence.find((e) => e.kind === "issue_comment")?.evidenceId;
+        assert.ok(decline);
+        return {
+          legs: [{
+            legId: "codex",
+            status: "unavailable",
+            rationale: "declined on record",
+            evidenceRefs: [decline],
+            unavailableScope: "global",
+          }],
+        };
+      },
+    });
+    assert.ok(transport.calls.pull >= 1);
+  });
+});
+
+test("F1 control: multiline rationale is schema-accepted", async () => {
+  await withHermeticHome({ prefix: "ak-collector-f1-multi-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+    const clock = clockAt("2024-01-01T00:10:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "h1" }),
+      reviews: [],
+      issueComments: [
+        sampleIssueComment({
+          id: 2,
+          userLogin: "codexbot",
+          body: "I decline",
+          createdAt: "2024-01-01T00:00:00Z",
+          updatedAt: "2024-01-01T00:00:00Z",
+        }),
+      ],
+      reviewComments: [],
+    });
+    await runSchemaAcceptedControl({
+      home,
+      agentDir,
+      legs,
+      api: "ak-collector-f1-multi",
+      transport,
+      clock,
+      buildOutput: ({ evidence }) => {
+        const decline = evidence.find((e) => e.kind === "issue_comment")?.evidenceId;
+        assert.ok(decline);
+        return {
+          legs: [{
+            legId: "codex",
+            status: "unavailable",
+            rationale: "line1\nline2 declined",
+            evidenceRefs: [decline],
+            unavailableScope: "global",
+          }],
+        };
+      },
+    });
+    assert.ok(transport.calls.pull >= 1);
   });
 });
 
@@ -1321,6 +1514,12 @@ test("F3-required-tool-absence", async () => {
     faux.setResponses([fauxAssistantMessage("should not run")]);
     const previousExit = process.exitCode;
     process.exitCode = undefined;
+    const logs: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+      origError(...args);
+    };
     try {
       await withInProcessPi({
         cwd: home,
@@ -1358,12 +1557,16 @@ test("F3-required-tool-absence", async () => {
       }, async ({ session }) => {
         await session.prompt("start");
         assert.equal(process.exitCode, 1);
-        assert.equal(transport.calls.pull, 0);
-        assert.equal(transport.calls.user, 0);
-        assert.equal(transport.calls.create, 0);
+        assert.match(
+          logs.join("\n"),
+          /Collector required tool missing:.*ak_collector_wait/i,
+        );
+        assertZeroGitHub(transport, "required-tool-absence");
+        assert.equal(faux.state.callCount, 0);
         assert.equal(faux.getPendingResponseCount(), 1);
       });
     } finally {
+      console.error = origError;
       process.exitCode = previousExit;
     }
   });
@@ -1387,53 +1590,83 @@ test("F3-ambient-skills", async () => {
     faux.setResponses([fauxAssistantMessage("should not run")]);
     const previousExit = process.exitCode;
     process.exitCode = undefined;
+    const failCalls: unknown[] = [];
     try {
       await withInProcessPi({
         cwd: home,
         agentDir,
         faux,
         modelsPath: null,
-        noSkills: false,
-        skillsOverride: () => ({
-          skills: [{
-            name: "ambient-collector-skill",
-            description: "nonempty ambient skill for collector fail-closed",
-            filePath: `${home}/ambient-collector-skill/SKILL.md`,
-            baseDir: `${home}/ambient-collector-skill`,
-            sourceInfo: {
-              path: `${home}/ambient-collector-skill/SKILL.md`,
-              source: "test",
-              scope: "temporary",
-              origin: "top-level",
-            },
-            disableModelInvocation: false,
-          }],
-          diagnostics: [],
-        }),
-        extensionFactories: [createRoleRuntimeExtension({
-          loadJudgeSoul: async () => "judge",
-          loadCollectorSoul: async () => COLLECTOR_SOUL,
-          createCollectorTransport: () => transport,
-          createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
-          transcriptFromContext: () => "",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        })],
+        // No skillsOverride / skill command load — inject into the real
+        // before_agent_start systemPromptOptions.skills surface only.
+        extensionFactories: [
+          (pi) => {
+            pi.on("before_agent_start", (event) => {
+              const options = event.systemPromptOptions as {
+                skills?: unknown[];
+              };
+              options.skills = [{
+                name: "ambient-decoy-skill",
+                description: "nonempty ambient skill decoy",
+                filePath: `${home}/ambient-decoy/SKILL.md`,
+                baseDir: `${home}/ambient-decoy`,
+                sourceInfo: {
+                  path: `${home}/ambient-decoy/SKILL.md`,
+                  source: "test",
+                  scope: "temporary",
+                  origin: "top-level",
+                },
+                disableModelInvocation: false,
+              }];
+            });
+            const collector = createCollectorRoleRuntime(
+              pi,
+              {
+                loadSoul: async () => COLLECTOR_SOUL,
+                createTransport: () => transport,
+                createClock: () => clockAt("2024-01-01T00:00:00Z"),
+              },
+              {
+                failInfrastructure(error, ctx) {
+                  failCalls.push(error);
+                  ctx.abort();
+                  if (ctx.mode === "print" || ctx.mode === "json") {
+                    process.exitCode = 1;
+                  }
+                  throw error;
+                },
+              },
+            );
+            pi.on("session_start", async (event, ctx) => {
+              await collector.activate(ctx, event);
+            });
+          },
+        ],
         noExtensions: true,
         systemPrompt: "BASE",
         mode: "print",
         flags: {
-          "ak-role": "collector",
           "ak-collector-repo": "acme/widgets",
           "ak-collector-pr": "1",
           "ak-collector-legs": legs,
         },
         noTools: "builtin",
       }, async ({ session }) => {
-        await session.prompt("start");
+        try {
+          await session.prompt("start");
+        } catch {
+          // failInfrastructure throws at before_agent_start skills guard
+        }
         assert.equal(process.exitCode, 1);
-        assert.equal(transport.calls.pull, 0);
-        assert.equal(transport.calls.user, 0);
-        assert.equal(transport.calls.create, 0);
+        assert.equal(failCalls.length, 1);
+        assert.match(
+          failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
+          /ambient skills in systemPromptOptions/i,
+        );
+        assertZeroGitHub(transport, "ambient-skills");
+        // Host may still enter the provider after before_agent_start throws are
+        // swallowed by the extension runner; the collector latched fatal first.
+        assert.ok(failCalls.length >= 1);
       });
     } finally {
       process.exitCode = previousExit;
@@ -1460,6 +1693,7 @@ test("F3-ambient-contextFiles", async () => {
     faux.setResponses([fauxAssistantMessage("should not run")]);
     const previousExit = process.exitCode;
     process.exitCode = undefined;
+    const failCalls: unknown[] = [];
     try {
       await withInProcessPi({
         cwd: home,
@@ -1467,30 +1701,53 @@ test("F3-ambient-contextFiles", async () => {
         faux,
         modelsPath: null,
         noContextFiles: false,
-        extensionFactories: [createRoleRuntimeExtension({
-          loadJudgeSoul: async () => "judge",
-          loadCollectorSoul: async () => COLLECTOR_SOUL,
-          createCollectorTransport: () => transport,
-          createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
-          transcriptFromContext: () => "",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        })],
+        extensionFactories: [
+          (pi) => {
+            const collector = createCollectorRoleRuntime(
+              pi,
+              {
+                loadSoul: async () => COLLECTOR_SOUL,
+                createTransport: () => transport,
+                createClock: () => clockAt("2024-01-01T00:00:00Z"),
+              },
+              {
+                failInfrastructure(error, ctx) {
+                  failCalls.push(error);
+                  ctx.abort();
+                  if (ctx.mode === "print" || ctx.mode === "json") {
+                    process.exitCode = 1;
+                  }
+                  throw error;
+                },
+              },
+            );
+            pi.on("session_start", async (event, ctx) => {
+              await collector.activate(ctx, event);
+            });
+          },
+        ],
         noExtensions: true,
         systemPrompt: "BASE",
         mode: "print",
         flags: {
-          "ak-role": "collector",
           "ak-collector-repo": "acme/widgets",
           "ak-collector-pr": "1",
           "ak-collector-legs": legs,
         },
         noTools: "builtin",
       }, async ({ session }) => {
-        await session.prompt("start");
+        try {
+          await session.prompt("start");
+        } catch {
+          // expected infrastructure failure
+        }
         assert.equal(process.exitCode, 1);
-        assert.equal(transport.calls.pull, 0);
-        assert.equal(transport.calls.user, 0);
-        assert.equal(transport.calls.create, 0);
+        assert.equal(failCalls.length, 1);
+        assert.match(
+          failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
+          /ambient context files in systemPromptOptions/i,
+        );
+        assertZeroGitHub(transport, "ambient-contextFiles");
       });
     } finally {
       process.exitCode = previousExit;
@@ -1516,6 +1773,7 @@ test("F3-ambient-appendSystemPrompt", async () => {
     faux.setResponses([fauxAssistantMessage("should not run")]);
     const previousExit = process.exitCode;
     process.exitCode = undefined;
+    const failCalls: unknown[] = [];
     try {
       await withInProcessPi({
         cwd: home,
@@ -1523,30 +1781,53 @@ test("F3-ambient-appendSystemPrompt", async () => {
         faux,
         modelsPath: null,
         appendSystemPrompt: ["AMBIENT_APPEND_BLOCK"],
-        extensionFactories: [createRoleRuntimeExtension({
-          loadJudgeSoul: async () => "judge",
-          loadCollectorSoul: async () => COLLECTOR_SOUL,
-          createCollectorTransport: () => transport,
-          createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
-          transcriptFromContext: () => "",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        })],
+        extensionFactories: [
+          (pi) => {
+            const collector = createCollectorRoleRuntime(
+              pi,
+              {
+                loadSoul: async () => COLLECTOR_SOUL,
+                createTransport: () => transport,
+                createClock: () => clockAt("2024-01-01T00:00:00Z"),
+              },
+              {
+                failInfrastructure(error, ctx) {
+                  failCalls.push(error);
+                  ctx.abort();
+                  if (ctx.mode === "print" || ctx.mode === "json") {
+                    process.exitCode = 1;
+                  }
+                  throw error;
+                },
+              },
+            );
+            pi.on("session_start", async (event, ctx) => {
+              await collector.activate(ctx, event);
+            });
+          },
+        ],
         noExtensions: true,
         systemPrompt: "BASE",
         mode: "print",
         flags: {
-          "ak-role": "collector",
           "ak-collector-repo": "acme/widgets",
           "ak-collector-pr": "1",
           "ak-collector-legs": legs,
         },
         noTools: "builtin",
       }, async ({ session }) => {
-        await session.prompt("start");
+        try {
+          await session.prompt("start");
+        } catch {
+          // expected infrastructure failure
+        }
         assert.equal(process.exitCode, 1);
-        assert.equal(transport.calls.pull, 0);
-        assert.equal(transport.calls.user, 0);
-        assert.equal(transport.calls.create, 0);
+        assert.equal(failCalls.length, 1);
+        assert.match(
+          failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
+          /appendSystemPrompt drift/i,
+        );
+        assertZeroGitHub(transport, "ambient-appendSystemPrompt");
       });
     } finally {
       process.exitCode = previousExit;
@@ -1572,6 +1853,12 @@ test("F3-ambient-commands", async () => {
     faux.setResponses([fauxAssistantMessage("should not run")]);
     const previousExit = process.exitCode;
     process.exitCode = undefined;
+    const logs: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+      origError(...args);
+    };
     try {
       await withInProcessPi({
         cwd: home,
@@ -1609,12 +1896,16 @@ test("F3-ambient-commands", async () => {
       }, async ({ session }) => {
         await session.prompt("start");
         assert.equal(process.exitCode, 1);
-        assert.equal(transport.calls.pull, 0);
-        assert.equal(transport.calls.user, 0);
-        assert.equal(transport.calls.create, 0);
+        assert.match(
+          logs.join("\n"),
+          /ambient instruction commands:.*skill-ambient/i,
+        );
+        assertZeroGitHub(transport, "ambient-commands");
+        assert.equal(faux.state.callCount, 0);
         assert.equal(faux.getPendingResponseCount(), 1);
       });
     } finally {
+      console.error = origError;
       process.exitCode = previousExit;
     }
   });
@@ -1767,6 +2058,7 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
     const previousExit = process.exitCode;
     process.exitCode = undefined;
     let outputExecuteEntered = false;
+    let outputExecuteFailed: unknown;
     try {
       await withInProcessPi({
         cwd: home,
@@ -1775,6 +2067,28 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
         modelsPath: null,
         extensionFactories: [
           (pi) => {
+            const origRegister = pi.registerTool.bind(pi);
+            pi.registerTool = ((tool: {
+              name: string;
+              execute?: (...args: never[]) => Promise<unknown>;
+            }) => {
+              if (
+                tool.name === COLLECTOR_OUTPUT_TOOL &&
+                typeof tool.execute === "function"
+              ) {
+                const inner = tool.execute.bind(tool);
+                tool.execute = (async (...args: never[]) => {
+                  outputExecuteEntered = true;
+                  try {
+                    return await inner(...args);
+                  } catch (error) {
+                    outputExecuteFailed = error;
+                    throw error;
+                  }
+                }) as typeof tool.execute;
+              }
+              return origRegister(tool as never);
+            }) as typeof pi.registerTool;
             const collector = createCollectorRoleRuntime(
               pi,
               {
@@ -1825,7 +2139,6 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
               e.kind === "review"
             )?.evidenceId;
             assert.ok(reviewId);
-            outputExecuteEntered = true;
             return fauxAssistantMessage(
               fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
                 legs: [{
@@ -1851,11 +2164,21 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
           entry.message.isError === false
         );
         assert.equal(successOutput, false);
-        assert.equal(outputExecuteEntered, true);
+        assert.equal(outputExecuteEntered, true, "overflow must enter output execute");
+        assert.ok(outputExecuteFailed instanceof Error);
+        assert.equal(
+          (outputExecuteFailed as { collectorFatal?: boolean }).collectorFatal,
+          true,
+        );
         assert.equal(failCalls.length, 1);
+        const fatal = failCalls[0];
+        assert.ok(fatal instanceof Error);
+        assert.equal((fatal as { collectorFatal?: boolean }).collectorFatal, true);
         assert.match(
-          failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
-          /receipt exceeded|32/i,
+          fatal.message,
+          new RegExp(
+            `receipt exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes \\(${COLLECTOR_RECEIPT_MAX_BYTES + 1}\\)`,
+          ),
         );
         assert.equal(process.exitCode, 1);
         assert.equal(transport.calls.create, 0);

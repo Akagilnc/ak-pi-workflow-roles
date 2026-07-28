@@ -5,7 +5,13 @@ import {
   COLLECTOR_RECEIPT_MAX_BYTES,
   type CollectorClock,
 } from "../src/collector-evidence.ts";
-import { createCollectorLedger } from "../src/collector-ledger.ts";
+import {
+  classifyCollectorBatch,
+  collectorToolArgumentsValid,
+  COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_OUTPUT_TOOL,
+  createCollectorLedger,
+} from "../src/collector-ledger.ts";
 import {
   buildCollectorReceipt,
   parseCollectorOutputCandidate,
@@ -107,7 +113,7 @@ test("parseCollectorOutputCandidate accepts narrow semantic legs only", () => {
         evidenceRefs: ["x"],
       }],
     }),
-    /valid\|unavailable\|missing|status/i,
+    /failed schema validation/i,
   );
   assert.throws(
     () => parseCollectorOutputCandidate({
@@ -119,7 +125,7 @@ test("parseCollectorOutputCandidate accepts narrow semantic legs only", () => {
         reports: [],
       }],
     }),
-    /unknown field/i,
+    /failed schema validation/i,
   );
 });
 
@@ -943,19 +949,18 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
     }).legs[0]?.rationale,
     "line1\nline2 still nonblank",
   );
-  assert.doesNotThrow(() =>
-    parseCollectorOutputCandidate({
-      legs: [{
-        legId: "codex",
-        status: "unavailable",
-        rationale: "declined",
-        evidenceRefs: ["e1"],
-        unavailableScope: "global",
-      }],
-    })
-  );
+  const unavailable = parseCollectorOutputCandidate({
+    legs: [{
+      legId: "codex",
+      status: "unavailable",
+      rationale: "declined",
+      evidenceRefs: ["e1"],
+      unavailableScope: "global",
+    }],
+  });
+  assert.equal(unavailable.legs[0]?.unavailableScope, "global");
 
-  const invalids: Array<[string, unknown, RegExp]> = [
+  const invalids: Array<[string, unknown]> = [
     ["unknown leg field", {
       legs: [{
         legId: "codex",
@@ -964,7 +969,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         evidenceRefs: ["x"],
         extra: true,
       }],
-    }, /unknown field|schema/i],
+    }],
     ["unavailable missing scope", {
       legs: [{
         legId: "codex",
@@ -972,7 +977,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         rationale: "ok",
         evidenceRefs: ["x"],
       }],
-    }, /unavailableScope|schema/i],
+    }],
     ["unavailable invalid scope", {
       legs: [{
         legId: "codex",
@@ -981,7 +986,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         evidenceRefs: ["x"],
         unavailableScope: "galaxy",
       }],
-    }, /unavailableScope|schema/i],
+    }],
     ["scope on valid", {
       legs: [{
         legId: "codex",
@@ -990,7 +995,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         evidenceRefs: ["x"],
         unavailableScope: "global",
       }],
-    }, /unavailableScope|unknown field|schema/i],
+    }],
     ["scope on missing", {
       legs: [{
         legId: "codex",
@@ -999,7 +1004,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         evidenceRefs: ["x"],
         unavailableScope: "target",
       }],
-    }, /unavailableScope|unknown field|schema/i],
+    }],
     ["blank rationale", {
       legs: [{
         legId: "codex",
@@ -1007,7 +1012,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         rationale: "   ",
         evidenceRefs: ["x"],
       }],
-    }, /non-blank|schema/i],
+    }],
     ["empty refs", {
       legs: [{
         legId: "codex",
@@ -1015,7 +1020,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         rationale: "ok",
         evidenceRefs: [],
       }],
-    }, /evidenceRefs|schema/i],
+    }],
     ["unknown top-level", {
       legs: [{
         legId: "codex",
@@ -1024,15 +1029,61 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         evidenceRefs: ["x"],
       }],
       extra: 1,
-    }, /only the legs|schema/i],
+    }],
+    ["missing legs", {}],
+    ["null raw", null],
   ];
-  for (const [label, raw, pattern] of invalids) {
+  for (const [label, raw] of invalids) {
     assert.throws(
       () => parseCollectorOutputCandidate(raw),
-      pattern,
+      /failed schema validation/i,
       label,
     );
   }
+
+  // Shared Check owner used by batch classify — no second validator fork.
+  assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, undefined), false);
+  assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, null), false);
+  assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, {}), true);
+  // observe rejects non-empty object (additionalProperties: false)
+  assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, { x: 1 }), false);
+
+  for (const [label, raw] of invalids) {
+    if (raw === null) continue;
+    assert.equal(
+      collectorToolArgumentsValid(COLLECTOR_OUTPUT_TOOL, raw),
+      false,
+      `shared-check ${label}`,
+    );
+    const batch = classifyCollectorBatch(
+      [{
+        type: "toolCall",
+        id: "out-1",
+        name: COLLECTOR_OUTPUT_TOOL,
+        arguments: raw,
+      }],
+      { outputAccepted: false, hasCompletedOperationalOrSnapshot: true },
+    );
+    assert.equal(batch.allow, false, `batch ${label}`);
+  }
+  // observe envelope at classify: undefined|null illegal; {} legal shape
+  for (const bad of [undefined, null]) {
+    const batch = classifyCollectorBatch(
+      [{
+        type: "toolCall",
+        id: "obs-1",
+        name: COLLECTOR_OBSERVE_TOOL,
+        arguments: bad,
+      }],
+      { outputAccepted: false, hasCompletedOperationalOrSnapshot: false },
+    );
+    assert.equal(batch.allow, false, `observe ${String(bad)}`);
+  }
+  // Empty-object observe is schema-valid (batch may still deny for other laws).
+  assert.equal(
+    collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, {}),
+    true,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1157,6 +1208,10 @@ test("F2-latestRelevant-recovered-then-succeeded", async () => {
   const reportA = receipt.reports.find((r) =>
     r.kind === "terminal-fact" && r.legId === "a"
   )!;
+  const legB = receipt.legs.find((l) => l.legId === "b")!;
+  const reportB = receipt.reports.find((r) =>
+    r.kind === "terminal-fact" && r.legId === "b"
+  )!;
   for (const refs of [legA.evidenceRefs, reportA.evidenceRefs]) {
     assert.ok(refs.includes(later.commentEvidenceId!));
     assert.ok(refs.includes(later.snapshotId));
@@ -1165,16 +1220,21 @@ test("F2-latestRelevant-recovered-then-succeeded", async () => {
     assert.equal(refs.includes(older.snapshotId), false);
     assert.equal(refs.includes(older.recoverySnapshotId!), false);
   }
+  assert.deepEqual(legA.evidenceRefs, reportA.evidenceRefs);
 
-  const legB = receipt.legs.find((l) => l.legId === "b")!;
-  const bContaminated = [
+  const aOwned = [
     older.commentEvidenceId!,
     older.snapshotId,
     older.recoverySnapshotId!,
     later.commentEvidenceId!,
     later.snapshotId,
-  ].some((id) => legB.evidenceRefs.includes(id));
-  assert.equal(bContaminated, false);
+  ];
+  for (const refs of [legB.evidenceRefs, reportB.evidenceRefs]) {
+    for (const id of aOwned) {
+      assert.equal(refs.includes(id), false, `leg b contaminated by ${id}`);
+    }
+  }
+  assert.deepEqual(legB.evidenceRefs, reportB.evidenceRefs);
 });
 
 test("F2 two-leg missing contamination: request only a", async () => {
@@ -1216,9 +1276,17 @@ test("F2 two-leg missing contamination: request only a", async () => {
   }, clock);
   const legA = receipt.legs.find((l) => l.legId === "a")!;
   const legB = receipt.legs.find((l) => l.legId === "b")!;
+  const termA = receipt.reports.find((r) =>
+    r.kind === "terminal-fact" && r.legId === "a"
+  )!;
+  const termB = receipt.reports.find((r) =>
+    r.kind === "terminal-fact" && r.legId === "b"
+  )!;
   assert.ok(legA.evidenceRefs.includes(attempt.commentEvidenceId!));
+  assert.deepEqual(legA.evidenceRefs, termA.evidenceRefs);
   assert.equal(legB.evidenceRefs.includes(attempt.commentEvidenceId!), false);
   assert.equal(legB.evidenceRefs.includes(attempt.snapshotId), false);
+  assert.deepEqual(legB.evidenceRefs, termB.evidenceRefs);
 });
 
 test("F2 M1-M3b missing decoys fail closed one at a time", async () => {
@@ -1318,58 +1386,116 @@ test("F2 M1-M3b missing decoys fail closed one at a time", async () => {
     ), clock),
     /absent|disallowed|missing/i,
   );
-  // M-clean
+  // M-clean: leg refs ≡ terminal-fact refs per leg
   const clean = buildCollectorReceipt(ledger, missingBoth(
     [final.snapshotId],
     [final.snapshotId],
   ), clock);
   assert.equal(clean.legs.length, 2);
+  for (const legId of ["a", "b"] as const) {
+    const leg = clean.legs.find((l) => l.legId === legId)!;
+    const term = clean.reports.find((r) =>
+      r.kind === "terminal-fact" && r.legId === legId
+    )!;
+    assert.deepEqual(leg.evidenceRefs, term.evidenceRefs, `M-clean ${legId}`);
+  }
 });
 
-test("F2 U1-U5 unavailable decoys fail closed one at a time", async () => {
-  const clock = clockAt("2024-01-01T00:10:00Z");
+test("F2 U1-U5 unavailable mandated decoys fail closed one at a time", async () => {
+  const clock = clockAt("2024-01-01T00:00:00Z");
   const transport = createFakeGitHubTransport({
     user: sampleUser("collector-bot"),
     pullRequest: samplePull({ headOid: "head-c" }),
     reviews: [],
-    issueComments: [
-      sampleIssueComment({
-        id: 1,
-        userLogin: "author-a",
-        body: "I decline a",
-        createdAt: "2024-01-01T00:00:00Z",
-        updatedAt: "2024-01-01T00:00:00Z",
-      }),
-      sampleIssueComment({
-        id: 2,
-        userLogin: "author-b",
-        body: "I decline b",
-        createdAt: "2024-01-01T00:00:00Z",
-        updatedAt: "2024-01-01T00:00:00Z",
-      }),
-      sampleIssueComment({
-        id: 3,
-        userLogin: "evil",
-        body: "decoy",
-        createdAt: "2024-01-01T00:00:00Z",
-        updatedAt: "2024-01-01T00:00:00Z",
-      }),
-    ],
+    issueComments: [],
     reviewComments: [],
   });
   const ledger = createCollectorLedger(twoLegConfig());
   ledger.recordActivation(clock);
+
+  // Establish authenticated requester marker on leg a.
+  const first = (await ledger.observe(transport, clock)).snapshot;
+  const req = await ledger.request(
+    { legId: "a", snapshotId: first.snapshotId },
+    transport,
+    clock,
+  ) as { status: string; commentEvidenceId?: string };
+  assert.equal(req.status, "succeeded");
+  const markerAttempt = ledger.requestAttempts().find((t) => t.legId === "a")!;
+  const markerCommentId = markerAttempt.commentEvidenceId!;
+
+  // Expected-author proofs + wrong-author extra on same PR.
+  transport.state.issueComments = [
+    ...(transport.state.issueComments ?? []),
+    sampleIssueComment({
+      id: 101,
+      userLogin: "author-a",
+      body: "I decline a",
+      createdAt: "2024-01-01T00:01:00Z",
+      updatedAt: "2024-01-01T00:01:00Z",
+    }),
+    sampleIssueComment({
+      id: 102,
+      userLogin: "author-b",
+      body: "I decline b",
+      createdAt: "2024-01-01T00:01:00Z",
+      updatedAt: "2024-01-01T00:01:00Z",
+    }),
+    sampleIssueComment({
+      id: 103,
+      userLogin: "evil",
+      body: "decoy",
+      createdAt: "2024-01-01T00:01:00Z",
+      updatedAt: "2024-01-01T00:01:00Z",
+    }),
+  ];
   await ledger.observe(transport, clock);
   const aProof = ledger.allEvidence().find((e) =>
-    e.kind === "issue_comment" && e.authorLogin === "author-a"
+    e.kind === "issue_comment" && e.authorLogin === "author-a" && e.body === "I decline a"
   )!;
   const bProof = ledger.allEvidence().find((e) =>
-    e.kind === "issue_comment" && e.authorLogin === "author-b"
+    e.kind === "issue_comment" && e.authorLogin === "author-b" && e.body === "I decline b"
   )!;
-  const decoy = ledger.allEvidence().find((e) =>
+  const wrongAuthor = ledger.allEvidence().find((e) =>
     e.kind === "issue_comment" && e.authorLogin === "evil"
   )!;
-  const finalId = ledger.latestCompleteSnapshotId!;
+
+  // Separate real ledger fixture for unrelated PR evidence + snapshot ids.
+  const unrelatedClock = clockAt("2024-02-01T00:00:00Z");
+  const unrelatedTransport = createFakeGitHubTransport({
+    user: sampleUser("other-bot"),
+    pullRequest: samplePull({ number: 99, headOid: "unrelated-head" }),
+    reviews: [
+      sampleReview({
+        id: 9001,
+        userLogin: "author-a",
+        state: "COMMENTED",
+        body: "unrelated PR proof",
+        commitId: "unrelated-head",
+        submittedAt: "2024-02-01T00:00:00Z",
+      }),
+    ],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const unrelatedLedger = createCollectorLedger({
+    ...twoLegConfig(),
+    prNumber: 99,
+    repository: {
+      display: "Other/Repo",
+      canonical: "other/repo",
+      owner: "other",
+      repo: "repo",
+    },
+  });
+  unrelatedLedger.recordActivation(unrelatedClock);
+  await unrelatedLedger.observe(unrelatedTransport, unrelatedClock);
+  const unrelatedEvidence = unrelatedLedger.allEvidence().find((e) =>
+    e.kind === "review" && e.body === "unrelated PR proof"
+  )!;
+  const unrelatedSnapshotId = unrelatedLedger.latestCompleteSnapshotId!;
+  assert.notEqual(unrelatedEvidence.evidenceId, aProof.evidenceId);
+  assert.notEqual(unrelatedSnapshotId, ledger.latestCompleteSnapshotId);
 
   const unavail = (aRefs: string[], bRefs: string[]) => ({
     legs: [
@@ -1390,35 +1516,29 @@ test("F2 U1-U5 unavailable decoys fail closed one at a time", async () => {
     ],
   });
 
-  // U1 wrong-author decoy on a
-  assert.throws(
-    () => buildCollectorReceipt(ledger, unavail([decoy.evidenceId], [bProof.evidenceId]), clock),
-    /wrong-author|non-eligible|unavailable/i,
-  );
-  // U2 cross-leg b proof on a
-  assert.throws(
-    () => buildCollectorReceipt(ledger, unavail([bProof.evidenceId], [bProof.evidenceId]), clock),
-    /wrong-author|non-eligible|unavailable/i,
-  );
-  // U3 snapshot cite on unavailable
-  assert.throws(
-    () => buildCollectorReceipt(ledger, unavail([finalId], [bProof.evidenceId]), clock),
-    /non-qualifying|non-eligible|unavailable/i,
-  );
-  // U4 dangling
+  // U1 cross-leg authenticated requester marker/comment on b
   assert.throws(
     () => buildCollectorReceipt(
       ledger,
-      unavail(["ev:nope"], [bProof.evidenceId]),
+      unavail([aProof.evidenceId], [markerCommentId]),
       clock,
     ),
-    /absent|non-qualifying|unavailable/i,
+    /ownership|disallowed|non-eligible|unavailable|wrong-author|non-qualifying/i,
   );
-  // U5 non-qualifying after-window text (create fresh ledger)
+  // U2 cross-leg expected-author evidence (a proof on b)
+  assert.throws(
+    () => buildCollectorReceipt(
+      ledger,
+      unavail([aProof.evidenceId], [aProof.evidenceId]),
+      clock,
+    ),
+    /ownership|disallowed|non-eligible|unavailable|wrong-author/i,
+  );
+  // U3 after-window evidence
   {
     const clock2 = clockAt("2024-01-01T00:10:00Z");
     const t2 = createFakeGitHubTransport({
-      user: sampleUser(),
+      user: sampleUser("collector-bot"),
       pullRequest: samplePull({ headOid: "head-c" }),
       reviews: [],
       issueComments: [],
@@ -1470,11 +1590,47 @@ test("F2 U1-U5 unavailable decoys fail closed one at a time", async () => {
           },
         ],
       }, clock2),
-      /non-eligible|unavailable|window/i,
+      /non-eligible|unavailable|window|non-qualifying/i,
     );
   }
+  // U4 actual unrelated PR evidence id (from separate real ledger fixture)
+  assert.throws(
+    () => buildCollectorReceipt(
+      ledger,
+      unavail([unrelatedEvidence.evidenceId], [bProof.evidenceId]),
+      clock,
+    ),
+    /absent|non-qualifying|unavailable|non-eligible/i,
+  );
+  // U5 actual unrelated snapshot id (from separate real ledger fixture)
+  assert.throws(
+    () => buildCollectorReceipt(
+      ledger,
+      unavail([unrelatedSnapshotId], [bProof.evidenceId]),
+      clock,
+    ),
+    /absent|non-qualifying|unavailable|non-eligible/i,
+  );
 
-  // U-clean
+  // Extras only (not substitutes for the five mandated rows)
+  assert.throws(
+    () => buildCollectorReceipt(
+      ledger,
+      unavail([wrongAuthor.evidenceId], [bProof.evidenceId]),
+      clock,
+    ),
+    /wrong-author|non-eligible|unavailable/i,
+  );
+  assert.throws(
+    () => buildCollectorReceipt(
+      ledger,
+      unavail(["ev:dangling-extra"], [bProof.evidenceId]),
+      clock,
+    ),
+    /absent|non-qualifying|unavailable/i,
+  );
+
+  // U-clean: leg + terminal-fact refs match per leg (proof only)
   const clean = buildCollectorReceipt(
     ledger,
     unavail([aProof.evidenceId], [bProof.evidenceId]),
@@ -1486,12 +1642,12 @@ test("F2 U1-U5 unavailable decoys fail closed one at a time", async () => {
   const termB = clean.reports.find((r) =>
     r.kind === "terminal-fact" && r.legId === "b"
   )!;
-  assert.deepEqual(termA.evidenceRefs, [aProof.evidenceId]);
-  assert.deepEqual(termB.evidenceRefs, [bProof.evidenceId]);
-  assert.deepEqual(
-    clean.legs.find((l) => l.legId === "a")!.evidenceRefs,
-    [aProof.evidenceId],
-  );
+  const legA = clean.legs.find((l) => l.legId === "a")!;
+  const legB = clean.legs.find((l) => l.legId === "b")!;
+  assert.deepEqual(legA.evidenceRefs, [aProof.evidenceId]);
+  assert.deepEqual(legB.evidenceRefs, [bProof.evidenceId]);
+  assert.deepEqual(termA.evidenceRefs, legA.evidenceRefs);
+  assert.deepEqual(termB.evidenceRefs, legB.evidenceRefs);
 });
 
 // ---------------------------------------------------------------------------
@@ -1698,12 +1854,50 @@ test("F3 v3 before-deadline comment edit after deadline", async () => {
   assert.ok(missing.legs[0]!.evidenceRefs.includes(terminal.evidenceId));
 });
 
-test("F3 review edit/dismiss/disappearance retention", async () => {
+async function retentionLedgerAndReceipt(input: {
+  initial: ReturnType<typeof sampleReview>[];
+  later: ReturnType<typeof sampleReview>[];
+}) {
   const clock = clockAt("2024-01-01T00:10:00Z");
   const transport = createFakeGitHubTransport({
     user: sampleUser(),
     pullRequest: samplePull({ headOid: "head-c" }),
-    reviews: [
+    reviews: input.initial,
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger(baseConfig());
+  ledger.recordActivation(clock);
+  await ledger.observe(transport, clock);
+  transport.state.reviews = input.later;
+  await ledger.observe(transport, clock);
+  // Missing is only legal at/after eligibility cutoff.
+  clock.advance(16 * 60 * 1000);
+  await ledger.observe(transport, clock);
+  const snap = ledger.latestCompleteSnapshotId!;
+  const receipt = buildCollectorReceipt(ledger, {
+    legs: [{
+      legId: "codex",
+      status: "missing",
+      rationale: "retention probe",
+      evidenceRefs: [snap],
+    }],
+  }, clock);
+  return { ledger, receipt };
+}
+
+function reviewReportsFor(
+  receipt: ReturnType<typeof buildCollectorReceipt>,
+  body: string,
+) {
+  return receipt.reports.filter((r) =>
+    r.kind === "review" && r.report.includes(body)
+  );
+}
+
+test("F3 review edit retention", async () => {
+  const { ledger, receipt } = await retentionLedgerAndReceipt({
+    initial: [
       sampleReview({
         id: 10,
         userLogin: "codexbot",
@@ -1712,6 +1906,37 @@ test("F3 review edit/dismiss/disappearance retention", async () => {
         commitId: "head-c",
         submittedAt: "2024-01-01T00:00:00Z",
       }),
+    ],
+    later: [
+      sampleReview({
+        id: 10,
+        userLogin: "codexbot",
+        state: "APPROVED",
+        body: "v2 edited body",
+        commitId: "head-c",
+        submittedAt: "2024-01-01T00:00:00Z",
+      }),
+    ],
+  });
+  const v1 = ledger.allEvidence().find((r) =>
+    r.kind === "review" && r.body === "v1 body"
+  )!;
+  const v2 = ledger.allEvidence().find((r) =>
+    r.kind === "review" && r.body === "v2 edited body"
+  )!;
+  const reportsV1 = reviewReportsFor(receipt, "v1 body");
+  const reportsV2 = reviewReportsFor(receipt, "v2 edited body");
+  assert.equal(reportsV1.length, 1);
+  assert.equal(reportsV2.length, 1);
+  assert.ok(reportsV1[0]!.evidenceRefs.includes(v1.evidenceId));
+  assert.ok(reportsV2[0]!.evidenceRefs.includes(v2.evidenceId));
+  assert.deepEqual(reportsV1[0]!.evidenceRefs, [v1.evidenceId]);
+  assert.deepEqual(reportsV2[0]!.evidenceRefs, [v2.evidenceId]);
+});
+
+test("F3 review dismiss retention", async () => {
+  const { ledger, receipt } = await retentionLedgerAndReceipt({
+    initial: [
       sampleReview({
         id: 11,
         userLogin: "codexbot",
@@ -1720,6 +1945,39 @@ test("F3 review edit/dismiss/disappearance retention", async () => {
         commitId: "head-c",
         submittedAt: "2024-01-01T00:01:00Z",
       }),
+    ],
+    later: [
+      sampleReview({
+        id: 11,
+        userLogin: "codexbot",
+        state: "DISMISSED",
+        body: "will dismiss",
+        commitId: "head-c",
+        submittedAt: "2024-01-01T00:01:00Z",
+      }),
+    ],
+  });
+  const prior = ledger.allEvidence().find((r) =>
+    r.kind === "review" && r.state === "COMMENTED" && r.body === "will dismiss"
+  )!;
+  const dismissed = ledger.allEvidence().find((r) =>
+    r.kind === "review" && r.state === "DISMISSED" && r.body === "will dismiss"
+  )!;
+  const priorReports = receipt.reports.filter((r) =>
+    r.kind === "review" && r.evidenceRefs.includes(prior.evidenceId)
+  );
+  const dismissedReports = receipt.reports.filter((r) =>
+    r.kind === "review" && r.evidenceRefs.includes(dismissed.evidenceId)
+  );
+  assert.equal(priorReports.length, 1);
+  assert.equal(dismissedReports.length, 1);
+  assert.ok(priorReports[0]!.evidenceRefs.includes(prior.evidenceId));
+  assert.ok(dismissedReports[0]!.evidenceRefs.includes(dismissed.evidenceId));
+});
+
+test("F3 review disappearance retention", async () => {
+  const { ledger, receipt } = await retentionLedgerAndReceipt({
+    initial: [
       sampleReview({
         id: 12,
         userLogin: "codexbot",
@@ -1729,46 +1987,17 @@ test("F3 review edit/dismiss/disappearance retention", async () => {
         submittedAt: "2024-01-01T00:02:00Z",
       }),
     ],
-    issueComments: [],
-    reviewComments: [],
+    later: [],
   });
-  const ledger = createCollectorLedger(baseConfig());
-  ledger.recordActivation(clock);
-  await ledger.observe(transport, clock);
-
-  transport.state.reviews = [
-    sampleReview({
-      id: 10,
-      userLogin: "codexbot",
-      state: "APPROVED",
-      body: "v2 edited body",
-      commitId: "head-c",
-      submittedAt: "2024-01-01T00:00:00Z",
-    }),
-    sampleReview({
-      id: 11,
-      userLogin: "codexbot",
-      state: "DISMISSED",
-      body: "will dismiss",
-      commitId: "head-c",
-      submittedAt: "2024-01-01T00:01:00Z",
-    }),
-    // id 12 disappeared
-  ];
-  await ledger.observe(transport, clock);
-
-  const bodies = ledger.allEvidence()
-    .filter((r) => r.kind === "review")
-    .map((r) => r.body);
-  assert.ok(bodies.includes("v1 body"));
-  assert.ok(bodies.includes("v2 edited body"));
-  assert.ok(bodies.includes("will dismiss"));
-  assert.ok(bodies.includes("will disappear"));
-  assert.ok(
-    ledger.allEvidence().some((r) =>
-      r.kind === "review" && r.state === "DISMISSED"
-    ),
+  const disappeared = ledger.allEvidence().find((r) =>
+    r.kind === "review" && r.body === "will disappear"
+  )!;
+  const reports = receipt.reports.filter((r) =>
+    r.kind === "review" && r.evidenceRefs.includes(disappeared.evidenceId)
   );
+  assert.equal(reports.length, 1);
+  assert.ok(reports[0]!.report.includes("will disappear"));
+  assert.deepEqual(reports[0]!.evidenceRefs, [disappeared.evidenceId]);
 });
 
 // ---------------------------------------------------------------------------

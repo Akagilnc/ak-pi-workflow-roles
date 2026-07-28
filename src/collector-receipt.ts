@@ -90,73 +90,10 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function parseCollectorOutputCandidate(
   raw: unknown,
 ): CollectorOutputCandidate {
   if (!Value.Check(collectorOutputArgsSchema, raw)) {
-    // Diagnostic detail for unit callers; schema is the sole acceptance owner.
-    if (!isRecord(raw) || !Array.isArray(raw["legs"])) {
-      fail("Collector output requires a legs array");
-    }
-    const keys = Object.keys(raw);
-    if (keys.some((key) => key !== "legs")) {
-      fail("Collector output accepts only the legs field");
-    }
-    for (const entry of raw["legs"]) {
-      if (!isRecord(entry)) fail("Collector output leg must be an object");
-      const legId = typeof entry["legId"] === "string" ? entry["legId"] : "?";
-      const status = entry["status"];
-      if (status !== "valid" && status !== "unavailable" && status !== "missing") {
-        fail(
-          `Collector output status for \"${legId}\" must be valid|unavailable|missing`,
-        );
-      }
-      if (
-        typeof entry["rationale"] !== "string" ||
-        entry["rationale"].trim().length === 0 ||
-        !/\S/.test(entry["rationale"])
-      ) {
-        fail(`Collector output rationale for \"${legId}\" must be non-blank`);
-      }
-      const evidenceRefs = entry["evidenceRefs"];
-      if (
-        !Array.isArray(evidenceRefs) ||
-        evidenceRefs.length === 0 ||
-        evidenceRefs.some((ref) => typeof ref !== "string" || ref.length === 0)
-      ) {
-        fail(
-          `Collector output evidenceRefs for \"${legId}\" must be a non-empty string array`,
-        );
-      }
-      if (status === "unavailable") {
-        const scope = entry["unavailableScope"];
-        if (scope !== "target" && scope !== "global") {
-          fail(
-            `Collector unavailable leg \"${legId}\" requires unavailableScope target|global`,
-          );
-        }
-      } else if (Object.hasOwn(entry, "unavailableScope")) {
-        fail(
-          `Collector leg \"${legId}\" may only declare unavailableScope when status is unavailable`,
-        );
-      }
-      const allowed = new Set([
-        "legId",
-        "status",
-        "rationale",
-        "evidenceRefs",
-        ...(status === "unavailable" ? ["unavailableScope"] : []),
-      ]);
-      for (const key of Object.keys(entry)) {
-        if (!allowed.has(key)) {
-          fail(`Collector output leg \"${legId}\" has unknown field \"${key}\"`);
-        }
-      }
-    }
     fail("Collector output failed schema validation");
   }
   const checked = raw as {
@@ -177,13 +114,8 @@ export function parseCollectorOutputCandidate(
         evidenceRefs: [...leg.evidenceRefs],
       };
       if (leg.status === "unavailable") {
-        const scope = leg.unavailableScope;
-        if (scope !== "target" && scope !== "global") {
-          fail(
-            `Collector unavailable leg "${leg.legId}" requires unavailableScope target|global`,
-          );
-        }
-        candidate.unavailableScope = scope;
+        // Schema acceptance already requires unavailableScope target|global.
+        candidate.unavailableScope = leg.unavailableScope as "target" | "global";
       }
       return candidate;
     }),
