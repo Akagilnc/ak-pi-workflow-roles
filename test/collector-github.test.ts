@@ -872,7 +872,7 @@ test("2xx parse ambiguous_loss recovers via marker observe without second POST",
   assert.equal(postCount, 1, "recovery must not repost");
 });
 
-test("request-path AbortSignal cancels hung POST child without rejected attempt", async () => {
+async function assertHungPostRequestCancellation(abortReason: unknown, reasonText: string) {
   const stateDir = await mkdtemp(join(tmpdir(), "ak-gh-post-abort-"));
   const pidFile = join(stateDir, "pid.txt");
   const script = `#!/usr/bin/env bash
@@ -956,8 +956,16 @@ echo "unexpected $*" >&2; exit 2
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     assert.ok(pid > 0, "POST child recorded pid");
-    controller.abort(new Error("request canceled"));
-    await assert.rejects(() => pending, /abort|cancel/i);
+    controller.abort(abortReason);
+    // Surface original reason text (Error or non-Error); do not require abort|cancel wording.
+    await assert.rejects(
+      () => pending,
+      (error: unknown) => {
+        const text = error instanceof Error ? error.message : String(error);
+        assert.match(text, new RegExp(reasonText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        return true;
+      },
+    );
     // Child must be dead; ESRCH means gone.
     await new Promise((resolve) => setTimeout(resolve, 30));
     let alive = true;
@@ -983,6 +991,24 @@ echo "unexpected $*" >&2; exit 2
       /already used|process-local/i,
     );
   });
+}
+
+test("request-path AbortSignal cancels hung POST child without rejected attempt", async () => {
+  await assertHungPostRequestCancellation(
+    new Error("request canceled"),
+    "request canceled",
+  );
+});
+
+test("request-path abort with deadline exceeded Error cancels without rejected attempt", async () => {
+  await assertHungPostRequestCancellation(
+    new Error("deadline exceeded"),
+    "deadline exceeded",
+  );
+});
+
+test("request-path abort with non-Error reason cancels without rejected attempt", async () => {
+  await assertHungPostRequestCancellation("stop now", "stop now");
 });
 
 test("R11 hung gh child aborted through runner settles once and kills child", async () => {
