@@ -565,7 +565,7 @@ test("packaged coder apply transforms colliding /skill:tddfoo into canonical tdd
   );
 });
 
-test("packaged fixer enforces singleton output without inheriting Judge tool narrowing", async () => {
+test("packaged fixer applies its both-phase bash seatbelt, retains its tool surface, and enforces singleton output", async () => {
   const manifest = await loadRawPackageManifest();
   const forbiddenLiterals = [
     "rm -rf",
