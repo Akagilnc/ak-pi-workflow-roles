@@ -14,7 +14,7 @@ The judge role:
 
 The compliance call uses the active Pi model and credentials. It checks demonstrated procedural compliance with the Soul; it does not replace the judge's substantive finding decisions.
 
-Judge infers its burden of proof from the supplied materials alone (authority completeness, plan construction-readiness, apply executable proof, or review finding adjudication). There is no posture CLI flag and no package-owned call history. A plan `converged` authorizes construction only; it does not claim implementation proof already exists. Authority completeness does not require apply-depth evidence. Optional `note` may carry apply obligations without a new verdict state.
+Judge infers its burden of proof from the supplied materials alone (authority completeness, plan construction-readiness, apply executable proof, or review finding adjudication).
 
 On activation, Judge narrows active tools to the registered members of this exact whitelist: `read`, `grep`, `find`, `ls`, `bash`, and `ak_judge_output`. In particular, `write`, `edit`, and arbitrary sibling tools are inactive. This is role gating to prevent accidental role drift, not a security boundary; callers that need isolation must provide a sandbox or container.
 

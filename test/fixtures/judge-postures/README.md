@@ -39,10 +39,15 @@ facts), never from path labels or sidecars.
 `test/judge-posture-recordings.test.ts` validates fixtures without calling a
 paid model:
 
-1. Parse `session.jsonl` for the **sole** distinct `toolCallId` with explicit
-   `isError === false`, text `Judge verdict accepted`, and object `details`.
-   Missing `isError` does not count; two distinct accepted ids fail even when
-   details stringify equal; stream + `message_end` for the same id merge.
+1. Parse `session.jsonl` for the **sole** accepted `ak_judge_output` bound as a
+   completed call chain: assistant-issued `toolCall` (non-empty id, object
+   arguments) → matching `tool_execution_start` (same id/name, args deep-equal)
+   → terminal success (`tool_execution_end` and/or `toolResult`) with
+   `isError === false`, text `Judge verdict accepted`, and object `details`
+   deep-equal to the issued arguments. All terminal representations for one id
+   must agree (deep-equal payload); disagreement rejects the id (no overwrite).
+   Missing bind, args mismatch, or missing `isError` does not count. Two
+   distinct fully-bound ids still count as two even when details are identical.
 2. Extract user-prompt text from JSONL `message_end` (not stream deltas) and
    materials-read path/body from the successful `read` bound to that prompt.
 3. Run neutrality checks on those JSONL-derived surfaces; require static
@@ -52,7 +57,8 @@ paid model:
 5. Pin soul digest to current `souls/judge.md` and require the soul body in the session.
 6. Assert direction against external `expected.json` only.
 
-A receipt-only or self-asserted audit marker without JSONL acceptance fails.
+A receipt-only, orphan terminal, or self-asserted marker without the bound call
+chain fails.
 
 ## Re-record (operator, not CI)
 
