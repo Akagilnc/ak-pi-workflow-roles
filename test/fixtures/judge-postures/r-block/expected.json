@@ -1,0 +1,5 @@
+{
+  "direction": "block",
+  "blockerClass": "oracle",
+  "allowedStatuses": ["continue", "escalate"]
+}
