@@ -94,30 +94,45 @@ export function createFakeGitHubTransport(
       }
       return state.pullRequest;
     },
-    async listPullRequestReviews() {
+    async listPullRequestReviews(input) {
       calls.reviews += 1;
       if (state.failNext?.reviews) throw state.failNext.reviews;
       const pages = state.reviewPages ?? [state.reviews];
+      const items: GitHubReview[] = [];
+      for (const page of pages) {
+        input.retainPage?.(page);
+        items.push(...page);
+      }
       return {
-        items: pages.flat(),
+        items,
         pages: pageDiagnostics("/reviews", pages),
       };
     },
-    async listIssueComments() {
+    async listIssueComments(input) {
       calls.issueComments += 1;
       if (state.failNext?.issueComments) throw state.failNext.issueComments;
       const pages = state.issueCommentPages ?? [state.issueComments];
+      const items: GitHubIssueComment[] = [];
+      for (const page of pages) {
+        input.retainPage?.(page);
+        items.push(...page);
+      }
       return {
-        items: pages.flat(),
+        items,
         pages: pageDiagnostics("/issue-comments", pages),
       };
     },
-    async listReviewComments() {
+    async listReviewComments(input) {
       calls.reviewComments += 1;
       if (state.failNext?.reviewComments) throw state.failNext.reviewComments;
       const pages = state.reviewCommentPages ?? [state.reviewComments];
+      const items: GitHubReviewComment[] = [];
+      for (const page of pages) {
+        input.retainPage?.(page);
+        items.push(...page);
+      }
       return {
-        items: pages.flat(),
+        items,
         pages: pageDiagnostics("/review-comments", pages),
       };
     },

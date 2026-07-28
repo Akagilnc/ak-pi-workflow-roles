@@ -7,6 +7,7 @@ import {
   COLLECTOR_ELIGIBILITY_MS,
   COLLECTOR_RECEIPT_MAX_BYTES,
   COLLECTOR_SNAPSHOT_MAX_BYTES,
+  createSnapshotByteBudget,
   measureNormalizedBytes,
   normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
@@ -432,36 +433,56 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
   const fetchObserveSurfaces = async (
     transport: CollectorGitHubTransport,
+    observedAt: string,
     signal?: AbortSignal,
   ) => {
     const owner = config.repository.owner;
     const repo = config.repository.repo;
     const prNumber = config.prNumber;
     const signalOpt = signal === undefined ? {} : { signal };
+    // One observation-attempt budget; resets on PR-identity retry.
+    const budget = createSnapshotByteBudget();
     const user = await transport.getAuthenticatedUser(signalOpt);
+    budget.retain([normalizeAuthenticatedUserEvidence(user, observedAt)]);
     const prInitial = await transport.getPullRequest({
       owner,
       repo,
       prNumber,
       ...signalOpt,
     });
+    budget.retain([normalizePullRequestEvidence(prInitial, observedAt)]);
     const reviews = await transport.listPullRequestReviews({
       owner,
       repo,
       prNumber,
       ...signalOpt,
+      retainPage: (items) => {
+        budget.retain(
+          items.map((item) => normalizeReviewEvidence(item, observedAt)),
+        );
+      },
     });
     const issueComments = await transport.listIssueComments({
       owner,
       repo,
       prNumber,
       ...signalOpt,
+      retainPage: (items) => {
+        budget.retain(
+          items.map((item) => normalizeIssueCommentEvidence(item, observedAt)),
+        );
+      },
     });
     const reviewComments = await transport.listReviewComments({
       owner,
       repo,
       prNumber,
       ...signalOpt,
+      retainPage: (items) => {
+        budget.retain(
+          items.map((item) => normalizeReviewCommentEvidence(item, observedAt)),
+        );
+      },
     });
     const prTerminal = await transport.getPullRequest({
       owner,
@@ -683,10 +704,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
       let surfaces;
       try {
-        surfaces = await fetchObserveSurfaces(transport, signal);
+        surfaces = await fetchObserveSurfaces(transport, observedAt, signal);
         if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
           // Retry full surfaces once; bind only a consistent terminal read.
-          surfaces = await fetchObserveSurfaces(transport, signal);
+          surfaces = await fetchObserveSurfaces(transport, observedAt, signal);
           if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
             throw new Error(
               `PR identity drifted across observe bracket after retry (${prIdentity(surfaces.prInitial)} → ${prIdentity(surfaces.prTerminal)})`,
