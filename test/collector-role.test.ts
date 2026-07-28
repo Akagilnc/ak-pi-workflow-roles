@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -1170,8 +1170,33 @@ test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", asyn
       assert.equal(result.exitCode, 1, row.name);
     }
 
-    // real-Pi sibling = valid operational observe + invalid output
-    {
+    // real-Pi siblings = valid operational observe + specified invalid output
+    const observeInvalidSiblings: Array<{ name: string; outputArgs: Record<string, unknown> }> = [
+      {
+        name: "observe+unknown-leg-field",
+        outputArgs: {
+          legs: [{
+            legId: "codex",
+            status: "missing",
+            rationale: "x",
+            evidenceRefs: ["s"],
+            extra: true,
+          }],
+        },
+      },
+      {
+        name: "observe+unavailable-without-scope",
+        outputArgs: {
+          legs: [{
+            legId: "codex",
+            status: "unavailable",
+            rationale: "x",
+            evidenceRefs: ["s"],
+          }],
+        },
+      },
+    ];
+    for (const sibling of observeInvalidSiblings) {
       const transport = createFakeGitHubTransport({
         user: sampleUser(),
         pullRequest: samplePull(),
@@ -1185,24 +1210,17 @@ test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", asyn
         legs,
         transport,
         clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-f1-sibling",
+        api: `ak-collector-f1-sibling-${sibling.name}`,
         responses: [
           fauxAssistantMessage([
             fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-ok" }),
-            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-              legs: [{
-                legId: "codex",
-                status: "missing",
-                rationale: "   ",
-                evidenceRefs: ["s"],
-              }],
-            }, { id: "bad-shape" }),
+            fauxToolCall(COLLECTOR_OUTPUT_TOOL, sibling.outputArgs, { id: "bad-shape" }),
           ], { stopReason: "toolUse" }),
           fauxAssistantMessage("done"),
         ],
       });
-      assertZeroGitHub(transport, "observe+invalid-output sibling");
-      assert.equal(result.exitCode, 1);
+      assertZeroGitHub(transport, sibling.name);
+      assert.equal(result.exitCode, 1, sibling.name);
     }
 
   });
@@ -1572,7 +1590,134 @@ test("F3-required-tool-absence", async () => {
   });
 });
 
-test("F3-ambient-skills", async () => {
+// Normally discovered Skill via DefaultResourceLoader (not fabricated extension
+// command, not late prompt mutation). Includes command-only
+// disable-model-invocation so prompt exclusion does not hide the Skill command.
+test("F3-loaded-skill-startup-fail-closed", async () => {
+  await withHermeticHome({ prefix: "ak-collector-loaded-skill-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+    const skillDir = resolve(home, "hostile-cmd-only-skill");
+    const skillPath = resolve(skillDir, "SKILL.md");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      skillPath,
+      [
+        "---",
+        "name: hostile-cmd-only",
+        "description: command-only hostile skill for Collector fail-closed",
+        "disable-model-invocation: true",
+        "---",
+        "",
+        "# Hostile command-only skill",
+        "",
+        "This must not be loadable under Collector.",
+        "",
+      ].join("\n"),
+    );
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const faux = fauxProvider({
+      api: "ak-collector-loaded-skill",
+      provider: "ak-collector-loaded-skill",
+      tokenSize: { min: 1000, max: 1000 },
+    });
+    faux.setResponses([fauxAssistantMessage("should not run")]);
+    const previousExit = process.exitCode;
+    process.exitCode = undefined;
+    const logs: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+      origError(...args);
+    };
+    const exposedSkillCommands: Array<{ name: string; source: string }> = [];
+    try {
+      await withInProcessPi({
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noSkills: false,
+        additionalSkillPaths: [skillPath],
+        extensionFactories: [
+          (pi) => {
+            pi.on("session_start", () => {
+              for (const command of pi.getCommands?.() ?? []) {
+                if (command.source === "skill") {
+                  exposedSkillCommands.push({
+                    name: command.name,
+                    source: command.source,
+                  });
+                }
+              }
+            });
+          },
+          createRoleRuntimeExtension({
+            loadJudgeSoul: async () => "judge",
+            loadCollectorSoul: async () => COLLECTOR_SOUL,
+            createCollectorTransport: () => transport,
+            createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
+            transcriptFromContext: () => "",
+            auditSoulCompliance: async () => ({ status: "pass" }),
+          }),
+        ],
+        noExtensions: true,
+        systemPrompt: "BASE",
+        mode: "print",
+        flags: {
+          "ak-role": "collector",
+          "ak-collector-repo": "acme/widgets",
+          "ak-collector-pr": "1",
+          "ak-collector-legs": legs,
+        },
+        noTools: "builtin",
+      }, async ({ loader, session, sessionManager }) => {
+        const loaded = loader.getSkills().skills;
+        const hostile = loaded.find((skill) => skill.name === "hostile-cmd-only");
+        assert.ok(hostile, "Pi DefaultResourceLoader must load the real Skill");
+        assert.equal(hostile.disableModelInvocation, true);
+        await session.prompt("start");
+        assert.ok(
+          exposedSkillCommands.some(
+            (command) =>
+              command.name === "skill:hostile-cmd-only" &&
+              command.source === "skill",
+          ),
+          "Pi must expose skill:hostile-cmd-only with source skill",
+        );
+        assert.equal(process.exitCode, 1);
+        assert.match(
+          logs.join("\n"),
+          /ambient instruction commands:.*skill:hostile-cmd-only/i,
+        );
+        const successfulOutput = sessionManager.getEntries().some((entry) =>
+          entry.type === "message" &&
+          entry.message.role === "toolResult" &&
+          entry.message.toolName === COLLECTOR_OUTPUT_TOOL &&
+          entry.message.isError === false
+        );
+        assert.equal(successfulOutput, false, "no successful ak_collector_output receipt");
+        assertZeroGitHub(transport, "loaded-skill");
+        assert.equal(faux.state.callCount, 0);
+        assert.equal(faux.getPendingResponseCount(), 1);
+      });
+    } finally {
+      console.error = origError;
+      process.exitCode = previousExit;
+    }
+  });
+});
+
+// Unsupported hostile sibling-extension injection into before_agent_start
+// systemPromptOptions.skills — not a normally discovered Skill path.
+// Pi 0.82.1 may still reach the provider after the throw is swallowed; do not
+// assert provider-zero or pending responses on this late seam.
+test("F3-ambient-skills unsupported hostile sibling-extension injection", async () => {
   await withHermeticHome({ prefix: "ak-collector-amb-skill-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
@@ -1597,8 +1742,7 @@ test("F3-ambient-skills", async () => {
         agentDir,
         faux,
         modelsPath: null,
-        // No skillsOverride / skill command load — inject into the real
-        // before_agent_start systemPromptOptions.skills surface only.
+        // Hostile sibling-extension injection only — not skill discovery.
         extensionFactories: [
           (pi) => {
             pi.on("before_agent_start", (event) => {
@@ -1651,7 +1795,7 @@ test("F3-ambient-skills", async () => {
           "ak-collector-legs": legs,
         },
         noTools: "builtin",
-      }, async ({ session }) => {
+      }, async ({ session, sessionManager }) => {
         try {
           await session.prompt("start");
         } catch {
@@ -1663,9 +1807,16 @@ test("F3-ambient-skills", async () => {
           failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
           /ambient skills in systemPromptOptions/i,
         );
-        assertZeroGitHub(transport, "ambient-skills");
-        // Host may still enter the provider after before_agent_start throws are
-        // swallowed by the extension runner; the collector latched fatal first.
+        const successfulOutput = sessionManager.getEntries().some((entry) =>
+          entry.type === "message" &&
+          entry.message.role === "toolResult" &&
+          entry.message.toolName === COLLECTOR_OUTPUT_TOOL &&
+          entry.message.isError === false
+        );
+        assert.equal(successfulOutput, false, "no successful ak_collector_output receipt");
+        assertZeroGitHub(transport, "ambient-skills-hostile-sibling-extension");
+        // Deliberately do not assert provider callCount or pending responses:
+        // late before_agent_start throws are non-normative for provider entry on Pi 0.82.1.
         assert.ok(failCalls.length >= 1);
       });
     } finally {

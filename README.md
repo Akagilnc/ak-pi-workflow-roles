@@ -141,7 +141,9 @@ Collector is a standalone external-GitHub PR evidence collection role. It observ
 
 v1 supports `github.com` only. There is no default leg/bot: callers must supply an explicit non-empty leg manifest. Owner/repo uses a conservative ASCII grammar (owner 1–39, repo 1–100). Enterprise hosts, interactive/RPC mode, resume/continue, and later prompts are unsupported.
 
-Supported one-shot launch profile:
+**Collector forbids every Skill**, including command-only Skills (`disable-model-invocation: true` / prompt-excluded but command-present). Skills are not part of the supported Collector surface.
+
+Supported one-shot launch profile (required shape):
 
 ```bash
 pi --no-extensions -e <package-extension> --no-skills --no-prompt-templates \
@@ -149,6 +151,8 @@ pi --no-extensions -e <package-extension> --no-skills --no-prompt-templates \
   --ak-collector-repo <owner/repo> --ak-collector-pr <n> \
   --ak-collector-legs <manifest.json> -p "Start collection."
 ```
+
+That profile means: `--no-skills`; `--no-extensions` with only the explicit Collector package extension; no prompt templates; no context files; exactly one print/JSON prompt. Do not load Skills, ambient extensions, prompt templates, or context files alongside Collector.
 
 Machine-readable manifest schema: [`schemas/collector-legs-v1.schema.json`](schemas/collector-legs-v1.schema.json).
 
@@ -161,9 +165,10 @@ Runtime behavior highlights:
 - successful receipts embed `snapshots[]` and `evidenceRecords[]` so every evidence ref resolves inside the tool-result details;
 - request attempts are process-local at-most-once per `(repo, PR, HEAD, leg)` with a deterministic HTML correlation marker; concurrent independent Collector processes can still race and duplicate comments—serialize callers when that is unacceptable;
 - requires ambient `gh` authentication for `github.com` and model credentials; role gating is drift prevention, not a security boundary;
+- on Pi 0.82.1, a late hostile sibling-extension injection into `before_agent_start` `systemPromptOptions.skills` is unsupported and fail-closed when detected; that path is not a normally discovered Skill, is not a security boundary, and does not imply a provider-zero guarantee;
 - current orchestrator wiring is unsupported and requires a separately authorized migration plus thin adapter.
 
-Failure channels (non-zero, no receipt) include malformed/unsupported config or mode, non-OPEN final snapshot, transport/API/pagination/size/model failures, unrecovered request response loss, and later-input/output-singleton violations. There is no Collector `refused` status.
+Failure channels (non-zero, no receipt) include malformed/unsupported config or mode, loaded Skills (including command-only), ambient instruction surfaces, non-OPEN final snapshot, transport/API/pagination/size/model failures, unrecovered request response loss, and later-input/output-singleton violations. There is no Collector `refused` status.
 
 ## Verdict contract
 
