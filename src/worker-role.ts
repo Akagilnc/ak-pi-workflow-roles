@@ -312,7 +312,10 @@ export function createCoderRoleRuntime(
           }
           tddInvocationInjected = true;
           expansionPending = true;
-          if (event.text.startsWith("/skill:tdd")) {
+          const isNativeTdd =
+            event.text === "/skill:tdd" ||
+            event.text.startsWith("/skill:tdd ");
+          if (isNativeTdd) {
             originalRequest = event.text.slice("/skill:tdd".length).trim();
             return { action: "continue" as const };
           }
