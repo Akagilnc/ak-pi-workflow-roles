@@ -809,6 +809,52 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   );
   assert.deepEqual((await submitCompleted(prefixedHarness, "prefixed")).details, completed);
 
+  const bareNativeHarness = await start();
+  assert.deepEqual(
+    await bareNativeHarness.handlers.get("input")?.(
+      { text: "/skill:tdd" },
+      {},
+    ),
+    { action: "continue" },
+  );
+  await bareNativeHarness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: expandedTdd("") },
+    { abort() {}, mode: "tui" },
+  );
+  assert.deepEqual((await submitCompleted(bareNativeHarness, "bare-native")).details, completed);
+
+  const collisionHarness = await start();
+  assert.deepEqual(
+    await collisionHarness.handlers.get("input")?.(
+      { text: "/skill:tddfoo" },
+      {},
+    ),
+    {
+      action: "transform",
+      text: "/skill:tdd /skill:tddfoo",
+    },
+  );
+  await collisionHarness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: expandedTdd("/skill:tddfoo") },
+    { abort() {}, mode: "tui" },
+  );
+  assert.deepEqual(
+    (await submitCompleted(collisionHarness, "collision")).details,
+    completed,
+  );
+
+  const tabSeparatedHarness = await start();
+  assert.deepEqual(
+    await tabSeparatedHarness.handlers.get("input")?.(
+      { text: `/skill:tdd\t${request}` },
+      {},
+    ),
+    {
+      action: "transform",
+      text: `/skill:tdd /skill:tdd\t${request}`,
+    },
+  );
+
   const refusedHarness = await start();
   await refusedHarness.handlers.get("input")?.({ text: request }, {});
   const refused = {
