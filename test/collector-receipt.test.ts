@@ -25,7 +25,10 @@ import {
   sampleUser,
 } from "./helpers/fake-github-transport.ts";
 
-function clockAt(startWall: string): CollectorClock & { advance(ms: number): void } {
+function clockAt(startWall: string): CollectorClock & {
+  advance(ms: number): void;
+  setWall(iso: string): void;
+} {
   let mono = 0;
   let wall = new Date(startWall);
   return {
@@ -38,6 +41,9 @@ function clockAt(startWall: string): CollectorClock & { advance(ms: number): voi
     advance(ms) {
       mono += ms;
       wall = new Date(wall.getTime() + ms);
+    },
+    setWall(iso) {
+      wall = new Date(iso);
     },
   };
 }
@@ -1137,6 +1143,63 @@ test("after-deadline first observation of review cannot prove valid or unavailab
       evidenceRefs: [late.evidenceId],
     }],
   }, clock), /valid|qualifying|window|head/i);
+});
+
+test("mono past deadline with wall before deadline nulls first-sighting trust", async () => {
+  // Packet reproduction: activation mono 0 / deadline mono 900000; advance mono
+  // to 960000 while wall is still before wall deadline; submitted_at before
+  // window must not prove valid/unavailable via wall-only first-sighting gate.
+  const clock = clockAt("2024-01-01T00:10:00Z");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-c" }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger(baseConfig());
+  ledger.recordActivation(clock); // activation mono 0, wall 00:10; deadline mono 900000 / wall 00:25
+  clock.advance(960_000); // mono 960000, wall would be 00:26
+  clock.setWall("2024-01-01T00:20:00Z"); // wall before deadline; mono still past cutoff
+  transport.state.reviews = [
+    sampleReview({
+      id: 31,
+      userLogin: "codexbot",
+      state: "APPROVED",
+      body: "wall-skew late first sighting",
+      commitId: "head-c",
+      submittedAt: "2024-01-01T00:05:00Z",
+    }),
+  ];
+  await ledger.observe(transport, clock);
+  const skewed = ledger.allEvidence().find((i) =>
+    i.kind === "review" && i.body === "wall-skew late first sighting"
+  )!;
+  assert.ok(skewed, "review must be stored");
+  assert.equal(skewed.firstObservedAt, "2024-01-01T00:20:00.000Z");
+  assert.equal(skewed.authoritativeTime, null);
+  assert.notEqual(skewed.windowRelation, "before");
+  assert.notEqual(skewed.windowRelation, "within");
+  assert.equal(skewed.windowRelation, "uncertain");
+
+  assert.throws(() => buildCollectorReceipt(ledger, {
+    legs: [{
+      legId: "codex",
+      status: "valid",
+      rationale: "wall-before mono-after cannot prove valid",
+      evidenceRefs: [skewed.evidenceId],
+    }],
+  }, clock), /valid|qualifying|window|head/i);
+
+  assert.throws(() => buildCollectorReceipt(ledger, {
+    legs: [{
+      legId: "codex",
+      status: "unavailable",
+      rationale: "wall-before mono-after cannot prove unavailable",
+      evidenceRefs: [skewed.evidenceId],
+      unavailableScope: "global",
+    }],
+  }, clock), /unavailable|eligible|window|uncertain/i);
 });
 
 test("observe start-before finish-after cutoff newly appearing review cannot prove valid", async () => {

@@ -225,6 +225,7 @@ async function prepareWorkspace(
         "fetch",
         "--no-tags",
         "--force",
+        "--update-shallow",
         snapshot.mirrorPath,
         snapshot.targetHead,
         "+refs/heads/*:refs/heads/*",

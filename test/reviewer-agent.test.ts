@@ -126,6 +126,60 @@ async function parentContext(
   };
 }
 
+test("Reviewer materializes shallow session snapshot refs into the workspace", async () => {
+  const seed = await repository();
+  const shallowRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-shallow-"));
+  try {
+    await exec("git", [
+      "clone",
+      "--depth",
+      "1",
+      `file://${seed.root}`,
+      shallowRoot,
+    ]);
+    assert.equal(await git(shallowRoot, "rev-parse", "--is-shallow-repository"), "true");
+
+    await git(shallowRoot, "config", "user.email", "test@example.com");
+    await git(shallowRoot, "config", "user.name", "Test");
+    const tip = await git(shallowRoot, "rev-parse", "HEAD^{commit}");
+    await git(shallowRoot, "branch", "fixed-branch", tip);
+    await git(shallowRoot, "tag", "fixed-tag", tip);
+    await git(shallowRoot, "update-ref", "refs/remotes/upstream/fixed", tip);
+
+    const sourceRefs: Record<string, string> = {};
+    for (const line of (await git(shallowRoot, "show-ref")).split("\n").filter(Boolean)) {
+      const space = line.indexOf(" ");
+      sourceRefs[line.slice(space + 1)] = line.slice(0, space);
+    }
+
+    let childReached = false;
+    const { context } = await parentContext(shallowRoot, async () => {
+      childReached = true;
+    }, 1);
+    const runner = createReviewerAgentRunner();
+    try {
+      const result = await runner.runReviewerAgent(
+        { description: "Standards", prompt: "Shallow snapshot review" },
+        { context },
+      );
+      assert.equal(childReached, true);
+      assert.match(result.report, /\S/);
+      assert.equal(result.targetSnapshot?.targetHead, tip);
+      assert.equal(result.targetSnapshot?.refs["refs/heads/fixed-branch"], tip);
+      assert.equal(result.targetSnapshot?.refs["refs/tags/fixed-tag"], tip);
+      assert.equal(result.targetSnapshot?.refs["refs/remotes/upstream/fixed"], tip);
+      for (const [name, sha] of Object.entries(sourceRefs)) {
+        assert.equal(result.targetSnapshot?.refs[name], sha);
+      }
+    } finally {
+      await runner.shutdown();
+    }
+  } finally {
+    await rm(shallowRoot, { recursive: true, force: true });
+    await rm(seed.root, { recursive: true, force: true });
+  }
+});
+
 test("two Reviewer Agent legs overlap in isolated clones with one pinned ref snapshot", async () => {
   const source = await repository();
   const requests: Array<{
