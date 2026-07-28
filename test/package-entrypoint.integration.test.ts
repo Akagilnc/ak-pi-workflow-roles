@@ -458,6 +458,110 @@ test("packaged coder apply proves the immediately following canonical native tdd
   );
 });
 
+test("packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion", async () => {
+  const manifest = await loadRawPackageManifest();
+  const coderSoul =
+    (await readFile(resolve(packageRoot, "souls/coder.md"), "utf8")).trim();
+  await withHermeticHome(
+    { prefix: "ak-coder-collision-integration-" },
+    async ({ home, agentDir }) => {
+      const { path: tddSkillTargetPath, raw: tddSkillRaw } =
+        await writeTestSkill(
+          resolve(home, "owned-target"),
+          "tdd",
+        );
+      const tddSkillPath = resolve(home, ".agents/skills/tdd/SKILL.md");
+      await mkdir(dirname(tddSkillPath), { recursive: true });
+      await symlink(tddSkillTargetPath, tddSkillPath);
+      const taskPath = resolve(home, "approved-task.md");
+      const task = "# Approved task\n\nImplement the first vertical slice.";
+      await writeFile(taskPath, task);
+      const faux = fauxProvider({
+        api: "ak-coder-offline",
+        provider: "ak-coder-offline",
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      await withInProcessPi({
+        cwd: packageRoot,
+        agentDir,
+        faux,
+        additionalExtensionPaths: [packageEntrypoint(manifest)],
+        additionalSkillPaths: [tddSkillPath],
+        systemPrompt: "CODER INTEGRATION BASE PROMPT",
+        mode: "print",
+        flags: {
+          "ak-role": "coder",
+          "ak-coder-phase": "apply",
+          "ak-coder-task": taskPath,
+        },
+        customTools: [siblingTool],
+      }, async ({ session, sessionManager }) => {
+        const output = {
+          status: "completed",
+          report:
+            "TDD red/green evidence; same-pattern, introduced-regression, and behavior-fact checks complete.",
+        };
+        let coderContext: Context | undefined;
+        faux.setResponses([
+          (context) => {
+            coderContext = context;
+            return fauxAssistantMessage(
+              fauxToolCall(CODER_OUTPUT_TOOL_NAME, output, {
+                id: "coder-collision-completed",
+              }),
+              { stopReason: "toolUse" },
+            );
+          },
+        ]);
+        await session.prompt("/skill:tddfoo");
+
+        const seenContext = coderContext as Context | undefined;
+        assert.ok(seenContext);
+        assert.ok(
+          seenContext.systemPrompt?.includes(
+            `<coder_soul>\n${coderSoul}\n</coder_soul>`,
+          ),
+        );
+        const userMessage = seenContext.messages.find((message) =>
+          message.role === "user"
+        );
+        assert.ok(userMessage?.role === "user");
+        const userText = typeof userMessage.content === "string"
+          ? userMessage.content
+          : userMessage.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
+        assert.equal(
+          (userText.match(/<skill name="tdd"/g) ?? []).length,
+          1,
+          "Pi emits one native Skill block after colliding prefix transform",
+        );
+        assert.deepEqual(parseSkillBlock(userText), {
+          name: "tdd",
+          location: tddSkillPath,
+          content: `References are relative to ${dirname(tddSkillPath)}.\n\n${
+            stripFrontmatter(tddSkillRaw).trim()
+          }`,
+          userMessage: "/skill:tddfoo",
+        });
+        const accepted = sessionManager.getEntries().find(
+          (entry) =>
+            entry.type === "message" &&
+            entry.message.role === "toolResult" &&
+            entry.message.toolCallId === "coder-collision-completed",
+        );
+        assert.ok(
+          accepted?.type === "message" &&
+            accepted.message.role === "toolResult",
+        );
+        assert.equal(accepted.message.isError, false);
+        assert.deepEqual(accepted.message.details, output);
+      });
+    },
+  );
+});
+
 test("packaged fixer enforces singleton output without inheriting Judge tool narrowing", async () => {
   const manifest = await loadRawPackageManifest();
   await withHermeticHome(
