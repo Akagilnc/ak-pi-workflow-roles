@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
@@ -565,98 +565,194 @@ test("packaged coder apply transforms colliding /skill:tddfoo into canonical tdd
   );
 });
 
-test("packaged fixer enforces singleton output without inheriting Judge tool narrowing", async () => {
+test("packaged fixer applies its both-phase bash seatbelt, retains its tool surface, and enforces singleton output", async () => {
   const manifest = await loadRawPackageManifest();
+  const forbiddenLiterals = [
+    "rm -rf",
+    "git reset --hard",
+    "git clean",
+    "git checkout --",
+  ] as const;
   await withHermeticHome(
     { prefix: "ak-fixer-integration-" },
     async ({ home, agentDir }) => {
       const packetPath = resolve(home, "fix-packet.md");
       await writeFile(packetPath, "# Approved repair\n\nApply it.");
-      const faux = fauxProvider({
-        api: "ak-fixer-offline",
-        provider: "ak-fixer-offline",
-        tokenSize: { min: 1000, max: 1000 },
-      });
-      await withInProcessPi({
-        cwd: packageRoot,
-        agentDir,
-        faux,
-        additionalExtensionPaths: [packageEntrypoint(manifest)],
-        systemPrompt: "FIXER INTEGRATION BASE PROMPT",
-        mode: "print",
-        flags: {
-          "ak-role": "fixer",
-          "ak-fixer-phase": "apply",
-          "ak-fix-packet": packetPath,
-        },
-        customTools: [siblingTool],
-      }, async ({ session, sessionManager }) => {
-        const activeNames = session.agent.state.tools.map((tool) => tool.name);
-        for (
-          const name of [
-            "read",
-            "bash",
-            "edit",
-            "write",
-            "integration_sibling",
-            FIXER_OUTPUT_TOOL_NAME,
-          ]
-        ) {
-          assert.ok(
-            activeNames.includes(name),
-            `${name} remains active for Fixer`,
+      for (const phase of ["plan", "apply"] as const) {
+        const faux = fauxProvider({
+          api: `ak-fixer-offline-${phase}`,
+          provider: `ak-fixer-offline-${phase}`,
+          tokenSize: { min: 1000, max: 1000 },
+        });
+        await withInProcessPi({
+          cwd: packageRoot,
+          agentDir,
+          faux,
+          additionalExtensionPaths: [packageEntrypoint(manifest)],
+          systemPrompt: "FIXER INTEGRATION BASE PROMPT",
+          mode: "print",
+          flags: {
+            "ak-role": "fixer",
+            "ak-fixer-phase": phase,
+            "ak-fix-packet": packetPath,
+          },
+          customTools: [siblingTool],
+        }, async ({ session, sessionManager }) => {
+          const activeNames = session.agent.state.tools.map((tool) => tool.name);
+          for (
+            const name of [
+              "read",
+              "bash",
+              "edit",
+              "write",
+              "integration_sibling",
+              FIXER_OUTPUT_TOOL_NAME,
+            ]
+          ) {
+            assert.ok(
+              activeNames.includes(name),
+              `${name} remains active for Fixer ${phase}`,
+            );
+          }
+
+          const markerDir = resolve(home, `fixer-markers-${phase}`);
+          await mkdir(markerDir, { recursive: true });
+          const controlMarker = resolve(markerDir, "control.txt");
+          const forbiddenCalls = forbiddenLiterals.map((literal, index) => {
+            const marker = resolve(markerDir, `blocked-${index}.txt`);
+            return {
+              literal,
+              marker,
+              id: `fixer-${phase}-blocked-${index}`,
+              call: fauxToolCall(
+                "bash",
+                {
+                  command:
+                    `printf 'executed' > ${JSON.stringify(marker)} # ${literal}`,
+                },
+                { id: `fixer-${phase}-blocked-${index}` },
+              ),
+            };
+          });
+          faux.setResponses([
+            fauxAssistantMessage(
+              [
+                ...forbiddenCalls.map((item) => item.call),
+                fauxToolCall(
+                  "bash",
+                  {
+                    command:
+                      `printf 'control-ok' > ${JSON.stringify(controlMarker)}`,
+                  },
+                  { id: `fixer-${phase}-control` },
+                ),
+              ],
+              { stopReason: "toolUse" },
+            ),
+            fauxAssistantMessage(`seatbelt matrix observed for ${phase}`),
+          ]);
+          await session.prompt(
+            `Exercise Fixer bash seatbelt in ${phase} phase.`,
           );
-        }
 
-        const output = {
-          status: "completed",
-          report: "Repaired and verified.",
-        };
-        faux.setResponses([
-          fauxAssistantMessage(
-            [
+          for (const item of forbiddenCalls) {
+            const blocked = sessionManager.getEntries().find(
+              (entry) =>
+                entry.type === "message" &&
+                entry.message.role === "toolResult" &&
+                entry.message.toolCallId === item.id,
+            );
+            assert.ok(
+              blocked?.type === "message" &&
+                blocked.message.role === "toolResult",
+              `${item.literal} must produce a tool result in ${phase}`,
+            );
+            assert.equal(
+              blocked.message.isError,
+              true,
+              `${item.literal} must be an ordinary blocked/error result in ${phase}`,
+            );
+            assert.match(
+              textOf(blocked.message),
+              new RegExp(item.literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+              `${item.literal} block reason must name the matched literal in ${phase}`,
+            );
+            await assert.rejects(
+              () => access(item.marker),
+              /ENOENT/,
+              `${item.literal} must not execute bash in ${phase}`,
+            );
+          }
+
+          const control = sessionManager.getEntries().find(
+            (entry) =>
+              entry.type === "message" &&
+              entry.message.role === "toolResult" &&
+              entry.message.toolCallId === `fixer-${phase}-control`,
+          );
+          assert.ok(
+            control?.type === "message" && control.message.role === "toolResult",
+          );
+          assert.equal(
+            control.message.isError,
+            false,
+            `harmless control bash must reach real packaged Pi bash in ${phase}`,
+          );
+          assert.equal(await readFile(controlMarker, "utf8"), "control-ok");
+
+          const output = phase === "plan"
+            ? { status: "planned", report: "Repair plan ready." }
+            : { status: "completed", report: "Repaired and verified." };
+          faux.setResponses([
+            fauxAssistantMessage(
+              [
+                fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, {
+                  id: `mixed-fixer-${phase}`,
+                }),
+                fauxToolCall("integration_sibling", {}, {
+                  id: `mixed-sibling-${phase}`,
+                }),
+              ],
+              { stopReason: "toolUse" },
+            ),
+            fauxAssistantMessage(`singleton rejection observed for ${phase}`),
+          ]);
+          await session.prompt(`Reject a mixed final batch in ${phase}.`);
+          const mixed = sessionManager.getEntries().find(
+            (entry) =>
+              entry.type === "message" &&
+              entry.message.role === "toolResult" &&
+              entry.message.toolCallId === `mixed-fixer-${phase}`,
+          );
+          assert.ok(
+            mixed?.type === "message" && mixed.message.role === "toolResult",
+          );
+          assert.equal(mixed.message.isError, true);
+          assert.match(textOf(mixed.message), /sole final tool call/);
+
+          faux.setResponses([
+            fauxAssistantMessage(
               fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, {
-                id: "mixed-fixer",
+                id: `sole-fixer-${phase}`,
               }),
-              fauxToolCall("integration_sibling", {}, { id: "mixed-sibling" }),
-            ],
-            { stopReason: "toolUse" },
-          ),
-          fauxAssistantMessage("singleton rejection observed"),
-        ]);
-        await session.prompt("Reject a mixed final batch.");
-        const mixed = sessionManager.getEntries().find(
-          (entry) =>
-            entry.type === "message" &&
-            entry.message.role === "toolResult" &&
-            entry.message.toolCallId === "mixed-fixer",
-        );
-        assert.ok(
-          mixed?.type === "message" && mixed.message.role === "toolResult",
-        );
-        assert.equal(mixed.message.isError, true);
-        assert.match(textOf(mixed.message), /sole final tool call/);
-
-        faux.setResponses([
-          fauxAssistantMessage(
-            fauxToolCall(FIXER_OUTPUT_TOOL_NAME, output, { id: "sole-fixer" }),
-            { stopReason: "toolUse" },
-          ),
-        ]);
-        await session.prompt("Accept a sole Fixer output.");
-        const accepted = sessionManager.getEntries().find(
-          (entry) =>
-            entry.type === "message" &&
-            entry.message.role === "toolResult" &&
-            entry.message.toolCallId === "sole-fixer",
-        );
-        assert.ok(
-          accepted?.type === "message" &&
-            accepted.message.role === "toolResult",
-        );
-        assert.equal(accepted.message.isError, false);
-        assert.deepEqual(accepted.message.details, output);
-      });
+              { stopReason: "toolUse" },
+            ),
+          ]);
+          await session.prompt(`Accept a sole Fixer output in ${phase}.`);
+          const accepted = sessionManager.getEntries().find(
+            (entry) =>
+              entry.type === "message" &&
+              entry.message.role === "toolResult" &&
+              entry.message.toolCallId === `sole-fixer-${phase}`,
+          );
+          assert.ok(
+            accepted?.type === "message" &&
+              accepted.message.role === "toolResult",
+          );
+          assert.equal(accepted.message.isError, false);
+          assert.deepEqual(accepted.message.details, output);
+        });
+      }
     },
   );
 });
