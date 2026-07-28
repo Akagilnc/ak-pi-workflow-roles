@@ -182,13 +182,13 @@ function requireUserLogin(raw: unknown): string {
 }
 
 /**
- * Surface authors may be tombstoned (`user: null`). Preserve the record with
- * null login rather than throwing.
+ * Surface authors may be tombstoned only as literal JSON null (`user: null`).
+ * Preserve that case with null login; every other shape fails closed.
  */
 function optionalUserLogin(raw: unknown): string | null {
-  if (raw === null || raw === undefined) return null;
+  if (raw === null) return null;
   if (!isRecord(raw) || typeof raw["login"] !== "string") {
-    return null;
+    throw new Error("GitHub payload missing user.login");
   }
   return raw["login"];
 }
