@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { writeTestSkill } from "./helpers/test-skill.ts";
-
-const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const piCli = resolve(packageRoot, "node_modules/.bin/pi");
+import {
+  packageRoot,
+  runPiSubprocess,
+  withHermeticHome,
+  writeTestSkill,
+} from "./helpers/pi-test-harness.ts";
 
 async function runCli(mode: "print" | "json") {
-  const agentDir = await mkdtemp(resolve(tmpdir(), "ak-audit-cli-"));
   const args = [
     "--no-extensions",
     "--no-skills",
@@ -33,33 +31,18 @@ async function runCli(mode: "print" | "json") {
     ...(mode === "print" ? ["-p", "Judge."] : ["--mode", "json", "Judge."]),
   ];
 
-  try {
-    return await new Promise<{ code: number | null; stdout: string; stderr: string }>(
-      (resolveResult, reject) => {
-        const child = spawn(piCli, args, {
-          cwd: packageRoot,
-          env: {
-            ...process.env,
-            PI_CODING_AGENT_DIR: agentDir,
-            PI_OFFLINE: "1",
-          },
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        let stdout = "";
-        let stderr = "";
-        child.stdout.setEncoding("utf8").on("data", (chunk) => {
-          stdout += chunk;
-        });
-        child.stderr.setEncoding("utf8").on("data", (chunk) => {
-          stderr += chunk;
-        });
-        child.on("error", reject);
-        child.on("close", (code) => resolveResult({ code, stdout, stderr }));
-      },
-    );
-  } finally {
-    await rm(agentDir, { recursive: true, force: true });
-  }
+  return withHermeticHome(
+    { prefix: "ak-audit-cli-" },
+    async ({ agentDir }) =>
+      runPiSubprocess(args, {
+        cwd: packageRoot,
+        env: {
+          ...process.env,
+          PI_CODING_AGENT_DIR: agentDir,
+          PI_OFFLINE: "1",
+        },
+      }),
+  );
 }
 
 type ReviewerFailureStage =
@@ -75,67 +58,119 @@ async function runReviewerCli(
   mode: "print" | "json",
   stage: ReviewerFailureStage,
 ) {
-  const agentDir = await mkdtemp(resolve(tmpdir(), "ak-reviewer-fatal-cli-"));
-  const { path: canonicalSkillPath } = await writeTestSkill(
-    agentDir,
-    "code-review",
+  return withHermeticHome(
+    { prefix: "ak-reviewer-fatal-cli-" },
+    async ({ home, agentDir }) => {
+      const { path: canonicalSkillPath } = await writeTestSkill(
+        home,
+        "code-review",
+      );
+      const cwd = stage === "child-preparation" ? home : packageRoot;
+      const args = [
+        "--no-extensions",
+        "--no-skills",
+        "--skill",
+        canonicalSkillPath,
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--no-session",
+        "-e",
+        resolve(packageRoot, "extensions/role-runtime.ts"),
+        "-e",
+        resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
+        "--ak-role",
+        "reviewer",
+        "--ak-review-task",
+        resolve(packageRoot, "test/fixtures/reviewer-task.md"),
+        "--provider",
+        "ak-reviewer-failure",
+        "--model",
+        "faux-1",
+        ...(mode === "print"
+          ? ["-p", "Review."]
+          : ["--mode", "json", "Review."]),
+      ];
+      return runPiSubprocess(args, {
+        cwd,
+        env: {
+          ...process.env,
+          HOME: home,
+          AK_REVIEWER_FAILURE_STAGE: stage,
+          PI_CODING_AGENT_DIR: agentDir,
+          PI_OFFLINE: "1",
+        },
+      });
+    },
   );
-  const cwd = stage === "child-preparation" ? agentDir : packageRoot;
-  const args = [
-    "--no-extensions",
-    "--no-skills",
-    "--skill",
-    canonicalSkillPath,
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--no-session",
-    "-e",
-    resolve(packageRoot, "extensions/role-runtime.ts"),
-    "-e",
-    resolve(packageRoot, "test/fixtures/reviewer-failure-provider.ts"),
-    "--ak-role",
-    "reviewer",
-    "--ak-review-task",
-    resolve(packageRoot, "test/fixtures/reviewer-task.md"),
-    "--provider",
-    "ak-reviewer-failure",
-    "--model",
-    "faux-1",
-    ...(mode === "print" ? ["-p", "Review."] : ["--mode", "json", "Review."]),
-  ];
-  try {
-    return await new Promise<{ code: number | null; stdout: string; stderr: string }>(
-      (resolveResult, reject) => {
-        const child = spawn(piCli, args, {
-          cwd,
-          env: {
-            ...process.env,
-            HOME: agentDir,
-            AK_REVIEWER_FAILURE_STAGE: stage,
-            PI_CODING_AGENT_DIR: agentDir,
-            PI_OFFLINE: "1",
-          },
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        let stdout = "";
-        let stderr = "";
-        child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
-        child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-        child.on("error", reject);
-        child.on("close", (code) => resolveResult({ code, stdout, stderr }));
-      },
-    );
-  } finally {
-    await rm(agentDir, { recursive: true, force: true });
-  }
+}
+
+async function runCoderSkillFailureCli(
+  mode: "print" | "json",
+  fixture: "missing" | "unreadable" | "empty",
+) {
+  return withHermeticHome(
+    { prefix: "ak-coder-skill-fatal-cli-" },
+    async ({ home, agentDir }) => {
+      const skillPath = resolve(home, ".agents/skills/tdd/SKILL.md");
+      const taskPath = resolve(home, "coder-task.md");
+      await writeFile(
+        taskPath,
+        "# Approved task\n\nApply the approved slice.\n",
+      );
+      if (fixture === "unreadable") {
+        await mkdir(skillPath, { recursive: true });
+      } else if (fixture === "empty") {
+        await mkdir(dirname(skillPath), { recursive: true });
+        await writeFile(
+          skillPath,
+          "---\nname: tdd\ndescription: empty fixture\n---\n\n",
+        );
+      }
+      const args = [
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--no-session",
+        "-e",
+        resolve(packageRoot, "extensions/role-runtime.ts"),
+        "-e",
+        resolve(packageRoot, "test/fixtures/coder-skill-failure-provider.ts"),
+        "--ak-role",
+        "coder",
+        "--ak-coder-phase",
+        "apply",
+        "--ak-coder-task",
+        taskPath,
+        "--provider",
+        "ak-coder-skill-failure",
+        "--model",
+        "faux-1",
+        ...(mode === "print" ? ["-p", "Apply."] : ["--mode", "json", "Apply."]),
+      ];
+      return runPiSubprocess(args, {
+        cwd: packageRoot,
+        env: {
+          ...process.env,
+          HOME: home,
+          PI_CODING_AGENT_DIR: agentDir,
+          PI_OFFLINE: "1",
+        },
+      });
+    },
+  );
 }
 
 test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
   for (const mode of ["print", "json"] as const) {
     const result = await runCli(mode);
     assert.equal(result.code, 1, `${mode} exits nonzero`);
-    assert.match(result.stderr, /Request was aborted|AUDIT_FAILURE_PROVIDER_CALLS/);
+    assert.match(
+      result.stderr,
+      /Request was aborted|AUDIT_FAILURE_PROVIDER_CALLS/,
+    );
     assert.doesNotMatch(result.stdout, /Judge verdict accepted/);
     assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
     if (mode === "json") {
@@ -144,6 +179,44 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
         /"toolName":"ak_judge_output".*"isError":true/,
       );
       assert.match(result.stdout, /"stopReason":"aborted"/);
+    }
+  }
+});
+
+test("unavailable canonical tdd is infrastructure failure in print and JSON", async () => {
+  for (const fixture of ["missing", "unreadable", "empty"] as const) {
+    for (const mode of ["print", "json"] as const) {
+      const result = await runCoderSkillFailureCli(mode, fixture);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      assert.equal(result.code, 1, `${fixture}/${mode} exits nonzero`);
+      assert.match(
+        combined,
+        /Canonical tdd Skill|Coder canonical tdd Skill binding was not initialized/,
+      );
+      assert.doesNotMatch(combined, /Coder report accepted/);
+      if (mode === "json") {
+        const events = result.stdout
+          .split("\n")
+          .filter((line) => line.trim().startsWith("{"))
+          .map((line) => JSON.parse(line));
+        const outputResults = events.filter((event) =>
+          event.type === "message_end" &&
+          event.message?.role === "toolResult" &&
+          event.message.toolName === "ak_coder_output"
+        );
+        assert.equal(
+          outputResults.some((event) => event.message.isError === false),
+          false,
+          `${fixture}/${mode} has no accepted Coder output`,
+        );
+        assert.equal(
+          outputResults.some((event) =>
+            event.message.details?.status !== undefined
+          ),
+          false,
+          `${fixture}/${mode} does not encode infrastructure as a receipt status`,
+        );
+      }
     }
   }
 });
@@ -203,7 +276,11 @@ test("every mandated Reviewer fatal stage aborts print and JSON at its intended 
       const result = await runReviewerCli(mode, row.stage);
       const combined = `${result.stdout}\n${result.stderr}`;
       assert.equal(result.code, 1, `${row.stage}/${mode} exits nonzero`);
-      assert.match(combined, row.marker, `${row.stage}/${mode} reached its stage`);
+      assert.match(
+        combined,
+        row.marker,
+        `${row.stage}/${mode} reached its stage`,
+      );
       assert.match(combined, /Request was aborted|"stopReason":"aborted"/);
       assert.match(
         result.stderr,

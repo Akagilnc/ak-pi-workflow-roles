@@ -105,7 +105,7 @@ Coder terminates through `ak_coder_output` with the same thin worker envelope:
 {"status":"planned|completed|refused","report":"Markdown report","commitSha":"optional self-report"}
 ```
 
-During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd`. Use `--no-skills --skill ~/.agents/skills/tdd/SKILL.md` to bind the canonical Matt TDD skill without name collisions. A `completed` receipt is rejected unless the session transcript contains Pi's expanded `<skill name="tdd" ...>` block; an evidence-bearing `refused` receipt does not require TDD or a commit.
+During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd`. Use `--no-skills --skill ~/.agents/skills/tdd/SKILL.md` to bind the canonical Matt TDD skill without name collisions. A `completed` receipt is rejected unless the immediately following prompt proves Pi's exact native expansion of the complete canonical TDD Skill and original request; an evidence-bearing `refused` receipt does not require that proof or a commit.
 
 The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the Judge. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate.
 
