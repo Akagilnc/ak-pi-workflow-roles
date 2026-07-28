@@ -3,10 +3,10 @@
   "roleFlags": [
     "--ak-role=judge"
   ],
-  "provider": "openai-codex",
-  "model": "gpt-5.6-sol",
-  "packageSha": "c721b940269a86b60a093223c812ade2218109e4",
-  "recordedAt": "2026-07-28T16:53:40.151Z",
-  "soulDigest": "7526737465b11310d71b89f667dde186d57609f0fce92bdd082fe79ef5778c3b",
-  "note": "JSONL trust root is session.jsonl mode-json stream; receipt is cross-check only."
+  "provider": "xai",
+  "model": "grok-4.5",
+  "packageSha": "62596bad1f62b1b2d0b040d47205f10b16454c41",
+  "recordedAt": "2026-07-28T17:13:35.662Z",
+  "soulDigest": "65266ef6c46e10728f74fea48cba5dae0a0145f2c2d260f59821980da3e0c99f",
+  "note": "JSONL trust root is session.jsonl mode-json stream; receipt is cross-check only. Recorded from opaque workspace without direction-labeled fixture paths."
 }
