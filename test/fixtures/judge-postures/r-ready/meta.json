@@ -1,0 +1,12 @@
+{
+  "akRole": "judge",
+  "roleFlags": [
+    "--ak-role=judge"
+  ],
+  "provider": "openai-codex",
+  "model": "gpt-5.6-sol",
+  "packageSha": "0546c8bdbadfa4f27c2ea2fafa9b9ae4cde9e372",
+  "recordedAt": "2026-07-28T17:54:49Z",
+  "soulDigest": "8f292429c4237598c93b92e191d6a76b18c69f2d4c1f6655aab0951f95a70339",
+  "note": "JSONL trust root is session.jsonl mode-json stream; receipt is cross-check only. Recorded from opaque workspace without direction-labeled fixture paths."
+}
