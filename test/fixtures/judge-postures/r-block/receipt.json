@@ -1,0 +1,7 @@
+{
+  "judgeStatus": "continue",
+  "fix": {
+    "summary": "The plan is not construction-ready because it does not state explicit Red and Green behavior oracles. Add a reproducible Red case: in a configured multi-leg receipt, request/recovery evidence owned by leg A is joined into leg B’s terminal report even though B has no local request/recovery evidence. Add the Green result: after correcting the owning join, A retains its own evidence while B contains no evidence references owned by A, with the frozen envelope, markers, and terminal statuses unchanged. Make clear how both request and recovery evidence covered by the accepted authority are verified, or explicitly scope an already-correct category as unchanged."
+  },
+  "note": "Open helper names, fixture shapes, library syntax, and the local join algorithm are Apply-time implementation details and do not independently block the plan."
+}

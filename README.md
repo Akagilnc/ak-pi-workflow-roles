@@ -14,6 +14,8 @@ The judge role:
 
 The compliance call uses the active Pi model and credentials. It checks demonstrated procedural compliance with the Soul; it does not replace the judge's substantive finding decisions.
 
+Judge infers its burden of proof from the supplied materials alone (authority completeness, plan construction-readiness, apply executable proof, or review finding adjudication). There is no posture CLI flag and no package-owned call history. A plan `converged` authorizes construction only; it does not claim implementation proof already exists. Authority completeness does not require apply-depth evidence. Optional `note` may carry apply obligations without a new verdict state.
+
 On activation, Judge narrows active tools to the registered members of this exact whitelist: `read`, `grep`, `find`, `ls`, `bash`, and `ak_judge_output`. In particular, `write`, `edit`, and arbitrary sibling tools are inactive. This is role gating to prevent accidental role drift, not a security boundary; callers that need isolation must provide a sandbox or container.
 
 ## Install
@@ -172,11 +174,11 @@ Failure channels (non-zero, no receipt) include malformed/unsupported config or 
 
 ## Verdict contract
 
-- `converged`
+- `converged` — relative to the material under judgment (for a plan: construction authorization only)
 - `continue` with non-empty `fix.summary`
 - `escalate` with `decisionGate.question` and non-empty `decisionGate.options`
 
-Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields. It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
+Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields (including apply obligations attached to a construction-ready plan). It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
 
 Workflow ordering and routing are caller-owned. A separate orchestrator is optional infrastructure, not a package requirement.
 
