@@ -560,6 +560,61 @@ test("R6 null user on review/issue comment/review comment preserves record and n
   void page;
 });
 
+test("R6 non-null user shapes fail closed on review/issue comment/review comment", () => {
+  const missingLogin = /GitHub payload missing user\.login/;
+  const rejectShapes: unknown[] = [
+    undefined, // user absent when field omitted via spread below
+    { id: 7 },
+    { login: 5 },
+    "not-an-object",
+  ];
+
+  for (const user of rejectShapes) {
+    const withUser = user === undefined ? {} : { user };
+
+    assert.throws(
+      () => normalizeReview({
+        id: 1,
+        ...withUser,
+        state: "APPROVED",
+        body: "x",
+        commit_id: "abc",
+        submitted_at: "2024-01-01T00:00:00Z",
+        html_url: "https://example.test/r/1",
+      }),
+      missingLogin,
+    );
+
+    assert.throws(
+      () => normalizeIssueComment({
+        id: 2,
+        ...withUser,
+        body: "x",
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+        html_url: "https://example.test/c/2",
+      }),
+      missingLogin,
+    );
+
+    assert.throws(
+      () => normalizeReviewComment({
+        id: 3,
+        ...withUser,
+        body: "x",
+        path: "src/a.ts",
+        line: 1,
+        original_line: 1,
+        created_at: "2024-01-01T00:00:00Z",
+        updated_at: "2024-01-01T00:00:00Z",
+        html_url: "https://example.test/rc/3",
+        pull_request_review_id: 1,
+      }),
+      missingLogin,
+    );
+  }
+});
+
 test("R8 authenticated_user retained raw is login+id only", () => {
   const record = normalizeAuthenticatedUserEvidence(
     {
