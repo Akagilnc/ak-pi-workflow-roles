@@ -647,8 +647,13 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       try {
         surfaces = await fetchObserveSurfaces(transport);
         if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
-          // Retry full surfaces once; bind only the consistent terminal read.
+          // Retry full surfaces once; bind only a consistent terminal read.
           surfaces = await fetchObserveSurfaces(transport);
+          if (prIdentity(surfaces.prInitial) !== prIdentity(surfaces.prTerminal)) {
+            throw new Error(
+              `PR identity drifted across observe bracket after retry (${prIdentity(surfaces.prInitial)} → ${prIdentity(surfaces.prTerminal)})`,
+            );
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
