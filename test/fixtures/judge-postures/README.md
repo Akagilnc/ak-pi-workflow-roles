@@ -40,14 +40,17 @@ facts), never from path labels or sidecars.
 paid model:
 
 1. Parse `session.jsonl` for the **sole** accepted `ak_judge_output` bound as a
-   completed call chain: assistant-issued `toolCall` (non-empty id, object
-   arguments) → matching `tool_execution_start` (same id/name, args deep-equal)
-   → terminal success (`tool_execution_end` and/or `toolResult`) with
-   `isError === false`, text `Judge verdict accepted`, and object `details`
-   deep-equal to the issued arguments. All terminal representations for one id
-   must agree (deep-equal payload); disagreement rejects the id (no overwrite).
-   Missing bind, args mismatch, or missing `isError` does not count. Two
-   distinct fully-bound ids still count as two even when details are identical.
+   unique ordered lifecycle: exactly one assistant-issued `toolCall` (non-empty
+   id, object arguments) → exactly one matching `tool_execution_start` (same
+   id/name, args deep-equal) → ≥1 terminal success (`tool_execution_end` and/or
+   `toolResult`) with `isError === false`, text `Judge verdict accepted`, and
+   object `details` deep-equal to the issued arguments; row order must be
+   call < start < every terminal. Same-id replay (multiple calls or starts)
+   rejects even when payloads would agree under last-write. All terminal
+   representations for one id must agree (deep-equal payload); disagreement
+   rejects the id. Missing bind, args mismatch, or missing `isError` does not
+   count. Two distinct fully-bound ids still count as two even when details are
+   identical.
 2. Extract user-prompt text from JSONL `message_end` (not stream deltas) and
    materials-read path/body from the successful `read` bound to that prompt.
 3. Run neutrality checks on those JSONL-derived surfaces; require static
