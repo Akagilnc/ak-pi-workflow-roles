@@ -6,7 +6,7 @@ import {
   type ComplianceCompletion,
   type ComplianceDecision,
 } from "./compliance-transport.ts";
-import type { ReviewerAuditInput } from "./role-runtime.ts";
+import type { ReviewerAuditInput } from "./reviewer-role.ts";
 
 export const REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
 

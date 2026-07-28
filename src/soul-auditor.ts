@@ -5,7 +5,7 @@ import {
   runComplianceAudit,
   type ComplianceCompletion,
 } from "./compliance-transport.ts";
-import type { SoulAuditInput, SoulAuditResult } from "./role-runtime.ts";
+import type { SoulAuditInput, SoulAuditResult } from "./judge-role.ts";
 
 export const SOUL_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
 
