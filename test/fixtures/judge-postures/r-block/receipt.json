@@ -1,7 +1,7 @@
 {
   "judgeStatus": "continue",
   "fix": {
-    "summary": "The plan is not construction-ready because it does not state explicit Red and Green behavior oracles. Add a reproducible Red case: in a configured multi-leg receipt, request/recovery evidence owned by leg A is joined into leg B’s terminal report even though B has no local request/recovery evidence. Add the Green result: after correcting the owning join, A retains its own evidence while B contains no evidence references owned by A, with the frozen envelope, markers, and terminal statuses unchanged. Make clear how both request and recovery evidence covered by the accepted authority are verified, or explicitly scope an already-correct category as unchanged."
+    "summary": "The plan is not start-ready because it omits explicit Red and Green facts. Add a Red oracle using at least two configured legs: request or recovery evidence owned by leg A exists, leg B has no local request/recovery evidence and reaches a terminal report, and before the fix B’s report contains an A-owned evidence reference. Add a Green oracle for the same scenario: B’s terminal report contains no request/recovery evidence owned by A (while the frozen receipt envelope, request markers, and terminal statuses remain unchanged). Behavior, owner, and scope are already sufficiently stated; helper names, fixture shapes, and library details may remain Apply-time choices."
   },
-  "note": "Open helper names, fixture shapes, library syntax, and the local join algorithm are Apply-time implementation details and do not independently block the plan."
+  "note": "Apply must exercise the production Collector receipt attempt-to-leg assembly seam and verify report evidenceRefs, rather than only a helper-level reconstruction."
 }

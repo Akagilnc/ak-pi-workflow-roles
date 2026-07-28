@@ -1,4 +1,4 @@
 {
   "judgeStatus": "converged",
-  "note": "Plan is construction-ready: Behavior, Owner, Red, Green, and Scope are explicit and consistent with the accepted authority. Convergence authorizes construction only; Apply must mechanically verify on the current head that the two-leg missing-B scenario traverses the Collector attempt-to-leg assembly seam, excludes A evidence IDs from B and B’s terminal report, preserves A evidence at the receipt root, and leaves the frozen envelope, markers, and status vocabulary unchanged."
+  "note": "Plan is construction-ready: it states the observable contamination, assigns the accepted attempt-to-leg assembly seam, supplies a two-leg red counterexample and explicit green oracle, and preserves the frozen receipt envelope, markers, and statuses. Apply must exercise the production receipt assembly and verify both B’s leg refs and B’s terminal-report refs exclude A’s request/recovery IDs while the root evidence embedding retains A’s evidence."
 }

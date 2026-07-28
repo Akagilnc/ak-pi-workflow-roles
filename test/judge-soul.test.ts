@@ -33,8 +33,11 @@ test("Judge Soul states plan readiness five facts and construction-only converge
 
 test("Judge Soul separates plan blockers from apply obligations via note", () => {
   assert.match(soul, /平行机制|forbidden|范围扩张|不可行|oracle/i);
-  assert.match(soul, /fake|夹具|helper|字节|note/i);
-  assert.match(soul, /不是.*计划阻断|not plan blocker|Apply 义务|apply obligation/i);
+  assert.match(soul, /note/i);
+  assert.match(
+    soul,
+    /不是.*计划阻断|not plan blocker|Apply 义务|apply obligation|局部机制|实现细节/i,
+  );
 });
 
 test("Judge Soul states complete-first, late-finding, and authority freeze without retry ceilings", () => {
@@ -79,6 +82,15 @@ test("Judge Soul excludes process, schema, flags, packets, and issue carriers", 
     /orchestrat/i,
     /fauxProvider|expected\.json|session\.jsonl/i,
     /exact fake array|helper call syntax/i,
+    /helper\/函数\/文件名/,
+    /fake\s*数组/,
+    /夹具字面量/,
+    /库调用语法/,
+    /表驱动/,
+    /分立测试/,
+    /字节边界/,
+    /确切\s*helper/i,
+    /确切\s*fake/i,
   ]) {
     assert.doesNotMatch(soul, forbidden);
   }
