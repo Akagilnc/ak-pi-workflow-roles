@@ -1,0 +1,8 @@
+{
+  "observedAtHead": "fd042e738ab57c2b44b2dbeb19947565f9f229db",
+  "receiptClaim": "worktree clean after commit",
+  "independentObservation": "tracked dist/recorder/rename_no_replace.node modified after invocation",
+  "headSha256": "99f8110e7123dad7f472e4855306d10c4c5b8f55957bfbb4b4730c60d1a2d97c",
+  "worktreeSha256": "aa88ed2ac1bb327948a8866351d3279b06a9233511d700e981bba9f5e352afcb",
+  "disposition": "Receipt completion claim is contradicted for cleanliness; generated native artifact ownership must be repaired before closure."
+}
