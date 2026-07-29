@@ -10,6 +10,7 @@ import {
   requireCanonicalGitWorktree,
   resolveInsideRoot,
 } from "./paths.ts";
+import { scanString } from "./scanner.ts";
 
 export type GitReferenceKind = "authority" | "task" | "input" | "exhibit";
 export type ExternalInputKind = "authority" | "task" | "input";
@@ -108,6 +109,22 @@ function requireStringOrNull(value: unknown, label: string): string | null {
   return value;
 }
 
+/**
+ * Structural metadata (archive identity, declaration ids) becomes path segments
+ * and report locations. Redaction would damage identity, so a scanner hit fails
+ * closed before path construction or later diagnostics can observe the raw value.
+ */
+function requireCredentialFreeMetadata(value: string, label: string): string {
+  const scanned = scanString(value, label);
+  if (scanned.report.redacted || scanned.value !== value) {
+    throw new RecorderError(
+      "invalid-config",
+      `${label} must not be credential-shaped`,
+    );
+  }
+  return value;
+}
+
 function parseGitReference(raw: unknown, index: number): GitReferenceDeclaration {
   if (!isRecord(raw) || !hasExactKeys(raw, [
     "id",
@@ -123,7 +140,10 @@ function parseGitReference(raw: unknown, index: number): GitReferenceDeclaration
       `declarations.gitReferences[${index}] has invalid shape`,
     );
   }
-  const id = requireString(raw.id, `declarations.gitReferences[${index}].id`);
+  const id = requireCredentialFreeMetadata(
+    requireString(raw.id, `declarations.gitReferences[${index}].id`),
+    `declarations.gitReferences[${index}].id`,
+  );
   if (!ID_RE.test(id)) {
     throw new RecorderError(
       "invalid-config",
@@ -197,7 +217,10 @@ function parseExternalInput(
       `declarations.externalInputs[${index}] has invalid shape`,
     );
   }
-  const id = requireString(raw.id, `declarations.externalInputs[${index}].id`);
+  const id = requireCredentialFreeMetadata(
+    requireString(raw.id, `declarations.externalInputs[${index}].id`),
+    `declarations.externalInputs[${index}].id`,
+  );
   if (!ID_RE.test(id)) {
     throw new RecorderError(
       "invalid-config",
@@ -241,7 +264,10 @@ function parseExhibit(raw: unknown, index: number): ExhibitDeclaration {
       `declarations.exhibits[${index}] has invalid shape`,
     );
   }
-  const id = requireString(raw.id, `declarations.exhibits[${index}].id`);
+  const id = requireCredentialFreeMetadata(
+    requireString(raw.id, `declarations.exhibits[${index}].id`),
+    `declarations.exhibits[${index}].id`,
+  );
   if (!ID_RE.test(id)) {
     throw new RecorderError(
       "invalid-config",
@@ -447,12 +473,18 @@ export function loadRecorderConfig(configPath: string): RecorderConfig {
     "archive.repositoryRoot",
   );
 
-  const root = normalizeRepoRelativePath(
-    requireString(raw.archive.root, "archive.root"),
+  const root = requireCredentialFreeMetadata(
+    normalizeRepoRelativePath(
+      requireString(raw.archive.root, "archive.root"),
+      "archive.root",
+    ),
     "archive.root",
   );
-  const docketId = normalizeRepoRelativePath(
-    requireString(raw.archive.docketId, "archive.docketId"),
+  const docketId = requireCredentialFreeMetadata(
+    normalizeRepoRelativePath(
+      requireString(raw.archive.docketId, "archive.docketId"),
+      "archive.docketId",
+    ),
     "archive.docketId",
   );
   const destination = resolveInsideRoot(
