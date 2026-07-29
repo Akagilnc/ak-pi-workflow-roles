@@ -1,0 +1,18 @@
+{
+  "role": "fixer",
+  "phase": "apply",
+  "resultCommit": "141a7d2e2ffcb1b985acf60dc66e28fd137d389e",
+  "plan": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/final-residual-receipts/receipt-derivative/plan/receipt.json",
+    "sha256": "52503950ac2eef2a21b94372fa416907e55c52dfd8e59443cdf65a2a72a9497e"
+  },
+  "sessionCandidate": {
+    "bytes": 3429709,
+    "sha256": "cde0330b0e1254b5c9440520bc60b4a21be1c7cd3fc3d7afcb3727a071623376",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "d7c2b526cb849ffc6b98c49ad461e7330e42d39aa06acc73761e5dc92cb61925"
+  }
+}
