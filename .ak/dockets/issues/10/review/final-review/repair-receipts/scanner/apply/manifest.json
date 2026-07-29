@@ -1,0 +1,18 @@
+{
+  "role": "fixer",
+  "phase": "apply",
+  "resultCommit": "f0bed0ea39100b1101ce1287ce4db505c884a671",
+  "plan": {
+    "path": ".ak/dockets/issues/10/review/final-review/repair-receipts/scanner/plan/receipt.json",
+    "sha256": "fdc1f9927c9126335e24870e5790cf726f9ca4c4867cdef3186fbf02a2cffc3e"
+  },
+  "sessionCandidate": {
+    "bytes": 3923295,
+    "sha256": "fbd28ab56ee490e2676c1d66c507ff43a555507c9cee28e4d0669174589f9df1",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "2fe94729c8af67e415fe45611d27e07c508f6e8726943180a3780c3c27a2e22a"
+  }
+}
