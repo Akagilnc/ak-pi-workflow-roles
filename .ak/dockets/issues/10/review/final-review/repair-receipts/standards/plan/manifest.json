@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/review/final-review/repairs/standards-doc-ci.md",
+    "sha256": "0c894cfbcb2478fb1aa6954c8ff69f63a5073f89c79a38e9ce079f69990ed393"
+  },
+  "sessionCandidate": {
+    "bytes": 10900486,
+    "sha256": "e0437a7ea0eea3e0c55f4ae00e51e020f9129f61ff863d6641790571528e72f5",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "36c2770f0ddff5fa2b9c5c34283d66697cbc7353a108b57999a9e2c87c377570"
+  }
+}

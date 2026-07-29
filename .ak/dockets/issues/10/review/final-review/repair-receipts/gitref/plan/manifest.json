@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/review/final-review/repairs/git-reference-identity.md",
+    "sha256": "93c82451d8470b3438b1bdd932a8e889ad45ccbce3048d8b6680efdec2bba256"
+  },
+  "sessionCandidate": {
+    "bytes": 8734136,
+    "sha256": "50d6a01bf50da0ebbf08173c3fbcce53fc351bd7a0cc34e14561261b04304911",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "6269e324db44569db68c7140f4bafa42d89015f780154fa0d0134505fed76303"
+  }
+}
