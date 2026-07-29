@@ -468,8 +468,11 @@ export function loadRecorderConfig(configPath: string): RecorderConfig {
     );
   }
 
-  const repositoryRoot = requireCanonicalGitWorktree(
-    requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"),
+  const repositoryRoot = requireCredentialFreeMetadata(
+    requireCanonicalGitWorktree(
+      requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"),
+      "archive.repositoryRoot",
+    ),
     "archive.repositoryRoot",
   );
 

@@ -996,6 +996,125 @@ test("admission counterexample matrix rejects before spawn", async () => {
   }
 });
 
+test("canonical archive identity fails closed when credential-shaped", async () => {
+  const root = makeTempDir("ak-recorder-arch-id-scan-");
+  try {
+    const secretComponent = "token=leaked-secret-value";
+    // Credential-shaped directory component is otherwise a valid Git worktree root.
+    const toxicArchive = initGitRepo(join(root, secretComponent));
+    commitFile(toxicArchive, ".keep", "\n");
+    // Clean authority/task refs so only archive identity is toxic.
+    const refs = initGitRepo(join(root, "refs"));
+    const authority = commitFile(refs, "authority.md", "# authority\n");
+    const task = commitFile(refs, "task.md", "# task\n");
+    const script = writeCounterScript(root);
+    const counter = join(root, "counter.txt");
+    const docketId = "issues/10/apply/apply-arch-identity-scan";
+    const toxicConfig = writeRecorderConfig(root, {
+      archiveRepo: toxicArchive,
+      cwd: root,
+      docketId,
+      authority: {
+        repositoryRoot: refs,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: refs,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+    });
+
+    const beforeSpawns = spawnCount(counter);
+    const toxic = await runRecorderBin(
+      ["--config", toxicConfig, "--", process.execPath, script, "ok"],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(toxic.code, 125, toxic.stderr);
+    assert.equal(spawnCount(counter), beforeSpawns, "toxic archive must not spawn");
+
+    const failureLine = toxic.stderr.trim().split("\n").at(-1)!;
+    const failure = JSON.parse(failureLine);
+    assert.equal(failure.recorder.status, "failed");
+    assert.equal(failure.recorder.code, "invalid-config");
+    assert.equal(failure.child.status, "not-spawned");
+    assert.equal(failureLine.includes(secretComponent), false);
+    assert.equal(toxic.stderr.includes(secretComponent), false);
+    assert.equal(toxic.stdout.includes(secretComponent), false);
+
+    assert.equal(
+      existsSync(join(toxicArchive, ".ak/dockets", docketId)),
+      false,
+      "no promoted docket",
+    );
+    assert.equal(
+      existsSync(join(toxicArchive, ".ak/dockets", docketId, "manifest.json")),
+      false,
+      "no promoted manifest",
+    );
+    assert.equal(
+      existsSync(join(toxicArchive, ".ak/work")),
+      false,
+      "no archive stage residue",
+    );
+
+    // Clean-path control: same fixture family spawns once with unchanged identity.
+    const cleanArchive = initGitRepo(join(root, "archive"));
+    commitFile(cleanArchive, ".keep", "\n");
+    const cleanDocketId = "issues/10/apply/apply-arch-identity-clean";
+    const cleanConfig = writeRecorderConfig(root, {
+      archiveRepo: cleanArchive,
+      cwd: root,
+      docketId: cleanDocketId,
+      authority: {
+        repositoryRoot: refs,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: refs,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+    });
+    const beforeCleanSpawns = spawnCount(counter);
+    const clean = await runRecorderBin(
+      ["--config", cleanConfig, "--", process.execPath, script, "ok"],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(clean.code, 0, clean.stderr);
+    assert.equal(spawnCount(counter), beforeCleanSpawns + 1);
+    const manifestPath = join(
+      cleanArchive,
+      ".ak/dockets",
+      cleanDocketId,
+      "manifest.json",
+    );
+    assert.equal(existsSync(manifestPath), true);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const { realpathSync } = await import("node:fs");
+    assert.equal(
+      manifest.archive.repositoryRoot,
+      realpathSync(cleanArchive),
+      "clean archive identity must remain the canonical root",
+    );
+    assert.equal(manifest.archive.repositoryRoot.includes(secretComponent), false);
+    assert.equal(JSON.stringify(manifest).includes(secretComponent), false);
+    assert.equal(JSON.stringify(manifest).includes("[REDACTED]"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("git reference identity coordinates fail closed when scanner would rewrite them", async () => {
   const root = makeTempDir("ak-recorder-ref-id-scan-");
   try {

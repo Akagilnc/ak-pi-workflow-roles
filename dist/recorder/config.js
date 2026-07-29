@@ -254,7 +254,7 @@ export function loadRecorderConfig(configPath) {
         !Array.isArray(raw.declarations.exhibits)) {
         throw new RecorderError("invalid-config", "declaration collections must be arrays");
     }
-    const repositoryRoot = requireCanonicalGitWorktree(requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"), "archive.repositoryRoot");
+    const repositoryRoot = requireCredentialFreeMetadata(requireCanonicalGitWorktree(requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"), "archive.repositoryRoot"), "archive.repositoryRoot");
     const root = requireCredentialFreeMetadata(normalizeRepoRelativePath(requireString(raw.archive.root, "archive.root"), "archive.root"), "archive.root");
     const docketId = requireCredentialFreeMetadata(normalizeRepoRelativePath(requireString(raw.archive.docketId, "archive.docketId"), "archive.docketId"), "archive.docketId");
     const destination = resolveInsideRoot(repositoryRoot, `${root}/${docketId}`, "archive destination");
