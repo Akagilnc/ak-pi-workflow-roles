@@ -1110,11 +1110,14 @@ test("category × credential matrix keeps raw secrets out of core, report, and f
       false,
     );
 
-    // --- Pre-promotion failure: public diagnostics + no stage/final core ---
+    // --- Post-spawn / pre-promotion failure: public diagnostics + no final core ---
+    // Declaration admission is before spawn, so force a promotion collision from the
+    // child after tee capture (destination-exists), preserving secret-bearing diagnostics.
+    const failDocket = "issues/10/apply/apply-matrix-fail";
     const failConfigPath = writeRecorderConfig(root, {
       archiveRepo: archive,
       cwd: root,
-      docketId: "issues/10/apply/apply-matrix-fail",
+      docketId: failDocket,
       authority: {
         repositoryRoot: archive,
         commit: authority.commit,
@@ -1135,27 +1138,25 @@ test("category × credential matrix keeps raw secrets out of core, report, and f
         target: null,
       },
     });
-    const failCfg = JSON.parse(readFileSync(failConfigPath, "utf8"));
-    failCfg.declarations.gitReferences[0].blobOid = "0".repeat(40);
-    writeFileSync(failConfigPath, JSON.stringify(failCfg));
+    const collideScript = join(root, "collide-dest.mjs");
+    writeFileSync(
+      collideScript,
+      `import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const dest = ${JSON.stringify(join(archive, ".ak/dockets", failDocket))};
+process.stdout.write("diag-ok Authorization: Bearer plainsecrettokenvalue999 ${secrets.skAnt}\\n");
+process.stderr.write("err ${secrets.basic}\\n");
+mkdirSync(dest, { recursive: true });
+writeFileSync(join(dest, "collision.txt"), "preexisting\\n");
+process.exit(0);
+`,
+    );
 
-    const failOut =
-      `diag-ok Authorization: Bearer plainsecrettokenvalue999 ${secrets.skAnt}\n`;
     const fail = await runRecorderBin(
-      [
-        "--config",
-        failConfigPath,
-        "--",
-        process.execPath,
-        script,
-        "exit-text",
-        "4",
-        failOut,
-        `err ${secrets.basic}\n`,
-      ],
+      ["--config", failConfigPath, "--", process.execPath, collideScript],
       { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
     );
-    assert.equal(fail.code, 125);
+    assert.equal(fail.code, 125, fail.stderr);
     // Tee remains byte-exact (caller-owned), including raw credentials.
     assert.equal(fail.stdout.includes("plainsecrettokenvalue999"), true);
     assert.equal(fail.stderr.includes("dXNlcjpwYXNz"), true);
@@ -1166,10 +1167,128 @@ test("category × credential matrix keeps raw secrets out of core, report, and f
     assert.equal(typeof failure.child.diagnostic, "string");
     assert.notEqual(failure.child.diagnostic, null);
     assertNoRawSecret("child.diagnostic", failure.child.diagnostic);
+    // Child-created collision dir may remain; Recorder must not leave a complete docket.
     assert.equal(
-      existsSync(join(archive, ".ak/dockets/issues/10/apply/apply-matrix-fail")),
+      existsSync(join(archive, ".ak/dockets", failDocket, "manifest.json")),
       false,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("final scan closure keeps manifest hits identical to redaction-report and includes final-manifest secrets", async () => {
+  const root = makeTempDir("ak-recorder-final-scan-");
+  try {
+    const archive = initGitRepo(join(root, "archive"));
+    // Secret first becomes observable when archive identity is scanned into the
+    // final manifest material (not only via pre-manifest leaf scans).
+    const authority = commitFile(
+      archive,
+      "authority.md",
+      "# authority Authorization: Bearer plainsecrettokenvalue999\n",
+    );
+    const task = commitFile(archive, "task.md", "# task\n");
+    const script = writeCounterScript(root);
+    const counter = join(root, "counter.txt");
+
+    const hitConfig = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: "issues/10/apply/apply-final-scan-hits",
+      authority: {
+        repositoryRoot: archive,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+      provenance: {
+        package: null,
+        model: `model-with-${secrets.glpat}`,
+        target: null,
+      },
+    });
+    const hit = await runRecorderBin(
+      [
+        "--config",
+        hitConfig,
+        "--",
+        process.execPath,
+        script,
+        "ok",
+        "Authorization: Bearer plainsecrettokenvalue999",
+      ],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(hit.code, 0, hit.stderr);
+    const dest = join(
+      archive,
+      ".ak/dockets/issues/10/apply/apply-final-scan-hits",
+    );
+    const manifest = JSON.parse(
+      readFileSync(join(dest, "manifest.json"), "utf8"),
+    );
+    assert.ok(Array.isArray(manifest.redaction.hits));
+    assert.ok(manifest.redaction.hits.length > 0);
+    assertNoRawSecret("final-manifest", JSON.stringify(manifest));
+    assert.equal(existsSync(join(dest, "redaction-report.json")), true);
+    const report = JSON.parse(
+      readFileSync(join(dest, "redaction-report.json"), "utf8"),
+    );
+    assert.deepEqual(report.hits, manifest.redaction.hits);
+    assertNoRawSecret("final-report", JSON.stringify(report));
+    // Schema validation of the persisted final manifest.
+    const { validatePublicManifest } = await import(
+      "../src/recorder/manifest.ts"
+    );
+    validatePublicManifest(manifest);
+
+    // Zero-hit control: no redaction-report.json and empty hits array.
+    const cleanArchive = initGitRepo(join(root, "clean-archive"));
+    const cleanAuth = commitFile(cleanArchive, "authority.md", "# authority\n");
+    const cleanTask = commitFile(cleanArchive, "task.md", "# task\n");
+    const zeroConfig = writeRecorderConfig(root, {
+      archiveRepo: cleanArchive,
+      cwd: root,
+      docketId: "issues/10/apply/apply-final-scan-zero",
+      authority: {
+        repositoryRoot: cleanArchive,
+        commit: cleanAuth.commit,
+        path: cleanAuth.path,
+        blobOid: cleanAuth.blobOid,
+        sha256: cleanAuth.sha256,
+      },
+      task: {
+        repositoryRoot: cleanArchive,
+        commit: cleanTask.commit,
+        path: cleanTask.path,
+        blobOid: cleanTask.blobOid,
+        sha256: cleanTask.sha256,
+      },
+    });
+    const zero = await runRecorderBin(
+      ["--config", zeroConfig, "--", process.execPath, script, "ok"],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(zero.code, 0, zero.stderr);
+    const zeroDest = join(
+      cleanArchive,
+      ".ak/dockets/issues/10/apply/apply-final-scan-zero",
+    );
+    const zeroManifest = JSON.parse(
+      readFileSync(join(zeroDest, "manifest.json"), "utf8"),
+    );
+    assert.deepEqual(zeroManifest.redaction.hits, []);
+    assert.equal(existsSync(join(zeroDest, "redaction-report.json")), false);
+    validatePublicManifest(zeroManifest);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

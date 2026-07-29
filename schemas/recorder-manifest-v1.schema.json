@@ -25,8 +25,8 @@
       "required": ["repositoryRoot", "root", "docketId"],
       "properties": {
         "repositoryRoot": { "type": "string", "minLength": 1 },
-        "root": { "type": "string", "minLength": 1 },
-        "docketId": { "type": "string", "minLength": 1 }
+        "root": { "$ref": "#/$defs/canonicalRelativePath" },
+        "docketId": { "$ref": "#/$defs/canonicalRelativePath" }
       }
     },
     "invocation": {
@@ -89,81 +89,7 @@
     },
     "artifacts": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "kind", "redactionStatus"],
-        "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "authority",
-              "task",
-              "input",
-              "exhibit",
-              "receipt",
-              "audit-observation"
-            ]
-          },
-          "redactionStatus": {
-            "type": "string",
-            "enum": ["clean", "redacted", "sanitized-derivative"]
-          },
-          "reference": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "identity",
-              "repositoryRoot",
-              "commit",
-              "path",
-              "blobOid",
-              "sha256",
-              "mode"
-            ],
-            "properties": {
-              "identity": { "const": "reference" },
-              "repositoryRoot": { "type": "string", "minLength": 1 },
-              "commit": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "path": { "type": "string", "minLength": 1 },
-              "blobOid": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "sha256": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "mode": { "type": "string", "enum": ["100644", "100755"] }
-            }
-          },
-          "stored": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["identity", "path", "sha256", "byteLength"],
-            "properties": {
-              "identity": { "const": "stored" },
-              "path": { "type": "string", "minLength": 1 },
-              "sha256": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "byteLength": { "type": "integer", "minimum": 0 }
-            }
-          },
-          "receiptArtifactKind": {
-            "type": "string",
-            "enum": [
-              "acceptedReceipt",
-              "sanitizedDerivativeOfAcceptedReceipt"
-            ]
-          }
-        }
-      }
+      "items": { "$ref": "#/$defs/artifact" }
     },
     "receipt": {
       "oneOf": [
@@ -175,7 +101,7 @@
           "properties": {
             "toolName": { "type": "string", "minLength": 1 },
             "toolCallId": { "type": "string", "minLength": 1 },
-            "artifactId": { "type": "string", "minLength": 1 },
+            "artifactId": { "const": "receipt" },
             "artifactKind": {
               "type": "string",
               "enum": [
@@ -225,7 +151,8 @@
       "allOf": [
         {
           "if": {
-            "properties": { "status": { "const": "exited" } }
+            "properties": { "status": { "const": "exited" } },
+            "required": ["status"]
           },
           "then": {
             "properties": {
@@ -236,7 +163,8 @@
         },
         {
           "if": {
-            "properties": { "status": { "const": "signaled" } }
+            "properties": { "status": { "const": "signaled" } },
+            "required": ["status"]
           },
           "then": {
             "properties": {
@@ -274,6 +202,220 @@
           }
         }
       }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "receipt": { "type": "null" } }
+      },
+      "then": {
+        "properties": {
+          "auditObservation": { "type": "null" },
+          "artifacts": {
+            "type": "array",
+            "not": {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "kind": { "enum": ["receipt", "audit-observation"] }
+                },
+                "required": ["kind"]
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "redactionStatus",
+                "stored",
+                "receiptArtifactKind"
+              ],
+              "properties": {
+                "id": { "const": "receipt" },
+                "kind": { "const": "receipt" },
+                "stored": { "$ref": "#/$defs/storedIdentity" },
+                "receiptArtifactKind": {
+                  "type": "string",
+                  "enum": [
+                    "acceptedReceipt",
+                    "sanitizedDerivativeOfAcceptedReceipt"
+                  ]
+                }
+              }
+            },
+            "minContains": 1,
+            "maxContains": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "auditObservation": { "type": "null" } }
+      },
+      "then": {
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "not": {
+              "contains": {
+                "type": "object",
+                "properties": { "kind": { "const": "audit-observation" } },
+                "required": ["kind"]
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "receipt": { "type": "object" },
+          "artifacts": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "required": ["id", "kind", "redactionStatus", "stored"],
+              "properties": {
+                "id": { "const": "audit-observation" },
+                "kind": { "const": "audit-observation" },
+                "stored": { "$ref": "#/$defs/storedIdentity" }
+              }
+            },
+            "minContains": 1,
+            "maxContains": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "canonicalRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*|\\.ak)(?:/(?:[A-Za-z0-9][A-Za-z0-9._-]*|\\.ak))*$"
+    },
+    "artifactId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "fullSha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "referenceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "repositoryRoot",
+        "commit",
+        "path",
+        "blobOid",
+        "sha256",
+        "mode"
+      ],
+      "properties": {
+        "identity": { "const": "reference" },
+        "repositoryRoot": { "type": "string", "minLength": 1 },
+        "commit": { "$ref": "#/$defs/fullSha1" },
+        "path": { "$ref": "#/$defs/canonicalRelativePath" },
+        "blobOid": { "$ref": "#/$defs/fullSha1" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "mode": { "type": "string", "enum": ["100644", "100755"] }
+      }
+    },
+    "storedIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "path", "sha256", "byteLength"],
+      "properties": {
+        "identity": { "const": "stored" },
+        "path": { "$ref": "#/$defs/canonicalRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byteLength": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "redactionStatus"],
+      "properties": {
+        "id": { "$ref": "#/$defs/artifactId" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "authority",
+            "task",
+            "input",
+            "exhibit",
+            "receipt",
+            "audit-observation"
+          ]
+        },
+        "redactionStatus": {
+          "type": "string",
+          "enum": ["clean", "redacted", "sanitized-derivative"]
+        },
+        "reference": { "$ref": "#/$defs/referenceIdentity" },
+        "stored": { "$ref": "#/$defs/storedIdentity" },
+        "receiptArtifactKind": {
+          "type": "string",
+          "enum": [
+            "acceptedReceipt",
+            "sanitizedDerivativeOfAcceptedReceipt"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["reference"],
+              "not": { "required": ["stored"] }
+            },
+            {
+              "required": ["stored"],
+              "not": { "required": ["reference"] }
+            }
+          ]
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "receipt" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["stored", "receiptArtifactKind"],
+            "not": { "required": ["reference"] }
+          },
+          "else": {
+            "not": { "required": ["receiptArtifactKind"] }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "audit-observation" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["stored"],
+            "not": { "required": ["reference"] }
+          }
+        }
+      ]
     }
   }
 }
