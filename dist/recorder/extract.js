@@ -176,86 +176,99 @@ export function decodeToolResultsFromEnvelope(text) {
 }
 /**
  * Bind exactly one unambiguous production-accepted lifecycle across ordered events.
- * Absence is lawful (null). Ambiguity / forgery / conflict fails closed via throw
- * only when a candidate looks like a package acceptance but is malformed after binding.
- * Pure forgeries simply yield null.
+ * Law: issuance → matching start → exactly one matching successful terminal.
+ * Absence is lawful (null). Multiple complete acceptances fail closed via throw.
+ * Contaminated / forged / partial lifecycles never accept.
  */
 export function bindAcceptedLifecycle(events) {
-    const byId = new Map();
-    const bucket = (id) => {
-        const existing = byId.get(id);
+    const states = new Map();
+    const stateOf = (id) => {
+        const existing = states.get(id);
         if (existing)
             return existing;
-        const created = { issued: [], starts: [], terminals: [] };
-        byId.set(id, created);
+        const created = { phase: "none" };
+        states.set(id, created);
         return created;
     };
+    const reject = (state) => {
+        state.phase = "rejected";
+        delete state.acceptance;
+    };
     for (const event of events) {
-        const b = bucket(event.toolCallId);
-        if (event.kind === "issued")
-            b.issued.push(event);
-        else if (event.kind === "start")
-            b.starts.push(event);
-        else
-            b.terminals.push(event);
-    }
-    const accepted = [];
-    for (const [toolCallId, life] of byId) {
-        const { issued, starts, terminals } = life;
-        // Require exact one issuance, one start, ≥1 terminal.
-        if (issued.length !== 1 || starts.length !== 1 || terminals.length === 0) {
+        const state = stateOf(event.toolCallId);
+        if (state.phase === "rejected")
+            continue;
+        if (event.kind === "issued") {
+            // Duplicate issuance / post-start issuance contaminates the lifecycle.
+            if (state.phase !== "none") {
+                reject(state);
+                continue;
+            }
+            state.phase = "issued";
+            state.toolName = event.toolName;
+            state.issuedArgs = event.args;
+            state.issuedIndex = event.index;
             continue;
         }
-        const soleIssued = issued[0];
-        const soleStart = starts[0];
-        if (soleIssued.toolName !== soleStart.toolName)
-            continue;
-        if (!(soleIssued.index < soleStart.index))
-            continue;
-        if (!terminals.every((t) => t.index > soleStart.index))
-            continue;
-        if (!terminals.every((t) => t.toolName === soleIssued.toolName))
-            continue;
-        if (!deepEqual(soleIssued.args, soleStart.args))
-            continue;
-        // Successful terminals only; any error terminal for this id rejects the lifecycle.
-        if (terminals.some((t) => t.isError))
-            continue;
-        const successTerminals = terminals.filter((t) => t.isError === false);
-        if (successTerminals.length === 0)
-            continue;
-        const expectedText = acceptedTextFor(soleIssued.toolName);
-        if (!successTerminals.every((t) => t.contentText.includes(expectedText))) {
+        if (event.kind === "start") {
+            if (state.phase !== "issued" ||
+                state.toolName !== event.toolName ||
+                state.issuedIndex === undefined ||
+                !(state.issuedIndex < event.index) ||
+                !deepEqual(state.issuedArgs, event.args)) {
+                reject(state);
+                continue;
+            }
+            state.phase = "started";
+            state.startIndex = event.index;
             continue;
         }
-        // All success terminals must agree on details.
-        const first = successTerminals[0];
-        if (successTerminals.some((t) => !deepEqual(t.details, first.details) || t.contentText !== first.contentText)) {
+        // terminal — require exactly one success after start; any further terminal rejects.
+        if (state.phase !== "started" ||
+            state.toolName !== event.toolName ||
+            state.startIndex === undefined ||
+            !(state.startIndex < event.index)) {
+            reject(state);
+            continue;
+        }
+        if (event.isError) {
+            reject(state);
+            continue;
+        }
+        const expectedText = acceptedTextFor(event.toolName);
+        // Exact package-owned acceptance text only; prefixes/suffixes/embeddings fail.
+        if (event.contentText !== expectedText) {
+            reject(state);
             continue;
         }
         // Non-collector: terminal details must equal issued args.
         // Collector: issued args are generated legs-only; terminal details are full receipt.
-        if (soleIssued.toolName !== COLLECTOR_OUTPUT_TOOL) {
-            if (!deepEqual(first.details, soleIssued.args))
-                continue;
+        if (event.toolName !== COLLECTOR_OUTPUT_TOOL &&
+            !deepEqual(event.details, state.issuedArgs)) {
+            reject(state);
+            continue;
         }
         let details;
         try {
-            details = validateAcceptedDetails(soleIssued.toolName, first.details);
+            details = validateAcceptedDetails(event.toolName, event.details);
         }
         catch {
-            // Malformed bound details → not a lawful acceptance (absence for forgeries;
-            // throw only if we need to fail redaction unlawfulness later).
+            reject(state);
             continue;
         }
-        // Prefer usage from the first terminal that carries it.
-        const usage = successTerminals.find((t) => t.usage !== undefined)?.usage;
-        accepted.push({
-            toolName: soleIssued.toolName,
-            toolCallId,
+        state.phase = "terminated";
+        state.acceptance = {
+            toolName: event.toolName,
+            toolCallId: event.toolCallId,
             details,
-            usage,
-        });
+            usage: event.usage,
+        };
+    }
+    const accepted = [];
+    for (const state of states.values()) {
+        if (state.phase === "terminated" && state.acceptance !== undefined) {
+            accepted.push(state.acceptance);
+        }
     }
     if (accepted.length === 0)
         return null;

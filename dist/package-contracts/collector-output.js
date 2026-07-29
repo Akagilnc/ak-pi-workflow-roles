@@ -20,10 +20,55 @@ function requireStringArray(value, label) {
     }
     return value;
 }
+/** Reject unknown keys; allow only required ∪ present optional fields. */
+function assertClosedKeys(value, required, optional, label) {
+    const allowed = new Set([...required, ...optional]);
+    for (const key of Object.keys(value)) {
+        if (!allowed.has(key))
+            fail(`${label} has unknown key ${key}`);
+    }
+    for (const key of required) {
+        if (!Object.hasOwn(value, key))
+            fail(`${label} missing key ${key}`);
+    }
+}
+function validatePageDiagnostics(value, label) {
+    if (!isRecord(value))
+        fail(`${label} is invalid`);
+    assertClosedKeys(value, ["path", "page", "status", "itemCount"], ["linkHeader"], label);
+    if (typeof value.page !== "number" || !Number.isInteger(value.page)) {
+        fail(`${label}.page is invalid`);
+    }
+    if (typeof value.status !== "number" || !Number.isInteger(value.status)) {
+        fail(`${label}.status is invalid`);
+    }
+    if (typeof value.itemCount !== "number" || !Number.isInteger(value.itemCount)) {
+        fail(`${label}.itemCount is invalid`);
+    }
+    const out = {
+        path: requireNonEmptyString(value.path, `${label}.path`),
+        page: value.page,
+        status: value.status,
+        itemCount: value.itemCount,
+    };
+    if (value.linkHeader !== undefined) {
+        out.linkHeader = requireNonEmptyString(value.linkHeader, `${label}.linkHeader`);
+    }
+    return out;
+}
 function validateReport(value, index) {
     if (!isRecord(value))
         fail(`Collector receipt reports[${index}] is invalid`);
     if (value.kind === "review") {
+        assertClosedKeys(value, [
+            "kind",
+            "legId",
+            "report",
+            "reviewedHead",
+            "headRelation",
+            "windowRelation",
+            "evidenceRefs",
+        ], [], `reports[${index}]`);
         return {
             kind: "review",
             legId: requireNonEmptyString(value.legId, `reports[${index}].legId`),
@@ -35,6 +80,7 @@ function validateReport(value, index) {
         };
     }
     if (value.kind === "terminal-fact") {
+        assertClosedKeys(value, ["kind", "legId", "terminalStatus", "report", "windowRelation", "evidenceRefs"], ["targetSnapshotHead", "scope"], `reports[${index}]`);
         if (value.terminalStatus !== "unavailable" && value.terminalStatus !== "missing") {
             fail(`reports[${index}].terminalStatus is invalid`);
         }
@@ -61,6 +107,7 @@ function validateReport(value, index) {
 function validateLeg(value, index) {
     if (!isRecord(value))
         fail(`Collector receipt legs[${index}] is invalid`);
+    assertClosedKeys(value, ["legId", "status", "rationale", "evidenceRefs"], [], `legs[${index}]`);
     if (value.status !== "valid" && value.status !== "unavailable" &&
         value.status !== "missing") {
         fail(`legs[${index}].status is invalid`);
@@ -75,6 +122,16 @@ function validateLeg(value, index) {
 function validateAttempt(value, index) {
     if (!isRecord(value))
         fail(`requestAttempts[${index}] is invalid`);
+    assertClosedKeys(value, [
+        "attemptId",
+        "legId",
+        "observedHead",
+        "snapshotId",
+        "marker",
+        "body",
+        "startedAt",
+        "status",
+    ], ["responseDiagnostics", "commentEvidenceId", "recoverySnapshotId"], `requestAttempts[${index}]`);
     const statuses = [
         "started",
         "succeeded",
@@ -109,6 +166,21 @@ function validateAttempt(value, index) {
 function validateSnapshot(value, index) {
     if (!isRecord(value))
         fail(`snapshots[${index}] is invalid`);
+    assertClosedKeys(value, [
+        "snapshotId",
+        "observedAt",
+        "completedAt",
+        "completedMono",
+        "host",
+        "repository",
+        "prNumber",
+        "prState",
+        "headOid",
+        "complete",
+        "evidenceIds",
+        "pageDiagnostics",
+        "normalizedByteLength",
+    ], [], `snapshots[${index}]`);
     if (value.host !== COLLECTOR_HOST)
         fail(`snapshots[${index}].host is invalid`);
     if (typeof value.prNumber !== "number" || !Number.isInteger(value.prNumber)) {
@@ -138,16 +210,15 @@ function validateSnapshot(value, index) {
         headOid: requireNonEmptyString(value.headOid, `snapshots[${index}].headOid`),
         complete: value.complete,
         evidenceIds: requireStringArray(value.evidenceIds, `snapshots[${index}].evidenceIds`),
-        pageDiagnostics: value.pageDiagnostics,
+        pageDiagnostics: value.pageDiagnostics.map((item, pageIndex) => validatePageDiagnostics(item, `snapshots[${index}].pageDiagnostics[${pageIndex}]`)),
         normalizedByteLength: value.normalizedByteLength,
     };
 }
 function validateEvidence(value, index) {
     if (!isRecord(value))
         fail(`evidenceRecords[${index}] is invalid`);
-    if (!Object.hasOwn(value, "raw")) {
-        fail(`evidenceRecords[${index}].raw is required`);
-    }
+    assertClosedKeys(value, ["evidenceId", "kind", "versionId", "contentDigest", "firstObservedAt", "raw"], [], `evidenceRecords[${index}]`);
+    // raw may be any JSON value, including null; reject only missing key (above).
     return {
         evidenceId: requireNonEmptyString(value.evidenceId, `evidenceRecords[${index}].evidenceId`),
         kind: requireNonEmptyString(value.kind, `evidenceRecords[${index}].kind`),
@@ -155,18 +226,11 @@ function validateEvidence(value, index) {
         contentDigest: requireNonEmptyString(value.contentDigest, `evidenceRecords[${index}].contentDigest`),
         firstObservedAt: requireNonEmptyString(value.firstObservedAt, `evidenceRecords[${index}].firstObservedAt`),
         raw: value.raw,
-        ...Object.fromEntries(Object.entries(value).filter(([key]) => ![
-            "evidenceId",
-            "kind",
-            "versionId",
-            "contentDigest",
-            "firstObservedAt",
-            "raw",
-        ].includes(key))),
     };
 }
 /**
  * Recursive production validator for accepted Collector terminal receipt details.
+ * Closed: unknown keys and malformed descendants fail at every nested shape.
  * Rejects generated legs-only tool args and shallow lookalikes.
  */
 export function validateAcceptedCollectorReceipt(value) {
@@ -178,6 +242,23 @@ export function validateAcceptedCollectorReceipt(value) {
         !Object.hasOwn(value, "reports")) {
         fail("Collector generated legs-only output is not an accepted receipt");
     }
+    assertClosedKeys(value, [
+        "host",
+        "repository",
+        "prNumber",
+        "manifestVersion",
+        "manifestDigest",
+        "activationTime",
+        "deadlineTime",
+        "finalObservationTime",
+        "finalSnapshotId",
+        "targetHead",
+        "reports",
+        "legs",
+        "requestAttempts",
+        "snapshots",
+        "evidenceRecords",
+    ], [], "Collector receipt");
     if (value.host !== COLLECTOR_HOST)
         fail("Collector receipt host is invalid");
     if (typeof value.repository !== "string" || value.repository.trim() === "") {
@@ -222,20 +303,20 @@ export function validateAcceptedCollectorReceipt(value) {
     if (!Array.isArray(value.evidenceRecords)) {
         fail("Collector receipt evidenceRecords are invalid");
     }
-    // Reject null/arbitrary array pollution (e.g. [null] descendants).
-    if (value.reports.some((item) => item === null || typeof item !== "object")) {
+    // Reject null/non-object array pollution at every child collection.
+    if (value.reports.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
         fail("Collector receipt reports contain invalid entries");
     }
-    if (value.legs.some((item) => item === null || typeof item !== "object")) {
+    if (value.legs.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
         fail("Collector receipt legs contain invalid entries");
     }
-    if (value.snapshots.some((item) => item === null || typeof item !== "object")) {
+    if (value.snapshots.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
         fail("Collector receipt snapshots contain invalid entries");
     }
-    if (value.evidenceRecords.some((item) => item === null || typeof item !== "object")) {
+    if (value.evidenceRecords.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
         fail("Collector receipt evidenceRecords contain invalid entries");
     }
-    if (value.requestAttempts.some((item) => item !== null && typeof item !== "object")) {
+    if (value.requestAttempts.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
         fail("Collector receipt requestAttempts contain invalid entries");
     }
     return {
