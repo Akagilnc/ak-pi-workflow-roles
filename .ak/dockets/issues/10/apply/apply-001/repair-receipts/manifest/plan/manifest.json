@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/repairs/manifest-admission.md",
+    "sha256": "86c8dcb92e22023ad71488f2428e0b5ffbb656d7610fe8685d476464d6c2867a"
+  },
+  "sessionCandidate": {
+    "bytes": 54538474,
+    "sha256": "dcf02c327eb4c5d3a60903ad23e76736c56fec1efb580387436f9cac300c8e96",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "1367a1f223d1db4959e820d06e9cad94c512a4de70f78227124da5056f83ac84"
+  }
+}
