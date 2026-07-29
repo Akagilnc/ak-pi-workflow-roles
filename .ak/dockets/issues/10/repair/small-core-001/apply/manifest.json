@@ -1,0 +1,28 @@
+{
+  "formatVersion": 1,
+  "role": "fixer",
+  "phase": "apply",
+  "targetHead": "f9d9d1240de39fb1e24519a7ab7765e4e3c2a6f7",
+  "resultCommit": "ab765a6770aee753541bb0b513a15c2e19c5a7f7",
+  "repairPlan": {
+    "path": ".ak/dockets/issues/10/repair/small-core-001/plan/receipt.json",
+    "sha256": "3f7cbffa10dfa94aac161b624609984f97a289e6624d8a8547c3f245ce6b14f5"
+  },
+  "products": [
+    {
+      "path": ".ak/dockets/issues/10/authority/amendments/006-small-core-recorder-v1.md",
+      "sha256": "f9b96b416d11ef84af878d77dc057f9f13bd123d8872caa63cda555be4e97039"
+    }
+  ],
+  "sessionCandidate": {
+    "sanitizedBytes": 1121387,
+    "sha256": "c01ebe3161e865a67b3301b4febffd4b031bc06a0a90c67461d52258c27f4107",
+    "retention": "not retained",
+    "reason": "routine execution exhaust"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "e32eec94e035f6ef7ab4614ae5898cce929b030e0fb10bb196d168da123af529"
+  },
+  "redactions": null
+}

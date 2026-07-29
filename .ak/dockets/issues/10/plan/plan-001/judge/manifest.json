@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "targetHead": "7ac12a73c95f27d73a72dbc862d35a72301be99a",
+  "materials": {
+    "path": ".ak/dockets/issues/10/plan/plan-001/receipt.json",
+    "sha256": "e3793f960baee593c17d4646d412b9f90ca08949dfceb82b333c5371a1981f78"
+  },
+  "sessionCandidate": {
+    "sanitizedBytes": 105595206,
+    "sha256": "d776a39aae70cad0c56eba754d07fa1229a07b7461671691e68ef6bb942617f7",
+    "retention": "not retained",
+    "reason": "routine execution exhaust; scratch heuristic match did not occur in retained Receipt"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "2676763b1b97109869f26625fd48725b0226bede5d57410f4afd157e71983eff",
+    "acceptedBySoulAudit": true
+  },
+  "redactions": null
+}
