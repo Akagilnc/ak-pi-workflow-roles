@@ -30,11 +30,13 @@ const RULES: Rule[] = [
   {
     // Composed Authorization headers are one credential boundary: the complete
     // credential field after Authorization:/ = is consumed atomically through
-    // CR/LF. Quote-shaped wrappers are not a closer — escaped auth-parameter
-    // quotes inside a whole-quoted value must not terminate the field early.
+    // CR/LF. Separators are horizontal-only so empty/whitespace-only values cannot
+    // swallow CR/LF or the following line; line-start is recognized without
+    // consuming the terminator. Quote-shaped wrappers are not a closer — escaped
+    // auth-parameter quotes inside a whole-quoted value must not terminate early.
     id: "authorization-header",
     pattern:
-      /(?:^|[\s,;])Authorization\s*[:=]\s*[^\r\n]+/gi,
+      /(?:^|(?<=[\r\n])|[ \t,;])Authorization[ \t]*[:=][ \t]*[^\r\n]*/gi,
   },
   {
     id: "bearer-credential",
