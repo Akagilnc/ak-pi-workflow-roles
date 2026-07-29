@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "targetHead": "7bfe5017f371b2389f87b4f4b15972705068541e",
+  "materials": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/fixer-apply/receipt.json",
+    "sha256": "496821b0f96bab6e17b666e72f018d0ec7f406191e0a181506c9143a26f0f368"
+  },
+  "sessionCandidate": {
+    "sanitizedBytes": 59392500,
+    "sha256": "09a883493f62095384d915bd81c09985f05ec173b40ce44cd2d8621a67dffd77",
+    "retention": "not retained",
+    "reason": "routine execution exhaust; Judge Receipt carries residual repair authority"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "2f393b1d944fa8f247dc997b6657706d2b39b8dec1a49627c153b1439f0d3a8e",
+    "acceptedBySoulAudit": true
+  },
+  "redactions": null
+}
