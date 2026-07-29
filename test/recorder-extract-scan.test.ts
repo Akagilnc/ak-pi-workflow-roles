@@ -1580,6 +1580,279 @@ test("credential-shaped structural metadata fails closed before stage/final path
   }
 });
 
+test("credential-shaped Judge toolCallId sanitizes through bound extract, audit, and promotion", async () => {
+  // Coverage gap: matrix/e2e paths use Coder only and never require audit-observation.json.
+  // Binding tests cover Judge/Reviewer acceptance but not credential-bearing call identity
+  // through store/manifest promotion. toolCallId is itself credential-shaped here.
+  const callId = "ghp_SUPERSECRETTOKENVALUE001";
+  const rawMarker = "SUPERSECRETTOKENVALUE001";
+  const details = { judgeStatus: "converged" as const };
+
+  // Bound issuance → start → accepted terminal (not forged/bare).
+  const boundEnvelope = lifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+    envelope: "machine",
+    callId,
+    details,
+  });
+  const extracted = extractAcceptedReceipt([boundEnvelope]);
+  assert.ok(extracted.receipt, "Judge lifecycle must accept");
+  assert.ok(extracted.auditObservation, "Judge must create audit observation");
+  assert.equal(extracted.receipt!.kind, "judge");
+  assert.equal(extracted.auditObservation!.auditPassed, true);
+  assert.equal(
+    extracted.receipt!.toolCallId,
+    extracted.auditObservation!.toolCallId,
+    "Receipt/audit join before store",
+  );
+
+  // storeGeneratedJson / final-scan path: same objects the production writer persists.
+  const storedReceipt = scanJsonValue(
+    {
+      toolName: extracted.receipt!.toolName,
+      toolCallId: extracted.receipt!.toolCallId,
+      details: extracted.receipt!.details,
+      artifactKind: extracted.artifactKind,
+    },
+    "receipt",
+  );
+  const storedAudit = scanJsonValue(
+    extracted.auditObservation,
+    "auditObservation",
+  );
+  assert.equal(
+    JSON.stringify(storedReceipt.value).includes(rawMarker),
+    false,
+    "extracted/stored receipt must drop raw marker",
+  );
+  assert.equal(
+    JSON.stringify(storedAudit.value).includes(rawMarker),
+    false,
+    "stored audit observation must drop raw marker",
+  );
+  assert.equal(
+    (storedReceipt.value as { toolCallId: string }).toolCallId,
+    (storedAudit.value as { toolCallId: string }).toolCallId,
+    "Receipt/audit toolCallId remain joined after sanitization",
+  );
+  assert.notEqual(
+    (storedReceipt.value as { toolCallId: string }).toolCallId,
+    callId,
+  );
+
+  const root = makeTempDir("ak-recorder-audit-cred-");
+  try {
+    const archive = initGitRepo(join(root, "archive"));
+    const authority = commitFile(archive, "authority.md", "# authority\n");
+    const task = commitFile(archive, "task.md", "# task\n");
+    const counter = join(root, "counter.txt");
+
+    const events = [
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: callId,
+            name: JUDGE_OUTPUT_TOOL_NAME,
+            arguments: details,
+          }],
+        },
+      },
+      {
+        type: "tool_execution_start",
+        toolCallId: callId,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        args: details,
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: callId,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        result: {
+          content: [{ type: "text", text: ACCEPTED[JUDGE_OUTPUT_TOOL_NAME] }],
+          details,
+        },
+      },
+    ];
+
+    // --- Success: full production promotion with credential-bearing call id ---
+    const okScript = join(root, "judge-cred-ok.mjs");
+    writeFileSync(
+      okScript,
+      `const events = ${JSON.stringify(events)};
+for (const event of events) process.stdout.write(JSON.stringify(event) + "\\n");
+process.exit(0);
+`,
+    );
+    const okConfig = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: "issues/10/apply/apply-audit-cred-ok",
+      authority: {
+        repositoryRoot: archive,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+    });
+    const ok = await runRecorderBin(
+      ["--config", okConfig, "--", process.execPath, okScript],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(ok.code, 0, ok.stderr);
+
+    const dest = join(
+      archive,
+      ".ak/dockets/issues/10/apply/apply-audit-cred-ok",
+    );
+    assert.equal(existsSync(join(dest, "receipt.json")), true);
+    assert.equal(existsSync(join(dest, "audit-observation.json")), true);
+    assert.equal(existsSync(join(dest, "manifest.json")), true);
+    assert.equal(existsSync(join(dest, "redaction-report.json")), true);
+
+    for (const file of walkFiles(dest)) {
+      const body = readFileSync(file, "utf8");
+      assert.equal(
+        body.includes(rawMarker),
+        false,
+        `final docket leaked raw marker: ${file}`,
+      );
+      assert.equal(
+        body.includes(callId),
+        false,
+        `final docket leaked callId: ${file}`,
+      );
+    }
+
+    const receipt = JSON.parse(readFileSync(join(dest, "receipt.json"), "utf8"));
+    const audit = JSON.parse(
+      readFileSync(join(dest, "audit-observation.json"), "utf8"),
+    );
+    const manifest = JSON.parse(
+      readFileSync(join(dest, "manifest.json"), "utf8"),
+    );
+    const report = JSON.parse(
+      readFileSync(join(dest, "redaction-report.json"), "utf8"),
+    );
+
+    assert.equal(receipt.toolName, JUDGE_OUTPUT_TOOL_NAME);
+    assert.equal(audit.toolName, JUDGE_OUTPUT_TOOL_NAME);
+    assert.equal(audit.auditPassed, true);
+    assert.equal(receipt.toolCallId, audit.toolCallId);
+    assert.equal(manifest.receipt.toolCallId, receipt.toolCallId);
+    assert.equal(manifest.auditObservation.toolCallId, audit.toolCallId);
+    assert.equal(
+      manifest.receipt.toolCallId,
+      manifest.auditObservation.toolCallId,
+      "manifest Receipt/audit identity remains joined after sanitization",
+    );
+    assert.notEqual(receipt.toolCallId, callId);
+    assert.equal(JSON.stringify(receipt).includes(rawMarker), false);
+    assert.equal(JSON.stringify(audit).includes(rawMarker), false);
+    assert.equal(JSON.stringify(manifest).includes(rawMarker), false);
+    assert.equal(JSON.stringify(report).includes(rawMarker), false);
+
+    assert.ok(Array.isArray(manifest.redaction.hits));
+    assert.ok(manifest.redaction.hits.length > 0);
+    assert.deepEqual(report.hits, manifest.redaction.hits);
+    for (const hit of report.hits) {
+      assert.deepEqual(
+        Object.keys(hit).sort(),
+        ["count", "location", "ruleId"],
+      );
+      assert.equal(typeof hit.ruleId, "string");
+      assert.equal(typeof hit.location, "string");
+      assert.equal(typeof hit.count, "number");
+      assert.equal(JSON.stringify(hit).includes(rawMarker), false);
+      assert.equal(JSON.stringify(hit).includes(callId), false);
+    }
+    const { validatePublicManifest } = await import(
+      "../src/recorder/manifest.ts"
+    );
+    validatePublicManifest(manifest);
+
+    // --- Failure: same credential-bearing lifecycle + destination collision ---
+    const failDocket = "issues/10/apply/apply-audit-cred-fail";
+    const failConfig = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: failDocket,
+      authority: {
+        repositoryRoot: archive,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+    });
+    const failScript = join(root, "judge-cred-collide.mjs");
+    writeFileSync(
+      failScript,
+      `import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const events = ${JSON.stringify(events)};
+for (const event of events) process.stdout.write(JSON.stringify(event) + "\\n");
+const dest = ${JSON.stringify(join(archive, ".ak/dockets", failDocket))};
+mkdirSync(dest, { recursive: true });
+writeFileSync(join(dest, "collision.txt"), "preexisting\\n");
+process.exit(0);
+`,
+    );
+    const fail = await runRecorderBin(
+      ["--config", failConfig, "--", process.execPath, failScript],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(fail.code, 125, fail.stderr);
+    // Tee remains byte-exact (caller-owned), including the raw call identity.
+    assert.equal(fail.stdout.includes(callId), true);
+    const failureLine = fail.stderr.trim().split("\n").at(-1)!;
+    const failure = JSON.parse(failureLine);
+    assert.equal(failure.recorder.status, "failed");
+    assert.equal(failureLine.includes(rawMarker), false);
+    assert.equal(failureLine.includes(callId), false);
+    assert.equal(JSON.stringify(failure).includes(rawMarker), false);
+    assert.equal(JSON.stringify(failure).includes(callId), false);
+    if (typeof failure.child.diagnostic === "string") {
+      assert.equal(failure.child.diagnostic.includes(rawMarker), false);
+      assert.equal(failure.child.diagnostic.includes(callId), false);
+    }
+    assert.equal(
+      existsSync(join(archive, ".ak/dockets", failDocket, "manifest.json")),
+      false,
+      "collision must not publish a complete final docket",
+    );
+    assert.equal(
+      existsSync(join(archive, ".ak/dockets", failDocket, "receipt.json")),
+      false,
+    );
+    assert.equal(
+      existsSync(
+        join(archive, ".ak/dockets", failDocket, "audit-observation.json"),
+      ),
+      false,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("structural metadata gate preserves non-structural credential sanitization matrix", async () => {
   // Representative forms beyond provider-token ids: assignment + header ride the
   // existing non-structural scanner paths (argv/context, receipt, copied bytes,
