@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { constants as fsConstants, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, closeSync, } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { admitDeclarations, storeGeneratedJson, } from "./admit.js";
@@ -7,7 +7,7 @@ import { buildChildEnv, loadRecorderConfig, parseRecorderArgv, } from "./config.
 import { RECORDER_FAILURE_EXIT, RecorderError, serializePublicFailure, } from "./errors.js";
 import { extractAcceptedReceipt } from "./extract.js";
 import { buildManifest, validatePublicManifest } from "./manifest.js";
-import { assertPathNotSymlinkEscape, assertScratchOutsideOrIgnored, resolveInsideRoot, } from "./paths.js";
+import { allocateIgnoredStageRoot, assertPathNotSymlinkEscape, assertSameFilesystem, assertScratchOutsideOrIgnored, resolveInsideRoot, } from "./paths.js";
 import { combineReports, publicRedactionReport, scanString, } from "./scanner.js";
 import { spawnOnce } from "./spawn.js";
 /** Fixed public bound for one child diagnostic derived from captured tee bytes. */
@@ -91,55 +91,104 @@ function captureGitState(repo) {
         return "";
     }
 }
+function isExistError(error) {
+    const code = typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        typeof error.code === "string"
+        ? error.code
+        : null;
+    return code === "EEXIST" || code === "ENOTEMPTY" || code === "ENOTDIR";
+}
+function destinationOccupied(dest) {
+    try {
+        lstatSync(dest);
+        return true;
+    }
+    catch (error) {
+        const code = typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            typeof error.code === "string"
+            ? error.code
+            : null;
+        if (code === "ENOENT")
+            return false;
+        // Unreadable destination name is treated as occupied/unsafe.
+        return true;
+    }
+}
 /**
- * Atomic create-if-absent rename robust to races and child-created collisions.
- * Uses O_EXCL directory create marker when available, then rename.
+ * Create-if-absent publication on one filesystem.
+ *
+ * Claims the final destination name with exclusive mkdir (no symlink follow on
+ * the last component, no overwrite of an existing name). Stage entries are then
+ * renamed into the claim on the same filesystem, with manifest.json last so an
+ * incomplete claim never looks like a complete docket. The claim is removed on
+ * any failure path owned by this promoter.
  */
 function promoteStageAtomically(stageRoot, dest, repositoryRoot) {
     const parent = dirname(dest);
     mkdirSync(parent, { recursive: true });
     assertPathNotSymlinkEscape(parent, repositoryRoot, "archive destination parent");
     assertPathNotSymlinkEscape(dest, repositoryRoot, "archive destination");
-    if (existsSync(dest)) {
+    assertSameFilesystem(stageRoot, parent, "publication stage and destination");
+    // Reject pre-existing destinations including dangling/occupied symlinks without following.
+    if (destinationOccupied(dest)) {
         throw new RecorderError("destination-exists", "archive destination already exists");
     }
-    // Race-robust: try exclusive create of the destination as empty dir, then
-    // replace via rename from stage. If exclusive create fails, destination exists.
-    let markerFd = null;
-    const markerPath = `${dest}.__ak_promoter_marker__`;
+    let claimed = false;
     try {
-        markerFd = openSync(markerPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
-        closeSync(markerFd);
-        markerFd = null;
-        // Re-check dest after winning the marker race.
-        if (existsSync(dest)) {
-            throw new RecorderError("destination-exists", "archive destination already exists");
+        try {
+            mkdirSync(dest);
         }
-        renameSync(stageRoot, dest);
+        catch (error) {
+            if (isExistError(error) || destinationOccupied(dest)) {
+                throw new RecorderError("destination-exists", "archive destination already exists");
+            }
+            throw new RecorderError("promotion-failed", "atomic promotion failed", {
+                cause: error,
+            });
+        }
+        claimed = true;
+        // Revalidate parent identity after the exclusive claim.
+        assertPathNotSymlinkEscape(parent, repositoryRoot, "archive destination parent");
+        assertSameFilesystem(stageRoot, dest, "publication stage and destination");
+        const entries = readdirSync(stageRoot);
+        const deferredManifest = entries.includes("manifest.json");
+        for (const name of entries) {
+            if (name === "manifest.json")
+                continue;
+            renameSync(join(stageRoot, name), join(dest, name));
+        }
+        if (deferredManifest) {
+            renameSync(join(stageRoot, "manifest.json"), join(dest, "manifest.json"));
+        }
+        if (!existsSync(join(dest, "manifest.json"))) {
+            throw new RecorderError("promotion-failed", "atomic promotion failed");
+        }
+        // Stage should now be empty private material.
+        try {
+            rmdirSync(stageRoot);
+        }
+        catch {
+            rmSync(stageRoot, { recursive: true, force: true });
+        }
+        claimed = false;
     }
     catch (error) {
+        if (claimed) {
+            bestEffortRm(dest);
+            claimed = false;
+        }
         if (error instanceof RecorderError)
             throw error;
-        if (existsSync(dest)) {
+        if (isExistError(error) || destinationOccupied(dest)) {
             throw new RecorderError("destination-exists", "archive destination already exists");
         }
-        throw new RecorderError("promotion-failed", "atomic promotion failed", { cause: error });
-    }
-    finally {
-        try {
-            if (markerFd !== null)
-                closeSync(markerFd);
-        }
-        catch {
-            // ignore
-        }
-        try {
-            if (existsSync(markerPath))
-                rmSync(markerPath, { force: true });
-        }
-        catch {
-            // ignore
-        }
+        throw new RecorderError("promotion-failed", "atomic promotion failed", {
+            cause: error,
+        });
     }
 }
 export async function runRecorder(options) {
@@ -187,17 +236,31 @@ export async function runRecorder(options) {
         const config = loadRecorderConfig(parsed.configPath);
         const dest = destinationPath(config);
         assertPathNotSymlinkEscape(dest, config.archive.repositoryRoot, "archive destination");
-        if (existsSync(dest)) {
+        if (destinationOccupied(dest)) {
             return fail(new RecorderError("destination-exists", "archive destination already exists"));
         }
         void captureGitState(config.archive.repositoryRoot);
-        // Scratch/stage outside worktree (tmpdir) — prove outside-or-ignored.
+        // Raw tee scratch stays outside the worktree (or ignored). Publication stage
+        // lives under the archive's ignored `.ak/work` so promotion stays same-FS.
         const scratch = mkdtempSync(join(tmpdir(), "ak-docket-record-scratch-"));
-        const stage = mkdtempSync(join(tmpdir(), "ak-docket-record-stage-"));
         scratchRoot = scratch;
-        stageRoot = stage;
         assertScratchOutsideOrIgnored(scratch, config.archive.repositoryRoot);
-        assertScratchOutsideOrIgnored(stage, config.archive.repositoryRoot);
+        let stage;
+        try {
+            stage = allocateIgnoredStageRoot(config.archive.repositoryRoot);
+        }
+        catch (error) {
+            if (error instanceof RecorderError)
+                return fail(error);
+            return fail(new RecorderError("invalid-path", "failed to allocate publication stage", {
+                cause: error,
+            }));
+        }
+        stageRoot = stage;
+        const destParent = dirname(dest);
+        mkdirSync(destParent, { recursive: true });
+        assertPathNotSymlinkEscape(destParent, config.archive.repositoryRoot, "archive destination parent");
+        assertSameFilesystem(stage, destParent, "publication stage and destination");
         const stdoutPath = join(scratch, "stdout.bin");
         const stderrPath = join(scratch, "stderr.bin");
         // Declaration admission is fail-closed before any child spawn.

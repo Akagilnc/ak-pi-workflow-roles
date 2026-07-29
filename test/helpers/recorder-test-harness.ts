@@ -4,6 +4,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,6 +33,8 @@ export function initGitRepo(dir: string): string {
   });
   execFileSync("git", ["config", "user.name", "Recorder Test"], { cwd: dir });
   execFileSync("git", ["checkout", "-b", "main"], { cwd: dir });
+  // Match production archive layout: private recorder stage lives under ignored .ak/work.
+  writeFileSync(join(dir, ".gitignore"), ".ak/work/\n");
   return dir;
 }
 
@@ -157,33 +160,43 @@ export function writeRecorderConfig(
   return path;
 }
 
+export type RecorderBinResult = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  stdoutBuf: Buffer;
+  stderrBuf: Buffer;
+};
+
 export async function runRecorderBin(
   args: string[],
   options: {
     cwd?: string;
     env?: NodeJS.ProcessEnv;
-    input?: string;
+    input?: string | Buffer;
+    binPath?: string;
   } = {},
-): Promise<{
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-}> {
+): Promise<RecorderBinResult> {
   const { spawn } = await import("node:child_process");
+  const binPath = options.binPath ?? recorderBin;
+  const argv =
+    binPath.endsWith(".js") || binPath.endsWith(".mjs")
+      ? [process.execPath, binPath, ...args]
+      : [binPath, ...args];
   return await new Promise((resolveResult, reject) => {
-    const child = spawn(process.execPath, [recorderBin, ...args], {
+    const child = spawn(argv[0]!, argv.slice(1), {
       cwd: options.cwd ?? packageRoot,
       env: options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (c) => {
-      stdout += c;
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => {
+      stdoutChunks.push(Buffer.from(c));
     });
-    child.stderr.setEncoding("utf8").on("data", (c) => {
-      stderr += c;
+    child.stderr.on("data", (c: Buffer) => {
+      stderrChunks.push(Buffer.from(c));
     });
     if (options.input !== undefined) {
       child.stdin.write(options.input);
@@ -191,9 +204,149 @@ export async function runRecorderBin(
     child.stdin.end();
     child.on("error", reject);
     child.on("close", (code, signal) => {
-      resolveResult({ code, signal, stdout, stderr });
+      const stdoutBuf = Buffer.concat(stdoutChunks);
+      const stderrBuf = Buffer.concat(stderrChunks);
+      resolveResult({
+        code,
+        signal,
+        stdout: stdoutBuf.toString("utf8"),
+        stderr: stderrBuf.toString("utf8"),
+        stdoutBuf,
+        stderrBuf,
+      });
     });
   });
+}
+
+/** True when the OS can freeze a file against unlink (macOS uchg / Linux immutable). */
+export function canFreezeFileAgainstUnlink(dir: string): boolean {
+  const probe = join(dir, `.freeze-probe-${process.pid}`);
+  try {
+    writeFileSync(probe, "x");
+    if (process.platform === "darwin") {
+      execFileSync("chflags", ["uchg", probe], { stdio: "ignore" });
+      try {
+        rmSync(probe, { force: true });
+        return false;
+      } catch {
+        execFileSync("chflags", ["nouchg", probe], { stdio: "ignore" });
+        rmSync(probe, { force: true });
+        return true;
+      }
+    }
+    if (process.platform === "linux") {
+      try {
+        execFileSync("chattr", ["+i", probe], { stdio: "ignore" });
+      } catch {
+        rmSync(probe, { force: true });
+        return false;
+      }
+      try {
+        rmSync(probe, { force: true });
+        execFileSync("chattr", ["-i", probe], { stdio: "ignore" });
+        rmSync(probe, { force: true });
+        return false;
+      } catch {
+        execFileSync("chattr", ["-i", probe], { stdio: "ignore" });
+        rmSync(probe, { force: true });
+        return true;
+      }
+    }
+    rmSync(probe, { force: true });
+    return false;
+  } catch {
+    try {
+      rmSync(probe, { force: true });
+    } catch {
+      // ignore
+    }
+    return false;
+  }
+}
+
+function freezePath(path: string): void {
+  if (process.platform === "darwin") {
+    execFileSync("chflags", ["uchg", path], { stdio: "ignore" });
+    return;
+  }
+  if (process.platform === "linux") {
+    execFileSync("chattr", ["+i", path], { stdio: "ignore" });
+    return;
+  }
+  throw new Error("freeze unsupported");
+}
+
+function unfreezePath(path: string): void {
+  try {
+    if (process.platform === "darwin") {
+      execFileSync("chflags", ["nouchg", path], { stdio: "ignore" });
+    } else if (process.platform === "linux") {
+      execFileSync("chattr", ["-i", path], { stdio: "ignore" });
+    }
+  } catch {
+    // best effort
+  }
+}
+
+/**
+ * Poll tmpdir for a new ak-docket-record-scratch-* directory and freeze a file
+ * inside it so required raw cleanup fails. Returns a disposer that unfreezes.
+ */
+export async function sabotageRawScratchCleanup(options: {
+  tmpDir?: string;
+  timeoutMs?: number;
+}): Promise<{ dispose: () => void } | null> {
+  const { readdirSync, statSync } = await import("node:fs");
+  const watchRoot = options.tmpDir ?? tmpdir();
+  const timeoutMs = options.timeoutMs ?? 5000;
+  const started = Date.now();
+  const baseline = new Set(
+    readdirSync(watchRoot).filter((name) =>
+      name.startsWith("ak-docket-record-scratch-"),
+    ),
+  );
+  const frozen: string[] = [];
+  const dispose = () => {
+    for (const path of frozen) unfreezePath(path);
+  };
+  while (Date.now() - started < timeoutMs) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(watchRoot).filter((name) =>
+        name.startsWith("ak-docket-record-scratch-"),
+      );
+    } catch {
+      await new Promise((r) => setTimeout(r, 5));
+      continue;
+    }
+    for (const name of names) {
+      if (baseline.has(name)) continue;
+      const scratch = join(watchRoot, name);
+      let entries: string[] = [];
+      try {
+        if (!statSync(scratch).isDirectory()) continue;
+        entries = readdirSync(scratch);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const target = join(scratch, entry);
+        if (frozen.includes(target)) continue;
+        try {
+          freezePath(target);
+          frozen.push(target);
+        } catch {
+          // try next
+        }
+      }
+      if (frozen.length > 0) {
+        return { dispose };
+      }
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  if (frozen.length > 0) return { dispose };
+  return null;
 }
 
 const COUNTER_SCRIPT = String.raw`import { appendFileSync, mkdirSync } from "node:fs";
@@ -275,6 +428,27 @@ if (mode === "signal") {
   process.exit(0);
 } else if (mode === "cwd") {
   process.stdout.write(process.cwd() + "\n");
+  process.exit(0);
+} else if (mode === "stdin-echo") {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const body = Buffer.concat(chunks);
+  process.stdout.write(body);
+  process.exit(0);
+} else if (mode === "binary-tee") {
+  const outLen = Number(process.argv[3] ?? "0");
+  const errLen = Number(process.argv[4] ?? "0");
+  const out = Buffer.alloc(outLen);
+  const err = Buffer.alloc(errLen);
+  for (let i = 0; i < outLen; i++) out[i] = i % 256;
+  for (let i = 0; i < errLen; i++) err[i] = 255 - (i % 256);
+  // Drain both pipes before exit — process.exit would truncate large tees.
+  await new Promise((resolve, reject) => {
+    process.stdout.write(out, (errWrite) => (errWrite ? reject(errWrite) : resolve()));
+  });
+  await new Promise((resolve, reject) => {
+    process.stderr.write(err, (errWrite) => (errWrite ? reject(errWrite) : resolve()));
+  });
   process.exit(0);
 } else {
   process.stdout.write("ok\n");
