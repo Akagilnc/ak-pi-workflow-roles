@@ -30,9 +30,10 @@ const RULES: Rule[] = [
   {
     // Composed Authorization headers are one credential boundary: scheme + value
     // must be consumed atomically so a redacted prefix cannot leave the secret.
+    // Generic schemes (Token, Digest, …) share that law with Basic/Bearer.
     id: "authorization-header",
     pattern:
-      /(?:^|[\s,;])Authorization\s*[:=]\s*(?:'[^'\r\n]+'|"[^"\r\n]+"|(?:Bearer|Basic)\s+[A-Za-z0-9\-._~+/]+=*|[^\s'"\r\n]+)/gi,
+      /(?:^|[\s,;])Authorization\s*[:=]\s*(?:'[^'\r\n]+'|"[^"\r\n]+"|(?:Bearer|Basic|[A-Za-z][A-Za-z0-9+._-]*)\s+[A-Za-z0-9\-._~+/]+=*|[^\s'"\r\n]+)/gi,
   },
   {
     id: "bearer-credential",
