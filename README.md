@@ -188,7 +188,14 @@ Workflow ordering and routing are caller-owned. A separate orchestrator is optio
 
 Opt-in mechanical wrapper that runs one exact caller-supplied command once and, on success, atomically promotes a small core docket under a caller-selected archive Git worktree. It is not a role, orchestrator, model router, or Git mutator.
 
-**Runtime:** Node.js **>= 20**. The package ships a precompiled plain-ESM Recorder under `dist/` (`npm run build:recorder` / `prepack`). `bin/ak-docket-record` launches `dist/recorder/cli.js` with no `tsx` dependency and no type-stripping under `node_modules`. Child signal death is re-raised as a real signal (not `128+n`).
+**Runtime:** Node.js **>= 20** on **darwin/linux** **x64/arm64** only (`package.json` `os`/`cpu`; other combinations are refused at package admission). The package ships a plain-ESM Recorder under `dist/`. `bin/ak-docket-record` launches `dist/recorder/cli.js` with no `tsx` dependency and no type-stripping under `node_modules`. Child signal death is re-raised as a real signal (not `128+n`).
+
+**Native binding:** Docket publication uses a small N-API addon (`rename_no_replace.node`) built from packaged C source (`scripts/rename_no_replace.c`) via `scripts/build-rename-no-replace.mjs`. A working C compiler (`cc` on `PATH`) and Node.js N-API headers (`node_api.h`, normally next to the Node install under `include/node`) are required. Lifecycle:
+
+- `npm run build:native` / package `install` — compile only the native binding for the installing host (no TypeScript toolchain);
+- `npm run build:recorder` / `prepack` — compile Recorder TypeScript, then the native binding.
+
+The publisher always compiles to a temporary artifact beside the destination and atomically renames it over `dist/recorder/rename_no_replace.node`, so concurrent readers never observe a truncated binding. A checked-in or prepacked foreign/stale `.node` must not be trusted: install rebuilds for the actual host.
 
 ### Grammar
 
@@ -248,6 +255,8 @@ Machine-readable promoted manifest schema: [`schemas/recorder-manifest-v1.schema
 ## Development
 
 ```bash
-npm test
+npm install          # rebuilds host native binding (needs cc + node_api.h)
+npm run build:recorder
 npm run typecheck
+npm test
 ```

@@ -10,6 +10,90 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Seed foreign binding so checkout artifact cannot satisfy Linux
+        run: |
+          mkdir -p dist/recorder
+          # Recognizably non-ELF / non-host bytes (checked-in Darwin Mach-O must not pass).
+          printf 'FOREIGN_STALE_DARWIN_BINDING_NOT_HOST_NATIVE\n' > dist/recorder/rename_no_replace.node
+          python3 - <<'PY'
+          from pathlib import Path
+          data = Path("dist/recorder/rename_no_replace.node").read_bytes()
+          assert not data.startswith(b"\x7fELF"), data[:16]
+          print("seeded foreign binding", len(data), "bytes")
+          PY
       - run: npm ci
+      - name: Prove install replaced foreign binding with host-loadable ELF
+        run: |
+          node --input-type=module -e '
+          import { createRequire } from "node:module";
+          import { readFileSync } from "node:fs";
+          import { resolve } from "node:path";
+          const path = resolve("dist/recorder/rename_no_replace.node");
+          const buf = readFileSync(path);
+          if (buf[0] !== 0x7f || buf[1] !== 0x45 || buf[2] !== 0x4c || buf[3] !== 0x46) {
+            console.error("installed binding is not ELF:", buf.subarray(0, 16));
+            process.exit(1);
+          }
+          const binding = createRequire(resolve("package.json"))(path);
+          if (typeof binding.renameNoReplace !== "function") {
+            console.error("binding missing renameNoReplace");
+            process.exit(1);
+          }
+          console.log("host ELF binding loadable", buf.length, "bytes");
+          '
       - run: npm run typecheck
       - run: npm test
+      - name: Packed consumer install proves host rebuild and recorder bin
+        run: |
+          set -euo pipefail
+          WORK="$(mktemp -d)"
+          cleanup() { rm -rf "$WORK"; }
+          trap cleanup EXIT
+          TARBALL_JSON="$(npm pack --json --pack-destination "$WORK")"
+          TARBALL="$WORK/$(node -e 'const j=JSON.parse(process.argv[1]); process.stdout.write(j[0].filename)' "$TARBALL_JSON")"
+          mkdir -p "$WORK/consumer"
+          cat > "$WORK/consumer/package.json" <<EOF
+          {
+            "private": true,
+            "dependencies": {
+              "@ak/pi-workflow-roles": "file:${TARBALL}"
+            }
+          }
+          EOF
+          # Clean consumer install runs package install lifecycle (native rebuild only).
+          npm install --omit=dev --prefix "$WORK/consumer"
+          PKG="$WORK/consumer/node_modules/@ak/pi-workflow-roles"
+          node --input-type=module -e '
+          import { createRequire } from "node:module";
+          import { readFileSync } from "node:fs";
+          import { resolve } from "node:path";
+          const root = process.argv[1];
+          const path = resolve(root, "dist/recorder/rename_no_replace.node");
+          const buf = readFileSync(path);
+          if (buf[0] !== 0x7f || buf[1] !== 0x45 || buf[2] !== 0x4c || buf[3] !== 0x46) {
+            console.error("consumer binding is not ELF");
+            process.exit(1);
+          }
+          const binding = createRequire(resolve(root, "package.json"))(path);
+          if (typeof binding.renameNoReplace !== "function") process.exit(1);
+          console.log("consumer host binding ok");
+          ' "$PKG"
+          # Foreign seed inside installed package must be replaced by the install entrypoint.
+          printf 'FOREIGN_STALE_PACKED_BINDING\n' > "$PKG/dist/recorder/rename_no_replace.node"
+          node "$PKG/scripts/build-rename-no-replace.mjs"
+          node --input-type=module -e '
+          import { createRequire } from "node:module";
+          import { readFileSync } from "node:fs";
+          import { resolve } from "node:path";
+          const root = process.argv[1];
+          const path = resolve(root, "dist/recorder/rename_no_replace.node");
+          const buf = readFileSync(path);
+          if (buf[0] !== 0x7f || buf[1] !== 0x45 || buf[2] !== 0x4c || buf[3] !== 0x46) {
+            console.error("rebuilt consumer binding is not ELF");
+            process.exit(1);
+          }
+          const binding = createRequire(resolve(root, "package.json"))(path);
+          if (typeof binding.renameNoReplace !== "function") process.exit(1);
+          console.log("foreign seed replaced");
+          ' "$PKG"
+          test -x "$WORK/consumer/node_modules/.bin/ak-docket-record"

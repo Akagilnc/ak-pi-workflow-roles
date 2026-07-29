@@ -7,10 +7,24 @@
   "bin": {
     "ak-docket-record": "./bin/ak-docket-record.js"
   },
-  "files": ["bin", "dist", "extensions", "src", "souls", "schemas", "README.md"],
+  "files": [
+    "bin",
+    "dist",
+    "extensions",
+    "scripts/build-rename-no-replace.mjs",
+    "scripts/rename_no_replace.c",
+    "src",
+    "souls",
+    "schemas",
+    "README.md"
+  ],
+  "os": ["darwin", "linux"],
+  "cpu": ["x64", "arm64"],
   "scripts": {
-    "build:recorder": "tsc -p tsconfig.recorder.json && node scripts/build-rename-no-replace.mjs",
+    "build:native": "node scripts/build-rename-no-replace.mjs",
+    "build:recorder": "tsc -p tsconfig.recorder.json && npm run build:native",
     "prepack": "npm run build:recorder",
+    "install": "node scripts/build-rename-no-replace.mjs",
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
