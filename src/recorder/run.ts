@@ -50,6 +50,9 @@ export type RunResult = {
   failureJson: string | null;
 };
 
+/** Fixed public bound for one child diagnostic derived from captured tee bytes. */
+const CHILD_DIAGNOSTIC_BOUND = 4096;
+
 function childOutcomeFromSpawn(spawn: {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -68,6 +71,28 @@ function childOutcomeFromSpawn(spawn: {
     signal: null,
     diagnostic,
   };
+}
+
+/**
+ * One bounded diagnostic from already-captured child tee bytes.
+ * Prefer stderr then stdout; scan before attach. Never mutates tee mirrors.
+ */
+function deriveChildDiagnostic(
+  stdout: Buffer,
+  stderr: Buffer,
+): string | null {
+  const parts: Buffer[] = [];
+  if (stderr.length > 0) parts.push(stderr);
+  if (stdout.length > 0) parts.push(stdout);
+  if (parts.length === 0) return null;
+  const joined = Buffer.concat(parts);
+  const slice =
+    joined.length > CHILD_DIAGNOSTIC_BOUND
+      ? joined.subarray(joined.length - CHILD_DIAGNOSTIC_BOUND)
+      : joined;
+  const text = slice.toString("utf8");
+  if (text.length === 0) return null;
+  return scanString(text, "child.diagnostic").value;
 }
 
 /** Required raw cleanup — failure is Recorder infrastructure failure. */
@@ -302,7 +327,12 @@ export async function runRecorder(options: {
       stderrText.toString("utf8"),
       "child.stderr",
     );
-    child = childOutcomeFromSpawn(spawnResult, null);
+    // Public failure path may expose one bounded, already-scanned diagnostic
+    // derived from the same captured bytes — never from live stream mutation.
+    child = childOutcomeFromSpawn(
+      spawnResult,
+      deriveChildDiagnostic(stdoutText, stderrText),
+    );
 
     let admitted;
     try {

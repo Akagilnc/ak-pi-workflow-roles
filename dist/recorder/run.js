@@ -10,6 +10,8 @@ import { buildManifest } from "./manifest.js";
 import { assertPathNotSymlinkEscape, assertScratchOutsideOrIgnored, resolveInsideRoot, } from "./paths.js";
 import { combineReports, scanString, } from "./scanner.js";
 import { spawnOnce } from "./spawn.js";
+/** Fixed public bound for one child diagnostic derived from captured tee bytes. */
+const CHILD_DIAGNOSTIC_BOUND = 4096;
 function childOutcomeFromSpawn(spawn, diagnostic) {
     if (spawn.signal) {
         return {
@@ -25,6 +27,27 @@ function childOutcomeFromSpawn(spawn, diagnostic) {
         signal: null,
         diagnostic,
     };
+}
+/**
+ * One bounded diagnostic from already-captured child tee bytes.
+ * Prefer stderr then stdout; scan before attach. Never mutates tee mirrors.
+ */
+function deriveChildDiagnostic(stdout, stderr) {
+    const parts = [];
+    if (stderr.length > 0)
+        parts.push(stderr);
+    if (stdout.length > 0)
+        parts.push(stdout);
+    if (parts.length === 0)
+        return null;
+    const joined = Buffer.concat(parts);
+    const slice = joined.length > CHILD_DIAGNOSTIC_BOUND
+        ? joined.subarray(joined.length - CHILD_DIAGNOSTIC_BOUND)
+        : joined;
+    const text = slice.toString("utf8");
+    if (text.length === 0)
+        return null;
+    return scanString(text, "child.diagnostic").value;
 }
 /** Required raw cleanup — failure is Recorder infrastructure failure. */
 function requiredRm(path) {
@@ -204,7 +227,9 @@ export async function runRecorder(options) {
         // promotion metadata only and must NOT mutate/suppress the already-teed streams.
         const stdoutScan = scanString(stdoutText.toString("utf8"), "child.stdout");
         const stderrScan = scanString(stderrText.toString("utf8"), "child.stderr");
-        child = childOutcomeFromSpawn(spawnResult, null);
+        // Public failure path may expose one bounded, already-scanned diagnostic
+        // derived from the same captured bytes — never from live stream mutation.
+        child = childOutcomeFromSpawn(spawnResult, deriveChildDiagnostic(stdoutText, stderrText));
         let admitted;
         try {
             admitted = admitDeclarations(config, stage);
