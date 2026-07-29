@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/residual-repairs/install-and-envelopes.md",
+    "sha256": "748b5352a8b7d6e25d941e3be89b80d16f1894e640d083cb7f827e6bedbcbb62"
+  },
+  "sessionCandidate": {
+    "bytes": 17137549,
+    "sha256": "d69ffd0361538b35a540e77ede6eae897d048060f3ac5f85daab9983e4d2f970",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "e868a258690def3166f1fe9e316bac72c14ae81695994e5d470236f189e82001"
+  }
+}
