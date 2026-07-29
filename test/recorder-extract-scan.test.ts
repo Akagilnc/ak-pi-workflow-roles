@@ -314,7 +314,7 @@ test("scanner redacts every mandated credential class", () => {
   }
 });
 
-test("composed Authorization Basic/Bearer headers redact the complete credential", () => {
+test("composed Authorization Basic/Bearer/Token headers redact the complete credential", () => {
   const cases = [
     {
       name: "composed-bearer-plain",
@@ -326,6 +326,12 @@ test("composed Authorization Basic/Bearer headers redact the complete credential
       name: "composed-basic",
       sample: "Authorization: Basic dXNlcjpwYXNz",
       secret: "dXNlcjpwYXNz",
+      ruleId: "authorization-header",
+    },
+    {
+      name: "composed-generic-token",
+      sample: "Authorization: Token plainsecrettokenvalue999",
+      secret: "plainsecrettokenvalue999",
       ruleId: "authorization-header",
     },
     {
@@ -2044,8 +2050,11 @@ test("structural metadata gate preserves non-structural credential sanitization 
     const counter = join(root, "counter.txt");
 
     const header = "Authorization: Bearer plainsecrettokenvalue999";
+    const genericAuth = "Authorization: Token plainsecrettokenvalue999";
     const assign = secrets.assign;
-    const inputBody = `body ${assign}\n`;
+    // Admitted external input carries a generic Authorization scheme so promotion
+    // must consume scheme+credential atomically (no secret suffix left behind).
+    const inputBody = `body ${assign}\n${genericAuth}\n`;
     const inputPath = join(root, "assign-input.txt");
     writeFileSync(inputPath, inputBody);
 
@@ -2104,12 +2113,19 @@ test("structural metadata gate preserves non-structural credential sanitization 
     );
     assert.equal(existsSync(join(dest, "manifest.json")), true);
     for (const file of walkFiles(dest)) {
-      assertNoRawSecret(`nonstruct:${file}`, readFileSync(file, "utf8"));
+      const text = readFileSync(file, "utf8");
+      assertNoRawSecret(`nonstruct:${file}`, text);
+      assert.equal(
+        text.includes("[REDACTED] plainsecrettokenvalue999"),
+        false,
+        `nonstruct-suffix:${file}`,
+      );
     }
+    const promotedInput = readFileSync(join(dest, "inputs/assign-input"), "utf8");
+    assert.equal(promotedInput.includes("supersecretvalue999"), false);
+    assert.equal(promotedInput.includes("plainsecrettokenvalue999"), false);
     assert.equal(
-      readFileSync(join(dest, "inputs/assign-input"), "utf8").includes(
-        "supersecretvalue999",
-      ),
+      promotedInput.includes("[REDACTED] plainsecrettokenvalue999"),
       false,
     );
   } finally {
