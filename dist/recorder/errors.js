@@ -17,9 +17,8 @@ const PUBLIC_MESSAGES = {
 export class RecorderError extends Error {
     code;
     childDiagnostic;
-    constructor(code, 
-    /** Internal detail — never interpolated into public JSON. */
-    message, options) {
+    /** @param message Internal detail — never interpolated into public JSON. */
+    constructor(code, message, options) {
         super(message ?? PUBLIC_MESSAGES[code], options?.cause === undefined ? undefined : { cause: options.cause });
         this.name = "RecorderError";
         this.code = code;

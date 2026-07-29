@@ -34,9 +34,9 @@ export class RecorderError extends Error {
   readonly code: RecorderFailureCode;
   readonly childDiagnostic: string | null;
 
+  /** @param message Internal detail — never interpolated into public JSON. */
   constructor(
     code: RecorderFailureCode,
-    /** Internal detail — never interpolated into public JSON. */
     message?: string,
     options?: { childDiagnostic?: string | null; cause?: unknown },
   ) {
