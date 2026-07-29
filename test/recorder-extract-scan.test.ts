@@ -127,55 +127,123 @@ function minimalCollectorReceipt(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function machineLifecycle(
-  tool: string,
-  details: unknown,
-  options: {
-    callId?: string;
-    acceptedText?: string;
-    omitIssued?: boolean;
-    omitStart?: boolean;
-    omitTerminal?: boolean;
-    isError?: boolean;
-    usage?: unknown;
-    /** Replay an identical second terminal after the first success. */
-    duplicateTerminal?: boolean;
-    /** Conflicting second terminal details (implies a second terminal). */
-    conflictDetails?: unknown;
-    argsMismatch?: boolean;
-    /** Emit terminal before start (ordering violation). */
-    terminalBeforeStart?: boolean;
-    /** Emit start/terminal before issuance. */
-    startBeforeIssued?: boolean;
-  } = {},
-): string {
-  const callId = options.callId ?? "c1";
+type EnvelopeKind = "machine" | "session";
+
+type LifecycleOptions = {
+  envelope?: EnvelopeKind;
+  callId?: string;
+  acceptedText?: string;
+  omitIssued?: boolean;
+  omitStart?: boolean;
+  omitTerminal?: boolean;
+  isError?: boolean;
+  usage?: unknown;
+  /** Replay an identical second terminal after the first success. */
+  duplicateTerminal?: boolean;
+  /** Conflicting second terminal details (implies a second terminal). */
+  conflictDetails?: unknown;
+  argsMismatch?: boolean;
+  /** Emit terminal before start (ordering violation). */
+  terminalBeforeStart?: boolean;
+  /** Emit start/terminal before issuance. */
+  startBeforeIssued?: boolean;
+  /** Terminal details override (default: detailsFor(tool)). */
+  details?: unknown;
+  /** Issued/start args override. Collector defaults to legs-only. */
+  args?: unknown;
+};
+
+/**
+ * Build one lawful or contaminated lifecycle in either supported envelope form.
+ * Collector keeps legs-only issuance args versus full accepted receipt details.
+ */
+function lifecycle(tool: string, options: LifecycleOptions = {}): string {
+  const envelope: EnvelopeKind = options.envelope ?? "machine";
+  const callId = options.callId ?? (envelope === "machine" ? "c1" : "s1");
   const text = options.acceptedText ?? ACCEPTED[tool] ?? "accepted";
-  const args = options.argsMismatch ? { tampered: true } : details;
-  const issued = {
-    type: "message_end",
-    message: {
-      role: "assistant",
-      content: [{ type: "toolCall", id: callId, name: tool, arguments: args }],
-    },
-  };
+  const details = options.details ?? detailsFor(tool);
+  let args: unknown;
+  if (options.args !== undefined) {
+    args = options.args;
+  } else if (options.argsMismatch) {
+    args = { tampered: true };
+  } else if (tool === COLLECTOR_OUTPUT_TOOL) {
+    const receipt = isCollectorReceiptShape(details)
+      ? details
+      : minimalCollectorReceipt();
+    args = collectorLegsOnlyArgs(receipt);
+  } else {
+    args = details;
+  }
+
+  const issued = envelope === "machine"
+    ? {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: callId, name: tool, arguments: args }],
+      },
+    }
+    : {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: callId, name: tool, arguments: args }],
+      },
+    };
   const start = {
     type: "tool_execution_start",
     toolCallId: callId,
     toolName: tool,
     args,
   };
-  const terminal = {
-    type: "tool_execution_end",
-    toolCallId: callId,
-    toolName: tool,
-    isError: options.isError ?? false,
-    result: {
-      content: [{ type: "text", text }],
-      details,
-      ...(options.usage === undefined ? {} : { usage: options.usage }),
-    },
-  };
+  const terminal = envelope === "machine"
+    ? {
+      type: "tool_execution_end",
+      toolCallId: callId,
+      toolName: tool,
+      isError: options.isError ?? false,
+      result: {
+        content: [{ type: "text", text }],
+        details,
+        ...(options.usage === undefined ? {} : { usage: options.usage }),
+      },
+    }
+    : {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: callId,
+        toolName: tool,
+        isError: options.isError ?? false,
+        details,
+        content: [{ type: "text", text }],
+        ...(options.usage === undefined ? {} : { usage: options.usage }),
+      },
+    };
+  const duplicateTerminal = envelope === "machine"
+    ? {
+      type: "tool_execution_end",
+      toolCallId: callId,
+      toolName: tool,
+      isError: false,
+      result: {
+        content: [{ type: "text", text }],
+        details: options.conflictDetails ?? details,
+      },
+    }
+    : {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: callId,
+        toolName: tool,
+        isError: false,
+        details: options.conflictDetails ?? details,
+        content: [{ type: "text", text }],
+      },
+    };
+
   const lines: unknown[] = [];
   const pushIssued = () => {
     if (!options.omitIssued) lines.push(issued);
@@ -202,50 +270,28 @@ function machineLifecycle(
   }
 
   if (options.duplicateTerminal || options.conflictDetails !== undefined) {
-    lines.push({
-      type: "tool_execution_end",
-      toolCallId: callId,
-      toolName: tool,
-      isError: false,
-      result: {
-        content: [{ type: "text", text }],
-        details: options.conflictDetails ?? details,
-      },
-    });
+    lines.push(duplicateTerminal);
   }
   return lines.map((line) => JSON.stringify(line)).join("\n");
 }
 
-function sessionLifecycle(tool: string, details: unknown): string {
-  const callId = "s1";
-  const text = ACCEPTED[tool]!;
-  return [
-    {
-      type: "message",
-      message: {
-        role: "assistant",
-        content: [{ type: "toolCall", id: callId, name: tool, arguments: details }],
-      },
-    },
-    // session envelope still requires a start event in the shared decoder stream
-    {
-      type: "tool_execution_start",
-      toolCallId: callId,
-      toolName: tool,
-      args: details,
-    },
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolCallId: callId,
-        toolName: tool,
-        isError: false,
-        details,
-        content: [{ type: "text", text }],
-      },
-    },
-  ].map((line) => JSON.stringify(line)).join("\n");
+function isCollectorReceiptShape(
+  value: unknown,
+): value is ReturnType<typeof minimalCollectorReceipt> {
+  return isRecordLike(value) && Array.isArray(value.legs);
+}
+
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Machine-envelope convenience used by non-matrix focused cases. */
+function machineLifecycle(
+  tool: string,
+  details: unknown,
+  options: Omit<LifecycleOptions, "envelope" | "details"> = {},
+): string {
+  return lifecycle(tool, { ...options, envelope: "machine", details });
 }
 
 test("scanner redacts every mandated credential class", () => {
@@ -392,237 +438,229 @@ function collectorLegsOnlyArgs(receipt = minimalCollectorReceipt()) {
 
 function collectorBoundLifecycle(
   receipt: ReturnType<typeof minimalCollectorReceipt>,
-  envelope: "machine" | "session" = "machine",
+  envelope: EnvelopeKind = "machine",
 ): string {
-  const callId = envelope === "machine" ? "col-m" : "col-s";
-  const legsOnly = collectorLegsOnlyArgs(receipt);
-  const text = ACCEPTED[COLLECTOR_OUTPUT_TOOL]!;
-  if (envelope === "machine") {
-    return [
-      {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [{
-            type: "toolCall",
-            id: callId,
-            name: COLLECTOR_OUTPUT_TOOL,
-            arguments: legsOnly,
-          }],
-        },
-      },
-      {
-        type: "tool_execution_start",
-        toolCallId: callId,
-        toolName: COLLECTOR_OUTPUT_TOOL,
-        args: legsOnly,
-      },
-      {
-        type: "tool_execution_end",
-        toolCallId: callId,
-        toolName: COLLECTOR_OUTPUT_TOOL,
-        isError: false,
-        result: {
-          content: [{ type: "text", text }],
-          details: receipt,
-        },
-      },
-    ].map((line) => JSON.stringify(line)).join("\n");
-  }
-  return [
-    {
-      type: "message",
-      message: {
-        role: "assistant",
-        content: [{
-          type: "toolCall",
-          id: callId,
-          name: COLLECTOR_OUTPUT_TOOL,
-          arguments: legsOnly,
-        }],
-      },
-    },
-    {
-      type: "tool_execution_start",
-      toolCallId: callId,
-      toolName: COLLECTOR_OUTPUT_TOOL,
-      args: legsOnly,
-    },
-    {
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolCallId: callId,
-        toolName: COLLECTOR_OUTPUT_TOOL,
-        isError: false,
-        details: receipt,
-        content: [{ type: "text", text }],
-      },
-    },
-  ].map((line) => JSON.stringify(line)).join("\n");
+  return lifecycle(COLLECTOR_OUTPUT_TOOL, {
+    envelope,
+    callId: envelope === "machine" ? "col-m" : "col-s",
+    details: receipt,
+  });
 }
+
+function conflictDetailsFor(tool: string): unknown {
+  if (tool === JUDGE_OUTPUT_TOOL_NAME) {
+    return { judgeStatus: "continue", fix: { summary: "x" } };
+  }
+  if (tool === COLLECTOR_OUTPUT_TOOL) {
+    return minimalCollectorReceipt({ targetHead: "b".repeat(40) });
+  }
+  return { status: "refused", report: "nope" };
+}
+
+const ENVELOPES: readonly EnvelopeKind[] = ["machine", "session"];
 
 test("decoder accepts machine/JSON and session envelopes for each tool", () => {
   for (const tool of TERMINATING_TOOLS) {
-    const details = detailsFor(tool);
-    const jsonEnvelope = tool === COLLECTOR_OUTPUT_TOOL
-      ? collectorBoundLifecycle(minimalCollectorReceipt(), "machine")
-      : machineLifecycle(tool, details);
-    const sessionEnvelope = tool === COLLECTOR_OUTPUT_TOOL
-      ? collectorBoundLifecycle(minimalCollectorReceipt(), "session")
-      : sessionLifecycle(tool, details);
-    assert.ok(decodeToolResultsFromEnvelope(jsonEnvelope).length >= 1);
-    assert.ok(decodeToolResultsFromEnvelope(sessionEnvelope).length >= 1);
-    const extracted = extractAcceptedReceipt([jsonEnvelope]);
-    assert.ok(extracted.receipt, tool);
-    assert.equal(extracted.receipt!.toolName, tool);
-    assert.equal(extracted.auditObservation !== null, tool === JUDGE_OUTPUT_TOOL_NAME || tool === REVIEWER_OUTPUT_TOOL_NAME);
-    const extractedSession = extractAcceptedReceipt([sessionEnvelope]);
-    assert.ok(extractedSession.receipt, `session ${tool}`);
+    for (const envelope of ENVELOPES) {
+      const text = lifecycle(tool, { envelope });
+      assert.ok(
+        decodeToolResultsFromEnvelope(text).length >= 1,
+        `${tool} ${envelope} decodes`,
+      );
+      const extracted = extractAcceptedReceipt([text]);
+      assert.ok(extracted.receipt, `${tool} ${envelope}`);
+      assert.equal(extracted.receipt!.toolName, tool);
+      assert.equal(
+        extracted.auditObservation !== null,
+        tool === JUDGE_OUTPUT_TOOL_NAME || tool === REVIEWER_OUTPUT_TOOL_NAME,
+      );
+    }
   }
 });
 
 test("acceptance matrix: exact lifecycle law for every terminating tool × envelope", () => {
   for (const tool of TERMINATING_TOOLS) {
-    const details = detailsFor(tool);
-    const lawfulMachine = tool === COLLECTOR_OUTPUT_TOOL
-      ? collectorBoundLifecycle(minimalCollectorReceipt(), "machine")
-      : machineLifecycle(tool, details);
-    const lawfulSession = tool === COLLECTOR_OUTPUT_TOOL
-      ? collectorBoundLifecycle(minimalCollectorReceipt(), "session")
-      : sessionLifecycle(tool, details);
+    for (const envelope of ENVELOPES) {
+      const cell = `${tool} ${envelope}`;
+      const lawful = lifecycle(tool, { envelope });
+      assert.ok(extractAcceptedReceipt([lawful]).receipt, `${cell} lawful`);
 
-    assert.ok(extractAcceptedReceipt([lawfulMachine]).receipt, `${tool} machine ok`);
-    assert.ok(extractAcceptedReceipt([lawfulSession]).receipt, `${tool} session ok`);
-
-    // Replayed identical terminal is not acceptance.
-    assert.equal(
-      extractAcceptedReceipt([
-        machineLifecycle(tool, details, { duplicateTerminal: true }),
-      ]).receipt,
-      null,
-      `${tool} identical replay`,
-    );
-
-    // Substring / prefix / suffix acceptance text is not acceptance.
-    for (const acceptedText of [
-      `prefix ${ACCEPTED[tool]}`,
-      `${ACCEPTED[tool]} suffix`,
-      `embed ${ACCEPTED[tool]} embed`,
-      ACCEPTED[tool]!.slice(0, -1),
-    ]) {
+      // Replayed identical terminal is not acceptance.
       assert.equal(
         extractAcceptedReceipt([
-          machineLifecycle(tool, details, { acceptedText }),
+          lifecycle(tool, { envelope, duplicateTerminal: true }),
         ]).receipt,
         null,
-        `${tool} text ${acceptedText}`,
+        `${cell} identical replay`,
       );
-    }
 
-    // Ordering / start-before-issued / terminal-before-start.
-    assert.equal(
-      extractAcceptedReceipt([
-        machineLifecycle(tool, details, { startBeforeIssued: true }),
-      ]).receipt,
-      null,
-      `${tool} start before issued`,
-    );
-    assert.equal(
-      extractAcceptedReceipt([
-        machineLifecycle(tool, details, { terminalBeforeStart: true }),
-      ]).receipt,
-      null,
-      `${tool} terminal before start`,
-    );
+      // Substring / prefix / suffix / truncated acceptance text is not acceptance.
+      for (const acceptedText of [
+        `prefix ${ACCEPTED[tool]}`,
+        `${ACCEPTED[tool]} suffix`,
+        `embed ${ACCEPTED[tool]} embed`,
+        ACCEPTED[tool]!.slice(0, -1),
+      ]) {
+        assert.equal(
+          extractAcceptedReceipt([
+            lifecycle(tool, { envelope, acceptedText }),
+          ]).receipt,
+          null,
+          `${cell} text ${acceptedText}`,
+        );
+      }
 
-    // Conflict / error / orphan / missing phases.
-    assert.equal(
-      extractAcceptedReceipt([
-        machineLifecycle(tool, details, {
-          duplicateTerminal: true,
-          conflictDetails: tool === JUDGE_OUTPUT_TOOL_NAME
-            ? { judgeStatus: "continue", fix: { summary: "x" } }
-            : tool === COLLECTOR_OUTPUT_TOOL
-            ? minimalCollectorReceipt({ targetHead: "b".repeat(40) })
-            : { status: "refused", report: "nope" },
-        }),
-      ]).receipt,
-      null,
-      `${tool} conflict`,
-    );
-    assert.equal(
-      extractAcceptedReceipt([machineLifecycle(tool, details, { isError: true })]).receipt,
-      null,
-      `${tool} error`,
-    );
-    assert.equal(
-      extractAcceptedReceipt([
-        machineLifecycle(tool, details, { omitIssued: true, omitStart: true }),
-      ]).receipt,
-      null,
-      `${tool} orphan terminal`,
-    );
-    assert.equal(
-      extractAcceptedReceipt([machineLifecycle(tool, details, { omitStart: true })]).receipt,
-      null,
-      `${tool} missing start`,
-    );
-    assert.equal(
-      extractAcceptedReceipt([machineLifecycle(tool, details, { omitIssued: true })]).receipt,
-      null,
-      `${tool} missing issued`,
-    );
+      // Ordering: start-before-issued / terminal-before-start.
+      assert.equal(
+        extractAcceptedReceipt([
+          lifecycle(tool, { envelope, startBeforeIssued: true }),
+        ]).receipt,
+        null,
+        `${cell} start before issued`,
+      );
+      assert.equal(
+        extractAcceptedReceipt([
+          lifecycle(tool, { envelope, terminalBeforeStart: true }),
+        ]).receipt,
+        null,
+        `${cell} terminal before start`,
+      );
 
-    // Args mismatch between issued and start, or terminal≠issued for non-collector.
-    if (tool === COLLECTOR_OUTPUT_TOOL) {
-      const receipt = minimalCollectorReceipt();
-      const legsOnly = collectorLegsOnlyArgs(receipt);
-      const mismatched = [
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{
-              type: "toolCall",
-              id: "cm",
-              name: COLLECTOR_OUTPUT_TOOL,
-              arguments: legsOnly,
-            }],
-          },
-        },
-        {
+      // Conflict / error / orphan / missing phases.
+      assert.equal(
+        extractAcceptedReceipt([
+          lifecycle(tool, {
+            envelope,
+            duplicateTerminal: true,
+            conflictDetails: conflictDetailsFor(tool),
+          }),
+        ]).receipt,
+        null,
+        `${cell} conflict`,
+      );
+      assert.equal(
+        extractAcceptedReceipt([
+          lifecycle(tool, { envelope, isError: true }),
+        ]).receipt,
+        null,
+        `${cell} error`,
+      );
+      assert.equal(
+        extractAcceptedReceipt([
+          lifecycle(tool, { envelope, omitIssued: true, omitStart: true }),
+        ]).receipt,
+        null,
+        `${cell} orphan terminal`,
+      );
+      assert.equal(
+        extractAcceptedReceipt([
+          lifecycle(tool, { envelope, omitStart: true }),
+        ]).receipt,
+        null,
+        `${cell} missing start`,
+      );
+      assert.equal(
+        extractAcceptedReceipt([
+          lifecycle(tool, { envelope, omitIssued: true }),
+        ]).receipt,
+        null,
+        `${cell} missing issued`,
+      );
+
+      // Args mismatch between issued and start.
+      if (tool === COLLECTOR_OUTPUT_TOOL) {
+        const receipt = minimalCollectorReceipt();
+        // Issued legs-only vs start empty-legs.
+        const callId = envelope === "machine" ? "cm" : "cs";
+        const legsOnly = collectorLegsOnlyArgs(receipt);
+        const issued = envelope === "machine"
+          ? {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{
+                type: "toolCall",
+                id: callId,
+                name: COLLECTOR_OUTPUT_TOOL,
+                arguments: legsOnly,
+              }],
+            },
+          }
+          : {
+            type: "message",
+            message: {
+              role: "assistant",
+              content: [{
+                type: "toolCall",
+                id: callId,
+                name: COLLECTOR_OUTPUT_TOOL,
+                arguments: legsOnly,
+              }],
+            },
+          };
+        const start = {
           type: "tool_execution_start",
-          toolCallId: "cm",
+          toolCallId: callId,
           toolName: COLLECTOR_OUTPUT_TOOL,
           args: { legs: [] },
-        },
-        {
-          type: "tool_execution_end",
-          toolCallId: "cm",
-          toolName: COLLECTOR_OUTPUT_TOOL,
-          isError: false,
-          result: {
-            content: [{ type: "text", text: ACCEPTED[COLLECTOR_OUTPUT_TOOL] }],
-            details: receipt,
-          },
-        },
-      ].map((line) => JSON.stringify(line)).join("\n");
+        };
+        const terminal = envelope === "machine"
+          ? {
+            type: "tool_execution_end",
+            toolCallId: callId,
+            toolName: COLLECTOR_OUTPUT_TOOL,
+            isError: false,
+            result: {
+              content: [{ type: "text", text: ACCEPTED[COLLECTOR_OUTPUT_TOOL] }],
+              details: receipt,
+            },
+          }
+          : {
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolCallId: callId,
+              toolName: COLLECTOR_OUTPUT_TOOL,
+              isError: false,
+              details: receipt,
+              content: [{ type: "text", text: ACCEPTED[COLLECTOR_OUTPUT_TOOL] }],
+            },
+          };
+        const mismatched = [issued, start, terminal]
+          .map((line) => JSON.stringify(line))
+          .join("\n");
+        assert.equal(
+          extractAcceptedReceipt([mismatched]).receipt,
+          null,
+          `${cell} issued/start args mismatch`,
+        );
+      } else {
+        assert.equal(
+          extractAcceptedReceipt([
+            lifecycle(tool, { envelope, argsMismatch: true }),
+          ]).receipt,
+          null,
+          `${cell} args mismatch`,
+        );
+      }
+
+      // Unsupported tool name lookalike in this envelope.
       assert.equal(
-        extractAcceptedReceipt([mismatched]).receipt,
+        extractAcceptedReceipt([
+          lifecycle("not_a_package_tool", {
+            envelope,
+            details: detailsFor(CODER_OUTPUT_TOOL_NAME),
+            args: detailsFor(CODER_OUTPUT_TOOL_NAME),
+            acceptedText: ACCEPTED[CODER_OUTPUT_TOOL_NAME]!,
+          }),
+        ]).receipt,
         null,
-        `${tool} issued/start args mismatch`,
-      );
-    } else {
-      assert.equal(
-        extractAcceptedReceipt([machineLifecycle(tool, details, { argsMismatch: true })]).receipt,
-        null,
-        `${tool} args mismatch`,
+        `${cell} unsupported tool`,
       );
     }
   }
 
-  // Unsupported envelope shapes / prose / bare lookalikes.
+  // Unsupported envelope shapes / prose / bare lookalikes (global).
   assert.equal(extractAcceptedReceipt([""]).receipt, null);
   assert.equal(
     extractAcceptedReceipt([
@@ -630,12 +668,40 @@ test("acceptance matrix: exact lifecycle law for every terminating tool × envel
     ]).receipt,
     null,
   );
+  // Bare machine terminal without lifecycle framing.
   assert.equal(
     extractAcceptedReceipt([
-      machineLifecycle("not_a_package_tool", detailsFor(CODER_OUTPUT_TOOL_NAME)),
+      JSON.stringify({
+        type: "tool_execution_end",
+        toolCallId: "c1",
+        toolName: CODER_OUTPUT_TOOL_NAME,
+        isError: false,
+        result: {
+          content: [{ type: "text", text: ACCEPTED[CODER_OUTPUT_TOOL_NAME] }],
+          details: detailsFor(CODER_OUTPUT_TOOL_NAME),
+        },
+      }),
     ]).receipt,
     null,
   );
+  // Bare session toolResult without lifecycle framing.
+  assert.equal(
+    extractAcceptedReceipt([
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "c1",
+          toolName: CODER_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: detailsFor(CODER_OUTPUT_TOOL_NAME),
+          content: [{ type: "text", text: ACCEPTED[CODER_OUTPUT_TOOL_NAME] }],
+        },
+      }),
+    ]).receipt,
+    null,
+  );
+  // Legacy bare toolResult object (no envelope type).
   assert.equal(
     extractAcceptedReceipt([
       JSON.stringify({
@@ -650,18 +716,17 @@ test("acceptance matrix: exact lifecycle law for every terminating tool × envel
     null,
   );
 
-  // Multi-candidate ambiguity fails closed with extraction-failed.
-  const a = machineLifecycle(CODER_OUTPUT_TOOL_NAME, detailsFor(CODER_OUTPUT_TOOL_NAME), {
-    callId: "a1",
-  });
-  const b = machineLifecycle(FIXER_OUTPUT_TOOL_NAME, detailsFor(FIXER_OUTPUT_TOOL_NAME), {
-    callId: "b1",
-  });
-  assert.throws(
-    () => extractAcceptedReceipt([`${a}\n${b}`]),
-    (error: unknown) =>
-      error instanceof RecorderError && error.code === "extraction-failed",
-  );
+  // Multi-candidate ambiguity fails closed with extraction-failed for each envelope.
+  for (const envelope of ENVELOPES) {
+    const a = lifecycle(CODER_OUTPUT_TOOL_NAME, { envelope, callId: "a1" });
+    const b = lifecycle(FIXER_OUTPUT_TOOL_NAME, { envelope, callId: "b1" });
+    assert.throws(
+      () => extractAcceptedReceipt([`${a}\n${b}`]),
+      (error: unknown) =>
+        error instanceof RecorderError && error.code === "extraction-failed",
+      `${envelope} ambiguity`,
+    );
+  }
 });
 
 test("collector closed recursive receipt rejects extras and malformed descendants", () => {
