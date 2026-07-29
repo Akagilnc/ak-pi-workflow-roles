@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/final-residual-repairs/package-lock-native-metadata.md",
+    "sha256": "3cbbd7498c1fe3736a346ad55ee3afb910a6f4838cd02925d873394c19baada6"
+  },
+  "sessionCandidate": {
+    "bytes": 9046672,
+    "sha256": "88737845df43e84cfd92e80c601e36279733c87ee993b79fe66c3be938977498",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "7786d1d2396b1ba7a90243c905a5be72e6f42b6cfc4b9709648514f264a679ae"
+  }
+}
