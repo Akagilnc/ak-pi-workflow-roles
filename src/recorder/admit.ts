@@ -96,28 +96,6 @@ export function verifyGitReference(
     );
   }
 
-  // Commit must be reachable from the declared repository's current HEAD.
-  try {
-    execFileSync(
-      "git",
-      [
-        "-C",
-        repositoryRoot,
-        "merge-base",
-        "--is-ancestor",
-        ref.commit,
-        "HEAD",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-  } catch (error) {
-    throw new RecorderError(
-      "reference-failed",
-      `git reference ${ref.id} commit is not reachable from HEAD`,
-      { cause: error },
-    );
-  }
-
   // Exact path listing without recursion into trees as blobs.
   const ls = git(repositoryRoot, [
     "ls-tree",

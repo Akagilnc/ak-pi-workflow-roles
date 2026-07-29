@@ -210,27 +210,11 @@ test("admission counterexample matrix rejects before spawn", async () => {
       sha256: task.sha256,
     };
 
-    // Orphan commit not reachable from HEAD.
-    const orphanCommit = execFileSync(
-      "git",
-      [
-        "-C",
-        archive,
-        "commit-tree",
-        execFileSync("git", ["-C", archive, "rev-parse", "HEAD^{tree}"], {
-          encoding: "utf8",
-        }).trim(),
-        "-m",
-        "orphan",
-      ],
-      { encoding: "utf8" },
-    ).trim();
-
-    // Future/unreachable: commit on a side branch then reset main away from it.
+    // Side-branch commit retained in-repo while HEAD stays on main.
     execFileSync("git", ["-C", archive, "checkout", "-b", "side"], {
       stdio: "ignore",
     });
-    const future = commitFile(archive, "future.md", "future\n");
+    const sideBranch = commitFile(archive, "future.md", "future\n");
     execFileSync("git", ["-C", archive, "checkout", "main"], { stdio: "ignore" });
 
     // Directory-as-blob fixture.
@@ -411,31 +395,6 @@ test("admission counterexample matrix rejects before spawn", async () => {
             path: otherAuth.path,
             blobOid: otherAuth.blobOid,
             sha256: otherAuth.sha256,
-          },
-          task: postCommitTask,
-        },
-      },
-      {
-        label: "orphan commit not reachable from HEAD",
-        docketId: "issues/10/apply/apply-orphan",
-        patch: {
-          authority: {
-            ...postCommitAuthority,
-            commit: orphanCommit,
-          },
-          task: postCommitTask,
-        },
-      },
-      {
-        label: "future/side commit not reachable from HEAD",
-        docketId: "issues/10/apply/apply-future",
-        patch: {
-          authority: {
-            repositoryRoot: archive,
-            commit: future.commit,
-            path: future.path,
-            blobOid: future.blobOid,
-            sha256: future.sha256,
           },
           task: postCommitTask,
         },
@@ -962,6 +921,53 @@ test("admission counterexample matrix rejects before spawn", async () => {
     assert.equal(
       existsSync(join(archive, ".ak/dockets/issues/10/apply/apply-admit-ok/manifest.json")),
       true,
+    );
+
+    // Exact side-branch reference: resolvable non-HEAD commit admits without moving HEAD.
+    const sideBefore = gitState(archive);
+    const sideDocketId = "issues/10/apply/apply-side-branch-ok";
+    const sideConfig = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: sideDocketId,
+      authority: {
+        repositoryRoot: archive,
+        commit: sideBranch.commit,
+        path: sideBranch.path,
+        blobOid: sideBranch.blobOid,
+        sha256: sideBranch.sha256,
+      },
+      task: postCommitTask,
+    });
+    const sideBeforeSpawns = spawnCount(counter);
+    const sideOk = await runRecorderBin(
+      ["--config", sideConfig, "--", process.execPath, script, "ok"],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(sideOk.code, 0, sideOk.stderr);
+    assert.equal(spawnCount(counter), sideBeforeSpawns + 1);
+    const sideManifestPath = join(
+      archive,
+      ".ak/dockets",
+      sideDocketId,
+      "manifest.json",
+    );
+    assert.equal(existsSync(sideManifestPath), true);
+    const sideManifest = JSON.parse(readFileSync(sideManifestPath, "utf8"));
+    const sideAuth = sideManifest.artifacts.find(
+      (a: { id: string }) => a.id === "authority",
+    );
+    assert.equal(sideAuth.reference.identity, "reference");
+    assert.equal(sideAuth.reference.commit, sideBranch.commit.toLowerCase());
+    assert.equal(sideAuth.reference.path, sideBranch.path);
+    assert.equal(sideAuth.reference.blobOid, sideBranch.blobOid.toLowerCase());
+    assert.equal(sideAuth.reference.sha256, sideBranch.sha256.toLowerCase());
+    const sideAfter = gitState(archive);
+    assert.equal(sideAfter.head, sideBefore.head, "side-branch admit: HEAD unchanged");
+    assert.equal(
+      sideAfter.status,
+      sideBefore.status,
+      "side-branch admit: worktree/index status unchanged",
     );
 
     // Cross-repository success control.
