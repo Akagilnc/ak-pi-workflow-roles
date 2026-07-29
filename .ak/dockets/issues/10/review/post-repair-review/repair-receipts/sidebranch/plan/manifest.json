@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/review/post-repair-review/repairs/side-branch-reference.md",
+    "sha256": "02d689beae512edec8d0f1ca3f9a97def5831f1bec8c11e716e6124636fbd4d6"
+  },
+  "sessionCandidate": {
+    "bytes": 6770902,
+    "sha256": "0242ecd09577722702b06a658059ee8111c8a912bc294a56cb225e1c1f9e4dad",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "c0e5a7543b4709736545408e0e9e2b38b524bc2abf9740b2b3e1fea0807c055f"
+  }
+}
