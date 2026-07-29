@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/final-residual-repairs/native-build-install.md",
+    "sha256": "74d14789260f8c9c7ddf2c008d671efc8d86a9deafc9742d47aeeaf89fd1ae00"
+  },
+  "sessionCandidate": {
+    "bytes": 14740888,
+    "sha256": "e594b76aa9ce3bbd4e279b4c81a34d87810ae92e610dc3f5a33bc537422baacb",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "8cd1e31366f8e9f6f00c965f68ad60ab37dee628302da57caceddf41a06ee4bb"
+  }
+}
