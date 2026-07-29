@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "reviewer",
+  "base": "6e76efa93588844996611b86320de7747cca3d24",
+  "target": "3a071f02d41cda0ff13aeaacf2986cd3aff374cf",
+  "task": {
+    "path": ".ak/dockets/issues/10/review/final-review/task.md",
+    "sha256": "4cd01190901fc3a9c6526d636d86c58d01256b149e48ef2f72d7e62c32bb12aa"
+  },
+  "sessionCandidate": {
+    "bytes": 45386790,
+    "sha256": "51b52c7890569dd840adab0b8a3a8386415d2f7d5a11d113bc7d4690e1f02b9a",
+    "retention": "not retained",
+    "reason": "routine review execution exhaust; accepted report retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "b0cb420986ef5a833e911b373958e04d153a41aecc32214959b020525b8ab260",
+    "acceptedBySoulAudit": true
+  }
+}
