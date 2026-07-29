@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/residual-repairs/atomic-publication.md",
+    "sha256": "aba5999939bcf59797f2196876ca8e01e697d3b3dbdac53ba27429fb84911d1f"
+  },
+  "sessionCandidate": {
+    "bytes": 27079294,
+    "sha256": "3d60f9c4acee904d799b20711b50f130f34fa041c86605affe268bc004b68447",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "e51f8a51ec2c723a39e04697ded8422171f9b525745e7ff4c9264bcb58f4141c"
+  }
+}
