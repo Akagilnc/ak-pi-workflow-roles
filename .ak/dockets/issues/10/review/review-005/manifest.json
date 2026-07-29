@@ -1,0 +1,22 @@
+{
+  "formatVersion": 1,
+  "role": "reviewer",
+  "reviewedBase": "f9d9d1240de39fb1e24519a7ab7765e4e3c2a6f7",
+  "reviewedTarget": "b7b1c968b4cce29e30c27d50fb9aeccece07cf39",
+  "task": {
+    "path": ".ak/dockets/issues/10/review/review-005/task.md",
+    "sha256": "a04175926cc1f9d09875667da0fdb1453269c2162da762a43128405c1b0b1d28"
+  },
+  "sessionCandidate": {
+    "sanitizedBytes": 24968289,
+    "sha256": "32d9bcb396e165eeb3108ab8bfea431b87ae2fc43f241c6fa7c7e212ee51d016",
+    "retention": "not retained",
+    "reason": "routine execution exhaust; accepted Reviewer Receipt and method-audit outcome carry the claim"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "77832896c8ad7a9d01b64270f256a2e8351538d971c8d7a80a68dedebd9a43ac",
+    "acceptedByMethodAudit": true
+  },
+  "redactions": null
+}
