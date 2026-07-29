@@ -1,0 +1,3 @@
+# Repair packet: generic Authorization credential boundary
+
+At current HEAD, correct the existing authorization-header scanner rule so a generic Authorization scheme and its complete credential value are redacted as one boundary. `Authorization: Token plainsecrettokenvalue999` must leave no credential suffix. Preserve Basic/Bearer and all other rules. Add focused scanner plus existing external-input admission regression proving no suffix promotion, regenerate dist, typecheck/full/pack-clean proof, one forward commit and Receipt. No second scanner or admission mechanism; do not inspect sessions.
