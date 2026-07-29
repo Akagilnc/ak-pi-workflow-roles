@@ -504,13 +504,24 @@ export function extractAcceptedReceipt(
     };
   }
 
-  const originalJson = JSON.stringify(bound.details);
-  const scanned = scanJsonValue(bound.details, "receipt.details");
+  // Scan every member persisted into receipt.json, not details alone.
+  const originalPayload = {
+    toolName: bound.toolName,
+    toolCallId: bound.toolCallId,
+    details: bound.details,
+  };
+  const originalJson = JSON.stringify(originalPayload);
+  const scanned = scanJsonValue(originalPayload, "receipt");
   const scannedJson = JSON.stringify(scanned.value);
+  const scannedPayload = scanned.value as {
+    toolName: string;
+    toolCallId: string;
+    details: unknown;
+  };
 
   // Revalidate derivative; redaction that damages discriminant/type fails closed.
   try {
-    validateAcceptedDetails(bound.toolName, scanned.value);
+    validateAcceptedDetails(bound.toolName, scannedPayload.details);
   } catch {
     throw new RecorderError(
       "scan-failed",
@@ -521,8 +532,8 @@ export function extractAcceptedReceipt(
   // Key collision: if scan produced colliding keys under an object, scanner throws.
   const receipt = toAcceptedReceipt(
     bound.toolName,
-    bound.toolCallId,
-    scanned.value as AcceptedDetails,
+    scannedPayload.toolCallId,
+    scannedPayload.details as AcceptedDetails,
   );
 
   const artifactKind = originalJson === scannedJson
@@ -532,6 +543,7 @@ export function extractAcceptedReceipt(
   let auditObservation: AuditObservation | null = null;
   // Audit only from genuinely bound accepted Judge/Reviewer lifecycle.
   // Never infer auditPassed from tool identity alone or child exit success.
+  // Source call identity from the Receipt so the join is structural.
   if (carriesPackageAuditObservation(bound.toolName)) {
     const usage = usageObservation(bound.usage);
     let usageScan = emptyReport;
@@ -543,7 +555,7 @@ export function extractAcceptedReceipt(
     }
     auditObservation = {
       toolName: bound.toolName as AuditObservation["toolName"],
-      toolCallId: bound.toolCallId,
+      toolCallId: receipt.toolCallId,
       auditPassed: true,
       ...(scannedUsage === undefined ? {} : { usage: scannedUsage }),
     };

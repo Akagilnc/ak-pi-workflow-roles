@@ -1599,6 +1599,18 @@ test("credential-shaped Judge toolCallId sanitizes through bound extract, audit,
   assert.ok(extracted.auditObservation, "Judge must create audit observation");
   assert.equal(extracted.receipt!.kind, "judge");
   assert.equal(extracted.auditObservation!.auditPassed, true);
+  // Outer toolCallId alone is enough to classify a sanitized derivative.
+  assert.equal(
+    extracted.artifactKind,
+    "sanitizedDerivativeOfAcceptedReceipt",
+    "credential-shaped toolCallId must classify as sanitized derivative",
+  );
+  assert.notEqual(extracted.receipt!.toolCallId, callId);
+  assert.equal(
+    extracted.receipt!.toolCallId.includes(rawMarker),
+    false,
+    "extraction must already return sanitized Receipt call identity",
+  );
   assert.equal(
     extracted.receipt!.toolCallId,
     extracted.auditObservation!.toolCallId,
@@ -1748,6 +1760,24 @@ process.exit(0);
     assert.equal(receipt.toolName, JUDGE_OUTPUT_TOOL_NAME);
     assert.equal(audit.toolName, JUDGE_OUTPUT_TOOL_NAME);
     assert.equal(audit.auditPassed, true);
+    assert.equal(
+      receipt.artifactKind,
+      "sanitizedDerivativeOfAcceptedReceipt",
+      "promoted receipt.json must carry derivative artifactKind",
+    );
+    assert.equal(
+      manifest.receipt.artifactKind,
+      "sanitizedDerivativeOfAcceptedReceipt",
+    );
+    const receiptArtifact = manifest.artifacts.find(
+      (artifact: { id: string }) => artifact.id === "receipt",
+    );
+    assert.ok(receiptArtifact, "manifest must list the receipt artifact");
+    assert.equal(
+      receiptArtifact.receiptArtifactKind,
+      "sanitizedDerivativeOfAcceptedReceipt",
+    );
+    assert.equal(receiptArtifact.redactionStatus, "sanitized-derivative");
     assert.equal(receipt.toolCallId, audit.toolCallId);
     assert.equal(manifest.receipt.toolCallId, receipt.toolCallId);
     assert.equal(manifest.auditObservation.toolCallId, audit.toolCallId);
