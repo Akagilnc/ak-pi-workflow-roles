@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ak.local/schemas/recorder-manifest-v1.schema.json",
+  "title": "RecorderManifestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "archive",
+    "invocation",
+    "execution",
+    "provenance",
+    "artifacts",
+    "receipt",
+    "auditObservation",
+    "child",
+    "recorder",
+    "redaction"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "archive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryRoot", "root", "docketId"],
+      "properties": {
+        "repositoryRoot": { "type": "string", "minLength": 1 },
+        "root": { "type": "string", "minLength": 1 },
+        "docketId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv", "cwd", "environment", "stdin", "stdio"],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "cwd": { "type": "string", "minLength": 1 },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["inherit", "overrides", "unset"],
+          "properties": {
+            "inherit": { "type": "boolean" },
+            "overrides": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "unset": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "stdin": { "const": "inherit" },
+        "stdio": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stdout", "stderr"],
+          "properties": {
+            "stdout": { "const": "tee" },
+            "stderr": { "const": "tee" }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "model", "target", "verification"],
+      "properties": {
+        "package": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"] },
+        "target": { "type": ["string", "null"] },
+        "verification": { "const": "unverified" }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "redactionStatus"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "authority",
+              "task",
+              "input",
+              "exhibit",
+              "receipt",
+              "audit-observation"
+            ]
+          },
+          "redactionStatus": {
+            "type": "string",
+            "enum": ["clean", "redacted", "sanitized-derivative"]
+          },
+          "reference": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "identity",
+              "repositoryRoot",
+              "commit",
+              "path",
+              "blobOid",
+              "sha256",
+              "mode"
+            ],
+            "properties": {
+              "identity": { "const": "reference" },
+              "repositoryRoot": { "type": "string", "minLength": 1 },
+              "commit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "path": { "type": "string", "minLength": 1 },
+              "blobOid": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "mode": { "type": "string", "enum": ["100644", "100755"] }
+            }
+          },
+          "stored": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identity", "path", "sha256", "byteLength"],
+            "properties": {
+              "identity": { "const": "stored" },
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "byteLength": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "receiptArtifactKind": {
+            "type": "string",
+            "enum": [
+              "acceptedReceipt",
+              "sanitizedDerivativeOfAcceptedReceipt"
+            ]
+          }
+        }
+      }
+    },
+    "receipt": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["toolName", "toolCallId", "artifactId", "artifactKind"],
+          "properties": {
+            "toolName": { "type": "string", "minLength": 1 },
+            "toolCallId": { "type": "string", "minLength": 1 },
+            "artifactId": { "type": "string", "minLength": 1 },
+            "artifactKind": {
+              "type": "string",
+              "enum": [
+                "acceptedReceipt",
+                "sanitizedDerivativeOfAcceptedReceipt"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "auditObservation": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["toolName", "toolCallId", "auditPassed"],
+          "properties": {
+            "toolName": { "type": "string", "minLength": 1 },
+            "toolCallId": { "type": "string", "minLength": 1 },
+            "auditPassed": { "const": true },
+            "usage": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "input": { "type": "number" },
+                "output": { "type": "number" },
+                "cacheRead": { "type": "number" },
+                "cacheWrite": { "type": "number" },
+                "totalTokens": { "type": "number" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "child": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "exitCode", "signal"],
+      "properties": {
+        "status": { "type": "string", "enum": ["exited", "signaled"] },
+        "exitCode": { "type": ["integer", "null"] },
+        "signal": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "exited" } }
+          },
+          "then": {
+            "properties": {
+              "exitCode": { "type": "integer" },
+              "signal": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "signaled" } }
+          },
+          "then": {
+            "properties": {
+              "exitCode": { "type": "null" },
+              "signal": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "recorder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "const": "completed" }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hits"],
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ruleId", "location", "count"],
+            "properties": {
+              "ruleId": { "type": "string", "minLength": 1 },
+              "location": { "type": "string", "minLength": 1 },
+              "count": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}
