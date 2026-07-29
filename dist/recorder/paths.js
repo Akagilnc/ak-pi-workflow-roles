@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, resolve, sep } from "node:path";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync, } from "node:fs";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { RecorderError } from "./errors.js";
 const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const RESERVED_IDS = new Set([
@@ -205,4 +205,35 @@ export function assertScratchOutsideOrIgnored(scratchPath, worktreeRoot) {
     catch {
         throw new RecorderError("invalid-path", "scratch/stage inside worktree must be gitignored");
     }
+}
+/** Require two existing paths share one device (same filesystem). */
+export function assertSameFilesystem(leftPath, rightPath, label) {
+    let leftStat;
+    let rightStat;
+    try {
+        leftStat = statSync(leftPath);
+        rightStat = statSync(rightPath);
+    }
+    catch (error) {
+        throw new RecorderError("invalid-path", `${label} is unreadable`, {
+            cause: error,
+        });
+    }
+    if (leftStat.dev !== rightStat.dev) {
+        throw new RecorderError("invalid-path", `${label} must be on the same filesystem`);
+    }
+}
+/**
+ * Private publication stage under the archive worktree's ignored `.ak/work`
+ * area so rename promotion stays same-filesystem with the final docket parent.
+ */
+export function allocateIgnoredStageRoot(worktreeRoot) {
+    const workRoot = resolveInsideRoot(worktreeRoot, ".ak/work", "archive private work area");
+    mkdirSync(workRoot, { recursive: true });
+    assertPathNotSymlinkEscape(workRoot, worktreeRoot, "archive private work area");
+    const stage = mkdtempSync(join(workRoot, "recorder-stage-"));
+    assertPathNotSymlinkEscape(stage, worktreeRoot, "publication stage");
+    assertScratchOutsideOrIgnored(stage, worktreeRoot);
+    assertSameFilesystem(stage, worktreeRoot, "publication stage");
+    return stage;
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
   access,
   mkdir,
@@ -16,6 +17,7 @@ import {
   initGitRepo,
   makeTempDir,
   npmPackTo,
+  runRecorderBin,
   sha256File,
   writeCounterScript,
   writeRecorderConfig,
@@ -47,7 +49,7 @@ test("npm pack includes recorder bin, source, schema, and docs", async () => {
   });
 });
 
-test("installed tarball exposes node_modules/.bin/ak-docket-record and runs once", async () => {
+test("installed tarball .bin proves stdin, streams, exit/signal, one-spawn, and recorder failure", async () => {
   await withHermeticHome(
     { prefix: "ak-recorder-install-" },
     async ({ home }) => {
@@ -74,73 +76,157 @@ test("installed tarball exposes node_modules/.bin/ak-docket-record and runs once
         const task = commitFile(archive, "task.md", "# task\n");
         const script = writeCounterScript(workspace);
         const counter = join(workspace, "counter.txt");
-        const configPath = writeRecorderConfig(workspace, {
-          archiveRepo: archive,
-          cwd: workspace,
-          docketId: "issues/10/apply/apply-install-001",
-          authority: {
-            repositoryRoot: archive,
-            commit: authority.commit,
-            path: authority.path,
-            blobOid: authority.blobOid,
-            sha256: authority.sha256,
-          },
-          task: {
-            repositoryRoot: archive,
-            commit: task.commit,
-            path: task.path,
-            blobOid: task.blobOid,
-            sha256: task.sha256,
-          },
-        });
-        const { spawn } = await import("node:child_process");
-        const result = await new Promise<{
-          code: number | null;
-          stdout: string;
-          stderr: string;
-        }>((resolveResult, reject) => {
-          const child = spawn(
-            bin,
-            [
-              "--config",
-              configPath,
-              "--",
-              process.execPath,
-              script,
-              "stdout-stderr",
-              "from-bin",
-            ],
+        const auth = {
+          repositoryRoot: archive,
+          commit: authority.commit,
+          path: authority.path,
+          blobOid: authority.blobOid,
+          sha256: authority.sha256,
+        };
+        const taskRef = {
+          repositoryRoot: archive,
+          commit: task.commit,
+          path: task.path,
+          blobOid: task.blobOid,
+          sha256: task.sha256,
+        };
+
+        const runInstalled = (
+          docketId: string,
+          childArgs: string[],
+          opts: { input?: string | Buffer } = {},
+        ) => {
+          const configPath = writeRecorderConfig(workspace, {
+            archiveRepo: archive,
+            cwd: workspace,
+            docketId,
+            authority: auth,
+            task: taskRef,
+          });
+          // writeRecorderConfig always uses the same filename; unique per call via rewrite is fine
+          // because runs are sequential.
+          return runRecorderBin(
+            ["--config", configPath, "--", process.execPath, script, ...childArgs],
             {
               cwd: workspace,
               env: { ...process.env, AK_RECORDER_COUNTER: counter },
-              stdio: ["ignore", "pipe", "pipe"],
+              binPath: bin,
+              ...(opts.input !== undefined ? { input: opts.input } : {}),
             },
           );
-          let stdout = "";
-          let stderr = "";
-          child.stdout.setEncoding("utf8").on("data", (c) => {
-            stdout += c;
-          });
-          child.stderr.setEncoding("utf8").on("data", (c) => {
-            stderr += c;
-          });
-          child.on("error", reject);
-          child.on("close", (code) => resolveResult({ code, stdout, stderr }));
-        });
-        assert.equal(result.code, 0);
-        assert.match(result.stdout, /OUT:from-bin/);
-        const counterText = await readFile(counter, "utf8");
-        assert.equal(counterText.trim(), "1");
-        const manifest = JSON.parse(
+        };
+
+        // Stream separation + one-spawn happy path
+        const streams = await runInstalled(
+          "issues/10/apply/apply-install-streams",
+          ["stdout-stderr", "from-bin"],
+        );
+        assert.equal(streams.code, 0);
+        assert.match(streams.stdout, /OUT:from-bin/);
+        assert.match(streams.stderr, /ERR:marker/);
+        assert.equal((await readFile(counter, "utf8")).trim().split("\n").length, 1);
+        const streamManifest = JSON.parse(
           await readFile(
             join(
               archive,
-              ".ak/dockets/issues/10/apply/apply-install-001/manifest.json",
+              ".ak/dockets/issues/10/apply/apply-install-streams/manifest.json",
             ),
             "utf8",
           ),
         );
-        assert.equal(manifest.recorder.status, "completed");
+        assert.equal(streamManifest.recorder.status, "completed");
+        assert.equal(streamManifest.child.exitCode, 0);
+
+        // Inherited stdin
+        const stdinPayload = "stdin-from-installed-bin\n";
+        const stdinResult = await runInstalled(
+          "issues/10/apply/apply-install-stdin",
+          ["stdin-echo"],
+          { input: stdinPayload },
+        );
+        assert.equal(stdinResult.code, 0);
+        assert.equal(stdinResult.stdout, stdinPayload);
+
+        // Child nonzero preserved
+        const nonzero = await runInstalled(
+          "issues/10/apply/apply-install-exit-9",
+          ["exit", "9"],
+        );
+        assert.equal(nonzero.code, 9);
+        const nonzeroManifest = JSON.parse(
+          await readFile(
+            join(
+              archive,
+              ".ak/dockets/issues/10/apply/apply-install-exit-9/manifest.json",
+            ),
+            "utf8",
+          ),
+        );
+        assert.equal(nonzeroManifest.child.exitCode, 9);
+        assert.equal(nonzeroManifest.recorder.status, "completed");
+
+        // Child signal archived then re-raised through launcher
+        const signaled = await runInstalled(
+          "issues/10/apply/apply-install-signal",
+          ["signal", "SIGTERM"],
+        );
+        assert.equal(signaled.signal, "SIGTERM");
+        const signalManifest = JSON.parse(
+          await readFile(
+            join(
+              archive,
+              ".ak/dockets/issues/10/apply/apply-install-signal/manifest.json",
+            ),
+            "utf8",
+          ),
+        );
+        assert.equal(signalManifest.child.status, "signaled");
+        assert.equal(signalManifest.child.signal, "SIGTERM");
+
+        // Recorder failure precedence via child-created collision
+        const failId = "issues/10/apply/apply-install-rec-fail";
+        const dest = join(archive, ".ak/dockets", failId);
+        const collide = join(workspace, "install-collide.mjs");
+        await writeFile(
+          collide,
+          `import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+process.stdout.write("install-collide-out\\n");
+process.stderr.write("install-collide-err\\n");
+mkdirSync(${JSON.stringify(dest)}, { recursive: true });
+writeFileSync(join(${JSON.stringify(dest)}, "collision.txt"), "x\\n");
+process.exit(4);
+`,
+        );
+        const failConfig = writeRecorderConfig(workspace, {
+          archiveRepo: archive,
+          cwd: workspace,
+          docketId: failId,
+          authority: auth,
+          task: taskRef,
+        });
+        const failed = await runRecorderBin(
+          ["--config", failConfig, "--", process.execPath, collide],
+          {
+            cwd: workspace,
+            env: { ...process.env, AK_RECORDER_COUNTER: counter },
+            binPath: bin,
+          },
+        );
+        assert.equal(failed.code, 125);
+        assert.equal(failed.stdout, "install-collide-out\n");
+        assert.match(failed.stderr, /^install-collide-err\n/);
+        const failLines = failed.stderr.trim().split("\n");
+        const failure = JSON.parse(failLines.at(-1)!);
+        assert.equal(failure.recorder.status, "failed");
+        assert.equal(failure.child.status, "exited");
+        assert.equal(failure.child.exitCode, 4);
+        assert.equal(existsSync(join(dest, "manifest.json")), false);
+
+        // One-spawn total across successful counter uses: streams + stdin + exit + signal = 4
+        // (collision script does not use counter)
+        const counterText = await readFile(counter, "utf8");
+        assert.equal(counterText.trim().split("\n").filter(Boolean).length, 4);
       } finally {
         await rm(workspace, { recursive: true, force: true });
       }
