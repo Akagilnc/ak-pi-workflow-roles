@@ -36,6 +36,7 @@ import {
   sha256File,
   writeCounterScript,
   writeRecorderConfig,
+  type MinimalConfigInput,
 } from "./helpers/recorder-test-harness.ts";
 
 const secrets = {
@@ -1289,6 +1290,312 @@ test("final scan closure keeps manifest hits identical to redaction-report and i
     assert.deepEqual(zeroManifest.redaction.hits, []);
     assert.equal(existsSync(join(zeroDest, "redaction-report.json")), false);
     validatePublicManifest(zeroManifest);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function readCounter(counterPath: string): number {
+  if (!existsSync(counterPath)) return 0;
+  return readFileSync(counterPath, "utf8").split("\n").filter(Boolean).length;
+}
+
+function assertNoSecretInTree(label: string, dir: string, markers: string[]): void {
+  for (const file of walkFiles(dir)) {
+    const text = readFileSync(file, "utf8");
+    for (const marker of markers) {
+      assert.equal(
+        text.includes(marker),
+        false,
+        `${label} file ${file} leaked ${marker}`,
+      );
+    }
+    assert.equal(
+      file.includes("SUPERSECRET"),
+      false,
+      `${label} path leaked secret: ${file}`,
+    );
+    assert.equal(
+      file.includes("sk-proj-ABCDEFGH"),
+      false,
+      `${label} path leaked provider token: ${file}`,
+    );
+  }
+  // Directory names themselves must not carry the raw credential.
+  const stack = [dir];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    if (!existsSync(cur)) continue;
+    for (const ent of readdirSync(cur, { withFileTypes: true })) {
+      const abs = join(cur, ent.name);
+      for (const marker of markers) {
+        assert.equal(
+          abs.includes(marker),
+          false,
+          `${label} path entry leaked ${marker}: ${abs}`,
+        );
+      }
+      if (ent.isDirectory()) stack.push(abs);
+    }
+  }
+}
+
+function writeConfigWithMutations(
+  dir: string,
+  input: MinimalConfigInput,
+  mutate: (cfg: Record<string, any>) => void,
+): string {
+  const path = writeRecorderConfig(dir, input);
+  const cfg = JSON.parse(readFileSync(path, "utf8"));
+  mutate(cfg);
+  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`);
+  return path;
+}
+
+test("credential-shaped structural metadata fails closed before stage/final path creation", async () => {
+  const root = makeTempDir("ak-recorder-meta-cred-");
+  try {
+    const archive = initGitRepo(join(root, "archive"));
+    const authority = commitFile(archive, "authority.md", "# authority\n");
+    const task = commitFile(archive, "task.md", "# task\n");
+    const script = writeCounterScript(root);
+    const counter = join(root, "counter.txt");
+
+    const providerId = secrets.skProj; // sk-proj-… grammar-valid id
+    const providerTokenMarker = "sk-proj-ABCDEFGHijklmnop1234567890";
+    const ghpId = "ghp_SUPERSECRETTOKENVALUE001";
+    const markers = [providerTokenMarker, "SUPERSECRETTOKENVALUE001", ghpId];
+
+    const baseInput: MinimalConfigInput = {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: "issues/10/apply/apply-meta-control",
+      authority: {
+        repositoryRoot: archive,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+    };
+
+    // Clean control: ordinary ids and archive identity still succeed.
+    const controlConfig = writeRecorderConfig(root, baseInput);
+    const control = await runRecorderBin(
+      ["--config", controlConfig, "--", process.execPath, script, "ok"],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(control.code, 0, control.stderr);
+    assert.equal(
+      existsSync(
+        join(archive, ".ak/dockets/issues/10/apply/apply-meta-control/manifest.json"),
+      ),
+      true,
+    );
+    const spawnsAfterControl = readCounter(counter);
+    assert.ok(spawnsAfterControl >= 1);
+
+    const externalBody = "external body\n";
+    const exhibitBody = "exhibit body\n";
+    const externalPath = join(root, "ext-body.txt");
+    const exhibitPath = join(root, "exh-body.txt");
+    writeFileSync(externalPath, externalBody);
+    writeFileSync(exhibitPath, exhibitBody);
+
+    type Case = {
+      name: string;
+      mutate: (cfg: Record<string, any>) => void;
+      secret: string;
+    };
+    const cases: Case[] = [
+      {
+        name: "git-reference-id-provider-token",
+        secret: providerTokenMarker,
+        mutate: (cfg) => {
+          cfg.archive.docketId = "issues/10/apply/apply-meta-ref-id";
+          cfg.declarations.gitReferences[0].id = providerId;
+        },
+      },
+      {
+        name: "external-input-id-ghp",
+        secret: ghpId,
+        mutate: (cfg) => {
+          cfg.archive.docketId = "issues/10/apply/apply-meta-ext-id";
+          cfg.declarations.externalInputs = [{
+            id: ghpId,
+            sourcePath: externalPath,
+            sha256: sha256File(externalBody),
+            kind: "input",
+          }];
+        },
+      },
+      {
+        name: "exhibit-id-provider-token",
+        secret: providerTokenMarker,
+        mutate: (cfg) => {
+          cfg.archive.docketId = "issues/10/apply/apply-meta-exh-id";
+          cfg.declarations.exhibits = [{
+            id: providerId,
+            sourcePath: exhibitPath,
+            sha256: sha256File(exhibitBody),
+          }];
+        },
+      },
+      {
+        name: "archive-docketId-provider-token",
+        secret: providerTokenMarker,
+        mutate: (cfg) => {
+          cfg.archive.docketId =
+            `issues/10/apply/${providerId}`;
+        },
+      },
+      {
+        name: "archive-root-ghp",
+        secret: ghpId,
+        mutate: (cfg) => {
+          cfg.archive.root = ghpId;
+          cfg.archive.docketId = "issues/10/apply/apply-meta-root";
+        },
+      },
+    ];
+
+    for (const item of cases) {
+      const beforeSpawns = readCounter(counter);
+      const configPath = writeConfigWithMutations(
+        root,
+        {
+          ...baseInput,
+          docketId: `issues/10/apply/apply-meta-${item.name}`,
+        },
+        item.mutate,
+      );
+      const result = await runRecorderBin(
+        ["--config", configPath, "--", process.execPath, script, "ok"],
+        { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+      );
+      assert.equal(result.code, 125, `${item.name}: ${result.stderr}`);
+      assert.equal(
+        readCounter(counter),
+        beforeSpawns,
+        `${item.name} must not spawn child`,
+      );
+
+      const failureLine = result.stderr.trim().split("\n").at(-1)!;
+      const failure = JSON.parse(failureLine);
+      assert.equal(failure.recorder.status, "failed", item.name);
+      assert.equal(failure.recorder.code, "invalid-config", item.name);
+      assert.equal(failure.child.status, "not-spawned", item.name);
+      assertNoRawSecret(`${item.name}-failure`, failureLine);
+      assert.equal(failureLine.includes(item.secret), false, item.name);
+      assert.equal(result.stderr.includes(item.secret), false, item.name);
+      assert.equal(result.stdout.includes(item.secret), false, item.name);
+
+      // No final docket core and no credential-shaped private stage/final paths.
+      assertNoSecretInTree(item.name, archive, markers);
+      assert.equal(
+        existsSync(join(archive, ".ak/dockets", `issues/10/apply/${providerId}`)),
+        false,
+        item.name,
+      );
+      assert.equal(existsSync(join(archive, ghpId)), false, item.name);
+      // No inputs/<credential> or exhibits/<credential> residue under work stage.
+      if (existsSync(join(archive, ".ak/work"))) {
+        assertNoSecretInTree(`${item.name}-work`, join(archive, ".ak/work"), markers);
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("structural metadata gate preserves non-structural credential sanitization matrix", async () => {
+  // Representative forms beyond provider-token ids: assignment + header ride the
+  // existing non-structural scanner paths (argv/context, receipt, copied bytes,
+  // provenance, manifest/report) and must still sanitize rather than reject config.
+  const root = makeTempDir("ak-recorder-meta-nonstruct-");
+  try {
+    const archive = initGitRepo(join(root, "archive"));
+    const authority = commitFile(archive, "authority.md", "# authority\n");
+    const task = commitFile(archive, "task.md", "# task\n");
+    const script = writeCounterScript(root);
+    const counter = join(root, "counter.txt");
+
+    const header = "Authorization: Bearer plainsecrettokenvalue999";
+    const assign = secrets.assign;
+    const inputBody = `body ${assign}\n`;
+    const inputPath = join(root, "assign-input.txt");
+    writeFileSync(inputPath, inputBody);
+
+    const configPath = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: "issues/10/apply/apply-meta-nonstruct",
+      authority: {
+        repositoryRoot: archive,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+      externalInputs: [{
+        id: "assign-input",
+        sourcePath: inputPath,
+        sha256: sha256File(inputBody),
+        kind: "input",
+      }],
+      provenance: {
+        package: null,
+        model: `model ${header}`,
+        target: null,
+      },
+    });
+
+    const result = await runRecorderBin(
+      [
+        "--config",
+        configPath,
+        "--",
+        process.execPath,
+        script,
+        "json-receipt",
+        CODER_OUTPUT_TOOL_NAME,
+        JSON.stringify({
+          status: "completed",
+          report: `done ${assign} ${header}`,
+        }),
+        header,
+      ],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    const dest = join(
+      archive,
+      ".ak/dockets/issues/10/apply/apply-meta-nonstruct",
+    );
+    assert.equal(existsSync(join(dest, "manifest.json")), true);
+    for (const file of walkFiles(dest)) {
+      assertNoRawSecret(`nonstruct:${file}`, readFileSync(file, "utf8"));
+    }
+    assert.equal(
+      readFileSync(join(dest, "inputs/assign-input"), "utf8").includes(
+        "supersecretvalue999",
+      ),
+      false,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

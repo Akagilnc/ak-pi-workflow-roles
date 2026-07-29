@@ -2,6 +2,7 @@ import { accessSync, constants, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { RecorderError } from "./errors.js";
 import { assertNotReservedArtifactId, assertPathNotSymlinkEscape, normalizeRepoRelativePath, requireAbsoluteExistingDirectory, requireCanonicalGitWorktree, resolveInsideRoot, } from "./paths.js";
+import { scanString } from "./scanner.js";
 const FULL_SHA_RE = /^[0-9a-f]{40}$/i;
 const SHA256_RE = /^[0-9a-f]{64}$/i;
 const BLOB_OID_RE = /^[0-9a-f]{40}$/i;
@@ -28,6 +29,18 @@ function requireStringOrNull(value, label) {
     }
     return value;
 }
+/**
+ * Structural metadata (archive identity, declaration ids) becomes path segments
+ * and report locations. Redaction would damage identity, so a scanner hit fails
+ * closed before path construction or later diagnostics can observe the raw value.
+ */
+function requireCredentialFreeMetadata(value, label) {
+    const scanned = scanString(value, label);
+    if (scanned.report.redacted || scanned.value !== value) {
+        throw new RecorderError("invalid-config", `${label} must not be credential-shaped`);
+    }
+    return value;
+}
 function parseGitReference(raw, index) {
     if (!isRecord(raw) || !hasExactKeys(raw, [
         "id",
@@ -40,7 +53,7 @@ function parseGitReference(raw, index) {
     ])) {
         throw new RecorderError("invalid-config", `declarations.gitReferences[${index}] has invalid shape`);
     }
-    const id = requireString(raw.id, `declarations.gitReferences[${index}].id`);
+    const id = requireCredentialFreeMetadata(requireString(raw.id, `declarations.gitReferences[${index}].id`), `declarations.gitReferences[${index}].id`);
     if (!ID_RE.test(id)) {
         throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].id is unlawful`);
     }
@@ -75,7 +88,7 @@ function parseExternalInput(raw, index) {
     if (!isRecord(raw) || !hasExactKeys(raw, ["id", "sourcePath", "sha256", "kind"])) {
         throw new RecorderError("invalid-config", `declarations.externalInputs[${index}] has invalid shape`);
     }
-    const id = requireString(raw.id, `declarations.externalInputs[${index}].id`);
+    const id = requireCredentialFreeMetadata(requireString(raw.id, `declarations.externalInputs[${index}].id`), `declarations.externalInputs[${index}].id`);
     if (!ID_RE.test(id)) {
         throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].id is unlawful`);
     }
@@ -97,7 +110,7 @@ function parseExhibit(raw, index) {
     if (!isRecord(raw) || !hasExactKeys(raw, ["id", "sourcePath", "sha256"])) {
         throw new RecorderError("invalid-config", `declarations.exhibits[${index}] has invalid shape`);
     }
-    const id = requireString(raw.id, `declarations.exhibits[${index}].id`);
+    const id = requireCredentialFreeMetadata(requireString(raw.id, `declarations.exhibits[${index}].id`), `declarations.exhibits[${index}].id`);
     if (!ID_RE.test(id)) {
         throw new RecorderError("invalid-config", `declarations.exhibits[${index}].id is unlawful`);
     }
@@ -242,8 +255,8 @@ export function loadRecorderConfig(configPath) {
         throw new RecorderError("invalid-config", "declaration collections must be arrays");
     }
     const repositoryRoot = requireCanonicalGitWorktree(requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"), "archive.repositoryRoot");
-    const root = normalizeRepoRelativePath(requireString(raw.archive.root, "archive.root"), "archive.root");
-    const docketId = normalizeRepoRelativePath(requireString(raw.archive.docketId, "archive.docketId"), "archive.docketId");
+    const root = requireCredentialFreeMetadata(normalizeRepoRelativePath(requireString(raw.archive.root, "archive.root"), "archive.root"), "archive.root");
+    const docketId = requireCredentialFreeMetadata(normalizeRepoRelativePath(requireString(raw.archive.docketId, "archive.docketId"), "archive.docketId"), "archive.docketId");
     const destination = resolveInsideRoot(repositoryRoot, `${root}/${docketId}`, "archive destination");
     assertPathNotSymlinkEscape(destination, repositoryRoot, "archive destination");
     const cwd = requireAbsoluteExistingDirectory(requireString(raw.execution.cwd, "execution.cwd"), "execution.cwd");
