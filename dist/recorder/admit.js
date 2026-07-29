@@ -35,6 +35,20 @@ export function verifyGitReference(ref) {
     if (resolved.toLowerCase() !== ref.commit.toLowerCase()) {
         throw new RecorderError("reference-failed", `git reference ${ref.id} commit does not resolve exactly`);
     }
+    // Commit must be reachable from the declared repository's current HEAD.
+    try {
+        execFileSync("git", [
+            "-C",
+            repositoryRoot,
+            "merge-base",
+            "--is-ancestor",
+            ref.commit,
+            "HEAD",
+        ], { stdio: ["ignore", "pipe", "pipe"] });
+    }
+    catch (error) {
+        throw new RecorderError("reference-failed", `git reference ${ref.id} commit is not reachable from HEAD`, { cause: error });
+    }
     // Exact path listing without recursion into trees as blobs.
     const ls = git(repositoryRoot, [
         "ls-tree",
@@ -78,8 +92,18 @@ export function verifyGitReference(ref) {
     if (digest !== ref.sha256.toLowerCase()) {
         throw new RecorderError("reference-failed", `git reference ${ref.id} sha256 mismatch`);
     }
-    // Reject untracked/dirty bytes as references: working tree must not be required;
-    // identity is purely committed. (Dirty worktree may exist but is not used.)
+    // Dirty, deleted, renamed, or untracked worktree state cannot satisfy a
+    // committed reference — even when the declaration names the committed bytes.
+    const worktreeState = git(repositoryRoot, [
+        "status",
+        "--porcelain",
+        "--untracked-files=normal",
+        "--",
+        ref.path,
+    ]);
+    if (worktreeState.length > 0) {
+        throw new RecorderError("reference-failed", `git reference ${ref.id} path is dirty, deleted, or untracked in the worktree`);
+    }
     const repoScan = scanString(repositoryRoot, `gitReference.${ref.id}.repositoryRoot`);
     const pathScan = scanString(ref.path, `gitReference.${ref.id}.path`);
     const report = combineReports(repoScan.report, pathScan.report);
@@ -151,8 +175,16 @@ export function admitDeclarations(config, stageRoot) {
     // Uniqueness of canonical reference identities and stored copies.
     const referenceKeys = new Set();
     const storedDigests = new Set();
+    const storedPaths = new Set();
+    const ids = new Set();
     for (const ref of config.declarations.gitReferences) {
         assertNotReservedArtifactId(ref.id, `gitReference.${ref.id}`);
+        if (ids.has(ref.id)) {
+            throw new RecorderError("admission-failed", `duplicate artifact id ${ref.id}`);
+        }
+        ids.add(ref.id);
+        // Generated docket outputs are not pre-existing committed references.
+        assertNotReservedStoredPath(ref.path, `gitReference.${ref.id}.path`);
         const verified = verifyGitReference(ref);
         const key = [
             verified.artifact.reference.repositoryRoot,
@@ -168,12 +200,20 @@ export function admitDeclarations(config, stageRoot) {
         reports.push(verified.report);
     }
     for (const input of config.declarations.externalInputs) {
+        if (ids.has(input.id)) {
+            throw new RecorderError("admission-failed", `duplicate artifact id ${input.id}`);
+        }
+        ids.add(input.id);
         const dest = join("inputs", input.id);
+        if (storedPaths.has(dest)) {
+            throw new RecorderError("admission-failed", `duplicate stored path for ${input.id}`);
+        }
         const stored = storeOnce(input.sourcePath, input.sha256, dest, stageRoot, `externalInput.${input.id}`, input.id);
         if (storedDigests.has(stored.stored.sha256)) {
             throw new RecorderError("admission-failed", `duplicate stored artifact digest for ${input.id}`);
         }
         storedDigests.add(stored.stored.sha256);
+        storedPaths.add(stored.stored.path);
         artifacts.push({
             id: input.id,
             kind: input.kind,
@@ -183,12 +223,20 @@ export function admitDeclarations(config, stageRoot) {
         reports.push(stored.report);
     }
     for (const exhibit of config.declarations.exhibits) {
+        if (ids.has(exhibit.id)) {
+            throw new RecorderError("admission-failed", `duplicate artifact id ${exhibit.id}`);
+        }
+        ids.add(exhibit.id);
         const dest = join("exhibits", exhibit.id);
+        if (storedPaths.has(dest)) {
+            throw new RecorderError("admission-failed", `duplicate stored path for ${exhibit.id}`);
+        }
         const stored = storeOnce(exhibit.sourcePath, exhibit.sha256, dest, stageRoot, `exhibit.${exhibit.id}`, exhibit.id);
         if (storedDigests.has(stored.stored.sha256)) {
             throw new RecorderError("admission-failed", `duplicate stored artifact digest for ${exhibit.id}`);
         }
         storedDigests.add(stored.stored.sha256);
+        storedPaths.add(stored.stored.path);
         artifacts.push({
             id: exhibit.id,
             kind: "exhibit",

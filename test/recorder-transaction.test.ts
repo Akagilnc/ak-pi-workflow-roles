@@ -131,27 +131,27 @@ test("child signal is preserved after successful promotion", async () => {
 test("recorder failure after child success yields 125 and no final manifest", async () => {
   const ctx = setup();
   try {
-    // Force admission failure via bad external hash after child would succeed.
-    // Child runs first; then admission of declarations happens.
-    // Put invalid blob on a git reference by using wrong sha after spawn...
-    // Easier: destination parent path traversal rejected before spawn.
-    const configPath = configFor(ctx, "issues/10/apply/apply-rec-fail");
-    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
-    cfg.declarations.gitReferences[0].sha256 = "ab".repeat(32);
-    writeFileSync(configPath, JSON.stringify(cfg));
+    // Declaration admission is before spawn. Force a post-spawn Recorder failure by
+    // having the successful child create the destination (promotion collision).
+    const docketId = "issues/10/apply/apply-rec-fail";
+    const configPath = configFor(ctx, docketId);
+    const dest = join(ctx.archive, ".ak/dockets", docketId);
+    const collide = join(ctx.root, "succeed-then-collide.mjs");
+    writeFileSync(
+      collide,
+      `import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+process.stdout.write("exit-body\\n");
+mkdirSync(${JSON.stringify(dest)}, { recursive: true });
+writeFileSync(join(${JSON.stringify(dest)}, "collision.txt"), "preexisting\\n");
+process.exit(0);
+`,
+    );
     const beforeHead = execFileSync("git", ["-C", ctx.archive, "rev-parse", "HEAD"], {
       encoding: "utf8",
     }).trim();
     const result = await runRecorderBin(
-      [
-        "--config",
-        configPath,
-        "--",
-        process.execPath,
-        ctx.script,
-        "exit",
-        "0",
-      ],
+      ["--config", configPath, "--", process.execPath, collide],
       {
         cwd: ctx.root,
         env: { ...process.env, AK_RECORDER_COUNTER: ctx.counter },
@@ -164,10 +164,7 @@ test("recorder failure after child success yields 125 and no final manifest", as
     assert.equal(failure.recorder.status, "failed");
     assert.equal(failure.child.status, "exited");
     assert.equal(failure.child.exitCode, 0);
-    assert.equal(
-      existsSync(join(ctx.archive, ".ak/dockets/issues/10/apply/apply-rec-fail")),
-      false,
-    );
+    assert.equal(existsSync(join(dest, "manifest.json")), false);
     const afterHead = execFileSync("git", ["-C", ctx.archive, "rev-parse", "HEAD"], {
       encoding: "utf8",
     }).trim();
@@ -180,25 +177,26 @@ test("recorder failure after child success yields 125 and no final manifest", as
 test("dual failure preserves scanned child diagnostic and recorder precedence", async () => {
   const ctx = setup();
   try {
-    const configPath = configFor(ctx, "issues/10/apply/apply-dual-fail");
-    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
-    cfg.declarations.gitReferences[0].blobOid = "0".repeat(40);
-    writeFileSync(configPath, JSON.stringify(cfg));
+    const docketId = "issues/10/apply/apply-dual-fail";
+    const configPath = configFor(ctx, docketId);
+    const dest = join(ctx.archive, ".ak/dockets", docketId);
     const stdoutBody =
       "child-failed-marker Authorization: Bearer plainsecrettokenvalue999\n";
     const stderrBody = "diag-line Basic dXNlcjpwYXNz\n";
+    const collide = join(ctx.root, "fail-then-collide.mjs");
+    writeFileSync(
+      collide,
+      `import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+process.stdout.write(${JSON.stringify(stdoutBody)});
+process.stderr.write(${JSON.stringify(stderrBody)});
+mkdirSync(${JSON.stringify(dest)}, { recursive: true });
+writeFileSync(join(${JSON.stringify(dest)}, "collision.txt"), "preexisting\\n");
+process.exit(3);
+`,
+    );
     const result = await runRecorderBin(
-      [
-        "--config",
-        configPath,
-        "--",
-        process.execPath,
-        ctx.script,
-        "exit-text",
-        "3",
-        stdoutBody,
-        stderrBody,
-      ],
+      ["--config", configPath, "--", process.execPath, collide],
       {
         cwd: ctx.root,
         env: { ...process.env, AK_RECORDER_COUNTER: ctx.counter },
@@ -221,10 +219,7 @@ test("dual failure preserves scanned child diagnostic and recorder precedence", 
     assert.equal(failure.child.diagnostic.includes("[REDACTED]"), true);
     assert.equal(failureLine.includes("plainsecrettokenvalue999"), false);
     assert.equal(failureLine.includes("dXNlcjpwYXNz"), false);
-    assert.equal(
-      existsSync(join(ctx.archive, ".ak/dockets/issues/10/apply/apply-dual-fail")),
-      false,
-    );
+    assert.equal(existsSync(join(dest, "manifest.json")), false);
   } finally {
     rmSync(ctx.root, { recursive: true, force: true });
   }

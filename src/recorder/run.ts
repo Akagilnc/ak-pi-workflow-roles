@@ -31,7 +31,7 @@ import {
   type ChildOutcome,
 } from "./errors.ts";
 import { extractAcceptedReceipt } from "./extract.ts";
-import { buildManifest } from "./manifest.ts";
+import { buildManifest, validatePublicManifest } from "./manifest.ts";
 import {
   assertPathNotSymlinkEscape,
   assertScratchOutsideOrIgnored,
@@ -39,6 +39,7 @@ import {
 } from "./paths.ts";
 import {
   combineReports,
+  publicRedactionReport,
   scanString,
   type ScanReport,
 } from "./scanner.ts";
@@ -293,6 +294,21 @@ export async function runRecorder(options: {
     const stdoutPath = join(scratch, "stdout.bin");
     const stderrPath = join(scratch, "stderr.bin");
 
+    // Declaration admission is fail-closed before any child spawn.
+    let admitted;
+    try {
+      admitted = admitDeclarations(config, stage);
+    } catch (error) {
+      if (error instanceof RecorderError) {
+        return fail(error);
+      }
+      return fail(
+        new RecorderError("admission-failed", "admission failed", {
+          cause: error,
+        }),
+      );
+    }
+
     const childEnv = buildChildEnv(env, config.execution.environment);
     let spawnResult;
     try {
@@ -333,20 +349,6 @@ export async function runRecorder(options: {
       spawnResult,
       deriveChildDiagnostic(stdoutText, stderrText),
     );
-
-    let admitted;
-    try {
-      admitted = admitDeclarations(config, stage);
-    } catch (error) {
-      if (error instanceof RecorderError) {
-        return fail(error);
-      }
-      return fail(
-        new RecorderError("admission-failed", "admission failed", {
-          cause: error,
-        }),
-      );
-    }
 
     let extraction;
     try {
@@ -433,28 +435,52 @@ export async function runRecorder(options: {
       );
     }
 
-    // Final scan closure — manifest redaction hits must equal this complete set.
-    const finalReport = combineReports(combined, manifestBuild.report);
-    // Rebuild redaction hits from final closure so manifest/report cannot diverge.
-    manifestBuild.manifest.redaction.hits = finalReport.hits.map((hit) => ({
-      ruleId: hit.ruleId,
-      location: hit.location,
-      count: hit.count,
-    }));
+    // Persist the already-closed final scan result. Do not recombine or rescan
+    // in a way that can diverge manifest hits from redaction-report hits.
+    const finalHits = publicRedactionReport(manifestBuild.report);
+    manifestBuild.manifest.redaction.hits = finalHits;
+    try {
+      validatePublicManifest(manifestBuild.manifest);
+    } catch (error) {
+      if (error instanceof RecorderError) return fail(error);
+      return fail(
+        new RecorderError("admission-failed", "manifest schema validation failed", {
+          cause: error,
+        }),
+      );
+    }
 
-    storeGeneratedJson(
+    const manifestStored = storeGeneratedJson(
       stage,
       "manifest.json",
       manifestBuild.manifest,
       "manifest",
     );
-    if (manifestBuild.manifest.redaction.hits.length > 0) {
-      storeGeneratedJson(
+    // Writing must not discover additional redactions; the pre-persist closure
+    // is the sole hit source for both manifest and optional report.
+    if (manifestStored.report.redacted) {
+      return fail(
+        new RecorderError(
+          "admission-failed",
+          "manifest write-time scan diverged from final closure",
+        ),
+      );
+    }
+    if (finalHits.length > 0) {
+      const reportStored = storeGeneratedJson(
         stage,
         "redaction-report.json",
-        { hits: manifestBuild.manifest.redaction.hits },
+        { hits: finalHits },
         "redaction-report",
       );
+      if (reportStored.report.redacted) {
+        return fail(
+          new RecorderError(
+            "admission-failed",
+            "redaction report write-time scan diverged from final closure",
+          ),
+        );
+      }
     }
 
     // Required raw scratch cleanup BEFORE promotion.
