@@ -195,7 +195,7 @@ Opt-in mechanical wrapper that runs one exact caller-supplied command once and, 
 - `npm run build:native` / package `install` — compile only the native binding for the installing host (no TypeScript toolchain);
 - `npm run build:recorder` / `prepack` — compile Recorder TypeScript, then the native binding.
 
-The publisher always compiles to a temporary artifact beside the destination and atomically renames it over `dist/recorder/rename_no_replace.node`, so concurrent readers never observe a truncated binding. A checked-in or prepacked foreign/stale `.node` must not be trusted: install rebuilds for the actual host.
+The publisher always compiles to a temporary artifact outside `dist` on the same filesystem as the destination and atomically renames it over `dist/recorder/rename_no_replace.node`, so concurrent readers never observe a truncated binding. A checked-in or prepacked foreign/stale `.node` must not be trusted: install rebuilds for the actual host.
 
 ### Grammar
 
