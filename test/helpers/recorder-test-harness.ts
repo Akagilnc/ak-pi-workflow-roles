@@ -258,6 +258,7 @@ if (mode === "signal") {
     toolName: tool,
     args: details,
   };
+  // Exactly one successful terminal (machine tool_execution_end).
   const end = {
     type: "tool_execution_end",
     toolCallId: callId,
@@ -268,19 +269,7 @@ if (mode === "signal") {
       details,
     },
   };
-  const terminal = {
-    type: "message_end",
-    message: {
-      role: "toolResult",
-      toolCallId: callId,
-      toolName: tool,
-      isError: false,
-      details,
-      timestamp: Date.now(),
-      content: [{ type: "text", text: acceptedText }],
-    },
-  };
-  for (const event of [issued, start, end, terminal]) {
+  for (const event of [issued, start, end]) {
     process.stdout.write(JSON.stringify(event) + "\n");
   }
   process.exit(0);
