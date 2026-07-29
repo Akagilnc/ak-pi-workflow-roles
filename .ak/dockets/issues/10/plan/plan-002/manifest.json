@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "coder",
+  "phase": "plan",
+  "targetHead": "c4d4810",
+  "authority": {
+    "path": ".ak/dockets/issues/10/plan/plan-001/judge/receipt.json",
+    "sha256": "2676763b1b97109869f26625fd48725b0226bede5d57410f4afd157e71983eff"
+  },
+  "sessionCandidate": {
+    "sanitizedBytes": 247709594,
+    "sha256": "7067fc427cfebb97111556d097f34f1a9037c97431ba22af57259f1053274bb0",
+    "retention": "not retained",
+    "reason": "routine execution exhaust"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "ba4646aacad2c629875318559a57876609a034f2c923b0ff65aec2cb64bdc602"
+  },
+  "redactions": null
+}
