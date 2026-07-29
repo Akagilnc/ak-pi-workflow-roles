@@ -1,0 +1,3 @@
+# Repair packet: reproducible install and full envelope matrix
+
+At current committed HEAD, synchronize package and lockfile engine metadata so exact clean `npm install` leaves tracked state unchanged. Complete all-five-tools × both-supported-envelopes lifecycle counterexamples: lawful controls plus replay, duplicate/order, error, exact-text, unsupported and ambiguity negatives must execute for each envelope without weakening shared leaf contracts. Preserve Recorder and role behavior. Add focused tests, run install/typecheck/full/package gates, make one forward commit, exact Receipt. Do not inspect sessions.
