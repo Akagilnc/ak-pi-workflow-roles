@@ -1,0 +1,12 @@
+{
+  "observedAtHead": "10b71bef294774ce24febd45a6e35c2b08157f2d",
+  "command": "npm install",
+  "result": "exit 0 followed by tracked package-lock.json delta",
+  "missingRootMetadata": [
+    "cpu",
+    "os",
+    "hasInstallScript"
+  ],
+  "worktreeSha256": "2e9f5d233d1471fde9950e7e7885324f8f0864d180bb99315885a3ef6eba6f02",
+  "disposition": "Clean-install claim remains unproven until authoritative package metadata is committed and repeated install is clean."
+}

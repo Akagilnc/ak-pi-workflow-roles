@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "fixer",
+  "phase": "plan",
+  "targetHead": "6fbf3d627e59d02339c5c7cb7b637c6511f054c4",
+  "repairPacket": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/judge/receipt.json",
+    "sha256": "dd88553f12e401a7b9dcf8d33f2593cb08671bf908febb95112090c1bdb3ccb8"
+  },
+  "sessionCandidate": {
+    "sanitizedBytes": 141007801,
+    "sha256": "e947dfe6f9c5e16bb6dea26ccc2f2b23b30b8b3dcbf3852630e6fbe1751ddce1",
+    "retention": "not retained",
+    "reason": "routine execution exhaust"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "93bee30cf1067a42f43c7670c175368ed2be2175066b15e2bc8d6133a45fe8f7"
+  },
+  "redactions": null
+}

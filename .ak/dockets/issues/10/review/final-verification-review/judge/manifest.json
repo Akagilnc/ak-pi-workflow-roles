@@ -1,0 +1,17 @@
+{
+  "role": "judge",
+  "targetHead": "6f777ca7986ca4731b2838dc54374224efddd84f",
+  "materials": {
+    "path": ".ak/dockets/issues/10/review/final-verification-review/result-002/receipt.json",
+    "sha256": "00536b948d757cd49a5ca802792b0e98a42f0cfb4d4f3b4285e72ea756c88e8a"
+  },
+  "sessionCandidate": {
+    "bytes": 27131177,
+    "sha256": "a06439a40cb7ee1fce65c56c2d4a5c64636a768ed94c9231a64e3668e41baf1a",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "46d8350945794c43a1c7919660a613ad5cb43c8a30efb50ff5752cc1de2bc812"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "formatVersion": 1,
+  "kind": "incomplete-role-invocation",
+  "role": "coder",
+  "phase": "apply",
+  "startHead": "ad5f9c4",
+  "lawfulReceipt": null,
+  "processObservation": "agent_end occurred without an accepted ak_coder_output tool result",
+  "sessionCandidate": {
+    "bytes": 11147069,
+    "sha256": "4ab28724204e94a13fb7f1414ebfdfb446ac9afdc1f560b55617b846f0745777",
+    "retention": "not retained",
+    "reason": "routine/incomplete execution exhaust; diagnostic facts captured separately"
+  },
+  "workingTreeAfterInvocation": [
+    " M README.md",
+    " M package.json",
+    " M src/collector-receipt.ts",
+    " M src/judge-role.ts",
+    " M src/reviewer-role.ts",
+    " M src/worker-role.ts",
+    "?? bin/",
+    "?? node_modules",
+    "?? schemas/recorder-manifest-v1.schema.json",
+    "?? src/recorder/",
+    "?? test/helpers/recorder-test-harness.ts",
+    "?? test/recorder-admission.test.ts",
+    "?? test/recorder-cli.test.ts",
+    "?? test/recorder-extract-scan.test.ts",
+    "?? test/recorder-package-lifecycle.test.ts",
+    "?? test/recorder-transaction.test.ts"
+  ],
+  "firstReproducedFailure": {
+    "command": "npm run typecheck",
+    "result": "failed",
+    "diagnostic": "src/recorder/extract.ts AuditObservation exactOptionalPropertyTypes mismatch: optional usage was explicitly assigned undefined"
+  },
+  "disposition": "uncommitted construction requires independent Apply adjudication; no completion claim"
+}

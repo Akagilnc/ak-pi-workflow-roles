@@ -184,9 +184,79 @@ Any verdict may additionally carry an optional non-empty `note` Markdown string.
 
 Workflow ordering and routing are caller-owned. A separate orchestrator is optional infrastructure, not a package requirement.
 
+## Recorder (`ak-docket-record`)
+
+Opt-in mechanical wrapper that runs one exact caller-supplied command once and, on success, atomically promotes a small core docket under a caller-selected archive Git worktree. It is not a role, orchestrator, model router, or Git mutator.
+
+**Runtime:** Node.js **>= 20** on **darwin/linux** **x64/arm64** only (`package.json` `os`/`cpu`; other combinations are refused at package admission). The package ships a plain-ESM Recorder under `dist/`. `bin/ak-docket-record` launches `dist/recorder/cli.js` with no `tsx` dependency and no type-stripping under `node_modules`. Child signal death is re-raised as a real signal (not `128+n`).
+
+**Native binding:** Docket publication uses a small N-API addon (`rename_no_replace.node`) built from packaged C source (`scripts/rename_no_replace.c`) via `scripts/build-rename-no-replace.mjs`. A working C compiler (`cc` on `PATH`) and Node.js N-API headers (`node_api.h`, normally next to the Node install under `include/node`) are required. Lifecycle:
+
+- `npm run build:native` / package `install` — compile only the native binding for the installing host (no TypeScript toolchain);
+- `npm run build:recorder` / `prepack` — compile Recorder TypeScript, then the native binding.
+
+The publisher always compiles to a temporary artifact outside `dist` on the same filesystem as the destination and atomically renames it over `dist/recorder/rename_no_replace.node`, so concurrent readers never observe a truncated binding. A checked-in or prepacked foreign/stale `.node` must not be trusted: install rebuilds for the actual host.
+
+### Grammar
+
+```bash
+ak-docket-record --config <json-path> -- <command> [args...]
+```
+
+There are no other Recorder flags. The first `--` ends Recorder syntax; every following argv element is the child argv, passed unchanged, without shell parsing. Empty child argv, missing/extra `--config`, unknown Recorder options, unreadable or non-closed JSON, invalid archive/declaration values, and path traversal/symlink escape fail before spawn.
+
+### Config (version 1, closed object)
+
+Mandatory keys: `version`, `archive`, `execution`, `declarations`, `provenance`.
+
+- `archive.repositoryRoot` — absolute path to an existing archive Git worktree (may differ from child `cwd` and from referenced repositories).
+- `archive.root` / `archive.docketId` — repository-relative slash paths with ordinary non-empty segments (no absolute paths, `.`/`..`, empty segments, or escape outside the worktree). Final identity is `repositoryRoot + root + docketId` and is create-if-absent only.
+- `execution.cwd` — absolute existing directory used as the child cwd.
+- `execution.environment` — `{ inherit, overrides, unset }`. Environment is exactly inherited-or-empty, then `unset`, then `overrides`. Duplicate unset names and unset/override overlap are invalid.
+- `execution.stdin` — must be `"inherit"`.
+- `declarations.gitReferences[]` — already-committed bytes identified only by repository root, full commit SHA, path, blob OID, and SHA-256. Dirty/untracked bytes cannot satisfy a reference. Cross-repository references require an explicit `repositoryRoot` and exact match in that repository.
+- `declarations.externalInputs[]` / `exhibits[]` — absolute source paths with expected SHA-256; stored once after scan.
+- At least one `authority` and one `task` kind must be declared (via git reference or external input).
+- `provenance.package|model|target` — caller-supplied strings or `null`, recorded as **unverified**.
+
+### Streams and outcomes
+
+- Child stdout and stderr are teed byte-for-byte to the Recorder’s corresponding streams and private scratch; streams are not merged or re-encoded.
+- The child is spawned exactly once, directly, without a shell, retry, command selection, routing, model, role, or Pi composition.
+- **Success** means scan, admission, raw-scratch cleanup, and atomic promotion all completed. The promoted `manifest.json` records `recorder.status: "completed"` and the child outcome. Recorder emits no success diagnostic. If the child exited, Recorder exits with that exact status. If the child died from signal `S`, Recorder completes promotion then terminates itself with `S`.
+- **Recorder failure** emits exactly one sanitized single-line JSON object on Recorder stderr after any already-teed child output, then exits **125**. Recorder failure has precedence over child nonzero/signal. Config/grammar failure reports `child.status: "not-spawned"`.
+
+```json
+{"recorder":{"status":"failed","code":"stable-nonsecret-code","message":"sanitized message"},"child":{"status":"not-spawned|exited|signaled","exitCode":null,"signal":null,"diagnostic":"sanitized-or-null"}}
+```
+
+Final truth on success is the promoted manifest; on failure it is the stderr object plus 125. No final or partial manifest is written on Recorder failure. Ordinary failures attempt scratch/stage cleanup. Abrupt OS/process crash may leave ignored private scratch or a non-final staging directory — that is host cleanup/credential risk, never an apparently complete docket.
+
+### Receipt extraction, scanning, and trust limits
+
+Recorder extracts a Receipt only from a package terminating submission tool’s successfully accepted tool-result (`role: "toolResult"`, matching package tool name and call id, `isError: false`, details that pass that tool’s production validator). Supported tools: `ak_coder_output`, `ak_fixer_output`, `ak_reviewer_output`, `ak_judge_output`, `ak_collector_output`. Persisted-session and machine/JSON envelopes share one decoder. Absence of such a result is lawful and records no Receipt. Package-observed audit acceptance (Judge/Reviewer) is an observation attached to that accepted result, not a second Receipt.
+
+Every promotable byte/metadata value crosses one bounded pattern scanner (authorization headers, Bearer/Basic, provider/package tokens, AWS keys, PEM/private keys, cookies/session credentials, credential-bearing URLs, conventional token/secret/password/API-key assignments). Unsupported opaque content is wholly replaced by one typed opaque-redaction record or fails closed. If scanning changes an accepted Receipt, the stored artifact is `sanitizedDerivativeOfAcceptedReceipt` and never claims byte equality to the accepted details. Redaction reports contain only rule id, structural location (without secret path/context values), and count.
+
+This is **bounded pattern scanning, not semantic DLP**. Callers own input minimization and credential rotation. Accepted output/audit proves only package acceptance. Recording, declarations, Git coordinates, and digests do not prove truth, freshness, authenticity, authority, mergeability, future availability, or closure; a hostile host can fabricate archive bytes.
+
+### Manifest facts
+
+Versioned manifest records archive/docket and invocation identity; sanitized argv and execution-context identity; unverified provenance; every declared authority/task/input/exhibit with exactly one of verified reference identity or once-stored identity; accepted Receipt/sanitized derivative and audit observation when present; separate child outcome and successful Recorder completion; and redaction hits.
+
+Already-committed bytes remain references and are not copied. Recorder never runs `git add`, commit, checkout, branch, merge, push, or permission/retention operations. Callers own declaration completeness, commit/push, permissions, retention, and downstream full-HEAD binding.
+
+### Exclusions
+
+No cold root, generic raw session/tool-event retention, second storage temperature, Git LFS, archive service, summarizer, model admission role, database, catalog, daemon, automatic Git mutation, or npm publication. Distribution is via this package’s `npm pack` contents and ADR 0009 git/local install paths.
+
+Machine-readable promoted manifest schema: [`schemas/recorder-manifest-v1.schema.json`](schemas/recorder-manifest-v1.schema.json).
+
 ## Development
 
 ```bash
-npm test
+npm install          # rebuilds host native binding (needs cc + node_api.h)
+npm run build:recorder
 npm run typecheck
+npm test
 ```

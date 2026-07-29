@@ -4,13 +4,35 @@
   "description": "Soul-bound workflow roles for Pi",
   "type": "module",
   "keywords": ["pi-package"],
-  "files": ["extensions", "src", "souls", "schemas", "README.md"],
+  "bin": {
+    "ak-docket-record": "./bin/ak-docket-record.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "extensions",
+    "scripts/build-rename-no-replace.mjs",
+    "scripts/rename_no_replace.c",
+    "src",
+    "souls",
+    "schemas",
+    "README.md"
+  ],
+  "os": ["darwin", "linux"],
+  "cpu": ["x64", "arm64"],
   "scripts": {
+    "build:native": "node scripts/build-rename-no-replace.mjs",
+    "build:recorder": "tsc -p tsconfig.recorder.json && npm run build:native",
+    "prepack": "npm run build:recorder",
+    "install": "node scripts/build-rename-no-replace.mjs",
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "pi": {
     "extensions": ["./extensions/role-runtime.ts"]
+  },
+  "engines": {
+    "node": ">=20"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

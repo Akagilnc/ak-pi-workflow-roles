@@ -18,6 +18,7 @@ import {
 
 import {
   packageRoot,
+  packIsolatedPackage,
   withHermeticHome,
   withInProcessPi,
   writeTestSkill,
@@ -77,20 +78,35 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
       await git(fixture, "commit", "-am", "consumer reviewed change");
       const reviewedHead = await git(fixture, "rev-parse", "HEAD");
 
-      const pack = JSON.parse(
-        (await exec(
-          "npm",
-          ["pack", "--json", "--pack-destination", temp],
-          { cwd: packageRoot },
-        )).stdout,
-      ) as Array<{ filename: string; files: Array<{ path: string }> }>;
-      const tarball = resolve(temp, pack[0]!.filename);
-      const paths = pack[0]!.files.map((file) => file.path);
+      const pack = await packIsolatedPackage(temp);
+      const tarball = pack.tarball;
+      const paths = pack.files.map((file) => file.path);
       assert.deepEqual(paths, [
         "README.md",
+        "bin/ak-docket-record.js",
+        "dist/package-contracts/collector-output.js",
+        "dist/package-contracts/judge-output.js",
+        "dist/package-contracts/reviewer-output.js",
+        "dist/package-contracts/terminating-tools.js",
+        "dist/package-contracts/worker-output.js",
+        "dist/recorder/admit.js",
+        "dist/recorder/cli.js",
+        "dist/recorder/config.js",
+        "dist/recorder/errors.js",
+        "dist/recorder/extract.js",
+        "dist/recorder/manifest.js",
+        "dist/recorder/paths.js",
+        "dist/recorder/rename_no_replace.node",
+        "dist/recorder/rename-no-replace.js",
+        "dist/recorder/run.js",
+        "dist/recorder/scanner.js",
+        "dist/recorder/spawn.js",
         "extensions/role-runtime.ts",
         "package.json",
         "schemas/collector-legs-v1.schema.json",
+        "schemas/recorder-manifest-v1.schema.json",
+        "scripts/build-rename-no-replace.mjs",
+        "scripts/rename_no_replace.c",
         "souls/coder.md",
         "souls/collector.md",
         "souls/fixer.md",
@@ -106,6 +122,22 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
         "src/collector-tool-schemas.ts",
         "src/compliance-transport.ts",
         "src/judge-role.ts",
+        "src/package-contracts/collector-output.ts",
+        "src/package-contracts/judge-output.ts",
+        "src/package-contracts/reviewer-output.ts",
+        "src/package-contracts/terminating-tools.ts",
+        "src/package-contracts/worker-output.ts",
+        "src/recorder/admit.ts",
+        "src/recorder/cli.ts",
+        "src/recorder/config.ts",
+        "src/recorder/errors.ts",
+        "src/recorder/extract.ts",
+        "src/recorder/manifest.ts",
+        "src/recorder/paths.ts",
+        "src/recorder/rename-no-replace.ts",
+        "src/recorder/run.ts",
+        "src/recorder/scanner.ts",
+        "src/recorder/spawn.ts",
         "src/reviewer-agent.ts",
         "src/reviewer-auditor.ts",
         "src/reviewer-execution-ledger.ts",

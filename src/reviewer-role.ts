@@ -17,8 +17,14 @@ import {
   type ReviewerAgentResult,
   type ReviewerExecutionRecord,
 } from "./reviewer-execution-ledger.ts";
+import {
+  REVIEWER_OUTPUT_TOOL_NAME,
+  validateAcceptedReviewerDetails,
+  type ReviewerOutput,
+} from "./package-contracts/reviewer-output.ts";
 
-export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
+export { REVIEWER_OUTPUT_TOOL_NAME };
+export type { ReviewerOutput };
 export const AGENT_TOOL_NAME = "Agent";
 
 const reviewerOutputSchema = Type.Object(
@@ -39,10 +45,6 @@ const reviewerAgentSchema = Type.Object(
 );
 
 type ReviewerOutputParameters = Static<typeof reviewerOutputSchema>;
-export type ReviewerOutput = {
-  status: "completed" | "refused";
-  report: string;
-};
 export type ReviewerAuditInput = {
   soul: string;
   canonicalSkill: string;
@@ -85,19 +87,10 @@ function hasExactKeys(
     expected.every((key) => Object.hasOwn(value, key));
 }
 
-function validateReviewerOutput(
+export function validateReviewerOutput(
   output: ReviewerOutputParameters,
 ): ReviewerOutput {
-  if (
-    !isRecord(output) || !hasExactKeys(output, ["status", "report"]) ||
-    (output.status !== "completed" && output.status !== "refused") ||
-    typeof output.report !== "string" || output.report.trim().length === 0
-  ) {
-    throw new Error(
-      "Reviewer output requires only completed|refused and a non-blank Markdown report",
-    );
-  }
-  return { status: output.status, report: output.report };
+  return validateAcceptedReviewerDetails(output);
 }
 
 function requireSingletonSubmissionCall(

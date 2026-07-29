@@ -1,0 +1,12 @@
+{
+  "role": "reviewer",
+  "status": "infrastructure-failure",
+  "lawfulReceipt": null,
+  "failure": "Standards sibling WebSocket failure aborted the one-batch Reviewer; Spec sibling result is not a Reviewer Receipt",
+  "sessionCandidate": {
+    "bytes": 2226937,
+    "sha256": "18e7425ab79b5f26d93f3050ef5da670d05f38747a1fb90940ea8e56783bb790",
+    "retention": "not retained"
+  },
+  "directCounterexampleDisposition": "Independently reproduce the CR/LF crossing behavior and use it as caller-supplied repair evidence; do not claim a completed review."
+}

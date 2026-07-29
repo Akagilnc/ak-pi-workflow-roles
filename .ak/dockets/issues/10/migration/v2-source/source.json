@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "sourceBranch": "feature/durable-invocation-dockets-v2",
+  "sourceHead": "58fc6059fa1c355a1bcbd4f1499e093567e45695",
+  "recordedDefaultRef": "origin/feature/judge-role",
+  "recordedDefaultHead": "6e76efa93588844996611b86320de7747cca3d24",
+  "inventoryMethod": "git ls-tree/cat-file metadata and blob digest; no session payload semantic inspection"
+}

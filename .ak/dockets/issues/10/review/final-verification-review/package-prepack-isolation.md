@@ -1,0 +1,3 @@
+# Repair packet: package-lifecycle prepack isolation
+
+At current clean HEAD, repair the demonstrated default-concurrency full-test race: package lifecycle tests run `npm pack`/prepack/tsc against the shared repository while other tests execute dist modules, exposing a cross-file partial generated tree. Make all package-lifecycle prepack/pack work occur in isolated materializations or otherwise within the existing deep harness so shared tracked `dist` is never rewritten during `npm test`. Preserve real packed inventory/install/bin/native lifecycle proof, do not serialize the suite or add production guards. Add a regression/stress oracle, run repeated default-concurrency full tests/typecheck/pack clean, one forward commit and Receipt. Do not inspect sessions.
