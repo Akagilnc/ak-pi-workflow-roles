@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -21,9 +22,12 @@ import {
   makeTempDir,
   runRecorderBin,
   sabotageRawScratchCleanup,
+  sha256File,
+  spawnRecorderBin,
   writeCounterScript,
   writeRecorderConfig,
 } from "./helpers/recorder-test-harness.ts";
+import { packageRoot } from "./helpers/pi-test-harness.ts";
 
 function setup() {
   const root = makeTempDir("ak-recorder-tx-");
@@ -311,10 +315,93 @@ test("config failure before spawn reports not-spawned", async () => {
   }
 });
 
+
+function killProcessTree(pid: number | undefined): void {
+  if (pid === undefined || pid <= 0) return;
+  try {
+    const out = execFileSync("pgrep", ["-P", String(pid)], {
+      encoding: "utf8",
+    }).trim();
+    for (const line of out.split("\n")) {
+      const childPid = Number(line.trim());
+      if (Number.isFinite(childPid) && childPid > 0) {
+        killProcessTree(childPid);
+      }
+    }
+  } catch {
+    // no children
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // already dead
+  }
+}
+
 function leftoverStageDirs(archive: string): string[] {
   const work = join(archive, ".ak/work");
   if (!existsSync(work)) return [];
   return readdirSync(work).filter((name) => name.startsWith("recorder-stage-"));
+}
+
+/** Observe final docket identity: absent, complete core, or partial/other. */
+function observeFinalDocket(dest: string): "absent" | "complete" | "partial" {
+  let st;
+  try {
+    st = lstatSync(dest);
+  } catch (error) {
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof (error as { code: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : null;
+    if (code === "ENOENT") return "absent";
+    return "partial";
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) return "partial";
+  const manifestPath = join(dest, "manifest.json");
+  if (!existsSync(manifestPath)) return "partial";
+  let manifest: {
+    artifacts?: Array<{ stored?: { path?: string } | null }>;
+  };
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      artifacts?: Array<{ stored?: { path?: string } | null }>;
+    };
+  } catch {
+    return "partial";
+  }
+  for (const artifact of manifest.artifacts ?? []) {
+    const rel = artifact.stored?.path;
+    if (typeof rel === "string" && rel.length > 0) {
+      if (!existsSync(join(dest, rel))) return "partial";
+    }
+  }
+  return "complete";
+}
+
+function multiExhibitConfig(
+  ctx: ReturnType<typeof setup>,
+  docketId: string,
+  count: number,
+): { configPath: string; exhibitIds: string[] } {
+  const exhibitsDir = join(ctx.root, "exhibits");
+  mkdirSync(exhibitsDir, { recursive: true });
+  const exhibits: Array<{ id: string; sourcePath: string; sha256: string }> = [];
+  const exhibitIds: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const id = `ex-${String(i).padStart(3, "0")}`;
+    const sourcePath = join(exhibitsDir, `${id}.bin`);
+    // Distinct multi-kilobyte payloads widen non-atomic entry-move windows.
+    const body = Buffer.alloc(8192 + i, i % 251);
+    writeFileSync(sourcePath, body);
+    exhibits.push({ id, sourcePath, sha256: sha256File(body) });
+    exhibitIds.push(id);
+  }
+  const configPath = configFor(ctx, docketId, { exhibits });
+  return { configPath, exhibitIds };
 }
 
 test("inherited stdin is delivered byte-for-byte to the child", async () => {
@@ -577,22 +664,32 @@ test("two concurrent recorders: one wins, loser is 125, destination not overwrit
   const ctx = setup();
   try {
     const docketId = "issues/10/apply/apply-race";
-    const configPath = configFor(ctx, docketId);
+    const { configPath } = multiExhibitConfig(ctx, docketId, 24);
     const dest = join(ctx.archive, ".ak/dockets", docketId);
+    const gate = join(ctx.root, "race-gate");
     const markerA = join(ctx.root, "race-a.txt");
     const markerB = join(ctx.root, "race-b.txt");
     const slow = join(ctx.root, "slow-ok.mjs");
+    // Both children block until the test releases the gate so publication races.
     writeFileSync(
       slow,
-      `import { appendFileSync } from "node:fs";
+      `import { appendFileSync, existsSync } from "node:fs";
 const marker = process.env.RACE_MARKER;
-await new Promise((r) => setTimeout(r, Number(process.env.RACE_DELAY_MS ?? "50")));
+const gate = process.env.RACE_GATE;
+const deadline = Date.now() + 15000;
+while (!existsSync(gate)) {
+  if (Date.now() > deadline) {
+    process.stderr.write("gate-timeout\\n");
+    process.exit(2);
+  }
+  await new Promise((r) => setTimeout(r, 5));
+}
 appendFileSync(marker, "ran\\n");
 process.stdout.write("race-body:" + process.env.RACE_ID + "\\n");
 process.exit(0);
 `,
     );
-    const runOne = (id: string, marker: string, delay: string) =>
+    const runOne = (id: string, marker: string) =>
       runRecorderBin(
         ["--config", configPath, "--", process.execPath, slow],
         {
@@ -602,15 +699,26 @@ process.exit(0);
             AK_RECORDER_COUNTER: ctx.counter,
             RACE_MARKER: marker,
             RACE_ID: id,
-            RACE_DELAY_MS: delay,
+            RACE_GATE: gate,
           },
         },
       );
-    const [a, b] = await Promise.all([
-      runOne("A", markerA, "30"),
-      runOne("B", markerB, "30"),
+    const pending = Promise.all([
+      runOne("A", markerA),
+      runOne("B", markerB),
     ]);
-    const codes = [a.code, b.code].sort();
+    // Release both children together once both have started (counter rows).
+    const start = Date.now();
+    while (Date.now() - start < 10000) {
+      if (existsSync(ctx.counter)) {
+        const lines = readFileSync(ctx.counter, "utf8").split("\n").filter(Boolean);
+        if (lines.length >= 2) break;
+      }
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    writeFileSync(gate, "go\n");
+    const [a, b] = await pending;
+    const codes = [a.code, b.code].sort((x, y) => Number(x) - Number(y));
     assert.deepEqual(codes, [0, 125]);
     const winner = a.code === 0 ? a : b;
     const loser = a.code === 125 ? a : b;
@@ -618,13 +726,87 @@ process.exit(0);
     const failure = JSON.parse(loser.stderr.trim().split("\n").at(-1)!);
     assert.equal(failure.recorder.status, "failed");
     assert.equal(failure.recorder.code, "destination-exists");
+    assert.equal(observeFinalDocket(dest), "complete");
     const manifest = JSON.parse(readFileSync(join(dest, "manifest.json"), "utf8"));
     assert.equal(manifest.recorder.status, "completed");
     // Exactly one complete docket; winner identity is stable in the teed stdout only once.
     const winnerId = winner.stdout.includes("race-body:A") ? "A" : "B";
     assert.equal(manifest.child.exitCode, 0);
     assert.equal(readFileSync(winnerId === "A" ? markerA : markerB, "utf8").includes("ran"), true);
+    // No mixed tree: every stored artifact belongs to the single winner manifest.
+    for (const artifact of manifest.artifacts ?? []) {
+      if (artifact.stored?.path) {
+        assert.equal(existsSync(join(dest, artifact.stored.path)), true);
+      }
+    }
     assert.equal(leftoverStageDirs(ctx.archive).length, 0);
+  } finally {
+    rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+test("pre-existing empty destination directory is not overwritten or removed", async () => {
+  const ctx = setup();
+  try {
+    const docketId = "issues/10/apply/apply-empty-dest";
+    const { configPath } = multiExhibitConfig(ctx, docketId, 8);
+    const dest = join(ctx.archive, ".ak/dockets", docketId);
+    mkdirSync(dest, { recursive: true });
+    // Plain directory rename would replace this empty directory; no-replace must lose.
+    assert.deepEqual(readdirSync(dest), []);
+    const result = await runRecorderBin(
+      [
+        "--config",
+        configPath,
+        "--",
+        process.execPath,
+        ctx.script,
+        "ok",
+      ],
+      {
+        cwd: ctx.root,
+        env: { ...process.env, AK_RECORDER_COUNTER: ctx.counter },
+      },
+    );
+    assert.equal(result.code, 125);
+    const failure = JSON.parse(result.stderr.trim().split("\n").at(-1)!);
+    assert.equal(failure.recorder.status, "failed");
+    assert.equal(failure.recorder.code, "destination-exists");
+    assert.equal(existsSync(dest), true);
+    assert.deepEqual(readdirSync(dest), []);
+    assert.equal(existsSync(join(dest, "manifest.json")), false);
+    assert.equal(leftoverStageDirs(ctx.archive).length, 0);
+  } finally {
+    rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+test("pre-existing destination file is not overwritten by publication", async () => {
+  const ctx = setup();
+  try {
+    const docketId = "issues/10/apply/apply-file-dest";
+    const configPath = configFor(ctx, docketId);
+    const dest = join(ctx.archive, ".ak/dockets", docketId);
+    mkdirSync(join(dest, ".."), { recursive: true });
+    writeFileSync(dest, "precious-file\n");
+    const result = await runRecorderBin(
+      [
+        "--config",
+        configPath,
+        "--",
+        process.execPath,
+        ctx.script,
+        "ok",
+      ],
+      {
+        cwd: ctx.root,
+        env: { ...process.env, AK_RECORDER_COUNTER: ctx.counter },
+      },
+    );
+    assert.equal(result.code, 125);
+    const failure = JSON.parse(result.stderr.trim().split("\n").at(-1)!);
+    assert.equal(failure.recorder.code, "destination-exists");
+    assert.equal(readFileSync(dest, "utf8"), "precious-file\n");
   } finally {
     rmSync(ctx.root, { recursive: true, force: true });
   }
@@ -714,3 +896,150 @@ setInterval(() => {}, 10000);
     rmSync(ctx.root, { recursive: true, force: true });
   }
 });
+
+test("publication observer never sees an empty or partial final docket", async () => {
+  const ctx = setup();
+  try {
+    const docketId = "issues/10/apply/apply-observer";
+    const dest = join(ctx.archive, ".ak/dockets", docketId);
+    const { configPath } = multiExhibitConfig(ctx, docketId, 40);
+    const slow = join(ctx.root, "observer-child.mjs");
+    writeFileSync(
+      slow,
+      `await new Promise((r) => setTimeout(r, 80));
+process.stdout.write("observer-child-ok\\n");
+process.exit(0);
+`,
+    );
+    const handle = spawnRecorderBin(
+      ["--config", configPath, "--", process.execPath, slow],
+      {
+        cwd: ctx.root,
+        env: { ...process.env, AK_RECORDER_COUNTER: ctx.counter },
+      },
+    );
+    const observations = new Set<string>();
+    let sawComplete = false;
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      const state = observeFinalDocket(dest);
+      observations.add(state);
+      if (state === "partial") {
+        try {
+          handle.child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+        assert.fail(
+          `observer saw partial final docket; states=${[...observations].join(",")}`,
+        );
+      }
+      if (state === "complete") sawComplete = true;
+      const done = await Promise.race([
+        handle.result.then(() => true),
+        new Promise<false>((r) => setTimeout(() => r(false), 0)),
+      ]);
+      if (done) break;
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    const result = await handle.result;
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /observer-child-ok/);
+    assert.equal(observeFinalDocket(dest), "complete");
+    assert.equal(sawComplete || observations.has("complete"), true);
+    // Only lawful states: absent before publish, complete after — never partial.
+    for (const state of observations) {
+      assert.ok(state === "absent" || state === "complete", state);
+    }
+    const manifest = JSON.parse(readFileSync(join(dest, "manifest.json"), "utf8"));
+    const stored = (manifest.artifacts ?? []).filter(
+      (a: { stored?: unknown }) => a.stored,
+    );
+    assert.ok(stored.length >= 40, `expected many stored artifacts, got ${stored.length}`);
+  } finally {
+    rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+test("crash before publication leaves no final identity (stage residue only)", async () => {
+  const ctx = setup();
+  try {
+    const docketId = "issues/10/apply/apply-crash-residue";
+    const dest = join(ctx.archive, ".ak/dockets", docketId);
+    const { configPath } = multiExhibitConfig(ctx, docketId, 30);
+    const gate = join(ctx.root, "crash-gate");
+    const slow = join(ctx.root, "crash-child.mjs");
+    // Hold the child open so the Recorder remains in the pre-publication window
+    // after admission has materialized private stage exhibits.
+    writeFileSync(
+      slow,
+      `import { existsSync } from "node:fs";
+const gate = process.env.CRASH_GATE;
+const deadline = Date.now() + 20000;
+while (!existsSync(gate)) {
+  if (Date.now() > deadline) process.exit(2);
+  await new Promise((r) => setTimeout(r, 5));
+}
+process.stdout.write("crash-child-ok\\n");
+process.exit(0);
+`,
+    );
+    // Invoke the production CLI entry directly (one process) so SIGKILL cannot
+    // leave an orphaned launcher grandchild that still publishes.
+    const handle = spawnRecorderBin(
+      ["--config", configPath, "--", process.execPath, slow],
+      {
+        cwd: ctx.root,
+        env: {
+          ...process.env,
+          AK_RECORDER_COUNTER: ctx.counter,
+          CRASH_GATE: gate,
+        },
+        binPath: join(packageRoot, "dist/recorder/cli.js"),
+      },
+    );
+
+    // Wait until admission finished and the child is alive (counter written).
+    let stageReady: string | null = null;
+    const readyDeadline = Date.now() + 15000;
+    while (Date.now() < readyDeadline) {
+      if (observeFinalDocket(dest) !== "absent") {
+        killProcessTree(handle.pid);
+        await handle.result.catch(() => null);
+        assert.fail("final docket appeared before crash probe");
+      }
+      for (const name of leftoverStageDirs(ctx.archive)) {
+        const stage = join(ctx.archive, ".ak/work", name);
+        const exhibits = join(stage, "exhibits");
+        if (existsSync(exhibits) && readdirSync(exhibits).length >= 10) {
+          stageReady = stage;
+          break;
+        }
+      }
+      if (stageReady) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.ok(stageReady, "private stage never materialized exhibits before publication");
+    assert.equal(observeFinalDocket(dest), "absent");
+    assert.equal(existsSync(dest), false);
+
+    // Terminate Recorder (and its child) during the pre-publication window.
+    killProcessTree(handle.pid);
+    await handle.result.catch(() => null);
+
+    // Final pathname must remain absent; only private ignored stage residue may remain.
+    assert.equal(observeFinalDocket(dest), "absent");
+    assert.equal(existsSync(dest), false);
+    const stages = leftoverStageDirs(ctx.archive);
+    assert.ok(stages.length >= 1, "expected ignored stage residue after crash");
+    for (const name of stages) {
+      const stage = join(ctx.archive, ".ak/work", name);
+      assert.equal(existsSync(join(stage, "exhibits")), true);
+    }
+    // Gate was never released; no successful publication path.
+    assert.equal(existsSync(gate), false);
+  } finally {
+    rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+

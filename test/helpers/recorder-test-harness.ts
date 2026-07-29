@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { execFile, execFileSync } from "node:child_process";
+import {
+  execFile,
+  execFileSync,
+  spawn,
+  type ChildProcess,
+} from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -178,30 +183,47 @@ export async function runRecorderBin(
     binPath?: string;
   } = {},
 ): Promise<RecorderBinResult> {
-  const { spawn } = await import("node:child_process");
+  const handle = spawnRecorderBin(args, options);
+  return await handle.result;
+}
+
+/** Spawn Recorder and expose the live child for black-box observation/kill tests. */
+export function spawnRecorderBin(
+  args: string[],
+  options: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    input?: string | Buffer;
+    binPath?: string;
+  } = {},
+): {
+  pid: number | undefined;
+  child: ChildProcess;
+  result: Promise<RecorderBinResult>;
+} {
   const binPath = options.binPath ?? recorderBin;
   const argv =
     binPath.endsWith(".js") || binPath.endsWith(".mjs")
       ? [process.execPath, binPath, ...args]
       : [binPath, ...args];
-  return await new Promise((resolveResult, reject) => {
-    const child = spawn(argv[0]!, argv.slice(1), {
-      cwd: options.cwd ?? packageRoot,
-      env: options.env ?? process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    child.stdout.on("data", (c: Buffer) => {
-      stdoutChunks.push(Buffer.from(c));
-    });
-    child.stderr.on("data", (c: Buffer) => {
-      stderrChunks.push(Buffer.from(c));
-    });
-    if (options.input !== undefined) {
-      child.stdin.write(options.input);
-    }
-    child.stdin.end();
+  const child = spawn(argv[0]!, argv.slice(1), {
+    cwd: options.cwd ?? packageRoot,
+    env: options.env ?? process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  child.stdout?.on("data", (c: Buffer) => {
+    stdoutChunks.push(Buffer.from(c));
+  });
+  child.stderr?.on("data", (c: Buffer) => {
+    stderrChunks.push(Buffer.from(c));
+  });
+  if (options.input !== undefined) {
+    child.stdin?.write(options.input);
+  }
+  child.stdin?.end();
+  const result = new Promise<RecorderBinResult>((resolveResult, reject) => {
     child.on("error", reject);
     child.on("close", (code, signal) => {
       const stdoutBuf = Buffer.concat(stdoutChunks);
@@ -216,6 +238,7 @@ export async function runRecorderBin(
       });
     });
   });
+  return { pid: child.pid, child, result };
 }
 
 /** True when the OS can freeze a file against unlink (macOS uchg / Linux immutable). */

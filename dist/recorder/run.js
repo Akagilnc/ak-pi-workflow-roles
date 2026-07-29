@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { admitDeclarations, storeGeneratedJson, } from "./admit.js";
@@ -8,6 +8,7 @@ import { RECORDER_FAILURE_EXIT, RecorderError, serializePublicFailure, } from ".
 import { extractAcceptedReceipt } from "./extract.js";
 import { buildManifest, validatePublicManifest } from "./manifest.js";
 import { allocateIgnoredStageRoot, assertPathNotSymlinkEscape, assertSameFilesystem, assertScratchOutsideOrIgnored, resolveInsideRoot, } from "./paths.js";
+import { isOccupiedRenameError, renameNoReplace, } from "./rename-no-replace.js";
 import { combineReports, publicRedactionReport, scanString, } from "./scanner.js";
 import { spawnOnce } from "./spawn.js";
 /** Fixed public bound for one child diagnostic derived from captured tee bytes. */
@@ -91,15 +92,6 @@ function captureGitState(repo) {
         return "";
     }
 }
-function isExistError(error) {
-    const code = typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        typeof error.code === "string"
-        ? error.code
-        : null;
-    return code === "EEXIST" || code === "ENOTEMPTY" || code === "ENOTDIR";
-}
 function destinationOccupied(dest) {
     try {
         lstatSync(dest);
@@ -121,11 +113,11 @@ function destinationOccupied(dest) {
 /**
  * Create-if-absent publication on one filesystem.
  *
- * Claims the final destination name with exclusive mkdir (no symlink follow on
- * the last component, no overwrite of an existing name). Stage entries are then
- * renamed into the claim on the same filesystem, with manifest.json last so an
- * incomplete claim never looks like a complete docket. The claim is removed on
- * any failure path owned by this promoter.
+ * The complete staged docket is published at the final name by one same-
+ * filesystem kernel-atomic no-replace rename. Before that operation the final
+ * identity is absent; afterward it is the complete staged tree. A collision
+ * loses without altering the pre-existing destination or the private stage
+ * (caller cleans only the private stage).
  */
 function promoteStageAtomically(stageRoot, dest, repositoryRoot) {
     const parent = dirname(dest);
@@ -133,57 +125,17 @@ function promoteStageAtomically(stageRoot, dest, repositoryRoot) {
     assertPathNotSymlinkEscape(parent, repositoryRoot, "archive destination parent");
     assertPathNotSymlinkEscape(dest, repositoryRoot, "archive destination");
     assertSameFilesystem(stageRoot, parent, "publication stage and destination");
-    // Reject pre-existing destinations including dangling/occupied symlinks without following.
-    if (destinationOccupied(dest)) {
-        throw new RecorderError("destination-exists", "archive destination already exists");
-    }
-    let claimed = false;
+    // Immediate pre-publication revalidation of containment and device identity.
+    assertPathNotSymlinkEscape(parent, repositoryRoot, "archive destination parent");
+    assertSameFilesystem(stageRoot, parent, "publication stage and destination");
     try {
-        try {
-            mkdirSync(dest);
-        }
-        catch (error) {
-            if (isExistError(error) || destinationOccupied(dest)) {
-                throw new RecorderError("destination-exists", "archive destination already exists");
-            }
-            throw new RecorderError("promotion-failed", "atomic promotion failed", {
-                cause: error,
-            });
-        }
-        claimed = true;
-        // Revalidate parent identity after the exclusive claim.
-        assertPathNotSymlinkEscape(parent, repositoryRoot, "archive destination parent");
-        assertSameFilesystem(stageRoot, dest, "publication stage and destination");
-        const entries = readdirSync(stageRoot);
-        const deferredManifest = entries.includes("manifest.json");
-        for (const name of entries) {
-            if (name === "manifest.json")
-                continue;
-            renameSync(join(stageRoot, name), join(dest, name));
-        }
-        if (deferredManifest) {
-            renameSync(join(stageRoot, "manifest.json"), join(dest, "manifest.json"));
-        }
-        if (!existsSync(join(dest, "manifest.json"))) {
-            throw new RecorderError("promotion-failed", "atomic promotion failed");
-        }
-        // Stage should now be empty private material.
-        try {
-            rmdirSync(stageRoot);
-        }
-        catch {
-            rmSync(stageRoot, { recursive: true, force: true });
-        }
-        claimed = false;
+        renameNoReplace(stageRoot, dest);
     }
     catch (error) {
-        if (claimed) {
-            bestEffortRm(dest);
-            claimed = false;
-        }
         if (error instanceof RecorderError)
             throw error;
-        if (isExistError(error) || destinationOccupied(dest)) {
+        // Occupied final name (file/dir/symlink/empty dir) — never mutate it.
+        if (isOccupiedRenameError(error) || destinationOccupied(dest)) {
             throw new RecorderError("destination-exists", "archive destination already exists");
         }
         throw new RecorderError("promotion-failed", "atomic promotion failed", {
@@ -414,7 +366,7 @@ export async function runRecorder(options) {
                 cause: error,
             }));
         }
-        // Atomic promotion with parent revalidation.
+        // One-tree atomic no-replace publication (stage ownership transfers on success).
         try {
             promoteStageAtomically(stage, dest, config.archive.repositoryRoot);
             stageRoot = null;
