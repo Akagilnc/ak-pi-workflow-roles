@@ -368,6 +368,55 @@ test("composed Authorization Basic/Bearer headers redact the complete credential
   }
 });
 
+test("token-assignment consumes quoted multiword values through the matching quote", () => {
+  const secret = "correct horse battery staple";
+  const suffixes = ["horse battery staple", "battery staple", "staple"];
+  const cases = [
+    {
+      name: "double-quoted-password",
+      sample: `password="${secret}" keep-me`,
+    },
+    {
+      name: "single-quoted-password",
+      sample: `password='${secret}' keep-me`,
+    },
+  ];
+  for (const item of cases) {
+    const scanned = scanString(item.sample, `quoted-assign.${item.name}`);
+    assert.equal(scanned.report.redacted, true, item.name);
+    assert.ok(
+      scanned.report.hits.some((hit) => hit.ruleId === "token-assignment"),
+      item.name,
+    );
+    assert.equal(scanned.value.includes(secret), false, item.name);
+    for (const suffix of suffixes) {
+      assert.equal(
+        scanned.value.includes(suffix),
+        false,
+        `${item.name} left suffix ${suffix}`,
+      );
+    }
+    // Prefix-only redaction is the forbidden failure mode.
+    assert.equal(
+      scanned.value.includes(`[REDACTED] ${suffixes[0]}`),
+      false,
+      item.name,
+    );
+    assert.equal(
+      scanned.value.includes("keep-me"),
+      true,
+      `${item.name} must preserve surrounding non-secret text`,
+    );
+    for (const hit of scanned.report.hits) {
+      assert.equal(JSON.stringify(hit).includes(secret), false, item.name);
+    }
+  }
+  // Unquoted assignments still stop at the first whitespace boundary.
+  const unquoted = scanString("password=correct keep-me", "quoted-assign.unquoted");
+  assert.equal(unquoted.report.redacted, true);
+  assert.equal(unquoted.value, "[REDACTED] keep-me");
+});
+
 test("provider token forms cover representative sk-proj/sk-ant/glpat/xoxb/AIza shapes", () => {
   const forms: Array<{ name: string; sample: string; needle: string }> = [
     { name: "sk-proj", sample: secrets.skProj, needle: "sk-proj-ABCDEFGH" },
@@ -1080,11 +1129,17 @@ test("category × credential matrix keeps raw secrets out of core, report, and f
     const secretArgv = `Authorization: Bearer plainsecrettokenvalue999`;
     const secretEnv = secrets.skProj;
     const secretProvenance = `model-with-${secrets.glpat}`;
+    const quotedAssign = `password="correct horse battery staple"`;
+    const quotedAssignMarkers = [
+      "correct horse battery staple",
+      "horse battery staple",
+      "battery staple",
+    ] as const;
     const secretInputBody = `copied ${secrets.basic} and ${secrets.xoxb}\n`;
     const secretExhibitBody = `exhibit ${secrets.aiza}\n`;
     const secretReceipt = {
       status: "completed",
-      report: `done ${secrets.bearer} ${secrets.assign}`,
+      report: `done ${secrets.bearer} ${secrets.assign} ${quotedAssign}`,
     };
 
     const inputPath = join(root, "secret-input.txt");
@@ -1175,6 +1230,40 @@ test("category × credential matrix keeps raw secrets out of core, report, and f
       readFileSync(join(dest, "exhibits/secret-exhibit"), "utf8").includes("AIzaSyA"),
       false,
     );
+    // Quoted multiword assignment must not leave the full value or any
+    // whitespace-delimited suffix in promoted docket / receipt / manifest / report.
+    for (const file of walkFiles(dest)) {
+      const text = readFileSync(file, "utf8");
+      for (const marker of quotedAssignMarkers) {
+        assert.equal(
+          text.includes(marker),
+          false,
+          `promoted:${file} leaked quoted-assign marker ${marker}`,
+        );
+      }
+    }
+    for (const label of ["manifest", "receipt"] as const) {
+      const text = JSON.stringify(
+        label === "manifest" ? manifest : receipt,
+      );
+      for (const marker of quotedAssignMarkers) {
+        assert.equal(
+          text.includes(marker),
+          false,
+          `${label} leaked quoted-assign marker ${marker}`,
+        );
+      }
+    }
+    if (existsSync(join(dest, "redaction-report.json"))) {
+      const reportText = readFileSync(join(dest, "redaction-report.json"), "utf8");
+      for (const marker of quotedAssignMarkers) {
+        assert.equal(
+          reportText.includes(marker),
+          false,
+          `redaction-report leaked quoted-assign marker ${marker}`,
+        );
+      }
+    }
 
     // --- Post-spawn / pre-promotion failure: public diagnostics + no final core ---
     // Declaration admission is before spawn, so force a promotion collision from the
