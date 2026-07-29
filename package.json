@@ -9,7 +9,7 @@
   },
   "files": ["bin", "dist", "extensions", "src", "souls", "schemas", "README.md"],
   "scripts": {
-    "build:recorder": "tsc -p tsconfig.recorder.json",
+    "build:recorder": "tsc -p tsconfig.recorder.json && node scripts/build-rename-no-replace.mjs",
     "prepack": "npm run build:recorder",
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
