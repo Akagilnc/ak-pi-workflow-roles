@@ -4,11 +4,11 @@ const REPLACEMENT = "[REDACTED]";
 // Covers authority-mandated classes plus representative provider forms.
 const RULES = [
     {
-        // Composed Authorization headers are one credential boundary: scheme + value
-        // must be consumed atomically so a redacted prefix cannot leave the secret.
-        // Generic schemes (Token, Digest, …) share that law with Basic/Bearer.
+        // Composed Authorization headers are one credential boundary: the complete
+        // credential field after Authorization:/ = is consumed atomically through
+        // CR/LF so parameterized schemes cannot leave a secret suffix.
         id: "authorization-header",
-        pattern: /(?:^|[\s,;])Authorization\s*[:=]\s*(?:'[^'\r\n]+'|"[^"\r\n]+"|(?:Bearer|Basic|[A-Za-z][A-Za-z0-9+._-]*)\s+[A-Za-z0-9\-._~+/]+=*|[^\s'"\r\n]+)/gi,
+        pattern: /(?:^|[\s,;])Authorization\s*[:=]\s*(?:'[^'\r\n]+'|"[^"\r\n]+"|[^\r\n]+)/gi,
     },
     {
         id: "bearer-credential",
