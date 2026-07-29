@@ -216,6 +216,12 @@ if (mode === "exit") {
   process.stdout.write("exit-body\n");
   process.exit(code);
 }
+if (mode === "exit-text") {
+  const code = Number(process.argv[3] ?? "0");
+  process.stdout.write(process.argv[4] ?? "");
+  process.stderr.write(process.argv[5] ?? "");
+  process.exit(code);
+}
 if (mode === "signal") {
   process.stdout.write("signal-body\n");
   process.kill(process.pid, process.argv[3] ?? "SIGTERM");

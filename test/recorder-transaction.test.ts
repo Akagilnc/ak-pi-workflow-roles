@@ -184,6 +184,9 @@ test("dual failure preserves scanned child diagnostic and recorder precedence", 
     const cfg = JSON.parse(readFileSync(configPath, "utf8"));
     cfg.declarations.gitReferences[0].blobOid = "0".repeat(40);
     writeFileSync(configPath, JSON.stringify(cfg));
+    const stdoutBody =
+      "child-failed-marker Authorization: Bearer plainsecrettokenvalue999\n";
+    const stderrBody = "diag-line Basic dXNlcjpwYXNz\n";
     const result = await runRecorderBin(
       [
         "--config",
@@ -191,8 +194,10 @@ test("dual failure preserves scanned child diagnostic and recorder precedence", 
         "--",
         process.execPath,
         ctx.script,
-        "exit",
+        "exit-text",
         "3",
+        stdoutBody,
+        stderrBody,
       ],
       {
         cwd: ctx.root,
@@ -200,10 +205,26 @@ test("dual failure preserves scanned child diagnostic and recorder precedence", 
       },
     );
     assert.equal(result.code, 125);
-    const failure = JSON.parse(result.stderr.trim().split("\n").at(-1)!);
+    // Byte-exact tee of child streams (credentials may appear on the tee).
+    assert.equal(result.stdout, stdoutBody);
+    assert.equal(result.stderr.startsWith(stderrBody), true);
+    const failureLine = result.stderr.trim().split("\n").at(-1)!;
+    const failure = JSON.parse(failureLine);
     assert.equal(failure.recorder.status, "failed");
     assert.equal(failure.child.status, "exited");
     assert.equal(failure.child.exitCode, 3);
+    assert.equal(typeof failure.child.diagnostic, "string");
+    assert.notEqual(failure.child.diagnostic, null);
+    assert.equal(failure.child.diagnostic.includes("plainsecrettokenvalue999"), false);
+    assert.equal(failure.child.diagnostic.includes("dXNlcjpwYXNz"), false);
+    assert.equal(failure.child.diagnostic.includes("child-failed-marker"), true);
+    assert.equal(failure.child.diagnostic.includes("[REDACTED]"), true);
+    assert.equal(failureLine.includes("plainsecrettokenvalue999"), false);
+    assert.equal(failureLine.includes("dXNlcjpwYXNz"), false);
+    assert.equal(
+      existsSync(join(ctx.archive, ".ak/dockets/issues/10/apply/apply-dual-fail")),
+      false,
+    );
   } finally {
     rmSync(ctx.root, { recursive: true, force: true });
   }

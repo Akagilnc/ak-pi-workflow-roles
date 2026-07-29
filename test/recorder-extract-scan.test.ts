@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -27,6 +33,7 @@ import {
   initGitRepo,
   makeTempDir,
   runRecorderBin,
+  sha256File,
   writeCounterScript,
   writeRecorderConfig,
 } from "./helpers/recorder-test-harness.ts";
@@ -243,6 +250,86 @@ test("scanner redacts every mandated credential class", () => {
       assert.ok(hit.count >= 1);
       assert.equal(JSON.stringify(hit).includes("SUPERSECRET"), false);
     }
+  }
+});
+
+test("composed Authorization Basic/Bearer headers redact the complete credential", () => {
+  const cases = [
+    {
+      name: "composed-bearer-plain",
+      sample: "Authorization: Bearer plainsecrettokenvalue999",
+      secret: "plainsecrettokenvalue999",
+      ruleId: "authorization-header",
+    },
+    {
+      name: "composed-basic",
+      sample: "Authorization: Basic dXNlcjpwYXNz",
+      secret: "dXNlcjpwYXNz",
+      ruleId: "authorization-header",
+    },
+    {
+      name: "composed-bearer-provider",
+      sample: secrets.bearer,
+      secret: "ghp_SUPERSECRETTOKENVALUE001",
+      ruleId: "authorization-header",
+    },
+    {
+      name: "quoted-composed-bearer",
+      sample: 'Authorization: "Bearer plainsecrettokenvalue999"',
+      secret: "plainsecrettokenvalue999",
+      ruleId: "authorization-header",
+    },
+  ];
+  for (const item of cases) {
+    const scanned = scanString(item.sample, `composed.${item.name}`);
+    assert.equal(scanned.report.redacted, true, item.name);
+    assert.equal(scanned.value.includes(item.secret), false, item.name);
+    // Prefix-only redaction is the forbidden failure mode.
+    assert.equal(
+      scanned.value.includes(`[REDACTED] ${item.secret}`),
+      false,
+      item.name,
+    );
+    assert.ok(
+      scanned.report.hits.some((hit) => hit.ruleId === item.ruleId),
+      item.name,
+    );
+    for (const hit of scanned.report.hits) {
+      assert.equal(JSON.stringify(hit).includes(item.secret), false, item.name);
+    }
+  }
+  // Standalone scheme forms still redact fully.
+  for (const sample of ["Bearer plainsecrettokenvalue999", "Basic dXNlcjpwYXNz"]) {
+    const scanned = scanString(sample, "standalone");
+    assert.equal(scanned.report.redacted, true, sample);
+    assert.equal(scanned.value.includes("plainsecrettokenvalue999"), false);
+    assert.equal(scanned.value.includes("dXNlcjpwYXNz"), false);
+  }
+});
+
+test("provider token forms cover representative sk-proj/sk-ant/glpat/xoxb/AIza shapes", () => {
+  const forms: Array<{ name: string; sample: string; needle: string }> = [
+    { name: "sk-proj", sample: secrets.skProj, needle: "sk-proj-ABCDEFGH" },
+    { name: "sk-ant", sample: secrets.skAnt, needle: "sk-ant-api03-ABCDEFGH" },
+    { name: "glpat", sample: secrets.glpat, needle: "glpat-ABCDEFGH" },
+    { name: "xoxb", sample: secrets.xoxb, needle: "xoxb-123456789012" },
+    { name: "AIza", sample: secrets.aiza, needle: "AIzaSyA-abcdefghijklmnopqrstuvwx" },
+  ];
+  for (const form of forms) {
+    const scanned = scanString(form.sample, `provider.${form.name}`);
+    assert.equal(scanned.report.redacted, true, form.name);
+    assert.equal(scanned.value.includes(form.needle), false, form.name);
+    assert.equal(scanned.value.includes("ABCDEFGH"), false, form.name);
+    assert.ok(scanned.report.hits.every((hit) => hit.count >= 1), form.name);
+    assert.ok(
+      scanned.report.hits.every(
+        (hit) =>
+          typeof hit.ruleId === "string" &&
+          typeof hit.location === "string" &&
+          !JSON.stringify(hit).includes(form.needle),
+      ),
+      form.name,
+    );
   }
 });
 
@@ -609,6 +696,215 @@ test("end-to-end child JSON receipt is stored once without leaking secrets", asy
     void collectLifecycleEvents;
     void bindAcceptedLifecycle;
     void scanJsonValue;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const MATRIX_MARKERS = [
+  "plainsecrettokenvalue999",
+  "dXNlcjpwYXNz",
+  "SUPERSECRETTOKENVALUE001",
+  "supersecretvalue999",
+  "sk-proj-ABCDEFGHijklmnop1234567890",
+  "glpat-ABCDEFGHijklmnop1234",
+  "xoxb-123456789012-ABCDEFGHijklmnop",
+  "AIzaSyA-abcdefghijklmnopqrstuvwx",
+] as const;
+
+function assertNoRawSecret(label: string, text: string): void {
+  for (const marker of MATRIX_MARKERS) {
+    assert.equal(
+      text.includes(marker),
+      false,
+      `${label} leaked ${marker}`,
+    );
+  }
+  // Redaction metadata must stay structural only.
+  if (label.includes("redaction") || label.includes("manifest")) {
+    assert.equal(text.includes("plainsecrettokenvalue999"), false, label);
+  }
+}
+
+function walkFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    const abs = join(dir, ent.name);
+    if (ent.isDirectory()) out.push(...walkFiles(abs));
+    else out.push(abs);
+  }
+  return out;
+}
+
+test("category × credential matrix keeps raw secrets out of core, report, and failure JSON", async () => {
+  const root = makeTempDir("ak-recorder-matrix-");
+  try {
+    const archive = initGitRepo(join(root, "archive"));
+    const authority = commitFile(archive, "authority.md", "# authority\n");
+    const task = commitFile(archive, "task.md", "# task\n");
+    const script = writeCounterScript(root);
+    const counter = join(root, "counter.txt");
+
+    const secretArgv = `Authorization: Bearer plainsecrettokenvalue999`;
+    const secretEnv = secrets.skProj;
+    const secretProvenance = `model-with-${secrets.glpat}`;
+    const secretInputBody = `copied ${secrets.basic} and ${secrets.xoxb}\n`;
+    const secretExhibitBody = `exhibit ${secrets.aiza}\n`;
+    const secretReceipt = {
+      status: "completed",
+      report: `done ${secrets.bearer} ${secrets.assign}`,
+    };
+
+    const inputPath = join(root, "secret-input.txt");
+    const exhibitPath = join(root, "secret-exhibit.txt");
+    writeFileSync(inputPath, secretInputBody);
+    writeFileSync(exhibitPath, secretExhibitBody);
+
+    // --- Success path: argv/context, provenance, receipt, copied bytes, manifest/report ---
+    const okConfig = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: "issues/10/apply/apply-matrix-ok",
+      overrides: { AK_MATRIX_SECRET: secretEnv },
+      authority: {
+        repositoryRoot: archive,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+      externalInputs: [{
+        id: "secret-input",
+        sourcePath: inputPath,
+        sha256: sha256File(secretInputBody),
+        kind: "input",
+      }],
+      exhibits: [{
+        id: "secret-exhibit",
+        sourcePath: exhibitPath,
+        sha256: sha256File(secretExhibitBody),
+      }],
+      provenance: {
+        package: "@ak/pi-workflow-roles",
+        model: secretProvenance,
+        target: null,
+      },
+    });
+
+    const ok = await runRecorderBin(
+      [
+        "--config",
+        okConfig,
+        "--",
+        process.execPath,
+        script,
+        "json-receipt",
+        CODER_OUTPUT_TOOL_NAME,
+        JSON.stringify(secretReceipt),
+        secretArgv,
+      ],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(ok.code, 0, ok.stderr);
+
+    const dest = join(archive, ".ak/dockets/issues/10/apply/apply-matrix-ok");
+    assert.equal(existsSync(dest), true);
+    for (const file of walkFiles(dest)) {
+      assertNoRawSecret(`final:${file}`, readFileSync(file, "utf8"));
+    }
+    const manifest = JSON.parse(readFileSync(join(dest, "manifest.json"), "utf8"));
+    assertNoRawSecret("manifest", JSON.stringify(manifest));
+    for (const hit of manifest.redaction.hits) {
+      assert.equal(typeof hit.ruleId, "string");
+      assert.equal(typeof hit.location, "string");
+      assert.equal(typeof hit.count, "number");
+      assert.deepEqual(Object.keys(hit).sort(), ["count", "location", "ruleId"]);
+    }
+    if (existsSync(join(dest, "redaction-report.json"))) {
+      const report = JSON.parse(
+        readFileSync(join(dest, "redaction-report.json"), "utf8"),
+      );
+      assertNoRawSecret("redaction-report", JSON.stringify(report));
+    }
+    const receipt = JSON.parse(readFileSync(join(dest, "receipt.json"), "utf8"));
+    assertNoRawSecret("receipt", JSON.stringify(receipt));
+    assert.equal(
+      readFileSync(join(dest, "inputs/secret-input"), "utf8").includes("dXNlcjpwYXNz"),
+      false,
+    );
+    assert.equal(
+      readFileSync(join(dest, "exhibits/secret-exhibit"), "utf8").includes("AIzaSyA"),
+      false,
+    );
+
+    // --- Pre-promotion failure: public diagnostics + no stage/final core ---
+    const failConfigPath = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: "issues/10/apply/apply-matrix-fail",
+      authority: {
+        repositoryRoot: archive,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+      provenance: {
+        package: null,
+        model: secretProvenance,
+        target: null,
+      },
+    });
+    const failCfg = JSON.parse(readFileSync(failConfigPath, "utf8"));
+    failCfg.declarations.gitReferences[0].blobOid = "0".repeat(40);
+    writeFileSync(failConfigPath, JSON.stringify(failCfg));
+
+    const failOut =
+      `diag-ok Authorization: Bearer plainsecrettokenvalue999 ${secrets.skAnt}\n`;
+    const fail = await runRecorderBin(
+      [
+        "--config",
+        failConfigPath,
+        "--",
+        process.execPath,
+        script,
+        "exit-text",
+        "4",
+        failOut,
+        `err ${secrets.basic}\n`,
+      ],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(fail.code, 125);
+    // Tee remains byte-exact (caller-owned), including raw credentials.
+    assert.equal(fail.stdout.includes("plainsecrettokenvalue999"), true);
+    assert.equal(fail.stderr.includes("dXNlcjpwYXNz"), true);
+    const failureLine = fail.stderr.trim().split("\n").at(-1)!;
+    const failure = JSON.parse(failureLine);
+    assert.equal(failure.recorder.status, "failed");
+    assertNoRawSecret("failure-json", failureLine);
+    assert.equal(typeof failure.child.diagnostic, "string");
+    assert.notEqual(failure.child.diagnostic, null);
+    assertNoRawSecret("child.diagnostic", failure.child.diagnostic);
+    assert.equal(
+      existsSync(join(archive, ".ak/dockets/issues/10/apply/apply-matrix-fail")),
+      false,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

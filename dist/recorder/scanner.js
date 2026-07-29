@@ -4,8 +4,10 @@ const REPLACEMENT = "[REDACTED]";
 // Covers authority-mandated classes plus representative provider forms.
 const RULES = [
     {
+        // Composed Authorization headers are one credential boundary: scheme + value
+        // must be consumed atomically so a redacted prefix cannot leave the secret.
         id: "authorization-header",
-        pattern: /(?:^|[\s,;])Authorization\s*[:=]\s*['"]?[^'"\s]+/gi,
+        pattern: /(?:^|[\s,;])Authorization\s*[:=]\s*(?:'[^'\r\n]+'|"[^"\r\n]+"|(?:Bearer|Basic)\s+[A-Za-z0-9\-._~+/]+=*|[^\s'"\r\n]+)/gi,
     },
     {
         id: "bearer-credential",
@@ -17,7 +19,7 @@ const RULES = [
     },
     {
         id: "provider-package-token",
-        pattern: /\b(?:ghp|gho|ghu|ghs|ghr|github_pat|npm|sk|xox[baprs]|glpat|sk-proj|sk-ant)[_-][A-Za-z0-9\-_]{8,}\b/gi,
+        pattern: /\b(?:ghp|gho|ghu|ghs|ghr|github_pat|npm|sk-proj|sk-ant|sk|xox[baprs]|glpat)[_-][A-Za-z0-9\-_]{8,}\b/gi,
     },
     {
         id: "google-api-key",
