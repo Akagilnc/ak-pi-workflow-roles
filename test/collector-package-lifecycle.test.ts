@@ -17,6 +17,7 @@ import {
 } from "../src/collector-role.ts";
 import {
   packageRoot,
+  packIsolatedPackage,
   runPiSubprocess,
   withHermeticHome,
   withInProcessPi,
@@ -26,20 +27,15 @@ const exec = promisify(execFile);
 
 test("npm pack includes collector modules, schema, and soul and excludes skills/orchestrator collect", async () => {
   await withHermeticHome({ prefix: "ak-collector-pack-" }, async ({ home }) => {
-    const pack = JSON.parse(
-      (await exec("npm", ["pack", "--json", "--pack-destination", home], {
-        cwd: packageRoot,
-      })).stdout,
-    ) as Array<{ filename: string; files: Array<{ path: string }> }>;
-    const paths = pack[0]!.files.map((file) => file.path);
+    const pack = await packIsolatedPackage(home);
+    const paths = pack.files.map((file) => file.path);
     assert.ok(paths.includes("souls/collector.md"));
     assert.ok(paths.includes("schemas/collector-legs-v1.schema.json"));
     assert.ok(paths.includes("src/collector-role.ts"));
     assert.ok(paths.includes("src/collector-tool-schemas.ts"));
     assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
     assert.equal(paths.includes("souls/collect.md"), false);
-    const tarball = resolve(home, pack[0]!.filename);
-    const archiveText = (await exec("tar", ["-xOf", tarball], {
+    const archiveText = (await exec("tar", ["-xOf", pack.tarball], {
       maxBuffer: 5 * 1024 * 1024,
     })).stdout;
     assert.doesNotMatch(archiveText, /onlineCollect|ReviewCargo|souls\/collect\.md/);
@@ -52,12 +48,8 @@ test("installed npm tarball collector runs default gh transport end-to-end in pr
     await withHermeticHome(
       { prefix: `ak-collector-install-${mode}-` },
       async ({ home }) => {
-        const pack = JSON.parse(
-          (await exec("npm", ["pack", "--json", "--pack-destination", home], {
-            cwd: packageRoot,
-          })).stdout,
-        ) as Array<{ filename: string }>;
-        const tarball = resolve(home, pack[0]!.filename);
+        const pack = await packIsolatedPackage(home);
+        const tarball = pack.tarball;
         const consumer = resolve(home, "consumer");
         await mkdir(consumer, { recursive: true });
         await writeFile(

@@ -18,6 +18,7 @@ import {
 
 import {
   packageRoot,
+  packIsolatedPackage,
   withHermeticHome,
   withInProcessPi,
   writeTestSkill,
@@ -77,15 +78,9 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
       await git(fixture, "commit", "-am", "consumer reviewed change");
       const reviewedHead = await git(fixture, "rev-parse", "HEAD");
 
-      const pack = JSON.parse(
-        (await exec(
-          "npm",
-          ["pack", "--json", "--pack-destination", temp],
-          { cwd: packageRoot },
-        )).stdout,
-      ) as Array<{ filename: string; files: Array<{ path: string }> }>;
-      const tarball = resolve(temp, pack[0]!.filename);
-      const paths = pack[0]!.files.map((file) => file.path);
+      const pack = await packIsolatedPackage(temp);
+      const tarball = pack.tarball;
+      const paths = pack.files.map((file) => file.path);
       assert.deepEqual(paths, [
         "README.md",
         "bin/ak-docket-record.js",

@@ -3,7 +3,6 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import {
   access,
-  copyFile,
   cp,
   mkdir,
   readFile,
@@ -11,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
@@ -26,7 +25,10 @@ import {
   writeRecorderConfig,
 } from "./helpers/recorder-test-harness.ts";
 import {
+  GENERATED_NATIVE_BINDING,
+  materializePackageTree,
   packageRoot,
+  packIsolatedPackage,
   withHermeticHome,
 } from "./helpers/pi-test-harness.ts";
 
@@ -93,53 +95,6 @@ function assertGitClean(cwd: string, label: string): void {
   );
 }
 
-function trackedPackagePaths(): string[] {
-  const raw = execFileSync("git", ["-C", packageRoot, "ls-files", "-z"], {
-    encoding: "buffer",
-  }).toString("utf8");
-  return raw
-    .split("\0")
-    .filter(Boolean)
-    .filter((rel) => rel !== "dist/recorder/rename_no_replace.node");
-}
-
-async function materializeCleanPackageCheckout(dest: string): Promise<void> {
-  const paths = trackedPackagePaths();
-  assert.ok(
-    paths.includes("scripts/rename_no_replace.c"),
-    "native C source must remain tracked",
-  );
-  assert.ok(
-    paths.includes("scripts/build-rename-no-replace.mjs"),
-    "native build publisher must remain tracked",
-  );
-  assert.equal(
-    paths.includes("dist/recorder/rename_no_replace.node"),
-    false,
-    "generated native binding must not be Git-owned",
-  );
-
-  for (const rel of paths) {
-    const src = resolve(packageRoot, rel);
-    if (!existsSync(src)) continue;
-    const dst = resolve(dest, rel);
-    await mkdir(dirname(dst), { recursive: true });
-    await copyFile(src, dst);
-  }
-
-  execFileSync("git", ["init", "-b", "main"], { cwd: dest });
-  execFileSync("git", ["config", "user.email", "lifecycle@test.local"], {
-    cwd: dest,
-  });
-  execFileSync("git", ["config", "user.name", "Lifecycle Test"], {
-    cwd: dest,
-  });
-  execFileSync("git", ["add", "-A"], { cwd: dest });
-  execFileSync("git", ["commit", "-m", "seed clean package checkout"], {
-    cwd: dest,
-  });
-}
-
 function listNativeScratch(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((name) =>
@@ -160,14 +115,8 @@ function listPublishedNativeScratch(): string[] {
 
 test("npm pack includes recorder bin, source, schema, docs, and native build entrypoints", async () => {
   await withHermeticHome({ prefix: "ak-recorder-pack-" }, async ({ home }) => {
-    const pack = JSON.parse(
-      (
-        await exec("npm", ["pack", "--json", "--pack-destination", home], {
-          cwd: packageRoot,
-        })
-      ).stdout,
-    ) as Array<{ filename: string; files: Array<{ path: string }> }>;
-    const paths = pack[0]!.files.map((file) => file.path);
+    const pack = await packIsolatedPackage(home);
+    const paths = pack.files.map((file) => file.path);
     assert.ok(paths.includes("bin/ak-docket-record.js"));
     assert.ok(paths.includes("dist/recorder/cli.js"));
     assert.ok(paths.includes("dist/recorder/run.js"));
@@ -337,12 +286,13 @@ test("clean checkout install/build/pack keeps generated native binding host-loca
     async ({ home }) => {
       const checkout = resolve(home, "checkout");
       await mkdir(checkout, { recursive: true });
-      await materializeCleanPackageCheckout(checkout);
+      // Seed Git-owned inputs only; deps provisioned after clean assertions.
+      await materializePackageTree(checkout, {
+        nodeModules: false,
+        gitSeed: true,
+      });
 
-      const checkoutBinding = resolve(
-        checkout,
-        "dist/recorder/rename_no_replace.node",
-      );
+      const checkoutBinding = resolve(checkout, GENERATED_NATIVE_BINDING);
       const gitignoreText = await readFile(
         resolve(checkout, ".gitignore"),
         "utf8",
@@ -366,17 +316,20 @@ test("clean checkout install/build/pack keeps generated native binding host-loca
       assert.match(tracked, /^scripts\/rename_no_replace\.c$/m);
       assert.match(tracked, /^scripts\/build-rename-no-replace\.mjs$/m);
       assert.equal(
-        tracked
-          .split("\n")
-          .includes("dist/recorder/rename_no_replace.node"),
+        tracked.split("\n").includes(GENERATED_NATIVE_BINDING),
         false,
+        "generated native binding must not be Git-owned",
       );
 
       // Offline deps from the live package so install/prepack stay hermetic.
-      await cp(resolve(packageRoot, "node_modules"), resolve(checkout, "node_modules"), {
-        recursive: true,
-        force: true,
-      });
+      await cp(
+        resolve(packageRoot, "node_modules"),
+        resolve(checkout, "node_modules"),
+        {
+          recursive: true,
+          force: true,
+        },
+      );
 
       // package.json "install" lifecycle = single native publisher.
       await exec(process.execPath, ["scripts/build-rename-no-replace.mjs"], {
