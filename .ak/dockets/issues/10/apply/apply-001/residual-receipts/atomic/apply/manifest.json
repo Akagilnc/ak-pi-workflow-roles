@@ -1,0 +1,18 @@
+{
+  "role": "fixer",
+  "phase": "apply",
+  "resultCommit": "289a04c5eff3d2d9e2a6aea63c9217233469d072",
+  "plan": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/residual-receipts/atomic/plan/receipt.json",
+    "sha256": "e51f8a51ec2c723a39e04697ded8422171f9b525745e7ff4c9264bcb58f4141c"
+  },
+  "sessionCandidate": {
+    "bytes": 14887655,
+    "sha256": "14467760cfefd55b6146242f7106bc5fd520fccbbe7adb142327b5f32826921a",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "5d2cffed28a99e3485b7d21cc1aafbfbc67e7afabc910a7203194d9f6ddc33ee"
+  }
+}
