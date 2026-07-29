@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "targetHead": "2d2f663d30b1d22b2ce4b802bf0b3ecb69d26622",
+  "materials": {
+    "path": ".ak/dockets/issues/10/judgment/small-core-001/request.md",
+    "sha256": "dbd59c9588eff2819daa3a0f61e3e88eed5ebac4b393d302729853d2ad0f0abb"
+  },
+  "sessionCandidate": {
+    "sanitizedBytes": 107459486,
+    "sha256": "f8feaf8b6f3eb3525fb501e5d4607003521da2c52c4985a70385be266aba5c9e",
+    "retention": "not retained",
+    "reason": "routine tool/event exhaust; accepted Judge Receipt and Soul-audit outcome carry the claim"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "29053af5157cf45be8bfbd03dab50bf9ee5bcf5bda18223ea17239e94e224f4d",
+    "acceptedBySoulAudit": true
+  },
+  "redactions": null
+}
