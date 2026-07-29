@@ -110,6 +110,8 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
         "package.json",
         "schemas/collector-legs-v1.schema.json",
         "schemas/recorder-manifest-v1.schema.json",
+        "scripts/build-rename-no-replace.mjs",
+        "scripts/rename_no_replace.c",
         "souls/coder.md",
         "souls/collector.md",
         "souls/fixer.md",

@@ -11,7 +11,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -625,15 +624,25 @@ process.stdout.write("slow-ok\\n");
 process.exit(0);
 `,
     );
+    // Isolate Recorder scratch under this fixture so concurrent suite work cannot
+    // own the freeze target (production still uses os.tmpdir()/TMPDIR).
+    const privateTmp = join(ctx.root, "private-tmp");
+    mkdirSync(privateTmp, { recursive: true });
     const saboteurPromise = sabotageRawScratchCleanup({
-      tmpDir: tmpdir(),
+      tmpDir: privateTmp,
       timeoutMs: 10000,
     });
     const runPromise = runRecorderBin(
       ["--config", configPath, "--", process.execPath, slow],
       {
         cwd: ctx.root,
-        env: { ...process.env, AK_RECORDER_COUNTER: ctx.counter },
+        env: {
+          ...process.env,
+          AK_RECORDER_COUNTER: ctx.counter,
+          TMPDIR: privateTmp,
+          TMP: privateTmp,
+          TEMP: privateTmp,
+        },
       },
     );
     saboteur = await saboteurPromise;
