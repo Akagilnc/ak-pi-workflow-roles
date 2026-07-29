@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/review/post-repair-review/repairs/escape-aware-assignment.md",
+    "sha256": "6054e7bfded8964c90487d11e6516a2155309ba9efc0722b36dbdeef6819106d"
+  },
+  "sessionCandidate": {
+    "bytes": 10030275,
+    "sha256": "3501c64e675a51a3aeb76ecd69e5f9ec228be45e62b6c542c3e6312e513e38f1",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "1aade3552a086b7bb7c04148cb725c9972dcc3bd01a1e0ca75e55532f1aab429"
+  }
+}
