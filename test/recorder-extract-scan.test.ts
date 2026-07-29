@@ -420,6 +420,85 @@ test("composed Authorization Basic/Bearer/Token headers redact the complete cred
   assert.equal(multiScanned.value.includes('username="user"'), false);
   assert.equal(multiScanned.value.includes("X-Other: keep-me"), true);
   assert.equal(multiScanned.value.includes("Next: still-here"), true);
+  // Whole-quoted Digest/custom values with escaped auth-parameter quotes are
+  // one CR/LF-bounded field — an inner quote must not leave a parameter suffix.
+  // Mirror token-assignment escaped-quote construction: \" inside the value.
+  const digestEscapedInner =
+    "Digest username=\\\"Mufasa\\\", realm=\\\"testrealm@host.com\\\", response=\\\"6629fae49393a05397450978507c4ef1\\\"";
+  const customEscapedInner =
+    "HOBA result=\\\"success\\\", signed=\\\"plainsecrettokenvalue999 abc def\\\"";
+  const wholeQuotedEscapedCases = [
+    {
+      name: "whole-quoted-digest-escaped-params",
+      sample: `Authorization: "${digestEscapedInner}"`,
+      secrets: [
+        "Mufasa",
+        "testrealm@host.com",
+        "6629fae49393a05397450978507c4ef1",
+        "username=\\\"Mufasa\\\"",
+        "response=\\\"6629fae49393a05397450978507c4ef1\\\"",
+      ],
+    },
+    {
+      name: "whole-quoted-custom-escaped-params",
+      sample: `Authorization: "${customEscapedInner}"`,
+      secrets: [
+        "plainsecrettokenvalue999",
+        "result=\\\"success\\\"",
+        "signed=\\\"plainsecrettokenvalue999 abc def\\\"",
+        "plainsecrettokenvalue999 abc def",
+      ],
+    },
+    {
+      name: "whole-single-quoted-digest-escaped-params",
+      sample: `Authorization: '${digestEscapedInner}'`,
+      secrets: [
+        "Mufasa",
+        "6629fae49393a05397450978507c4ef1",
+        "username=\\\"Mufasa\\\"",
+        "response=\\\"6629fae49393a05397450978507c4ef1\\\"",
+      ],
+    },
+  ];
+  for (const item of wholeQuotedEscapedCases) {
+    const scanned = scanString(item.sample, `composed.${item.name}`);
+    assert.equal(scanned.report.redacted, true, item.name);
+    assert.ok(
+      scanned.report.hits.some((hit) => hit.ruleId === "authorization-header"),
+      item.name,
+    );
+    assert.equal(scanned.value, "[REDACTED]", item.name);
+    for (const secret of item.secrets) {
+      assert.equal(
+        scanned.value.includes(secret),
+        false,
+        `${item.name}:secret:${secret}`,
+      );
+      assert.equal(
+        scanned.value.includes(`[REDACTED] ${secret}`),
+        false,
+        `${item.name}:redacted-suffix:${secret}`,
+      );
+    }
+  }
+  const wholeQuotedMultiInner =
+    "Digest username=\\\"user\\\", response=\\\"secretvalue999\\\"";
+  const wholeQuotedMulti =
+    `Authorization: "${wholeQuotedMultiInner}"` + "\r\n" + "X-Other: keep-me\nNext: still-here";
+  const wholeQuotedMultiScanned = scanString(
+    wholeQuotedMulti,
+    "composed.whole-quoted-crlf-bound",
+  );
+  assert.equal(wholeQuotedMultiScanned.report.redacted, true);
+  assert.ok(
+    wholeQuotedMultiScanned.report.hits.some(
+      (hit) => hit.ruleId === "authorization-header",
+    ),
+  );
+  assert.equal(wholeQuotedMultiScanned.value.includes("secretvalue999"), false);
+  assert.equal(wholeQuotedMultiScanned.value.includes("username=\\\"user\\\""), false);
+  assert.equal(wholeQuotedMultiScanned.value.includes("X-Other: keep-me"), true);
+  assert.equal(wholeQuotedMultiScanned.value.includes("Next: still-here"), true);
   // Standalone scheme forms still redact fully.
   for (const sample of ["Bearer plainsecrettokenvalue999", "Basic dXNlcjpwYXNz"]) {
     const scanned = scanString(sample, "standalone");
@@ -2109,10 +2188,13 @@ test("structural metadata gate preserves non-structural credential sanitization 
     // Parameterized Authorization must promote with no complete field or suffix left.
     const parameterizedAuth =
       'Authorization: Digest username="Mufasa", realm="testrealm@host.com", response="6629fae49393a05397450978507c4ef1"';
+    // Whole-quoted Digest with escaped auth-parameter quotes is still one field.
+    const wholeQuotedEscapedAuth =
+      "Authorization: \"Digest username=\\\"Mufasa\\\", realm=\\\"testrealm@host.com\\\", response=\\\"6629fae49393a05397450978507c4ef1\\\"\"";
     const assign = secrets.assign;
     // Admitted external input carries a generic Authorization scheme so promotion
     // must consume scheme+credential atomically (no secret suffix left behind).
-    const inputBody = `body ${assign}\n${genericAuth}\n${parameterizedAuth}\n`;
+    const inputBody = `body ${assign}\n${genericAuth}\n${parameterizedAuth}\n${wholeQuotedEscapedAuth}\n`;
     const inputPath = join(root, "assign-input.txt");
     writeFileSync(inputPath, inputBody);
 
@@ -2201,6 +2283,20 @@ test("structural metadata gate preserves non-structural credential sanitization 
       ),
       false,
     );
+    assert.equal(
+      promotedInput.includes('username=\\"Mufasa\\"'),
+      false,
+    );
+    assert.equal(
+      promotedInput.includes('response=\\"6629fae49393a05397450978507c4ef1\\"'),
+      false,
+    );
+    assert.equal(
+      promotedInput.includes(
+        'Digest username=\\"Mufasa\\", realm=\\"testrealm@host.com\\", response=\\"6629fae49393a05397450978507c4ef1\\"',
+      ),
+      false,
+    );
     for (const file of walkFiles(dest)) {
       const text = readFileSync(file, "utf8");
       assert.equal(
@@ -2212,6 +2308,16 @@ test("structural metadata gate preserves non-structural credential sanitization 
         text.includes('username="Mufasa"'),
         false,
         `digest-user:${file}`,
+      );
+      assert.equal(
+        text.includes('username=\\"Mufasa\\"'),
+        false,
+        `digest-escaped-user:${file}`,
+      );
+      assert.equal(
+        text.includes('response=\\"6629fae49393a05397450978507c4ef1\\"'),
+        false,
+        `digest-escaped-response:${file}`,
       );
     }
   } finally {
