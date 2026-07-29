@@ -1,0 +1,22 @@
+{
+  "role": "fixer",
+  "phase": "apply",
+  "resultCommit": "5eaa5f74410318d0c77137c65c52a133b62f3858",
+  "plan": {
+    "path": ".ak/dockets/issues/10/review/final-verification-review/successor/plan/receipt.json",
+    "sha256": "1e685cd958d1e60c742a3f135088a1f283e32bce6a41c5a4d4c6c2c6ab483af0"
+  },
+  "packet": {
+    "path": ".ak/dockets/issues/10/review/final-verification-review/successor/repair-packet.md",
+    "sha256": "90f3d1581c398c9b426a782e8245fe2c95032afdf5952d19b732d816dd4aa4c5"
+  },
+  "sessionCandidate": {
+    "bytes": 1967030,
+    "sha256": "e97a5eb23026d9ae738dfb2840a7bcc7770ae09534b065674d8d98717a89ed7c",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "530e0078f90d51f5cfa386275113e02c4715cfc12d1f90bb555dbd6177c5c39b"
+  }
+}
