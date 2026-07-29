@@ -9,9 +9,20 @@ import type {
   AnyCanonicalSkillBinding,
   CanonicalSkillBinding,
 } from "./canonical-skill-binding.ts";
+import {
+  CODER_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
+  validateAcceptedWorkerDetails,
+  type WorkerOutput,
+  type WorkerRoleLabel,
+} from "./package-contracts/worker-output.ts";
 
-export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
-export const CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
+export {
+  CODER_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
+  validateAcceptedWorkerDetails,
+};
+export type { WorkerOutput };
 
 /** Exact case-sensitive substring literals blocked on Fixer bash only. */
 const FIXER_BASH_FORBIDDEN_LITERALS = [
@@ -39,15 +50,9 @@ const workerOutputSchema = Type.Object(
 );
 
 type WorkerOutputParameters = Static<typeof workerOutputSchema>;
-export type WorkerOutput = {
-  status: "planned" | "completed" | "refused";
-  report: string;
-  commitSha?: string;
-};
 export type FixerOutput = WorkerOutput;
 export type CoderOutput = WorkerOutput;
 type WorkerPhase = "plan" | "apply";
-type WorkerRoleLabel = "Coder" | "Fixer";
 
 export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext): never;
@@ -79,7 +84,7 @@ function hasExactKeys(
     expected.every((key) => Object.hasOwn(value, key));
 }
 
-function validateWorkerOutput(
+export function validateWorkerOutput(
   output: WorkerOutputParameters,
   phase: WorkerPhase,
   roleLabel: WorkerRoleLabel,

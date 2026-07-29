@@ -1,0 +1,17 @@
+{
+  "role": "judge",
+  "targetHead": "a238ea50e385c9e9beb57b11428c5fda71c5ca50",
+  "materials": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/repair-receipts/closure/apply/receipt.json",
+    "sha256": "08e40fa0728ea2254b0f433d125c06b477da6ff69dfa9d50beb43cdffd88a121"
+  },
+  "sessionCandidate": {
+    "bytes": 57645124,
+    "sha256": "46fb20c6312263a01ba0ac7a3a6b631b711896100d6e594acda9243455258592",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "ba5febcb88713a5471c411d797e1a2bafb4679c71e3c3467d0d77166fcdfe9d6"
+  }
+}

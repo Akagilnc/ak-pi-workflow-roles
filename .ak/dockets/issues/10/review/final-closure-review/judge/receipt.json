@@ -1,0 +1,7 @@
+{
+  "judgeStatus": "continue",
+  "fix": {
+    "summary": "Closure is not ready at exact clean HEAD `7561bd3d7dcf743fd9817f33ac3e8849a50bfc97`. The sole Spec finding is sustained. Frozen authority requires authorization-header values to be replaced (`authority/materials.md:35-37`), and Plan-002 §2 forbids secrets reaching staging or the final core. The existing `authorization-header` alternative in `src/recorder/scanner.ts` consumes only the generic scheme token: a direct current-HEAD probe returned `[REDACTED] plainsecrettokenvalue999` for `Authorization: Token plainsecrettokenvalue999`. An independent external-input run then exited 0 and promoted those exact partially scanned bytes to `inputs/generic-auth`; `storeOnce()` in `src/recorder/admit.ts` writes that `scanBytes()` result.\n\nSmallest owning-seam repair only: correct the existing `authorization-header` scanner rule so a generic Authorization scheme and its complete credential value are redacted as one boundary, regenerate the tracked Recorder distribution, and add a focused generic-scheme regression through the existing scanner and external-input admission path proving no credential suffix is promoted. Do not add a second scanner or admission mechanism."
+  },
+  "note": "The earlier infrastructure failures have no verdict and were given no adjudicative weight. No session was inspected."
+}

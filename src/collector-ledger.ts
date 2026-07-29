@@ -32,10 +32,12 @@ import {
   collectorRequestArgsSchema,
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
+import { COLLECTOR_OUTPUT_TOOL } from "./package-contracts/collector-output.ts";
+
 export const COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
 export const COLLECTOR_REQUEST_TOOL = "ak_collector_request";
 export const COLLECTOR_WAIT_TOOL = "ak_collector_wait";
-export const COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
+export { COLLECTOR_OUTPUT_TOOL };
 
 export const COLLECTOR_OPERATIONAL_TOOLS = [
   COLLECTOR_OBSERVE_TOOL,

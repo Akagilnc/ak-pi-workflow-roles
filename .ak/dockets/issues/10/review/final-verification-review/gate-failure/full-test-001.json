@@ -1,0 +1,12 @@
+{
+  "observedAtHead": "706293dea2283d9a866f188bd9838c85e0e30446",
+  "gate": "HOME=$(mktemp -d) npm test",
+  "result": "323/324; admission child imported cross-file inconsistent dist during concurrent prepack tsc",
+  "counterexample": "terminating-tools.js imported JUDGE_ACCEPTED_TEXT while concurrently rewritten judge-output.js did not yet export it",
+  "logCandidate": {
+    "bytes": 100245,
+    "sha256": "17a22f1b6079ac328fff5ea1afdb96aac1f8958c1012eca0f8313836f85521f5",
+    "retention": "not retained"
+  },
+  "disposition": "Repair package-lifecycle prepack isolation before final review; do not treat broad gate as green."
+}

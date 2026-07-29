@@ -1,0 +1,17 @@
+{
+  "role": "judge",
+  "targetHead": "67bb450ddd8809af5437c565ca75743888ccda77",
+  "materials": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/final-residual-receipts/native-lock/apply/receipt.json",
+    "sha256": "f3ca4cfff0eb443523afecc17de2590ce93e8bb5511e2dfb15e6791058493042"
+  },
+  "sessionCandidate": {
+    "bytes": 81472142,
+    "sha256": "e9734f1c8f91aa5835e0efb581d2e5d104fd1607f079dbab2ecc79e58fead07e",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "9f1816dc2ba4b5ee34f7523c3235f3a6cab93bbd3466a39fb08d63523683d431"
+  }
+}

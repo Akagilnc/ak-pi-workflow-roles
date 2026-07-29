@@ -21,6 +21,9 @@ import type {
   CollectorRequestAttempt,
 } from "./collector-ledger.ts";
 import { collectorOutputArgsSchema } from "./collector-tool-schemas.ts";
+import { validateAcceptedCollectorReceipt } from "./package-contracts/collector-output.ts";
+
+export { validateAcceptedCollectorReceipt };
 
 export type CollectorLegStatus = "valid" | "unavailable" | "missing";
 

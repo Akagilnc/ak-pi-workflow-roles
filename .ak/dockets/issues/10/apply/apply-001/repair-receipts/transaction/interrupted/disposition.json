@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "role": "fixer",
+  "phase": "apply",
+  "startedAtHead": "8a20c7a",
+  "status": "interrupted",
+  "lawfulReceipt": null,
+  "observedDirtyPaths": [
+    "src/recorder/paths.ts",
+    "src/recorder/run.ts"
+  ],
+  "disposition": "Preserve the dirty in-place construction and continue it under the accepted plan; do not treat this invocation as completed.",
+  "interruption": "host power/network interruption reported during invocation",
+  "sessionCandidate": {
+    "bytes": 5715984,
+    "sha256": "cd316a94f1cb51d52f489f9a974a0c99e57d0619f3df692cd648c8bd701ec0d2",
+    "retention": "not retained",
+    "reason": "routine incomplete execution exhaust"
+  },
+  "plan": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/repair-receipts/transaction/plan/receipt.json",
+    "sha256": "963ecaf6783f993db9628f07791f3bba8ce860cf2a0e773b0b1ef97fb9bdc0c1"
+  }
+}

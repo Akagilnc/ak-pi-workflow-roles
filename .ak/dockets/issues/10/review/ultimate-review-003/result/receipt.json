@@ -1,0 +1,4 @@
+{
+  "status": "refused",
+  "report": "Unable to submit a method-compliant completed review from this invocation.\n\nEvidence: invocation start resolved `HEAD` once to `2364177489e26f3af56af5be5d8f7e5ef07e6424`, but the same initial preflight command subsequently used symbolic `HEAD` for `git merge-base`, `git log`, and `git diff` instead of reusing the captured SHA. Although later commands and the sole Standards/Spec sibling-parallel batch used the immutable SHA, that cannot cure the task’s target-pinning requirement after the fact, and the permitted batch cannot be rerun.\n\nThis is a procedural refusal only. No review findings or closure claim are submitted."
+}

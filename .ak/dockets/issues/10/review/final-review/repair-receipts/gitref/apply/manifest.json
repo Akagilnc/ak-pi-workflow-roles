@@ -1,0 +1,18 @@
+{
+  "role": "fixer",
+  "phase": "apply",
+  "resultCommit": "a90c605a42202745ace38f7a3252fa4416007d34",
+  "plan": {
+    "path": ".ak/dockets/issues/10/review/final-review/repair-receipts/gitref/plan/receipt.json",
+    "sha256": "6269e324db44569db68c7140f4bafa42d89015f780154fa0d0134505fed76303"
+  },
+  "sessionCandidate": {
+    "bytes": 2467134,
+    "sha256": "69e7b0077713cff05f90c80c33d08afc8aa062446ace2a75add89935d970b508",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "9d1cf2696bc6c53f790f9ecd06f076ebf3cecdee5559ef45c143ebf3fc5b43da"
+  }
+}
