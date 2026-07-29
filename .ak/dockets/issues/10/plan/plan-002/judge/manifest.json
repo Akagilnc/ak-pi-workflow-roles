@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "targetHead": "e01e98ccfda2af6762bb71db30d35935e9b1943c",
+  "materials": {
+    "path": ".ak/dockets/issues/10/plan/plan-002/receipt.json",
+    "sha256": "ba4646aacad2c629875318559a57876609a034f2c923b0ff65aec2cb64bdc602"
+  },
+  "sessionCandidate": {
+    "sanitizedBytes": 48276278,
+    "sha256": "5920c91dc34a82e88863cb6fc98b5b9b6137088367c6be4e2794f2c2c4426d93",
+    "retention": "not retained",
+    "reason": "routine execution exhaust"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "1e6e187c6e434746edfd86565ed3ea788c8a146127c24e4089dbef637daeeb8a",
+    "acceptedBySoulAudit": true
+  },
+  "redactions": null
+}
