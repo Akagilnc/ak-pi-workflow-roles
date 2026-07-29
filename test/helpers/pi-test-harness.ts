@@ -1,5 +1,8 @@
-import { spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
+  copyFile,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -10,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import {
   type FauxProviderHandle,
@@ -27,10 +31,120 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
+const execFileAsync = promisify(execFile);
+
+/** Generated host binding: not Git-owned; prepack/native build recreates it. */
+export const GENERATED_NATIVE_BINDING =
+  "dist/recorder/rename_no_replace.node";
+
 export const packageRoot = dirname(
   fileURLToPath(new URL("../../package.json", import.meta.url)),
 );
 export const piCli = resolve(packageRoot, "node_modules/.bin/pi");
+
+/**
+ * Tracked package inputs eligible for private materialization.
+ * Excludes only the generated native binding (host-local, gitignored).
+ */
+export function trackedPackageInputPaths(): string[] {
+  const raw = execFileSync("git", ["-C", packageRoot, "ls-files", "-z"], {
+    encoding: "buffer",
+  }).toString("utf8");
+  return raw
+    .split("\0")
+    .filter(Boolean)
+    .filter((rel) => rel !== GENERATED_NATIVE_BINDING);
+}
+
+export interface MaterializePackageOptions {
+  /** Copy live package node_modules for offline prepack/install. Default true. */
+  nodeModules?: boolean;
+  /** Initialize a git repo and commit the seeded tree. Default false. */
+  gitSeed?: boolean;
+}
+
+/**
+ * Copy tracked package inputs into an isolated directory so lifecycle scripts
+ * (prepack/tsc/native build) cannot rewrite the shared repository tree.
+ */
+export async function materializePackageTree(
+  dest: string,
+  options: MaterializePackageOptions = {},
+): Promise<void> {
+  const paths = trackedPackageInputPaths();
+  await mkdir(dest, { recursive: true });
+
+  for (const rel of paths) {
+    const src = resolve(packageRoot, rel);
+    if (!existsSync(src)) continue;
+    const dst = resolve(dest, rel);
+    await mkdir(dirname(dst), { recursive: true });
+    await copyFile(src, dst);
+  }
+
+  if (options.nodeModules !== false) {
+    await cp(
+      resolve(packageRoot, "node_modules"),
+      resolve(dest, "node_modules"),
+      { recursive: true, force: true },
+    );
+  }
+
+  if (options.gitSeed) {
+    execFileSync("git", ["init", "-b", "main"], { cwd: dest });
+    execFileSync("git", ["config", "user.email", "lifecycle@test.local"], {
+      cwd: dest,
+    });
+    execFileSync("git", ["config", "user.name", "Lifecycle Test"], {
+      cwd: dest,
+    });
+    execFileSync("git", ["add", "-A"], { cwd: dest });
+    execFileSync("git", ["commit", "-m", "seed clean package checkout"], {
+      cwd: dest,
+    });
+  }
+}
+
+export interface IsolatedPackResult {
+  /** Private materialization root used for pack (removed before return). */
+  root: string;
+  /** Absolute path to the packed tarball under packDestination. */
+  tarball: string;
+  filename: string;
+  files: Array<{ path: string }>;
+}
+
+/**
+ * Materialize a private package tree and run real `npm pack` there so the
+ * prepack → build:recorder → tsc + native chain cannot rewrite shared dist/.
+ */
+export async function packIsolatedPackage(
+  packDestination: string,
+): Promise<IsolatedPackResult> {
+  await mkdir(packDestination, { recursive: true });
+  const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
+  try {
+    await materializePackageTree(root, { nodeModules: true });
+    const { stdout } = await execFileAsync(
+      "npm",
+      ["pack", "--json", "--pack-destination", packDestination],
+      { cwd: root, maxBuffer: 10 * 1024 * 1024 },
+    );
+    const pack = JSON.parse(stdout) as Array<{
+      filename: string;
+      files: Array<{ path: string }>;
+    }>;
+    const entry = pack[0]!;
+    return {
+      root,
+      tarball: resolve(packDestination, entry.filename),
+      filename: entry.filename,
+      files: entry.files,
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 export interface RawPackageManifest {
   files?: string[];

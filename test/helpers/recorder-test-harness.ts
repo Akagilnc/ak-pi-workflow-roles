@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import {
-  execFile,
   execFileSync,
   spawn,
   type ChildProcess,
@@ -14,11 +13,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
 
-import { packageRoot } from "./pi-test-harness.ts";
-
-const execFileAsync = promisify(execFile);
+import { packageRoot, packIsolatedPackage } from "./pi-test-harness.ts";
 
 export const recorderBin = resolve(packageRoot, "bin/ak-docket-record.js");
 
@@ -486,12 +482,8 @@ export function writeCounterScript(dir: string): string {
   return path;
 }
 
+/** Pack from a private materialization; never rewrites shared packageRoot dist/. */
 export async function npmPackTo(dir: string): Promise<string> {
-  const { stdout } = await execFileAsync(
-    "npm",
-    ["pack", "--json", "--pack-destination", dir],
-    { cwd: packageRoot, maxBuffer: 5 * 1024 * 1024 },
-  );
-  const pack = JSON.parse(stdout) as Array<{ filename: string }>;
-  return join(dir, pack[0]!.filename);
+  const packed = await packIsolatedPackage(dir);
+  return packed.tarball;
 }
