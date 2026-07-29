@@ -1,0 +1,18 @@
+{
+  "role": "fixer",
+  "phase": "apply",
+  "resultCommit": "8026685aacd679b1003b7d51a4bc30db2eb06c46",
+  "plan": {
+    "path": ".ak/dockets/issues/10/review/final-closure-review/repair-receipts/generic-auth/plan/receipt.json",
+    "sha256": "659f19c4425e5697c4dad53318fab8c58fbbfdac225252615a918ed0da80935b"
+  },
+  "sessionCandidate": {
+    "bytes": 4321149,
+    "sha256": "ea8784cb7e1458f9acf7582b7f475cee376ae9c4c9cb727e52eb4e4c808f176f",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "4012232b1387607dd6e99ff22cae4f0dbcb57310eea96bae94f21fd5ecdc67be"
+  }
+}
