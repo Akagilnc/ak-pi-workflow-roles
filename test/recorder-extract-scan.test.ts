@@ -370,15 +370,61 @@ test("composed Authorization Basic/Bearer headers redact the complete credential
 
 test("token-assignment consumes quoted multiword values through the matching quote", () => {
   const secret = "correct horse battery staple";
-  const suffixes = ["horse battery staple", "battery staple", "staple"];
+  // password="alpha \"beta\" gamma" — embedded quotes do not close the boundary.
+  const escapedDoubleSecret = "alpha \\\"beta\\\" gamma";
+  // password='alpha \'beta\' gamma' — same law for single quotes.
+  const escapedSingleSecret = "alpha \\'beta\\' gamma";
+  const unmatchedSecret = "alpha beta";
   const cases = [
     {
       name: "double-quoted-password",
       sample: `password="${secret}" keep-me`,
+      secret,
+      suffixes: ["horse battery staple", "battery staple", "staple"],
+      preserve: "keep-me",
     },
     {
       name: "single-quoted-password",
       sample: `password='${secret}' keep-me`,
+      secret,
+      suffixes: ["horse battery staple", "battery staple", "staple"],
+      preserve: "keep-me",
+    },
+    {
+      name: "double-quoted-with-escaped-quotes",
+      sample: `password="${escapedDoubleSecret}" keep-me`,
+      secret: escapedDoubleSecret,
+      // Naive close-on-first-quote leaks the embedded-quote tail.
+      suffixes: ["beta\\\" gamma\"", "beta", "gamma"],
+      preserve: "keep-me",
+    },
+    {
+      name: "single-quoted-with-escaped-quotes",
+      sample: `password='${escapedSingleSecret}' keep-me`,
+      secret: escapedSingleSecret,
+      suffixes: ["beta\\' gamma'", "beta", "gamma"],
+      preserve: "keep-me",
+    },
+    {
+      name: "unmatched-double-quoted-password",
+      sample: `password="${unmatchedSecret}`,
+      secret: unmatchedSecret,
+      suffixes: ["alpha", "beta", unmatchedSecret],
+      preserve: null,
+    },
+    {
+      name: "unmatched-single-quoted-password",
+      sample: `password='${unmatchedSecret}`,
+      secret: unmatchedSecret,
+      suffixes: ["alpha", "beta", unmatchedSecret],
+      preserve: null,
+    },
+    {
+      name: "unmatched-double-quoted-line-bounded",
+      sample: `password="${unmatchedSecret}\nkeep-next-line`,
+      secret: unmatchedSecret,
+      suffixes: ["alpha", "beta", unmatchedSecret],
+      preserve: "keep-next-line",
     },
   ];
   for (const item of cases) {
@@ -388,8 +434,8 @@ test("token-assignment consumes quoted multiword values through the matching quo
       scanned.report.hits.some((hit) => hit.ruleId === "token-assignment"),
       item.name,
     );
-    assert.equal(scanned.value.includes(secret), false, item.name);
-    for (const suffix of suffixes) {
+    assert.equal(scanned.value.includes(item.secret), false, item.name);
+    for (const suffix of item.suffixes) {
       assert.equal(
         scanned.value.includes(suffix),
         false,
@@ -398,17 +444,19 @@ test("token-assignment consumes quoted multiword values through the matching quo
     }
     // Prefix-only redaction is the forbidden failure mode.
     assert.equal(
-      scanned.value.includes(`[REDACTED] ${suffixes[0]}`),
+      scanned.value.includes(`[REDACTED] ${item.suffixes[0]}`),
       false,
       item.name,
     );
-    assert.equal(
-      scanned.value.includes("keep-me"),
-      true,
-      `${item.name} must preserve surrounding non-secret text`,
-    );
+    if (item.preserve !== null) {
+      assert.equal(
+        scanned.value.includes(item.preserve),
+        true,
+        `${item.name} must preserve surrounding non-secret text`,
+      );
+    }
     for (const hit of scanned.report.hits) {
-      assert.equal(JSON.stringify(hit).includes(secret), false, item.name);
+      assert.equal(JSON.stringify(hit).includes(item.secret), false, item.name);
     }
   }
   // Unquoted assignments still stop at the first whitespace boundary.
@@ -1130,16 +1178,27 @@ test("category × credential matrix keeps raw secrets out of core, report, and f
     const secretEnv = secrets.skProj;
     const secretProvenance = `model-with-${secrets.glpat}`;
     const quotedAssign = `password="correct horse battery staple"`;
+    const escapedQuotedAssign = `password="alpha \"beta\" gamma"`;
+    const unmatchedQuotedAssign = `password="alpha beta`;
     const quotedAssignMarkers = [
       "correct horse battery staple",
       "horse battery staple",
       "battery staple",
+      // Full escaped/unmatched values and meaningful tails — not bare hex-like
+      // tokens (alpha/beta) that can appear inside sha256/oid digests.
+      'alpha \"beta\" gamma',
+      'beta\" gamma',
+      'beta\" gamma"',
+      "alpha beta",
+      'password="alpha beta',
+      'password=\"alpha beta',
     ] as const;
     const secretInputBody = `copied ${secrets.basic} and ${secrets.xoxb}\n`;
     const secretExhibitBody = `exhibit ${secrets.aiza}\n`;
     const secretReceipt = {
       status: "completed",
-      report: `done ${secrets.bearer} ${secrets.assign} ${quotedAssign}`,
+      report:
+        `done ${secrets.bearer} ${secrets.assign} ${quotedAssign} ${escapedQuotedAssign} ${unmatchedQuotedAssign}`,
     };
 
     const inputPath = join(root, "secret-input.txt");

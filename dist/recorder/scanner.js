@@ -50,11 +50,13 @@ const RULES = [
         pattern: /[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/gi,
     },
     {
-        // Quoted assignment values are one credential boundary: matching quotes must
-        // consume internal whitespace so a redacted prefix cannot leave a secret suffix.
-        // JSON-escaped double quotes (\") appear when assignments ride serialized argv/stdout.
+        // Quoted assignment values are one credential boundary: only an unescaped matching
+        // delimiter closes the value; escaped quotes stay inside. Unmatched open quotes
+        // fail closed through the line end (CR/LF-bounded) so no secret suffix survives.
+        // JSON-escaped \"...\" alternatives cover the same law when assignments ride
+        // serialized argv/stdout without decoding first.
         id: "token-assignment",
-        pattern: /\b(?:api[_-]?key|token|secret|password|passwd|access[_-]?key)\b\s*[:=]\s*(?:'[^'\r\n]+'|"[^"\r\n]+"|\\"[^"\r\n]+\\"|[^\s'"\r\n]+)/gi,
+        pattern: /\b(?:api[_-]?key|token|secret|password|passwd|access[_-]?key)\b\s*[:=]\s*(?:'(?:\\[^\r\n]|[^'\\\r\n])*'|"(?:\\[^\r\n]|[^"\\\r\n])*"|\\"(?:[^"\\\r\n]|\\\\\\"|\\\\|\\[^"\\\r\n])*\\"|'(?:\\[^\r\n]|[^'\\\r\n])*|"(?:\\[^\r\n]|[^"\\\r\n])*|\\"(?:[^"\\\r\n]|\\\\\\"|\\\\|\\[^"\\\r\n])*|[^\s'\"\r\n]+)/gi,
     },
 ];
 function mergeHits(into, hit) {
