@@ -1,0 +1,44 @@
+{
+  "formatVersion": 1,
+  "kind": "formal-role-invocation-bootstrap",
+  "issue": 10,
+  "role": "judge",
+  "model": "openai-codex/gpt-5.6-sol",
+  "thinking": "high",
+  "targetHead": "a478b738fe1e45a56db091791f415f78df7190a6",
+  "materials": {
+    "path": ".ak/dockets/issues/10/judgment/review-findings-002/request.md",
+    "sha256": "469b5055d582aea2d606990d62f6a93efbe5605cb1940a5c29a916f05ab69eab"
+  },
+  "logicalSession": {
+    "bytes": 63668662,
+    "sha256": "5fd0684b0a775f387b747fb80ab8809e87547176c6962d0f0ea27b6f964574a2",
+    "chunks": [
+      {
+        "path": "session/0001.jsonl",
+        "bytes": 20926960,
+        "sha256": "f97bc48b88d65ea269f2b23e00911e4d1a72844639af0f7050b8d3045f7aafba"
+      },
+      {
+        "path": "session/0002.jsonl",
+        "bytes": 20962283,
+        "sha256": "f9673e2b716e85f3803ea66bd7ff91530f3200000c73458457f4b77a0659b4cb"
+      },
+      {
+        "path": "session/0003.jsonl",
+        "bytes": 20933697,
+        "sha256": "fef9255658f1b4676c0ebfa44d7e5652af9503d6cce1529af84719c6171284a4"
+      },
+      {
+        "path": "session/0004.jsonl",
+        "bytes": 845722,
+        "sha256": "7990b652f0ce3ead61ebe6e0a0d3f83d56b73db85e3dacab11674598b8212071"
+      }
+    ]
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "acceptedBySoulAudit": true
+  },
+  "redactions": null
+}
