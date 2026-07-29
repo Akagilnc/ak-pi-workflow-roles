@@ -1,0 +1,3 @@
+# Repair packet: one-tree atomic publication
+
+At current committed HEAD, replace visible final-directory entry-by-entry materialization with create-if-absent, same-filesystem atomic publication of the complete staged tree. Before the single publication point, observers may see only private/non-final stage; after it, the complete core. Crash/failure cannot leave a partial final identity. Preserve race/no-overwrite, symlink safety, raw cleanup before publication, status 125 Recorder failure, exact child outcomes, ignored stage and no production hooks. Add observer/crash-residue and race counterexamples, focused red/green tests, one coherent forward commit and exact Receipt. Do not inspect sessions.
