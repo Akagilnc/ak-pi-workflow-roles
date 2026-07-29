@@ -4,3 +4,4 @@ coverage/
 .ak/work/
 .native-build-staging/
 **/*.tmp.node
+dist/recorder/rename_no_replace.node
