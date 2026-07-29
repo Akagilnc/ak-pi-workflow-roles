@@ -1,0 +1,28 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "model": "openai-codex/gpt-5.6-sol",
+  "thinking": "high",
+  "targetHead": "62dd3b897dd9d3b6554612ebc3ba6e23888b3f95",
+  "materials": {
+    "path": ".ak/dockets/issues/10/judgment/final-authority-001/request.md",
+    "sha256": "ecfff2ddb1ea42c6ddbfedd604212cd9af8bddc05ceefab520556cfd431e0ffb"
+  },
+  "logicalSession": {
+    "bytes": 11476488,
+    "sha256": "79948d74e594ed20fc5bd137e81a4ef5071720485b81e2352cd2174adf931982",
+    "chunks": [
+      {
+        "path": "session.jsonl",
+        "bytes": 11476488,
+        "sha256": "79948d74e594ed20fc5bd137e81a4ef5071720485b81e2352cd2174adf931982"
+      }
+    ]
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "e4f15a9890d5e4512770ac5f78b9ae1965ee615b6aec72c929352f23522e3165",
+    "acceptedBySoulAudit": true
+  },
+  "redactions": null
+}

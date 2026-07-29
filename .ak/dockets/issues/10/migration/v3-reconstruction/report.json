@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "sourceBranch": "feature/durable-invocation-dockets-v2",
+  "sourceInventoryHead": "58fc6059fa1c355a1bcbd4f1499e093567e45695",
+  "copySourceHead": "20b564d",
+  "baseHead": "6e76efa93588844996611b86320de7747cca3d24",
+  "retainedApprovedItemsVerified": 71,
+  "copiedSmallPaths": 75,
+  "copiedSmallBytes": 224089,
+  "omittedSessionPaths": 28,
+  "omission": "generic session/tool-event execution exhaust; no payload copied or semantically inspected",
+  "historyConstruction": "fresh branch from recorded default; no merge or ancestry-bearing cherry-pick from v2"
+}

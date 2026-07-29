@@ -1,0 +1,22 @@
+{
+  "formatVersion": 1,
+  "role": "coder",
+  "phase": "plan",
+  "targetHead": "36a4cb4",
+  "authority": {
+    "path": ".ak/dockets/issues/10/judgment/final-small-core-001/judge/receipt.json",
+    "sha256": "34e8deeba166f9a3d5074924a8c2fdac51563e73df0adc83a41d8b0eb58a1b34"
+  },
+  "sessionCandidate": {
+    "sanitizedBytes": 99693062,
+    "sha256": "9a696ea6682d7221eaa2bca748fb9bd5148d183f2ae62e1fbe80479033fe0dc6",
+    "retention": "not retained",
+    "reason": "routine execution exhaust",
+    "scanDisposition": "one repeated long sk-prefix heuristic match was confined to scratch-only truncated tool-read content; retained receipt passed tightened provider-key and mandated credential scans"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "e3793f960baee593c17d4646d412b9f90ca08949dfceb82b333c5371a1981f78"
+  },
+  "redactions": null
+}
