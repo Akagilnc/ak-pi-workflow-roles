@@ -320,30 +320,61 @@ test("composed Authorization Basic/Bearer/Token headers redact the complete cred
       name: "composed-bearer-plain",
       sample: "Authorization: Bearer plainsecrettokenvalue999",
       secret: "plainsecrettokenvalue999",
+      suffixes: ["plainsecrettokenvalue999"],
       ruleId: "authorization-header",
     },
     {
       name: "composed-basic",
       sample: "Authorization: Basic dXNlcjpwYXNz",
       secret: "dXNlcjpwYXNz",
+      suffixes: ["dXNlcjpwYXNz"],
       ruleId: "authorization-header",
     },
     {
       name: "composed-generic-token",
       sample: "Authorization: Token plainsecrettokenvalue999",
       secret: "plainsecrettokenvalue999",
+      suffixes: ["plainsecrettokenvalue999"],
       ruleId: "authorization-header",
     },
     {
       name: "composed-bearer-provider",
       sample: secrets.bearer,
       secret: "ghp_SUPERSECRETTOKENVALUE001",
+      suffixes: ["ghp_SUPERSECRETTOKENVALUE001"],
       ruleId: "authorization-header",
     },
     {
       name: "quoted-composed-bearer",
       sample: 'Authorization: "Bearer plainsecrettokenvalue999"',
       secret: "plainsecrettokenvalue999",
+      suffixes: ["plainsecrettokenvalue999"],
+      ruleId: "authorization-header",
+    },
+    {
+      name: "composed-digest-parameters",
+      sample:
+        'Authorization: Digest username="Mufasa", realm="testrealm@host.com", nonce="abc123", uri="/dir/index.html", response="6629fae49393a05397450978507c4ef1"',
+      secret: 'response="6629fae49393a05397450978507c4ef1"',
+      suffixes: [
+        'username="Mufasa"',
+        'realm="testrealm@host.com"',
+        'response="6629fae49393a05397450978507c4ef1"',
+        "6629fae49393a05397450978507c4ef1",
+      ],
+      ruleId: "authorization-header",
+    },
+    {
+      name: "composed-custom-parameterized",
+      sample:
+        'Authorization: HOBA result="success", signed="plainsecrettokenvalue999 abc def"',
+      secret: 'signed="plainsecrettokenvalue999 abc def"',
+      suffixes: [
+        'result="success"',
+        'signed="plainsecrettokenvalue999 abc def"',
+        "plainsecrettokenvalue999 abc def",
+        "plainsecrettokenvalue999",
+      ],
       ruleId: "authorization-header",
     },
   ];
@@ -357,6 +388,18 @@ test("composed Authorization Basic/Bearer/Token headers redact the complete cred
       false,
       item.name,
     );
+    for (const suffix of item.suffixes) {
+      assert.equal(
+        scanned.value.includes(suffix),
+        false,
+        `${item.name}:suffix:${suffix}`,
+      );
+      assert.equal(
+        scanned.value.includes(`[REDACTED] ${suffix}`),
+        false,
+        `${item.name}:redacted-suffix:${suffix}`,
+      );
+    }
     assert.ok(
       scanned.report.hits.some((hit) => hit.ruleId === item.ruleId),
       item.name,
@@ -365,6 +408,18 @@ test("composed Authorization Basic/Bearer/Token headers redact the complete cred
       assert.equal(JSON.stringify(hit).includes(item.secret), false, item.name);
     }
   }
+  // CR/LF bounds the credential field so following headers/text stay intact.
+  const multiLine =
+    'Authorization: Digest username="user", response="secretvalue999"\r\nX-Other: keep-me\nNext: still-here';
+  const multiScanned = scanString(multiLine, "composed.crlf-bound");
+  assert.equal(multiScanned.report.redacted, true);
+  assert.ok(
+    multiScanned.report.hits.some((hit) => hit.ruleId === "authorization-header"),
+  );
+  assert.equal(multiScanned.value.includes("secretvalue999"), false);
+  assert.equal(multiScanned.value.includes('username="user"'), false);
+  assert.equal(multiScanned.value.includes("X-Other: keep-me"), true);
+  assert.equal(multiScanned.value.includes("Next: still-here"), true);
   // Standalone scheme forms still redact fully.
   for (const sample of ["Bearer plainsecrettokenvalue999", "Basic dXNlcjpwYXNz"]) {
     const scanned = scanString(sample, "standalone");
@@ -2051,10 +2106,13 @@ test("structural metadata gate preserves non-structural credential sanitization 
 
     const header = "Authorization: Bearer plainsecrettokenvalue999";
     const genericAuth = "Authorization: Token plainsecrettokenvalue999";
+    // Parameterized Authorization must promote with no complete field or suffix left.
+    const parameterizedAuth =
+      'Authorization: Digest username="Mufasa", realm="testrealm@host.com", response="6629fae49393a05397450978507c4ef1"';
     const assign = secrets.assign;
     // Admitted external input carries a generic Authorization scheme so promotion
     // must consume scheme+credential atomically (no secret suffix left behind).
-    const inputBody = `body ${assign}\n${genericAuth}\n`;
+    const inputBody = `body ${assign}\n${genericAuth}\n${parameterizedAuth}\n`;
     const inputPath = join(root, "assign-input.txt");
     writeFileSync(inputPath, inputBody);
 
@@ -2128,6 +2186,34 @@ test("structural metadata gate preserves non-structural credential sanitization 
       promotedInput.includes("[REDACTED] plainsecrettokenvalue999"),
       false,
     );
+    assert.equal(
+      promotedInput.includes("6629fae49393a05397450978507c4ef1"),
+      false,
+    );
+    assert.equal(promotedInput.includes('username="Mufasa"'), false);
+    assert.equal(
+      promotedInput.includes('realm="testrealm@host.com"'),
+      false,
+    );
+    assert.equal(
+      promotedInput.includes(
+        'response="6629fae49393a05397450978507c4ef1"',
+      ),
+      false,
+    );
+    for (const file of walkFiles(dest)) {
+      const text = readFileSync(file, "utf8");
+      assert.equal(
+        text.includes("6629fae49393a05397450978507c4ef1"),
+        false,
+        `digest-param:${file}`,
+      );
+      assert.equal(
+        text.includes('username="Mufasa"'),
+        false,
+        `digest-user:${file}`,
+      );
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
