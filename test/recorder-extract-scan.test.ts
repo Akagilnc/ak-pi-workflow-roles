@@ -499,6 +499,66 @@ test("composed Authorization Basic/Bearer/Token headers redact the complete cred
   assert.equal(wholeQuotedMultiScanned.value.includes("username=\\\"user\\\""), false);
   assert.equal(wholeQuotedMultiScanned.value.includes("X-Other: keep-me"), true);
   assert.equal(wholeQuotedMultiScanned.value.includes("Next: still-here"), true);
+  // Empty / horizontal-whitespace-only Authorization fields redact only that field;
+  // CR, LF, CRLF and the following line must survive unconsumed.
+  const emptyBoundaryCases = [
+    {
+      name: "empty-lf",
+      sample: "Authorization:\nX-Other: keep-me\nNext: still-here",
+      expected: "[REDACTED]\nX-Other: keep-me\nNext: still-here",
+    },
+    {
+      name: "empty-cr",
+      sample: "Authorization:\rX-Other: keep-me\rNext: still-here",
+      expected: "[REDACTED]\rX-Other: keep-me\rNext: still-here",
+    },
+    {
+      name: "empty-crlf",
+      sample: "Authorization:\r\nX-Other: keep-me\r\nNext: still-here",
+      expected: "[REDACTED]\r\nX-Other: keep-me\r\nNext: still-here",
+    },
+    {
+      name: "ws-only-lf",
+      sample: "Authorization: \nX-Other: keep-me\nNext: still-here",
+      expected: "[REDACTED]\nX-Other: keep-me\nNext: still-here",
+    },
+    {
+      name: "ws-only-cr",
+      sample: "Authorization: \rX-Other: keep-me\rNext: still-here",
+      expected: "[REDACTED]\rX-Other: keep-me\rNext: still-here",
+    },
+    {
+      name: "ws-only-crlf",
+      sample: "Authorization: \r\nX-Other: keep-me\r\nNext: still-here",
+      expected: "[REDACTED]\r\nX-Other: keep-me\r\nNext: still-here",
+    },
+    {
+      name: "ws-tab-only-crlf",
+      sample: "Authorization:\t\r\nX-Other: keep-me\r\nNext: still-here",
+      expected: "[REDACTED]\r\nX-Other: keep-me\r\nNext: still-here",
+    },
+    {
+      name: "empty-after-lf-line-start",
+      sample: "prev\nAuthorization:\nX-Other: keep-me",
+      expected: "prev\n[REDACTED]\nX-Other: keep-me",
+    },
+    {
+      name: "empty-after-crlf-line-start",
+      sample: "prev\r\nAuthorization:\r\nX-Other: keep-me",
+      expected: "prev\r\n[REDACTED]\r\nX-Other: keep-me",
+    },
+  ];
+  for (const item of emptyBoundaryCases) {
+    const scanned = scanString(item.sample, `composed.${item.name}`);
+    assert.equal(scanned.report.redacted, true, item.name);
+    assert.ok(
+      scanned.report.hits.some((hit) => hit.ruleId === "authorization-header"),
+      item.name,
+    );
+    assert.equal(scanned.value, item.expected, item.name);
+    assert.equal(scanned.value.includes("X-Other: keep-me"), true, item.name);
+    assert.equal(scanned.value.includes("Authorization:"), false, item.name);
+  }
   // Standalone scheme forms still redact fully.
   for (const sample of ["Bearer plainsecrettokenvalue999", "Basic dXNlcjpwYXNz"]) {
     const scanned = scanString(sample, "standalone");
@@ -2192,9 +2252,26 @@ test("structural metadata gate preserves non-structural credential sanitization 
     const wholeQuotedEscapedAuth =
       "Authorization: \"Digest username=\\\"Mufasa\\\", realm=\\\"testrealm@host.com\\\", response=\\\"6629fae49393a05397450978507c4ef1\\\"\"";
     const assign = secrets.assign;
+    // Empty / whitespace-only Authorization fields must redact without consuming
+    // CR/LF/CRLF or the following line markers in promoted external input.
+    const emptyBoundaryInput =
+      "Authorization:\n" +
+      "Boundary-Follow-LF: keep-empty-lf\n" +
+      "Authorization: \n" +
+      "Boundary-Follow-WS-LF: keep-ws-lf\n" +
+      "Authorization:\r" +
+      "Boundary-Follow-CR: keep-empty-cr\r" +
+      "Authorization: \r" +
+      "Boundary-Follow-WS-CR: keep-ws-cr\r" +
+      "Authorization:\r\n" +
+      "Boundary-Follow-CRLF: keep-empty-crlf\r\n" +
+      "Authorization: \r\n" +
+      "Boundary-Follow-WS-CRLF: keep-ws-crlf\r\n";
     // Admitted external input carries a generic Authorization scheme so promotion
     // must consume scheme+credential atomically (no secret suffix left behind).
-    const inputBody = `body ${assign}\n${genericAuth}\n${parameterizedAuth}\n${wholeQuotedEscapedAuth}\n`;
+    const inputBody =
+      `body ${assign}\n${genericAuth}\n${parameterizedAuth}\n${wholeQuotedEscapedAuth}\n` +
+      emptyBoundaryInput;
     const inputPath = join(root, "assign-input.txt");
     writeFileSync(inputPath, inputBody);
 
@@ -2297,6 +2374,58 @@ test("structural metadata gate preserves non-structural credential sanitization 
       ),
       false,
     );
+    // Empty/ws-only Authorization redacts the field only; line endings + followers stay.
+    assert.equal(
+      promotedInput.includes("[REDACTED]\nBoundary-Follow-LF: keep-empty-lf"),
+      true,
+    );
+    assert.equal(
+      promotedInput.includes("[REDACTED]\nBoundary-Follow-WS-LF: keep-ws-lf"),
+      true,
+    );
+    assert.equal(
+      promotedInput.includes("[REDACTED]\rBoundary-Follow-CR: keep-empty-cr"),
+      true,
+    );
+    assert.equal(
+      promotedInput.includes("[REDACTED]\rBoundary-Follow-WS-CR: keep-ws-cr"),
+      true,
+    );
+    assert.equal(
+      promotedInput.includes("[REDACTED]\r\nBoundary-Follow-CRLF: keep-empty-crlf"),
+      true,
+    );
+    assert.equal(
+      promotedInput.includes("[REDACTED]\r\nBoundary-Follow-WS-CRLF: keep-ws-crlf"),
+      true,
+    );
+    assert.equal(promotedInput.includes("Authorization:"), false);
+    for (const marker of [
+      "Boundary-Follow-LF: keep-empty-lf",
+      "Boundary-Follow-WS-LF: keep-ws-lf",
+      "Boundary-Follow-CR: keep-empty-cr",
+      "Boundary-Follow-WS-CR: keep-ws-cr",
+      "Boundary-Follow-CRLF: keep-empty-crlf",
+      "Boundary-Follow-WS-CRLF: keep-ws-crlf",
+    ]) {
+      assert.equal(promotedInput.includes(marker), true, `promoted:${marker}`);
+    }
+    // Artifacts that carry the boundary input must keep followers and not restore headers.
+    for (const file of walkFiles(dest)) {
+      const text = readFileSync(file, "utf8");
+      if (!text.includes("Boundary-Follow-")) continue;
+      for (const marker of [
+        "Boundary-Follow-LF: keep-empty-lf",
+        "Boundary-Follow-WS-LF: keep-ws-lf",
+        "Boundary-Follow-CR: keep-empty-cr",
+        "Boundary-Follow-WS-CR: keep-ws-cr",
+        "Boundary-Follow-CRLF: keep-empty-crlf",
+        "Boundary-Follow-WS-CRLF: keep-ws-crlf",
+      ]) {
+        assert.equal(text.includes(marker), true, `${marker}:${file}`);
+      }
+      assert.equal(text.includes("Authorization:"), false, `auth-restored:${file}`);
+    }
     for (const file of walkFiles(dest)) {
       const text = readFileSync(file, "utf8");
       assert.equal(
