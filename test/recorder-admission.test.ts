@@ -996,6 +996,94 @@ test("admission counterexample matrix rejects before spawn", async () => {
   }
 });
 
+test("git reference identity coordinates fail closed when scanner would rewrite them", async () => {
+  const root = makeTempDir("ak-recorder-ref-id-scan-");
+  try {
+    const archive = initGitRepo(join(root, "archive"));
+    // Archive needs a reachable HEAD so failure assertions can observe Git state.
+    commitFile(archive, ".keep", "\n");
+    // Credential-shaped directory component is otherwise a valid Git worktree root.
+    const toxicRepo = initGitRepo(join(root, "token=leaked-secret-value"));
+    const toxicAuthority = commitFile(toxicRepo, "authority.md", "# authority\n");
+    const toxicTask = commitFile(toxicRepo, "task.md", "# task\n");
+    const script = writeCounterScript(root);
+    const counter = join(root, "counter.txt");
+    const docketId = "issues/10/apply/apply-ref-identity-scan";
+    const toxicConfig = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId,
+      authority: {
+        repositoryRoot: toxicRepo,
+        commit: toxicAuthority.commit,
+        path: toxicAuthority.path,
+        blobOid: toxicAuthority.blobOid,
+        sha256: toxicAuthority.sha256,
+      },
+      task: {
+        repositoryRoot: toxicRepo,
+        commit: toxicTask.commit,
+        path: toxicTask.path,
+        blobOid: toxicTask.blobOid,
+        sha256: toxicTask.sha256,
+      },
+    });
+    await expectAdmissionFailure({
+      root,
+      archive,
+      configPath: toxicConfig,
+      script,
+      counter,
+      docketId,
+      label: "scanner-mutated git reference identity",
+    });
+
+    // Clean-coordinate control: same fixture family admits and spawns once.
+    const cleanAuthority = commitFile(archive, "authority.md", "# authority\n");
+    const cleanTask = commitFile(archive, "task.md", "# task\n");
+    const cleanDocketId = "issues/10/apply/apply-ref-identity-clean";
+    const cleanConfig = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: cleanDocketId,
+      authority: {
+        repositoryRoot: archive,
+        commit: cleanAuthority.commit,
+        path: cleanAuthority.path,
+        blobOid: cleanAuthority.blobOid,
+        sha256: cleanAuthority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: cleanTask.commit,
+        path: cleanTask.path,
+        blobOid: cleanTask.blobOid,
+        sha256: cleanTask.sha256,
+      },
+    });
+    const beforeSpawns = spawnCount(counter);
+    const before = gitState(archive);
+    const clean = await runRecorderBin(
+      ["--config", cleanConfig, "--", process.execPath, script, "ok"],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(clean.code, 0, clean.stderr);
+    assert.equal(spawnCount(counter), beforeSpawns + 1);
+    assert.equal(
+      existsSync(join(archive, ".ak/dockets", cleanDocketId, "manifest.json")),
+      true,
+    );
+    const after = gitState(archive);
+    assert.equal(after.head, before.head);
+    const staged = after.status
+      .split("\n")
+      .filter((line) => line && !line.startsWith("??"));
+    assert.deepEqual(staged, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("external inputs and exhibits are stored once with exact digests", async () => {
   const root = makeTempDir("ak-recorder-stored-");
   try {

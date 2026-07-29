@@ -210,16 +210,30 @@ export function verifyGitReference(
   const pathScan = scanString(ref.path, `gitReference.${ref.id}.path`);
   const report = combineReports(repoScan.report, pathScan.report);
 
+  // Identity coordinates are exact verified facts. Scanner hits may prove a
+  // secret shape was present, but must never rewrite ReferenceIdentity fields.
+  if (
+    repoScan.value !== repositoryRoot ||
+    pathScan.value !== ref.path ||
+    repoScan.report.redacted ||
+    pathScan.report.redacted
+  ) {
+    throw new RecorderError(
+      "reference-failed",
+      `git reference ${ref.id} identity coordinates must not contain redactable material`,
+    );
+  }
+
   return {
     artifact: {
       id: ref.id,
       kind: ref.kind,
-      redactionStatus: report.redacted ? "redacted" : "clean",
+      redactionStatus: "clean",
       reference: {
         identity: "reference",
-        repositoryRoot: repoScan.value,
+        repositoryRoot,
         commit: ref.commit.toLowerCase(),
-        path: pathScan.value,
+        path: ref.path,
         blobOid: ref.blobOid.toLowerCase(),
         sha256: digest,
         mode,
