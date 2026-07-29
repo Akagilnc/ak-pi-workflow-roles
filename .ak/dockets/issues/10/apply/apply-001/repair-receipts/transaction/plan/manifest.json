@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/apply/apply-001/repairs/transaction-package.md",
+    "sha256": "1a729acf55292fed16294cbec0f5f6315c0ece92d08e8edeab4e594c1bddd292"
+  },
+  "sessionCandidate": {
+    "bytes": 17437595,
+    "sha256": "4eebda46e571f99ec3fc49b68dcd0c6dc181343901efb28382665190ef9d7a23",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "963ecaf6783f993db9628f07791f3bba8ce860cf2a0e773b0b1ef97fb9bdc0c1"
+  }
+}
