@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/10/review/final-successor-review/conforming-successor/repair-packet.md",
+    "sha256": "52558360c8954c652a6ee8c68aedf253dbfe5548b637e6b04592863530d3e2d4"
+  },
+  "sessionCandidate": {
+    "bytes": 5909553,
+    "sha256": "5fbbeb5334d026069f7598c9c2a13136e4f12311e9ff19b96f241b7ea74dec82",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "42bcfcce5edb02a1312f67ba0b2e87ba4edd7735c01f0d5ee94e6bdba6929e6c"
+  }
+}
