@@ -1,0 +1,17 @@
+# Issue #17 concurrency and mandatory capability repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-008/receipt.json`, converged Authority/Plan, and axis-isolation law.
+
+R1 — Correct the public contract, not axis isolation: README must say the parent task’s exact bytes/digest are retained in accepted construction and semantic audit evidence, while child prompts receive deterministic axis-specific instructions/materials plus the task identity/digest—not indiscriminate opaque task prose. This resolves the stale README statement without injecting Spec instructions into Standards.
+
+R2 — Before acceptance, require each child grant to include `bash` and the exact compiled canonical three-dot `range.diffCommand`. It is a mandatory task-bound verification command, not optional authority. Missing command rejects with zero child/runner effect; exact-command enforcement remains.
+
+R3 — Eliminate shared mutable execution context/signal from Reviewer role. Bind invocation context/signal to the individual proposal/accepted dispatch call. Also close the async rejection race: after any awaited compilation success or failure, re-check accepted/accepting state before recording rejection or acceptance, so no correction/rejection evidence can be appended after another proposal accepts.
+
+R4 — Restore file-level citation safely: include each selected material’s repository path in child prompt only as deterministic escaped JSON/data-label text, never raw interpolation, while retaining exact evidence identity. Test spaces, Unicode, quotes, Markdown/control-shaped values.
+
+R5 — Finish narrow duplication cleanup: use the exported ReviewerPromptIdentity type at agent/dispatch/ledger seams, and one shared immutable ref-snapshot equality/canonicalization helper instead of repeated sort/JSON comparison. Keep reviewer-dispatch as the intentional single deep owner of compilation, capability admission, preflight, and acceptance lifecycle; do not split it merely for line count.
+
+R6 — Add deterministic interleaving tests for slow invalid proposal versus accepted proposal, concurrent proposal contexts/signals, missing diff authorization, exact escaped path citation, axis-isolated task evidence, and shared identity/ref helpers. Run package lifecycle, focused tests, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R6.
