@@ -1,0 +1,23 @@
+# Issue #17 final Apply slice 007 — package lifecycle and documentation closure
+
+Complete the approved issue #17 construction after core integration commit `ae1112b`.
+
+Required exact residuals:
+
+1. Remove every temporary skip/todo added for issue #17. Migrate the installed-tarball Reviewer lifecycle and audit-failure subprocess fixtures to:
+   - create exact task bytes and matching mandatory V1 capability file;
+   - invoke `--ak-review-capabilities`;
+   - submit the structured atomic Reviewer proposal;
+   - prove native Skill expansion, preflight, one accepted dispatch, correct one/two child cardinality, audit, termination, and fatal-stage behavior in installed-package execution.
+2. Update README Reviewer contract, CLI examples/help expectations, and package lifecycle docs:
+   - existing opaque task plus mandatory narrow capability file;
+   - exact schema/vocabulary, no widening fallback, byte-exact bash command matching;
+   - atomic structured proposal/correction-before-acceptance;
+   - established Spec two legs; established no-spec Standards-only;
+   - exact prompt evidence and post-run semantic audit;
+   - no change to role topology, active model inheritance, or security-boundary disclaimers.
+3. Search and remove obsolete docs/tests referring to arbitrary `{description,prompt}` Reviewer Agent dispatch, same-message provenance, fake Spec no-spec, or old CLI shape.
+4. Run typecheck, all focused Reviewer tests, full isolated `HOME=$(mktemp -d) npm test`, `npm pack --dry-run`, and `git diff --check`. No issue-17 skips/todos may remain.
+5. Preserve thin Reviewer Receipt, Souls, other roles, Recorder, and package distribution.
+
+Use canonical TDD, commit the complete packaging closure, and submit through `ak_coder_output` with same-pattern, introduced-regression, and behavior-fact evidence. Do not declare completion with skipped required tests. 
