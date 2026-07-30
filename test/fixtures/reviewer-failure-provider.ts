@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -37,7 +39,7 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   const agentCall = fauxAssistantMessage(
     fauxToolCall(AGENT_TOOL_NAME, {
       version: 1,
-      base: { revision: "HEAD~1" },
+      base: { revision: execFileSync("git", ["rev-parse", "HEAD~1"], { encoding: "utf8" }).trim() },
       standardsMaterials: [{ id: "readme", repositoryPath: "README.md" }],
       spec: { state: "not-established", evidence: [{ id: "task", repositoryPath: "test/fixtures/reviewer-task.md" }] },
       required: { standards: request },

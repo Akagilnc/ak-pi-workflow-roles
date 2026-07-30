@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
-
-import type {
-  ReviewerCapabilityRequest,
-  ReviewerMaterialEvidence,
-  ReviewerPinnedTarget,
-  ReviewerRange,
+import {
+  isReviewerPromptIdentity,
+  type ReviewerPromptIdentity,
+  type ReviewerCapabilityRequest,
+  type ReviewerMaterialEvidence,
+  type ReviewerPinnedTarget,
+  type ReviewerRange,
 } from "./reviewer-dispatch.ts";
 
 export type ReviewerUsage = Readonly<{
@@ -42,7 +42,7 @@ export type ReviewerLegResultEvidence = Readonly<{
   dispatchIdentity: string;
   axis: "standards" | "spec";
   status: "successful" | "failed";
-  prompt: Readonly<{ bytes: string; utf8Length: number; sha256: string }>;
+  prompt: ReviewerPromptIdentity;
   target: ReviewerPinnedTarget;
   report?: string;
   diagnostics?: string;
@@ -69,7 +69,6 @@ export type ReviewerExecutionLedger = Readonly<{
 }>;
 
 type FatalEvidence = { diagnostics: string; targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition };
-const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 function cloneFreeze<T>(value: T): T {
   if (Array.isArray(value)) return Object.freeze(value.map(cloneFreeze)) as T;
@@ -117,20 +116,18 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       if (event.materials.noSpecEvidence !== undefined === established || axes[0] !== "standards" ||
           (established ? axes.length !== 2 || axes[1] !== "spec" : axes.length !== 1))
         throw new Error("Accepted dispatch Spec state, materials, and sibling axes disagree");
-      if (Buffer.byteLength(event.input.task.bytes, "utf8") !== event.input.task.utf8Length ||
-          sha256(event.input.task.bytes) !== event.input.task.sha256)
+      if (!isReviewerPromptIdentity(event.input.task))
         throw new Error("Accepted task bytes, length, or SHA disagree");
       for (const material of [
         ...event.materials.standards,
         ...(event.materials.spec ?? []),
         ...(event.materials.noSpecEvidence ?? []),
       ]) {
-        if (Buffer.byteLength(material.bytes, "utf8") !== material.utf8Length ||
-            sha256(material.bytes) !== material.sha256)
+        if (!isReviewerPromptIdentity(material))
           throw new Error("Accepted material bytes, length, or SHA disagree");
       }
       for (const leg of event.legs) {
-        if (Buffer.byteLength(leg.prompt, "utf8") !== leg.utf8Length || sha256(leg.prompt) !== leg.sha256)
+        if (!isReviewerPromptIdentity({ bytes: leg.prompt, utf8Length: leg.utf8Length, sha256: leg.sha256 }))
           throw new Error("Accepted compiled prompt bytes, length, or SHA disagree");
       }
       accepted = event;
@@ -157,8 +154,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     const compiled = accepted.legs.find((leg) => leg.axis === event.axis);
     if (compiled === undefined) throw new Error(`Reviewer ${event.axis} was not an accepted leg`);
     if (event.prompt.bytes !== compiled.prompt || event.prompt.utf8Length !== compiled.utf8Length ||
-        event.prompt.sha256 !== compiled.sha256 || Buffer.byteLength(event.prompt.bytes, "utf8") !== event.prompt.utf8Length ||
-        sha256(event.prompt.bytes) !== event.prompt.sha256)
+        event.prompt.sha256 !== compiled.sha256 || !isReviewerPromptIdentity(event.prompt))
       throw new Error("Actual runner prompt does not exactly match compiled prompt bytes, length, and SHA");
     if (!sameTarget(event.target, accepted.target)) throw new Error("Runner target does not match shared pinned target");
     results[event.axis] = event;

@@ -72,6 +72,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let reader: ReviewerPinnedGitReader | undefined;
   let dispatcher: ReturnType<typeof createReviewerDispatcher> | undefined;
   let originalRequest: string | undefined;
+  let expansionCaptured = false;
   let registered = false;
   const ledger = createReviewerExecutionLedger();
 
@@ -131,6 +132,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           if (!soul || task === undefined || !binding) throw new Error("Reviewer inputs were not loaded");
           singleton(id, toolCtx);
           const output = validateReviewerOutput(parameters);
+          if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
           let record: ReviewerExecutionRecord;
           try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx); throw error; }
           let audit: ComplianceDecision;
@@ -141,7 +143,15 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: output, terminate: true as const, ...(audit.usage === undefined ? {} : { usage: audit.usage }) };
         } });
       pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
-      pi.on("before_agent_start", (event) => ({ systemPrompt: `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<review_task>\n${task}\n</review_task>` }));
+      pi.on("before_agent_start", (event) => {
+        if (!expansionCaptured) {
+          if (originalRequest === undefined || binding!.captureExpansion(event.prompt, originalRequest) === undefined) {
+            throw new Error("Canonical code-review Skill expansion did not match the captured request");
+          }
+          expansionCaptured = true;
+        }
+        return { systemPrompt: `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<review_task>\n${task}\n</review_task>` };
+      });
       pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
     }
     const available = new Set(pi.getAllTools().map((tool) => tool.name));

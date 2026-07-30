@@ -3,6 +3,9 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+
 export const REVIEWER_CHILD_TOOLS = [
   "read",
   "grep",
@@ -247,15 +250,16 @@ function validateRequest(
   return immutableRequest({ tools, bashCommands, prerequisiteOperations });
 }
 
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 function validateMaterialSelection(value: unknown): asserts value is MaterialSelection {
-  if (
-    !isExactObject(value, ["id", "repositoryPath"]) ||
-    typeof value.id !== "string" ||
-    value.id.length === 0 ||
-    typeof value.repositoryPath !== "string" ||
-    value.repositoryPath.length === 0
-  ) {
-    throw new Error("Invalid material selection");
+  if (!isExactObject(value, ["id", "repositoryPath"]) ||
+      typeof value.id !== "string" || !SAFE_ID.test(value.id) ||
+      typeof value.repositoryPath !== "string" || value.repositoryPath.length === 0 ||
+      value.repositoryPath.startsWith("/") || value.repositoryPath.includes("\\") ||
+      value.repositoryPath.split("/").some((segment) => segment === "." || segment === ".." || !SAFE_PATH_SEGMENT.test(segment))) {
+    throw new Error("Invalid material selection identity or repository-relative path");
   }
 }
 
@@ -304,10 +308,21 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
     refs[line.slice(0, at)] = line.slice(at + 1);
   }
   const pin = Object.freeze({ repositoryRoot, targetHead, refs: Object.freeze(refs) });
+  const symbolic = (base: string): string | undefined => {
+    if (Object.hasOwn(refs, base)) return refs[base];
+    const candidates = [`refs/heads/${base}`, `refs/tags/${base}`, `refs/remotes/${base}`]
+      .filter((name) => Object.hasOwn(refs, name));
+    return candidates.length === 1 ? refs[candidates[0]!] : undefined;
+  };
   return Object.freeze({
     pin,
     async resolve(base: string) {
-      return gitText(repositoryRoot, ["rev-parse", `${base}^{commit}`]);
+      const commit = /^[0-9a-f]{40}$/.test(base) ? base : symbolic(base);
+      if (commit === undefined) throw new Error("Base revision is not present in the pinned ref map");
+      await gitText(repositoryRoot, ["cat-file", "-e", `${commit}^{commit}`]);
+      try { await gitText(repositoryRoot, ["merge-base", "--is-ancestor", commit, targetHead]); }
+      catch { throw new Error("Base commit is not reachable from the pinned target"); }
+      return commit;
     },
     async range(base: string) {
       const mergeBase = await gitText(repositoryRoot, ["merge-base", base, targetHead]);
@@ -372,6 +387,14 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     const specGrant = proposal.spec.state === "established"
       ? validateRequest(proposal.required.spec, capabilities, hostTools)
       : undefined;
+    const runnerOperations = REVIEWER_PREREQUISITES.filter((operation) => operation.startsWith("runner."));
+    for (const operation of runnerOperations) {
+      if (!capabilities.prerequisiteOperations.includes(operation) ||
+          !standardsGrant.prerequisiteOperations.includes(operation) ||
+          (specGrant !== undefined && !specGrant.prerequisiteOperations.includes(operation))) {
+        throw new Error(`Missing accepted runner prerequisite: ${operation}`);
+      }
+    }
 
     const base = await dependencies.reader.resolve(proposal.base.revision);
     const readRange = await dependencies.reader.range(base);
@@ -444,13 +467,10 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     } else {
       await renderMaterials(proposal.spec.evidence);
     }
-    const legs = Object.freeze(promptInputs.map(({ axis, prompt, grant }) => Object.freeze({
-      axis,
-      prompt,
-      utf8Length: Buffer.byteLength(prompt, "utf8"),
-      sha256: sha256(prompt),
-      grant,
-    })));
+    const legs = Object.freeze(promptInputs.map(({ axis, prompt, grant }) => {
+      const identity: ReviewerPromptIdentity = reviewerPromptIdentity(prompt);
+      return Object.freeze({ axis, prompt: identity.bytes, utf8Length: identity.utf8Length, sha256: identity.sha256, grant });
+    }));
     const evidenceFor = (items: readonly MaterialSelection[]) => Object.freeze(items.map((item) => materialEvidence.get(item.id)!));
     const materials = Object.freeze({
       standards: evidenceFor(proposal.standardsMaterials),
