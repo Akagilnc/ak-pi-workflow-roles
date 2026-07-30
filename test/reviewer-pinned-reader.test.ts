@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +49,46 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     const withAliases = await createReviewerPinnedGitReader(root);
     await assert.rejects(withAliases.resolve("same"), /base-invalid/);
     await assert.rejects(ambiguous.resolve("HEAD:evil"), /base-invalid/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("abbreviated bases are resolved only among commits reachable from the activation target", async () => {
+  const root = await mkdtemp(join(tmpdir(), "reviewer-prefix-"));
+  try {
+    await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
+    await writeFile(join(root, "file"), "base\n"); await git(root, "add", "."); await git(root, "commit", "-m", "base");
+    const base = await git(root, "rev-parse", "HEAD");
+    await writeFile(join(root, "file"), "target\n"); await git(root, "commit", "-am", "target");
+    const reader = await createReviewerPinnedGitReader(root);
+    const prefix = base.slice(0, 4);
+    assert.equal(await reader.resolve(prefix), base);
+
+    let collision: Buffer | undefined;
+    for (let index = 0; collision === undefined; index++) {
+      const candidate = Buffer.from(`unreachable-${index}`);
+      const header = Buffer.from(`blob ${candidate.length}\0`);
+      if (createHash("sha1").update(header).update(candidate).digest("hex").startsWith(prefix)) collision = candidate;
+    }
+    const collisionPath = join(root, "collision");
+    await writeFile(collisionPath, collision);
+    const collisionId = await git(root, "hash-object", "-w", collisionPath);
+    assert.equal(collisionId.startsWith(prefix), true);
+    assert.equal(await reader.resolve(prefix), base);
+
+    const tree = await git(root, "rev-parse", "HEAD^{tree}");
+    let parent = reader.pin.targetHead;
+    const prefixes = new Map<string, string>();
+    let ambiguousPrefix: string | undefined;
+    for (let index = 0; index < 1200 && ambiguousPrefix === undefined; index++) {
+      parent = execFileSync("git", ["-C", root, "commit-tree", tree, "-p", parent], { input: `reachable-${index}\n`, encoding: "utf8" }).trim();
+      const candidatePrefix = parent.slice(0, 4);
+      if (prefixes.has(candidatePrefix)) ambiguousPrefix = candidatePrefix;
+      else prefixes.set(candidatePrefix, parent);
+    }
+    assert.ok(ambiguousPrefix, "expected a four-hex collision among reachable commits");
+    await git(root, "update-ref", "HEAD", parent);
+    const ambiguousReader = await createReviewerPinnedGitReader(root);
+    await assert.rejects(ambiguousReader.resolve(ambiguousPrefix), /base-invalid/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
