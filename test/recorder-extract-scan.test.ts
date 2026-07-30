@@ -1209,6 +1209,11 @@ function combinedCrossRepresentationLifecycle(
     callId?: string;
     details?: unknown;
     usage?: unknown;
+    /**
+     * When true with `usage`, attach usage only on tool_execution_end and leave
+     * message_end/toolResult without usage (production Pi asymmetry).
+     */
+    usageOnToolExecutionEndOnly?: boolean;
     /** Override only the message_end/toolResult half (conflict cases). */
     toolResultDetails?: unknown;
     toolResultText?: string;
@@ -1259,6 +1264,11 @@ function combinedCrossRepresentationLifecycle(
     toolName: tool,
     args,
   };
+  const toolExecutionEndUsage =
+    usage === undefined ? undefined : usage;
+  const toolResultUsage = options.usageOnToolExecutionEndOnly
+    ? undefined
+    : usage;
   const toolExecutionEnd = {
     type: "tool_execution_end",
     toolCallId: callId,
@@ -1267,7 +1277,9 @@ function combinedCrossRepresentationLifecycle(
     result: {
       content: [{ type: "text", text }],
       details,
-      ...(usage === undefined ? {} : { usage }),
+      ...(toolExecutionEndUsage === undefined
+        ? {}
+        : { usage: toolExecutionEndUsage }),
     },
   };
   const toolResultMessage = {
@@ -1282,7 +1294,7 @@ function combinedCrossRepresentationLifecycle(
         type: "text",
         text: options.toolResultText ?? text,
       }],
-      ...(usage === undefined ? {} : { usage }),
+      ...(toolResultUsage === undefined ? {} : { usage: toolResultUsage }),
     },
   };
 
@@ -1377,6 +1389,78 @@ test("issue #16: combined tool_execution_end + message_end toolResult canonicali
   assert.ok(coder.receipt);
   assert.equal(coder.receipt!.toolName, CODER_OUTPUT_TOOL_NAME);
   assert.equal(coder.auditObservation, null);
+});
+
+test("issue #16: usage-only-on-tool_execution_end copies without mutating input", () => {
+  // PR #21 / CodeRabbit — usage may live only on the dropped tee half.
+  // Canonicalization must retain exact audit usage via a copied toolResult and
+  // must not assign into the caller-owned terminal object.
+  const exactUsage = { input: 21, output: 13, cacheRead: 2, totalTokens: 36 };
+  for (const tool of [JUDGE_OUTPUT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME] as const) {
+    const details = detailsFor(tool);
+    const envelope = combinedCrossRepresentationLifecycle(tool, {
+      callId: `usage-tee-only-${tool}`,
+      details,
+      usage: exactUsage,
+      usageOnToolExecutionEndOnly: true,
+    });
+
+    const rawEvents = collectLifecycleEvents(decodeEnvelopeRows(envelope));
+    const rawToolResult = rawEvents.find(
+      (event) => event.kind === "terminal" && event.representation === "toolResult",
+    );
+    assert.ok(rawToolResult && rawToolResult.kind === "terminal", `${tool} raw toolResult`);
+    assert.equal(
+      rawToolResult.usage,
+      undefined,
+      `${tool} message_end/toolResult must lack usage before canonicalize`,
+    );
+    const rawTee = rawEvents.find(
+      (event) =>
+        event.kind === "terminal" && event.representation === "tool_execution_end",
+    );
+    assert.ok(rawTee && rawTee.kind === "terminal", `${tool} raw tee`);
+    assert.deepEqual(rawTee.usage, exactUsage, `${tool} tee carries usage`);
+
+    const canonical = canonicalizeLifecycleEvents(rawEvents);
+    const canonicalTerminals = canonical.filter((event) => event.kind === "terminal");
+    assert.equal(canonicalTerminals.length, 1, `${tool} one retained terminal`);
+    const retained = canonicalTerminals[0]!;
+    assert.equal(retained.kind, "terminal");
+    assert.equal(
+      retained.kind === "terminal" ? retained.representation : null,
+      "toolResult",
+      `${tool} retains toolResult`,
+    );
+    assert.deepEqual(
+      retained.kind === "terminal" ? retained.usage : undefined,
+      exactUsage,
+      `${tool} retained terminal carries tee usage`,
+    );
+    // Non-mutation: original caller-owned toolResult terminal stays usage-less
+    // and is not the same object as the retained copy.
+    assert.equal(
+      rawToolResult.usage,
+      undefined,
+      `${tool} canonicalize must not mutate input toolResult.usage`,
+    );
+    assert.notEqual(
+      retained,
+      rawToolResult,
+      `${tool} retained terminal must be a copy when usage is merged`,
+    );
+
+    const extracted = extractAcceptedReceipt([envelope]);
+    assert.ok(extracted.receipt, `${tool} typed Receipt`);
+    assert.equal(extracted.receipt!.toolName, tool);
+    assert.equal(extracted.receipt!.toolCallId, `usage-tee-only-${tool}`);
+    assert.deepEqual(extracted.receipt!.details, details);
+    assert.ok(extracted.auditObservation, `${tool} audit observation`);
+    assert.equal(extracted.auditObservation!.auditPassed, true);
+    assert.equal(extracted.auditObservation!.toolName, tool);
+    assert.equal(extracted.auditObservation!.toolCallId, `usage-tee-only-${tool}`);
+    assert.deepEqual(extracted.auditObservation!.usage, exactUsage);
+  }
 });
 
 test("issue #16: cross-representation conflicts and same-rep replays stay fail-closed", () => {
