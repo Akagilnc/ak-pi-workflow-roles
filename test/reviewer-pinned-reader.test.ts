@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -49,6 +49,32 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     await assert.rejects(withAliases.resolve("same"), /ambiguous/);
     await assert.rejects(ambiguous.resolve("HEAD:evil"), /Unsafe/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("pinning discovers and canonicalizes the worktree root from nested and symlinked cwd", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "reviewer-root-"));
+  const root = join(temporary, "repository");
+  const nested = join(root, "nested", "directory");
+  const linked = join(temporary, "linked-repository");
+  try {
+    await mkdir(nested, { recursive: true });
+    await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
+    await writeFile(join(root, "file"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "initial");
+    await symlink(root, linked, "dir");
+    const canonicalRoot = await realpath(root);
+    assert.equal((await createReviewerPinnedGitReader(nested)).pin.repositoryRoot, canonicalRoot);
+    assert.equal((await createReviewerPinnedGitReader(join(linked, "nested"))).pin.repositoryRoot, canonicalRoot);
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test("pinning rejects non-repositories and bare repositories", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "reviewer-root-reject-"));
+  const bare = join(temporary, "bare.git");
+  try {
+    await assert.rejects(createReviewerPinnedGitReader(temporary));
+    await git(temporary, "init", "--bare", bare);
+    await assert.rejects(createReviewerPinnedGitReader(bare));
+  } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
 test("shared ref snapshot helper canonicalizes immutably and compares order-independently", () => {

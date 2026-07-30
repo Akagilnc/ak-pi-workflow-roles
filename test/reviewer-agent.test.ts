@@ -367,18 +367,18 @@ test("Reviewer child provider delegates class-private streams to the original re
 
 test("Reviewer Agent reports deterministic setup failures with bounded retention evidence", async () => {
   const cases = [
-    ["mirror.before-create", "not-created"],
-    ["mirror.create", "retained"],
-    ["mirror.verify", "retained"],
-    ["workspace.before-create", "not-created"],
-    ["workspace.init", "retained"],
-    ["workspace.fetch", "retained"],
-    ["workspace.verify", "retained"],
+    ["mirror.before-create", "not-created", "snapshot"],
+    ["mirror.create", "retained", "snapshot"],
+    ["mirror.verify", "retained", "snapshot"],
+    ["workspace.before-create", "not-created", "workspace"],
+    ["workspace.init", "retained", "workspace"],
+    ["workspace.fetch", "retained", "workspace"],
+    ["workspace.verify", "retained", "workspace"],
   ] as const;
-  for (const [fault, expected] of cases) {
+  for (const [fault, expected, classification] of cases) {
     const source = await repository();
     const { context } = await parentContext(source.root, async () => {}, 1);
-    const runner = createReviewerAgentRunner({ fault(operation) { if (operation === fault) throw new Error(`injected ${fault}`); } });
+    const runner = createReviewerAgentRunner({ fault(operation) { if (operation === fault) throw new Error("provider cancelled child prose must not classify this failure"); } });
     const acceptedDispatch = await dispatch(source.root, [fault]);
     let retained: string | undefined;
     try {
@@ -392,6 +392,7 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
             assert.ok(retained?.startsWith(tmpdir()));
           }
           const accepted = error.outcome;
+          assert.equal(accepted.legs.standards.failure, classification);
           const ledger = createReviewerExecutionLedger();
           // Project the exact failed settlement through the durable ledger seam.
           ledger.append(projectAcceptedDispatch({ ...acceptedDispatch, materials: { ...acceptedDispatch.materials, noSpecEvidence: [] } }));

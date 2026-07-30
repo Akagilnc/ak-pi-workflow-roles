@@ -80,26 +80,40 @@ type GitSnapshot = ReviewerTargetSnapshot & {
 
 type CommandResult = { stdout: string; stderr: string; code: number };
 
-function classifyFailure(error: unknown): ReviewerFailureClassification {
-  const text = error instanceof Error ? `${error.name} ${error.message}`.toLowerCase() : "";
-  if (/abort|cancel/.test(text)) return "cancelled";
-  if (/provider|model|auth/.test(text)) return "provider";
-  if (/snapshot|mirror|target|ref map/.test(text)) return "snapshot";
-  if (/workspace|clone|checkout|fetch/.test(text)) return "workspace";
-  if (/child|report|tool isolation/.test(text)) return "child";
+type ClassifiedReviewerError = Error & Readonly<{ reviewerFailure: ReviewerFailureClassification }>;
+
+function classifiedError(
+  error: unknown,
+  reviewerFailure: ReviewerFailureClassification,
+  evidence: {
+    workspaceDisposition?: ReviewerWorkspaceDisposition;
+    targetSnapshot?: ReviewerTargetSnapshot;
+  } = {},
+): ClassifiedReviewerError {
+  const wrapped = error instanceof Error ? error : new Error(String(error));
+  const classification = "reviewerFailure" in wrapped
+    ? (wrapped as ClassifiedReviewerError).reviewerFailure
+    : reviewerFailure;
+  return Object.assign(wrapped, { reviewerFailure: classification }, evidence);
+}
+
+function classifyFailure(error: unknown, signal?: AbortSignal): ReviewerFailureClassification {
+  if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) return "cancelled";
+  if (typeof error === "object" && error !== null && "reviewerFailure" in error) {
+    return (error as ClassifiedReviewerError).reviewerFailure;
+  }
   return "unknown";
 }
 
 function infrastructureError(
   error: unknown,
+  classification: ReviewerFailureClassification,
   evidence: {
     workspaceDisposition?: ReviewerWorkspaceDisposition;
     targetSnapshot?: ReviewerTargetSnapshot;
   } = {},
 ): Error {
-  const wrapped =
-    error instanceof Error ? error : new Error(String(error));
-  return Object.assign(wrapped, evidence);
+  return classifiedError(error, classification, evidence);
 }
 
 async function runCommand(
@@ -241,7 +255,7 @@ async function prepareSnapshot(
     );
     return { repositoryRoot, targetHead, refs, mirrorRoot, mirrorPath };
   } catch (error) {
-    throw infrastructureError(error, {
+    throw infrastructureError(error, "snapshot", {
       workspaceDisposition: mirrorRoot === undefined ? "not-created" : { retained: mirrorRoot },
       targetSnapshot: { repositoryRoot, targetHead, refs },
     });
@@ -286,7 +300,7 @@ async function prepareWorkspace(
     await verifySnapshot(workspace, snapshot, signal);
     return workspace;
   } catch (error) {
-    throw infrastructureError(error, {
+    throw infrastructureError(error, "workspace", {
       workspaceDisposition: workspace === undefined ? "not-created" : { retained: workspace },
       targetSnapshot: {
         repositoryRoot: snapshot.repositoryRoot,
@@ -413,7 +427,13 @@ async function runChild(
     ].join("\n"),
   });
   await loader.reload();
-  const { runtime, model } = await createChildRuntime(context);
+  let runtime: ModelRuntime;
+  let model: Model<Api>;
+  try {
+    ({ runtime, model } = await createChildRuntime(context));
+  } catch (error) {
+    throw classifiedError(error, "provider");
+  }
   const customTools = leg.grant.tools.includes("bash")
     ? [{
         ...createBashTool(workspace),
@@ -453,27 +473,30 @@ async function runChild(
       throw new Error(`Reviewer child tool isolation failed: ${visibleTools.join(", ")}`);
     }
     const delivered = Object.freeze(reviewerPromptIdentity(leg.prompt));
-    await session.prompt(delivered.bytes);
+    try {
+      await session.prompt(delivered.bytes);
+    } catch (error) {
+      throw classifiedError(error, "provider");
+    }
     if (signal?.aborted) {
       throw new Error("Reviewer Agent was cancelled");
     }
     const lastAssistant = [...session.messages]
       .reverse()
       .find((message) => message.role === "assistant");
-    if (
-      lastAssistant?.role !== "assistant" ||
-      lastAssistant.stopReason === "error" ||
-      lastAssistant.stopReason === "aborted"
-    ) {
-      throw new Error(
-        `Reviewer Agent child failed: ${lastAssistant?.role === "assistant" ? lastAssistant.errorMessage ?? lastAssistant.stopReason : "no assistant output"}`,
-      );
+    if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
+      throw classifiedError(new Error(`Reviewer Agent provider failed: ${lastAssistant.errorMessage ?? lastAssistant.stopReason}`), "provider");
+    }
+    if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
+      throw classifiedError(new Error(`Reviewer Agent child failed: ${lastAssistant?.role === "assistant" ? lastAssistant.stopReason : "no assistant output"}`), "child");
     }
     const report = session.getLastAssistantText()?.trim() ?? "";
     if (report.length === 0) {
       throw new Error("Reviewer Agent returned a blank child report");
     }
     return { report, usage, prompt: delivered };
+  } catch (error) {
+    throw classifiedError(error, "child");
   } finally {
     signal?.removeEventListener("abort", abortChild);
     unsubscribe();
@@ -521,7 +544,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
       catch (error) {
         const evidence = failureEvidence(error, dispatch.targetSnapshot);
         const target = evidence.target;
-        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error), target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition: evidence.workspaceDisposition })]));
+        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error, options.signal), target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition: evidence.workspaceDisposition })]));
         throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
       }
       const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
@@ -537,7 +560,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
           const workspaceDisposition = workspace === undefined
             ? evidence.workspaceDisposition
             : Object.freeze({ retained: workspace });
-          return [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error), target: evidence.target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition })] as const;
+          return [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error, options.signal), target: evidence.target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition })] as const;
         }
       }));
       const pairs = settled.map((item) => item.status === "fulfilled" ? item.value : (() => { throw item.reason; })());
