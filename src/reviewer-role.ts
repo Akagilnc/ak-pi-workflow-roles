@@ -4,6 +4,7 @@ import { Type, type Static } from "typebox";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import { exactUtf8 } from "./exact-utf8.ts";
 import {
   createReviewerDispatcher,
   parseReviewerCapabilities,
@@ -87,12 +88,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     if (typeof taskPath !== "string" || !taskPath.trim()) throw new Error("Reviewer role requires --ak-review-task");
     if (typeof capabilityPath !== "string" || !capabilityPath.trim()) throw new Error("Reviewer role requires --ak-review-capabilities");
     taskBytes = Uint8Array.from(await dependencies.loadTask(taskPath));
-    try { task = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(taskBytes); }
-    catch { throw new Error("Reviewer task is not valid UTF-8"); }
-    const roundTrip = new TextEncoder().encode(task);
-    if (roundTrip.byteLength !== taskBytes.byteLength || !roundTrip.every((byte, index) => byte === taskBytes![index])) {
-      throw new Error("Reviewer task does not round-trip as exact UTF-8");
-    }
+    task = exactUtf8(taskBytes, "Reviewer task");
     if (!task.trim()) throw new Error("Reviewer task is empty");
     capabilities = parseReviewerCapabilities(await dependencies.loadCapabilities(capabilityPath), taskBytes);
     if (!capabilities.prerequisiteOperations.includes("preflight.git.pin-target")) {
@@ -127,6 +123,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           try { result = await dispatcher!.propose(proposal as ReviewerProposalV1, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
           catch (error) { hostActions.failInfrastructure(error, toolCtx); }
           if (result.status === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: result.identity, violations: result.violations, started: false });
+          if (result.status === "closed") ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: result.identity, reason: result.reason, started: false });
           return { content: [{ type: "text" as const, text: result.status === "rejected" ? `Reviewer proposal rejected: ${result.violations.join("; ")}` : result.status === "closed" ? "Reviewer dispatch is already closed" : "Reviewer dispatch completed" }], details: result };
         } });
       pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`], parameters: reviewerOutputSchema,

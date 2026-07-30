@@ -16,11 +16,9 @@ export type ReviewerUsage = Readonly<{
 export type ReviewerTargetSnapshot = ReviewerPinnedTarget;
 export type ReviewerWorkspaceDisposition = "deleted" | Readonly<{ retained: string }>;
 
-export type ReviewerCompiledLegEvidence = Readonly<{
+export type ReviewerCompiledLegEvidence = Omit<ReviewerPromptIdentity, "bytes"> & Readonly<{
   axis: "standards" | "spec";
-  prompt: string;
-  utf8Length: number;
-  sha256: string;
+  prompt: ReviewerPromptIdentity["bytes"];
   grant: ReviewerCapabilityRequest;
 }>;
 export type ReviewerAcceptedEvidence = Readonly<{
@@ -60,6 +58,7 @@ export type ReviewerLegResultEvidence = Readonly<{
 }>;
 export type ReviewerEvidenceEvent =
   | (Readonly<{ source: "reviewer-dispatch"; type: "rejected"; identity: string; violations: readonly string[]; started: false }>)
+  | Readonly<{ source: "reviewer-dispatch"; type: "closed-attempt"; identity: string; reason: "acceptance-closed"; started: false }>
   | (Readonly<{ source: "reviewer-dispatch"; type: "accepted" }> & ReviewerAcceptedEvidence)
   | Readonly<{ source: "reviewer-agent"; type: "dispatch-started"; dispatchIdentity: string; cardinality: 1 | 2 }>
   | (Readonly<{ source: "reviewer-agent"; type: "leg-settled" }> & ReviewerLegResultEvidence)
@@ -67,6 +66,7 @@ export type ReviewerEvidenceEvent =
 
 export type ReviewerExecutionRecord = Readonly<{
   rejections: readonly Readonly<{ identity: string; violations: readonly string[]; started: false }>[];
+  closedAttempts?: readonly Readonly<{ identity: string; reason: "acceptance-closed"; started: false }>[];
   accepted?: ReviewerAcceptedEvidence;
   started?: Readonly<{ dispatchIdentity: string; cardinality: 1 | 2 }>;
   results: Readonly<Partial<Record<"standards" | "spec", ReviewerLegResultEvidence>>>;
@@ -103,6 +103,7 @@ function fatal(error: unknown): FatalEvidence {
 
 export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
   const rejections: Array<{ identity: string; violations: readonly string[]; started: false }> = [];
+  const closedAttempts: Array<{ identity: string; reason: "acceptance-closed"; started: false }> = [];
   let accepted: ReviewerAcceptedEvidence | undefined;
   let started: { dispatchIdentity: string; cardinality: 1 | 2 } | undefined;
   const results: Partial<Record<"standards" | "spec", ReviewerLegResultEvidence>> = {};
@@ -116,6 +117,14 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
         throw new Error("Rejected proposal cannot contain runner, child, usage, workspace, provider, or start evidence");
       if (accepted !== undefined || started !== undefined) throw new Error("Rejection cannot follow an accepted dispatch");
       rejections.push(cloneFreeze({ identity: event.identity, violations: event.violations, started: false }));
+      return;
+    }
+    if (event.source === "reviewer-dispatch" && event.type === "closed-attempt") {
+      const allowed = ["source", "type", "identity", "reason", "started"];
+      if (Object.keys(event).some((key) => !allowed.includes(key)) || event.reason !== "acceptance-closed" || event.started !== false)
+        throw new Error("Closed attempt must contain only immutable non-start outcome evidence");
+      if (accepted === undefined) throw new Error("Closed attempt requires a closed acceptance lifecycle");
+      closedAttempts.push(cloneFreeze({ identity: event.identity, reason: event.reason, started: false }));
       return;
     }
     if (event.source === "reviewer-dispatch" && event.type === "accepted") {
@@ -184,7 +193,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       if (expected.some((axis) => results[axis]?.status !== "successful") || Object.keys(results).length !== expected.length)
         throw new Error(expected.length === 2 ? "Reviewer completed requires both axes settled successfully" : "Reviewer completed requires Standards settled successfully and no Spec evidence");
     }
-    return cloneFreeze({ rejections, ...(accepted === undefined ? {} : { accepted }), ...(started === undefined ? {} : { started }), results });
+    return cloneFreeze({ rejections, closedAttempts, ...(accepted === undefined ? {} : { accepted }), ...(started === undefined ? {} : { started }), results });
   }
   return Object.freeze({ append, recordInfrastructureFailure, recordForAudit });
 }
