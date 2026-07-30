@@ -51,8 +51,6 @@ export type ReviewerDispatchRunResult = Readonly<{
 }>;
 export type ReviewerAgentRunner = {
   run(dispatch: AcceptedReviewerDispatch, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
-  /** @internal @deprecated Remove with the next Reviewer role/ledger migration slice. */
-  runReviewerAgent(input: { description: string; prompt: string }, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<never>;
   shutdown(): Promise<void>;
 };
 
@@ -463,9 +461,6 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
   let snapshotDeleted = false;
 
   return {
-    async runReviewerAgent() {
-      throw new Error("Deprecated Reviewer Agent adapter cannot execute without an accepted dispatch");
-    },
     async run(dispatch, options) {
       if (dispatch.recipe !== "reviewer-dispatch-v1" || dispatch.legs.length < 1 || dispatch.legs.length > 2 ||
           dispatch.legs[0]?.axis !== "standards" || (dispatch.legs.length === 2 && dispatch.legs[1]?.axis !== "spec")) {

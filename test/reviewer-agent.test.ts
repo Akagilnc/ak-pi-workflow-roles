@@ -32,7 +32,7 @@ async function dispatch(root: string, prompts: readonly string[], tools: readonl
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
   const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => line.split("\0")));
   const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
-  return { identity: "accepted", recipe: "reviewer-dispatch-v1", targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex"), grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
+  return { identity: "accepted", recipe: "reviewer-dispatch-v1", input: { taskSha256: "task", canonicalSkillSha256: "skill" }, materials: { standards: [] }, targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex"), grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
 }
 
 const exec = promisify(execFile);

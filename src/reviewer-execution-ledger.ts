@@ -52,7 +52,8 @@ export type ReviewerEvidenceEvent =
   | (Readonly<{ source: "reviewer-dispatch"; type: "rejected"; identity: string; violations: readonly string[]; started: false }>)
   | (Readonly<{ source: "reviewer-dispatch"; type: "accepted" }> & ReviewerAcceptedEvidence)
   | Readonly<{ source: "reviewer-agent"; type: "dispatch-started"; dispatchIdentity: string; cardinality: 1 | 2 }>
-  | (Readonly<{ source: "reviewer-agent"; type: "leg-settled" }> & ReviewerLegResultEvidence);
+  | (Readonly<{ source: "reviewer-agent"; type: "leg-settled" }> & ReviewerLegResultEvidence)
+  | Readonly<{ source: "reviewer-runtime"; type: "fatal"; diagnostics: string; targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition }>;
 
 export type ReviewerExecutionRecord = Readonly<{
   rejections: readonly Readonly<{ identity: string; violations: readonly string[]; started: false }>[];
@@ -122,6 +123,14 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       accepted = event;
       return;
     }
+    if (event.source === "reviewer-runtime" && event.type === "fatal") {
+      if (infrastructureFailure === undefined) infrastructureFailure = cloneFreeze({
+        diagnostics: event.diagnostics,
+        ...(event.targetSnapshot === undefined ? {} : { targetSnapshot: event.targetSnapshot }),
+        ...(event.workspaceDisposition === undefined ? {} : { workspaceDisposition: event.workspaceDisposition }),
+      });
+      return;
+    }
     if (event.type === "dispatch-started") {
       if (accepted === undefined || event.dispatchIdentity !== accepted.identity) throw new Error("Start requires its accepted dispatch");
       if (started !== undefined) throw new Error("Accepted dispatch can start exactly once");
@@ -143,7 +152,10 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
   }
 
   function recordInfrastructureFailure<T>(error: T): T {
-    if (infrastructureFailure === undefined) infrastructureFailure = fatal(error);
+    if (infrastructureFailure === undefined) {
+      const evidence = fatal(error);
+      append({ source: "reviewer-runtime", type: "fatal", ...evidence });
+    }
     return error;
   }
   function recordForAudit(status: "completed" | "refused"): ReviewerExecutionRecord {

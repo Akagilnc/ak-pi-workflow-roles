@@ -20,7 +20,8 @@ import {
   createReviewerRoleRuntime,
   type ReviewerAuditInput,
 } from "./reviewer-role.ts";
-import type { ReviewerAgentResult } from "./reviewer-execution-ledger.ts";
+import type { AcceptedReviewerDispatch, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
@@ -52,15 +53,13 @@ export {
   COLLECTOR_WAIT_TOOL,
 } from "./collector-role.ts";
 export type {
-  ReviewerAgentAttempt,
-  ReviewerAgentInvocationBatch,
-  ReviewerAgentResult,
-  ReviewerBashEvidence,
   ReviewerExecutionRecord,
   ReviewerTargetSnapshot,
   ReviewerUsage,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
+export type { AcceptedReviewerDispatch, ReviewerPinnedGitReader, ReviewerProposalV1 } from "./reviewer-dispatch.ts";
+export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
@@ -72,7 +71,10 @@ export type RoleRuntimeDependencies = {
   loadCoderSoul?(): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
-  loadReviewerTask?(path: string): Promise<string>;
+  loadReviewerTask?(path: string): Promise<Uint8Array>;
+  loadReviewerCapabilities?(path: string): Promise<Uint8Array>;
+  createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
+  reviewerHostTools?: readonly string[];
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   createCollectorClock?(): CollectorClock;
@@ -80,10 +82,10 @@ export type RoleRuntimeDependencies = {
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
-  runReviewerAgent?(
-    input: { description: string; prompt: string },
+  runReviewerDispatch?(
+    dispatch: AcceptedReviewerDispatch,
     options: { context: ExtensionContext; signal?: AbortSignal },
-  ): Promise<ReviewerAgentResult>;
+  ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
@@ -173,27 +175,27 @@ export function createRoleRuntimeExtension(
           return dependencies.loadReviewerSoul();
         },
         async loadTask(path) {
-          if (
-            dependencies.loadReviewerTask === undefined ||
-            dependencies.loadCanonicalSkillBinding === undefined ||
-            dependencies.runReviewerAgent === undefined ||
-            dependencies.auditReviewerCompliance === undefined
-          ) {
-            throw new Error("Reviewer runtime dependencies are not configured");
-          }
+          if (dependencies.loadReviewerTask === undefined) throw new Error("Reviewer runtime dependencies are not configured");
           return dependencies.loadReviewerTask(path);
         },
+        async loadCapabilities(path) {
+          if (dependencies.loadReviewerCapabilities === undefined) throw new Error("Reviewer runtime dependencies are not configured");
+          return dependencies.loadReviewerCapabilities(path);
+        },
+        async createPinnedGitReader() {
+          if (dependencies.createReviewerPinnedGitReader === undefined) throw new Error("Reviewer runtime dependencies are not configured");
+          return dependencies.createReviewerPinnedGitReader();
+        },
+        hostTools() { return dependencies.reviewerHostTools ?? ["read", "grep", "find", "ls", "bash", "write", "edit"]; },
         async loadCanonicalSkillBinding(name) {
           if (dependencies.loadCanonicalSkillBinding === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");
           }
           return dependencies.loadCanonicalSkillBinding(name);
         },
-        async runAgent(input, options) {
-          if (dependencies.runReviewerAgent === undefined) {
-            throw new Error("Reviewer runtime dependencies are not configured");
-          }
-          return dependencies.runReviewerAgent(input, options);
+        async runDispatch(dispatch, options) {
+          if (dependencies.runReviewerDispatch === undefined) throw new Error("Reviewer runtime dependencies are not configured");
+          return dependencies.runReviewerDispatch(dispatch, options);
         },
         ...(dependencies.shutdownReviewerAgent === undefined
           ? {}
