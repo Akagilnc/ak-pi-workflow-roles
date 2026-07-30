@@ -482,8 +482,8 @@ async function runChild(
     if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
       throw classifiedError(new Error(`Reviewer Agent child failed: ${lastAssistant?.role === "assistant" ? lastAssistant.stopReason : "no assistant output"}`), "child");
     }
-    const report = session.getLastAssistantText()?.trim() ?? "";
-    if (report.length === 0) {
+    const report = session.getLastAssistantText() ?? "";
+    if (report.trim().length === 0) {
       throw new Error("Reviewer Agent returned a blank child report");
     }
     return { report, usage, prompt: delivered };

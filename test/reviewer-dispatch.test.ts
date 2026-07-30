@@ -163,7 +163,7 @@ test("HEAD/ref drift immediately before acceptance rejects without runner and pe
   const { dispatcher, calls } = harness({ reader });
   const rejected = await dispatcher.propose(proposal);
   assert.equal(rejected.status, "rejected");
-  if (rejected.status === "rejected") assert.match(rejected.violations[0]!, /pin-target/);
+  if (rejected.status === "rejected") assert.deepEqual(rejected.violations, ["target-drift"]);
   assert.equal(calls.length, 0);
   assert.equal(dispatcher.acceptance, undefined);
   drift = false;
@@ -221,7 +221,7 @@ test("hidden repository materials are accepted and unsafe paths reject with type
     });
     assert.equal(result.status, "rejected");
     if (result.status !== "rejected") continue;
-    assert.deepEqual(result.violations, ["Invalid standards material selection at index 0 (id: authority): repository-relative path"]);
+    assert.deepEqual(result.violations, ["material-invalid"]);
     assert.equal(calls.length, 0);
   }
 
@@ -232,8 +232,7 @@ test("hidden repository materials are accepted and unsafe paths reject with type
   });
   assert.equal(rejected.status, "rejected");
   if (rejected.status === "rejected") {
-    assert.deepEqual(rejected.violations, ["Invalid standards material selection at index 0: identity"]);
-    assert.equal(rejected.violations[0]!.includes("unsafe"), false);
+    assert.deepEqual(rejected.violations, ["material-invalid"]);
   }
 });
 
@@ -479,6 +478,35 @@ test("preserves BOM and multibyte task/material bytes and rejects invalid UTF-8 
   assert.equal(effects, 0);
 });
 
+test("rejection evidence is closed and never retains injected diagnostics", async () => {
+  const secret = "TOKEN=super-secret /private/repo stderr: fatal";
+  for (const reader of [
+    fakeReader({ async resolve() { throw new Error(secret); } }),
+    fakeReader({ async range() { throw new Error(secret); } }),
+    fakeReader({ async material() { throw new Error(secret); } }),
+    fakeReader({ async snapshot() { throw new Error(secret); } }),
+  ]) {
+    const { dispatcher } = harness({ reader });
+    const result = await dispatcher.propose(proposal);
+    assert.equal(result.status, "rejected");
+    assert.equal(JSON.stringify(result).includes(secret), false);
+    assert.equal(JSON.stringify(dispatcher.rejections).includes(secret), false);
+  }
+});
+
+test("rejects malformed and unequal compilation identities before child effects", async () => {
+  const mutations = [
+    (prompt: string) => ({ bytes: prompt, utf8Length: Buffer.byteLength(prompt) + 1, sha256: createHash("sha256").update(prompt).digest("hex") }),
+    (prompt: string) => ({ bytes: prompt, utf8Length: Buffer.byteLength(prompt), sha256: "0".repeat(64) }),
+  ];
+  for (const mutate of mutations) {
+    const { dispatcher, calls } = harness({ compilePrompt(prompt) { return mutate(prompt); } });
+    const result = await dispatcher.propose(proposal);
+    assert.deepEqual(result.status === "rejected" ? result.violations : [], ["prompt-identity-invalid"]);
+    assert.equal(calls.length, 0);
+  }
+});
+
 test("rejects independently recompiled prompt mismatch before child effects", async () => {
   let effects = 0;
   const { dispatcher } = harness({
@@ -490,7 +518,7 @@ test("rejects independently recompiled prompt mismatch before child effects", as
   });
   const result = await dispatcher.propose(proposal);
   assert.equal(result.status, "rejected");
-  if (result.status === "rejected") assert.match(result.violations[0]!, /recompilation mismatch/);
+  if (result.status === "rejected") assert.deepEqual(result.violations, ["prompt-identity-mismatch"]);
   assert.equal(effects, 0);
 });
 

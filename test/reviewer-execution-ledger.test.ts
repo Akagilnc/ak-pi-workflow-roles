@@ -78,11 +78,11 @@ test("no-Spec completion proves one Standards-only dispatch and no Spec evidence
 
 test("rejections remain no-start facts and cannot smuggle runner evidence", () => {
   const ledger = createReviewerExecutionLedger();
-  const violations = ["capability exceeds ceiling"];
+  const violations: any = ["capability-invalid"];
   ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: "bad", violations, started: false });
   violations[0] = "mutated";
   const record = ledger.recordForAudit("refused");
-  assert.deepEqual(record.rejections, [{ identity: "bad", violations: ["capability exceeds ceiling"], started: false }]);
+  assert.deepEqual(record.rejections, [{ identity: "bad", violations: ["capability-invalid"], started: false }]);
   assert.equal(record.started, undefined);
   assert.deepEqual(record.results, {});
   assert.throws(() => ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: "bad", cardinality: 1 }), /accepted dispatch/);

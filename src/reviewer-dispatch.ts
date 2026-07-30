@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
-
 import { exactUtf8 } from "./exact-utf8.ts";
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
-import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import { sha256Hex } from "./sha256.ts";
+export { sha256Hex } from "./sha256.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
 export const REVIEWER_CHILD_TOOLS = [
@@ -77,9 +77,16 @@ export type AcceptedReviewerDispatch = Readonly<{
   legs: readonly AcceptedReviewerLeg[];
 }>;
 export type ReviewerMaterialEvidence = Readonly<MaterialSelection & ReviewerPromptIdentity>;
+export const REVIEWER_PREFLIGHT_VIOLATIONS = [
+  "proposal-invalid", "base-invalid", "material-invalid", "spec-invalid",
+  "capability-invalid", "prerequisite-missing", "range-invalid",
+  "prompt-identity-invalid", "prompt-identity-mismatch", "target-drift",
+  "preflight-infrastructure",
+] as const;
+export type ReviewerPreflightViolation = (typeof REVIEWER_PREFLIGHT_VIOLATIONS)[number];
 export type ReviewerRejectionEvidence = Readonly<{
   identity: string;
-  violations: readonly string[];
+  violations: readonly ReviewerPreflightViolation[];
   started: false;
 }>;
 export type ReviewerAcceptanceEvidence = Readonly<{
@@ -93,7 +100,7 @@ export type ReviewerClosedAttemptEvidence = Readonly<{
   started: false;
 }>;
 export type ReviewerDispatchResult =
-  | Readonly<{ status: "rejected"; identity: string; violations: readonly string[] }>
+  | Readonly<{ status: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[] }>
   | Readonly<{ status: "accepted"; dispatch: AcceptedReviewerDispatch; results: unknown }>
   | Readonly<{ status: "closed"; identity: string; reason: "acceptance-closed"; started: false }>;
 
@@ -109,8 +116,10 @@ type DispatcherDependencies = Readonly<{
 }>;
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-const sha256 = (bytes: string | Uint8Array): string =>
-  createHash("sha256").update(bytes).digest("hex");
+class PreflightViolation extends Error {
+  constructor(readonly code: ReviewerPreflightViolation) { super(code); }
+}
+const violation = (code: ReviewerPreflightViolation): never => { throw new PreflightViolation(code); };
 
 function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -181,7 +190,7 @@ export function parseReviewerCapabilities(
   ) {
     throw new Error("Invalid Reviewer capabilities schema");
   }
-  if (!/^[0-9a-f]{64}$/.test(taskSha256) || taskSha256 !== sha256(task)) {
+  if (!/^[0-9a-f]{64}$/.test(taskSha256) || taskSha256 !== sha256Hex(task)) {
     throw new Error("Reviewer capabilities task digest mismatch");
   }
   let request: ReviewerCapabilityRequest;
@@ -242,7 +251,7 @@ function proposalIdentity(proposal: unknown): string {
   } catch {
     encoded = "[unserializable proposal]";
   }
-  return sha256(encoded);
+  return sha256Hex(encoded);
 }
 
 export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
@@ -263,9 +272,17 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   }
 
   function reject(identity: string, error: unknown): ReviewerDispatchResult {
-    const violations = Object.freeze([
-      error instanceof Error ? error.message : String(error),
-    ]);
+    const message = error instanceof Error ? error.message : "";
+    const code: ReviewerPreflightViolation = error instanceof PreflightViolation ? error.code
+      : /proposal/i.test(message) ? "proposal-invalid"
+      : /base revision/i.test(message) ? "base-invalid"
+      : /material|UTF-8/i.test(message) ? "material-invalid"
+      : /Spec state|Spec state evidence/i.test(message) ? "spec-invalid"
+      : /capability|bash commands/i.test(message) ? "capability-invalid"
+      : /prerequisite/i.test(message) ? "prerequisite-missing"
+      : /range/i.test(message) ? "range-invalid"
+      : "preflight-infrastructure";
+    const violations = Object.freeze<ReviewerPreflightViolation[]>([code]);
     rejections.push(Object.freeze({ identity, violations, started: false as const }));
     return Object.freeze({ status: "rejected" as const, identity, violations });
   }
@@ -322,8 +339,12 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       }
     }
 
-    const base = await dependencies.reader.resolve(proposal.base.revision);
-    const readRange = await dependencies.reader.range(base);
+    let base!: string;
+    let readRange!: ReviewerRange;
+    try {
+      base = await dependencies.reader.resolve(proposal.base.revision);
+      readRange = await dependencies.reader.range(base);
+    } catch { violation("preflight-infrastructure"); }
     if (readRange.base !== base || readRange.target !== targetSnapshot.targetHead) {
       throw new Error("Range is inconsistent with immutable target pin");
     }
@@ -331,7 +352,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       readRange.diffCommand !== `git diff ${base}...${targetSnapshot.targetHead}` ||
       typeof readRange.diffSha256 !== "string" ||
       !/^[0-9a-f]{64}$/.test(readRange.diffSha256) ||
-      readRange.diffSha256 === sha256("") ||
+      readRange.diffSha256 === sha256Hex("") ||
       !Array.isArray(readRange.commits) ||
       !readRange.commits.every((commit) => typeof commit === "string") ||
       !hasUniqueValues(readRange.commits)
@@ -349,13 +370,17 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     const renderMaterials = async (items: readonly MaterialSelection[]): Promise<string> => {
       const rendered: string[] = [];
       for (const item of items) {
-        const bytes = await dependencies.reader.material(item.repositoryPath, targetSnapshot.targetHead);
-        const text = exactUtf8(bytes, `Material ${item.id}`);
+        let bytes!: Uint8Array;
+        try { bytes = await dependencies.reader.material(item.repositoryPath, targetSnapshot.targetHead); }
+        catch { violation("preflight-infrastructure"); }
+        let text!: string;
+        try { text = exactUtf8(bytes, "Reviewer material"); }
+        catch { violation("material-invalid"); }
         materialEvidence.set(item.id, Object.freeze({
           ...item,
           bytes: text,
           utf8Length: bytes.byteLength,
-          sha256: sha256(bytes),
+          sha256: sha256Hex(bytes),
         }));
         rendered.push(`Material-Identity: ${JSON.stringify({ id: item.id, repositoryPath: item.repositoryPath })}\nMaterial-Bytes:\n${text}`);
       }
@@ -393,8 +418,11 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     for (let index = 0; index < firstCompilations.length; index++) {
       const first = firstCompilations[index]!;
       const second = secondCompilations[index]!;
-      if (first.bytes !== second.bytes) {
-        throw new Error(`Reviewer ${promptInputs[index]!.axis} prompt recompilation mismatch (first ${first.utf8Length}/${first.sha256}, second ${second.utf8Length}/${second.sha256})`);
+      if (!isReviewerPromptIdentity(first) || !isReviewerPromptIdentity(second)) {
+        violation("prompt-identity-invalid");
+      }
+      if (first.bytes !== second.bytes || first.utf8Length !== second.utf8Length || first.sha256 !== second.sha256) {
+        violation("prompt-identity-mismatch");
       }
     }
     const legs = Object.freeze(promptInputs.map(({ axis, grant }, index) => {
@@ -411,7 +439,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     return Object.freeze({
       identity,
       recipe: "reviewer-dispatch-v1",
-      input: Object.freeze({ task: taskEvidence, canonicalSkillSha256: sha256(canonicalSkill) }),
+      input: Object.freeze({ task: taskEvidence, canonicalSkillSha256: sha256Hex(canonicalSkill) }),
       targetSnapshot,
       prerequisiteOperations: acceptedPrerequisites,
       range,
@@ -447,11 +475,11 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       try {
         const live = await dependencies.reader.snapshot();
         if (!sameReviewerPinnedTarget(live, targetSnapshot)) {
-          throw new Error("preflight.git.pin-target detected repository HEAD/ref drift");
+          violation("target-drift");
         }
       } catch (error) {
         if (accepted || accepting) return close(identity);
-        return reject(identity, error);
+        return reject(identity, error instanceof PreflightViolation ? error : new PreflightViolation("preflight-infrastructure"));
       }
       if (accepted || accepting) return close(identity);
       accepting = true;

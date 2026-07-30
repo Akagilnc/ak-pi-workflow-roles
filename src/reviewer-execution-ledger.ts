@@ -1,6 +1,8 @@
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import {
+  REVIEWER_PREFLIGHT_VIOLATIONS,
+  type ReviewerPreflightViolation,
   type ReviewerPinnedTarget,
   type AcceptedReviewerDispatch,
 } from "./reviewer-dispatch.ts";
@@ -42,7 +44,7 @@ export type ReviewerLegResultEvidence = Readonly<{
 }>;
 export type ReviewerEvidenceEvent =
   | Readonly<{ source: "reviewer-transport"; type: "transport-rejected"; identity: string; violation: "schema"; started: false }>
-  | (Readonly<{ source: "reviewer-dispatch"; type: "rejected"; identity: string; violations: readonly string[]; started: false }>)
+  | (Readonly<{ source: "reviewer-dispatch"; type: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>)
   | Readonly<{ source: "reviewer-dispatch"; type: "closed-attempt"; identity: string; reason: "acceptance-closed"; started: false }>
   | (Readonly<{ source: "reviewer-dispatch"; type: "accepted" }> & ReviewerAcceptedEvidence)
   | Readonly<{ source: "reviewer-agent"; type: "dispatch-started"; dispatchIdentity: string; cardinality: 1 | 2 }>
@@ -51,7 +53,7 @@ export type ReviewerEvidenceEvent =
 
 export type ReviewerExecutionRecord = Readonly<{
   transportRejections: readonly Readonly<{ identity: string; violation: "schema"; started: false }>[];
-  rejections: readonly Readonly<{ identity: string; violations: readonly string[]; started: false }>[];
+  rejections: readonly Readonly<{ identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>[];
   closedAttempts?: readonly Readonly<{ identity: string; reason: "acceptance-closed"; started: false }>[];
   accepted?: ReviewerAcceptedEvidence;
   started?: Readonly<{ dispatchIdentity: string; cardinality: 1 | 2 }>;
@@ -85,7 +87,7 @@ function fatal(error: unknown): FatalEvidence {
 
 export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
   const transportRejections: Array<{ identity: string; violation: "schema"; started: false }> = [];
-  const rejections: Array<{ identity: string; violations: readonly string[]; started: false }> = [];
+  const rejections: Array<{ identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }> = [];
   const closedAttempts: Array<{ identity: string; reason: "acceptance-closed"; started: false }> = [];
   let accepted: ReviewerAcceptedEvidence | undefined;
   let started: { dispatchIdentity: string; cardinality: 1 | 2 } | undefined;
@@ -104,8 +106,9 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     }
     if (event.source === "reviewer-dispatch" && event.type === "rejected") {
       const allowed = ["source", "type", "identity", "violations", "started"];
-      if (Object.keys(event).some((key) => !allowed.includes(key)) || event.started !== false)
-        throw new Error("Rejected proposal cannot contain runner, child, usage, workspace, provider, or start evidence");
+      if (Object.keys(event).some((key) => !allowed.includes(key)) || event.started !== false ||
+          event.violations.length === 0 || event.violations.some((code) => !REVIEWER_PREFLIGHT_VIOLATIONS.includes(code)))
+        throw new Error("Rejected proposal must contain only closed bounded non-start evidence");
       if (accepted !== undefined || started !== undefined) throw new Error("Rejection cannot follow an accepted dispatch");
       rejections.push(cloneFreeze({ identity: event.identity, violations: event.violations, started: false }));
       return;
