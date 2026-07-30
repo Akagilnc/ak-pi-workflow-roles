@@ -2007,6 +2007,7 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
       };
     }>;
     identityLedger?: {
+      gitTupleCount?: number;
       gitTuples?: GitTuple[];
       externalSources?: Array<{
         itemKey: string;
@@ -2251,6 +2252,35 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
   assert.deepEqual(
     [...summary.identityLedger.requiredTupleKeys!].sort(),
     [...requiredKeySet].sort(),
+  );
+
+  // Manifest gitTupleCount must equal sealed result unique Git tuples and
+  // the independently required unique tuple-key universe (three-way equality).
+  const resultUniqueGitTupleCount = ledgerKeySet.size;
+  assert.equal(
+    summary.identityLedger.gitTuples.length,
+    resultUniqueGitTupleCount,
+    "result gitTuples are unique",
+  );
+  assert.equal(
+    typeof manifest.identityLedger?.gitTupleCount,
+    "number",
+    "manifest identityLedger.gitTupleCount present",
+  );
+  assert.equal(
+    manifest.identityLedger!.gitTupleCount,
+    resultUniqueGitTupleCount,
+    "manifest gitTupleCount equals result unique Git tuple count",
+  );
+  assert.equal(
+    manifest.identityLedger!.gitTupleCount,
+    requiredKeySet.size,
+    "manifest gitTupleCount equals independently required unique tuple-key count",
+  );
+  assert.equal(
+    resultUniqueGitTupleCount,
+    requiredKeySet.size,
+    "result unique Git tuples equal required unique tuple keys",
   );
 
   // RED: omitting any one required key from a copy must fail completeness.
