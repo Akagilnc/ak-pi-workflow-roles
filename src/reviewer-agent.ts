@@ -53,14 +53,13 @@ export type ReviewerFailedLegRunResult = Readonly<{
   workspaceDisposition: ReviewerWorkspaceDisposition;
 }>;
 export type ReviewerLegRunResult = ReviewerSuccessfulLegRunResult | ReviewerFailedLegRunResult;
-export type ReviewerDispatchRunResult = Readonly<{
-  identity: string; target: ReviewerTargetSnapshot;
-  legs: Readonly<{ standards: ReviewerLegRunResult; spec?: ReviewerLegRunResult }>;
+type ReviewerRunEnvelope<Legs> = Readonly<{
+  identity: string; target: ReviewerTargetSnapshot; legs: Readonly<Legs>;
 }>;
-export type ReviewerSuccessfulDispatchRunResult = Readonly<{
-  identity: string; target: ReviewerTargetSnapshot;
-  legs: Readonly<{ standards: ReviewerSuccessfulLegRunResult; spec?: ReviewerSuccessfulLegRunResult }>;
-}>;
+type ReviewerOneLegResult<Leg> = ReviewerRunEnvelope<{ standards: Leg; spec?: never }>;
+type ReviewerTwoLegResult<Leg> = ReviewerRunEnvelope<{ standards: Leg; spec: Leg }>;
+export type ReviewerDispatchRunResult = ReviewerOneLegResult<ReviewerLegRunResult> | ReviewerTwoLegResult<ReviewerLegRunResult>;
+export type ReviewerSuccessfulDispatchRunResult = ReviewerOneLegResult<ReviewerSuccessfulLegRunResult> | ReviewerTwoLegResult<ReviewerSuccessfulLegRunResult>;
 export class ReviewerDispatchExecutionError extends Error {
   constructor(readonly outcome: ReviewerDispatchRunResult) { super("Reviewer dispatch execution failed"); this.name = "ReviewerDispatchExecutionError"; }
 }
