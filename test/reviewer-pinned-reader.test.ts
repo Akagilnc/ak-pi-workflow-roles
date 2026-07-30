@@ -22,10 +22,14 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     const base = await git(root, "rev-parse", "HEAD"); await git(root, "branch", "review-base", base);
     await writeFile(join(root, "file"), "target\n"); await git(root, "commit", "-am", "target");
     await git(root, "tag", "-a", "review-tag", base, "-m", "annotated");
+    const blob = await git(root, "rev-parse", "HEAD:file");
+    await git(root, "update-ref", "refs/tags/blob-base", blob);
     const target = await git(root, "rev-parse", "HEAD");
     const reader = await createReviewerPinnedGitReader(root);
     const pinnedTagObject = await git(root, "rev-parse", "review-tag^{object}");
     assert.deepEqual(reader.pin.refs["refs/tags/review-tag"], { objectId: pinnedTagObject, peeledCommitId: base });
+    assert.deepEqual(reader.pin.refs["refs/tags/blob-base"], { objectId: blob, peeledCommitId: null });
+    await assert.rejects(reader.resolve("blob-base"), /does not identify a commit/);
     await git(root, "branch", "-f", "review-base", "HEAD");
     await git(root, "tag", "-f", "review-tag", "HEAD");
     assert.equal(await reader.resolve("review-base"), base);

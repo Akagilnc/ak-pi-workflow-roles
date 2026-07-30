@@ -74,9 +74,16 @@ test("concurrent proposals keep each accepted invocation context and signal boun
   assert.deepEqual(seen,[{context:secondContext,signal:secondSignal}]);
 });
 
-test("established Spec runs exactly two legs with actual prompts equal to compiled prompts", async()=>{
-  const h=setup(); await h.runtime.activate(); const result=await h.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(true),undefined,undefined,{} as ExtensionContext);
-  assert.equal(result.details.dispatch.legs.length,2); assert.deepEqual(result.details.dispatch.legs.map((x:any)=>x.axis),["standards","spec"]); assert.equal(h.starts,1);
+test("successful dispatch exposes exact child reports with axis and prompt identities", async()=>{
+  const reviewerHarness=setup(); await reviewerHarness.runtime.activate(); const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(true),undefined,undefined,{} as ExtensionContext);
+  assert.equal(result.details.dispatch.legs.length,2);
+  assert.deepEqual(result.details.dispatch.legs.map((leg: { axis: string })=>leg.axis),["standards","spec"]);
+  const text=result.content[0].text;
+  for (const axis of ["standards","spec"] as const) {
+    const settled=result.details.results.legs[axis];
+    assert.equal(text.includes(`<<< REVIEWER CHILD REPORT axis=${axis} prompt=${JSON.stringify(settled.prompt)} >>>\n${axis} report\n<<< END REVIEWER CHILD REPORT axis=${axis} >>>`),true);
+  }
+  assert.equal(reviewerHarness.starts,1);
 });
 
 test("no-op expansion capture fails closed before completion", async()=>{
@@ -98,7 +105,10 @@ test("completion audits projected facts and revise can be resubmitted without re
 test("one failed and one successful sibling are both audited before infrastructure termination", async()=>{
   const h=setup({runDispatch:async(dispatch)=>{const [standards,spec]=dispatch.legs; throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"provider",target:pin,prompt:{bytes:standards!.prompt,utf8Length:standards!.utf8Length,sha256:standards!.sha256},workspaceDisposition:"not-created"},spec:{status:"successful",report:"spec report",usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{bytes:spec!.prompt,utf8Length:spec!.utf8Length,sha256:spec!.sha256},workspaceDisposition:"deleted"}}});}});
   await h.runtime.activate();
-  await assert.rejects(h.tools.get(AGENT_TOOL_NAME).execute("run",proposal(true),undefined,undefined,{} as ExtensionContext),/execution failed/);
+  await assert.rejects(h.tools.get(AGENT_TOOL_NAME).execute("run",proposal(true),undefined,undefined,{} as ExtensionContext),(error: unknown)=>{
+    assert.equal(String(error).includes("spec report"),false);
+    return /execution failed/.test(String(error));
+  });
   await assert.rejects(h.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",report:"infra"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
 });
 

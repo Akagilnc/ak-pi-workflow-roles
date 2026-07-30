@@ -172,7 +172,9 @@ async function verifySnapshot(
   }
   for (const entry of Object.values(snapshot.refs)) {
     await git(cwd, ["cat-file", "-e", `${entry.objectId}^{object}`], signal);
-    await git(cwd, ["cat-file", "-e", `${entry.peeledCommitId}^{commit}`], signal);
+    if (entry.peeledCommitId !== null) {
+      await git(cwd, ["cat-file", "-e", `${entry.peeledCommitId}^{commit}`], signal);
+    }
   }
 }
 
@@ -214,7 +216,12 @@ async function prepareSnapshot(
     if (!sameReviewerRefs(mirrorRefs, refs)) {
       throw new Error("Bare review mirror ref map changed while the snapshot was prepared");
     }
-    for (const object of new Set([targetHead, ...Object.values(refs).flatMap((entry) => [entry.objectId, entry.peeledCommitId])])) {
+    const preservedObjects = Object.values(refs).flatMap((entry) =>
+      entry.peeledCommitId === null
+        ? [entry.objectId]
+        : [entry.objectId, entry.peeledCommitId]
+    );
+    for (const object of new Set([targetHead, ...preservedObjects])) {
       await git(mirrorPath, ["cat-file", "-e", `${object}^{object}`], signal);
     }
     await git(

@@ -16,7 +16,7 @@ import {
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
 } from "./reviewer-dispatch.ts";
-import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult, type ReviewerSuccessfulDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedReviewerDetails, type ReviewerOutput } from "./package-contracts/reviewer-output.ts";
 
@@ -80,6 +80,15 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   const pendingTransport = new Map<string, string>();
   const admittedToolCalls = new Set<string>();
 
+  const handleTransportTerminal = (event: { toolCallId: string; isError: boolean }) => {
+    const identity = pendingTransport.get(event.toolCallId);
+    pendingTransport.delete(event.toolCallId);
+    const admitted = admittedToolCalls.delete(event.toolCallId);
+    if (identity !== undefined && event.isError && !admitted) {
+      ledger.append({ source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false });
+    }
+  };
+
   pi.registerFlag("ak-review-task", { description: "Opaque Markdown review task assigned to the reviewer role", type: "string" });
   pi.registerFlag("ak-review-capabilities", { description: "Closed Reviewer capability grant bound to the exact task bytes", type: "string" });
 
@@ -136,7 +145,19 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           catch (error) { hostActions.failInfrastructure(error, toolCtx); }
           if (result.status === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: result.identity, violations: result.violations, started: false });
           if (result.status === "closed") ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: result.identity, reason: result.reason, started: false });
-          return { content: [{ type: "text" as const, text: result.status === "rejected" ? `Reviewer proposal rejected: ${result.violations.join("; ")}` : result.status === "closed" ? "Reviewer dispatch is already closed" : "Reviewer dispatch completed" }], details: result };
+          const text = result.status === "rejected"
+            ? `Reviewer proposal rejected: ${result.violations.join("; ")}`
+            : result.status === "closed"
+              ? "Reviewer dispatch is already closed"
+              : result.dispatch.legs.map((leg) => {
+                const settled = (result.results as ReviewerSuccessfulDispatchRunResult).legs[leg.axis]!;
+                return [
+                  `<<< REVIEWER CHILD REPORT axis=${leg.axis} prompt=${JSON.stringify(settled.prompt)} >>>`,
+                  settled.report,
+                  `<<< END REVIEWER CHILD REPORT axis=${leg.axis} >>>`,
+                ].join("\n");
+              }).join("\n");
+          return { content: [{ type: "text" as const, text }], details: result };
         } });
       pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`], parameters: reviewerOutputSchema,
         async execute(id, parameters, signal, _update, toolCtx) {
@@ -158,18 +179,8 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
         const encoded = JSON.stringify(event.args) ?? "undefined";
         pendingTransport.set(event.toolCallId, `transport-${createHash("sha256").update(encoded).digest("hex")}`);
       });
-      pi.on("tool_execution_end", (event) => {
-        const identity = pendingTransport.get(event.toolCallId);
-        pendingTransport.delete(event.toolCallId);
-        const admitted = admittedToolCalls.delete(event.toolCallId);
-        if (identity !== undefined && event.isError && !admitted) ledger.append({ source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false });
-      });
-      pi.on("tool_result", (event) => {
-        const identity = pendingTransport.get(event.toolCallId);
-        pendingTransport.delete(event.toolCallId);
-        const admitted = admittedToolCalls.delete(event.toolCallId);
-        if (identity !== undefined && event.isError && !admitted) ledger.append({ source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false });
-      });
+      pi.on("tool_execution_end", handleTransportTerminal);
+      pi.on("tool_result", handleTransportTerminal);
       pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
       pi.on("before_agent_start", (event) => {
         if (!expansionCaptured) {

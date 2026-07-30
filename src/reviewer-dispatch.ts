@@ -287,11 +287,18 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   const refs = parseReviewerRefSnapshot(rawRefs);
   const pin = Object.freeze({ repositoryRoot, targetHead, refs: immutableReviewerRefs(refs) });
   const symbolic = (base: string): string | undefined => {
-    if (Object.hasOwn(refs, base)) return refs[base]?.peeledCommitId;
-    const candidates = [`refs/heads/${base}`, `refs/tags/${base}`, `refs/remotes/${base}`]
-      .filter((name) => Object.hasOwn(refs, name));
-    if (candidates.length > 1) throw new Error("Base revision alias is ambiguous in the pinned ref map");
-    return candidates.length === 1 ? refs[candidates[0]!]?.peeledCommitId : undefined;
+    const selected = Object.hasOwn(refs, base)
+      ? base
+      : (() => {
+        const candidates = [`refs/heads/${base}`, `refs/tags/${base}`, `refs/remotes/${base}`]
+          .filter((name) => Object.hasOwn(refs, name));
+        if (candidates.length > 1) throw new Error("Base revision alias is ambiguous in the pinned ref map");
+        return candidates[0];
+      })();
+    if (selected === undefined) return undefined;
+    const commit = refs[selected]?.peeledCommitId;
+    if (commit === null) throw new Error("Base revision does not identify a commit");
+    return commit;
   };
   return Object.freeze({
     pin,
@@ -352,6 +359,14 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     const evidence = Object.freeze({ identity, reason: "acceptance-closed" as const, started: false as const });
     closedAttempts.push(evidence);
     return Object.freeze({ status: "closed" as const, ...evidence });
+  }
+
+  function reject(identity: string, error: unknown): ReviewerDispatchResult {
+    const violations = Object.freeze([
+      error instanceof Error ? error.message : String(error),
+    ]);
+    rejections.push(Object.freeze({ identity, violations, started: false as const }));
+    return Object.freeze({ status: "rejected" as const, identity, violations });
   }
 
   async function compile(proposal: ReviewerProposalV1, identity: string): Promise<AcceptedReviewerDispatch> {
@@ -517,10 +532,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       } catch (error) {
         // Compilation awaits repository I/O; another proposal may accept meanwhile.
         if (accepted || accepting) return close(identity);
-        const violations = Object.freeze([error instanceof Error ? error.message : String(error)]);
-        const evidence = Object.freeze({ identity, violations, started: false as const });
-        rejections.push(evidence);
-        return Object.freeze({ status: "rejected", identity, violations });
+        return reject(identity, error);
       }
 
       // Another async proposal may have completed preflight while this one awaited pin reads.
@@ -533,9 +545,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         }
       } catch (error) {
         if (accepted || accepting) return close(identity);
-        const violations = Object.freeze([error instanceof Error ? error.message : String(error)]);
-        rejections.push(Object.freeze({ identity, violations, started: false as const }));
-        return Object.freeze({ status: "rejected", identity, violations });
+        return reject(identity, error);
       }
       if (accepted || accepting) return close(identity);
       accepting = true;
