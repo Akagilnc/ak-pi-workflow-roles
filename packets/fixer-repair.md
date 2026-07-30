@@ -50,22 +50,27 @@ set.** IDs must be unique; the set is exact.
 
 ## Requested report shape (manual)
 
-When a worker responds, request a Markdown table whose keys are exactly the
-packet’s unique `R1..Rn` set:
+When a worker responds, request one keyed data line per packet `R#`. Each exact
+packet key must occur exactly once at the start of a keyed data line and carry a
+nonblank disposition. Example shape (headings optional and non-normative):
 
-| R# | Disposition |
-| --- | --- |
-| R1 | `implemented(<test name>)` or `refused(<reason>)` |
-| R2 | `implemented(<test name>)` or `refused(<reason>)` |
+```text
+R1 <nonblank disposition>
+R2 <nonblank disposition>
+```
 
 ### Manual exact-set reconciliation (required before trail acceptance)
 
 Before accepting a response into **this repository’s** development trail, a
 maintainer **manually** verifies:
 
-1. every packet `R#` appears exactly once in the report table;
-2. the report introduces no missing, duplicate, or extra keys;
-3. each disposition is either `implemented(<test name>)` or `refused(<reason>)`.
+1. the response key set exactly equals the packet’s unique `R1..Rn` set;
+2. each exact packet `R#` occurs exactly once at the start of a keyed data line;
+3. each keyed disposition is nonblank;
+4. missing, duplicate, or extra keys fail reconciliation.
+
+Headings and header spelling are ignored and are not evidence. No per-item
+wording grammar is required beyond a nonblank disposition.
 
 Acceptance or rejection of that reconciliation is recorded **externally** in the
 contributor trail (see `docs/development-closure.md`). This template does **not**

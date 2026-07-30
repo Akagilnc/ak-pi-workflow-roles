@@ -41,9 +41,11 @@ be omitted only with an **explicit disposition** recorded in the trail.
 7. **Issue a forward repair artifact when needed** — open a new repair request
    with unique `R1..Rn` items (`packets/fixer-repair.md`) without overwriting
    prior artifacts. Before accepting a repair response into this trail,
-   **manually** reconcile report keys to the packet’s exact `R1..Rn` set (no
-   missing, duplicate, or extra keys). Do not claim mechanical Fixer/Soul-audit
-   enforcement unless separate authority changes the public Fixer contract.
+   **manually** reconcile by exact key-set equality: each packet `R#` occurs
+   exactly once at the start of a keyed data line with a nonblank disposition;
+   missing, duplicate, or extra keys fail. Headings and header spelling are not
+   evidence. Do not claim mechanical Fixer/Soul-audit enforcement unless
+   separate authority changes the public Fixer contract.
 
 ## Artifact preservation rules
 
