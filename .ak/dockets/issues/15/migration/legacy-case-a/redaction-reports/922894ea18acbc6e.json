@@ -1,0 +1,13 @@
+{
+  "itemKey": "922894ea18acbc6e4600e32cba0433b393af2fdf6b3e632273b4d6589213a16b",
+  "basename": "issue-3-provenance-plan.md",
+  "sourceSha256": "df60dbdf178f6746e3e8989bf44e9c891b988f98074b29c11b075ee2bfefda96",
+  "recoveredSha256": "df60dbdf178f6746e3e8989bf44e9c891b988f98074b29c11b075ee2bfefda96",
+  "sourceBytes": 4531,
+  "recoveredBytes": 4531,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

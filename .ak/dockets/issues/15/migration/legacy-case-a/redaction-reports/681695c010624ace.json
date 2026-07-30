@@ -1,0 +1,13 @@
+{
+  "itemKey": "681695c010624aced69d1bc4922ea03970222bee4b42d84f01cff5155193b86a",
+  "basename": "ak-roles-fresh-review.md",
+  "sourceSha256": "72cfed9a62bc8cd4ecacb34a8cc8ebd8002211e9f62f0accf9e932467338ac2a",
+  "recoveredSha256": "72cfed9a62bc8cd4ecacb34a8cc8ebd8002211e9f62f0accf9e932467338ac2a",
+  "sourceBytes": 5402,
+  "recoveredBytes": 5402,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

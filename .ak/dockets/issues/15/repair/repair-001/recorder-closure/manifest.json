@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/15/repair/repair-001/recorder-closure"
+  },
+  "invocation": {
+    "id": "f9498a28-4a30-4a1f-8d37-b676fc5fa425"
+  },
+  "execution": {
+    "argv": [
+      "/Users/akagilnc/.hermes/node/bin/node",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work/issues/15/repair-apply-001/recorder-child-corroboration-and-scan.mjs"
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {
+        "AK_REPAIR_REPO_ROOT": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "AK_REPAIR_EVIDENCE_OUT": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work/issues/15/repair-apply-001/corroboration-scan-summary.json"
+      },
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": null,
+    "model": null,
+    "target": "issue-15-case-a-repair-r2-r3",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "8c9e7f839bde7042677b5965c4cc76f08a5e470a",
+        "path": ".ak/dockets/issues/15/repair/repair-001/packet.md",
+        "blobOid": "fac2f97dc2f9a2b9a87775c7c0b3847e7bb3aaaa",
+        "sha256": "63895889f31df2adc211a77de6a855bcfea27bbe50438d6858eb800a387ef183",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "8c9e7f839bde7042677b5965c4cc76f08a5e470a",
+        "path": ".ak/dockets/issues/15/repair/repair-001/plan/receipt.json",
+        "blobOid": "0c4c6aec4d350e6c6a35f744beab41ffe63bfef6",
+        "sha256": "cb5fca848896b6400892930ae1fc03b93422f0833fa9dc90cf158011d8a41e86",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "corroboration-scan-summary",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/corroboration-scan-summary",
+        "sha256": "2dc0e5b9798f3521a984d6a43fee29da20ca1f82f08042d69873df6a6a96d352",
+        "byteLength": 122249
+      }
+    }
+  ],
+  "receipt": null,
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "6322f713e3906027be7a21fbe21a9e18961d78be072c94bdab7865ffcb3e0ae8",
+  "basename": "ak-roles-e2e-help-fix-plan.md",
+  "sourceSha256": "dc8b4ca530cdbd2baac9279aee3d34e053e654fc4c1a1098d8ec2653e8f8a800",
+  "recoveredSha256": "dc8b4ca530cdbd2baac9279aee3d34e053e654fc4c1a1098d8ec2653e8f8a800",
+  "sourceBytes": 1004,
+  "recoveredBytes": 1004,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

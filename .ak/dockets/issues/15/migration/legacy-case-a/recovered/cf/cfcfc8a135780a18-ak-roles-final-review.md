@@ -1,0 +1,12 @@
+# Final fresh review for HEAD ea09419
+
+## Standards axis
+
+- **P1 — Soul audit bypasses Pi’s runtime request preparation and can use the wrong endpoint.** `src/soul-auditor.ts:111-127` retrieves API key/headers but invokes `provider.stream()` with the original model. Pi’s `ModelRuntime.prepareRequest()` additionally replaces `model.baseUrl` with the authentication-resolved URL (`node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.js:325`), notably required for dynamic providers such as GitHub Copilot Enterprise (`node_modules/@earendil-works/pi-ai/dist/auth/oauth/github-copilot.js:308`). Consequently, the main judge call can work against the resolved enterprise endpoint while its mandatory audit targets the model’s default endpoint and fails. The new integration test only registers a keyless faux native provider (`test/package-entrypoint.integration.test.ts:67-76`), so it does not detect this boundary regression.
+
+All 35 tests, typecheck, pack dry-run, diff check, clean-tree, and HEAD checks pass.
+
+
+## Spec axis
+
+No findings.

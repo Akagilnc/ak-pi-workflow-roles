@@ -1,0 +1,13 @@
+{
+  "itemKey": "85cf04147400cb58a2856e15eef1f523a083d97cad5c1fcfad29b5151cc0ca83",
+  "basename": "issue-2-receipt-trail-plan.md",
+  "sourceSha256": "f6a5a3f9d202ecad1dddd922c243b1f05414a4af11561fbebab167ea828791e9",
+  "recoveredSha256": "f6a5a3f9d202ecad1dddd922c243b1f05414a4af11561fbebab167ea828791e9",
+  "sourceBytes": 1664,
+  "recoveredBytes": 1664,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/15/repair/repair-003/recorder-closure"
+  },
+  "invocation": {
+    "id": "e289b017-0726-42e6-99be-b370494fd0ca"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work/issues/15/repair-003-apply/recorder-child-cutoff-and-scan.mjs"
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {
+        "AK_REPAIR_REPO_ROOT": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "AK_REPAIR_EVIDENCE_OUT": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work/issues/15/repair-003-apply/cutoff-scan-summary.json"
+      },
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": null,
+    "model": null,
+    "target": "issue-15-case-a-repair-003-r1-r4",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "d81605c5bcd478a01fbf5612c34399b8f4b44bdf",
+        "path": ".ak/dockets/issues/15/repair/repair-003/packet.md",
+        "blobOid": "8c893a923cd0fc8506e1ebd917be8f079152d87f",
+        "sha256": "0350f934d9131391c4b62549052bbc8425afb0738efa5bfb860f9bb88d77c791",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "d81605c5bcd478a01fbf5612c34399b8f4b44bdf",
+        "path": ".ak/dockets/issues/15/repair/repair-003/plan-003/receipt.json",
+        "blobOid": "ec3225c28782d7d733fff2410924aae40063d341",
+        "sha256": "f4e27898a6754fdbbe8fe527c1790940a280c1a7976e92e0f46e9558510b2873",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair-003-child-result",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/cutoff-scan-summary",
+        "sha256": "daadad3bc2487de6eed761420dd3c50ff5ac301e4bc64149246146bd7d3d5c43",
+        "byteLength": 666816
+      }
+    },
+    {
+      "id": "repair-003-child-implementation",
+      "kind": "exhibit",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "exhibits/cutoff-scan-implementation",
+        "sha256": "c5e2b0b6a651a4bd24b49d253d80f3d524126b8b874855509766c4f7e99bb504",
+        "byteLength": 29375
+      }
+    }
+  ],
+  "receipt": null,
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  },
+  "identityLedger": {
+    "namespace": {
+      "namespace": "github.com/Akagilnc/ak-pi-workflow-roles",
+      "inputs": [
+        {
+          "repository": "github.com/Akagilnc/ak-pi-workflow-roles",
+          "commit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/authority/judge-003/inputs/issue-snapshot",
+          "blobOid": "5f6f7533360e186cd8f9f7d85b3bb7e77c08cfe3",
+          "sha256": "b4e91b794101d592045d28ca1b7f809e9f8718f48a889bd49ac2003fef00fa08"
+        },
+        {
+          "repository": "github.com/Akagilnc/ak-pi-workflow-roles",
+          "commit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/discovery-spec.v1.json",
+          "blobOid": "7b778f33a61efede91832b5d17f3dd1bdbab313f",
+          "sha256": "176fe8f30467470a42a7cccf317957799035b03a12fd928c701628568bd4f6d3"
+        }
+      ]
+    },
+    "gitTupleCount": 561,
+    "externalSourceCount": 277,
+    "resultPath": "inputs/cutoff-scan-summary",
+    "implementationPath": "exhibits/cutoff-scan-implementation"
+  }
+}

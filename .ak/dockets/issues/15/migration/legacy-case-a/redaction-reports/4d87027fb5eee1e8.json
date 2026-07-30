@@ -1,0 +1,13 @@
+{
+  "itemKey": "4d87027fb5eee1e849f015991f3544af3f983584bc0f518af6273cd2c62e12d8",
+  "basename": "ak-collector-wait-cadence-finding.md",
+  "sourceSha256": "33b5cb19e34fd1ff2f41283500a5349e87978ff27b8ff4f86869ce88961255f3",
+  "recoveredSha256": "33b5cb19e34fd1ff2f41283500a5349e87978ff27b8ff4f86869ce88961255f3",
+  "sourceBytes": 1882,
+  "recoveredBytes": 1882,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

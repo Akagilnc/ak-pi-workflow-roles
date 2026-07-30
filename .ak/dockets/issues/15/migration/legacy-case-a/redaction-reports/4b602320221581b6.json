@@ -1,0 +1,13 @@
+{
+  "itemKey": "4b602320221581b62576adf21d04bd17d8673eb110421b548f71fc1f9d491cfa",
+  "basename": "ak-runtime-review-receipt.md",
+  "sourceSha256": "d167572247625b0d4f89a18c0f998b945d2388e953f9668b7d58f818ec0c9078",
+  "recoveredSha256": "d167572247625b0d4f89a18c0f998b945d2388e953f9668b7d58f818ec0c9078",
+  "sourceBytes": 1414,
+  "recoveredBytes": 1414,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

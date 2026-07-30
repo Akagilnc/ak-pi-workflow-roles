@@ -1,0 +1,98 @@
+{
+  "formatVersion": 1,
+  "count": 7,
+  "items": [
+    {
+      "itemKey": "f74d83d3725baf15484a822c249725db3e0066b6febb3f0d504362736170499d",
+      "basename": "ak-collector-independent-probes.ts",
+      "repositoryId": "designated-project",
+      "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+      "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/f7/f74d83d3725baf15-ak-collector-independent-probes.ts",
+      "blobOid": "e90c610ca47ca42579ba9cbeda89370269f9c552",
+      "sha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
+      "axes": [
+        "Collector"
+      ],
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target"
+    },
+    {
+      "itemKey": "15442864e040bc0c55b753949084e889b6580bf0ae69d8d78f2b25a9b1cc074e",
+      "basename": "collector-adjudication-probe.ts",
+      "repositoryId": "designated-project",
+      "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+      "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/15/15442864e040bc0c-collector-adjudication-probe.ts",
+      "blobOid": "cf244543e2e9601662cccdc91a1d30b2796968fa",
+      "sha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb",
+      "axes": [
+        "Judge",
+        "Collector"
+      ],
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target"
+    },
+    {
+      "itemKey": "2ade6dc2dd7242f3d4b9277aa4415d5031a2f42fb9e35668a40ba8e046de14ca",
+      "basename": "collector-cancel-probe.ts",
+      "repositoryId": "designated-project",
+      "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+      "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/2a/2ade6dc2dd7242f3-collector-cancel-probe.ts",
+      "blobOid": "2a63bb9320e0776297b9ebddc9cd01b0a9c77661",
+      "sha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
+      "axes": [
+        "Collector"
+      ],
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target"
+    },
+    {
+      "itemKey": "23bc7d533fa98421a666533c2afdf6aab7ba6b45184820a233d7b67d7cc8fabd",
+      "basename": "collector-cross-cutoff-probe.ts",
+      "repositoryId": "designated-project",
+      "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+      "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/23/23bc7d533fa98421-collector-cross-cutoff-probe.ts",
+      "blobOid": "58035b27e2dea0abfc97c149664e7c7f902efc4c",
+      "sha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da",
+      "axes": [
+        "Collector"
+      ],
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target"
+    },
+    {
+      "itemKey": "47cc29d52cf223099fe31c16e7dd51c358e7e1885d6c49d5a8a9f9a50f6659af",
+      "basename": "issue-1-independent-probe.ts",
+      "repositoryId": "designated-project",
+      "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+      "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/47/47cc29d52cf22309-issue-1-independent-probe.ts",
+      "blobOid": "f743cd6bc5cf0ffff538aff0a37dfaaa89456110",
+      "sha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
+      "axes": [
+        "issue-1"
+      ],
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target"
+    },
+    {
+      "itemKey": "42a9fc2895acf1796351b2f7a06a73f46d10605a4138776ddb548d39a34607f1",
+      "basename": "judge-malformed-probe.ts",
+      "repositoryId": "designated-project",
+      "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+      "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/42/42a9fc2895acf179-judge-malformed-probe.ts",
+      "blobOid": "c29e68fd02f1ebc8cc56b56a8f0755ea1f63f684",
+      "sha256": "857682fe76fd6ea58d3b63a7946aadae69ca55fe3e1a2a6b32509a3d054dd48d",
+      "axes": [
+        "Judge"
+      ],
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target"
+    },
+    {
+      "itemKey": "af289a8e481f1cf51eea5f948b6a43b40ada81e6346d2f7ad2e7ea880167c0fb",
+      "basename": "reviewer-real-pi-snippet.ts",
+      "repositoryId": "designated-project",
+      "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+      "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/af/af289a8e481f1cf5-reviewer-real-pi-snippet.ts",
+      "blobOid": "676134ef8279d8cb1e9eb5a921e277ef5bbdc1fb",
+      "sha256": "e5b36400cf6705888179fcead419b3b188e78be4f17e8c68628ce5e88a6150fc",
+      "axes": [
+        "Reviewer"
+      ],
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target"
+    }
+  ]
+}

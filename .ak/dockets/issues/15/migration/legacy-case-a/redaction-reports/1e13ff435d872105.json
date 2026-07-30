@@ -1,0 +1,13 @@
+{
+  "itemKey": "1e13ff435d87210518f94a475347d8af017a54f6386c2cf87998d2aaf18e2851",
+  "basename": "ak-reviewer-pack.json",
+  "sourceSha256": "a2dc52c65e66668d14db03fd215c1a8fa6cd593c715639a543fd870424dd92d1",
+  "recoveredSha256": "a2dc52c65e66668d14db03fd215c1a8fa6cd593c715639a543fd870424dd92d1",
+  "sourceBytes": 1707,
+  "recoveredBytes": 1707,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

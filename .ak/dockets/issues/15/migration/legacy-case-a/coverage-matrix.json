@@ -1,0 +1,122 @@
+{
+  "formatVersion": 1,
+  "discoverySpecSha256": "176fe8f30467470a42a7cccf317957799035b03a12fd928c701628568bd4f6d3",
+  "axes": [
+    "Judge",
+    "Fixer",
+    "Coder",
+    "Reviewer",
+    "Collector",
+    "issue-1",
+    "issue-2",
+    "issue-3"
+  ],
+  "outcomes": {
+    "Judge": {
+      "axis": "Judge",
+      "status": "recovered",
+      "admittedCount": 72,
+      "excludedRelatedCount": 185,
+      "sampleBasenames": [
+        "ak-collector-judge-pack.json",
+        "ak-collector-pack-adjudication.json",
+        "ak-harness-approved-plan.md",
+        "ak-harness-plan-revision.md",
+        "ak-judge-pack-2.json"
+      ]
+    },
+    "Fixer": {
+      "axis": "Fixer",
+      "status": "recovered",
+      "admittedCount": 155,
+      "excludedRelatedCount": 137,
+      "sampleBasenames": [
+        "ak-collector-fix-packet-2.md",
+        "ak-collector-fix-packet-3.md",
+        "ak-collector-fix-packet-4.md",
+        "ak-collector-fix-packet-5.md",
+        "ak-collector-fix-packet-final.md"
+      ]
+    },
+    "Coder": {
+      "axis": "Coder",
+      "status": "recovered",
+      "admittedCount": 86,
+      "excludedRelatedCount": 79,
+      "sampleBasenames": [
+        "ak-collector-coder-plan-gpt.md",
+        "ak-collector-coder-plan-grok.md",
+        "ak-collector-coder-receipt.md",
+        "ak-harness-approved-plan.md",
+        "ak-harness-coder-plan.md"
+      ]
+    },
+    "Reviewer": {
+      "axis": "Reviewer",
+      "status": "recovered",
+      "admittedCount": 70,
+      "excludedRelatedCount": 66,
+      "sampleBasenames": [
+        "ak-collector-final-review-receipt.md",
+        "ak-collector-final-review-task.md",
+        "ak-collector-reviewer-refusal.md",
+        "ak-harness-approved-plan.md",
+        "ak-harness-plan-revision.md"
+      ]
+    },
+    "Collector": {
+      "axis": "Collector",
+      "status": "recovered",
+      "admittedCount": 97,
+      "excludedRelatedCount": 110,
+      "sampleBasenames": [
+        "ak-collector-approved-synthesis.md",
+        "ak-collector-cancel-precedence-packet.md",
+        "ak-collector-cancel-precedence-plan-2.md",
+        "ak-collector-cancel-precedence-plan-correction.md",
+        "ak-collector-cancel-precedence-plan.md"
+      ]
+    },
+    "issue-1": {
+      "axis": "issue-1",
+      "status": "recovered",
+      "admittedCount": 18,
+      "excludedRelatedCount": 17,
+      "sampleBasenames": [
+        "issue-1-adr3-plan.md",
+        "issue-1-adr3-receipt.md",
+        "issue-1-adr3-residual.md",
+        "issue-1-authority-source.md",
+        "issue-1-authority.md"
+      ]
+    },
+    "issue-2": {
+      "axis": "issue-2",
+      "status": "recovered",
+      "admittedCount": 15,
+      "excludedRelatedCount": 15,
+      "sampleBasenames": [
+        "issue-2-apply-fix-packet.md",
+        "issue-2-authority-source.md",
+        "issue-2-authority.md",
+        "issue-2-coder-plan.md",
+        "issue-2-coder-receipt.md"
+      ]
+    },
+    "issue-3": {
+      "axis": "issue-3",
+      "status": "recovered",
+      "admittedCount": 22,
+      "excludedRelatedCount": 27,
+      "sampleBasenames": [
+        "issue-3-apply-fix-packet.md",
+        "issue-3-authority.md",
+        "issue-3-coder-plan-2.md",
+        "issue-3-coder-plan-3.md",
+        "issue-3-coder-plan.md"
+      ]
+    }
+  },
+  "completenessClaim": "Coverage is limited to the frozen discoverable universe at walk start under sealed predicates. This migration does not claim historical completeness.",
+  "historicalCompletenessClaimed": false
+}

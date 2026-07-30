@@ -1,0 +1,13 @@
+{
+  "itemKey": "7f96a41ae44a677b32dcdb08a7c1c0d978852625cf5ba32ed829bf7e81779d3d",
+  "basename": "issue-1-commit-msg.txt",
+  "sourceSha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+  "recoveredSha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+  "sourceBytes": 503,
+  "recoveredBytes": 503,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain commit-msg artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

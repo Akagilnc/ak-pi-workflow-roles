@@ -1,0 +1,13 @@
+{
+  "itemKey": "c0fbdf7fa851a5c98a247316cd97e25f6f18f99887f5c1875e80930582dd8bc6",
+  "basename": "ak-skill-coder-receipt.md",
+  "sourceSha256": "90f61e644418e0c328040a9199695a5c7346eff94b82230b6dc86d5cd8a93180",
+  "recoveredSha256": "90f61e644418e0c328040a9199695a5c7346eff94b82230b6dc86d5cd8a93180",
+  "sourceBytes": 2002,
+  "recoveredBytes": 2002,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

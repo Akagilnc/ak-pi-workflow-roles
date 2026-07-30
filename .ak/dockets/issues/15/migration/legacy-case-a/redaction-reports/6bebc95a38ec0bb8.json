@@ -1,0 +1,13 @@
+{
+  "itemKey": "6bebc95a38ec0bb8f2e534d8cce1919172630075cfe5e652cbcb7613ea91c79b",
+  "basename": "ak-reviewer-refusal-receipt.md",
+  "sourceSha256": "a4564df89e44ddeb1efb67d835dc84c69b51636683cc162b7745c0f0a392d2a3",
+  "recoveredSha256": "a4564df89e44ddeb1efb67d835dc84c69b51636683cc162b7745c0f0a392d2a3",
+  "sourceBytes": 1222,
+  "recoveredBytes": 1222,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

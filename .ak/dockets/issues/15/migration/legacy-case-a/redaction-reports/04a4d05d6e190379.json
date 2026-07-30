@@ -1,0 +1,13 @@
+{
+  "itemKey": "04a4d05d6e190379341712ee2a7cb999649bbf0fe7a710788524df7c03025b03",
+  "basename": "ak-ledger-review-receipt.md",
+  "sourceSha256": "c76dad8fb92b0ba83f5061a0a765f5c0b1254820b686dbb12fc4cbec9d77f801",
+  "recoveredSha256": "c76dad8fb92b0ba83f5061a0a765f5c0b1254820b686dbb12fc4cbec9d77f801",
+  "sourceBytes": 4702,
+  "recoveredBytes": 4702,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

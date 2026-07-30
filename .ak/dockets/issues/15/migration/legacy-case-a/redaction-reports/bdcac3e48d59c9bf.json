@@ -1,0 +1,13 @@
+{
+  "itemKey": "bdcac3e48d59c9bf5a2356716268b6b4331254b4fe29876c65f8b53d64c9c3ea",
+  "basename": "ak-reviewer-approved-plan-candidate.md",
+  "sourceSha256": "a86408cba91097db59a6b5f7ab07819ee22ac1f99b9235dc9cd7c11ebd123d9b",
+  "recoveredSha256": "a86408cba91097db59a6b5f7ab07819ee22ac1f99b9235dc9cd7c11ebd123d9b",
+  "sourceBytes": 13273,
+  "recoveredBytes": 13273,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

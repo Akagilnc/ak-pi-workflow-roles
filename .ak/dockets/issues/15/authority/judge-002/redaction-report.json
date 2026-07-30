@@ -1,0 +1,19 @@
+{
+  "hits": [
+    {
+      "ruleId": "basic-credential",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "provider-package-token",
+      "location": "child.stdout",
+      "count": 16
+    },
+    {
+      "ruleId": "token-assignment",
+      "location": "child.stdout",
+      "count": 15
+    }
+  ]
+}

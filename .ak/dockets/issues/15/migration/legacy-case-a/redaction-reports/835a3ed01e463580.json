@@ -1,0 +1,13 @@
+{
+  "itemKey": "835a3ed01e463580721e15ff637938e7a7227977828c522f89ae691496bc3022",
+  "basename": "ak-roles-e2e-spec-18c.md",
+  "sourceSha256": "463142d43847de346e37db07947291d4b0d703a80e86ea17e758cd79ddb5419e",
+  "recoveredSha256": "463142d43847de346e37db07947291d4b0d703a80e86ea17e758cd79ddb5419e",
+  "sourceBytes": 3403,
+  "recoveredBytes": 3403,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

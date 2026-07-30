@@ -1,0 +1,22 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "posture": "review",
+  "status": "continue",
+  "target": "da250445d09ef2b9105a99590f2ccda0a8db29c4",
+  "request": {
+    "path": "request.md",
+    "sha256": "bda75287e5e275706d136937ff4f2056ccb9519932abdb80d500a0b053fa6680"
+  },
+  "sessionCandidate": {
+    "bytes": 90275587,
+    "sha256": "cf0cd1612cc79e75035fa9c2c13549d2006f4071e799055a5ceaa2408cf2887e",
+    "retention": "not retained",
+    "reason": "routine judgment execution exhaust; accepted Judge Receipt and Soul-audit outcome carry the claim"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "4e550a48c7354eaa240cb492c20e41f688fe0d1dca43da53ce28fd9e8f84ec2b",
+    "acceptedBySoulAudit": true
+  }
+}

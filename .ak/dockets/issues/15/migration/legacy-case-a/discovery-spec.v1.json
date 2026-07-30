@@ -1,0 +1,193 @@
+{
+  "formatVersion": 1,
+  "specId": "issue-15-case-a-discovery-v1",
+  "sealedBefore": "construction-enumeration-or-selection",
+  "authority": {
+    "issue": 15,
+    "case": "A",
+    "governing": [
+      ".ak/dockets/issues/10/authority/amendments/001-legacy-import-and-logical-stream.md",
+      ".ak/dockets/issues/10/authority/amendments/003-evidence-admission-and-core-docket.md",
+      ".ak/dockets/issues/10/authority/amendments/005-value-bearing-evidence-only.md",
+      ".ak/dockets/issues/10/authority/amendments/006-small-core-recorder-v1.md",
+      ".ak/dockets/issues/15/authority/judge-004/receipt.json",
+      ".ak/dockets/issues/15/plan/plan-002/receipt.json",
+      ".ak/dockets/issues/15/plan/plan-002/judge/receipt.json"
+    ],
+    "ownerComments": [
+      5125684908,
+      5125711800
+    ]
+  },
+  "priorAggregateObservation": {
+    "ownerCommentId": 5125684908,
+    "notedCandidates": 573,
+    "notedJsonl": 255,
+    "notedNonJsonl": 318,
+    "role": "recoverability-observation-only",
+    "excludedFromDenominator": true,
+    "excludedFromInventorySeed": true,
+    "excludedFromAdmissionOrCompleteness": true
+  },
+  "canonicalSourceRoot": {
+    "logical": "/tmp",
+    "resolveSymlinkRoot": true,
+    "topLevelOnly": true,
+    "maxDepth": 1
+  },
+  "projectRolePredicates": {
+    "description": "Top-level /tmp basenames tied to @ak/pi-workflow-roles Judge/Fixer/Coder/Reviewer/Collector development and issue #1–#3 work.",
+    "includeBasenamePrefixes": [
+      "ak-roles",
+      "ak-pi-workflow",
+      "ak-collector",
+      "ak-reviewer",
+      "ak-harness",
+      "ak-runtime",
+      "ak-skill",
+      "ak-ledger",
+      "ak-judge",
+      "ak-fixer",
+      "ak-coder",
+      "ak-role-",
+      "issue-1-",
+      "issue-2-",
+      "issue-3-"
+    ],
+    "includeBasenameRegexes": [
+      "^(judge|fixer|coder|reviewer|collector)[-_.]",
+      "^ak-pi-workflow-roles"
+    ],
+    "excludeNotes": [
+      "issue10/issue-10 scratch is out of Case A five-role/#1–#3 denominator (issue #10 had its own migration).",
+      "Other-project trees (issue33+, issue39+, ak-rm-*, xcresult) do not match prefixes.",
+      "No recursion into subdirectories; directory entries are outside the file inventory."
+    ]
+  },
+  "filesystemBoundaries": {
+    "followSymlinks": false,
+    "includeRegularFiles": true,
+    "includeSymlinksAsEntries": true,
+    "includeDirectories": false,
+    "includeSpecialFiles": false,
+    "skipUnreadable": true,
+    "recordSkipReason": true
+  },
+  "regularFileSymlinkHandling": {
+    "lstatOnly": true,
+    "neverFollowForReadOrCopy": true,
+    "openFlags": "O_RDONLY|O_NOFOLLOW when available",
+    "symlinkDispositionDefault": "excluded",
+    "symlinkReason": "symlink-not-followed",
+    "specialFileDispositionDefault": "excluded",
+    "specialFileReason": "non-regular-file"
+  },
+  "cutoff": {
+    "type": "walk-start-instant",
+    "description": "Inventory is the set of matching top-level entries present at construction walk start. No mtime lower bound. Volatility after walk start is out of universe."
+  },
+  "metadataRecordedPerEntry": [
+    "sanitizedLocator",
+    "basename",
+    "fileType",
+    "sizeBytes",
+    "mtimeMs",
+    "ctimeMs",
+    "dev",
+    "ino",
+    "mode",
+    "digestPolicy",
+    "sha256"
+  ],
+  "digestPolicy": {
+    "regularFileNonGeneric": "sha256 of exact rescued bytes after no-follow open; verified copy-then-hash",
+    "regularFileGenericExhaust": "sha256 of exact source bytes for inventory identity only; payload not semantically parsed; bytes never copied into Git",
+    "symlinkOrSpecial": "digest-not-applicable",
+    "unreadable": "digest-unavailable"
+  },
+  "stableItemKey": {
+    "algorithm": "sha256-hex",
+    "material": "v1|{basename}|{fileType}|{sizeBytes}|{mtimeMs}|{dev}|{ino}|{sha256|no-digest}",
+    "description": "Stable across re-runs on identical inode snapshot; not a path-only key."
+  },
+  "genericExhaustClassification": {
+    "method": "function-and-provenance-from-frozen-name-class",
+    "notByExtensionAlone": true,
+    "jsonlExtensionNeitherAutoExcludeNorAdmit": true,
+    "classes": {
+      "role-session-recording": {
+        "function": "raw Pi/role invocation event stream captured by orchestrator",
+        "provenance": "basename matches project/role predicates AND ends with .jsonl AND matches role-invocation capture naming used by this package's historical runner (contains role/phase tokens or dogfood/session capture shape)",
+        "disposition": "excluded",
+        "reasonCode": "generic-role-session-exhaust",
+        "copyToGit": false,
+        "semanticRead": false,
+        "metadataOnly": true
+      },
+      "build-test-pack-output": {
+        "function": "build, test, typecheck, pack, or CLI stdout/stderr exhaust",
+        "provenance": "basename matches known exhaust suffixes/tokens (.log/.out/.err/.tap, typecheck, test.txt, commits.txt, pack.txt, pack-*.txt, stderr, install.log, live-help dump)",
+        "disposition": "excluded",
+        "reasonCode": "generic-build-test-pack-exhaust",
+        "copyToGit": false,
+        "semanticRead": false,
+        "metadataOnly": true
+      },
+      "ephemeral-cli-scratch": {
+        "function": "path export, nl probe, work-ready marker, or empty scratch",
+        "provenance": "basename matches judge-nl/reviewer-nl/export/work-r/r-ready/r-block/rerecord scratch tokens or zero-length non-document",
+        "disposition": "excluded",
+        "reasonCode": "ephemeral-cli-scratch",
+        "copyToGit": false,
+        "semanticRead": false,
+        "metadataOnly": true
+      },
+      "decision-chain-artifact": {
+        "function": "authority, plan, fix packet, typed receipt, review report/task, adjudication, disposition, finding, closure court, corrections, residual, synthesis, or evidence probe that carries the claim chain",
+        "provenance": "non-generic name class: authority|receipt|fix-packet|plan|review|adjudicat|disposition|judgment|task|finding|closure|court|spec|standards|synthesis|correction|residual|probe|pack.json|owner|amendment|pr.md|commit-msg|skill|protocol",
+        "dispositionCandidates": [
+          "recovered",
+          "reference",
+          "superseded"
+        ],
+        "copyToGitWhenNotGitResolvable": true,
+        "semanticRead": "sanitized-bytes-only-after-rescue-and-scan"
+      }
+    },
+    "irreducibleExhibitPath": "Only when frozen citation/provenance identifies an exact artifact independently of exploratory generic-payload reading; none pre-cited for Case A beyond decision-chain name class. Surrounding generic containers remain metadata-only."
+  },
+  "authorizedRepositories": [
+    {
+      "id": "designated-project",
+      "role": "designated",
+      "path": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+      "remoteHint": "Akagilnc/ak-pi-workflow-roles"
+    }
+  ],
+  "privateRescue": {
+    "root": ".ak/work/issues/15/case-a-rescue",
+    "gitignored": true,
+    "permissionMode": 448,
+    "neitherAdmissionNorPromotion": true
+  },
+  "coverageAxes": [
+    "Judge",
+    "Fixer",
+    "Coder",
+    "Reviewer",
+    "Collector",
+    "issue-1",
+    "issue-2",
+    "issue-3"
+  ],
+  "completenessClaim": "Coverage is limited to the frozen discoverable universe at walk start under sealed predicates. This migration does not claim historical completeness.",
+  "dispositionsAllowed": [
+    "recovered",
+    "reference",
+    "excluded",
+    "superseded"
+  ],
+  "knownMissingSeparate": true,
+  "sealedAt": "2026-07-30T03:26:50.841Z",
+  "constructionHeadAtSeal": "8063b4d6c4a425a5d2e240ff10ada85396926aca"
+}

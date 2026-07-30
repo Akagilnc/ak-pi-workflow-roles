@@ -1,0 +1,13 @@
+{
+  "itemKey": "e94106c067bc8f078815398adb20585daad320f3647ce1c0f4a2f782dddd3490",
+  "basename": "ak-reviewer-fixer-plan-2.md",
+  "sourceSha256": "cfd42f16c4fbaaaad57ba5850b3e9432a6beafbce0c786d92aea48ac75f7b151",
+  "recoveredSha256": "cfd42f16c4fbaaaad57ba5850b3e9432a6beafbce0c786d92aea48ac75f7b151",
+  "sourceBytes": 8690,
+  "recoveredBytes": 8690,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

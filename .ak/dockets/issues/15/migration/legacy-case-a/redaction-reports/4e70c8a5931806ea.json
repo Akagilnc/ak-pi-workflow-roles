@@ -1,0 +1,13 @@
+{
+  "itemKey": "4e70c8a5931806ea7dc7da0b33e58785c0eb47f8d4c5bda1f9df60bdeef8b20b",
+  "basename": "issue-2-coder-plan.md",
+  "sourceSha256": "95ccb2a9e26c2fe7722fe5102b96e7d7503d3b853a4dc5c3fd8b1e257fb6c8f1",
+  "recoveredSha256": "95ccb2a9e26c2fe7722fe5102b96e7d7503d3b853a4dc5c3fd8b1e257fb6c8f1",
+  "sourceBytes": 10375,
+  "recoveredBytes": 10375,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

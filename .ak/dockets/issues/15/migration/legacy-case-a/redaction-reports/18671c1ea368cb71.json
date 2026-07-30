@@ -1,0 +1,13 @@
+{
+  "itemKey": "18671c1ea368cb71a3e3356ac7e3311699c7379ceff1ae1b154412f5d9d7e2aa",
+  "basename": "ak-runtime-fixer-plan.md",
+  "sourceSha256": "2d60c279efdc008cba211ba782815bf30403000eefde6c90c8ce01956ac2ebc2",
+  "recoveredSha256": "2d60c279efdc008cba211ba782815bf30403000eefde6c90c8ce01956ac2ebc2",
+  "sourceBytes": 1612,
+  "recoveredBytes": 1612,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

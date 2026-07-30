@@ -1,0 +1,8 @@
+feat(fixer): add exact four-literal bash seatbelt for both phases
+
+Register a Fixer-only tool_call gate that blocks bash commands containing
+the exact literals rm -rf, git reset --hard, git clean, or git checkout --.
+Prove ordinary blocked results, no execution, continued session, and a
+harmless control through the packaged real-Pi Fixer integration for plan
+and apply. Document the seatbelt and non-security boundary; accept ADRs
+0001-0003 and 0005-0009 while marking ADR 0001 fixed roster obsolete.

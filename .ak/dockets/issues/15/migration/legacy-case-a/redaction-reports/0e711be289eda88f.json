@@ -1,0 +1,13 @@
+{
+  "itemKey": "0e711be289eda88fd83a46d63a737b5940a3ee6fb1f4a6b44988688d79e3b51e",
+  "basename": "ak-skill-fix-packet.md",
+  "sourceSha256": "6b6252ca2ea3d5bb7b0ebb8df4607e28841b56748dba093f1726c7f864e7a259",
+  "recoveredSha256": "6b6252ca2ea3d5bb7b0ebb8df4607e28841b56748dba093f1726c7f864e7a259",
+  "sourceBytes": 2280,
+  "recoveredBytes": 2280,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}
