@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
+  createBashTool,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -21,21 +23,36 @@ import {
 
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
 import type {
-  ReviewerAgentResult,
+  AcceptedReviewerDispatch,
+  AcceptedReviewerLeg,
+} from "./reviewer-dispatch.ts";
+import type {
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
+  ReviewerUsage,
 } from "./reviewer-execution-ledger.ts";
 
-const CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
 const REVIEW_REF_PREFIXES = ["refs/heads", "refs/tags", "refs/remotes"];
+const RUNNER_MIRROR = "runner.git.materialize-mirror";
+const RUNNER_WORKSPACE = "runner.git.materialize-workspace";
+const RUNNER_VERIFY = "runner.git.verify-snapshot";
 
-export type RunReviewerAgent = (
-  input: { description: string; prompt: string },
-  options: { context: ExtensionContext; signal?: AbortSignal },
-) => Promise<ReviewerAgentResult>;
-
+export type ReviewerLegRunResult = Readonly<{
+  report: string;
+  usage: ReviewerUsage;
+  target: ReviewerTargetSnapshot;
+  prompt: Readonly<{ bytes: string; utf8Length: number; sha256: string }>;
+  workspaceDisposition: ReviewerWorkspaceDisposition;
+}>;
+export type ReviewerDispatchRunResult = Readonly<{
+  identity: string;
+  target: ReviewerTargetSnapshot;
+  legs: Readonly<{ standards: ReviewerLegRunResult; spec?: ReviewerLegRunResult }>;
+}>;
 export type ReviewerAgentRunner = {
-  runReviewerAgent: RunReviewerAgent;
+  run(dispatch: AcceptedReviewerDispatch, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
+  /** @internal @deprecated Remove with the next Reviewer role/ledger migration slice. */
+  runReviewerAgent(input: { description: string; prompt: string }, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<never>;
   shutdown(): Promise<void>;
 };
 
@@ -158,16 +175,17 @@ async function verifySnapshot(
 }
 
 async function prepareSnapshot(
-  cwd: string,
+  accepted: ReviewerTargetSnapshot,
   signal?: AbortSignal,
 ): Promise<GitSnapshot> {
-  const repositoryRoot = (
-    await git(cwd, ["rev-parse", "--show-toplevel"], signal)
-  ).stdout.trim();
+  const repositoryRoot = accepted.repositoryRoot;
   const targetHead = (
     await git(repositoryRoot, ["rev-parse", "HEAD^{commit}"], signal)
   ).stdout.trim();
   const refs = await readRefs(repositoryRoot, signal);
+  if (targetHead !== accepted.targetHead || !sameRefs(refs, accepted.refs)) {
+    throw new Error("Accepted Reviewer target/ref identity no longer matches the repository");
+  }
   const mirrorRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-snapshot-"));
   const mirrorPath = join(mirrorRoot, "repository.git");
   try {
@@ -345,7 +363,7 @@ async function createChildRuntime(
 
 async function runChild(
   workspace: string,
-  prompt: string,
+  leg: AcceptedReviewerLeg,
   context: ExtensionContext,
   signal?: AbortSignal,
 ): Promise<{ report: string; usage: Usage }> {
@@ -372,6 +390,18 @@ async function runChild(
   });
   await loader.reload();
   const { runtime, model } = await createChildRuntime(context);
+  const customTools = leg.grant.tools.includes("bash")
+    ? [{
+        ...createBashTool(workspace),
+        async execute(...args: any[]) {
+          const input = args[1] as { command?: unknown };
+          if (typeof input.command !== "string" || !leg.grant.bashCommands.includes(input.command)) {
+            throw new Error("Reviewer bash command denied: command is not an exact accepted member");
+          }
+          return (createBashTool(workspace).execute as any)(...args);
+        },
+      }]
+    : [];
   const { session } = await createAgentSession({
     cwd: workspace,
     agentDir: childConfigDir,
@@ -379,7 +409,8 @@ async function runChild(
     thinkingLevel: context.thinkingLevel ?? "off",
     modelRuntime: runtime,
     resourceLoader: loader,
-    tools: CHILD_TOOLS,
+    tools: [...leg.grant.tools],
+    customTools,
     sessionManager: SessionManager.inMemory(workspace),
     settingsManager: settings,
   });
@@ -394,12 +425,10 @@ async function runChild(
   else signal?.addEventListener("abort", abortChild, { once: true });
   try {
     const visibleTools = session.agent.state.tools.map((tool) => tool.name);
-    if (JSON.stringify(visibleTools) !== JSON.stringify(CHILD_TOOLS)) {
-      throw new Error(
-        `Reviewer child tool isolation failed: ${visibleTools.join(", ")}`,
-      );
+    if (JSON.stringify(visibleTools) !== JSON.stringify(leg.grant.tools)) {
+      throw new Error(`Reviewer child tool isolation failed: ${visibleTools.join(", ")}`);
     }
-    await session.prompt(prompt);
+    await session.prompt(leg.prompt);
     if (signal?.aborted) {
       throw new Error("Reviewer Agent was cancelled");
     }
@@ -430,50 +459,43 @@ async function runChild(
 
 export function createReviewerAgentRunner(): ReviewerAgentRunner {
   let snapshotPromise: Promise<GitSnapshot> | undefined;
-  let pinnedCwd: string | undefined;
+  let acceptedIdentity: string | undefined;
   let snapshotDeleted = false;
 
-  const runReviewerAgent: RunReviewerAgent = async (input, options) => {
-    if (snapshotPromise === undefined) {
-      pinnedCwd = options.context.cwd;
-      snapshotPromise = prepareSnapshot(
-        options.context.cwd,
-        options.signal,
-      );
-    } else if (pinnedCwd !== options.context.cwd) {
-      throw new Error("Reviewer Agent session cannot change repository roots");
-    }
-    const snapshot = await snapshotPromise;
-    const publicSnapshot: ReviewerTargetSnapshot = {
-      repositoryRoot: snapshot.repositoryRoot,
-      targetHead: snapshot.targetHead,
-      refs: { ...snapshot.refs },
-    };
-    const workspace = await prepareWorkspace(snapshot, options.signal);
-    try {
-      const child = await runChild(
-        workspace,
-        input.prompt,
-        options.context,
-        options.signal,
-      );
-      await rm(workspace, { recursive: true, force: false });
-      return {
-        report: child.report,
-        usage: child.usage,
-        targetSnapshot: publicSnapshot,
-        workspaceDisposition: "deleted",
-      };
-    } catch (error) {
-      throw infrastructureError(error, {
-        workspaceDisposition: { retained: workspace },
-        targetSnapshot: publicSnapshot,
-      });
-    }
-  };
-
   return {
-    runReviewerAgent,
+    async runReviewerAgent() {
+      throw new Error("Deprecated Reviewer Agent adapter cannot execute without an accepted dispatch");
+    },
+    async run(dispatch, options) {
+      if (dispatch.recipe !== "reviewer-dispatch-v1" || dispatch.legs.length < 1 || dispatch.legs.length > 2 ||
+          dispatch.legs[0]?.axis !== "standards" || (dispatch.legs.length === 2 && dispatch.legs[1]?.axis !== "spec")) {
+        throw new Error("Invalid accepted Reviewer dispatch cardinality or axes");
+      }
+      if (acceptedIdentity !== undefined) throw new Error("Reviewer runner accepts exactly one dispatch");
+      acceptedIdentity = dispatch.identity;
+      for (const leg of dispatch.legs) {
+        const actualLength = Buffer.byteLength(leg.prompt, "utf8");
+        const actualSha = createHash("sha256").update(leg.prompt).digest("hex");
+        if (actualLength !== leg.utf8Length || actualSha !== leg.sha256) throw new Error("Accepted Reviewer prompt evidence mismatch");
+        for (const operation of [RUNNER_MIRROR, RUNNER_WORKSPACE, RUNNER_VERIFY]) {
+          if (!leg.grant.prerequisiteOperations.includes(operation as any)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
+        }
+      }
+      snapshotPromise = prepareSnapshot(dispatch.targetSnapshot, options.signal);
+      const snapshot = await snapshotPromise;
+      const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
+      const pairs = await Promise.all(dispatch.legs.map(async (leg) => {
+        const workspace = await prepareWorkspace(snapshot, options.signal);
+        try {
+          const child = await runChild(workspace, leg, options.context, options.signal);
+          await rm(workspace, { recursive: true, force: false });
+          return [leg.axis, Object.freeze({ report: child.report, usage: child.usage, target, prompt: Object.freeze({ bytes: leg.prompt, utf8Length: Buffer.byteLength(leg.prompt, "utf8"), sha256: createHash("sha256").update(leg.prompt).digest("hex") }), workspaceDisposition: "deleted" as const })] as const;
+        } catch (error) {
+          throw infrastructureError(error, { workspaceDisposition: { retained: workspace }, targetSnapshot: target });
+        }
+      }));
+      return Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(Object.fromEntries(pairs)) }) as ReviewerDispatchRunResult;
+    },
     async shutdown() {
       if (snapshotPromise === undefined || snapshotDeleted) return;
       const snapshot = await snapshotPromise;
