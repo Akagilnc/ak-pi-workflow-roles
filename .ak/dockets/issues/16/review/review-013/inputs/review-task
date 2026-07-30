@@ -1,0 +1,13 @@
+# Review issue #16 final positional repair
+
+Review the fixed range:
+
+- base: `78cd4e9807aa8a6ebf5a0d852b096b62180fb2da`
+- target: `7e67b3b29ea81a331cbbf5c139cd894d4acbb169`
+
+Authority: issue #16 at `.ak/dockets/issues/16/review/review-001/inputs/issue-16`.
+Latest accepted finding: `.ak/dockets/issues/16/review/review-012/receipt.json`.
+
+Verify full issue #16 closure, especially complete one-to-one production terminal pairing in every position, independent failed-call/successful-retry handling, complete-content equality, shared invocation-match law, non-mutating tee-only usage, and all prior fail-closed/promotion/scope obligations.
+
+Perform the canonical Standards and Spec review for this exact range.
