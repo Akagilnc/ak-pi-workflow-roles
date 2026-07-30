@@ -108,9 +108,12 @@ export function collectLifecycleEvents(rows) {
                 toolCallId: row.toolCallId,
                 toolName: row.toolName,
                 isError: row.isError,
+                content: result?.content,
                 contentText: contentTextFromUnknown(result?.content),
                 details: result?.details,
                 usage: result?.usage ?? row.usage,
+                representation: "tool_execution_end",
+                rowType: "tool_execution_end",
             });
             continue;
         }
@@ -118,6 +121,7 @@ export function collectLifecycleEvents(rows) {
         // machine/JSON: { type: "message_end", message }
         if ((row.type === "message" || row.type === "message_end") &&
             isRecord(row.message)) {
+            const rowType = row.type;
             const message = row.message;
             if (message.role === "assistant" && Array.isArray(message.content)) {
                 for (const part of message.content) {
@@ -151,14 +155,175 @@ export function collectLifecycleEvents(rows) {
                     toolCallId: message.toolCallId,
                     toolName: message.toolName,
                     isError: message.isError,
+                    content: message.content,
                     contentText: contentTextFromUnknown(message.content),
                     details: message.details,
                     usage: message.usage,
+                    representation: "toolResult",
+                    // Preserve message vs message_end so only the documented Pi pair collapses.
+                    rowType,
                 });
             }
         }
     }
     return events;
+}
+function terminalPayloadsEquivalent(left, right) {
+    if (left.toolName !== right.toolName ||
+        left.isError !== right.isError ||
+        !deepEqual(left.content, right.content) ||
+        !deepEqual(left.details, right.details)) {
+        return false;
+    }
+    // Usage may appear on only one transport form; when both carry it they must agree.
+    if (left.usage === undefined || right.usage === undefined)
+        return true;
+    return deepEqual(left.usage, right.usage);
+}
+function terminalsEquivalent(left, right) {
+    return (left.toolCallId === right.toolCallId &&
+        terminalPayloadsEquivalent(left, right));
+}
+/**
+ * Validate the complete production-shaped dual-terminal candidate sequence.
+ * Once both supported representations occur, every candidate terminal must be
+ * an ordered one-to-one tee → message_end/toolResult pair with one call id.
+ * Envelopes carrying only one representation remain standalone lifecycles.
+ */
+function hasMismatchedCrossRepCallIdentity(events) {
+    const candidates = events.filter((event) => event.kind === "terminal" &&
+        (event.representation === "tool_execution_end" ||
+            (event.representation === "toolResult" && event.rowType === "message_end")));
+    const hasTee = candidates.some((event) => event.representation === "tool_execution_end");
+    const hasToolResult = candidates.some((event) => event.representation === "toolResult");
+    if (!hasTee || !hasToolResult)
+        return false;
+    if (candidates.length % 2 !== 0)
+        return true;
+    for (let index = 0; index < candidates.length; index += 2) {
+        const tee = candidates[index];
+        const toolResult = candidates[index + 1];
+        if (tee.representation !== "tool_execution_end" ||
+            toolResult.representation !== "toolResult" ||
+            tee.toolCallId !== toolResult.toolCallId) {
+            return true;
+        }
+    }
+    return false;
+}
+/** Canonical issuance/start package match law, shared by collapse and binding. */
+function invocationMatches(issued, start) {
+    return issued.toolName === start.toolName && deepEqual(issued.args, start.args);
+}
+/**
+ * Collapse only the documented production-order current-Pi pair:
+ * issuance → matching start → `type:"tool_execution_end"` → equivalent
+ * `type:"message_end"` / `role:"toolResult"`.
+ * Generic persisted-session `type:"message"` / `role:"toolResult"` remains a
+ * supported standalone terminal and must not collapse with tool_execution_end.
+ * Retain the toolResult representation (public Receipt trust contract).
+ * A matching start is not merely same call-id index order: it must match the
+ * issued package tool and arguments (binding's start law) and occur strictly
+ * before tool_execution_end. Early or non-matching starts leave both terminals
+ * visible so binding stays fail-closed.
+ * Reversed order, same-representation replays, and conflicts keep every
+ * terminal so binding stays fail-closed.
+ */
+export function canonicalizeLifecycleEvents(events) {
+    const terminalsByCallId = new Map();
+    const issuedByCallId = new Map();
+    const startsByCallId = new Map();
+    for (const event of events) {
+        if (event.kind === "terminal") {
+            const list = terminalsByCallId.get(event.toolCallId);
+            if (list)
+                list.push(event);
+            else
+                terminalsByCallId.set(event.toolCallId, [event]);
+            continue;
+        }
+        if (event.kind === "issued") {
+            const ref = {
+                index: event.index,
+                toolName: event.toolName,
+                args: event.args,
+            };
+            const list = issuedByCallId.get(event.toolCallId);
+            if (list)
+                list.push(ref);
+            else
+                issuedByCallId.set(event.toolCallId, [ref]);
+            continue;
+        }
+        if (event.kind === "start") {
+            const ref = {
+                index: event.index,
+                toolName: event.toolName,
+                args: event.args,
+            };
+            const list = startsByCallId.get(event.toolCallId);
+            if (list)
+                list.push(ref);
+            else
+                startsByCallId.set(event.toolCallId, [ref]);
+        }
+    }
+    const drop = new Set();
+    const substitutions = new Map();
+    for (const [callId, terminals] of terminalsByCallId) {
+        if (terminals.length !== 2)
+            continue;
+        const first = terminals[0];
+        const second = terminals[1];
+        if (first.representation === second.representation)
+            continue;
+        if (!terminalsEquivalent(first, second))
+            continue;
+        const toolExecutionEnd = first.representation === "tool_execution_end" ? first : second;
+        const toolResult = first.representation === "toolResult" ? first : second;
+        // Documented current-Pi pair only: message_end/toolResult after tee.
+        if (toolResult.rowType !== "message_end")
+            continue;
+        // Complete production lifecycle order required before dropping tee:
+        // issuance → genuinely matching start → tool_execution_end →
+        // message_end/toolResult. Call-id co-occurrence alone is insufficient.
+        const issuedRefs = issuedByCallId.get(callId) ?? [];
+        const startRefs = startsByCallId.get(callId) ?? [];
+        const hasCompleteProductionOrder = issuedRefs.some((issued) => startRefs.some((start) => issued.index < start.index &&
+            start.index < toolExecutionEnd.index &&
+            toolExecutionEnd.index < toolResult.index &&
+            invocationMatches(issued, start)));
+        if (!hasCompleteProductionOrder)
+            continue;
+        // Preserve usage facts that appear only on the dropped transport form.
+        // Copy the retained terminal — never mutate caller-owned event objects.
+        if (toolResult.usage === undefined && toolExecutionEnd.usage !== undefined) {
+            drop.add(toolExecutionEnd);
+            drop.add(toolResult);
+            const retainedWithUsage = {
+                ...toolResult,
+                usage: toolExecutionEnd.usage,
+            };
+            // Replace toolResult in-place in the output via map below.
+            // Track the substitution keyed by object identity of the dropped toolResult.
+            substitutions.set(toolResult, retainedWithUsage);
+            continue;
+        }
+        drop.add(toolExecutionEnd);
+    }
+    if (drop.size === 0)
+        return events;
+    const out = [];
+    for (const event of events) {
+        if (event.kind === "terminal" && drop.has(event)) {
+            const substitute = substitutions.get(event);
+            if (substitute !== undefined)
+                out.push(substitute);
+            continue;
+        }
+        out.push(event);
+    }
+    return out;
 }
 /** @deprecated Use decodeEnvelopeRows + collectLifecycleEvents. Kept for tests naming. */
 export function decodeToolResultsFromEnvelope(text) {
@@ -212,10 +377,10 @@ export function bindAcceptedLifecycle(events) {
         }
         if (event.kind === "start") {
             if (state.phase !== "issued" ||
-                state.toolName !== event.toolName ||
+                state.toolName === undefined ||
                 state.issuedIndex === undefined ||
                 !(state.issuedIndex < event.index) ||
-                !deepEqual(state.issuedArgs, event.args)) {
+                !invocationMatches({ toolName: state.toolName, args: state.issuedArgs }, event)) {
                 reject(state);
                 continue;
             }
@@ -329,11 +494,39 @@ function usageObservation(usage) {
 }
 export function extractAcceptedReceipt(envelopes) {
     const emptyReport = { hits: [], redacted: false };
-    const rows = [];
+    // Collect raw lifecycle events across every supplied envelope/channel first.
+    // Mismatch detection must see the complete pre-canonical terminal set: dropping
+    // tool_execution_end during per-envelope collapse would erase opposite-rep
+    // identity evidence (valid call-a pair + extra call-b toolResult).
+    // Canonicalize only within each decoded envelope input afterward. Concatenating
+    // stdout/stderr (or other channels) before dedup would collapse split
+    // opposite representations that must remain fail-closed replay/conflict.
+    const perEnvelopeCollected = [];
+    let rowOffset = 0;
     for (const text of envelopes) {
-        rows.push(...decodeEnvelopeRows(text));
+        const rows = decodeEnvelopeRows(text);
+        const collected = collectLifecycleEvents(rows).map((event) => ({
+            ...event,
+            index: event.index + rowOffset,
+        }));
+        perEnvelopeCollected.push(collected);
+        rowOffset += rows.length;
     }
-    const events = collectLifecycleEvents(rows);
+    const rawEvents = perEnvelopeCollected.flat();
+    // Mismatched cross-representation call identity fails closed on the raw set
+    // across all inputs, before any canonicalization can erase a representation.
+    if (hasMismatchedCrossRepCallIdentity(rawEvents)) {
+        return {
+            receipt: null,
+            auditObservation: null,
+            artifactKind: null,
+            report: emptyReport,
+        };
+    }
+    const events = [];
+    for (const collected of perEnvelopeCollected) {
+        events.push(...canonicalizeLifecycleEvents(collected));
+    }
     let bound;
     try {
         bound = bindAcceptedLifecycle(events);

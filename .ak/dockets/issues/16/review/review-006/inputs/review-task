@@ -1,0 +1,14 @@
+# Issue #16 post-Judge repair review
+
+Use exactly this range in both sibling prompts:
+
+```text
+git diff 78cd4e9807aa8a6ebf5a0d852b096b62180fb2da...7421858fd71f14a18252374dcbb54d7246047a65
+```
+
+Authority: `.ak/dockets/issues/16/review/review-001/inputs/issue-16`.
+Judge blocker: `.ak/dockets/issues/16/judgment/final/receipt.json`.
+
+Verify all issue #16 obligations and especially strict complete lifecycle order: issuance → matching start → tool_execution_end → equivalent message_end/toolResult. The Judge counterexample `issued → tool_execution_end → start → toolResult` must remain visible and fail closed. Recheck every previously discharged identity/provenance/replay/conflict/split/promotion/absence obligation, source/dist consistency, and excluded surfaces.
+
+Perform Standards and Spec review in exactly one sibling-parallel batch. Fresh invocation; no second batch.

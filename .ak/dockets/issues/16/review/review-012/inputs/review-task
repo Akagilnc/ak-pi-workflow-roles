@@ -1,0 +1,12 @@
+# Review issue #16 final fixed target
+
+Review the fixed range:
+
+- base: `78cd4e9807aa8a6ebf5a0d852b096b62180fb2da`
+- target: `1490fbe95bcadedd4f1a434213da712b06a4c8ff`
+
+Authority is issue #16 as preserved at `.ak/dockets/issues/16/review/review-001/inputs/issue-16`.
+
+The final change must safely canonicalize current-Pi duplicate terminal representations while rejecting real conflicts. Verify complete-content equality, bounded candidate matching, independent failed-call/successful-retry behavior, genuine mismatched/extra-terminal rejection, non-mutating tee-only usage, and preservation of all prior lifecycle and scope obligations.
+
+Perform the canonical Standards and Spec review for this exact range.

@@ -1,0 +1,18 @@
+# Issue #16 fixed-target review
+
+Review exactly:
+
+- base: `78cd4e9807aa8a6ebf5a0d852b096b62180fb2da`
+- target: `49a73c6b71683da488ec593731c23b2e834b176d`
+
+Authority: GitHub issue #16, Recorder rejects equivalent current-Pi terminal representations.
+
+Required behavior:
+
+1. A production-shaped combined `tool_execution_end` plus `message_end` `toolResult` for one accepted Judge or Reviewer call canonicalizes to one logical terminal and yields its typed Receipt/audit observation.
+2. Equivalence binds call ID, package tool, accepted/error state, content, typed details, and compatible usage.
+3. Same-representation replay, conflicting details, mismatched identity, replay, and out-of-order lifecycle events remain fail-closed.
+4. Complete Recorder promotion proves the combined shape; lawful absent-Receipt behavior is unchanged.
+5. No Soul, role contract, orchestration, migration, or generic-session-retention changes.
+
+Review Standards and Spec in exactly one sibling-parallel batch. Treat generated `dist/recorder/extract.js` consistency with source as part of Standards.
