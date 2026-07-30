@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_JNTsaMzDtlEdjjM1nx2y0KOB|fc_0d0f1954ea26f40a016a6b8b6f7cdc8191b6d8c3cc70a68de8",
+  "details": {
+    "status": "completed",
+    "report": "R1–R6: completed in forward commit 565f9654dd596cd0c31f6d828f62039b8cb70b83; canonical expansion capture, pre-acceptance runner authorization, closed material grammar, pin-bound base resolution, shared prompt identity, and red/green regressions are implemented; focused Reviewer tests, installed tarball lifecycle, typecheck, pack, diff check, audit-failure subprocess, and full suite passed (the initial full run exposed one stale HEAD~1 fixture, corrected to use a full reachable commit, then its failing gate passed).",
+    "commitSha": "565f9654dd596cd0c31f6d828f62039b8cb70b83"
+  },
+  "artifactKind": "acceptedReceipt"
+}
