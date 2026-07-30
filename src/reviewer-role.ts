@@ -17,6 +17,7 @@ import {
   type ReviewerProposalV1,
 } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult, type ReviewerSuccessfulDispatchRunResult } from "./reviewer-agent.ts";
+import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedReviewerDetails, type ReviewerOutput } from "./package-contracts/reviewer-output.ts";
 
@@ -116,6 +117,8 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       ledger.append(projectAcceptedDispatch(dispatch));
       ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: dispatch.identity, cardinality: dispatch.legs.length as 1 | 2 });
       const appendSettlements = (result: ReviewerDispatchRunResult) => {
+        if (result.identity !== dispatch.identity) throw new Error("Reviewer runner identity does not match accepted dispatch");
+        if (!sameReviewerPinnedTarget(result.target, dispatch.targetSnapshot)) throw new Error("Reviewer runner target does not match accepted pinned target");
         for (const leg of dispatch.legs) {
           const actual = result.legs[leg.axis];
           if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
@@ -129,7 +132,10 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
         appendSettlements(result);
         return result;
       } catch (error) {
-        if (error instanceof ReviewerDispatchExecutionError) appendSettlements(error.outcome);
+        if (error instanceof ReviewerDispatchExecutionError) {
+          try { appendSettlements(error.outcome); }
+          catch (mismatch) { throw ledger.recordInfrastructureFailure(mismatch); }
+        }
         throw ledger.recordInfrastructureFailure(error);
       }
     };

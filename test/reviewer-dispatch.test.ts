@@ -138,6 +138,31 @@ test("generic capability shapes remain representable but the recipe requires eac
   assert.equal(accepted.status, "accepted");
   assert.deepEqual(accepted.status === "accepted" ? accepted.dispatch.legs.map(({ grant }) => grant) : [], [required, required]);
 
+  const verificationCommands = [exactCommand, "git diff --check", "npm run typecheck"] as const;
+  const verificationRequest = { ...required, bashCommands: verificationCommands };
+  const verificationCeiling = parseReviewerCapabilities(Buffer.from(JSON.stringify({
+    ...capabilityValue, bashCommands: verificationCommands,
+  })), task);
+  const verified = harness({ ceiling: verificationCeiling });
+  const verifiedResult = await verified.dispatcher.propose({
+    ...proposal, required: { standards: verificationRequest, spec: verificationRequest },
+  });
+  assert.equal(verifiedResult.status, "accepted");
+  assert.deepEqual(verifiedResult.status === "accepted" ? verifiedResult.dispatch.legs.map((leg) => leg.grant.bashCommands) : [], [verificationCommands, verificationCommands]);
+
+  const undeclaredExtra = harness();
+  assert.equal((await undeclaredExtra.dispatcher.propose({
+    ...proposal, required: { ...proposal.required, standards: verificationRequest },
+  })).status, "rejected");
+  assert.equal(undeclaredExtra.calls.length, 0);
+
+  const ceilingMismatch = harness({ ceiling: verificationCeiling });
+  assert.equal((await ceilingMismatch.dispatcher.propose({
+    ...proposal,
+    required: { ...proposal.required, standards: { ...required, bashCommands: [exactCommand, "npm test"] } },
+  })).status, "rejected");
+  assert.equal(ceilingMismatch.calls.length, 0);
+
   for (const changed of [
     `${exactCommand} `,
     ` ${exactCommand}`,

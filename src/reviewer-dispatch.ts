@@ -374,8 +374,12 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       throw new Error("Capability ceiling lacks the canonical diff command");
     }
     for (const grant of [standardsGrant, ...(specGrant === undefined ? [] : [specGrant])]) {
-      if (!grant.tools.includes("bash") || grant.bashCommands.length !== 1 || grant.bashCommands[0] !== range.diffCommand) {
-        throw new Error("Capability requirement must grant only the canonical bash diff command");
+      if (
+        !grant.tools.includes("bash") ||
+        !grant.bashCommands.includes(range.diffCommand) ||
+        grant.bashCommands.some((command) => !capabilities.bashCommands.includes(command))
+      ) {
+        throw new Error("Capability requirement must grant the canonical bash diff command without exceeding the ceiling");
       }
     }
     const materialEvidence = new Map<string, ReviewerMaterialEvidence>();
