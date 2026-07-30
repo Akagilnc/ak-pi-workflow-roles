@@ -95,6 +95,8 @@ type LifecycleEvent =
     toolCallId: string;
     toolName: TerminatingToolName;
     isError: boolean;
+    /** Complete transport content value; retained for dual-representation provenance. */
+    content: unknown;
     contentText: string;
     details: unknown;
     usage: unknown;
@@ -206,6 +208,7 @@ export function collectLifecycleEvents(rows: unknown[]): LifecycleEvent[] {
         toolCallId: row.toolCallId,
         toolName: row.toolName,
         isError: row.isError,
+        content: result?.content,
         contentText: contentTextFromUnknown(result?.content),
         details: result?.details,
         usage: result?.usage ?? row.usage,
@@ -259,6 +262,7 @@ export function collectLifecycleEvents(rows: unknown[]): LifecycleEvent[] {
           toolCallId: message.toolCallId,
           toolName: message.toolName as TerminatingToolName,
           isError: message.isError,
+          content: message.content,
           contentText: contentTextFromUnknown(message.content),
           details: message.details,
           usage: message.usage,
@@ -281,7 +285,7 @@ function terminalPayloadsEquivalent(
   if (
     left.toolName !== right.toolName ||
     left.isError !== right.isError ||
-    left.contentText !== right.contentText ||
+    !deepEqual(left.content, right.content) ||
     !deepEqual(left.details, right.details)
   ) {
     return false;
@@ -302,27 +306,32 @@ function terminalsEquivalent(
 }
 
 /**
- * True when opposite-representation package terminals use different call ids.
- * Fail closed regardless of whether content/details/usage also conflict —
- * equivalence-only detection would let binding accept one valid lifecycle and
- * ignore the differently identified orphan.
- * Callers must evaluate this against the complete raw collected terminal set
- * before canonicalization can drop one representation of a dual pair.
+ * Analyze only bounded, production-shaped Pi terminal candidates. Each tee is
+ * paired with the next message_end/toolResult; independent settled lifecycles
+ * are never cross-producted. A mismatched pair, or an extra opposite terminal
+ * after a pair, remains fail-closed.
  */
 function hasMismatchedCrossRepCallIdentity(
   events: LifecycleEvent[],
 ): boolean {
-  const terminals = events.filter(
-    (event): event is TerminalLifecycleEvent => event.kind === "terminal",
-  );
-  for (let i = 0; i < terminals.length; i++) {
-    const left = terminals[i]!;
-    for (let j = i + 1; j < terminals.length; j++) {
-      const right = terminals[j]!;
-      if (left.toolCallId === right.toolCallId) continue;
-      if (left.representation === right.representation) continue;
-      return true;
+  let pendingTee: TerminalLifecycleEvent | undefined;
+  let sawCandidatePair = false;
+  for (const event of events) {
+    if (event.kind !== "terminal") continue;
+    if (event.representation === "tool_execution_end") {
+      // Two tees without the documented corresponding result are not one
+      // current-Pi candidate; leave replay rejection to lifecycle binding.
+      pendingTee = event;
+      continue;
     }
+    if (event.rowType !== "message_end") continue;
+    if (pendingTee !== undefined) {
+      if (pendingTee.toolCallId !== event.toolCallId) return true;
+      pendingTee = undefined;
+      sawCandidatePair = true;
+      continue;
+    }
+    if (sawCandidatePair) return true;
   }
   return false;
 }
