@@ -1,4 +1,4 @@
-import { sameReviewerRefs } from "./reviewer-git-snapshot.ts";
+import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import {
   type ReviewerPinnedTarget,
@@ -24,6 +24,7 @@ export function projectAcceptedDispatch(dispatch: AcceptedReviewerDispatch): Rev
   return {
     source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
     recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
+    prerequisiteOperations: dispatch.prerequisiteOperations,
     range: dispatch.range, materials: dispatch.materials, legs: dispatch.legs,
   };
 }
@@ -72,10 +73,6 @@ function cloneFreeze<T>(value: T): T {
     return Object.freeze(copy) as T;
   }
   return value;
-}
-function sameTarget(a: ReviewerPinnedTarget, b: ReviewerPinnedTarget): boolean {
-  return a.repositoryRoot === b.repositoryRoot && a.targetHead === b.targetHead &&
-    sameReviewerRefs(a.refs, b.refs);
 }
 function fatal(error: unknown): FatalEvidence {
   const record = typeof error === "object" && error !== null ? error as Record<string, unknown> : undefined;
@@ -168,7 +165,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     if (event.prompt.bytes !== compiled.prompt || event.prompt.utf8Length !== compiled.utf8Length ||
         event.prompt.sha256 !== compiled.sha256 || !isReviewerPromptIdentity(event.prompt))
       throw new Error("Actual runner prompt does not exactly match compiled prompt bytes, length, and SHA");
-    if (!sameTarget(event.target, accepted.target)) throw new Error("Runner target does not match shared pinned target");
+    if (!sameReviewerPinnedTarget(event.target, accepted.target)) throw new Error("Runner target does not match shared pinned target");
     if (event.status === "successful") {
       if (typeof event.report !== "string" || event.report.length === 0 || event.failure !== undefined) throw new Error("Successful settlement requires only a report");
     } else if (event.failure === undefined || event.report !== undefined) {

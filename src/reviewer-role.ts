@@ -182,10 +182,11 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       pi.on("tool_execution_end", handleTransportTerminal);
       pi.on("tool_result", handleTransportTerminal);
       pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
-      pi.on("before_agent_start", (event) => {
+      pi.on("before_agent_start", (event, toolCtx) => {
         if (!expansionCaptured) {
           if (originalRequest === undefined || binding!.captureExpansion(event.prompt, originalRequest) === undefined) {
-            throw new Error("Canonical code-review Skill expansion did not match the captured request");
+            const error = ledger.recordInfrastructureFailure(new Error("Canonical code-review Skill expansion did not match the captured request"));
+            hostActions.failInfrastructure(error, toolCtx);
           }
           expansionCaptured = true;
         }

@@ -22,7 +22,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
-import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerRefs, type ReviewerRefEntry } from "./reviewer-git-snapshot.ts";
+import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerPinnedTarget, sameReviewerRefs, type ReviewerRefEntry } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import type {
   AcceptedReviewerDispatch,
@@ -69,6 +69,7 @@ export type ReviewerAgentRunner = {
   shutdown(): Promise<void>;
 };
 export type ReviewerAgentFaultPoint =
+  | "snapshot.head" | "snapshot.refs"
   | "mirror.before-create" | "mirror.create" | "mirror.verify"
   | "workspace.before-create" | "workspace.init" | "workspace.fetch" | "workspace.verify";
 type ReviewerAgentDependencies = Readonly<{ fault?(operation: ReviewerAgentFaultPoint): void }>;
@@ -103,17 +104,6 @@ function classifyFailure(error: unknown, signal?: AbortSignal): ReviewerFailureC
     return (error as ClassifiedReviewerError).reviewerFailure;
   }
   return "unknown";
-}
-
-function infrastructureError(
-  error: unknown,
-  classification: ReviewerFailureClassification,
-  evidence: {
-    workspaceDisposition?: ReviewerWorkspaceDisposition;
-    targetSnapshot?: ReviewerTargetSnapshot;
-  } = {},
-): Error {
-  return classifiedError(error, classification, evidence);
 }
 
 async function runCommand(
@@ -202,15 +192,17 @@ async function prepareSnapshot(
   dependencies: ReviewerAgentDependencies = {},
 ): Promise<GitSnapshot> {
   const repositoryRoot = accepted.repositoryRoot;
-  const targetHead = (
-    await git(repositoryRoot, ["rev-parse", "HEAD^{commit}"], signal)
-  ).stdout.trim();
-  const refs = await readRefs(repositoryRoot, signal);
-  if (targetHead !== accepted.targetHead || !sameReviewerRefs(refs, accepted.refs)) {
-    throw new Error("Accepted Reviewer target/ref identity no longer matches the repository");
-  }
   let mirrorRoot: string | undefined;
   try {
+    dependencies.fault?.("snapshot.head");
+    const targetHead = (
+      await git(repositoryRoot, ["rev-parse", "HEAD^{commit}"], signal)
+    ).stdout.trim();
+    dependencies.fault?.("snapshot.refs");
+    const refs = await readRefs(repositoryRoot, signal);
+    if (!sameReviewerPinnedTarget({ repositoryRoot, targetHead, refs }, accepted)) {
+      throw new Error("Accepted Reviewer target/ref identity no longer matches the repository");
+    }
     dependencies.fault?.("mirror.before-create");
     mirrorRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-snapshot-"));
     const mirrorPath = join(mirrorRoot, "repository.git");
@@ -255,9 +247,9 @@ async function prepareSnapshot(
     );
     return { repositoryRoot, targetHead, refs, mirrorRoot, mirrorPath };
   } catch (error) {
-    throw infrastructureError(error, "snapshot", {
+    throw classifiedError(error, "snapshot", {
       workspaceDisposition: mirrorRoot === undefined ? "not-created" : { retained: mirrorRoot },
-      targetSnapshot: { repositoryRoot, targetHead, refs },
+      targetSnapshot: accepted,
     });
   }
 }
@@ -300,7 +292,7 @@ async function prepareWorkspace(
     await verifySnapshot(workspace, snapshot, signal);
     return workspace;
   } catch (error) {
-    throw infrastructureError(error, "workspace", {
+    throw classifiedError(error, "workspace", {
       workspaceDisposition: workspace === undefined ? "not-created" : { retained: workspace },
       targetSnapshot: {
         repositoryRoot: snapshot.repositoryRoot,
@@ -534,9 +526,9 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
       acceptedIdentity = dispatch.identity;
       for (const leg of dispatch.legs) {
         if (!isReviewerPromptIdentity({ bytes: leg.prompt, utf8Length: leg.utf8Length, sha256: leg.sha256 })) throw new Error("Accepted Reviewer prompt evidence mismatch");
-        for (const operation of RUNNER_PREREQUISITES) {
-          if (!leg.grant.prerequisiteOperations.includes(operation)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
-        }
+      }
+      for (const operation of RUNNER_PREREQUISITES) {
+        if (!dispatch.prerequisiteOperations.includes(operation)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
       }
       snapshotPromise = prepareSnapshot(dispatch.targetSnapshot, options.signal, dependencies);
       let snapshot: GitSnapshot;

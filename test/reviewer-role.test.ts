@@ -86,10 +86,12 @@ test("successful dispatch exposes exact child reports with axis and prompt ident
   assert.equal(reviewerHarness.starts,1);
 });
 
-test("no-op expansion capture fails closed before completion", async()=>{
+test("invalid expansion is fatal and makes a later refused receipt impossible", async()=>{
   const reviewerHarness=setup({loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:()=>undefined})});
   await reviewerHarness.runtime.activate(); reviewerHarness.handlers.get("input")({text:"review",images:undefined});
-  assert.throws(()=>reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"}),/expansion did not match/);
+  assert.throws(()=>reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"},{} as ExtensionContext),/expansion did not match/);
+  await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",report:"cannot continue"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
+  assert.equal(reviewerHarness.audits.length,0);
 });
 
 test("completion audits projected facts and revise can be resubmitted without rerunning", async()=>{
