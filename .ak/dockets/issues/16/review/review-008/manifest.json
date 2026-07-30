@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/16/review/review-008"
+  },
+  "invocation": {
+    "id": "e2d087c3-523a-4967-aea6-834468df94d3"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "xai/grok-4.5",
+      "--thinking",
+      "high",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/16/review-task-008.md",
+      "-p",
+      "Invoke the canonical Skill; issue one Agent call containing exactly two sibling objects in the same batch, Standards first and Spec second, both with the supplied three-dot range; then submit through ak_reviewer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "xai/grok-4.5:high",
+    "target": "0a07c12195e4376acf2234c378d04c5079ad7a0e",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-16",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "0a07c12195e4376acf2234c378d04c5079ad7a0e",
+        "path": ".ak/dockets/issues/16/review/review-001/inputs/issue-16",
+        "blobOid": "3eab19ad137a1aaa5d80658fbd5e5bdbb6c0902e",
+        "sha256": "98dccf58fdd437e1a7142d55ee4d627a611c8482493e05ec4eea8e1ec9ca5dd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "prior-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "0a07c12195e4376acf2234c378d04c5079ad7a0e",
+        "path": ".ak/dockets/issues/16/judgment/final-002/receipt.json",
+        "blobOid": "6e9a9b597309af6ae5aa263b3b11e0ca33b31774",
+        "sha256": "2bb76abbe047b5f760c4efbeb87b607c8077d299cf94e2fa93d876156694eba1",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "b935f9932f6a8392b0a37171a328bf8a5808133d1862a752d9ae61976b3fef3d",
+        "byteLength": 965
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "e945d39cf4f6d3795dfa6861d1172f6128e08f5a82e36a01228b2c97ff23506b",
+        "byteLength": 4989
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "de49de5fcfec6d9015feef6dac6c4c0fb7e08d48c53fe5ac63dec1e68a2a7ab2",
+        "byteLength": 293
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call-1349f55a-ef08-4ed9-9bf9-72f0051885e8-9|fc_1540884c-b09f-98f8-afe9-5205673a0e7d_0",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call-1349f55a-ef08-4ed9-9bf9-72f0051885e8-9|fc_1540884c-b09f-98f8-afe9-5205673a0e7d_0",
+    "auditPassed": true,
+    "usage": {
+      "input": 40636,
+      "output": 1529,
+      "cacheRead": 128,
+      "cacheWrite": 0,
+      "totalTokens": 42293
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
