@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
+import { isReviewerPromptIdentity, reviewerPromptIdentity } from "./reviewer-dispatch.ts";
 import type {
   AcceptedReviewerDispatch,
   AcceptedReviewerLeg,
@@ -472,9 +473,7 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
       if (acceptedIdentity !== undefined) throw new Error("Reviewer runner accepts exactly one dispatch");
       acceptedIdentity = dispatch.identity;
       for (const leg of dispatch.legs) {
-        const actualLength = Buffer.byteLength(leg.prompt, "utf8");
-        const actualSha = createHash("sha256").update(leg.prompt).digest("hex");
-        if (actualLength !== leg.utf8Length || actualSha !== leg.sha256) throw new Error("Accepted Reviewer prompt evidence mismatch");
+        if (!isReviewerPromptIdentity({ bytes: leg.prompt, utf8Length: leg.utf8Length, sha256: leg.sha256 })) throw new Error("Accepted Reviewer prompt evidence mismatch");
         for (const operation of RUNNER_PREREQUISITES) {
           if (!leg.grant.prerequisiteOperations.includes(operation)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
         }
@@ -487,7 +486,7 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
         try {
           const child = await runChild(workspace, leg, options.context, options.signal);
           await rm(workspace, { recursive: true, force: false });
-          return [leg.axis, Object.freeze({ report: child.report, usage: child.usage, target, prompt: Object.freeze({ bytes: leg.prompt, utf8Length: Buffer.byteLength(leg.prompt, "utf8"), sha256: createHash("sha256").update(leg.prompt).digest("hex") }), workspaceDisposition: "deleted" as const })] as const;
+          return [leg.axis, Object.freeze({ report: child.report, usage: child.usage, target, prompt: reviewerPromptIdentity(leg.prompt), workspaceDisposition: "deleted" as const })] as const;
         } catch (error) {
           throw infrastructureError(error, { workspaceDisposition: { retained: workspace }, targetSnapshot: target });
         }
