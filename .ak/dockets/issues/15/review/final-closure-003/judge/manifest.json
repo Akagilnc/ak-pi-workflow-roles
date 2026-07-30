@@ -1,0 +1,29 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "posture": "review",
+  "status": "continue",
+  "target": "eb6bb68903bced53d49d06dfce086cccb8ccde17",
+  "request": {
+    "path": "request.md",
+    "sha256": "a08558b165b2b838969eae7ae650473d1a9f8312e0851cceb78cf01fd8df7615"
+  },
+  "infrastructureAttempts": [
+    {
+      "bytes": 20540545,
+      "sha256": "fab89ec17c26fc4ba0bf8583cb6ef0774ca8fe022a28f21c7f12d337a4ca73ca",
+      "outcome": "no terminating tool execution after provider auto-retries",
+      "retention": "not retained"
+    }
+  ],
+  "sessionCandidate": {
+    "bytes": 27629136,
+    "sha256": "5fe9b4bdf0404e3c86587a2b4af184f1bfb016609d1344487f9f129a4df3d700",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "cf3a9d7b12d8798251828bc5b00cdefd1b12222a4cb7a08b633ad768260701bd",
+    "acceptedBySoulAudit": true
+  }
+}
