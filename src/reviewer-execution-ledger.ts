@@ -139,7 +139,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
           throw new Error("Accepted material bytes, length, or SHA disagree");
       }
       for (const leg of event.legs) {
-        if (!isReviewerPromptIdentity({ bytes: leg.prompt, utf8Length: leg.utf8Length, sha256: leg.sha256 }))
+        if (!isReviewerPromptIdentity(leg.prompt))
           throw new Error("Accepted compiled prompt bytes, length, or SHA disagree");
       }
       accepted = event;
@@ -165,8 +165,8 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     if (results[event.axis] !== undefined) throw new Error(`Reviewer ${event.axis} result can settle exactly once`);
     const compiled = accepted.legs.find((leg) => leg.axis === event.axis);
     if (compiled === undefined) throw new Error(`Reviewer ${event.axis} was not an accepted leg`);
-    if (event.prompt.bytes !== compiled.prompt || event.prompt.utf8Length !== compiled.utf8Length ||
-        event.prompt.sha256 !== compiled.sha256 || !isReviewerPromptIdentity(event.prompt))
+    if (event.prompt.text !== compiled.prompt.text || event.prompt.utf8Length !== compiled.prompt.utf8Length ||
+        event.prompt.sha256 !== compiled.prompt.sha256 || !isReviewerPromptIdentity(event.prompt))
       throw new Error("Actual runner prompt does not exactly match compiled prompt bytes, length, and SHA");
     if (!sameReviewerPinnedTarget(event.target, accepted.target)) throw new Error("Runner target does not match shared pinned target");
     if (event.status === "successful") {

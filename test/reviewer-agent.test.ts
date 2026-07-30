@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -33,7 +33,7 @@ async function dispatch(root: string, prompts: readonly string[], tools: readonl
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
   const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => { const [name, objectId, peeled, objectType, peeledType] = line.split("\0"); return [name!, { objectId: objectId!, peeledCommitId: objectType === "commit" ? objectId! : peeledType === "commit" ? peeled! : null }]; }));
   const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
-  return { identity: "accepted", recipe: "reviewer-dispatch-v1", prerequisiteOperations: prerequisites, input: { task: { bytes: "task", utf8Length: 4, sha256: createHash("sha256").update("task").digest("hex") }, canonicalSkillSha256: "skill" }, materials: { standards: [] }, targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex"), grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
+  return { identity: "accepted", recipe: "reviewer-dispatch-v1", prerequisiteOperations: prerequisites, input: { task: { text: "task", utf8Length: 4, sha256: createHash("sha256").update("task").digest("hex") }, canonicalSkillSha256: "skill" }, materials: { standards: [] }, targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex") }, grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
 }
 
 const exec = promisify(execFile);
@@ -217,7 +217,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
   });
   const runner = createReviewerAgentRunner();
   const before = {
-    bytes: await readFile(join(source.root, "fixture.txt"), "utf8"),
+    text: await readFile(join(source.root, "fixture.txt"), "utf8"),
     head: await git(source.root, "rev-parse", "HEAD"),
     refs: await git(source.root, "show-ref"),
     status: await git(source.root, "status", "--porcelain"),
@@ -238,8 +238,8 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     assert.equal(standards.target.refs["refs/heads/fixed-branch"]?.objectId, source.base);
     assert.equal(standards.target.refs["refs/tags/fixed-tag"]?.objectId, source.base);
     assert.equal(standards.target.refs["refs/remotes/upstream/fixed"]?.objectId, source.base);
-    assert.equal(standards.prompt.bytes, "Standards prompt");
-    assert.equal(spec.prompt.bytes, "Spec prompt");
+    assert.equal(standards.prompt.text, "Standards prompt");
+    assert.equal(spec.prompt.text, "Spec prompt");
     assert.deepEqual(
       [...new Set(requests.map((request) => request.prompt))].sort(),
       ["Spec prompt", "Standards prompt"],
@@ -255,7 +255,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
       });
     }
     assert.deepEqual({
-      bytes: await readFile(join(source.root, "fixture.txt"), "utf8"),
+      text: await readFile(join(source.root, "fixture.txt"), "utf8"),
       head: await git(source.root, "rev-parse", "HEAD"),
       refs: await git(source.root, "show-ref"),
       status: await git(source.root, "status", "--porcelain"),
@@ -352,7 +352,7 @@ test("Reviewer child provider delegates class-private streams to the original re
     assert.deepEqual(visibleTools, [["bash"], ["bash"]]);
     assert.match(toolResults.join("\n"), /exact accepted member/);
     await assert.rejects(access(join(source.root, "forbidden.txt")));
-    assert.equal(result.legs.standards.prompt.bytes, "Inspect private provider dispatch");
+    assert.equal(result.legs.standards.prompt.text, "Inspect private provider dispatch");
     assert.deepEqual(dispatches, [0, 1].map(() => ({
       baseUrl: "https://private-resolved.invalid",
       apiKey: "private-secret",
@@ -376,12 +376,15 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
     ["workspace.init", "retained", "workspace"],
     ["workspace.fetch", "retained", "workspace"],
     ["workspace.verify", "retained", "workspace"],
+    ["child.reload", "retained", "child"],
+    ["child.session", "retained", "child"],
   ] as const;
   for (const [fault, expected, classification] of cases) {
     const source = await repository();
     const { context } = await parentContext(source.root, async () => {}, 1);
     const runner = createReviewerAgentRunner({ fault(operation) { if (operation === fault) throw new Error("provider cancelled child prose must not classify this failure"); } });
     const acceptedDispatch = await dispatch(source.root, [fault]);
+    const scratchBefore = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-")));
     let retained: string | undefined;
     try {
       await assert.rejects(
@@ -405,6 +408,8 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
         },
       );
       if (retained !== undefined) await access(retained);
+      const scratchAfter = (await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name));
+      assert.deepEqual(scratchAfter, [], `${fault} leaked credential scratch`);
     } finally {
       await runner.shutdown().catch(() => {});
       if (retained !== undefined) await rm(retained, { recursive: true, force: true });
@@ -425,6 +430,7 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     });
   }, 1);
   const runner = createReviewerAgentRunner();
+  const scratchBefore = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-")));
   const controller = new AbortController();
   const call = dispatch(source.root, ["Long review"]).then((accepted) => runner.run(accepted, { context, signal: controller.signal }));
   await started;
@@ -448,6 +454,7 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     });
     assert.ok(retained);
     await access(retained);
+    assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name)), []);
   } finally {
     await runner.shutdown().catch(() => {});
     if (retained !== undefined) {

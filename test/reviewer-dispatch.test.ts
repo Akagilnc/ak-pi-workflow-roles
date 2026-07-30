@@ -11,6 +11,7 @@ import {
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
 } from "../src/reviewer-dispatch.ts";
+import { ReviewerCorrectablePreflightError } from "../src/reviewer-preflight-error.ts";
 
 const task = Buffer.from(" review exactly — 逐字 \nSpec behavior: frobnicator must return 42.\n");
 const digest = createHash("sha256").update(task).digest("hex");
@@ -127,6 +128,21 @@ test("proposal grants allow no bash or empty bash while enforcing exact declared
   assert.equal((await harness().dispatcher.propose(unknown as ReviewerProposalV1)).status, "rejected");
 });
 
+test("typed repository failures have closed correctable codes and no diagnostics", async () => {
+  for (const [code, reader] of [
+    ["base-invalid", fakeReader({ async resolve() { throw new ReviewerCorrectablePreflightError("base-invalid"); } })],
+    ["range-invalid", fakeReader({ async range() { throw new ReviewerCorrectablePreflightError("range-invalid"); } })],
+    ["material-invalid", fakeReader({ async material() { throw new ReviewerCorrectablePreflightError("material-invalid"); } })],
+    ["preflight-infrastructure", fakeReader({ async resolve() { throw new Error("secret spawn diagnostic"); } })],
+  ] as const) {
+    const { dispatcher } = harness({ reader });
+    const result = await dispatcher.propose(proposal);
+    assert.equal(result.status, "rejected");
+    if (result.status === "rejected") assert.deepEqual(result.violations, [code]);
+    assert.equal(JSON.stringify([result, dispatcher.rejections]).includes("secret"), false);
+  }
+});
+
 test("all pin-bound material and range failures reject atomically before runner", async () => {
   const failures: ReviewerPinnedGitReader[] = [
     fakeReader({ async resolve() { throw new Error("base unreachable"); } }),
@@ -207,8 +223,8 @@ test("hidden repository materials are accepted and unsafe paths reject with type
     assert.equal(result.status, "accepted");
     if (result.status === "accepted") {
       assert.equal(result.dispatch.materials.standards[0]!.repositoryPath, repositoryPath);
-      assert.equal(result.dispatch.legs[0]!.prompt.includes(`Material-Identity: ${JSON.stringify({ id: "authority", repositoryPath })}\n`), true);
-      assert.equal(result.dispatch.legs[0]!.prompt.includes(`repositoryPath=${repositoryPath}`), false);
+      assert.equal(result.dispatch.legs[0]!.prompt.text.includes(`Material-Identity: ${JSON.stringify({ id: "authority", repositoryPath })}\n`), true);
+      assert.equal(result.dispatch.legs[0]!.prompt.text.includes(`repositoryPath=${repositoryPath}`), false);
     }
   }
 
@@ -286,23 +302,23 @@ test("established Spec produces exact deterministic isolated two-leg prompts", a
   const dispatch = first.calls[0]!;
   assert.deepEqual(dispatch.legs.map(({ axis }) => axis), ["standards", "spec"]);
   const smells = ["Mysterious Name", "Duplicated Code", "Feature Envy", "Data Clumps", "Primitive Obsession", "Repeated Switches", "Shotgun Surgery", "Divergent Change", "Speculative Generality", "Message Chains", "Middle Man", "Refused Bequest"];
-  for (const smell of smells) assert.equal(dispatch.legs[0]!.prompt.split(`**${smell}**`).length - 1, 1);
-  assert.match(dispatch.legs[0]!.prompt, /### 3\. Identify the standards sources/);
-  assert.match(dispatch.legs[0]!.prompt, /\*\*Standards sub-agent prompt\*\*[\s\S]*Under 400 words\./);
-  assert.match(dispatch.legs[0]!.prompt, /B:STYLE\.md/);
-  assert.doesNotMatch(dispatch.legs[0]!.prompt, /B:SPEC\.md|\*\*Spec sub-agent prompt\*\*|### 5\. Aggregate/);
-  assert.match(dispatch.legs[1]!.prompt, /B:SPEC\.md/);
-  assert.match(dispatch.legs[1]!.prompt, /\*\*Spec sub-agent prompt\*\*[\s\S]*Under 400 words\./);
-  assert.doesNotMatch(dispatch.legs[1]!.prompt, /Mysterious Name|\*\*Standards sub-agent prompt\*\*|B:STYLE\.md|### 5\. Aggregate/);
+  for (const smell of smells) assert.equal(dispatch.legs[0]!.prompt.text.split(`**${smell}**`).length - 1, 1);
+  assert.match(dispatch.legs[0]!.prompt.text, /### 3\. Identify the standards sources/);
+  assert.match(dispatch.legs[0]!.prompt.text, /\*\*Standards sub-agent prompt\*\*[\s\S]*Under 400 words\./);
+  assert.match(dispatch.legs[0]!.prompt.text, /B:STYLE\.md/);
+  assert.doesNotMatch(dispatch.legs[0]!.prompt.text, /B:SPEC\.md|\*\*Spec sub-agent prompt\*\*|### 5\. Aggregate/);
+  assert.match(dispatch.legs[1]!.prompt.text, /B:SPEC\.md/);
+  assert.match(dispatch.legs[1]!.prompt.text, /\*\*Spec sub-agent prompt\*\*[\s\S]*Under 400 words\./);
+  assert.doesNotMatch(dispatch.legs[1]!.prompt.text, /Mysterious Name|\*\*Standards sub-agent prompt\*\*|B:STYLE\.md|### 5\. Aggregate/);
   for (const leg of dispatch.legs) {
-    assert.equal(Buffer.byteLength(leg.prompt), leg.utf8Length);
-    assert.equal(createHash("sha256").update(leg.prompt).digest("hex"), leg.sha256);
-    assert.match(leg.prompt, new RegExp(`Task-SHA256: ${digest}`));
-    assert.match(leg.prompt, new RegExp(`Task-UTF8-Length: ${task.byteLength}`));
-    assert.doesNotMatch(leg.prompt, /review exactly|frobnicator|Task-Bytes:/);
-    assert.match(leg.prompt, /Target: B\nBase: A\nDiff: git diff A\.\.\.B\nDiff-SHA256: 1111111111111111111111111111111111111111111111111111111111111111\nCommits:\nC\nB/);
+    assert.equal(Buffer.byteLength(leg.prompt.text), leg.prompt.utf8Length);
+    assert.equal(createHash("sha256").update(leg.prompt.text).digest("hex"), leg.prompt.sha256);
+    assert.match(leg.prompt.text, new RegExp(`Task-SHA256: ${digest}`));
+    assert.match(leg.prompt.text, new RegExp(`Task-UTF8-Length: ${task.byteLength}`));
+    assert.doesNotMatch(leg.prompt.text, /review exactly|frobnicator|Task-Bytes:/);
+    assert.match(leg.prompt.text, /Target: B\nBase: A\nDiff: git diff A\.\.\.B\nDiff-SHA256: 1111111111111111111111111111111111111111111111111111111111111111\nCommits:\nC\nB/);
   }
-  assert.deepEqual(dispatch.input.task, { bytes: task.toString("utf8"), utf8Length: task.byteLength, sha256: digest });
+  assert.deepEqual(dispatch.input.task, { text: task.toString("utf8"), utf8Length: task.byteLength, sha256: digest });
   const second = harness();
   await second.dispatcher.propose(proposal);
   assert.deepEqual(second.calls[0], dispatch);
@@ -331,17 +347,17 @@ test("opaque task prose and selected material bytes remain isolated in compiled 
   if (result.status !== "accepted") return;
   const [standardsLeg, specLeg] = result.dispatch.legs;
   assert.equal(delivered[0], result.dispatch);
-  assert.ok(standardsLeg!.prompt.includes(standardsBytes.toString("utf8")));
-  assert.ok(specLeg!.prompt.includes(specBytes.toString("utf8")));
-  assert.doesNotMatch(standardsLeg!.prompt, new RegExp(`${specSentinel}|SPEC_MATERIAL_ONLY|SPEC-PRIVATE`));
-  assert.doesNotMatch(specLeg!.prompt, new RegExp(`${standardsSentinel}|STANDARDS_MATERIAL_ONLY|STYLE-PRIVATE`));
+  assert.ok(standardsLeg!.prompt.text.includes(standardsBytes.toString("utf8")));
+  assert.ok(specLeg!.prompt.text.includes(specBytes.toString("utf8")));
+  assert.doesNotMatch(standardsLeg!.prompt.text, new RegExp(`${specSentinel}|SPEC_MATERIAL_ONLY|SPEC-PRIVATE`));
+  assert.doesNotMatch(specLeg!.prompt.text, new RegExp(`${standardsSentinel}|STANDARDS_MATERIAL_ONLY|STYLE-PRIVATE`));
   for (const leg of delivered[0]!.legs) {
-    assert.doesNotMatch(leg.prompt, /STANDARDS_ONLY_SENTINEL|SPEC_ONLY_SENTINEL|Task-Bytes:/);
-    assert.match(leg.prompt, new RegExp(`Task-SHA256: ${taskSha256}`));
-    assert.match(leg.prompt, new RegExp(`Task-UTF8-Length: ${opaqueTask.byteLength}`));
+    assert.doesNotMatch(leg.prompt.text, /STANDARDS_ONLY_SENTINEL|SPEC_ONLY_SENTINEL|Task-Bytes:/);
+    assert.match(leg.prompt.text, new RegExp(`Task-SHA256: ${taskSha256}`));
+    assert.match(leg.prompt.text, new RegExp(`Task-UTF8-Length: ${opaqueTask.byteLength}`));
   }
   assert.deepEqual(result.dispatch.input.task, {
-    bytes: opaqueTask.toString("utf8"), utf8Length: opaqueTask.byteLength, sha256: taskSha256,
+    text: opaqueTask.toString("utf8"), utf8Length: opaqueTask.byteLength, sha256: taskSha256,
   });
 
   const noSpecProposal: ReviewerProposalV1 = {
@@ -358,9 +374,9 @@ test("opaque task prose and selected material bytes remain isolated in compiled 
   const noSpec = await noSpecDispatcher.propose(noSpecProposal);
   assert.equal(noSpec.status, "accepted");
   assert.equal(noSpecDelivered[0]!.legs.length, 1);
-  assert.doesNotMatch(noSpecDelivered[0]!.legs[0]!.prompt, /SPEC_ONLY_SENTINEL|SPEC_MATERIAL_ONLY|SPEC-PRIVATE|Task-Bytes:/);
+  assert.doesNotMatch(noSpecDelivered[0]!.legs[0]!.prompt.text, /SPEC_ONLY_SENTINEL|SPEC_MATERIAL_ONLY|SPEC-PRIVATE|Task-Bytes:/);
   assert.deepEqual(noSpecDelivered[0]!.input.task, {
-    bytes: opaqueTask.toString("utf8"), utf8Length: opaqueTask.byteLength, sha256: taskSha256,
+    text: opaqueTask.toString("utf8"), utf8Length: opaqueTask.byteLength, sha256: taskSha256,
   });
 });
 
@@ -369,8 +385,8 @@ test("canonical snapshot perturbation changes only extracted Standards evidence"
   await original.dispatcher.propose(proposal);
   const changed = harness({ canonicalSkill: skill.replace("**Duplicated Code**", "**Repeated Code**") });
   await changed.dispatcher.propose(proposal);
-  assert.notEqual(original.calls[0]!.legs[0]!.sha256, changed.calls[0]!.legs[0]!.sha256);
-  assert.equal(original.calls[0]!.legs[1]!.sha256, changed.calls[0]!.legs[1]!.sha256);
+  assert.notEqual(original.calls[0]!.legs[0]!.prompt.sha256, changed.calls[0]!.legs[0]!.prompt.sha256);
+  assert.equal(original.calls[0]!.legs[1]!.prompt.sha256, changed.calls[0]!.legs[1]!.prompt.sha256);
 });
 
 test("no-spec retains actual evidence bytes, length, and hash without creating a Spec leg", async () => {
@@ -382,13 +398,13 @@ test("no-spec retains actual evidence bytes, length, and hash without creating a
   const { dispatcher, calls } = harness();
   assert.equal((await dispatcher.propose(one)).status, "accepted");
   assert.deepEqual(calls[0]!.legs.map(({ axis }) => axis), ["standards"]);
-  assert.match(calls[0]!.legs[0]!.prompt, /Mysterious Name|NO-SPEC/);
-  assert.doesNotMatch(calls[0]!.legs[0]!.prompt, /Spec sub-agent prompt|Quote the spec line/);
+  assert.match(calls[0]!.legs[0]!.prompt.text, /Mysterious Name|NO-SPEC/);
+  assert.doesNotMatch(calls[0]!.legs[0]!.prompt.text, /Spec sub-agent prompt|Quote the spec line/);
   const evidence = calls[0]!.materials.noSpecEvidence![0]!;
   assert.deepEqual(evidence, {
     id: "absence",
     repositoryPath: "NO-SPEC.md",
-    bytes: "B:NO-SPEC.md\n",
+    text: "B:NO-SPEC.md\n",
     utf8Length: 13,
     sha256: createHash("sha256").update("B:NO-SPEC.md\n").digest("hex"),
   });
@@ -468,9 +484,9 @@ test("preserves BOM and multibyte task/material bytes and rejects invalid UTF-8 
   const accepted = await dispatcher.propose(proposal);
   assert.equal(accepted.status, "accepted");
   if (accepted.status !== "accepted") return;
-  assert.equal(accepted.dispatch.input.task.bytes, bomTask.toString("utf8"));
-  assert.equal(accepted.dispatch.materials.standards[0]?.bytes, bomMaterial.toString("utf8"));
-  assert.ok(accepted.dispatch.legs[0]?.prompt.includes(bomMaterial.toString("utf8")));
+  assert.equal(accepted.dispatch.input.task.text, bomTask.toString("utf8"));
+  assert.equal(accepted.dispatch.materials.standards[0]?.text, bomMaterial.toString("utf8"));
+  assert.ok(accepted.dispatch.legs[0]?.prompt.text.includes(bomMaterial.toString("utf8")));
 
   let effects = 0;
   const invalid = createReviewerDispatcher({ task, canonicalSkill: skill, capabilities: capabilities(), reader: fakeReader({ async material() { return Buffer.from([0xff]); } }), hostTools: REVIEWER_CHILD_TOOLS, async run() { effects++; } });
@@ -496,8 +512,8 @@ test("rejection evidence is closed and never retains injected diagnostics", asyn
 
 test("rejects malformed and unequal compilation identities before child effects", async () => {
   const mutations = [
-    (prompt: string) => ({ bytes: prompt, utf8Length: Buffer.byteLength(prompt) + 1, sha256: createHash("sha256").update(prompt).digest("hex") }),
-    (prompt: string) => ({ bytes: prompt, utf8Length: Buffer.byteLength(prompt), sha256: "0".repeat(64) }),
+    (prompt: string) => ({ text: prompt, utf8Length: Buffer.byteLength(prompt) + 1, sha256: createHash("sha256").update(prompt).digest("hex") }),
+    (prompt: string) => ({ text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: "0".repeat(64) }),
   ];
   for (const mutate of mutations) {
     const { dispatcher, calls } = harness({ compilePrompt(prompt) { return mutate(prompt); } });
@@ -512,7 +528,7 @@ test("rejects independently recompiled prompt mismatch before child effects", as
   const { dispatcher } = harness({
     compilePrompt(prompt, _axis, pass) {
       const bytes = pass === 1 ? prompt : `${prompt}stateful`;
-      return { bytes, utf8Length: Buffer.byteLength(bytes), sha256: createHash("sha256").update(bytes).digest("hex") };
+      return { text: bytes, utf8Length: Buffer.byteLength(bytes), sha256: createHash("sha256").update(bytes).digest("hex") };
     },
     async run() { effects++; },
   });
