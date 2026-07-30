@@ -95,6 +95,31 @@ test("aggregation preserves leading indentation and trailing newlines", async()=
   assert.equal(result.content[0].text.includes(`>>>\n${exact}\n<<< END REVIEWER CHILD REPORT`),true);
 });
 
+test("runner identity and pinned target must exactly match accepted dispatch before settlement projection", async()=>{
+  const mismatches = [
+    { identity: "substituted-dispatch", target: pin, message: /identity does not match/ },
+    { identity: undefined, target: { ...pin, refs: { "refs/heads/main": { objectId: "other", peeledCommitId: "other" } } }, message: /target does not match/ },
+  ] as const;
+  for (const mismatch of mismatches) {
+    const reviewerHarness=setup({runDispatch:async(dispatch)=>{const leg=dispatch.legs[0]!;return {
+      identity:mismatch.identity ?? dispatch.identity,
+      target:mismatch.target,
+      legs:{standards:{status:"successful" as const,report:"must not project",usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:leg.prompt,workspaceDisposition:"deleted" as const}},
+    };}});
+    await reviewerHarness.runtime.activate();
+    await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext),mismatch.message);
+    await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",report:"infra"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
+    assert.equal(reviewerHarness.audits.length,0);
+  }
+
+  const exact=setup(); await exact.runtime.activate();
+  exact.handlers.get("input")({text:"review"}); exact.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+  const accepted=await exact.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
+  await exact.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"ok"},undefined,undefined,outputContext("out"));
+  assert.equal(exact.audits[0]!.record.results.standards!.dispatchIdentity,accepted.details.dispatch.identity);
+  assert.deepEqual(exact.audits[0]!.record.results.standards!.target,pin);
+});
+
 test("invalid expansion is fatal and makes a later refused receipt impossible", async()=>{
   const reviewerHarness=setup({loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:()=>undefined})});
   await reviewerHarness.runtime.activate(); reviewerHarness.handlers.get("input")({text:"review",images:undefined});
