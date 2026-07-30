@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_0hzTKdl7DhOU015t6CjpeagN|fc_0a54957056c3c131016a6be37c40848191a95d31e7caa2c646",
+  "details": {
+    "status": "completed",
+    "report": "R1: Empty Standards materials now pass closed schema/preflight; baseline-only two-leg and Standards-only no-spec tests prove canonical baseline, smell list, fixed range identity, and no fabricated material.\nR2: Runner axes are compared exactly with accepted dispatch before settlement projection; one-leg/two-leg result unions now encode Spec absence/presence.\nR3: Regressions cover hidden Spec on no-spec plus missing/extra two-leg axes, block completed/refused receipts and audit projection, while existing exact one-leg/two-leg successes pass.\nR4: Renamed closure to executeAndProjectDispatch and extracted successfulLeg fixture.\nR5: Focused tests, full npm test (374 passed), typecheck, npm pack/package lifecycle, and git diff --check passed; committed forward as 23a52990fd924216b760b349c1effe6bd3f03323.",
+    "commitSha": "23a52990fd924216b760b349c1effe6bd3f03323"
+  },
+  "artifactKind": "acceptedReceipt"
+}
