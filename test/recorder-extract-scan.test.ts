@@ -1215,6 +1215,11 @@ function combinedCrossRepresentationLifecycle(
     toolResultIsError?: boolean;
     toolResultToolName?: string;
     toolResultCallId?: string;
+    /**
+     * Envelope row type for the toolResult half.
+     * Documented Pi pair uses message_end; persisted-session message must not collapse.
+     */
+    toolResultRowType?: "message_end" | "message";
     /** Emit a second same-representation tool_execution_end after the pair. */
     extraToolExecutionEnd?: boolean;
     /** Emit toolResult before start (ordering violation with cross-rep pair). */
@@ -1261,7 +1266,7 @@ function combinedCrossRepresentationLifecycle(
     },
   };
   const toolResultMessage = {
-    type: "message_end",
+    type: options.toolResultRowType ?? "message_end",
     message: {
       role: "toolResult",
       toolCallId: options.toolResultCallId ?? callId,
@@ -1465,6 +1470,57 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
     "mismatched call-a/call-b cross-rep identity must reject",
   );
   assert.equal(mismatchedIdentity.auditObservation, null);
+
+  // Residual R1 — opposite-rep different call ids fail closed even when details also conflict.
+  // Equivalence-only mismatch detection would accept call-a and ignore orphan call-b.
+  const mismatchedIdentityConflictingDetails = extractAcceptedReceipt([
+    combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+      callId: "call-a",
+      details: judgeDetails,
+      toolResultCallId: "call-b",
+      toolResultDetails: { judgeStatus: "continue", fix: { summary: "x" } },
+    }),
+  ]);
+  assert.equal(
+    mismatchedIdentityConflictingDetails.receipt,
+    null,
+    "call-a tool_execution_end + call-b conflicting message_end/toolResult must reject",
+  );
+  assert.equal(
+    mismatchedIdentityConflictingDetails.auditObservation,
+    null,
+    "call-a/call-b conflicting details must yield no audit",
+  );
+
+  // Residual R2 — tool_execution_end + generic-session message/toolResult must not canonicalize.
+  const mixedSessionPairEnvelope = combinedCrossRepresentationLifecycle(
+    JUDGE_OUTPUT_TOOL_NAME,
+    {
+      callId: "mixed-session-1",
+      details: judgeDetails,
+      usage: { input: 3, output: 2, totalTokens: 5 },
+      toolResultRowType: "message",
+    },
+  );
+  const mixedSessionCanonical = canonicalizeLifecycleEvents(
+    collectLifecycleEvents(decodeEnvelopeRows(mixedSessionPairEnvelope)),
+  ).filter((event) => event.kind === "terminal");
+  assert.equal(
+    mixedSessionCanonical.length,
+    2,
+    "tool_execution_end + message/toolResult must keep both terminals",
+  );
+  const mixedSessionExtracted = extractAcceptedReceipt([mixedSessionPairEnvelope]);
+  assert.equal(
+    mixedSessionExtracted.receipt,
+    null,
+    "mixed tool_execution_end + message/toolResult pair must fail closed",
+  );
+  assert.equal(
+    mixedSessionExtracted.auditObservation,
+    null,
+    "mixed session pair must yield no audit",
+  );
 
   // R3 — reversed pair remains two terminals (no canonical collapse).
   const reversedEvents = canonicalizeLifecycleEvents(

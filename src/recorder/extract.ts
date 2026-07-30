@@ -98,8 +98,10 @@ type LifecycleEvent =
     contentText: string;
     details: unknown;
     usage: unknown;
-    /** Transport representation that produced this terminal. */
+    /** Coarse transport class for cross-rep identity and dual-terminal law. */
     representation: "tool_execution_end" | "toolResult";
+    /** Exact envelope row `type` that produced this terminal. */
+    rowType: "tool_execution_end" | "message_end" | "message";
   };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -208,6 +210,7 @@ export function collectLifecycleEvents(rows: unknown[]): LifecycleEvent[] {
         details: result?.details,
         usage: result?.usage ?? row.usage,
         representation: "tool_execution_end",
+        rowType: "tool_execution_end",
       });
       continue;
     }
@@ -218,6 +221,7 @@ export function collectLifecycleEvents(rows: unknown[]): LifecycleEvent[] {
       (row.type === "message" || row.type === "message_end") &&
       isRecord(row.message)
     ) {
+      const rowType = row.type;
       const message = row.message;
       if (message.role === "assistant" && Array.isArray(message.content)) {
         for (const part of message.content) {
@@ -259,6 +263,8 @@ export function collectLifecycleEvents(rows: unknown[]): LifecycleEvent[] {
           details: message.details,
           usage: message.usage,
           representation: "toolResult",
+          // Preserve message vs message_end so only the documented Pi pair collapses.
+          rowType,
         });
       }
     }
@@ -296,8 +302,10 @@ function terminalsEquivalent(
 }
 
 /**
- * True when opposite-representation terminals carry equivalent payloads under
- * different call ids — mismatched identity must fail closed.
+ * True when opposite-representation package terminals use different call ids.
+ * Fail closed regardless of whether content/details/usage also conflict —
+ * equivalence-only detection would let binding accept one valid lifecycle and
+ * ignore the differently identified orphan.
  */
 export function hasMismatchedCrossRepCallIdentity(
   events: LifecycleEvent[],
@@ -311,16 +319,19 @@ export function hasMismatchedCrossRepCallIdentity(
       const right = terminals[j]!;
       if (left.toolCallId === right.toolCallId) continue;
       if (left.representation === right.representation) continue;
-      if (terminalPayloadsEquivalent(left, right)) return true;
+      return true;
     }
   }
   return false;
 }
 
 /**
- * Collapse only the documented production-order cross-representation pair:
- * `tool_execution_end` followed later by an equivalent `toolResult`.
- * Retain the `toolResult` representation (public Receipt trust contract).
+ * Collapse only the documented production-order current-Pi pair:
+ * `type:"tool_execution_end"` followed later by equivalent
+ * `type:"message_end"` / `role:"toolResult"`.
+ * Generic persisted-session `type:"message"` / `role:"toolResult"` remains a
+ * supported standalone terminal and must not collapse with tool_execution_end.
+ * Retain the toolResult representation (public Receipt trust contract).
  * Reversed order, same-representation replays, and conflicts keep every
  * terminal so binding stays fail-closed.
  */
@@ -346,7 +357,8 @@ export function canonicalizeLifecycleEvents(
       first.representation === "tool_execution_end" ? first : second;
     const toolResult =
       first.representation === "toolResult" ? first : second;
-    // Documented order only: tool_execution_end then later toolResult.
+    // Documented current-Pi pair only: tool_execution_end then message_end/toolResult.
+    if (toolResult.rowType !== "message_end") continue;
     if (!(toolExecutionEnd.index < toolResult.index)) continue;
     // Preserve usage facts that appear only on the dropped transport form.
     if (toolResult.usage === undefined && toolExecutionEnd.usage !== undefined) {
