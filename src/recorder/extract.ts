@@ -268,12 +268,11 @@ export function collectLifecycleEvents(rows: unknown[]): LifecycleEvent[] {
 
 type TerminalLifecycleEvent = Extract<LifecycleEvent, { kind: "terminal" }>;
 
-function terminalsEquivalent(
+function terminalPayloadsEquivalent(
   left: TerminalLifecycleEvent,
   right: TerminalLifecycleEvent,
 ): boolean {
   if (
-    left.toolCallId !== right.toolCallId ||
     left.toolName !== right.toolName ||
     left.isError !== right.isError ||
     left.contentText !== right.contentText ||
@@ -286,10 +285,44 @@ function terminalsEquivalent(
   return deepEqual(left.usage, right.usage);
 }
 
+function terminalsEquivalent(
+  left: TerminalLifecycleEvent,
+  right: TerminalLifecycleEvent,
+): boolean {
+  return (
+    left.toolCallId === right.toolCallId &&
+    terminalPayloadsEquivalent(left, right)
+  );
+}
+
 /**
- * Collapse only an equivalent cross-representation terminal pair for one call.
- * Same-representation replays and any conflict keep every terminal so binding
- * stays fail-closed.
+ * True when opposite-representation terminals carry equivalent payloads under
+ * different call ids — mismatched identity must fail closed.
+ */
+export function hasMismatchedCrossRepCallIdentity(
+  events: LifecycleEvent[],
+): boolean {
+  const terminals = events.filter(
+    (event): event is TerminalLifecycleEvent => event.kind === "terminal",
+  );
+  for (let i = 0; i < terminals.length; i++) {
+    const left = terminals[i]!;
+    for (let j = i + 1; j < terminals.length; j++) {
+      const right = terminals[j]!;
+      if (left.toolCallId === right.toolCallId) continue;
+      if (left.representation === right.representation) continue;
+      if (terminalPayloadsEquivalent(left, right)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Collapse only the documented production-order cross-representation pair:
+ * `tool_execution_end` followed later by an equivalent `toolResult`.
+ * Retain the `toolResult` representation (public Receipt trust contract).
+ * Reversed order, same-representation replays, and conflicts keep every
+ * terminal so binding stays fail-closed.
  */
 export function canonicalizeLifecycleEvents(
   events: LifecycleEvent[],
@@ -309,12 +342,17 @@ export function canonicalizeLifecycleEvents(
     const second = terminals[1]!;
     if (first.representation === second.representation) continue;
     if (!terminalsEquivalent(first, second)) continue;
-    const [earlier, later] =
-      first.index <= second.index ? [first, second] : [second, first];
-    if (earlier.usage === undefined && later.usage !== undefined) {
-      earlier.usage = later.usage;
+    const toolExecutionEnd =
+      first.representation === "tool_execution_end" ? first : second;
+    const toolResult =
+      first.representation === "toolResult" ? first : second;
+    // Documented order only: tool_execution_end then later toolResult.
+    if (!(toolExecutionEnd.index < toolResult.index)) continue;
+    // Preserve usage facts that appear only on the dropped transport form.
+    if (toolResult.usage === undefined && toolExecutionEnd.usage !== undefined) {
+      toolResult.usage = toolExecutionEnd.usage;
     }
-    drop.add(later);
+    drop.add(toolExecutionEnd);
   }
 
   if (drop.size === 0) return events;
@@ -539,11 +577,29 @@ export function extractAcceptedReceipt(
   envelopes: string[],
 ): ExtractionResult {
   const emptyReport: ScanReport = { hits: [], redacted: false };
-  const rows: unknown[] = [];
+  // Canonicalize only within each decoded envelope input. Concatenating
+  // stdout/stderr (or other channels) before dedup would collapse split
+  // opposite representations that must remain fail-closed replay/conflict.
+  const events: LifecycleEvent[] = [];
+  let rowOffset = 0;
   for (const text of envelopes) {
-    rows.push(...decodeEnvelopeRows(text));
+    const rows = decodeEnvelopeRows(text);
+    const collected = collectLifecycleEvents(rows).map((event) => ({
+      ...event,
+      index: event.index + rowOffset,
+    }));
+    events.push(...canonicalizeLifecycleEvents(collected));
+    rowOffset += rows.length;
   }
-  const events = canonicalizeLifecycleEvents(collectLifecycleEvents(rows));
+  // Mismatched cross-representation call identity fails closed before binding.
+  if (hasMismatchedCrossRepCallIdentity(events)) {
+    return {
+      receipt: null,
+      auditObservation: null,
+      artifactKind: null,
+      report: emptyReport,
+    };
+  }
   let bound: BoundAcceptance | null;
   try {
     bound = bindAcceptedLifecycle(events);
