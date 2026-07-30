@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/review/review-019"
+  },
+  "invocation": {
+    "id": "0fa84e6b-df6c-493c-b992-9687c43d0e00"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/17/final-review-task.md",
+      "--ak-review-capabilities",
+      ".ak/work/issues/17/final-review-capabilities.json",
+      "-p",
+      "Review the fixed target. Submit one structured atomic proposal exactly as specified in the task; after accepted dispatch, call ak_reviewer_output with the complete two-axis report. Do not terminate without that final tool."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "950a6fae97fa4ba7a70c9c7127f96fd50c0c0e93",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "950a6fae97fa4ba7a70c9c7127f96fd50c0c0e93",
+        "path": ".ak/dockets/issues/17/authority/judge-001/receipt.json",
+        "blobOid": "2c5b838b504efa89d1aca255ab8cc3beaeb06694",
+        "sha256": "d20d37fc5766f59f113e96ce40f30a669d0bffbbbe770465f7f0aec61ab40fd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "950a6fae97fa4ba7a70c9c7127f96fd50c0c0e93",
+        "path": ".ak/dockets/issues/17/plan/coder-002/receipt.json",
+        "blobOid": "5e2cddcb81699c2bf5fc694ff39eeb5c394b1471",
+        "sha256": "151d41b7d687b7f6dd9b2b5a62e9483efd5cd43c8ea2e74a72b5502d2fbe6171",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-addendum",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "950a6fae97fa4ba7a70c9c7127f96fd50c0c0e93",
+        "path": ".ak/dockets/issues/17/plan/coder-003/receipt.json",
+        "blobOid": "dae4f08ebb4ea80de1614ef0b9a2f3eacf47ca79",
+        "sha256": "30cfd3bbc7c2cd945bdf4b2a9ba3eb4c691e6a971c68eb0dd18b5327378a3bad",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "950a6fae97fa4ba7a70c9c7127f96fd50c0c0e93",
+        "path": ".ak/dockets/issues/17/plan/judge-003/receipt.json",
+        "blobOid": "c86cbee3b97435af2ddee225f2557171507f32f6",
+        "sha256": "67bb854c9564d0f06603cc994208e0a7a4c0579ba81ede39632fefe3efdd3daa",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "46354e4cd10be3e116d75676eefa048ecb37d131cd16fb3ceaddea20ef6c8717",
+        "byteLength": 1895
+      }
+    },
+    {
+      "id": "review-capabilities",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-capabilities",
+        "sha256": "7c4b90a3c0b6e1a391f04fd2410ed5e037c2c57a2a3fd7a80b1da104701bbee8",
+        "byteLength": 809
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "a8f854ad0af8919c650a20bd509adfecbdd3525e132f77c687dd3b69a05fdd3f",
+        "byteLength": 936
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "9799aecc2ca5d0891f93d9cafb7f98385030be0da6575a6ef45573703be1ca5e",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_pLqVhMvxr6tZmn5YXpq1lnSM|fc_0f20925c8e2b2e40016a6bd028946c819195bbdaa29ec41ff0",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_pLqVhMvxr6tZmn5YXpq1lnSM|fc_0f20925c8e2b2e40016a6bd028946c819195bbdaa29ec41ff0",
+    "auditPassed": true,
+    "usage": {
+      "input": 61445,
+      "output": 418,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 61863
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
