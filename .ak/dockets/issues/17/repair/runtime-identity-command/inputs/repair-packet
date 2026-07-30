@@ -1,0 +1,13 @@
+# Issue #17 declared-command and runtime-identity repair
+
+Authority: Judge `.ak/dockets/issues/17/judgment/review-020/receipt.json` requires each concrete leg to include the exact canonical diff command, but does not prohibit additional task-bound declared verification commands; Review `.ak/dockets/issues/17/review/review-022/receipt.json`.
+
+R1 — Require `bash` and inclusion of `range.diffCommand` in every concrete review leg, but allow additional exact commands declared by that leg when each is present byte-for-byte in the task-bound ceiling. Do not require extras and do not widen the effective grant. Add green coverage for diff plus `git diff --check`/`npm run typecheck`, reds for missing diff, undeclared extra, and ceiling mismatch.
+
+R2 — Before projecting any runner settlements, require `result.identity === accepted dispatch.identity` and `result.target` equals the accepted pinned target. Retain the verified runtime identity/target in settlement and audit evidence. Mismatch is fatal infrastructure before any misleading settlement projection or completed/refused receipt.
+
+R3 — Add runner counterexamples for wrong identity, wrong target/ref map, and correct exact identity; verify no accepted-input substitution can conceal runtime mismatch.
+
+R4 — Keep dispatch and runner as the authority-designated deep owners; do not perform optional architecture extraction in this repair. Run focused tests, package lifecycle, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R4.
