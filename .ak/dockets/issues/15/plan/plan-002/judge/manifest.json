@@ -1,0 +1,17 @@
+{
+  "role": "judge",
+  "posture": "plan",
+  "plan": {
+    "path": ".ak/dockets/issues/15/plan/plan-002/receipt.json",
+    "sha256": "d13ac6d84c72d3f8fe7d0a5e81fd749b287255d11e14a355667344beaefcb913"
+  },
+  "sessionCandidate": {
+    "bytes": 11668166,
+    "sha256": "a7a3cc658fa3eb8c6ed6425a9db3126d7b2856a79241a937b93ec5f54f44e3a9",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "d6328d0d3f57a8292a33bd2491d9f8a1992ed69c9f3e23140dda556cb168b33a"
+  }
+}
