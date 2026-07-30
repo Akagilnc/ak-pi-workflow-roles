@@ -2,63 +2,255 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
+  REVIEWER_CHILD_TOOLS,
+  REVIEWER_PREREQUISITES,
   createReviewerDispatcher,
   parseReviewerCapabilities,
+  type AcceptedReviewerDispatch,
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
 } from "../src/reviewer-dispatch.ts";
 
-const task = Buffer.from(" review exactly \n");
+const task = Buffer.from(" review exactly — 逐字 \n");
 const digest = createHash("sha256").update(task).digest("hex");
-const skill = `# Code review\n## Standards baseline\n- Readability\n- Design\n- Tests\n## Standards review burden\nApply every baseline item.\n## Spec review burden\nCheck every requirement.\n`;
-const ceiling = JSON.stringify({version:1,taskSha256:digest,tools:["read","bash"],bashCommands:["git diff A..B"],prerequisiteOperations:["preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"]});
+const skill = `# Code review
+## Standards baseline
+- Readability
+- Design
+- Tests
+## Standards review burden
+Apply every baseline item.
+## Spec review burden
+Check every requirement.
+`;
+const exactCommand = "git diff A..B -- 'space path'";
+const capabilityValue = {
+  version: 1,
+  taskSha256: digest,
+  tools: [...REVIEWER_CHILD_TOOLS],
+  bashCommands: [exactCommand],
+  prerequisiteOperations: [...REVIEWER_PREREQUISITES],
+};
+const capabilityBytes = () => Buffer.from(JSON.stringify(capabilityValue));
+const capabilities = () => parseReviewerCapabilities(capabilityBytes(), task);
 
-test("capability ceiling is exact, task-byte-bound, and closed", () => {
-  const parsed = parseReviewerCapabilities(Buffer.from(ceiling), task);
-  assert.deepEqual(parsed.tools, ["read", "bash"]);
-  for (const bad of [
-    {...JSON.parse(ceiling), taskSha256: digest.toUpperCase()},
-    {...JSON.parse(ceiling), tools:["read","shell"]},
-    {...JSON.parse(ceiling), tools:["read"], bashCommands:["git diff A..B"]},
-    {...JSON.parse(ceiling), extra:true},
-  ]) assert.throws(() => parseReviewerCapabilities(Buffer.from(JSON.stringify(bad)), task));
-  assert.throws(() => parseReviewerCapabilities(Buffer.from(ceiling), Buffer.from(task.toString().trim())));
-});
+const required = {
+  tools: ["read", "bash"] as const,
+  bashCommands: [exactCommand] as const,
+  prerequisiteOperations: [
+    "preflight.git.resolve-base",
+    "preflight.git.derive-range",
+    "preflight.git.list-ordered-commits",
+    "preflight.git.read-material",
+    "runner.git.materialize-mirror",
+    "runner.git.materialize-workspace",
+    "runner.git.verify-snapshot",
+  ] as const,
+};
+const proposal: ReviewerProposalV1 = {
+  version: 1,
+  base: { revision: "A" },
+  standardsMaterials: [{ id: "style", repositoryPath: "STYLE.md" }],
+  spec: { state: "established", materials: [{ id: "requirements", repositoryPath: "SPEC.md" }] },
+  required: { standards: required, spec: required },
+};
 
-function reader(): ReviewerPinnedGitReader {
+function fakeReader(overrides: Partial<ReviewerPinnedGitReader> = {}): ReviewerPinnedGitReader {
   return {
-    pin: {repositoryRoot:"/repo",targetHead:"B",refs:{"refs/heads/main":"B"}},
-    async resolve(base) { assert.equal(base,"A"); return "A"; },
-    async range(base) { return {base,target:"B",diffCommand:"git diff A..B",commits:["B"]}; },
+    pin: { repositoryRoot: "/repo", targetHead: "B", refs: { "refs/heads/main": "B" } },
+    async resolve(base) { return base; },
+    async range(base) { return { base, target: "B", diffCommand: "git diff A..B", commits: ["C", "B"] }; },
     async material(path, revision) { return Buffer.from(`${revision}:${path}\n`); },
+    ...overrides,
   };
 }
-const required = {tools:["read","bash"] as const,bashCommands:["git diff A..B"] as const,prerequisiteOperations:["preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"] as const};
-const proposal: ReviewerProposalV1 = {version:1,base:{revision:"A"},standardsMaterials:[{id:"style",repositoryPath:"STYLE.md"}],spec:{state:"established",materials:[{id:"requirements",repositoryPath:"SPEC.md"}]},required:{standards:required,spec:required}};
 
-test("atomic compiler binds canonical bytes and accepts exactly once", async () => {
-  let starts=0; let accepted:any;
-  const dispatcher=createReviewerDispatcher({task,canonicalSkill:skill,capabilities:parseReviewerCapabilities(Buffer.from(ceiling),task),reader:reader(),hostTools:["read","bash"],run:async value=>{starts++;accepted=value;return [{axis:"standards",report:"ok",workspaceDisposition:"deleted"},{axis:"spec",report:"ok",workspaceDisposition:"deleted"}];}});
-  const result=await dispatcher.propose(proposal);
-  assert.equal(result.status,"accepted"); assert.equal(starts,1); assert.equal(accepted.legs.length,2);
-  for(const leg of accepted.legs){assert.equal(Buffer.byteLength(leg.prompt),leg.utf8Length);assert.equal(createHash("sha256").update(leg.prompt).digest("hex"),leg.sha256);}
-  assert.match(accepted.legs[0].prompt,/Readability/); assert.doesNotMatch(accepted.legs[1].prompt,/Readability/);
-  assert.equal(accepted.legs[0].actualPrompt,undefined);
-  assert.equal((await dispatcher.propose(proposal)).status,"closed"); assert.equal(starts,1);
+function harness(options: {
+  reader?: ReviewerPinnedGitReader;
+  ceiling?: ReturnType<typeof capabilities>;
+  canonicalSkill?: string;
+  hostTools?: readonly string[];
+  run?: (dispatch: AcceptedReviewerDispatch) => Promise<unknown>;
+} = {}) {
+  const calls: AcceptedReviewerDispatch[] = [];
+  const dispatcher = createReviewerDispatcher({
+    task,
+    canonicalSkill: options.canonicalSkill ?? skill,
+    capabilities: options.ceiling ?? capabilities(),
+    reader: options.reader ?? fakeReader(),
+    hostTools: options.hostTools ?? REVIEWER_CHILD_TOOLS,
+    run: options.run ?? (async (dispatch) => { calls.push(dispatch); return { ok: true }; }),
+  });
+  return { dispatcher, calls };
+}
+
+test("capability document is closed, exact-byte task-bound, and deeply immutable", () => {
+  const parsed = capabilities();
+  assert.deepEqual(parsed.tools, REVIEWER_CHILD_TOOLS);
+  assert.throws(() => (parsed.tools as string[]).push("read"));
+
+  const invalid = [
+    { ...capabilityValue, version: 2 },
+    { ...capabilityValue, taskSha256: digest.toUpperCase() },
+    { ...capabilityValue, tools: ["read", "shell"] },
+    { ...capabilityValue, tools: ["read", "read"] },
+    { ...capabilityValue, tools: ["read"], bashCommands: [exactCommand] },
+    { ...capabilityValue, bashCommands: [exactCommand, exactCommand] },
+    { ...capabilityValue, prerequisiteOperations: ["preflight.git.any"] },
+    { ...capabilityValue, extra: true },
+  ];
+  for (const value of invalid) {
+    assert.throws(() => parseReviewerCapabilities(Buffer.from(JSON.stringify(value)), task));
+  }
+  assert.throws(() => parseReviewerCapabilities(Buffer.from([0xff]), task));
+  assert.throws(() => parseReviewerCapabilities(capabilityBytes(), Buffer.from(task.toString().trim())));
 });
 
-test("failed all-leg preflight has no effect and correction remains possible", async () => {
-  let starts=0;
-  const dispatcher=createReviewerDispatcher({task,canonicalSkill:skill,capabilities:parseReviewerCapabilities(Buffer.from(ceiling),task),reader:reader(),hostTools:["read","bash"],run:async()=>{starts++;return[];}});
-  const bad={...proposal,required:{...proposal.required,spec:{...required,bashCommands:["git status"]}}};
-  assert.equal((await dispatcher.propose(bad)).status,"rejected"); assert.equal(starts,0);
-  assert.equal((await dispatcher.propose(proposal)).status,"accepted"); assert.equal(starts,1);
+test("proposal grants are exact subsets of the closed vocabulary, ceiling, and host", async () => {
+  for (const changed of [
+    `${exactCommand} `,
+    ` ${exactCommand}`,
+    `${exactCommand} --stat`,
+    `sh -c ${JSON.stringify(exactCommand)}`,
+  ]) {
+    const { dispatcher, calls } = harness();
+    const bad = { ...proposal, required: { ...proposal.required, spec: { ...required, bashCommands: [changed] } } };
+    assert.equal((await dispatcher.propose(bad as ReviewerProposalV1)).status, "rejected");
+    assert.equal(calls.length, 0);
+  }
+  const unavailable = harness({ hostTools: ["read"] });
+  assert.equal((await unavailable.dispatcher.propose(proposal)).status, "rejected");
+  assert.equal(unavailable.calls.length, 0);
+
+  const unknown = { ...proposal, required: { ...proposal.required, standards: { ...required, tools: ["read", "curl"] } } };
+  assert.equal((await harness().dispatcher.propose(unknown as ReviewerProposalV1)).status, "rejected");
 });
 
-test("established no-spec compiles and runs one Standards leg and no Spec bytes", async () => {
-  let accepted:any;
-  const dispatcher=createReviewerDispatcher({task,canonicalSkill:skill,capabilities:parseReviewerCapabilities(Buffer.from(ceiling),task),reader:reader(),hostTools:["read","bash"],run:async value=>{accepted=value;return[];}});
-  const one={...proposal,spec:{state:"not-established" as const,evidence:[{id:"absence",repositoryPath:"NO-SPEC.md"}]},required:{standards:required}};
-  assert.equal((await dispatcher.propose(one)).status,"accepted");
-  assert.deepEqual(accepted.legs.map((x:any)=>x.axis),["standards"]); assert.doesNotMatch(accepted.legs[0].prompt,/Spec review burden/);
+test("all pin-bound material and range failures reject atomically before runner", async () => {
+  const failures: ReviewerPinnedGitReader[] = [
+    fakeReader({ async resolve() { throw new Error("base unreachable"); } }),
+    fakeReader({ async range(base) { return { base, target: "DRIFT", diffCommand: "git diff", commits: [] }; } }),
+    fakeReader({ async material() { throw new Error("material unavailable"); } }),
+    fakeReader({ async material() { return Buffer.from([0xff]); } }),
+  ];
+  for (const reader of failures) {
+    const { dispatcher, calls } = harness({ reader });
+    assert.equal((await dispatcher.propose(proposal)).status, "rejected");
+    assert.equal(calls.length, 0);
+    assert.equal(dispatcher.rejections[0]!.started, false);
+  }
+
+  const missing = { ...capabilityValue, prerequisiteOperations: capabilityValue.prerequisiteOperations.filter((x) => x !== "preflight.git.read-material") };
+  const ceiling = parseReviewerCapabilities(Buffer.from(JSON.stringify(missing)), task);
+  const absent = harness({ ceiling });
+  assert.equal((await absent.dispatcher.propose(proposal)).status, "rejected");
+  assert.equal(absent.calls.length, 0);
+});
+
+test("proposal shape rejects contradictory axes and duplicate material identities", async () => {
+  const badProposals = [
+    { ...proposal, standardsMaterials: [] },
+    { ...proposal, standardsMaterials: [{ id: "requirements", repositoryPath: "STYLE.md" }] },
+    { ...proposal, spec: { state: "established", materials: [] } },
+    { ...proposal, spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "NONE.md" }] } },
+    { ...proposal, spec: { state: "not-established", materials: proposal.spec.state === "established" ? proposal.spec.materials : [] }, required: { standards: required } },
+  ];
+  for (const bad of badProposals) {
+    assert.equal((await harness().dispatcher.propose(bad as ReviewerProposalV1)).status, "rejected");
+  }
+});
+
+test("established Spec produces exact deterministic isolated two-leg prompts", async () => {
+  const first = harness();
+  const result = await first.dispatcher.propose(proposal);
+  assert.equal(result.status, "accepted");
+  assert.equal(first.calls.length, 1);
+  const dispatch = first.calls[0]!;
+  assert.deepEqual(dispatch.legs.map(({ axis }) => axis), ["standards", "spec"]);
+  assert.match(dispatch.legs[0]!.prompt, /## Standards baseline\n- Readability\n- Design\n- Tests/);
+  assert.match(dispatch.legs[0]!.prompt, /B:STYLE\.md/);
+  assert.doesNotMatch(dispatch.legs[0]!.prompt, /B:SPEC\.md|Check every requirement/);
+  assert.match(dispatch.legs[1]!.prompt, /B:SPEC\.md/);
+  assert.doesNotMatch(dispatch.legs[1]!.prompt, /Readability|Apply every baseline item|B:STYLE\.md/);
+  for (const leg of dispatch.legs) {
+    assert.equal(Buffer.byteLength(leg.prompt), leg.utf8Length);
+    assert.equal(createHash("sha256").update(leg.prompt).digest("hex"), leg.sha256);
+    assert.match(leg.prompt, new RegExp(`Task-SHA256: ${digest}`));
+    assert.match(leg.prompt, /Target: B\nBase: A\nDiff: git diff A\.\.B\nCommits:\nC\nB/);
+  }
+  const second = harness();
+  await second.dispatcher.propose(proposal);
+  assert.deepEqual(second.calls[0], dispatch);
+  assert.throws(() => (dispatch.targetSnapshot.refs as Record<string, string>).main = "DRIFT");
+  assert.throws(() => (dispatch.range.commits as string[]).push("DRIFT"));
+});
+
+test("canonical snapshot perturbation changes only extracted Standards evidence", async () => {
+  const original = harness();
+  await original.dispatcher.propose(proposal);
+  const changed = harness({ canonicalSkill: skill.replace("- Design", "- Architecture") });
+  await changed.dispatcher.propose(proposal);
+  assert.notEqual(original.calls[0]!.legs[0]!.sha256, changed.calls[0]!.legs[0]!.sha256);
+  assert.equal(original.calls[0]!.legs[1]!.sha256, changed.calls[0]!.legs[1]!.sha256);
+});
+
+test("no-spec produces one complete Standards leg and no Spec bytes", async () => {
+  const one: ReviewerProposalV1 = {
+    ...proposal,
+    spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "NO-SPEC.md" }] },
+    required: { standards: required },
+  };
+  const { dispatcher, calls } = harness();
+  assert.equal((await dispatcher.propose(one)).status, "accepted");
+  assert.deepEqual(calls[0]!.legs.map(({ axis }) => axis), ["standards"]);
+  assert.match(calls[0]!.legs[0]!.prompt, /Readability|NO-SPEC/);
+  assert.doesNotMatch(calls[0]!.legs[0]!.prompt, /Spec review burden|Check every requirement/);
+  assert.equal(dispatcher.acceptance?.cardinality, 1);
+});
+
+test("unbounded rejection correction stays open, then one acceptance closes irreversibly", async () => {
+  const { dispatcher, calls } = harness();
+  const bad = { ...proposal, required: { ...proposal.required, spec: { ...required, bashCommands: ["git status"] } } };
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    assert.equal((await dispatcher.propose(bad as ReviewerProposalV1)).status, "rejected");
+  }
+  assert.equal(calls.length, 0);
+  assert.equal(dispatcher.rejections.length, 25);
+  assert.equal((await dispatcher.propose(proposal)).status, "accepted");
+  assert.equal(calls.length, 1);
+  assert.equal((await dispatcher.propose(proposal)).status, "closed");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(dispatcher.acceptance, { identity: calls[0]!.identity, recipe: "reviewer-dispatch-v1", cardinality: 2 });
+});
+
+test("concurrent valid proposals cannot invoke the runner twice", async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  let rangeCalls = 0;
+  const reader = fakeReader({
+    async range(base) { rangeCalls += 1; await blocked; return { base, target: "B", diffCommand: "git diff A..B", commits: ["B"] }; },
+  });
+  const { dispatcher, calls } = harness({ reader });
+  const first = dispatcher.propose(proposal);
+  const second = dispatcher.propose(proposal);
+  while (rangeCalls < 2) await new Promise((resolve) => setImmediate(resolve));
+  release();
+  const results = await Promise.all([first, second]);
+  assert.deepEqual(results.map(({ status }) => status).sort(), ["accepted", "closed"]);
+  assert.equal(calls.length, 1);
+});
+
+test("runner failure occurs after irreversible acceptance and cannot reopen correction", async () => {
+  const dispatcher = createReviewerDispatcher({
+    task,
+    canonicalSkill: skill,
+    capabilities: capabilities(),
+    reader: fakeReader(),
+    hostTools: REVIEWER_CHILD_TOOLS,
+    async run() { throw new Error("provider failed"); },
+  });
+  await assert.rejects(dispatcher.propose(proposal), /provider failed/);
+  assert.equal(dispatcher.acceptance?.cardinality, 2);
+  assert.equal((await dispatcher.propose(proposal)).status, "closed");
+  assert.equal(dispatcher.rejections.length, 0);
 });
