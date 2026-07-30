@@ -264,6 +264,7 @@ export function canonicalizeLifecycleEvents(events) {
         }
     }
     const drop = new Set();
+    const substitutions = new Map();
     for (const [callId, terminals] of terminalsByCallId) {
         if (terminals.length !== 2)
             continue;
@@ -290,14 +291,34 @@ export function canonicalizeLifecycleEvents(events) {
         if (!hasCompleteProductionOrder)
             continue;
         // Preserve usage facts that appear only on the dropped transport form.
+        // Copy the retained terminal — never mutate caller-owned event objects.
         if (toolResult.usage === undefined && toolExecutionEnd.usage !== undefined) {
-            toolResult.usage = toolExecutionEnd.usage;
+            drop.add(toolExecutionEnd);
+            drop.add(toolResult);
+            const retainedWithUsage = {
+                ...toolResult,
+                usage: toolExecutionEnd.usage,
+            };
+            // Replace toolResult in-place in the output via map below.
+            // Track the substitution keyed by object identity of the dropped toolResult.
+            substitutions.set(toolResult, retainedWithUsage);
+            continue;
         }
         drop.add(toolExecutionEnd);
     }
     if (drop.size === 0)
         return events;
-    return events.filter((event) => event.kind !== "terminal" || !drop.has(event));
+    const out = [];
+    for (const event of events) {
+        if (event.kind === "terminal" && drop.has(event)) {
+            const substitute = substitutions.get(event);
+            if (substitute !== undefined)
+                out.push(substitute);
+            continue;
+        }
+        out.push(event);
+    }
+    return out;
 }
 /** @deprecated Use decodeEnvelopeRows + collectLifecycleEvents. Kept for tests naming. */
 export function decodeToolResultsFromEnvelope(text) {
