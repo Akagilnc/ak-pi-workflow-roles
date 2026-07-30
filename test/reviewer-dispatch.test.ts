@@ -12,7 +12,7 @@ import {
   type ReviewerProposalV1,
 } from "../src/reviewer-dispatch.ts";
 
-const task = Buffer.from(" review exactly — 逐字 \n");
+const task = Buffer.from(" review exactly — 逐字 \nSpec behavior: frobnicator must return 42.\n");
 const digest = createHash("sha256").update(task).digest("hex");
 const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
 const exactCommand = "git diff A..B -- 'space path'";
@@ -51,7 +51,7 @@ function fakeReader(overrides: Partial<ReviewerPinnedGitReader> = {}): ReviewerP
   return {
     pin: { repositoryRoot: "/repo", targetHead: "B", refs: { "refs/heads/main": "B" } },
     async resolve(base) { return base; },
-    async range(base) { return { base, target: "B", diffCommand: "git diff A..B", commits: ["C", "B"] }; },
+    async range(base) { return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: "1".repeat(64), commits: ["C", "B"] }; },
     async material(path, revision) { return Buffer.from(`${revision}:${path}\n`); },
     ...overrides,
   };
@@ -99,6 +99,11 @@ test("capability document is closed, exact-byte task-bound, and deeply immutable
 });
 
 test("proposal grants are exact subsets of the closed vocabulary, ceiling, and host", async () => {
+  const emptyBash = { ...proposal, required: { ...proposal.required, standards: { ...required, bashCommands: [] } } };
+  const empty = harness();
+  assert.equal((await empty.dispatcher.propose(emptyBash as ReviewerProposalV1)).status, "rejected");
+  assert.equal(empty.calls.length, 0);
+
   for (const changed of [
     `${exactCommand} `,
     ` ${exactCommand}`,
@@ -121,7 +126,9 @@ test("proposal grants are exact subsets of the closed vocabulary, ceiling, and h
 test("all pin-bound material and range failures reject atomically before runner", async () => {
   const failures: ReviewerPinnedGitReader[] = [
     fakeReader({ async resolve() { throw new Error("base unreachable"); } }),
-    fakeReader({ async range(base) { return { base, target: "DRIFT", diffCommand: "git diff", commits: [] }; } }),
+    fakeReader({ async range(base) { return { base, target: "DRIFT", diffCommand: `git diff ${base}...DRIFT`, diffSha256: "1".repeat(64), commits: [] }; } }),
+    fakeReader({ async range(base) { return { base, target: "B", diffCommand: `git diff ${base} B`, diffSha256: "1".repeat(64), commits: ["B"] }; } }),
+    fakeReader({ async range(base) { return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: createHash("sha256").update("").digest("hex"), commits: ["B"] }; } }),
     fakeReader({ async material() { throw new Error("material unavailable"); } }),
     fakeReader({ async material() { return Buffer.from([0xff]); } }),
   ];
@@ -138,6 +145,26 @@ test("all pin-bound material and range failures reject atomically before runner"
   assert.equal((await absent.dispatcher.propose(proposal)).status, "rejected");
   assert.equal(absent.calls.length, 0);
 });
+
+test("range preflight corrections consume no runner before one acceptance", async () => {
+  let attempt = 0;
+  const reader = fakeReader({
+    async range(base) {
+      attempt += 1;
+      if (attempt === 1) return { base, target: "B", diffCommand: `git diff ${base} B`, diffSha256: "1".repeat(64), commits: ["B"] };
+      if (attempt === 2) return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: sha256Empty, commits: ["B"] };
+      return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: "1".repeat(64), commits: ["B"] };
+    },
+  });
+  const { dispatcher, calls } = harness({ reader });
+  assert.equal((await dispatcher.propose(proposal)).status, "rejected");
+  assert.equal((await dispatcher.propose(proposal)).status, "rejected");
+  assert.equal(calls.length, 0);
+  assert.equal((await dispatcher.propose(proposal)).status, "accepted");
+  assert.equal(calls.length, 1);
+});
+
+const sha256Empty = createHash("sha256").update("").digest("hex");
 
 test("proposal shape rejects contradictory axes and duplicate material identities", async () => {
   const badProposals = [
@@ -172,8 +199,10 @@ test("established Spec produces exact deterministic isolated two-leg prompts", a
     assert.equal(Buffer.byteLength(leg.prompt), leg.utf8Length);
     assert.equal(createHash("sha256").update(leg.prompt).digest("hex"), leg.sha256);
     assert.match(leg.prompt, new RegExp(`Task-SHA256: ${digest}`));
-    assert.match(leg.prompt, /Target: B\nBase: A\nDiff: git diff A\.\.B\nCommits:\nC\nB/);
+    assert.doesNotMatch(leg.prompt, /frobnicator must return 42|Task bytes:/);
+    assert.match(leg.prompt, /Target: B\nBase: A\nDiff: git diff A\.\.\.B\nDiff-SHA256: 1111111111111111111111111111111111111111111111111111111111111111\nCommits:\nC\nB/);
   }
+  assert.deepEqual(dispatch.input.task, { bytes: task.toString("utf8"), utf8Length: task.byteLength, sha256: digest });
   const second = harness();
   await second.dispatcher.propose(proposal);
   assert.deepEqual(second.calls[0], dispatch);
@@ -224,7 +253,7 @@ test("concurrent valid proposals cannot invoke the runner twice", async () => {
   const blocked = new Promise<void>((resolve) => { release = resolve; });
   let rangeCalls = 0;
   const reader = fakeReader({
-    async range(base) { rangeCalls += 1; await blocked; return { base, target: "B", diffCommand: "git diff A..B", commits: ["B"] }; },
+    async range(base) { rangeCalls += 1; await blocked; return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: "1".repeat(64), commits: ["B"] }; },
   });
   const { dispatcher, calls } = harness({ reader });
   const first = dispatcher.propose(proposal);

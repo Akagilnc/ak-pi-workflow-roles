@@ -27,7 +27,10 @@ export type ReviewerCompiledLegEvidence = Readonly<{
 export type ReviewerAcceptedEvidence = Readonly<{
   identity: string;
   recipe: "reviewer-dispatch-v1";
-  input: Readonly<{ taskSha256: string; canonicalSkillSha256: string }>;
+  input: Readonly<{
+    task: Readonly<{ bytes: string; utf8Length: number; sha256: string }>;
+    canonicalSkillSha256: string;
+  }>;
   target: ReviewerPinnedTarget;
   range: ReviewerRange;
   materials: Readonly<{
@@ -116,6 +119,9 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       if (event.materials.noSpecEvidence !== undefined === established || axes[0] !== "standards" ||
           (established ? axes.length !== 2 || axes[1] !== "spec" : axes.length !== 1))
         throw new Error("Accepted dispatch Spec state, materials, and sibling axes disagree");
+      if (Buffer.byteLength(event.input.task.bytes, "utf8") !== event.input.task.utf8Length ||
+          sha256(event.input.task.bytes) !== event.input.task.sha256)
+        throw new Error("Accepted task bytes, length, or SHA disagree");
       for (const leg of event.legs) {
         if (Buffer.byteLength(leg.prompt, "utf8") !== leg.utf8Length || sha256(leg.prompt) !== leg.sha256)
           throw new Error("Accepted compiled prompt bytes, length, or SHA disagree");

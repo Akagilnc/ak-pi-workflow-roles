@@ -10,7 +10,7 @@ import {
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const target = { repositoryRoot: "/repo", targetHead: "abc", refs: { "refs/heads/main": "abc" } };
-const range = { base: "base", target: "abc", diffCommand: "git diff base abc", commits: ["abc"] };
+const range = { base: "base", target: "abc", diffCommand: "git diff base...abc", diffSha256: sha("diff"), commits: ["abc"] };
 const grant = { tools: ["read"] as const, bashCommands: [] as const, prerequisiteOperations: ["preflight.git.pin-target"] as const };
 const usage: ReviewerUsage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 } };
 
@@ -18,7 +18,7 @@ function accepted(spec = true): ReviewerEvidenceEvent {
   const prompts = spec ? [["standards", "standards π"], ["spec", "spec prompt"]] as const : [["standards", "standards π"]] as const;
   return {
     source: "reviewer-dispatch", type: "accepted", identity: "proposal-1", recipe: "reviewer-dispatch-v1",
-    input: { taskSha256: "task-sha", canonicalSkillSha256: "skill-sha" }, target, range,
+    input: { task: { bytes: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha" }, target, range,
     materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", sha256: "rules-sha" }], ...(spec ? { spec: [{ id: "requirements", repositoryPath: "SPEC.md", sha256: "spec-sha" }] } : { noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", sha256: "absence-sha" }] }) },
     legs: prompts.map(([axis, prompt]) => ({ axis, prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt), grant })),
   } as ReviewerEvidenceEvent;

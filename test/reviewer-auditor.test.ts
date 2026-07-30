@@ -21,9 +21,9 @@ const input = {
     rejections: [],
     accepted: {
       identity: "dispatch-1", recipe: "reviewer-dispatch-v1" as const,
-      input: { taskSha256: "task", canonicalSkillSha256: "skill" },
+      input: { task: { bytes: "opaque task", utf8Length: 11, sha256: "task" }, canonicalSkillSha256: "skill" },
       target: { repositoryRoot: "/repo", targetHead: "head", refs: {} },
-      range: { base: "base", target: "head", diffCommand: "git diff base head", commits: ["head"] },
+      range: { base: "base", target: "head", diffCommand: "git diff base...head", diffSha256: "diff", commits: ["head"] },
       materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", sha256: "rules" }], noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", sha256: "absence" }] },
       legs: [{ axis: "standards" as const, prompt: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt", grant: { tools: ["read"] as const, bashCommands: [], prerequisiteOperations: [] } }],
     },
