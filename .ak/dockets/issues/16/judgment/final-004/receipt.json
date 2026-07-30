@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_AN8JbrjGdAUbsgf3HbepCs7f|fc_0a1665310e11a64b016a6b5aca74a48194ae12f267626b314e",
+  "details": {
+    "judgeStatus": "converged",
+    "note": "Issue #16 is closed at immutable construction target 7e67b3b29ea81a331cbbf5c139cd894d4acbb169. Independent target-archive verification, after rebuilding the target-local native binding, passed the Recorder extraction suite 22/22, typecheck, recorder build, checked-in/generated dist identity, and diff check. The repair validates the complete dual-terminal candidate sequence linearly, accepts an independent failed call followed by a successful retry, rejects all four leading/trailing extra-terminal forms, compares complete content/details and compatible usage, and shares issuance/start invocation matching between canonicalization and binding. Prior obligations remain discharged: collapse is confined to one envelope and strict issuance → genuinely matching start → tool_execution_end → equivalent message_end/role:toolResult order; the retained trust representation is toolResult; tee-only usage is copied without mutating caller-owned events; identity, conflict, replay, reversed/early order, split-input, orphan, generic-message, and extra-terminal cases fail closed; Judge/Reviewer typed Receipt, audit observation, promotion, and lawful absence are exercised; excluded product surfaces and probe lifecycle remain unchanged. Review-013’s two judgement-only style findings do not establish closure failures: `hasMismatchedCrossRepCallIdentity` is private and its adjacent contract accurately states the broader sequence validation, so renaming is cosmetic; the three short map-append blocks repeat only a local collection idiom, not an authority invariant or parallel guardrail, and repository law does not require abstracting them."
+  },
+  "artifactKind": "acceptedReceipt"
+}
