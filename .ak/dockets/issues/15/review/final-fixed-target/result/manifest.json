@@ -1,0 +1,30 @@
+{
+  "formatVersion": 1,
+  "role": "reviewer",
+  "status": "completed",
+  "base": "702e36f97caa92f012470bf5a890e656a5859800",
+  "target": "da250445d09ef2b9105a99590f2ccda0a8db29c4",
+  "task": {
+    "path": ".ak/dockets/issues/15/review/final-fixed-target/task.md",
+    "sha256": "a344bf12631b85b4002beb3787bcf46b63d2272de0f30a4b33c17318f95c0f8e"
+  },
+  "sessionCandidate": {
+    "bytes": 110283438,
+    "sha256": "e5703a5d3b6554eb96c30813650a30599aefd65379e2d5ba8f342cb13d79150f",
+    "retention": "not retained",
+    "reason": "routine review execution exhaust; accepted Reviewer Receipt and method-audit outcome carry the claim"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "7ed562386c1e1e0a57ab51bb299aaa10d077938f13077710d355f86641b067bd",
+    "acceptedByMethodAudit": true
+  },
+  "methodAudit": {
+    "submissionAttempts": 2,
+    "rejectedAttempts": 1,
+    "acceptedAttempts": 1,
+    "rejectedReasons": [
+      "Reviewer receipt violates its method: Faithful aggregation was not demonstrated: the Spec sibling reported a nested-JSON example for the R3 exhaustiveness finding, but the candidate Receipt replaces/expands it with a separately discovered “42 recovered Markdown artifacts” claim and a new concrete example from the parent reviewer’s own analysis. Canonical aggregation permits verbatim or light cleanup, not adding substantive findings/evidence outside the isolated axis report.; The candidate Receipt partially adjudicates and reframes the Standards sibling instead of preserving its report: it adds that the hard probe-lifecycle finding is “disputed,” says it turns on whether the exhibit is disposed, and labels it the “disputed hard” worst issue. That qualification was not the sibling’s finding and exceeds light cleanup/faithful aggregation.; Reviewer role boundaries were crossed in the aggregation phase: the parent reviewer used its own substantive association audit to strengthen and rerank the Spec result rather than limiting itself to presenting the two isolated sibling reports side by side."
+    ]
+  }
+}
