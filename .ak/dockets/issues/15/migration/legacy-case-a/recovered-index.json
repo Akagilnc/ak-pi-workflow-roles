@@ -655,7 +655,14 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          99
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "64a89e52c74aca51ef2c5058ccf80ddd26f54a44c7a8d4248347ec082c799474",
@@ -739,7 +746,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "e84012e8480e1ce7dc8a5df1d7bb4c3d89c548415a1e1d942baa98a19ef5ed90",
@@ -856,16 +870,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": [
-          "6604a733886dfb5d074f558963e20e01e587aa6d"
-        ]
-      }
+      ]
     },
     {
       "itemKey": "5949d09472b53ccd7bb6e29ef6d74ff0a8570347850acb1968e2f31460a88fe5",
@@ -882,16 +887,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": [
-          "6604a733886dfb5d074f558963e20e01e587aa6d"
-        ]
-      }
+      ]
     },
     {
       "itemKey": "dd10a25655287e49a64eda89c580bba3115ee0e84ec9d23adee887f7f060c126",
@@ -908,16 +904,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": [
-          "6604a733886dfb5d074f558963e20e01e587aa6d"
-        ]
-      }
+      ]
     },
     {
       "itemKey": "b9000828b29c11e87abee16cc6efe34e4a4df4f9e8c1e31ada902842416aa02f",
@@ -934,16 +921,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": [
-          "6604a733886dfb5d074f558963e20e01e587aa6d"
-        ]
-      }
+      ]
     },
     {
       "itemKey": "b5c7924c54bd67116963007fa5a683a7b9399fbf62013c7229e390ebbcd92567",
@@ -960,16 +938,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": [
-          "6604a733886dfb5d074f558963e20e01e587aa6d"
-        ]
-      }
+      ]
     },
     {
       "itemKey": "1454bd6a275fc10849e551bd2593c4af365630cf1d1fb0be9baf515e2d6f6d11",
@@ -987,13 +956,11 @@
         "Collector"
       ],
       "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
+        "issues": [
+          3
         ],
-        "commits": [
-          "6604a733886dfb5d074f558963e20e01e587aa6d"
-        ]
+        "pullRequests": [],
+        "commits": []
       }
     },
     {
@@ -1017,7 +984,10 @@
           5
         ],
         "commits": [
-          "6604a733886dfb5d074f558963e20e01e587aa6d"
+          "6604a733886dfb5d074f558963e20e01e587aa6d",
+          "6fc54e117ebc5e43414015c6e02ef332e9f7d2af",
+          "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac",
+          "a817975c375255a9c1cfb7c307f32e79f23594a8"
         ]
       }
     },
@@ -1036,16 +1006,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": [
-          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
-        ]
-      }
+      ]
     },
     {
       "itemKey": "5411e3fb214ecc9ac2d4619066b47c76a305af55086b0ed26998cdcbccfaa404",
@@ -1062,16 +1023,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": [
-          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
-        ]
-      }
+      ]
     },
     {
       "itemKey": "8492a5278a99f685a31705b8fc4954617ce0a9975455111073edd09672126cbe",
@@ -1088,16 +1040,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": [
-          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
-        ]
-      }
+      ]
     },
     {
       "itemKey": "76af266775a69343c49ec9a2ba996c339b2283e8b431d52a4177000b6d7072a3",
@@ -1120,7 +1063,11 @@
           5
         ],
         "commits": [
-          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          "6604a733886dfb5d074f558963e20e01e587aa6d",
+          "6fc54e117ebc5e43414015c6e02ef332e9f7d2af",
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed",
+          "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac",
+          "a817975c375255a9c1cfb7c307f32e79f23594a8"
         ]
       }
     },
@@ -1145,6 +1092,10 @@
           5
         ],
         "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d",
+          "6fc54e117ebc5e43414015c6e02ef332e9f7d2af",
+          "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac",
+          "a817975c375255a9c1cfb7c307f32e79f23594a8",
           "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
         ]
       }
@@ -1195,6 +1146,11 @@
           5
         ],
         "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d",
+          "6fc54e117ebc5e43414015c6e02ef332e9f7d2af",
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed",
+          "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac",
+          "a817975c375255a9c1cfb7c307f32e79f23594a8",
           "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
         ]
       }
@@ -1214,14 +1170,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": []
-      }
+      ]
     },
     {
       "itemKey": "9b926dfa52aadd7fe4a805703908aab5474f60b9b259b8ee848e916c676ede0d",
@@ -1238,14 +1187,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": []
-      }
+      ]
     },
     {
       "itemKey": "eef325385d54b0d642c5d17e3368d37f0a3906b28d494a2f131dcf257b91115e",
@@ -1262,14 +1204,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": []
-      }
+      ]
     },
     {
       "itemKey": "25fa9f26180e267b570a797ffe2238a1d66b5444c22829658d7898351fbc46d4",
@@ -1286,14 +1221,7 @@
       "axes": [
         "Fixer",
         "Collector"
-      ],
-      "issuePrCommitAssociations": {
-        "issues": [],
-        "pullRequests": [
-          5
-        ],
-        "commits": []
-      }
+      ]
     },
     {
       "itemKey": "5e0df10a51874256e8d7291a63a4778c11304c5cfb62352e14f7c7b918c03019",
@@ -1316,7 +1244,9 @@
           5
         ],
         "commits": [
-          "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac"
+          "6fc54e117ebc5e43414015c6e02ef332e9f7d2af",
+          "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac",
+          "a817975c375255a9c1cfb7c307f32e79f23594a8"
         ]
       }
     },
@@ -1566,7 +1496,15 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          4,
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "7d95c72e4b57a4526f48c332394c77db868d5194de440facc27a890c2daf4bdf",
@@ -1600,7 +1538,14 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "1c25ba6089d1f3fce70e9bc143cc9949dcff39e0224dfd488d79cb4ca8671116",
@@ -3220,7 +3165,16 @@
         "Judge",
         "Fixer",
         "Coder"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1,
+          2,
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "9d403490c47c9033a09f2a2b9a8a737647b4c9f7b2a51a5b45a2e719017f483e",
@@ -3238,7 +3192,16 @@
         "Judge",
         "Fixer",
         "Coder"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1,
+          2,
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "fd421a23d249f73373bcf62727ed0c65c60531daaf0280fb95363364789bac52",
@@ -3807,7 +3770,9 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
-          1
+          1,
+          2,
+          3
         ],
         "pullRequests": [],
         "commits": []
@@ -3901,9 +3866,13 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
-          1
+          1,
+          3
         ],
-        "pullRequests": [],
+        "pullRequests": [
+          7,
+          8
+        ],
         "commits": []
       }
     },
@@ -4159,9 +4128,12 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
-          2
+          2,
+          3
         ],
-        "pullRequests": [],
+        "pullRequests": [
+          7
+        ],
         "commits": []
       }
     },
@@ -4232,7 +4204,9 @@
         "issues": [
           2
         ],
-        "pullRequests": [],
+        "pullRequests": [
+          9
+        ],
         "commits": []
       }
     },
@@ -4325,7 +4299,8 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
-          2
+          2,
+          3
         ],
         "pullRequests": [],
         "commits": []
@@ -4513,6 +4488,8 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
+          2,
           3
         ],
         "pullRequests": [],
@@ -4537,6 +4514,8 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
+          2,
           3
         ],
         "pullRequests": [],
@@ -4561,6 +4540,7 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
           3
         ],
         "pullRequests": [],
@@ -4585,6 +4565,7 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          2,
           3
         ],
         "pullRequests": [],
@@ -4656,6 +4637,7 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
           3
         ],
         "pullRequests": [],
@@ -4748,6 +4730,8 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
+          2,
           3
         ],
         "pullRequests": [],
@@ -4771,6 +4755,8 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
+          2,
           3
         ],
         "pullRequests": [],
@@ -4890,6 +4876,7 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
           3
         ],
         "pullRequests": [],
@@ -4915,6 +4902,7 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
           3
         ],
         "pullRequests": [],
@@ -4939,6 +4927,7 @@
       ],
       "issuePrCommitAssociations": {
         "issues": [
+          1,
           3
         ],
         "pullRequests": [],
@@ -5000,7 +4989,14 @@
       "axes": [
         "Fixer",
         "Reviewer"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          4
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "51b6aa364310b723b909abcf7a3d73cf1699036d4d426c4988bf3e5885a152c0",
@@ -5017,7 +5013,17 @@
       "axes": [
         "Fixer",
         "Reviewer"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          4,
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "80b6e7b7b5f43bcdd205be9d0b9cd753c0b7da36d637438d00b98b00cbf0e00e",
@@ -5034,7 +5040,17 @@
       "axes": [
         "Fixer",
         "Reviewer"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          4,
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "990bddad95cfae7e51da3cad364580cea67ede59ba58c4dfb5ddb6d0d81a10cd",
@@ -5051,7 +5067,17 @@
       "axes": [
         "Fixer",
         "Reviewer"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          4,
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "c355f6278288a419b9840c8a33750607b82b6dba3206aa86b61559c521cce158",
@@ -5100,7 +5126,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Reviewer"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "e4f75162d2324b84a35263cc7e907519513f1d7f38c569aca5372f71a777c3e6",
@@ -5132,7 +5165,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Reviewer"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     }
   ]
 }

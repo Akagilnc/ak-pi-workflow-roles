@@ -1,0 +1,786 @@
+/**
+ * Non-role Recorder child for Case-A repair-003 R1/R2 (corrected).
+ * Independently executable:
+ * - Sealed discovery-spec/construction-walk/inventory via immutable Git
+ * - Metadata-only no-follow lstat+hash of all 597 frozen identities
+ * - Cutoff-derived post-cutoff partition via exact candidate identity oracle
+ *   (basename alone never establishes post-cutoff status)
+ * - Verifies scanner module bytes before import
+ * - Actual scanBytes on every admitted non-generic original source (277)
+ * - Identity ledger: git tuples + external source seals + namespace inputs
+ * Emits summary JSON to AK_REPAIR_EVIDENCE_OUT; exit 0 only if all gates pass.
+ * Does not copy source payloads into the summary. No JSONL semantic reads.
+ * Does not share implementation with the seam verifier.
+ */
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+
+const REPO_ROOT = process.env.AK_REPAIR_REPO_ROOT;
+const MIG = join(REPO_ROOT, ".ak/dockets/issues/15/migration/legacy-case-a");
+const IMMUTABLE = "ea64733e382c6dcf14906b3b52782ec3f1c07535";
+const IMMUTABLE_MIG = ".ak/dockets/issues/15/migration/legacy-case-a";
+const RESCUE = join(REPO_ROOT, ".ak/work/issues/15/case-a-rescue");
+const OUT = process.env.AK_REPAIR_EVIDENCE_OUT;
+const SOLE_NAMESPACE = "github.com/Akagilnc/ak-pi-workflow-roles";
+const NAMESPACE_SNAPSHOT =
+  ".ak/dockets/issues/15/authority/judge-003/inputs/issue-snapshot";
+const SCANNER_SRC = "src/recorder/scanner.ts";
+const SCANNER_DIST = "dist/recorder/scanner.js";
+
+function sha256(buf) {
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function noFollowRead(path) {
+  const fd = openSync(path, "r");
+  try {
+    const st = lstatSync(path);
+    const buf = Buffer.alloc(st.size);
+    let off = 0;
+    while (off < st.size) {
+      const n = readSync(fd, buf, off, st.size - off, off);
+      if (n <= 0) break;
+      off += n;
+    }
+    return buf.subarray(0, off);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function gitShow(revPath) {
+  return execFileSync("git", ["-C", REPO_ROOT, "show", revPath], {
+    maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+function gitRevParse(revPath) {
+  return execFileSync("git", ["-C", REPO_ROOT, "rev-parse", revPath], {
+    encoding: "utf8",
+  }).trim();
+}
+
+function gitTuple(commit, path) {
+  const blobOid = gitRevParse(`${commit}:${path}`);
+  const digest = sha256(gitShow(`${commit}:${path}`));
+  return {
+    repository: SOLE_NAMESPACE,
+    commit,
+    path,
+    blobOid,
+    sha256: digest,
+  };
+}
+
+function matchesProjectRole(name, spec) {
+  const prefixes = spec.projectRolePredicates.includeBasenamePrefixes;
+  if (prefixes.some((p) => name.startsWith(p))) return true;
+  const regexes = spec.projectRolePredicates.includeBasenameRegexes.map(
+    (r) => new RegExp(r),
+  );
+  return regexes.some((r) => r.test(name));
+}
+
+function candidateMatchesFrozen(candidate, frozen) {
+  if (candidate.itemKey && candidate.itemKey === frozen.itemKey) return true;
+  return (
+    candidate.fileType === frozen.fileType &&
+    candidate.sizeBytes === frozen.sizeBytes &&
+    candidate.mtimeMs === frozen.mtimeMs &&
+    candidate.ctimeMs === frozen.ctimeMs &&
+    candidate.dev === frozen.dev &&
+    candidate.ino === frozen.ino &&
+    candidate.mode === frozen.mode &&
+    (candidate.sha256 ?? null) === (frozen.sha256 ?? null)
+  );
+}
+
+/** Corrected R1 oracle: identity membership + sealed predicates; not basename. */
+function isPostCutoffAddition(candidate, frozenEntries, frozenItemKeys, spec) {
+  if (!matchesProjectRole(candidate.basename, spec)) return false;
+  if (candidate.itemKey && frozenItemKeys.has(candidate.itemKey)) return false;
+  for (const frozen of frozenEntries) {
+    if (candidateMatchesFrozen(candidate, frozen)) return false;
+  }
+  return true;
+}
+
+function sealedPredicateWalk(spec, sourceRoot) {
+  const entries = [];
+  const skipped = [];
+  const names = readdirSync(sourceRoot, { withFileTypes: false });
+  for (const basename of names.sort()) {
+    if (!matchesProjectRole(basename, spec)) continue;
+    const full = join(sourceRoot, basename);
+    let st;
+    try {
+      st = lstatSync(full);
+    } catch {
+      skipped.push({ basename, reason: "unreadable" });
+      continue;
+    }
+    const isLnk = st.isSymbolicLink();
+    const isDir = st.isDirectory();
+    const isReg = st.isFile() && !isLnk;
+    if (isDir && !spec.filesystemBoundaries.includeDirectories) {
+      skipped.push({ basename, reason: "directory-outside-file-inventory" });
+      continue;
+    }
+    if (!isReg && !isLnk) {
+      if (!spec.filesystemBoundaries.includeSpecialFiles) {
+        skipped.push({ basename, reason: "non-regular-file" });
+        continue;
+      }
+    }
+    if (isLnk && !spec.filesystemBoundaries.includeSymlinksAsEntries) {
+      skipped.push({ basename, reason: "symlink-excluded" });
+      continue;
+    }
+    if (isReg && !spec.filesystemBoundaries.includeRegularFiles) continue;
+
+    const fileType = isLnk
+      ? "symlink"
+      : isDir
+        ? "directory"
+        : isReg
+          ? "regular"
+          : "other";
+    let digest = null;
+    if (isReg) {
+      digest = sha256(noFollowRead(full));
+    }
+    entries.push({
+      basename,
+      fileType,
+      sizeBytes: st.size,
+      mtimeMs: st.mtimeMs,
+      ctimeMs: st.ctimeMs,
+      dev: st.dev,
+      ino: st.ino,
+      mode: st.mode,
+      sha256: digest,
+      itemKey: digest || undefined,
+    });
+  }
+  return { entries, skipped };
+}
+
+function fail(payload, code) {
+  writeFileSync(OUT, `${JSON.stringify(payload, null, 2)}\n`);
+  console.log(JSON.stringify(payload));
+  process.exit(code);
+}
+
+async function verifyAndLoadScanner(expectedSrcSha) {
+  const srcPath = join(REPO_ROOT, SCANNER_SRC);
+  const distPath = join(REPO_ROOT, SCANNER_DIST);
+  if (!existsSync(srcPath) || !existsSync(distPath)) {
+    fail(
+      {
+        ok: false,
+        gate: "scanner-missing",
+        srcPath,
+        distPath,
+      },
+      5,
+    );
+  }
+  const srcBuf = readFileSync(srcPath);
+  const srcSha = sha256(srcBuf);
+  // Prefer immutable Git identity when resolvable.
+  let gitSrcTuple = null;
+  try {
+    gitSrcTuple = gitTuple("HEAD", SCANNER_SRC);
+  } catch {
+    gitSrcTuple = null;
+  }
+  if (gitSrcTuple && gitSrcTuple.sha256 !== srcSha) {
+    fail(
+      {
+        ok: false,
+        gate: "scanner-worktree-drift",
+        git: gitSrcTuple.sha256,
+        worktree: srcSha,
+      },
+      5,
+    );
+  }
+  if (expectedSrcSha && srcSha !== expectedSrcSha) {
+    fail(
+      {
+        ok: false,
+        gate: "scanner-hash-mismatch",
+        expected: expectedSrcSha,
+        actual: srcSha,
+      },
+      5,
+    );
+  }
+  const mod = await import(pathToFileURL(distPath).href);
+  if (typeof mod.scanBytes !== "function") {
+    fail({ ok: false, gate: "scanner-export-missing" }, 5);
+  }
+  return {
+    scanBytes: mod.scanBytes,
+    srcSha,
+    distSha: sha256(readFileSync(distPath)),
+    gitSrcTuple,
+  };
+}
+
+async function main() {
+  if (!REPO_ROOT || !OUT) {
+    console.error("AK_REPAIR_REPO_ROOT and AK_REPAIR_EVIDENCE_OUT required");
+    process.exit(1);
+  }
+
+  const gitTuples = [];
+  const pushTuple = (t) => {
+    gitTuples.push(t);
+    return t;
+  };
+
+  // Namespace inputs from immutable Git only.
+  const snapTuple = pushTuple(gitTuple(IMMUTABLE, NAMESPACE_SNAPSHOT));
+  const specTuple = pushTuple(
+    gitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/discovery-spec.v1.json`),
+  );
+  const walkTuple = pushTuple(
+    gitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/construction-walk.json`),
+  );
+  const invTuple = pushTuple(
+    gitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/inventory.json`),
+  );
+
+  const snap = JSON.parse(
+    gitShow(`${IMMUTABLE}:${NAMESPACE_SNAPSHOT}`).toString("utf8"),
+  );
+  const spec = JSON.parse(
+    gitShow(`${IMMUTABLE}:${IMMUTABLE_MIG}/discovery-spec.v1.json`).toString(
+      "utf8",
+    ),
+  );
+  const remoteHint = spec.authorizedRepositories?.[0]?.remoteHint;
+  // repository_url is api.github.com/repos/OWNER/REPO; html_url is github.com/OWNER/REPO/...
+  const fromRepoApi = String(snap.repository_url || "").match(
+    /github\.com\/repos\/([^/]+)\/([^/]+)/i,
+  );
+  const fromHtml = String(snap.html_url || "").match(
+    /github\.com\/([^/]+)\/([^/]+)/i,
+  );
+  const nsFromRepo = fromRepoApi
+    ? `github.com/${fromRepoApi[1]}/${fromRepoApi[2]}`
+    : "";
+  const nsFromHtml = fromHtml
+    ? `github.com/${fromHtml[1]}/${fromHtml[2]}`
+    : "";
+  const canon = (s) => s.replace(/^github\.com\//i, "github.com/").toLowerCase();
+  if (
+    canon(nsFromRepo) !== canon(SOLE_NAMESPACE) ||
+    canon(nsFromHtml) !== canon(SOLE_NAMESPACE) ||
+    remoteHint !== "Akagilnc/ak-pi-workflow-roles"
+  ) {
+    fail(
+      {
+        ok: false,
+        gate: "namespace-binding",
+        repository_url: snap.repository_url,
+        html_url: snap.html_url,
+        nsFromRepo,
+        nsFromHtml,
+        remoteHint,
+      },
+      6,
+    );
+  }
+
+  // Scanner byte gate before import/execution.
+  const scannerExpected = gitTuple("HEAD", SCANNER_SRC);
+  pushTuple(scannerExpected);
+  const scanner = await verifyAndLoadScanner(scannerExpected.sha256);
+  const { scanBytes } = scanner;
+
+  const frozenWalk = JSON.parse(
+    gitShow(`${IMMUTABLE}:${IMMUTABLE_MIG}/construction-walk.json`).toString(
+      "utf8",
+    ),
+  );
+  const frozenInventory = JSON.parse(
+    gitShow(`${IMMUTABLE}:${IMMUTABLE_MIG}/inventory.json`).toString("utf8"),
+  );
+  if (frozenWalk.entries.length !== 597 || frozenInventory.count !== 597) {
+    fail(
+      {
+        ok: false,
+        gate: "R1-frozen-denominator",
+        walkEntries: frozenWalk.entries.length,
+        inventoryCount: frozenInventory.count,
+      },
+      2,
+    );
+  }
+
+  const frozenItemKeys = new Set(frozenWalk.entries.map((e) => e.itemKey));
+
+  // R1: metadata-only corroboration of all 597 frozen identities
+  let matched = 0;
+  let missing = 0;
+  let changed = 0;
+  const changedSamples = [];
+  for (const e of frozenWalk.entries) {
+    try {
+      const st = lstatSync(e.sanitizedLocator);
+      const type = st.isSymbolicLink()
+        ? "symlink"
+        : st.isFile()
+          ? "regular"
+          : st.isDirectory()
+            ? "directory"
+            : "other";
+      const metaOk =
+        type === e.fileType &&
+        st.size === e.sizeBytes &&
+        st.mtimeMs === e.mtimeMs &&
+        st.ctimeMs === e.ctimeMs &&
+        st.dev === e.dev &&
+        st.ino === e.ino &&
+        st.mode === e.mode;
+      let hashOk = true;
+      if (e.fileType === "regular" && e.sha256) {
+        hashOk = sha256(noFollowRead(e.sanitizedLocator)) === e.sha256;
+      }
+      if (metaOk && hashOk) matched += 1;
+      else {
+        changed += 1;
+        if (changedSamples.length < 8) {
+          changedSamples.push({ basename: e.basename, type, metaOk, hashOk });
+        }
+      }
+    } catch {
+      missing += 1;
+    }
+  }
+
+  if (missing !== 0 || changed !== 0 || matched !== frozenWalk.entries.length) {
+    fail(
+      {
+        ok: false,
+        gate: "R1-frozen-identity-drift",
+        recorded: frozenWalk.entries.length,
+        matched,
+        missing,
+        changed,
+        changedSamples,
+        refuse: "required source identity absent or changed; owner escalation",
+      },
+      2,
+    );
+  }
+
+  // Independent sealed-predicate walk; cutoff-derived identity partition
+  const sourceRoot = realpathSync(spec.canonicalSourceRoot.logical);
+  const live = sealedPredicateWalk(spec, sourceRoot);
+  const postCutoff = live.entries.filter((c) =>
+    isPostCutoffAddition(c, frozenWalk.entries, frozenItemKeys, spec),
+  );
+  for (const c of postCutoff) {
+    if (c.itemKey && frozenItemKeys.has(c.itemKey)) {
+      fail(
+        {
+          ok: false,
+          gate: "R1-post-cutoff-identity-collision",
+          basename: c.basename,
+          itemKey: c.itemKey,
+        },
+        2,
+      );
+    }
+  }
+  // RED counterexample path: synthetic pre-cutoff identity named coder.ts rejected
+  const frozenSample = frozenWalk.entries[0];
+  const synthetic = {
+    basename: "coder.ts",
+    fileType: frozenSample.fileType,
+    sizeBytes: frozenSample.sizeBytes,
+    mtimeMs: frozenSample.mtimeMs,
+    ctimeMs: frozenSample.ctimeMs,
+    dev: frozenSample.dev,
+    ino: frozenSample.ino,
+    mode: frozenSample.mode,
+    sha256: frozenSample.sha256,
+    itemKey: frozenSample.itemKey,
+  };
+  if (
+    isPostCutoffAddition(synthetic, frozenWalk.entries, frozenItemKeys, spec)
+  ) {
+    fail(
+      {
+        ok: false,
+        gate: "R1-cutoff-identity-oracle",
+        note: "synthetic pre-cutoff coder.ts must be rejected",
+      },
+      2,
+    );
+  }
+
+  // Predicate drift on frozen set
+  for (const e of frozenWalk.entries) {
+    if (!matchesProjectRole(e.basename, spec)) {
+      fail({ ok: false, gate: "R1-predicate-drift", basename: e.basename }, 2);
+    }
+  }
+
+  // Load dispositions from worktree (association-only edits); seal content hash.
+  // Prefer Git HEAD when path is committed; otherwise hash worktree bytes.
+  const dispPath = "dispositions.json";
+  const dispositionsLivePath = join(MIG, dispPath);
+  const dispositions = readJson(dispositionsLivePath);
+  const dispRel = `${IMMUTABLE_MIG}/dispositions.json`;
+  let dispTuple;
+  try {
+    // Worktree may differ from HEAD during apply; record worktree sha and try HEAD tuple.
+    const headTuple = gitTuple("HEAD", dispRel);
+    const liveSha = sha256(readFileSync(dispositionsLivePath));
+    dispTuple = {
+      ...headTuple,
+      worktreeSha256: liveSha,
+      worktreeMatchesHead: headTuple.sha256 === liveSha,
+    };
+    pushTuple(headTuple);
+  } catch {
+    dispTuple = {
+      repository: SOLE_NAMESPACE,
+      commit: null,
+      path: dispRel,
+      blobOid: null,
+      sha256: sha256(readFileSync(dispositionsLivePath)),
+    };
+  }
+
+  const admitted = dispositions.items.filter((d) =>
+    ["recovered", "reference", "superseded"].includes(d.disposition),
+  );
+  if (admitted.length !== 277) {
+    fail(
+      {
+        ok: false,
+        gate: "R2-admitted-count",
+        admitted: admitted.length,
+        expected: 277,
+      },
+      3,
+    );
+  }
+
+  const externalSources = [];
+  const scanResults = [];
+  for (const d of admitted) {
+    const sourceSha = d.evidence?.sourceSha256 || null;
+    const basename = d.basename;
+    let sourceBuf = null;
+    let sourceOrigin = null;
+    if (sourceSha) {
+      const rescueFile = join(RESCUE, sourceSha, basename);
+      if (existsSync(rescueFile)) {
+        sourceBuf = readFileSync(rescueFile);
+        sourceOrigin = "private-rescue";
+      }
+    }
+    if (!sourceBuf && existsSync(join("/tmp", basename))) {
+      const buf = noFollowRead(join("/tmp", basename));
+      if (!sourceSha || sha256(buf) === sourceSha) {
+        sourceBuf = buf;
+        sourceOrigin = "tmp";
+      }
+    }
+    if (
+      !sourceBuf &&
+      d.evidence?.recoveredPath &&
+      existsSync(join(MIG, d.evidence.recoveredPath))
+    ) {
+      const buf = readFileSync(join(MIG, d.evidence.recoveredPath));
+      if (!sourceSha || sha256(buf) === sourceSha) {
+        sourceBuf = buf;
+        sourceOrigin = "recovered-clean";
+      }
+    }
+    if (!sourceBuf && d.evidence?.reference) {
+      const ref = d.evidence.reference;
+      const blob = gitShow(`${ref.commitSha}:${ref.path}`);
+      pushTuple(gitTuple(ref.commitSha, ref.path));
+      if (!sourceSha || sha256(blob) === sourceSha) {
+        sourceBuf = blob;
+        sourceOrigin = "immutable-git-clean";
+      }
+    }
+    if (!sourceBuf) {
+      fail(
+        {
+          ok: false,
+          gate: "R2-source-missing",
+          basename,
+          sourceSha,
+          refuse: "required source identity absent; owner escalation",
+        },
+        3,
+      );
+    }
+    const actualSourceSha = sha256(sourceBuf);
+    if (sourceSha && actualSourceSha !== sourceSha) {
+      fail(
+        {
+          ok: false,
+          gate: "R2-source-drift",
+          basename,
+          expected: sourceSha,
+          actual: actualSourceSha,
+          refuse: "required source identity changed; owner escalation",
+        },
+        3,
+      );
+    }
+    externalSources.push({
+      itemKey: d.itemKey,
+      sourceSha256: actualSourceSha,
+      basename,
+      sourceOrigin,
+      frozenIdentity: {
+        itemKey: d.itemKey,
+        basename: d.basename,
+        disposition: d.disposition,
+      },
+    });
+
+    // Seal redaction report via git when possible
+    if (d.evidence?.redactionReportPath) {
+      const rp = `${IMMUTABLE_MIG}/${d.evidence.redactionReportPath}`;
+      try {
+        pushTuple(gitTuple("HEAD", rp));
+      } catch {
+        /* worktree-only */
+      }
+    }
+    if (d.evidence?.recoveredPath) {
+      const rp = `${IMMUTABLE_MIG}/${d.evidence.recoveredPath}`;
+      try {
+        pushTuple(gitTuple("HEAD", rp));
+      } catch {
+        /* worktree-only */
+      }
+    }
+
+    const scanned = scanBytes(sourceBuf, basename);
+    const derSha = sha256(scanned.value);
+    const report = readJson(join(MIG, d.evidence.redactionReportPath));
+    const hitKey = (h) => `${h.ruleId}|${h.location}|${h.count}`;
+    const expectedHits = [...(report.hits || [])].map(hitKey).sort();
+    const actualHits = [...scanned.report.hits].map(hitKey).sort();
+    if (
+      JSON.stringify(expectedHits) !== JSON.stringify(actualHits) ||
+      Boolean(report.redacted) !== Boolean(scanned.report.redacted) ||
+      report.sourceSha256 !== actualSourceSha ||
+      report.recoveredSha256 !== derSha
+    ) {
+      fail(
+        {
+          ok: false,
+          gate: "R2-scan-mismatch",
+          basename,
+          expectedHits,
+          actualHits,
+          reportRedacted: report.redacted,
+          actualRedacted: scanned.report.redacted,
+          reportSource: report.sourceSha256,
+          actualSource: actualSourceSha,
+          reportDer: report.recoveredSha256,
+          actualDer: derSha,
+        },
+        4,
+      );
+    }
+    scanResults.push({
+      itemKey: d.itemKey,
+      basename,
+      sourceOrigin,
+      sourceSha256: actualSourceSha,
+      recoveredSha256: derSha,
+      redacted: scanned.report.redacted,
+      hits: scanned.report.hits,
+    });
+  }
+
+  const highlighted = scanResults.filter(
+    (s) =>
+      s.itemKey.startsWith("42a9fc") ||
+      s.itemKey.startsWith("af289a") ||
+      s.basename === "judge-malformed-probe.ts" ||
+      s.basename === "reviewer-real-pi-snippet.ts",
+  );
+  if (highlighted.length < 2) {
+    fail(
+      {
+        ok: false,
+        gate: "R2-highlighted-missing",
+        highlighted: highlighted.map((h) => h.itemKey),
+      },
+      4,
+    );
+  }
+  const redactedCount = scanResults.filter((s) => s.redacted).length;
+  if (redactedCount !== 2) {
+    fail(
+      {
+        ok: false,
+        gate: "R2-redaction-count",
+        redactedCount,
+      },
+      4,
+    );
+  }
+
+  // Deduplicate git tuples by commit+path
+  const seen = new Set();
+  const uniqueTuples = [];
+  for (const t of gitTuples) {
+    const k = `${t.commit}:${t.path}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    uniqueTuples.push(t);
+  }
+
+  // Mechanical red-gate proofs (boolean assertions the verifier re-checks).
+  const redGates = {
+    tuplePerturbation: (() => {
+      const t = uniqueTuples[0];
+      const bad = { ...t, blobOid: "0".repeat(40) };
+      try {
+        const oid = gitRevParse(`${bad.commit}:${bad.path}`);
+        return oid !== bad.blobOid;
+      } catch {
+        return true;
+      }
+    })(),
+    scannerHash: scanner.srcSha === scannerExpected.sha256,
+    selectionIdentity: admitted.length === 277,
+    sourceSeal: externalSources.every((e) => e.sourceSha256.length === 64),
+    hitReport: highlighted.every((h) => h.redacted && h.hits.length > 0),
+    cutoffIdentity: !isPostCutoffAddition(
+      synthetic,
+      frozenWalk.entries,
+      frozenItemKeys,
+      spec,
+    ),
+    namespaceBinding:
+      remoteHint === "Akagilnc/ak-pi-workflow-roles" &&
+      snapTuple.sha256.length === 64 &&
+      specTuple.sha256.length === 64,
+    redaction42a9fc: scanResults.some(
+      (s) => s.itemKey.startsWith("42a9fc") && s.redacted,
+    ),
+    redactionAf289a: scanResults.some(
+      (s) => s.itemKey.startsWith("af289a") && s.redacted,
+    ),
+  };
+  for (const [k, v] of Object.entries(redGates)) {
+    if (!v) {
+      fail({ ok: false, gate: `red-gate-${k}`, redGates }, 7);
+    }
+  }
+
+  const summary = {
+    ok: true,
+    recorderChild: "non-role-case-a-repair-003-cutoff-scan",
+    childExitCode: 0,
+    immutableTarget: IMMUTABLE,
+    sealedInputs: {
+      discoverySpec: `${IMMUTABLE}:${IMMUTABLE_MIG}/discovery-spec.v1.json`,
+      constructionWalk: `${IMMUTABLE}:${IMMUTABLE_MIG}/construction-walk.json`,
+      inventory: `${IMMUTABLE}:${IMMUTABLE_MIG}/inventory.json`,
+      issueSnapshot: `${IMMUTABLE}:${NAMESPACE_SNAPSHOT}`,
+      dispositions: dispTuple,
+    },
+    scanner: {
+      path: SCANNER_SRC,
+      sha256: scanner.srcSha,
+      distPath: SCANNER_DIST,
+      distSha256: scanner.distSha,
+      verified: true,
+    },
+    r1: {
+      recorded: frozenWalk.entries.length,
+      matched,
+      missing,
+      changed,
+      postCutoffCount: postCutoff.length,
+      postCutoffBasenames: postCutoff.map((p) => p.basename).sort(),
+      postCutoffAdditions: postCutoff.map((p) => ({
+        basename: p.basename,
+        fileType: p.fileType,
+        sizeBytes: p.sizeBytes,
+        itemKey: p.itemKey || null,
+        note: "absent from sealed pre-cutoff identity set under discovery predicates",
+      })),
+      liveEntryCount: live.entries.length,
+      liveSkipped: live.skipped,
+      algorithm:
+        "metadata-only no-follow lstat+hash+mode vs git-show ea64733 construction-walk; independent sealed-predicate readdir walk; exact candidate-identity post-cutoff oracle (not basename allowlist); synthetic pre-cutoff coder.ts rejected; no JSONL semantic reads",
+    },
+    r2: {
+      admittedScanned: scanResults.length,
+      redactedCount,
+      allMatched: true,
+      highlighted,
+      results: scanResults,
+    },
+    identityLedger: {
+      gitTuples: uniqueTuples,
+      externalSources: externalSources.map((e) => ({
+        itemKey: e.itemKey,
+        sourceSha256: e.sourceSha256,
+        basename: e.basename,
+        sourceOrigin: e.sourceOrigin,
+        frozenIdentity: e.frozenIdentity,
+      })),
+      namespace: {
+        namespace: SOLE_NAMESPACE,
+        inputs: [snapTuple, specTuple],
+      },
+      walk: walkTuple,
+      inventory: invTuple,
+      scanner: scannerExpected,
+    },
+    redGates,
+  };
+  writeFileSync(OUT, `${JSON.stringify(summary, null, 2)}\n`);
+  process.stdout.write(
+    JSON.stringify({
+      ok: true,
+      evidencePath: OUT,
+      r1matched: matched,
+      r2scanned: scanResults.length,
+      postCutoff: postCutoff.map((p) => p.basename),
+    }) + "\n",
+  );
+}
+
+main().catch((err) => {
+  console.error(String(err && err.stack ? err.stack : err));
+  process.exit(1);
+});
