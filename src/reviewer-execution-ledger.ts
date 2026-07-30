@@ -44,6 +44,7 @@ export type ReviewerLegResultEvidence = Readonly<{
 }>;
 export type ReviewerEvidenceEvent =
   | Readonly<{ source: "reviewer-transport"; type: "transport-rejected"; identity: string; violation: "schema"; started: false }>
+  | Readonly<{ source: "reviewer-transport"; type: "closed-attempt"; identity: string; reason: "transport-after-acceptance"; started: false }>
   | (Readonly<{ source: "reviewer-dispatch"; type: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>)
   | Readonly<{ source: "reviewer-dispatch"; type: "closed-attempt"; identity: string; reason: "acceptance-closed"; started: false }>
   | (Readonly<{ source: "reviewer-dispatch"; type: "accepted" }> & ReviewerAcceptedEvidence)
@@ -54,7 +55,7 @@ export type ReviewerEvidenceEvent =
 export type ReviewerExecutionRecord = Readonly<{
   transportRejections: readonly Readonly<{ identity: string; violation: "schema"; started: false }>[];
   rejections: readonly Readonly<{ identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>[];
-  closedAttempts?: readonly Readonly<{ identity: string; reason: "acceptance-closed"; started: false }>[];
+  closedAttempts?: readonly Readonly<{ identity: string; reason: "acceptance-closed" | "transport-after-acceptance"; started: false }>[];
   accepted?: ReviewerAcceptedEvidence;
   started?: Readonly<{ dispatchIdentity: string; cardinality: 1 | 2 }>;
   results: Readonly<Partial<Record<"standards" | "spec", ReviewerLegResultEvidence>>>;
@@ -88,7 +89,7 @@ function fatal(error: unknown): FatalEvidence {
 export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
   const transportRejections: Array<{ identity: string; violation: "schema"; started: false }> = [];
   const rejections: Array<{ identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }> = [];
-  const closedAttempts: Array<{ identity: string; reason: "acceptance-closed"; started: false }> = [];
+  const closedAttempts: Array<{ identity: string; reason: "acceptance-closed" | "transport-after-acceptance"; started: false }> = [];
   let accepted: ReviewerAcceptedEvidence | undefined;
   let started: { dispatchIdentity: string; cardinality: 1 | 2 } | undefined;
   const results: Partial<Record<"standards" | "spec", ReviewerLegResultEvidence>> = {};
@@ -102,6 +103,14 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
         throw new Error("Transport rejection must contain only immutable bounded non-start evidence");
       if (accepted !== undefined || started !== undefined) throw new Error("Transport rejection cannot follow an accepted dispatch");
       transportRejections.push(cloneFreeze({ identity: event.identity, violation: event.violation, started: false }));
+      return;
+    }
+    if (event.source === "reviewer-transport" && event.type === "closed-attempt") {
+      const allowed = ["source", "type", "identity", "reason", "started"];
+      if (Object.keys(event).some((key) => !allowed.includes(key)) || event.reason !== "transport-after-acceptance" || event.started !== false)
+        throw new Error("Closed transport attempt must contain only immutable bounded non-start evidence");
+      if (accepted === undefined) throw new Error("Closed transport attempt requires acceptance");
+      closedAttempts.push(cloneFreeze({ identity: event.identity, reason: event.reason, started: false }));
       return;
     }
     if (event.source === "reviewer-dispatch" && event.type === "rejected") {

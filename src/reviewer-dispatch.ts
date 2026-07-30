@@ -117,13 +117,13 @@ type DispatcherDependencies = Readonly<{
 }>;
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-class PreflightViolation extends Error {
+export class ReviewerPreflightError extends Error {
   constructor(readonly code: ReviewerPreflightViolation) { super(code); }
 }
-const violation = (code: ReviewerPreflightViolation): never => { throw new PreflightViolation(code); };
+const violation = (code: ReviewerPreflightViolation): never => { throw new ReviewerPreflightError(code); };
 const classifyReadFailure = (error: unknown): never => {
   if (error instanceof ReviewerCorrectablePreflightError) violation(error.code);
-  throw new PreflightViolation("preflight-infrastructure");
+  throw new ReviewerPreflightError("preflight-infrastructure");
 };
 
 function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
@@ -142,16 +142,16 @@ function freezeStrings<T extends string>(values: readonly T[]): readonly T[] {
 
 function validateCapabilityRequestShape(value: unknown): ReviewerCapabilityRequest {
   if (!isExactObject(value, ["tools", "bashCommands", "prerequisiteOperations"]))
-    throw new Error("Invalid capability request");
+    throw new ReviewerPreflightError("capability-invalid");
   const { tools, bashCommands, prerequisiteOperations } = value;
   if (!Array.isArray(tools) || !Array.isArray(bashCommands) || !Array.isArray(prerequisiteOperations) ||
       !tools.every((item): item is ReviewerChildToolName => typeof item === "string" && (REVIEWER_CHILD_TOOLS as readonly string[]).includes(item)) ||
       !bashCommands.every((item): item is string => typeof item === "string") ||
       !prerequisiteOperations.every((item): item is ReviewerPrerequisiteOperation => typeof item === "string" && (REVIEWER_PREREQUISITES as readonly string[]).includes(item)) ||
       !hasUniqueValues(tools) || !hasUniqueValues(bashCommands) || !hasUniqueValues(prerequisiteOperations))
-    throw new Error("Invalid capability request values");
+    throw new ReviewerPreflightError("capability-invalid");
   if (bashCommands.length > 0 && !tools.includes("bash"))
-    throw new Error("Reviewer bash commands require bash tool");
+    violation("capability-invalid");
   return { tools, bashCommands, prerequisiteOperations };
 }
 
@@ -214,37 +214,41 @@ function validateRequest(
     tools.some((tool) => !ceiling.tools.includes(tool) || !hostTools.includes(tool)) ||
     prerequisiteOperations.some((operation) => !ceiling.prerequisiteOperations.includes(operation))
   ) {
-    throw new Error("Capability requirement exceeds ceiling or host availability");
+    violation("capability-invalid");
   }
   return immutableRequest({ tools, bashCommands, prerequisiteOperations });
+}
+
+export function validateReviewerHostCeiling(ceiling: ReviewerCapabilitiesV1, hostTools: readonly string[]): void {
+  if (ceiling.tools.some((tool) => !hostTools.includes(tool))) {
+    throw new ReviewerPreflightError("capability-invalid");
+  }
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 function validateMaterialSelection(
   value: unknown,
-  axis: "standards" | "spec" | "no-spec evidence",
-  index: number,
+  _axis: "standards" | "spec" | "no-spec evidence",
+  _index: number,
 ): asserts value is MaterialSelection {
-  const location = `${axis} material selection at index ${index}`;
   if (!isExactObject(value, ["id", "repositoryPath"]) ||
       typeof value.id !== "string" || !SAFE_ID.test(value.id)) {
-    throw new Error(`Invalid ${location}: identity`);
+    throw new ReviewerPreflightError("material-invalid");
   }
-  const safeId = ` (id: ${value.id})`;
   if (typeof value.repositoryPath !== "string" || value.repositoryPath.length === 0 ||
       value.repositoryPath.startsWith("/") || value.repositoryPath.includes("\\") ||
       /[\u0000-\u001f\u007f]/u.test(value.repositoryPath) ||
       value.repositoryPath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
-    throw new Error(`Invalid ${location}${safeId}: repository-relative path`);
+    violation("material-invalid");
   }
 }
 
 function skillSection(skill: string, heading: string, nextHeading: string): string {
   const start = skill.indexOf(heading);
-  if (start < 0) throw new Error(`Canonical Skill lacks ${heading}`);
+  if (start < 0) violation("preflight-infrastructure");
   const end = skill.indexOf(nextHeading, start + heading.length);
-  if (end < 0 || end <= start) throw new Error(`Canonical Skill lacks ${nextHeading}`);
+  if (end < 0 || end <= start) violation("preflight-infrastructure");
   return skill.slice(start, end).trim();
 }
 
@@ -262,8 +266,9 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   const task = Uint8Array.from(dependencies.task);
   const canonicalSkill = dependencies.canonicalSkill;
   const capabilities = dependencies.capabilities;
-  const targetSnapshot = immutableReviewerPin(dependencies.reader.pin);
   const hostTools = freezeStrings(dependencies.hostTools);
+  validateReviewerHostCeiling(capabilities, hostTools);
+  const targetSnapshot = immutableReviewerPin(dependencies.reader.pin);
   let accepted: ReviewerAcceptanceEvidence | undefined;
   let accepting = false;
   const rejections: ReviewerRejectionEvidence[] = [];
@@ -276,15 +281,8 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   }
 
   function reject(identity: string, error: unknown): ReviewerDispatchResult {
-    const message = error instanceof Error ? error.message : "";
-    const code: ReviewerPreflightViolation = error instanceof PreflightViolation ? error.code
-      : /proposal/i.test(message) ? "proposal-invalid"
-      : /base revision/i.test(message) ? "base-invalid"
-      : /material|UTF-8/i.test(message) ? "material-invalid"
-      : /Spec state|Spec state evidence/i.test(message) ? "spec-invalid"
-      : /capability|bash commands/i.test(message) ? "capability-invalid"
-      : /prerequisite/i.test(message) ? "prerequisite-missing"
-      : /range/i.test(message) ? "range-invalid"
+    const code: ReviewerPreflightViolation = error instanceof ReviewerPreflightError
+      ? error.code
       : "preflight-infrastructure";
     const violations = Object.freeze<ReviewerPreflightViolation[]>([code]);
     rejections.push(Object.freeze({ identity, violations, started: false as const }));
@@ -293,13 +291,13 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
 
   async function preflightAndCompileDispatch(proposal: ReviewerProposalV1, identity: string): Promise<AcceptedReviewerDispatch> {
     if (!isExactObject(proposal, ["version", "base", "standardsMaterials", "spec", "required"]) || proposal.version !== 1) {
-      throw new Error("Invalid Reviewer proposal");
+      violation("proposal-invalid");
     }
     if (!isExactObject(proposal.base, ["revision"]) || typeof proposal.base.revision !== "string" || proposal.base.revision.length === 0) {
-      throw new Error("Invalid base revision");
+      violation("base-invalid");
     }
     if (!Array.isArray(proposal.standardsMaterials) || proposal.standardsMaterials.length === 0) {
-      throw new Error("Standards materials are required");
+      violation("material-invalid");
     }
     proposal.standardsMaterials.forEach((selection, index) =>
       validateMaterialSelection(selection, "standards", index));
@@ -309,22 +307,22 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         ? Object.freeze({ kind: "standards-only" as const, selections: proposal.spec.evidence, selectionLabel: "no-spec evidence", requiredKeys: ["standards"] as const })
         : undefined;
     if (axisPlan === undefined || !isExactObject(proposal.spec, ["state", axisPlan.kind === "two-leg" ? "materials" : "evidence"])) {
-      throw new Error("Invalid Spec state");
+      throw new ReviewerPreflightError("spec-invalid");
     }
     if (!isExactObject(proposal.required, axisPlan.requiredKeys)) {
-      throw new Error("Capability requirements contradict Spec state");
+      violation("capability-invalid");
     }
     const specSelections = axisPlan.selections;
-    if (!Array.isArray(specSelections) || specSelections.length === 0) throw new Error("Spec state evidence is required");
+    if (!Array.isArray(specSelections) || specSelections.length === 0) violation("spec-invalid");
     specSelections.forEach((selection, index) => validateMaterialSelection(selection, axisPlan.selectionLabel, index));
 
     const allSelections = [...proposal.standardsMaterials, ...specSelections];
     if (!hasUniqueValues(allSelections.map(({ id }) => id)) ||
         !hasUniqueValues(allSelections.map(({ repositoryPath }) => repositoryPath.normalize("NFC"))))
-      throw new Error("Duplicate or cross-axis material identity or repository path");
+      violation("material-invalid");
     for (const operation of DISPATCH_PREREQUISITES) {
       if (!capabilities.prerequisiteOperations.includes(operation)) {
-        throw new Error(`Missing preflight prerequisite: ${operation}`);
+        violation("prerequisite-missing");
       }
     }
 
@@ -339,7 +337,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     ])]);
     for (const operation of runnerOperations) {
       if (!capabilities.prerequisiteOperations.includes(operation) || !acceptedPrerequisites.includes(operation)) {
-        throw new Error(`Missing accepted runner prerequisite: ${operation}`);
+        violation("prerequisite-missing");
       }
     }
 
@@ -350,7 +348,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       readRange = await dependencies.reader.range(base);
     } catch (error) { classifyReadFailure(error); }
     if (readRange.base !== base || readRange.target !== targetSnapshot.targetHead) {
-      throw new Error("Range is inconsistent with immutable target pin");
+      violation("range-invalid");
     }
     if (
       readRange.diffCommand !== `git diff ${base}...${targetSnapshot.targetHead}` ||
@@ -361,7 +359,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       !readRange.commits.every((commit) => typeof commit === "string") ||
       !hasUniqueValues(readRange.commits)
     ) {
-      throw new Error("Invalid canonical range evidence");
+      violation("range-invalid");
     }
     const range: ReviewerRange = Object.freeze({
       base,
@@ -371,7 +369,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       commits: freezeStrings(readRange.commits),
     });
     if (!capabilities.tools.includes("bash") || !capabilities.bashCommands.includes(range.diffCommand)) {
-      throw new Error("Capability ceiling lacks the canonical diff command");
+      violation("capability-invalid");
     }
     for (const grant of [standardsGrant, ...(specGrant === undefined ? [] : [specGrant])]) {
       if (
@@ -379,7 +377,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         !grant.bashCommands.includes(range.diffCommand) ||
         grant.bashCommands.some((command) => !capabilities.bashCommands.includes(command))
       ) {
-        throw new Error("Capability requirement must grant the canonical bash diff command without exceeding the ceiling");
+        violation("capability-invalid");
       }
     }
     const materialEvidence = new Map<string, ReviewerMaterialEvidence>();
@@ -403,7 +401,9 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       return rendered.join("\n\n");
     };
 
-    const taskText = exactUtf8(task, "Reviewer task");
+    let taskText!: string;
+    try { taskText = exactUtf8(task, "Reviewer task"); }
+    catch { violation("prompt-identity-invalid"); }
     const taskEvidence: ReviewerPromptIdentity = reviewerPromptIdentity(taskText);
     const common = [
       `Task-SHA256: ${taskEvidence.sha256}`,
@@ -495,7 +495,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         }
       } catch (error) {
         if (accepted || accepting) return close(identity);
-        return reject(identity, error instanceof PreflightViolation ? error : new PreflightViolation("preflight-infrastructure"));
+        return reject(identity, error instanceof ReviewerPreflightError ? error : new ReviewerPreflightError("preflight-infrastructure"));
       }
       if (accepted || accepting) return close(identity);
       accepting = true;
