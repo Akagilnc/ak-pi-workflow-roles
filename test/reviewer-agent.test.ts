@@ -385,7 +385,13 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
           .workspaceDisposition?.retained;
         throw error;
       }
-    }, /cancel|abort/i);
+    }, (error: any) => {
+      assert.equal(error.name, "ReviewerDispatchExecutionError");
+      assert.equal(error.outcome.legs.standards.status, "failed");
+      assert.equal(error.outcome.legs.standards.failure, "cancelled");
+      retained = error.outcome.legs.standards.workspaceDisposition.retained;
+      return true;
+    });
     assert.ok(retained);
     await access(retained);
   } finally {

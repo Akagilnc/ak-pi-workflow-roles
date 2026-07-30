@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
@@ -15,7 +16,7 @@ import {
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
 } from "./reviewer-dispatch.ts";
-import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedReviewerDetails, type ReviewerOutput } from "./package-contracts/reviewer-output.ts";
 
@@ -76,6 +77,8 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let expansionCaptured = false;
   let registered = false;
   const ledger = createReviewerExecutionLedger();
+  const pendingTransport = new Map<string, string>();
+  const admittedToolCalls = new Set<string>();
 
   pi.registerFlag("ak-review-task", { description: "Opaque Markdown review task assigned to the reviewer role", type: "string" });
   pi.registerFlag("ak-review-capabilities", { description: "Closed Reviewer capability grant bound to the exact task bytes", type: "string" });
@@ -103,15 +106,23 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
       ledger.append(projectAcceptedDispatch(dispatch));
       ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: dispatch.identity, cardinality: dispatch.legs.length as 1 | 2 });
-      try {
-        const result = await dependencies.runDispatch(dispatch, { context, ...(signal === undefined ? {} : { signal }) });
+      const appendSettlements = (result: ReviewerDispatchRunResult) => {
         for (const leg of dispatch.legs) {
           const actual = result.legs[leg.axis];
           if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
-          ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, workspaceDisposition: actual.workspaceDisposition });
+          ledger.append(actual.status === "failed"
+            ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, workspaceDisposition: actual.workspaceDisposition }
+            : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, workspaceDisposition: actual.workspaceDisposition });
         }
+      };
+      try {
+        const result = await dependencies.runDispatch(dispatch, { context, ...(signal === undefined ? {} : { signal }) });
+        appendSettlements(result);
         return result;
-      } catch (error) { throw ledger.recordInfrastructureFailure(error); }
+      } catch (error) {
+        if (error instanceof ReviewerDispatchExecutionError) appendSettlements(error.outcome);
+        throw ledger.recordInfrastructureFailure(error);
+      }
     };
     dispatcher = createReviewerDispatcher({ task: taskBytes, canonicalSkill: binding.snapshot.raw, capabilities, reader, hostTools: dependencies.hostTools(), run });
 
@@ -119,6 +130,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       registered = true;
       pi.registerTool({ name: AGENT_TOOL_NAME, label: "Reviewer Dispatch", description: "Validate and irreversibly run one atomic Reviewer proposal.", promptSnippet: "Propose the atomic Reviewer dispatch", promptGuidelines: ["Correct rejected proposals; an accepted proposal is irreversible."], parameters: reviewerProposalSchema,
         async execute(_id, proposal, signal, _update, toolCtx) {
+          admittedToolCalls.add(_id);
           let result;
           try { result = await dispatcher!.propose(proposal as ReviewerProposalV1, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
           catch (error) { hostActions.failInfrastructure(error, toolCtx); }
@@ -141,6 +153,23 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
           return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: output, terminate: true as const, ...(audit.usage === undefined ? {} : { usage: audit.usage }) };
         } });
+      pi.on("tool_execution_start", (event) => {
+        if (event.toolName !== AGENT_TOOL_NAME) return;
+        const encoded = JSON.stringify(event.args) ?? "undefined";
+        pendingTransport.set(event.toolCallId, `transport-${createHash("sha256").update(encoded).digest("hex")}`);
+      });
+      pi.on("tool_execution_end", (event) => {
+        const identity = pendingTransport.get(event.toolCallId);
+        pendingTransport.delete(event.toolCallId);
+        const admitted = admittedToolCalls.delete(event.toolCallId);
+        if (identity !== undefined && event.isError && !admitted) ledger.append({ source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false });
+      });
+      pi.on("tool_result", (event) => {
+        const identity = pendingTransport.get(event.toolCallId);
+        pendingTransport.delete(event.toolCallId);
+        const admitted = admittedToolCalls.delete(event.toolCallId);
+        if (identity !== undefined && event.isError && !admitted) ledger.append({ source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false });
+      });
       pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
       pi.on("before_agent_start", (event) => {
         if (!expansionCaptured) {

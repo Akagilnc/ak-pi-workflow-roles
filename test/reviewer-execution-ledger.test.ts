@@ -25,8 +25,17 @@ function accepted(spec = true): ReviewerEvidenceEvent {
 }
 
 function settled(axis: "standards" | "spec", prompt: string): ReviewerEvidenceEvent {
-  return { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "successful", prompt: { bytes: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, report: `${axis} report`, usage, workspaceDisposition: "deleted" };
+  return { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "successful", prompt: { bytes: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, report: `${axis} report`, usage, workspaceDisposition: "deleted" } as const;
 }
+
+test("transport rejection is immutable, bounded, ordered, and retains no raw arguments", () => {
+  const ledger = createReviewerExecutionLedger();
+  ledger.append({ source: "reviewer-transport", type: "transport-rejected", identity: "transport-abc", violation: "schema", started: false });
+  const record = ledger.recordForAudit("refused");
+  assert.deepEqual(record.transportRejections, [{ identity: "transport-abc", violation: "schema", started: false }]);
+  assert.equal(JSON.stringify(record).includes("secret"), false);
+  assert.throws(() => ledger.append({ source: "reviewer-transport", type: "transport-rejected", identity: "x", violation: "schema", started: false, args: "secret" } as any), /only immutable/);
+});
 
 test("established Spec completion projects one accepted sibling dispatch and exact actual evidence", () => {
   const ledger = createReviewerExecutionLedger();
@@ -43,6 +52,18 @@ test("established Spec completion projects one accepted sibling dispatch and exa
   assert.ok(Object.isFrozen(record));
   assert.ok(Object.isFrozen(record.accepted?.target.refs));
   assert.throws(() => { (record.results.standards!.usage!.cost as any).total = 99; }, TypeError);
+});
+
+test("both sibling failures preserve exact settlement order and bounded evidence", () => {
+  const ledger = createReviewerExecutionLedger();
+  ledger.append(accepted(true));
+  ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: "proposal-1", cardinality: 2 });
+  for (const [axis, prompt, failure] of [["standards", "standards π", "provider"], ["spec", "spec prompt", "child"]] as const) {
+    ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "failed", prompt: { bytes: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, failure, workspaceDisposition: "not-created" });
+  }
+  const record = ledger.recordForAudit("refused");
+  assert.deepEqual(Object.keys(record.results), ["standards", "spec"]);
+  assert.deepEqual([record.results.standards?.failure, record.results.spec?.failure], ["provider", "child"]);
 });
 
 test("no-Spec completion proves one Standards-only dispatch and no Spec evidence", () => {
