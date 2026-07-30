@@ -78,11 +78,15 @@ function gitRevParse(revPath) {
 }
 
 function gitTuple(commit, path) {
-  const blobOid = gitRevParse(`${commit}:${path}`);
-  const digest = sha256(gitShow(`${commit}:${path}`));
+  const fullCommit =
+    commit === "HEAD" || commit.length < 40
+      ? gitRevParse(commit)
+      : commit;
+  const blobOid = gitRevParse(`${fullCommit}:${path}`);
+  const digest = sha256(gitShow(`${fullCommit}:${path}`));
   return {
     repository: SOLE_NAMESPACE,
-    commit,
+    commit: fullCommit,
     path,
     blobOid,
     sha256: digest,
