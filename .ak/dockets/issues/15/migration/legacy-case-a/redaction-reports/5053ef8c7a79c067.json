@@ -1,0 +1,13 @@
+{
+  "itemKey": "5053ef8c7a79c067a64a0c3f70aca8b6b8068577ab4e691b9a0d02b311e0e203",
+  "basename": "ak-roles-open-issues.json",
+  "sourceSha256": "1c9b6c7cf99f471cde0ed91a69cb8dac76ea67d169dd0b9cee1abdb810f4b6b2",
+  "recoveredSha256": "1c9b6c7cf99f471cde0ed91a69cb8dac76ea67d169dd0b9cee1abdb810f4b6b2",
+  "sourceBytes": 22112,
+  "recoveredBytes": 22112,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,9 @@
+{
+  "sourceWalkEquality": true,
+  "inventoryDispositionJoin": true,
+  "noKnownMissingInDenominator": true,
+  "dispositionSetExact": true,
+  "noGenericPayloadInRecovered": true,
+  "allAxesPresent": true,
+  "historicalCompletenessClaimed": false
+}

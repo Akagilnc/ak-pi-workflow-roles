@@ -1,0 +1,13 @@
+{
+  "itemKey": "c5ada2a49f93e975ff8b5e6d54491b992a80bf28b2735362ff5d34952c12c311",
+  "basename": "ak-roles-e2e-last-plan-report.md",
+  "sourceSha256": "7f4bcb038da6b4069c62119c7ee4ca0bc9d4be7a18349aafab962616dfcae0c7",
+  "recoveredSha256": "7f4bcb038da6b4069c62119c7ee4ca0bc9d4be7a18349aafab962616dfcae0c7",
+  "sourceBytes": 1967,
+  "recoveredBytes": 1967,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "78815eb9ff01e9151379545a5f60db4117d2ed9a5c8a1448d9e707da95939d31",
+  "basename": "ak-roles-fix-packet-2.md",
+  "sourceSha256": "c388243f2a69c9d653626a02a6bf31c55e300a0942b05a221914142748c33b3e",
+  "recoveredSha256": "c388243f2a69c9d653626a02a6bf31c55e300a0942b05a221914142748c33b3e",
+  "sourceBytes": 2613,
+  "recoveredBytes": 2613,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

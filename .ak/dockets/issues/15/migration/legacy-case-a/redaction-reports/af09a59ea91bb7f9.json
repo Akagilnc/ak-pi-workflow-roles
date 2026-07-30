@@ -1,0 +1,13 @@
+{
+  "itemKey": "af09a59ea91bb7f933c6b9b2c69572ec39c3d9d2d3575ef6e3951a9d409e507d",
+  "basename": "ak-collector-observe-visibility-fixer-receipt.md",
+  "sourceSha256": "f4e4f6ee4a001fd7e0e2f683b6aaeeb433105a554d70cc426be87ed8e70ff9c2",
+  "recoveredSha256": "f4e4f6ee4a001fd7e0e2f683b6aaeeb433105a554d70cc426be87ed8e70ff9c2",
+  "sourceBytes": 2590,
+  "recoveredBytes": 2590,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,146 @@
+[
+  {
+    "id": "@ak/pi-workflow-roles@0.1.0",
+    "name": "@ak/pi-workflow-roles",
+    "version": "0.1.0",
+    "size": 56130,
+    "unpackedSize": 242951,
+    "shasum": "4b2f3da05d0370d4ce7c5ee7fb09db0153b28ba8",
+    "integrity": "sha512-BQW2nqnLof4MlSuL1UN4GjnPjA/gXj/BnsvD37ZtOuV0VtMGy1UhiBlg/9Za6xg7IcNYSIJ3gdNJM4H9rnwwAQ==",
+    "filename": "ak-pi-workflow-roles-0.1.0.tgz",
+    "files": [
+      {
+        "path": "README.md",
+        "size": 10106,
+        "mode": 420
+      },
+      {
+        "path": "extensions/role-runtime.ts",
+        "size": 2443,
+        "mode": 420
+      },
+      {
+        "path": "package.json",
+        "size": 750,
+        "mode": 420
+      },
+      {
+        "path": "schemas/collector-legs-v1.schema.json",
+        "size": 1020,
+        "mode": 420
+      },
+      {
+        "path": "souls/coder.md",
+        "size": 671,
+        "mode": 420
+      },
+      {
+        "path": "souls/collector.md",
+        "size": 698,
+        "mode": 420
+      },
+      {
+        "path": "souls/fixer.md",
+        "size": 3092,
+        "mode": 420
+      },
+      {
+        "path": "souls/judge.md",
+        "size": 2671,
+        "mode": 420
+      },
+      {
+        "path": "souls/reviewer.md",
+        "size": 528,
+        "mode": 420
+      },
+      {
+        "path": "src/canonical-skill-binding.ts",
+        "size": 2958,
+        "mode": 420
+      },
+      {
+        "path": "src/collector-config.ts",
+        "size": 16243,
+        "mode": 420
+      },
+      {
+        "path": "src/collector-evidence.ts",
+        "size": 12554,
+        "mode": 420
+      },
+      {
+        "path": "src/collector-github.ts",
+        "size": 15551,
+        "mode": 420
+      },
+      {
+        "path": "src/collector-ledger.ts",
+        "size": 34075,
+        "mode": 420
+      },
+      {
+        "path": "src/collector-receipt.ts",
+        "size": 24583,
+        "mode": 420
+      },
+      {
+        "path": "src/collector-role.ts",
+        "size": 21922,
+        "mode": 420
+      },
+      {
+        "path": "src/collector-tool-schemas.ts",
+        "size": 2425,
+        "mode": 420
+      },
+      {
+        "path": "src/compliance-transport.ts",
+        "size": 5615,
+        "mode": 420
+      },
+      {
+        "path": "src/judge-role.ts",
+        "size": 7811,
+        "mode": 420
+      },
+      {
+        "path": "src/reviewer-agent.ts",
+        "size": 15022,
+        "mode": 420
+      },
+      {
+        "path": "src/reviewer-auditor.ts",
+        "size": 2365,
+        "mode": 420
+      },
+      {
+        "path": "src/reviewer-execution-ledger.ts",
+        "size": 21340,
+        "mode": 420
+      },
+      {
+        "path": "src/reviewer-role.ts",
+        "size": 14614,
+        "mode": 420
+      },
+      {
+        "path": "src/role-runtime.ts",
+        "size": 8759,
+        "mode": 420
+      },
+      {
+        "path": "src/soul-auditor.ts",
+        "size": 1930,
+        "mode": 420
+      },
+      {
+        "path": "src/worker-role.ts",
+        "size": 13205,
+        "mode": 420
+      }
+    ],
+    "entryCount": 26,
+    "bundled": []
+  }
+]

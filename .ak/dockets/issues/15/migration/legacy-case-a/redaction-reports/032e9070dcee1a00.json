@@ -1,0 +1,13 @@
+{
+  "itemKey": "032e9070dcee1a0024cca80732519299e91e59292c34a50f2593687d5ab96b6a",
+  "basename": "ak-roles-e2e-last-postfixer.md",
+  "sourceSha256": "3c5d3dbb1cf24a6fe87265de0e2fdc61cfaaf963e46e96735d6f3a558871b2e0",
+  "recoveredSha256": "3c5d3dbb1cf24a6fe87265de0e2fdc61cfaaf963e46e96735d6f3a558871b2e0",
+  "sourceBytes": 1526,
+  "recoveredBytes": 1526,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

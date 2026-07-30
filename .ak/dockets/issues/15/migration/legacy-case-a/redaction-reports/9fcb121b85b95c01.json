@@ -1,0 +1,13 @@
+{
+  "itemKey": "9fcb121b85b95c01155061cd588fe3bab200f1818ecd9654bc693547689d7302",
+  "basename": "ak-skill-coder-plan.md",
+  "sourceSha256": "aa9eeb3cb99fc0266aca90412e4e608e4405f6103147fe149e046b88bbb966df",
+  "recoveredSha256": "aa9eeb3cb99fc0266aca90412e4e608e4405f6103147fe149e046b88bbb966df",
+  "sourceBytes": 8788,
+  "recoveredBytes": 8788,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

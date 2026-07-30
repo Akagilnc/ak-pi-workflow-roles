@@ -1,0 +1,13 @@
+{
+  "itemKey": "84e1365027c8e7c5ab187521731c6ffbc5bf31d0c5b399b03a9805b0b48ba1cf",
+  "basename": "ak-collector-cancel-precedence-packet.md",
+  "sourceSha256": "54542726d0772dd86b31622b274ffdd730b0e34e8fac034190c08e3064961d7f",
+  "recoveredSha256": "54542726d0772dd86b31622b274ffdd730b0e34e8fac034190c08e3064961d7f",
+  "sourceBytes": 759,
+  "recoveredBytes": 759,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

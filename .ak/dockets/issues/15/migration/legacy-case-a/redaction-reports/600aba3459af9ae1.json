@@ -1,0 +1,13 @@
+{
+  "itemKey": "600aba3459af9ae1678d2ca5d20bd9544fe8512e88c278acf928f04c0fb1f305",
+  "basename": "ak-collector-fixer-plan-final.md",
+  "sourceSha256": "4cc97418e33b0a99ffc9e0505fa6783a8ec0ab80568d7d90999a0bdc29dcb5a3",
+  "recoveredSha256": "4cc97418e33b0a99ffc9e0505fa6783a8ec0ab80568d7d90999a0bdc29dcb5a3",
+  "sourceBytes": 3803,
+  "recoveredBytes": 3803,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

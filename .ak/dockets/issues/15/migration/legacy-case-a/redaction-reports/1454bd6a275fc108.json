@@ -1,0 +1,13 @@
+{
+  "itemKey": "1454bd6a275fc10849e551bd2593c4af365630cf1d1fb0be9baf515e2d6f6d11",
+  "basename": "ak-collector-pr5-6604-plan-corrections.md",
+  "sourceSha256": "1919c5d7774da0505bdad60c0178465ef3db67fa1a87473e942e887dd22a0193",
+  "recoveredSha256": "1919c5d7774da0505bdad60c0178465ef3db67fa1a87473e942e887dd22a0193",
+  "sourceBytes": 4997,
+  "recoveredBytes": 4997,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

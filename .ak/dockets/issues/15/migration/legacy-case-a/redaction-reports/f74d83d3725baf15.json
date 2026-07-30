@@ -1,0 +1,13 @@
+{
+  "itemKey": "f74d83d3725baf15484a822c249725db3e0066b6febb3f0d504362736170499d",
+  "basename": "ak-collector-independent-probes.ts",
+  "sourceSha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
+  "recoveredSha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
+  "sourceBytes": 5299,
+  "recoveredBytes": 5299,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "4aa67806059ca106d465e5dc512d2843daf0019c62b602ec9e571446cde43d45",
+  "basename": "ak-ledger-coder-plan.md",
+  "sourceSha256": "f91c671a29022fa0bed2925173513721005f17cf40d1bc11049df53f52037f14",
+  "recoveredSha256": "f91c671a29022fa0bed2925173513721005f17cf40d1bc11049df53f52037f14",
+  "sourceBytes": 9000,
+  "recoveredBytes": 9000,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

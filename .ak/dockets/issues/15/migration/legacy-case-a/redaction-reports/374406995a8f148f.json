@@ -1,0 +1,13 @@
+{
+  "itemKey": "374406995a8f148f40c92280d3451a4074cf32be70a8e8599bb2c5488db10641",
+  "basename": "issue-1-adr3-residual.md",
+  "sourceSha256": "f5d6e9ae450fc7ffde8074f5e2dad04d4b944f3546e6e037f639c8f50502c5a2",
+  "recoveredSha256": "f5d6e9ae450fc7ffde8074f5e2dad04d4b944f3546e6e037f639c8f50502c5a2",
+  "sourceBytes": 519,
+  "recoveredBytes": 519,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

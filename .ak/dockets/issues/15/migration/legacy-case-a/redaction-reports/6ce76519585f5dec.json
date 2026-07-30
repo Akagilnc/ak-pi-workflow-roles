@@ -1,0 +1,13 @@
+{
+  "itemKey": "6ce76519585f5decbb95febc0e70654b8f498622d5634af527e79ae0b28796aa",
+  "basename": "ak-collector-coder-plan-grok.md",
+  "sourceSha256": "244c00a4b8ffd7b1226caf05d5f7dd84e86e73afb28f9ed151e327966d844ea9",
+  "recoveredSha256": "244c00a4b8ffd7b1226caf05d5f7dd84e86e73afb28f9ed151e327966d844ea9",
+  "sourceBytes": 25923,
+  "recoveredBytes": 25923,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

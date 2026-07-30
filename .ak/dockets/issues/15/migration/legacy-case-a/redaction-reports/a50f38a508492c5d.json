@@ -1,0 +1,13 @@
+{
+  "itemKey": "a50f38a508492c5df593eca60fe9d3fc14d2a5a1d86ac5c28607bb2a7c7f0fff",
+  "basename": "ak-collector-v1-authority-v3-addendum.md",
+  "sourceSha256": "04f736d8977a1bb15865e7c8d306c326f1edd0e845dbd433513d698dd186fd43",
+  "recoveredSha256": "04f736d8977a1bb15865e7c8d306c326f1edd0e845dbd433513d698dd186fd43",
+  "sourceBytes": 6380,
+  "recoveredBytes": 6380,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

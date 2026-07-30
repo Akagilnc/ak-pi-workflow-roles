@@ -1,0 +1,13 @@
+{
+  "itemKey": "0d54947cf45c3d6d92ea399eae63a05a690b4f76c4b08e2ae06e6a21c1e0f9f9",
+  "basename": "ak-roles-standards-prompt.md",
+  "sourceSha256": "24614decdf46b2810c6490e873c6e1aebb518c26368ede900afa0cd2c6b17d18",
+  "recoveredSha256": "24614decdf46b2810c6490e873c6e1aebb518c26368ede900afa0cd2c6b17d18",
+  "sourceBytes": 1084,
+  "recoveredBytes": 1084,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

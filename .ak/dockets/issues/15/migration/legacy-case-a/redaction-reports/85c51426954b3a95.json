@@ -1,0 +1,13 @@
+{
+  "itemKey": "85c51426954b3a9580fa8aefa7823f5e1c8ef84d9e3c43cffdfc73fb00cac47e",
+  "basename": "ak-ledger-fixer-plan.md",
+  "sourceSha256": "39885ddef16f307f0aec97f1a307dd4167058571ec4243d97a9a77eecc87689e",
+  "recoveredSha256": "39885ddef16f307f0aec97f1a307dd4167058571ec4243d97a9a77eecc87689e",
+  "sourceBytes": 5614,
+  "recoveredBytes": 5614,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

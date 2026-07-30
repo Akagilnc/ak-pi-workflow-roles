@@ -1,0 +1,13 @@
+{
+  "itemKey": "455a38387068075b1e4231a0ae7c7007b3897a57176f7091f8de46d2f0462d75",
+  "basename": "ak-collector-two-residual-fixer-plan.md",
+  "sourceSha256": "fd6242035b462a62a5f39cf83c831d82eada565c4d0ea990925d74c7c4f5f4e9",
+  "recoveredSha256": "fd6242035b462a62a5f39cf83c831d82eada565c4d0ea990925d74c7c4f5f4e9",
+  "sourceBytes": 6428,
+  "recoveredBytes": 6428,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}
