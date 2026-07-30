@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/16/review/review-002"
+  },
+  "invocation": {
+    "id": "e03ed8ce-e508-41a2-a080-e5bd40e13d43"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/16/review-task-002.md",
+      "-p",
+      "Use the supplied canonical three-dot command in exactly one sibling-parallel Standards/Spec batch, then submit the complete report through ak_reviewer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "49a73c6b71683da488ec593731c23b2e834b176d",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-16",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "558cce66a5d8896b889e4205abf3b8849b4ef174",
+        "path": ".ak/dockets/issues/16/review/review-001/inputs/issue-16",
+        "blobOid": "3eab19ad137a1aaa5d80658fbd5e5bdbb6c0902e",
+        "sha256": "98dccf58fdd437e1a7142d55ee4d627a611c8482493e05ec4eea8e1ec9ca5dd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "011ae55c49a58961a0bebcacd056444675372730236b024422f15c38aaba90fb",
+        "byteLength": 1316
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "355d8e1e44d7d7cbd71f899e1bc3c54599ac42f3ef0fee1e6b92a120f201b143",
+        "byteLength": 3523
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "f85d621cf93bf303765b87dd88fc30cc9f8b15669e1c76b49ad1246bc73259e9",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_vHewFETZMOGAs5E7rc4TfUtg|fc_05c77e903f7cfc86016a6b303d83b881948280203457daf890",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_vHewFETZMOGAs5E7rc4TfUtg|fc_05c77e903f7cfc86016a6b303d83b881948280203457daf890",
+    "auditPassed": true,
+    "usage": {
+      "input": 12004,
+      "output": 239,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 12243
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
