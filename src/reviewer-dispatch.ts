@@ -212,7 +212,6 @@ function validateRequest(
   const { tools, bashCommands, prerequisiteOperations } = validateCapabilityRequestShape(value);
   if (
     tools.some((tool) => !ceiling.tools.includes(tool) || !hostTools.includes(tool)) ||
-    bashCommands.some((command) => !ceiling.bashCommands.includes(command)) ||
     prerequisiteOperations.some((operation) => !ceiling.prerequisiteOperations.includes(operation))
   ) {
     throw new Error("Capability requirement exceeds ceiling or host availability");
@@ -371,6 +370,14 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       diffSha256: readRange.diffSha256,
       commits: freezeStrings(readRange.commits),
     });
+    if (!capabilities.tools.includes("bash") || !capabilities.bashCommands.includes(range.diffCommand)) {
+      throw new Error("Capability ceiling lacks the canonical diff command");
+    }
+    for (const grant of [standardsGrant, ...(specGrant === undefined ? [] : [specGrant])]) {
+      if (!grant.tools.includes("bash") || grant.bashCommands.length !== 1 || grant.bashCommands[0] !== range.diffCommand) {
+        throw new Error("Capability requirement must grant only the canonical bash diff command");
+      }
+    }
     const materialEvidence = new Map<string, ReviewerMaterialEvidence>();
     const renderMaterials = async (items: readonly MaterialSelection[]): Promise<string> => {
       const rendered: string[] = [];

@@ -102,14 +102,43 @@ test("capability document is closed, exact-byte task-bound, and deeply immutable
   assert.throws(() => parseReviewerCapabilities(capabilityBytes(), Buffer.from(task.toString().trim())));
 });
 
-test("proposal grants allow no bash or empty bash while enforcing exact declared commands", async () => {
+test("generic capability shapes remain representable but the recipe requires each leg's exact diff command", async () => {
   const noBashRequest = { ...required, tools: ["read"] as const, bashCommands: [] as const };
-  assert.equal((await harness().dispatcher.propose({ ...proposal, required: { standards: noBashRequest, spec: noBashRequest } })).status, "accepted");
   const emptyBashRequest = { ...required, bashCommands: [] as const };
-  assert.equal((await harness().dispatcher.propose({ ...proposal, required: { standards: emptyBashRequest, spec: emptyBashRequest } })).status, "accepted");
+  for (const value of [
+    { ...capabilityValue, tools: ["read"], bashCommands: [] },
+    { ...capabilityValue, bashCommands: [] },
+  ]) assert.doesNotThrow(() => parseReviewerCapabilities(Buffer.from(JSON.stringify(value)), task));
+
+  for (const requests of [
+    { standards: noBashRequest, spec: noBashRequest },
+    { standards: emptyBashRequest, spec: emptyBashRequest },
+    { standards: required, spec: noBashRequest },
+  ]) {
+    const attempted = harness();
+    const result = await attempted.dispatcher.propose({ ...proposal, required: requests });
+    assert.deepEqual(result.status === "rejected" ? result.violations : [], ["capability-invalid"]);
+    assert.equal(attempted.calls.length, 0);
+  }
+
+  const ceilingWithoutCommand = parseReviewerCapabilities(Buffer.from(JSON.stringify({
+    ...capabilityValue, bashCommands: [],
+  })), task);
+  let rangeDerivations = 0;
+  const underpowered = harness({
+    ceiling: ceilingWithoutCommand,
+    reader: fakeReader({ async range(base) { rangeDerivations++; return { base, target: "B", diffCommand: exactCommand, diffSha256: "1".repeat(64), commits: ["B"] }; } }),
+  });
+  assert.deepEqual((await underpowered.dispatcher.propose(proposal)).status, "rejected");
+  assert.equal(rangeDerivations, 1);
+  assert.equal(underpowered.calls.length, 0);
+
+  const minimum = harness();
+  const accepted = await minimum.dispatcher.propose(proposal);
+  assert.equal(accepted.status, "accepted");
+  assert.deepEqual(accepted.status === "accepted" ? accepted.dispatch.legs.map(({ grant }) => grant) : [], [required, required]);
 
   for (const changed of [
-
     `${exactCommand} `,
     ` ${exactCommand}`,
     `${exactCommand} --stat`,

@@ -40,6 +40,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   const discoveredRoot = await gitText(root, ["rev-parse", "--show-toplevel"]);
   const repositoryRoot = await realpath(discoveredRoot);
   const targetHead = await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]);
+  const reachableCommitIds = Object.freeze((await gitText(repositoryRoot, ["rev-list", targetHead])).split("\n").filter(Boolean));
   const refs = parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs()));
   const pin = immutableReviewerPin({ repositoryRoot, targetHead, refs });
   const invalid = (code: "base-invalid" | "range-invalid" | "material-invalid"): never => {
@@ -66,8 +67,9 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       let commit: string | undefined;
       const headExpression = /^HEAD((?:~[0-9]+|\^[0-9]+)*)$/.exec(base);
       if (headExpression) commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${targetHead}${headExpression[1]}^{commit}`]);
-      else if (/^[0-9a-f]{4,40}$/.test(base)) {
-        const matches = (await gitText(repositoryRoot, ["rev-parse", `--disambiguate=${base}`])).split("\n").filter(Boolean);
+      else if (/^[0-9a-f]{40}$/.test(base)) commit = base;
+      else if (/^[0-9a-f]{4,39}$/.test(base)) {
+        const matches = reachableCommitIds.filter((candidate) => candidate.startsWith(base));
         if (matches.length !== 1) invalid("base-invalid");
         commit = matches[0];
       } else commit = symbolic(base);
