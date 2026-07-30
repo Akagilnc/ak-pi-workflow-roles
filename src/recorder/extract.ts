@@ -309,7 +309,7 @@ function terminalsEquivalent(
  * Callers must evaluate this against the complete raw collected terminal set
  * before canonicalization can drop one representation of a dual pair.
  */
-export function hasMismatchedCrossRepCallIdentity(
+function hasMismatchedCrossRepCallIdentity(
   events: LifecycleEvent[],
 ): boolean {
   const terminals = events.filter(
@@ -327,6 +327,23 @@ export function hasMismatchedCrossRepCallIdentity(
   return false;
 }
 
+type IssuedOrStartRef = {
+  index: number;
+  toolName: TerminatingToolName;
+  args: unknown;
+};
+
+/** True when start matches issued package under the same law binding uses. */
+function startMatchesIssuance(
+  issued: IssuedOrStartRef,
+  start: IssuedOrStartRef,
+): boolean {
+  return (
+    issued.toolName === start.toolName &&
+    deepEqual(issued.args, start.args)
+  );
+}
+
 /**
  * Collapse only the documented production-order current-Pi pair:
  * issuance → matching start → `type:"tool_execution_end"` → equivalent
@@ -334,8 +351,10 @@ export function hasMismatchedCrossRepCallIdentity(
  * Generic persisted-session `type:"message"` / `role:"toolResult"` remains a
  * supported standalone terminal and must not collapse with tool_execution_end.
  * Retain the toolResult representation (public Receipt trust contract).
- * Terminal-to-terminal order alone is insufficient: an early tool_execution_end
- * before matching start must stay visible so binding stays fail-closed.
+ * A matching start is not merely same call-id index order: it must match the
+ * issued package tool and arguments (binding's start law) and occur strictly
+ * before tool_execution_end. Early or non-matching starts leave both terminals
+ * visible so binding stays fail-closed.
  * Reversed order, same-representation replays, and conflicts keep every
  * terminal so binding stays fail-closed.
  */
@@ -343,8 +362,8 @@ export function canonicalizeLifecycleEvents(
   events: LifecycleEvent[],
 ): LifecycleEvent[] {
   const terminalsByCallId = new Map<string, TerminalLifecycleEvent[]>();
-  const issuedByCallId = new Map<string, number[]>();
-  const startsByCallId = new Map<string, number[]>();
+  const issuedByCallId = new Map<string, IssuedOrStartRef[]>();
+  const startsByCallId = new Map<string, IssuedOrStartRef[]>();
   for (const event of events) {
     if (event.kind === "terminal") {
       const list = terminalsByCallId.get(event.toolCallId);
@@ -353,15 +372,25 @@ export function canonicalizeLifecycleEvents(
       continue;
     }
     if (event.kind === "issued") {
+      const ref: IssuedOrStartRef = {
+        index: event.index,
+        toolName: event.toolName,
+        args: event.args,
+      };
       const list = issuedByCallId.get(event.toolCallId);
-      if (list) list.push(event.index);
-      else issuedByCallId.set(event.toolCallId, [event.index]);
+      if (list) list.push(ref);
+      else issuedByCallId.set(event.toolCallId, [ref]);
       continue;
     }
     if (event.kind === "start") {
+      const ref: IssuedOrStartRef = {
+        index: event.index,
+        toolName: event.toolName,
+        args: event.args,
+      };
       const list = startsByCallId.get(event.toolCallId);
-      if (list) list.push(event.index);
-      else startsByCallId.set(event.toolCallId, [event.index]);
+      if (list) list.push(ref);
+      else startsByCallId.set(event.toolCallId, [ref]);
     }
   }
 
@@ -379,15 +408,17 @@ export function canonicalizeLifecycleEvents(
     // Documented current-Pi pair only: message_end/toolResult after tee.
     if (toolResult.rowType !== "message_end") continue;
     // Complete production lifecycle order required before dropping tee:
-    // issuance → matching start → tool_execution_end → message_end/toolResult.
-    const issuedIndexes = issuedByCallId.get(callId) ?? [];
-    const startIndexes = startsByCallId.get(callId) ?? [];
-    const hasCompleteProductionOrder = issuedIndexes.some((issuedIndex) =>
-      startIndexes.some(
-        (startIndex) =>
-          issuedIndex < startIndex &&
-          startIndex < toolExecutionEnd.index &&
-          toolExecutionEnd.index < toolResult.index,
+    // issuance → genuinely matching start → tool_execution_end →
+    // message_end/toolResult. Call-id co-occurrence alone is insufficient.
+    const issuedRefs = issuedByCallId.get(callId) ?? [];
+    const startRefs = startsByCallId.get(callId) ?? [];
+    const hasCompleteProductionOrder = issuedRefs.some((issued) =>
+      startRefs.some(
+        (start) =>
+          issued.index < start.index &&
+          start.index < toolExecutionEnd.index &&
+          toolExecutionEnd.index < toolResult.index &&
+          startMatchesIssuance(issued, start),
       ),
     );
     if (!hasCompleteProductionOrder) continue;
