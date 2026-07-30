@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_F3O6iSNrDTZSAbmWC5vUB7US|fc_01c6d96df06bb2fb016a6bb4f8b41c8191bdd76195ac4cb089",
+  "details": {
+    "status": "completed",
+    "report": "R1: Successful dispatch now returns exact, deterministic, axis/prompt-delimited Standards and optional Spec reports while preserving the opaque accepted result in details and exposing nothing before complete success.\nR2: Ref snapshots retain objectId plus nullable peeledCommitId; commit checks are limited to commit-peelable refs, non-commit bases reject cleanly, and unrelated blob/tree tags remain pinned.\nR3: Shared transport-terminal handling preserves dual-event deduplication/provenance; shared preflight rejection construction removes duplicate paths; flagged opaque test names were clarified.\nR4: Regression coverage proves exact report aggregation, failed-settlement non-leakage, annotated commit tags, blob/tree refs, non-commit-base rejection, and dual-terminal deduplication.\nR5: Focused tests passed (18), full suite passed (359 tests), typecheck passed, npm pack/prepack lifecycle passed, diff check passed, and forward commit 1fa4a5f was created.",
+    "commitSha": "1fa4a5f"
+  },
+  "artifactKind": "acceptedReceipt"
+}
