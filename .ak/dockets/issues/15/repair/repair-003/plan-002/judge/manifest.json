@@ -1,0 +1,20 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "posture": "plan",
+  "status": "continue",
+  "request": {
+    "path": "request.md",
+    "sha256": "eaf913781cfef073bba384c704360b33ea9762a2cfd42f4e6ae94ccf6adf7400"
+  },
+  "sessionCandidate": {
+    "bytes": 31050349,
+    "sha256": "ea731c331bb5174026cb9a10a1a2545e02d65f9e80416a0d6f097a683fe9786f",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "31c274eceafa81146d7386d7a7e62552a38be5c602eecd3c8ddab0a8a544d967",
+    "acceptedBySoulAudit": true
+  }
+}
