@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/16/review/review-009"
+  },
+  "invocation": {
+    "id": "b804a00c-43e5-4343-bbd5-71234ae74d49"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/16/review-task-009.md",
+      "-p",
+      "Invoke the canonical Skill; dispatch exactly one same-message Standards/Spec sibling batch using the supplied range; submit through ak_reviewer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "1490fbe95bcadedd4f1a434213da712b06a4c8ff",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-16",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "1490fbe95bcadedd4f1a434213da712b06a4c8ff",
+        "path": ".ak/dockets/issues/16/review/review-001/inputs/issue-16",
+        "blobOid": "3eab19ad137a1aaa5d80658fbd5e5bdbb6c0902e",
+        "sha256": "98dccf58fdd437e1a7142d55ee4d627a611c8482493e05ec4eea8e1ec9ca5dd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "prior-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "1490fbe95bcadedd4f1a434213da712b06a4c8ff",
+        "path": ".ak/dockets/issues/16/judgment/final-003/receipt.json",
+        "blobOid": "d9aaf3c23807c7837f4d2294087269063158bcac",
+        "sha256": "e2761886ebcd52f9adb2053af3a6954701e16f290b3ef801abda02dd7f22ebe6",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "970f058e241dda45644224dffac9bb8e219b927ee6bcf173afb04ac58a0e0e78",
+        "byteLength": 1049
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "81a12bd031ec18707bbcf1401960f3b7abc6a6e21123eaf434c301af6ad264cf",
+        "byteLength": 895
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "ee2ee96051f0f6f70b7389b4c7f6f3ccb144f08862cc42da1e21a8fc41ee9bbf",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_81GMtX6I6i8UuyTY3xlbpiOx|fc_0906fca284077dc5016a6b501b82a481918e4ec90dc90bc026",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_81GMtX6I6i8UuyTY3xlbpiOx|fc_0906fca284077dc5016a6b501b82a481918e4ec90dc90bc026",
+    "auditPassed": true,
+    "usage": {
+      "input": 21439,
+      "output": 309,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 21748
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
