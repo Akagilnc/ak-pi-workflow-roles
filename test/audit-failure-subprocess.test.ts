@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
@@ -46,7 +47,6 @@ async function runCli(mode: "print" | "json") {
 }
 
 type ReviewerFailureStage =
-  | "child-preparation"
   | "child-provider"
   | "child-session"
   | "child-malformed-output"
@@ -65,7 +65,27 @@ async function runReviewerCli(
         home,
         "code-review",
       );
-      const cwd = stage === "child-preparation" ? home : packageRoot;
+      await writeFile(canonicalSkillPath, [
+        "---", "name: code-review", "description: fatal-stage fixture", "---", "",
+        "# Code review", "## Standards baseline", "Check correctness.",
+        "## Standards review burden", "Apply the baseline.",
+        "## Spec review burden", "Check each established requirement.", "",
+      ].join("\n"));
+      const cwd = packageRoot;
+      const taskPath = resolve(packageRoot, "test/fixtures/reviewer-task.md");
+      const taskBytes = await readFile(taskPath);
+      const capabilityPath = resolve(home, "reviewer-capabilities.json");
+      await writeFile(capabilityPath, JSON.stringify({
+        version: 1,
+        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
+        tools: ["read"],
+        bashCommands: [],
+        prerequisiteOperations: [
+          "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
+          "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror",
+          "runner.git.materialize-workspace", "runner.git.verify-snapshot",
+        ],
+      }));
       const args = [
         "--no-extensions",
         "--no-skills",
@@ -82,7 +102,9 @@ async function runReviewerCli(
         "--ak-role",
         "reviewer",
         "--ak-review-task",
-        resolve(packageRoot, "test/fixtures/reviewer-task.md"),
+        taskPath,
+        "--ak-review-capabilities",
+        capabilityPath,
         "--provider",
         "ak-reviewer-failure",
         "--model",
@@ -221,19 +243,13 @@ test("unavailable canonical tdd is infrastructure failure in print and JSON", as
   }
 });
 
-test.skip("legacy installed Reviewer fatal-stage fixture awaits structured proposal/capability packaging migration", async () => {
+test("installed Reviewer fatal stages abort without a receipt", async () => {
   const rows: Array<{
     stage: ReviewerFailureStage;
     marker: RegExp;
     calls: number;
     tool: "Agent" | "ak_reviewer_output";
   }> = [
-    {
-      stage: "child-preparation",
-      marker: /not a git repository/i,
-      calls: 1,
-      tool: "Agent",
-    },
     {
       stage: "child-provider",
       marker: /Reviewer Agent provider not found/,
@@ -272,10 +288,10 @@ test.skip("legacy installed Reviewer fatal-stage fixture awaits structured propo
     },
   ];
   for (const row of rows) {
-    for (const mode of ["print", "json"] as const) {
+    for (const mode of ["json", "print"] as const) {
       const result = await runReviewerCli(mode, row.stage);
       const combined = `${result.stdout}\n${result.stderr}`;
-      assert.equal(result.code, 1, `${row.stage}/${mode} exits nonzero`);
+      assert.equal(result.code, 1, `${row.stage}/${mode} exits nonzero\n${combined}`);
       assert.match(
         combined,
         row.marker,

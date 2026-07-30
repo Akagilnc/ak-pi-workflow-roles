@@ -24,11 +24,23 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
     provider: "ak-reviewer-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const request = {
+    tools: [],
+    bashCommands: [],
+    prerequisiteOperations: [
+      "preflight.git.resolve-base", "preflight.git.derive-range",
+      "preflight.git.list-ordered-commits", "preflight.git.read-material",
+      "runner.git.materialize-mirror", "runner.git.materialize-workspace",
+      "runner.git.verify-snapshot",
+    ],
+  };
   const agentCall = fauxAssistantMessage(
     fauxToolCall(AGENT_TOOL_NAME, {
-      subagent_type: "general-purpose",
-      description: "Standards",
-      prompt: "Inspect the pinned target.",
+      version: 1,
+      base: { revision: "HEAD~1" },
+      standardsMaterials: [{ id: "readme", repositoryPath: "README.md" }],
+      spec: { state: "not-established", evidence: [{ id: "task", repositoryPath: "test/fixtures/reviewer-task.md" }] },
+      required: { standards: request },
     }, { id: "fatal-agent" }),
     { stopReason: "toolUse" },
   );
