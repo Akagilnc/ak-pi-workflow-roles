@@ -87,7 +87,12 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     if (typeof taskPath !== "string" || !taskPath.trim()) throw new Error("Reviewer role requires --ak-review-task");
     if (typeof capabilityPath !== "string" || !capabilityPath.trim()) throw new Error("Reviewer role requires --ak-review-capabilities");
     taskBytes = Uint8Array.from(await dependencies.loadTask(taskPath));
-    try { task = new TextDecoder("utf-8", { fatal: true }).decode(taskBytes); } catch { throw new Error("Reviewer task is not valid UTF-8"); }
+    try { task = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(taskBytes); }
+    catch { throw new Error("Reviewer task is not valid UTF-8"); }
+    const roundTrip = new TextEncoder().encode(task);
+    if (roundTrip.byteLength !== taskBytes.byteLength || !roundTrip.every((byte, index) => byte === taskBytes![index])) {
+      throw new Error("Reviewer task does not round-trip as exact UTF-8");
+    }
     if (!task.trim()) throw new Error("Reviewer task is empty");
     capabilities = parseReviewerCapabilities(await dependencies.loadCapabilities(capabilityPath), taskBytes);
     if (!capabilities.prerequisiteOperations.includes("preflight.git.pin-target")) {

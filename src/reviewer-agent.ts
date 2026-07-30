@@ -22,7 +22,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
-import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerRefs } from "./reviewer-git-snapshot.ts";
+import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerRefs, type ReviewerRefEntry } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import type {
   AcceptedReviewerDispatch,
@@ -125,7 +125,7 @@ async function git(
 async function readRefs(
   cwd: string,
   signal?: AbortSignal,
-): Promise<Record<string, string>> {
+): Promise<Record<string, ReviewerRefEntry>> {
   const result = await git(
     cwd,
     reviewerRefSnapshotArgs(),
@@ -149,8 +149,9 @@ async function verifySnapshot(
   if (!sameReviewerRefs(refs, snapshot.refs)) {
     throw new Error("Review clone ref map does not match the pinned session snapshot");
   }
-  for (const object of new Set(Object.values(snapshot.refs))) {
-    await git(cwd, ["cat-file", "-e", `${object}^{object}`], signal);
+  for (const entry of Object.values(snapshot.refs)) {
+    await git(cwd, ["cat-file", "-e", `${entry.objectId}^{object}`], signal);
+    await git(cwd, ["cat-file", "-e", `${entry.peeledCommitId}^{commit}`], signal);
   }
 }
 
@@ -192,7 +193,7 @@ async function prepareSnapshot(
     if (!sameReviewerRefs(mirrorRefs, refs)) {
       throw new Error("Bare review mirror ref map changed while the snapshot was prepared");
     }
-    for (const object of new Set([targetHead, ...Object.values(refs)])) {
+    for (const object of new Set([targetHead, ...Object.values(refs).flatMap((entry) => [entry.objectId, entry.peeledCommitId])])) {
       await git(mirrorPath, ["cat-file", "-e", `${object}^{object}`], signal);
     }
     await git(
@@ -346,7 +347,7 @@ async function runChild(
   leg: AcceptedReviewerLeg,
   context: ExtensionContext,
   signal?: AbortSignal,
-): Promise<{ report: string; usage: Usage }> {
+): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptIdentity }> {
   const childConfigDir = await mkdtemp(join(tmpdir(), "ak-reviewer-child-"));
   const settings = SettingsManager.inMemory({
     compaction: { enabled: false },
@@ -408,7 +409,8 @@ async function runChild(
     if (JSON.stringify(visibleTools) !== JSON.stringify(leg.grant.tools)) {
       throw new Error(`Reviewer child tool isolation failed: ${visibleTools.join(", ")}`);
     }
-    await session.prompt(leg.prompt);
+    const delivered = Object.freeze(reviewerPromptIdentity(leg.prompt));
+    await session.prompt(delivered.bytes);
     if (signal?.aborted) {
       throw new Error("Reviewer Agent was cancelled");
     }
@@ -428,7 +430,7 @@ async function runChild(
     if (report.length === 0) {
       throw new Error("Reviewer Agent returned a blank child report");
     }
-    return { report, usage };
+    return { report, usage, prompt: delivered };
   } finally {
     signal?.removeEventListener("abort", abortChild);
     unsubscribe();
@@ -464,7 +466,7 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
         try {
           const child = await runChild(workspace, leg, options.context, options.signal);
           await rm(workspace, { recursive: true, force: false });
-          return [leg.axis, Object.freeze({ report: child.report, usage: child.usage, target, prompt: reviewerPromptIdentity(leg.prompt), workspaceDisposition: "deleted" as const })] as const;
+          return [leg.axis, Object.freeze({ report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const })] as const;
         } catch (error) {
           throw infrastructureError(error, { workspaceDisposition: { retained: workspace }, targetSnapshot: target });
         }

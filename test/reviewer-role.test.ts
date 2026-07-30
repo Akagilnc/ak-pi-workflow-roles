@@ -13,7 +13,7 @@ const operations = ["preflight.git.pin-target","preflight.git.resolve-base","pre
 const diffCommand = "git diff base...target";
 const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: operations }));
 const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
-const pin = { repositoryRoot: "/repo", targetHead: "target", refs: { "refs/heads/main": "target" } };
+const pin = { repositoryRoot: "/repo", targetHead: "target", refs: { "refs/heads/main": { objectId: "target", peeledCommitId: "target" } } };
 const request = { tools: ["read", "bash"] as const, bashCommands: [diffCommand] as const, prerequisiteOperations: operations };
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, standardsMaterials: [{ id: "rules", repositoryPath: "RULES.md" }], spec: established ? { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] } : { state: "not-established", evidence: [{ id: "absence", repositoryPath: "README.md" }] }, required: established ? { standards: request, spec: request } : { standards: request } }; }
 function harness() {

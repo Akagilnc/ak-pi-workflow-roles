@@ -30,7 +30,7 @@ import type { AcceptedReviewerDispatch } from "../src/reviewer-dispatch.ts";
 
 async function dispatch(root: string, prompts: readonly string[], tools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "write" | "edit")[] = ["read", "grep", "find", "ls", "bash", "write", "edit"], bashCommands: readonly string[] = []): Promise<AcceptedReviewerDispatch> {
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
-  const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => line.split("\0")));
+  const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => { const [name, objectId, peeled] = line.split("\0"); return [name!, { objectId: objectId!, peeledCommitId: peeled || objectId! }]; }));
   const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
   return { identity: "accepted", recipe: "reviewer-dispatch-v1", input: { task: { bytes: "task", utf8Length: 4, sha256: createHash("sha256").update("task").digest("hex") }, canonicalSkillSha256: "skill" }, materials: { standards: [] }, targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex"), grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
 }
@@ -172,10 +172,10 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
       assert.equal(childReached, true);
       assert.match(leg.report, /\S/);
       assert.equal(result.target.targetHead, tip);
-      assert.equal(result.target.refs["refs/heads/fixed-branch"], tip);
-      assert.equal(result.target.refs["refs/tags/fixed-tag"], tip);
-      assert.equal(result.target.refs["refs/remotes/upstream/fixed"], tip);
-      for (const [name, sha] of Object.entries(sourceRefs)) assert.equal(result.target.refs[name], sha);
+      assert.equal(result.target.refs["refs/heads/fixed-branch"]?.objectId, tip);
+      assert.equal(result.target.refs["refs/tags/fixed-tag"]?.objectId, tip);
+      assert.equal(result.target.refs["refs/remotes/upstream/fixed"]?.objectId, tip);
+      for (const [name, sha] of Object.entries(sourceRefs)) assert.equal(result.target.refs[name]?.objectId, sha);
     } finally {
       await runner.shutdown();
     }
@@ -229,9 +229,9 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     assert.equal(standards.workspaceDisposition, "deleted");
     assert.equal(spec.workspaceDisposition, "deleted");
     assert.deepEqual(standards.target, spec.target);
-    assert.equal(standards.target.refs["refs/heads/fixed-branch"], source.base);
-    assert.equal(standards.target.refs["refs/tags/fixed-tag"], source.base);
-    assert.equal(standards.target.refs["refs/remotes/upstream/fixed"], source.base);
+    assert.equal(standards.target.refs["refs/heads/fixed-branch"]?.objectId, source.base);
+    assert.equal(standards.target.refs["refs/tags/fixed-tag"]?.objectId, source.base);
+    assert.equal(standards.target.refs["refs/remotes/upstream/fixed"]?.objectId, source.base);
     assert.equal(standards.prompt.bytes, "Standards prompt");
     assert.equal(spec.prompt.bytes, "Spec prompt");
     assert.deepEqual(

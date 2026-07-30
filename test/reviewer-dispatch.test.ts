@@ -49,7 +49,7 @@ const proposal: ReviewerProposalV1 = {
 
 function fakeReader(overrides: Partial<ReviewerPinnedGitReader> = {}): ReviewerPinnedGitReader {
   return {
-    pin: { repositoryRoot: "/repo", targetHead: "B", refs: { "refs/heads/main": "B" } },
+    pin: { repositoryRoot: "/repo", targetHead: "B", refs: { "refs/heads/main": { objectId: "B", peeledCommitId: "B" } } },
     async resolve(base) { return base; },
     async range(base) { return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: "1".repeat(64), commits: ["C", "B"] }; },
     async material(path, revision) { return Buffer.from(`${revision}:${path}\n`); },
@@ -63,6 +63,7 @@ function harness(options: {
   canonicalSkill?: string;
   hostTools?: readonly string[];
   run?: (dispatch: AcceptedReviewerDispatch) => Promise<unknown>;
+  compilePrompt?: Parameters<typeof createReviewerDispatcher>[0]["compilePrompt"];
 } = {}) {
   const calls: AcceptedReviewerDispatch[] = [];
   const dispatcher = createReviewerDispatcher({
@@ -72,6 +73,7 @@ function harness(options: {
     reader: options.reader ?? fakeReader(),
     hostTools: options.hostTools ?? REVIEWER_CHILD_TOOLS,
     run: options.run ?? (async (dispatch) => { calls.push(dispatch); return { ok: true }; }),
+    ...(options.compilePrompt === undefined ? {} : { compilePrompt: options.compilePrompt }),
   });
   return { dispatcher, calls };
 }
@@ -263,14 +265,14 @@ test("established Spec produces exact deterministic isolated two-leg prompts", a
     assert.equal(Buffer.byteLength(leg.prompt), leg.utf8Length);
     assert.equal(createHash("sha256").update(leg.prompt).digest("hex"), leg.sha256);
     assert.match(leg.prompt, new RegExp(`Task-SHA256: ${digest}`));
-    assert.doesNotMatch(leg.prompt, /frobnicator must return 42|Task bytes:/);
+    assert.match(leg.prompt, /Task-Bytes:\n review exactly — 逐字 \nSpec behavior: frobnicator must return 42\./);
     assert.match(leg.prompt, /Target: B\nBase: A\nDiff: git diff A\.\.\.B\nDiff-SHA256: 1111111111111111111111111111111111111111111111111111111111111111\nCommits:\nC\nB/);
   }
   assert.deepEqual(dispatch.input.task, { bytes: task.toString("utf8"), utf8Length: task.byteLength, sha256: digest });
   const second = harness();
   await second.dispatcher.propose(proposal);
   assert.deepEqual(second.calls[0], dispatch);
-  assert.throws(() => (dispatch.targetSnapshot.refs as Record<string, string>).main = "DRIFT");
+  assert.throws(() => (dispatch.targetSnapshot.refs as unknown as Record<string, string>).main = "DRIFT");
   assert.throws(() => (dispatch.range.commits as string[]).push("DRIFT"));
 });
 
@@ -355,6 +357,41 @@ test("slow invalid proposal cannot append rejection after another proposal accep
   assert.equal((await slow).status, "closed");
   assert.equal(dispatcher.rejections.length, 0);
   assert.equal(calls.length, 1);
+});
+
+test("preserves BOM and multibyte task/material bytes and rejects invalid UTF-8 before child effects", async () => {
+  const bomTask = Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("任务\n")]);
+  const bomMaterial = Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("材料—逐字\n")]);
+  const ceiling = parseReviewerCapabilities(Buffer.from(JSON.stringify({ ...capabilityValue, taskSha256: createHash("sha256").update(bomTask).digest("hex") })), bomTask);
+  const calls: AcceptedReviewerDispatch[] = [];
+  const reader = fakeReader({ async material() { return bomMaterial; } });
+  const dispatcher = createReviewerDispatcher({ task: bomTask, canonicalSkill: skill, capabilities: ceiling, reader, hostTools: REVIEWER_CHILD_TOOLS, async run(dispatch) { calls.push(dispatch); } });
+  const accepted = await dispatcher.propose(proposal);
+  assert.equal(accepted.status, "accepted");
+  if (accepted.status !== "accepted") return;
+  assert.equal(accepted.dispatch.input.task.bytes, bomTask.toString("utf8"));
+  assert.equal(accepted.dispatch.materials.standards[0]?.bytes, bomMaterial.toString("utf8"));
+  assert.ok(accepted.dispatch.legs[0]?.prompt.includes(bomMaterial.toString("utf8")));
+
+  let effects = 0;
+  const invalid = createReviewerDispatcher({ task, canonicalSkill: skill, capabilities: capabilities(), reader: fakeReader({ async material() { return Buffer.from([0xff]); } }), hostTools: REVIEWER_CHILD_TOOLS, async run() { effects++; } });
+  assert.equal((await invalid.propose(proposal)).status, "rejected");
+  assert.equal(effects, 0);
+});
+
+test("rejects independently recompiled prompt mismatch before child effects", async () => {
+  let effects = 0;
+  const { dispatcher } = harness({
+    compilePrompt(prompt, _axis, pass) {
+      const bytes = pass === 1 ? prompt : `${prompt}stateful`;
+      return { bytes, utf8Length: Buffer.byteLength(bytes), sha256: createHash("sha256").update(bytes).digest("hex") };
+    },
+    async run() { effects++; },
+  });
+  const result = await dispatcher.propose(proposal);
+  assert.equal(result.status, "rejected");
+  if (result.status === "rejected") assert.match(result.violations[0]!, /recompilation mismatch/);
+  assert.equal(effects, 0);
 });
 
 test("runner failure occurs after irreversible acceptance and cannot reopen correction", async () => {
