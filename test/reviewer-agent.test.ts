@@ -30,7 +30,7 @@ import type { AcceptedReviewerDispatch } from "../src/reviewer-dispatch.ts";
 
 async function dispatch(root: string, prompts: readonly string[], tools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "write" | "edit")[] = ["read", "grep", "find", "ls", "bash", "write", "edit"], bashCommands: readonly string[] = []): Promise<AcceptedReviewerDispatch> {
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
-  const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => { const [name, objectId, peeled] = line.split("\0"); return [name!, { objectId: objectId!, peeledCommitId: peeled || objectId! }]; }));
+  const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => { const [name, objectId, peeled, objectType, peeledType] = line.split("\0"); return [name!, { objectId: objectId!, peeledCommitId: objectType === "commit" ? objectId! : peeledType === "commit" ? peeled! : null }]; }));
   const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
   return { identity: "accepted", recipe: "reviewer-dispatch-v1", input: { task: { bytes: "task", utf8Length: 4, sha256: createHash("sha256").update("task").digest("hex") }, canonicalSkillSha256: "skill" }, materials: { standards: [] }, targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex"), grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
 }
@@ -52,6 +52,11 @@ async function repository() {
   const base = await git(root, "rev-parse", "HEAD");
   await git(root, "branch", "fixed-branch", base);
   await git(root, "tag", "fixed-tag", base);
+  await git(root, "tag", "-a", "annotated-commit", base, "-m", "annotated");
+  const blob = await git(root, "rev-parse", "HEAD:fixture.txt");
+  const tree = await git(root, "rev-parse", "HEAD^{tree}");
+  await git(root, "update-ref", "refs/tags/blob-object", blob);
+  await git(root, "update-ref", "refs/tags/tree-object", tree);
   await git(root, "update-ref", "refs/remotes/upstream/fixed", base);
   await writeFile(join(root, "fixture.txt"), "reviewed\n");
   await git(root, "commit", "-am", "reviewed change");
