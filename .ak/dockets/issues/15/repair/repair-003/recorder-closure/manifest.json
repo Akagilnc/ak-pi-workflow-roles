@@ -119,7 +119,7 @@
         }
       ]
     },
-    "gitTupleCount": 553,
+    "gitTupleCount": 561,
     "externalSourceCount": 277,
     "resultPath": "inputs/cutoff-scan-summary",
     "implementationPath": "exhibits/cutoff-scan-implementation"
