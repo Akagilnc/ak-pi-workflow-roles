@@ -1217,6 +1217,10 @@ function combinedCrossRepresentationLifecycle(
     /** Override only the message_end/toolResult half (conflict cases). */
     toolResultDetails?: unknown;
     toolResultText?: string;
+    /** Override complete content on the message_end/toolResult half. */
+    toolResultContent?: unknown;
+    /** Set the error state on both terminal representations. */
+    isError?: boolean;
     toolResultIsError?: boolean;
     toolResultToolName?: string;
     toolResultCallId?: string;
@@ -1273,7 +1277,7 @@ function combinedCrossRepresentationLifecycle(
     type: "tool_execution_end",
     toolCallId: callId,
     toolName: tool,
-    isError: false,
+    isError: options.isError ?? false,
     result: {
       content: [{ type: "text", text }],
       details,
@@ -1288,9 +1292,9 @@ function combinedCrossRepresentationLifecycle(
       role: "toolResult",
       toolCallId: options.toolResultCallId ?? callId,
       toolName: options.toolResultToolName ?? tool,
-      isError: options.toolResultIsError ?? false,
+      isError: options.toolResultIsError ?? options.isError ?? false,
       details: options.toolResultDetails ?? details,
-      content: [{
+      content: options.toolResultContent ?? [{
         type: "text",
         text: options.toolResultText ?? text,
       }],
@@ -1483,6 +1487,26 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
       }),
     },
     {
+      name: "same text with an extra image block",
+      envelope: combinedCrossRepresentationLifecycle(REVIEWER_OUTPUT_TOOL_NAME, {
+        details: reviewerDetails,
+        toolResultContent: [
+          { type: "text", text: ACCEPTED[REVIEWER_OUTPUT_TOOL_NAME] },
+          { type: "image", data: "different-image" },
+        ],
+      }),
+    },
+    {
+      name: "same text with conflicting image block provenance",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        toolResultContent: [
+          { type: "image", data: "image-before-text" },
+          { type: "text", text: ACCEPTED[JUDGE_OUTPUT_TOOL_NAME] },
+        ],
+      }),
+    },
+    {
       name: "conflicting isError",
       envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
         details: judgeDetails,
@@ -1556,6 +1580,26 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
     assert.equal(extracted.receipt, null, item.name);
     assert.equal(extracted.auditObservation, null, `${item.name} audit`);
   }
+
+  // R3 — independent failed lifecycle followed by a successful retry under a
+  // new id canonicalizes each dual pair without inventing a cross-call mismatch.
+  const failedThenSuccessful = extractAcceptedReceipt([
+    `${combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+      callId: "failed-call",
+      details: judgeDetails,
+      isError: true,
+    })}\n${combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+      callId: "successful-retry",
+      details: judgeDetails,
+    })}`,
+  ]);
+  assert.ok(failedThenSuccessful.receipt, "successful independent retry accepts");
+  assert.equal(failedThenSuccessful.receipt!.toolCallId, "successful-retry");
+  assert.ok(failedThenSuccessful.auditObservation);
+  assert.equal(
+    failedThenSuccessful.auditObservation!.toolCallId,
+    "successful-retry",
+  );
 
   // R2 — mismatched cross-representation call identity must fail closed.
   const mismatchedIdentity = extractAcceptedReceipt([
