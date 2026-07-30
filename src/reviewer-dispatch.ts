@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { realpath } from "node:fs/promises";
+import { promisify } from "node:util";
 
 export const REVIEWER_CHILD_TOOLS = [
   "read",
@@ -74,8 +77,14 @@ export type AcceptedReviewerLeg = Readonly<{
 export type AcceptedReviewerDispatch = Readonly<{
   identity: string;
   recipe: "reviewer-dispatch-v1";
+  input: Readonly<{ taskSha256: string; canonicalSkillSha256: string }>;
   targetSnapshot: ReviewerPinnedTarget;
   range: ReviewerRange;
+  materials: Readonly<{
+    standards: readonly Readonly<MaterialSelection & { sha256: string }>[];
+    spec?: readonly Readonly<MaterialSelection & { sha256: string }>[];
+    noSpecEvidence?: readonly Readonly<MaterialSelection & { sha256: string }>[];
+  }>;
   legs: readonly AcceptedReviewerLeg[];
 }>;
 export type ReviewerRejectionEvidence = Readonly<{
@@ -274,6 +283,40 @@ function proposalIdentity(proposal: unknown): string {
   return sha256(encoded);
 }
 
+const execFileAsync = promisify(execFile);
+
+async function gitText(root: string, args: readonly string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", root, ...args], { encoding: "utf8" });
+  return stdout.trim();
+}
+
+/** Pins HEAD and refs before the parent can submit a proposal. */
+export async function createReviewerPinnedGitReader(root = process.cwd()): Promise<ReviewerPinnedGitReader> {
+  const repositoryRoot = await realpath(root);
+  const targetHead = await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]);
+  const rawRefs = await gitText(repositoryRoot, ["for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags", "refs/remotes"]);
+  const refs: Record<string, string> = {};
+  for (const line of rawRefs.split("\n").filter(Boolean)) {
+    const at = line.indexOf("\0");
+    if (at < 1) throw new Error("Malformed Git ref snapshot");
+    refs[line.slice(0, at)] = line.slice(at + 1);
+  }
+  const pin = Object.freeze({ repositoryRoot, targetHead, refs: Object.freeze(refs) });
+  return Object.freeze({
+    pin,
+    async resolve(base: string) { return gitText(repositoryRoot, ["rev-parse", `${base}^{commit}`]); },
+    async range(base: string) {
+      const commitsText = await gitText(repositoryRoot, ["rev-list", "--reverse", `${base}..${targetHead}`]);
+      return Object.freeze({ base, target: targetHead, diffCommand: `git diff ${base} ${targetHead}`, commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
+    },
+    async material(path: string, revision: string) {
+      if (revision !== targetHead) throw new Error("Material revision is not the pinned target");
+      const { stdout } = await execFileAsync("git", ["-C", repositoryRoot, "show", `${revision}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
+      return Uint8Array.from(stdout);
+    },
+  });
+}
+
 export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   const task = Uint8Array.from(dependencies.task);
   const canonicalSkill = dependencies.canonicalSkill;
@@ -339,6 +382,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       commits: freezeStrings(readRange.commits),
     });
 
+    const materialEvidence = new Map<string, Readonly<MaterialSelection & { sha256: string }>>();
     const renderMaterials = async (items: readonly MaterialSelection[]): Promise<string> => {
       const rendered: string[] = [];
       for (const item of items) {
@@ -349,6 +393,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         } catch {
           throw new Error(`Material is not valid UTF-8: ${item.id}`);
         }
+        materialEvidence.set(item.id, Object.freeze({ ...item, sha256: sha256(bytes) }));
         rendered.push(`${item.id} (${item.repositoryPath}):\n${text}`);
       }
       return rendered.join("\n\n");
@@ -381,7 +426,22 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       sha256: sha256(prompt),
       grant,
     })));
-    return Object.freeze({ identity, recipe: "reviewer-dispatch-v1", targetSnapshot, range, legs });
+    const evidenceFor = (items: readonly MaterialSelection[]) => Object.freeze(items.map((item) => materialEvidence.get(item.id)!));
+    const materials = Object.freeze({
+      standards: evidenceFor(proposal.standardsMaterials),
+      ...(proposal.spec.state === "established"
+        ? { spec: evidenceFor(proposal.spec.materials) }
+        : { noSpecEvidence: evidenceFor(proposal.spec.evidence) }),
+    });
+    return Object.freeze({
+      identity,
+      recipe: "reviewer-dispatch-v1",
+      input: Object.freeze({ taskSha256: sha256(task), canonicalSkillSha256: sha256(canonicalSkill) }),
+      targetSnapshot,
+      range,
+      materials,
+      legs,
+    });
   }
 
   return Object.freeze({

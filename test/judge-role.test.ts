@@ -149,7 +149,7 @@ async function startJudge(
   return { harness, tool };
 }
 
-test("stable factory registers all six flags in exact help order and stays inert without a role", async () => {
+test("stable factory registers all role flags in exact help order and stays inert without a role", async () => {
   let loads = 0;
   const harness = extensionHarness(undefined);
   createRoleRuntimeExtension({
@@ -184,6 +184,10 @@ test("stable factory registers all six flags in exact help order and stays inert
     }],
     ["ak-review-task", {
       description: "Opaque Markdown review task assigned to the reviewer role",
+      type: "string",
+    }],
+    ["ak-review-capabilities", {
+      description: "Closed Reviewer capability grant bound to the exact task bytes",
       type: "string",
     }],
     ["ak-collector-repo", {

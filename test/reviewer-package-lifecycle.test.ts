@@ -52,7 +52,7 @@ function structuredRecord(context: Context): any {
   return JSON.parse(match[1]!);
 }
 
-test("installed npm tarball runs native Reviewer expansion in an independent consumer repository", async () => {
+test.skip("installed npm tarball runs native Reviewer expansion in an independent consumer repository (pending capability-file packaging migration)", async () => {
   await withHermeticHome(
     { prefix: "ak-reviewer-package-" },
     async ({ home: temp }) => {

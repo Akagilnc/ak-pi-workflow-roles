@@ -18,20 +18,17 @@ const input = {
   canonicalSkill: "complete raw canonical Skill",
   task: "opaque task",
   record: {
-    bashEvidence: [],
-    agentAttempts: [{
-      id: "standards-leg",
-      description: "Standards",
-      prompt: "Inspect the pinned diff",
-      status: "successful" as const,
-      report: "No findings",
-      workspaceDisposition: "deleted" as const,
-    }],
-    agentInvocationBatches: [{
-      assistantSessionEntryId: "019fa2b3-session-entry",
-      executionMode: "parallel" as const,
-      agentToolCallIds: ["standards-leg", "spec-leg"],
-    }],
+    rejections: [],
+    accepted: {
+      identity: "dispatch-1", recipe: "reviewer-dispatch-v1" as const,
+      input: { taskSha256: "task", canonicalSkillSha256: "skill" },
+      target: { repositoryRoot: "/repo", targetHead: "head", refs: {} },
+      range: { base: "base", target: "head", diffCommand: "git diff base head", commits: ["head"] },
+      materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", sha256: "rules" }], noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", sha256: "absence" }] },
+      legs: [{ axis: "standards" as const, prompt: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt", grant: { tools: ["read"] as const, bashCommands: [], prerequisiteOperations: [] } }],
+    },
+    started: { dispatchIdentity: "dispatch-1", cardinality: 1 as const },
+    results: { standards: { dispatchIdentity: "dispatch-1", axis: "standards" as const, status: "successful" as const, prompt: { bytes: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt" }, target: { repositoryRoot: "/repo", targetHead: "head", refs: {} }, report: "No findings", workspaceDisposition: "deleted" as const } },
   },
   candidate: { status: "completed" as const, report: "No findings." },
 };
@@ -62,15 +59,10 @@ test("Reviewer auditor receives complete method inputs and has only its decision
     "complete raw canonical Skill",
     "opaque task",
     "No findings",
-    "019fa2b3-session-entry",
-    "parallel",
-    "standards-leg",
-    "spec-leg",
+    "dispatch-1",
+    "Inspect the pinned diff",
   ]) assert.match(serialized, new RegExp(expected));
-  assert.match(
-    textOfAuditContext(seen),
-    /"agentInvocationBatches":\[\{"assistantSessionEntryId":"019fa2b3-session-entry","executionMode":"parallel","agentToolCallIds":\["standards-leg","spec-leg"\]\}\]/,
-  );
+  assert.match(textOfAuditContext(seen), /"dispatchIdentity":"dispatch-1"/);
   assert.match(seen?.systemPrompt ?? "", /not a second substantive reviewer/i);
   assert.match(seen?.systemPrompt ?? "", /Do not discover findings, rerank axes/i);
 });
