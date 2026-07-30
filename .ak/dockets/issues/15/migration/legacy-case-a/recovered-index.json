@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "count": 275,
+  "count": 270,
   "items": [
     {
       "itemKey": "93db23eb4be737fbfefedb5e80d967a17ec195e55fb497ed359eb963f393b5bd",
@@ -709,22 +709,6 @@
       ]
     },
     {
-      "itemKey": "f74d83d3725baf15484a822c249725db3e0066b6febb3f0d504362736170499d",
-      "basename": "ak-collector-independent-probes.ts",
-      "path": "recovered/f7/f74d83d3725baf15-ak-collector-independent-probes.ts",
-      "sourceSha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
-      "recoveredSha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
-      "sourceBytes": 5299,
-      "recoveredBytes": 5299,
-      "redacted": false,
-      "redactionReportPath": "redaction-reports/f74d83d3725baf15.json",
-      "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
-      "axes": [
-        "Collector"
-      ]
-    },
-    {
       "itemKey": "b77e5be3e134c03cb29945a421877a989091b4d19866778c2e725e4f2f0a5ab1",
       "basename": "ak-collector-judge-pack.json",
       "path": "recovered/b7/b77e5be3e134c03c-ak-collector-judge-pack.json",
@@ -872,7 +856,16 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "5949d09472b53ccd7bb6e29ef6d74ff0a8570347850acb1968e2f31460a88fe5",
@@ -889,7 +882,16 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "dd10a25655287e49a64eda89c580bba3115ee0e84ec9d23adee887f7f060c126",
@@ -906,7 +908,16 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "b9000828b29c11e87abee16cc6efe34e4a4df4f9e8c1e31ada902842416aa02f",
@@ -923,7 +934,16 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "b5c7924c54bd67116963007fa5a683a7b9399fbf62013c7229e390ebbcd92567",
@@ -940,7 +960,16 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "1454bd6a275fc10849e551bd2593c4af365630cf1d1fb0be9baf515e2d6f6d11",
@@ -956,7 +985,16 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "ecec8803c114076294b1dda31b0de1a8901f2955d39c04cd360dd99840e5272e",
@@ -972,7 +1010,16 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "94bae24b3af066091d5ca4868d3e4a8899918cf6e31d50cbcf822a7f41f093fb",
@@ -989,7 +1036,16 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "5411e3fb214ecc9ac2d4619066b47c76a305af55086b0ed26998cdcbccfaa404",
@@ -1006,7 +1062,16 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "8492a5278a99f685a31705b8fc4954617ce0a9975455111073edd09672126cbe",
@@ -1023,7 +1088,16 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "76af266775a69343c49ec9a2ba996c339b2283e8b431d52a4177000b6d7072a3",
@@ -1039,7 +1113,16 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "59acc4e55e5ca9abff74ff5d91e8ef181da2ac45f47cdc8c498fd60a2bf6c6ad",
@@ -1055,7 +1138,16 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "e9077cb4e1f57c95392009e832c33ed650a5ed57c8c5c909a350cb1754251d39",
@@ -1071,7 +1163,16 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+        ]
+      }
     },
     {
       "itemKey": "588443847289abd04867ade8bc6d81ec2f06c1ef559d8fc7f4cac07f3f5a5365",
@@ -1087,7 +1188,16 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+        ]
+      }
     },
     {
       "itemKey": "c935075a516e7332116c17b60ac21da2ca44fcf821c37e23a7a521ba1ccfb9fa",
@@ -1104,7 +1214,14 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "9b926dfa52aadd7fe4a805703908aab5474f60b9b259b8ee848e916c676ede0d",
@@ -1121,7 +1238,14 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "eef325385d54b0d642c5d17e3368d37f0a3906b28d494a2f131dcf257b91115e",
@@ -1138,7 +1262,14 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "25fa9f26180e267b570a797ffe2238a1d66b5444c22829658d7898351fbc46d4",
@@ -1155,7 +1286,14 @@
       "axes": [
         "Fixer",
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "5e0df10a51874256e8d7291a63a4778c11304c5cfb62352e14f7c7b918c03019",
@@ -1171,7 +1309,16 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "Collector"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac"
+        ]
+      }
     },
     {
       "itemKey": "88890555ac3fb015703bf38b4ee84725695c345e25b96cfcf9d874dbca082665",
@@ -2534,7 +2681,14 @@
         "Fixer",
         "Judge",
         "Coder"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [],
+        "commits": [
+          "24e1cb46819f6e78b1af4e8d354e8b55844fdc0b"
+        ]
+      }
     },
     {
       "itemKey": "75ce4b728544b21ab25294ea7a4524c0aca1824f5bfdd614236e21b2da947753",
@@ -2606,7 +2760,14 @@
         "Fixer",
         "Judge",
         "Coder"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [],
+        "commits": [
+          "2357b36608dc70b397212c3a046149cf9d325895"
+        ]
+      }
     },
     {
       "itemKey": "e16f4eb2417dcd56eef876931359b69720e11f13704a050523aa68045d9bfaf5",
@@ -3506,55 +3667,6 @@
       ]
     },
     {
-      "itemKey": "15442864e040bc0c55b753949084e889b6580bf0ae69d8d78f2b25a9b1cc074e",
-      "basename": "collector-adjudication-probe.ts",
-      "path": "recovered/15/15442864e040bc0c-collector-adjudication-probe.ts",
-      "sourceSha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb",
-      "recoveredSha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb",
-      "sourceBytes": 9806,
-      "recoveredBytes": 9806,
-      "redacted": false,
-      "redactionReportPath": "redaction-reports/15442864e040bc0c.json",
-      "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
-      "axes": [
-        "Judge",
-        "Collector"
-      ]
-    },
-    {
-      "itemKey": "2ade6dc2dd7242f3d4b9277aa4415d5031a2f42fb9e35668a40ba8e046de14ca",
-      "basename": "collector-cancel-probe.ts",
-      "path": "recovered/2a/2ade6dc2dd7242f3-collector-cancel-probe.ts",
-      "sourceSha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
-      "recoveredSha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
-      "sourceBytes": 911,
-      "recoveredBytes": 911,
-      "redacted": false,
-      "redactionReportPath": "redaction-reports/2ade6dc2dd7242f3.json",
-      "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
-      "axes": [
-        "Collector"
-      ]
-    },
-    {
-      "itemKey": "23bc7d533fa98421a666533c2afdf6aab7ba6b45184820a233d7b67d7cc8fabd",
-      "basename": "collector-cross-cutoff-probe.ts",
-      "path": "recovered/23/23bc7d533fa98421-collector-cross-cutoff-probe.ts",
-      "sourceSha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da",
-      "recoveredSha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da",
-      "sourceBytes": 2197,
-      "recoveredBytes": 2197,
-      "redacted": false,
-      "redactionReportPath": "redaction-reports/23bc7d533fa98421.json",
-      "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
-      "axes": [
-        "Collector"
-      ]
-    },
-    {
       "itemKey": "a6073a84f07d41355237beeb9ce0fba3db321e37beff9954ef56d90665090ed5",
       "basename": "collector-whitespace-author.json",
       "path": "recovered/a6/a6073a84f07d4135-collector-whitespace-author.json",
@@ -3571,6 +3683,22 @@
       ]
     },
     {
+      "itemKey": "cd2b4c7a149b0ac249635a29a5ed60edad17ea46283eefd2df9b2199dc12ab3c",
+      "basename": "fixer-commit-msg.txt",
+      "path": "recovered/cd/cd2b4c7a149b0ac2-fixer-commit-msg.txt",
+      "sourceSha256": "1d3d032739b6d37c384b6080fe6366ac1b161a8b59492db6b213aa00bc891353",
+      "recoveredSha256": "1d3d032739b6d37c384b6080fe6366ac1b161a8b59492db6b213aa00bc891353",
+      "sourceBytes": 1602,
+      "recoveredBytes": 1602,
+      "redacted": false,
+      "redactionReportPath": "redaction-reports/cd2b4c7a149b0ac2.json",
+      "discoveryTime": "2026-07-30T03:26:50.842Z",
+      "admissionReason": "decision-chain commit-msg artifact not git-resolvable; promoted once after credential scan/redaction",
+      "axes": [
+        "Fixer"
+      ]
+    },
+    {
       "itemKey": "482edd79060ddf29ec8aea258d56ec55e8998de53e5b2c9ebe5c41045a086a26",
       "basename": "issue-1-adr3-plan.md",
       "path": "recovered/48/482edd79060ddf29-issue-1-adr3-plan.md",
@@ -3584,7 +3712,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d3d9d7830721b196dd341d76450fbd31381b91ddc73286118fac32876c4d6e7a",
@@ -3600,7 +3735,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "374406995a8f148f40c92280d3451a4074cf32be70a8e8599bb2c5488db10641",
@@ -3616,7 +3758,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e6612c38be3fbab964f5d4eb7b75dc663f794900215c5626650c2a6e0248152e",
@@ -3632,7 +3781,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "8b5f31d956284dac487f596e7c01b5ef34feaa7459a4b3c187934bb5df541390",
@@ -3648,7 +3804,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "0fb29f8706d008e6e963a4f694d323047cdba4725d2f22e414321f45f195d8fa",
@@ -3665,7 +3828,14 @@
       "axes": [
         "Coder",
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e279f3eb41f207a4f44913e9c62d8da81ca3ff9b6c679f6f6ccc97e3a72e8ba8",
@@ -3682,7 +3852,37 @@
       "axes": [
         "Coder",
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
+    },
+    {
+      "itemKey": "7f96a41ae44a677b32dcdb08a7c1c0d978852625cf5ba32ed829bf7e81779d3d",
+      "basename": "issue-1-commit-msg.txt",
+      "path": "recovered/7f/7f96a41ae44a677b-issue-1-commit-msg.txt",
+      "sourceSha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+      "recoveredSha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+      "sourceBytes": 503,
+      "recoveredBytes": 503,
+      "redacted": false,
+      "redactionReportPath": "redaction-reports/7f96a41ae44a677b.json",
+      "discoveryTime": "2026-07-30T03:26:50.842Z",
+      "admissionReason": "decision-chain commit-msg artifact not git-resolvable; promoted once after credential scan/redaction",
+      "axes": [
+        "issue-1"
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "1e68734a7b8ec29c7da53772784b5706b811a50bb912fd366e0eba2e8c2f4242",
@@ -3698,7 +3898,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "94fa278f792082782422475ec719038be83344c00f7409011710a9bf7f7ed4a8",
@@ -3715,7 +3922,14 @@
       "axes": [
         "Reviewer",
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "1071dee3d0f7f6663e6326f80ce170c51503d37f4a6cd3162945cbd40eaf72f5",
@@ -3732,23 +3946,14 @@
       "axes": [
         "Reviewer",
         "issue-1"
-      ]
-    },
-    {
-      "itemKey": "47cc29d52cf223099fe31c16e7dd51c358e7e1885d6c49d5a8a9f9a50f6659af",
-      "basename": "issue-1-independent-probe.ts",
-      "path": "recovered/47/47cc29d52cf22309-issue-1-independent-probe.ts",
-      "sourceSha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
-      "recoveredSha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
-      "sourceBytes": 7404,
-      "recoveredBytes": 7404,
-      "redacted": false,
-      "redactionReportPath": "redaction-reports/47cc29d52cf22309.json",
-      "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
-      "axes": [
-        "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "1aa4a913e8f3abb26af41dd11d2cfffbf29715a586dc676388d1e5e0a4ba1161",
@@ -3764,7 +3969,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "ec132f8d2852c49a54c60f7a62d1605b562502d84a68bfa3c0eacef47796cde7",
@@ -3781,7 +3993,14 @@
       "axes": [
         "Reviewer",
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d962afd88d72db5ba0c517384277148abc411d37b2116b6d94eec0fe0cab28aa",
@@ -3798,7 +4017,14 @@
       "axes": [
         "Reviewer",
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "69e5e684936410113c6f51ae27f3e90c36acfcaae34dd20de68dc0a14c07df05",
@@ -3814,7 +4040,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "73a9e166d2aea47ad01258ca991898189e8a8ad81637a946b2f8652cd09fa550",
@@ -3830,7 +4063,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "61530ab0cc886913b3e5c67f43ec2f4f0593c9732819857409feed33f686cf19",
@@ -3846,7 +4086,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-1"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "23a2217308ea76f636ba1e55255abcd34f501a5c270538c9ffc03a02024d223d",
@@ -3863,7 +4110,14 @@
       "axes": [
         "Fixer",
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e4f03196f2ef649ab74042482f32e304a23fd64819d7e046a2325f5962cd3cd2",
@@ -3879,7 +4133,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "bbd9dde73b18980fc2d1db2374bc543e5f4f48ef8fc0637f4bc86632c9ed1fad",
@@ -3895,7 +4156,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "4e70c8a5931806ea7dc7da0b33e58785c0eb47f8d4c5bda1f9df60bdeef8b20b",
@@ -3912,7 +4180,14 @@
       "axes": [
         "Coder",
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "93f38fe3512a99a8f2a59d536688c6e7aa85f112bc086655bf39a8c32e8fd596",
@@ -3929,7 +4204,14 @@
       "axes": [
         "Coder",
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "ba431807140ba6602bb6685cb9afff0998583938a916c35b6403622e2086258b",
@@ -3945,7 +4227,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d5c68dbb32111db8c3ad75f9d7eb5380eb9f769f99137f53d511164ad8c089b4",
@@ -3962,7 +4251,14 @@
       "axes": [
         "Fixer",
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "04909187f7b9dcf43da825afa82aa2f93958ebe22c267ad548ab203fadbccb4a",
@@ -3979,7 +4275,14 @@
       "axes": [
         "Fixer",
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "8227fa0713a3d16e16a1ca6e90b0110d8967dc2710187c030ca516f72c497144",
@@ -3996,7 +4299,14 @@
       "axes": [
         "Judge",
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "c754b1b6dd89d297eb98496a7edd88b09b775ff335cf24471bcdf5fa0c45c6e8",
@@ -4012,7 +4322,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "85cf04147400cb58a2856e15eef1f523a083d97cad5c1fcfad29b5151cc0ca83",
@@ -4028,7 +4345,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "3a92048c8e3f8c467a3713f45284ecd6ac1e822f484ae5ac355ca9cea0e1c1de",
@@ -4044,7 +4368,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "3a2d79f6653e947b320785bb6f5449d3bf6740be95df979441e0f31dba90d057",
@@ -4060,7 +4391,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d8c476507e4c1216afae76274c1dc4ffba62454171eb06b2393120d00ab35b35",
@@ -4077,7 +4415,14 @@
       "axes": [
         "Reviewer",
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "2e1c7d042fc6d3be3e171a40605a567c6a0b87ba22b037bd7cfb3f6cafff3996",
@@ -4094,7 +4439,14 @@
       "axes": [
         "Reviewer",
         "issue-2"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "7905dc4c9d6a7a8404dcecc24527fb5bb7b63466db56d0b337eb1f6b1428d953",
@@ -4111,7 +4463,14 @@
       "axes": [
         "Fixer",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "f24638e26f9bbabeddf74775075e074781b533caa0e4a5830506ac6863071e32",
@@ -4127,7 +4486,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "61e2c107ff9b2d8156dc3f83407f9275d5fb25b63626379d8e2ba586bc2220ad",
@@ -4144,7 +4510,14 @@
       "axes": [
         "Coder",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d150eb87dfdf262f5e431aa3d75c57deb9b222eb10ee4cc43f91e688ec9151c6",
@@ -4161,7 +4534,14 @@
       "axes": [
         "Coder",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "0e525f44a336b9d46d0de7b490ea04213709e8e0add49a740527022397e44b94",
@@ -4178,7 +4558,14 @@
       "axes": [
         "Coder",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e51ec02865fc8afd0f9bf077a9a0c0219ef9e7a814fe9f33432f8940aadf17ca",
@@ -4195,7 +4582,14 @@
       "axes": [
         "Coder",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "474ad08e93a066709a9dd677afe35e91ab759aff36a6463f0c78e9d1e5f64f00",
@@ -4212,7 +4606,14 @@
       "axes": [
         "Fixer",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "f9bf2e6d9c039c1425a91fd2c91d9ef3f9cfcffad3914ef21667bc5137f34714",
@@ -4229,7 +4630,14 @@
       "axes": [
         "Fixer",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e686804adc7617823eecab49fb25374740a6d374990413e00fdef020eccf9448",
@@ -4245,7 +4653,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "73eba658f670dfd408d83f89aefb7fb69f26f5c3a2d6ca3ef495ca923a2b621e",
@@ -4261,7 +4676,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "2c182424777ce12715b7a58977c40a547eb5037c764a356bf500be11314d9ab4",
@@ -4277,7 +4699,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e7ff0a251df4a329851b21f9bd459c9bc78e79770c7950f4f0504811c5eaf478",
@@ -4293,7 +4722,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "f0fdd387ff61cdffe251eeecd407650e19e3e86b31227e85e44af6eb8317d021",
@@ -4309,7 +4745,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e19a0bda7cb18c552b76946389e61ec079fec1aa23f131a80540d7a7beb74b7c",
@@ -4325,7 +4768,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "922894ea18acbc6e4600e32cba0433b393af2fdf6b3e632273b4d6589213a16b",
@@ -4341,7 +4791,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "50b01ed868e13d5464f6793fe284e8af830e31e89f8546da41945dc01f30300b",
@@ -4357,7 +4814,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "16269f4ef120234f99d33817e48a431beecf7640f1640aceab6828f39a768bac",
@@ -4373,7 +4837,14 @@
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "89dd2e2773262444887d787cc3207e4c0d1928f247258364cb8fb71502f2f9ef",
@@ -4391,7 +4862,14 @@
         "Fixer",
         "Reviewer",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "564cf1799ebae581a9d92f4e7e626cbf538eb6192348a6a109638f7432c84040",
@@ -4409,7 +4887,14 @@
         "Fixer",
         "Reviewer",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e774a7ebfd1c99657bc187d9ce1d239168aa973aaf27220b6eb161d569ee2f31",
@@ -4427,7 +4912,14 @@
         "Fixer",
         "Reviewer",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "5cf2f85c65581053b2a00135906c1878d3d16715203e2d23a716ececb13c4487",
@@ -4444,7 +4936,14 @@
       "axes": [
         "Reviewer",
         "issue-3"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "da8b8dc7d4873117f27601906359a2d7f7872ca886640efe4ead7ed5ab7192a4",
@@ -4461,23 +4960,14 @@
       "axes": [
         "Reviewer",
         "issue-3"
-      ]
-    },
-    {
-      "itemKey": "42a9fc2895acf1796351b2f7a06a73f46d10605a4138776ddb548d39a34607f1",
-      "basename": "judge-malformed-probe.ts",
-      "path": "recovered/42/42a9fc2895acf179-judge-malformed-probe.ts",
-      "sourceSha256": "4306d0fe0d9c2139912a50bae8ea635d71e32bd56bb9ba98c22cc4e4e5a17918",
-      "recoveredSha256": "857682fe76fd6ea58d3b63a7946aadae69ca55fe3e1a2a6b32509a3d054dd48d",
-      "sourceBytes": 3581,
-      "recoveredBytes": 3572,
-      "redacted": true,
-      "redactionReportPath": "redaction-reports/42a9fc2895acf179.json",
-      "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
-      "axes": [
-        "Judge"
-      ]
+      ],
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "05883343bd7817d04f33cc61340e0cfe1ee399a8c1c05a1fb8239c855dcaf5d1",
@@ -4638,22 +5128,6 @@
       "recoveredBytes": 3722,
       "redacted": false,
       "redactionReportPath": "redaction-reports/6ebf296330d56d3a.json",
-      "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
-      "axes": [
-        "Reviewer"
-      ]
-    },
-    {
-      "itemKey": "af289a8e481f1cf51eea5f948b6a43b40ada81e6346d2f7ad2e7ea880167c0fb",
-      "basename": "reviewer-real-pi-snippet.ts",
-      "path": "recovered/af/af289a8e481f1cf5-reviewer-real-pi-snippet.ts",
-      "sourceSha256": "7b46d00de66ff21b732bd093dd4710c78e51f26651dca9f1c26934cb30f27954",
-      "recoveredSha256": "e5b36400cf6705888179fcead419b3b188e78be4f17e8c68628ce5e88a6150fc",
-      "sourceBytes": 6098,
-      "recoveredBytes": 6092,
-      "redacted": true,
-      "redactionReportPath": "redaction-reports/af289a8e481f1cf5.json",
       "discoveryTime": "2026-07-30T03:26:50.842Z",
       "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
       "axes": [

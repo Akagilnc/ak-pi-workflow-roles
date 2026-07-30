@@ -28,8 +28,8 @@
     "Fixer": {
       "axis": "Fixer",
       "status": "recovered",
-      "admittedCount": 154,
-      "excludedRelatedCount": 138,
+      "admittedCount": 155,
+      "excludedRelatedCount": 137,
       "sampleBasenames": [
         "ak-collector-fix-packet-2.md",
         "ak-collector-fix-packet-3.md",
@@ -80,8 +80,8 @@
     "issue-1": {
       "axis": "issue-1",
       "status": "recovered",
-      "admittedCount": 17,
-      "excludedRelatedCount": 18,
+      "admittedCount": 18,
+      "excludedRelatedCount": 17,
       "sampleBasenames": [
         "issue-1-adr3-plan.md",
         "issue-1-adr3-receipt.md",

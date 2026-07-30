@@ -1,0 +1,26 @@
+fix(collector): close signal-state cancel and conservative first-sighting residuals
+
+Approved two-residual repair at 25d0da2 owners only; no Soul diff, no new
+cancel/attempt status, no parallel validator, no amend.
+
+1. Request-path cancellation by signal state (collector-github):
+   createIssueComment catch rethrows whenever input.signal.aborted (Error or
+   non-Error reason). Drop /abort|cancel/i message matching for this seam;
+   AbortError name remains non-signal belt only. Hung POST still SIGTERM'd;
+   attempt stays non-terminal started; process-local one-shot retained.
+   Coverage: deadline exceeded Error and "stop now" non-Error reasons plus
+   existing request canceled hung-POST and R11 observe/GET cancel.
+
+2. Conservative first-sighting stamp (collector-ledger observe):
+   After fetchObserveSurfaces (+ identity retry) succeeds, stamp evidence
+   firstObservedAt from wallNow at surface hand-off (not observe-start).
+   Snapshot observedAt/completedAt start-complete distinction kept; budget
+   retain during fetch may keep temporary start stamp. applyEvidenceVersionHistory
+   predicate unchanged — after-deadline first sighting still nulls
+   authoritativeTime; exact-deadline equality oracle preserved.
+   Coverage: start-before/finish-after newly appearing review cannot prove
+   valid or unavailable; existing unit boundary/after-deadline/R5 tests green.
+
+Preservation: R1–R11 and prior six-root 25d0da2 seams (target unavailable
+provenance, 2xx parse→ambiguous_loss, inline author ownership, body schema
+parity, request signal threading, after-deadline guard existence).
