@@ -1,0 +1,19 @@
+# Issue #17 Plan addendum — freeze final interface and chronology
+
+Amend the replacement Plan under `.ak/dockets/issues/17/plan/judge-002/receipt.json`. Do not repeat settled sections; produce a binding addendum with Behavior / Owner / Red / Green / Scope for both blockers.
+
+## Capability contract to freeze
+
+- Select one mandatory narrow transport: `--ak-review-capabilities <json-path>`, version 1, bound to the exact SHA-256 of existing `--ak-review-task` bytes. Missing/unreadable/invalid/mismatched input fails Reviewer activation/preflight and never defaults to a wider grant.
+- The only child tool names are exactly: `read`, `grep`, `find`, `ls`, `bash`, `write`, `edit`.
+- Every allowed bash entry is the exact complete `command` string accepted by the child bash tool. Match by byte-for-byte string equality; no trimming, glob, prefix, regex, tokenization, shell inference, or task-prose authority. Any other command is unavailable.
+- Freeze a closed enum of package-owned prerequisite operations sufficient for deterministic preflight and post-acceptance setup. Distinguish preflight Git identity/read operations from runner setup operations; do not invent generic filesystem/network/process policy.
+
+## Chronology to reconcile
+
+- Existing Reviewer runtime pins the target/ref snapshot before proposal handling.
+- `reviewer-dispatch` owns pre-acceptance use of a narrow Git reader adapter against that immutable pin: resolve declared base, derive range/ordered commits, and read selected material bytes. Rejected proposals may perform those bounded reads but create no mirror/workspace, invoke no provider, start no child, and consume no batch.
+- Acceptance freezes compiled prompts/grants/target evidence and records the irreversible transition.
+- Only afterward may `reviewer-agent` materialize the accepted mirror/workspaces and execute opaque accepted bytes/grants. It never resolves target/materials, compiles prompts, or decides lifecycle.
+
+State exact schema/default behavior, prerequisite enum, owner sequence, red/green counterexamples, and test ownership. Do not edit or commit. Submit through `ak_coder_output`.
