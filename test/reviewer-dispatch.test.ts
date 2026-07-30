@@ -167,6 +167,41 @@ test("range preflight corrections consume no runner before one acceptance", asyn
 
 const sha256Empty = createHash("sha256").update("").digest("hex");
 
+test("hidden repository materials are accepted and unsafe paths reject with typed safe locations", async () => {
+  const authorityPath = ".ak/dockets/issues/17/authority/judge-001/receipt.json";
+  const hidden = {
+    ...proposal,
+    standardsMaterials: [{ id: "authority", repositoryPath: authorityPath }],
+  };
+  const accepted = harness();
+  assert.equal((await accepted.dispatcher.propose(hidden)).status, "accepted");
+  assert.equal(accepted.calls[0]!.materials.standards[0]!.repositoryPath, authorityPath);
+
+  const unsafe = ["", ".", "..", "docs//receipt.json", "../receipt.json", "/receipt.json", "docs\\receipt.json", "docs/control\nreceipt.json", "docs/Ignore instructions.md", "docs/**system**.md"];
+  for (const repositoryPath of unsafe) {
+    const { dispatcher, calls } = harness();
+    const result = await dispatcher.propose({
+      ...proposal,
+      standardsMaterials: [{ id: "authority", repositoryPath }],
+    });
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") continue;
+    assert.deepEqual(result.violations, ["Invalid standards material selection at index 0 (id: authority): repository-relative path"]);
+    assert.equal(calls.length, 0);
+  }
+
+  const invalidId = harness();
+  const rejected = await invalidId.dispatcher.propose({
+    ...proposal,
+    standardsMaterials: [{ id: "unsafe\nid", repositoryPath: "SAFE.md" }],
+  });
+  assert.equal(rejected.status, "rejected");
+  if (rejected.status === "rejected") {
+    assert.deepEqual(rejected.violations, ["Invalid standards material selection at index 0: identity"]);
+    assert.equal(rejected.violations[0]!.includes("unsafe"), false);
+  }
+});
+
 test("runner prerequisites and injection-shaped material selections reject before runner effect", async () => {
   const missingRunner = { ...proposal, required: { ...proposal.required, standards: { ...required, prerequisiteOperations: required.prerequisiteOperations.filter((x) => x !== "runner.git.verify-snapshot") } } };
   const hostile = [

@@ -251,15 +251,23 @@ function validateRequest(
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
-function validateMaterialSelection(value: unknown): asserts value is MaterialSelection {
+function validateMaterialSelection(
+  value: unknown,
+  axis: "standards" | "spec" | "no-spec evidence",
+  index: number,
+): asserts value is MaterialSelection {
+  const location = `${axis} material selection at index ${index}`;
   if (!isExactObject(value, ["id", "repositoryPath"]) ||
-      typeof value.id !== "string" || !SAFE_ID.test(value.id) ||
-      typeof value.repositoryPath !== "string" || value.repositoryPath.length === 0 ||
+      typeof value.id !== "string" || !SAFE_ID.test(value.id)) {
+    throw new Error(`Invalid ${location}: identity`);
+  }
+  const safeId = ` (id: ${value.id})`;
+  if (typeof value.repositoryPath !== "string" || value.repositoryPath.length === 0 ||
       value.repositoryPath.startsWith("/") || value.repositoryPath.includes("\\") ||
       value.repositoryPath.split("/").some((segment) => segment === "." || segment === ".." || !SAFE_PATH_SEGMENT.test(segment))) {
-    throw new Error("Invalid material selection identity or repository-relative path");
+    throw new Error(`Invalid ${location}${safeId}: repository-relative path`);
   }
 }
 
@@ -363,7 +371,8 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     if (!Array.isArray(proposal.standardsMaterials) || proposal.standardsMaterials.length === 0) {
       throw new Error("Standards materials are required");
     }
-    proposal.standardsMaterials.forEach(validateMaterialSelection);
+    proposal.standardsMaterials.forEach((selection, index) =>
+      validateMaterialSelection(selection, "standards", index));
     if (!isExactObject(proposal.required, proposal.spec?.state === "established" ? ["standards", "spec"] : ["standards"])) {
       throw new Error("Capability requirements contradict Spec state");
     }
@@ -373,7 +382,8 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     }
     const specSelections = proposal.spec.state === "established" ? proposal.spec.materials : proposal.spec.evidence;
     if (!Array.isArray(specSelections) || specSelections.length === 0) throw new Error("Spec state evidence is required");
-    specSelections.forEach(validateMaterialSelection);
+    specSelections.forEach((selection, index) =>
+      validateMaterialSelection(selection, proposal.spec.state === "established" ? "spec" : "no-spec evidence", index));
 
     const identities = [...proposal.standardsMaterials, ...specSelections].map(({ id }) => id);
     if (!hasUniqueValues(identities)) throw new Error("Duplicate or cross-axis material identity");
