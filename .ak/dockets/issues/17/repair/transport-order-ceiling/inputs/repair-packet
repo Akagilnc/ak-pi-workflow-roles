@@ -1,0 +1,17 @@
+# Issue #17 transport ordering and ceiling repair
+
+Authority: Judge review-020 requires inclusion of the canonical diff command and forbids requiring unrelated commands; accepted Plan permits additional exact declared verification commands. Review: `.ak/dockets/issues/17/review/review-023/receipt.json`.
+
+R1 — Correct README to match substantive law: every accepted leg must include the one byte-exact canonical diff command; additional commands are permitted only when explicitly declared by that leg and byte-exact members of the task-bound ceiling. The runtime’s current include-plus-subset behavior is correct; do not revert to exactly-one.
+
+R2 — Validate the entire task-bound capability ceiling against host tool availability before any Git pin/read effect. Any ceiling tool unavailable from the host makes invocation setup fail closed even when a narrower proposal would omit it. Add zero-pin/zero-run regressions. Preserve no-widening subset validation.
+
+R3 — Replace message/regex-based proposal classification with typed `ReviewerPreflightViolation` at proposal shape, base/range/material, capability, prerequisite, pin-drift, and prompt-identity boundaries. Durable evidence remains closed code only; unexpected exceptions map to `preflight-infrastructure` without retaining diagnostics.
+
+R4 — If schema-invalid transport for an Agent call settles after another proposal has accepted, record it as a bounded immutable `closed-attempt`/transport-after-acceptance event with attempt identity and `started:false`, not `transport-rejected`, correction evidence, or infrastructure failure. Before acceptance it remains transport-rejected and correctable. Deduplicate dual terminal representations and retain no raw args.
+
+R5 — Add deterministic sibling-order tests: valid acceptance then malformed terminal; malformed terminal then acceptance; concurrent/racing order; each produces one accepted dispatch, bounded ordered evidence, no second child batch, and no crash. Add host-ceiling and typed-classification tests.
+
+R6 — Run package lifecycle, transport subprocess/focused tests, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R6.
