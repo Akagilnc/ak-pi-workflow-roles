@@ -1,0 +1,15 @@
+# Issue #17 repository-root repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-015/receipt.json` and `preflight.git.pin-target` root-identification law.
+
+R1 — Discover the actual Git worktree top-level with Git from the invocation cwd, canonicalize that top-level path, and store it as `repositoryRoot` before pinning HEAD/refs/materials. Never treat an arbitrary nested cwd as repository root. Reject bare/non-worktree/non-repository invocation before acceptance. Runner mirror/workspace must consume this canonical root.
+
+R2 — Add package-lifecycle coverage invoking Reviewer from a nested directory, proving accepted root equals top-level and mirror/child execution succeeds; add non-repository and bare-repository preflight rejection with zero runner effects; cover symlinked cwd/root canonicalization.
+
+R3 — Replace message-regex failure classification with typed/stage-owned classification. Snapshot/workspace/child/provider/cancel owners must attach the closed `ReviewerFailureClassification` directly; cancellation may use AbortSignal/error identity, not prose. Preserve attached disposition/target evidence.
+
+R4 — Export one deep immutable pin/ref helper and use it in dispatch and pinned Git reader. Normalize established/no-spec proposal state once into a closed internal axis plan before selections, grants, prompt compilation, and evidence projection, eliminating repeated state switches without changing one-versus-two-leg behavior. Rename flagged one-letter test callback parameters when local.
+
+R5 — Run nested-cwd package lifecycle, focused tests, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R5.
