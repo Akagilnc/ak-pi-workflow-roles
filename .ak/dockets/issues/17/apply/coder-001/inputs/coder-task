@@ -1,0 +1,28 @@
+# Issue #17 approved implementation task
+
+Implement the converged combined Plan at these committed authorities:
+
+- `.ak/dockets/issues/17/authority/judge-001/receipt.json`
+- `.ak/dockets/issues/17/plan/coder-002/receipt.json`
+- `.ak/dockets/issues/17/plan/coder-003/receipt.json`
+- `.ak/dockets/issues/17/plan/judge-003/receipt.json`
+
+Use the canonical TDD Skill. Follow the approved incremental order and keep `reviewer-dispatch` as the sole compiler/capability/transition owner. Replace the arbitrary Reviewer child-prompt dispatch path rather than layering a second path.
+
+Required Apply proof includes:
+
+- red-before-green tests at each owned seam;
+- mandatory task-digest-bound Reviewer capability ceiling with exact closed values and no widening fallback;
+- deterministic complete Standards/Spec prompt compilation from canonical Skill/task/pinned target/material bytes;
+- atomic all-leg preflight before mirror/workspace/provider/child/batch effects;
+- correction allowed only before irreversible acceptance;
+- established no-spec runs exactly one complete Standards child and constructs no Spec prompt;
+- opaque post-acceptance runner enforces exact tool/command grant and cannot resolve/compile/decide lifecycle;
+- append-only evidence projection with exact prompt bytes/lengths/SHA and actual-dispatch equality;
+- existing semantic audit and thin Reviewer Receipt contract preserved;
+- no Soul, role topology, cross-model-panel, generic retention, or other-role behavior change;
+- obsolete arbitrary prompt/provenance/fake-Spec fixtures removed rather than duplicated;
+- focused tests, full package tests, typecheck, pack/diff checks as feasible;
+- same-pattern, introduced-regression, and behavior-fact self-checks in the final report.
+
+Commit the implementation forward. Submit only through `ak_coder_output`.
