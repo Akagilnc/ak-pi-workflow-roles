@@ -1,0 +1,13 @@
+# Issue #16 final judgment after candidate-pair repair
+
+Judge immutable construction target `7e67b3b29ea81a331cbbf5c139cd894d4acbb169`.
+
+Authority: `.ak/dockets/issues/16/review/review-001/inputs/issue-16`.
+Final review: `.ak/dockets/issues/16/review/review-013/receipt.json`.
+Prior converged judgment: `.ak/dockets/issues/16/judgment/final-003/receipt.json`.
+
+The latest repair discharges external PR findings by comparing complete content, replacing quadratic cross-call comparison with linear complete candidate-sequence validation, accepting an independent failed dual call followed by a successful retry, rejecting all four leading/trailing extra-terminal forms, and sharing issuance/start invocation matching. Focused extraction tests pass 22/22; typecheck, build/source-dist consistency, and diff check pass.
+
+Reviewer reports Spec 0 and no hard Standards violations. It raises two judgement-only style findings: the private function name `hasMismatchedCrossRepCallIdentity` now understates full sequence validation, and three small map-append blocks repeat. Decide whether either demonstrates a real closure failure under authority/repository law rather than merely a refactoring preference.
+
+Rejudge all #16 obligations and return only through `ak_judge_output`. Do not edit or commit.
