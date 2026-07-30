@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
@@ -8,6 +7,7 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
 import {
   createReviewerDispatcher,
+  sha256Hex,
   parseReviewerCapabilities,
   REVIEWER_CHILD_TOOLS,
   REVIEWER_PREREQUISITES,
@@ -177,7 +177,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       pi.on("tool_execution_start", (event) => {
         if (event.toolName !== AGENT_TOOL_NAME) return;
         const encoded = JSON.stringify(event.args) ?? "undefined";
-        pendingTransport.set(event.toolCallId, `transport-${createHash("sha256").update(encoded).digest("hex")}`);
+        pendingTransport.set(event.toolCallId, `transport-${sha256Hex(encoded)}`);
       });
       pi.on("tool_execution_end", handleTransportTerminal);
       pi.on("tool_result", handleTransportTerminal);

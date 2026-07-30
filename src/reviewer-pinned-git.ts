@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs, type ReviewerRefMap } from "./reviewer-git-snapshot.ts";
+import { sha256Hex } from "./sha256.ts";
 
 export type ReviewerPinnedTarget = Readonly<{
   repositoryRoot: string;
@@ -26,7 +26,6 @@ export type ReviewerPinnedGitReader = {
 };
 
 const execFileAsync = promisify(execFile);
-const sha256 = (bytes: string | Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 export const immutableReviewerPin = (pin: ReviewerPinnedTarget): ReviewerPinnedTarget => Object.freeze({
   repositoryRoot: pin.repositoryRoot, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
@@ -82,7 +81,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
         gitText(repositoryRoot, ["rev-list", "--reverse", `${mergeBase}..${targetHead}`]),
       ]);
       if (diff.length === 0) throw new Error("Pinned three-dot diff is empty");
-      return Object.freeze({ base: mergeBase, target: targetHead, diffCommand, diffSha256: sha256(Uint8Array.from(diff)), commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
+      return Object.freeze({ base: mergeBase, target: targetHead, diffCommand, diffSha256: sha256Hex(Uint8Array.from(diff)), commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
     },
     async material(path: string, revision: string) {
       if (revision !== targetHead) throw new Error("Material revision is not the pinned target");

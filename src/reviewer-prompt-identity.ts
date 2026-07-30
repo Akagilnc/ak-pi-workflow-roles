@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./sha256.ts";
 
 /** Dispatch-owned exact identity for model-visible prompt bytes. */
 export type ReviewerPromptIdentity = Readonly<{
@@ -11,7 +11,7 @@ export function reviewerPromptIdentity(bytes: string): ReviewerPromptIdentity {
   return Object.freeze({
     bytes,
     utf8Length: Buffer.byteLength(bytes, "utf8"),
-    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sha256: sha256Hex(bytes),
   });
 }
 
