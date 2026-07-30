@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_reviewer_output",
+  "toolCallId": "call_N6NHrY95lsP7qI1zivIY1wCt|fc_01a9bf7d53aa137e016a6bb2d59fe48191a0fbf3d6f49080af",
+  "details": {
+    "status": "completed",
+    "report": "## Standards\n1. **Judgement call — Duplicated Code (`src/reviewer-role.ts:161-172`):** the `tool_execution_end` and `tool_result` handlers duplicate the same handling logic; extract the shared shape and call it from both handlers.\n2. **Judgement call — Duplicated Code (`src/reviewer-dispatch.ts:517-538`):** rejection construction is duplicated in this dispatch path; extract one rejection-construction helper and reuse it.\n3. **Judgement call — Mysterious Name (`test/reviewer-role.test.ts:27-120`):** the test uses opaque names `const h=setup()` and `(x:any)=>x.axis`; rename them so the harness/value and selected report axis are evident.\n\nNo documented-standard hard violation was reported.\n\n## Spec\n1. **P1 — Child-report visibility/aggregation failure:** after successful dispatch, `Agent` exposes only `Reviewer dispatch completed`, not the Standards and Spec child reports. The caller therefore cannot present those reports verbatim or lightly cleaned through `ak_reviewer_output`, as the required review method demands.\n2. **P2 — Non-commit tag snapshot verification (`src/reviewer-agent.ts:173-175`):** verification applies `^{commit}` to every preserved ref’s `peeledCommitId`. Preserved refs may legitimately be unrelated blob/tree tags, so this forces them through commit peeling and fails package snapshot verification.\n\nSummary: Standards 3 findings (worst: Duplicated Code in `src/reviewer-role.ts:161-172`); Spec 2 findings (worst: P1 child-report visibility/aggregation failure)."
+  },
+  "artifactKind": "acceptedReceipt"
+}
