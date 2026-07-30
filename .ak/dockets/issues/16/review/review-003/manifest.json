@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/16/review/review-003"
+  },
+  "invocation": {
+    "id": "1901645b-b225-41cb-947d-6c7c15c7acc6"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/16/review-task-003.md",
+      "-p",
+      "Use the exact supplied three-dot range in one sibling-parallel Standards/Spec batch, verify prior findings, and submit through ak_reviewer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "297fa77c9620d09f687502177073304c865c7b0b",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-16",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "297fa77c9620d09f687502177073304c865c7b0b",
+        "path": ".ak/dockets/issues/16/review/review-001/inputs/issue-16",
+        "blobOid": "3eab19ad137a1aaa5d80658fbd5e5bdbb6c0902e",
+        "sha256": "98dccf58fdd437e1a7142d55ee4d627a611c8482493e05ec4eea8e1ec9ca5dd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "prior-review",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "297fa77c9620d09f687502177073304c865c7b0b",
+        "path": ".ak/dockets/issues/16/review/review-002/receipt.json",
+        "blobOid": "3d902982a6842b81331c45a035795c9d813a3fb8",
+        "sha256": "355d8e1e44d7d7cbd71f899e1bc3c54599ac42f3ef0fee1e6b92a120f201b143",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "15c4b3ff2733463da1dd5263baffb9105f43b66b4204470300aa17559cea118d",
+        "byteLength": 1163
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "5fba73fc8cb9ebe423c9589339bcb93b5d948a2fc80cd9c223e40e36060d866e",
+        "byteLength": 4013
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "b893c667075411c57ffc886e8bdafb60f2d27f888b6d44ad04cfbde163061df2",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_dGFsA02mSrdUbETTiBVYR7tN|fc_05da36c401696902016a6b3263d05c81908b4d2d3cc82a0af6",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_dGFsA02mSrdUbETTiBVYR7tN|fc_05da36c401696902016a6b3263d05c81908b4d2d3cc82a0af6",
+    "auditPassed": true,
+    "usage": {
+      "input": 22899,
+      "output": 294,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 23193
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "bearer-credential",
+        "location": "child.stdout",
+        "count": 12
+      },
+      {
+        "ruleId": "basic-credential",
+        "location": "child.stdout",
+        "count": 6
+      },
+      {
+        "ruleId": "provider-package-token",
+        "location": "child.stdout",
+        "count": 24
+      },
+      {
+        "ruleId": "google-api-key",
+        "location": "child.stdout",
+        "count": 6
+      },
+      {
+        "ruleId": "aws-access-key",
+        "location": "child.stdout",
+        "count": 6
+      },
+      {
+        "ruleId": "pem-private-key",
+        "location": "child.stdout",
+        "count": 6
+      },
+      {
+        "ruleId": "cookie-header",
+        "location": "child.stdout",
+        "count": 6
+      },
+      {
+        "ruleId": "credential-url",
+        "location": "child.stdout",
+        "count": 6
+      },
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 12
+      }
+    ]
+  }
+}
