@@ -15,7 +15,7 @@ import {
   type ReviewerProposalV1,
 } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
-import { createReviewerExecutionLedger, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
+import { createReviewerExecutionLedger, projectAcceptedDispatch, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedReviewerDetails, type ReviewerOutput } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -99,7 +99,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     reader = await dependencies.createPinnedGitReader();
 
     const run = async (dispatch: AcceptedReviewerDispatch): Promise<ReviewerDispatchRunResult> => {
-      ledger.append({ source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity, recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot, range: dispatch.range, materials: dispatch.materials, legs: dispatch.legs });
+      ledger.append(projectAcceptedDispatch(dispatch));
       ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: dispatch.identity, cardinality: dispatch.legs.length as 1 | 2 });
       try {
         const result = await dependencies.runDispatch(dispatch, { context: currentContext!, ...(currentSignal === undefined ? {} : { signal: currentSignal }) });

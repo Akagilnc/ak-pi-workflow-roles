@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs } from "./reviewer-git-snapshot.ts";
 import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
@@ -141,6 +142,21 @@ function freezeStrings<T extends string>(values: readonly T[]): readonly T[] {
   return Object.freeze([...values]);
 }
 
+function validateCapabilityRequestShape(value: unknown): ReviewerCapabilityRequest {
+  if (!isExactObject(value, ["tools", "bashCommands", "prerequisiteOperations"]))
+    throw new Error("Invalid capability request");
+  const { tools, bashCommands, prerequisiteOperations } = value;
+  if (!Array.isArray(tools) || !Array.isArray(bashCommands) || !Array.isArray(prerequisiteOperations) ||
+      !tools.every((item): item is ReviewerChildToolName => typeof item === "string" && (REVIEWER_CHILD_TOOLS as readonly string[]).includes(item)) ||
+      !bashCommands.every((item): item is string => typeof item === "string") ||
+      !prerequisiteOperations.every((item): item is ReviewerPrerequisiteOperation => typeof item === "string" && (REVIEWER_PREREQUISITES as readonly string[]).includes(item)) ||
+      !hasUniqueValues(tools) || !hasUniqueValues(bashCommands) || !hasUniqueValues(prerequisiteOperations))
+    throw new Error("Invalid capability request values");
+  if (bashCommands.length > 0 && !tools.includes("bash"))
+    throw new Error("Reviewer bash commands require bash tool");
+  return { tools, bashCommands, prerequisiteOperations };
+}
+
 function immutableRequest(request: ReviewerCapabilityRequest): ReviewerCapabilityRequest {
   return Object.freeze({
     tools: freezeStrings(request.tools),
@@ -184,31 +200,10 @@ export function parseReviewerCapabilities(
   if (!/^[0-9a-f]{64}$/.test(taskSha256) || taskSha256 !== sha256(task)) {
     throw new Error("Reviewer capabilities task digest mismatch");
   }
-  if (
-    !tools.every(
-      (item): item is ReviewerChildToolName =>
-        typeof item === "string" && (REVIEWER_CHILD_TOOLS as readonly string[]).includes(item),
-    ) ||
-    !bashCommands.every((item): item is string => typeof item === "string") ||
-    !prerequisiteOperations.every(
-      (item): item is ReviewerPrerequisiteOperation =>
-        typeof item === "string" && (REVIEWER_PREREQUISITES as readonly string[]).includes(item),
-    ) ||
-    !hasUniqueValues(tools) ||
-    !hasUniqueValues(bashCommands) ||
-    !hasUniqueValues(prerequisiteOperations)
-  ) {
-    throw new Error("Reviewer capabilities contain unknown or duplicate values");
-  }
-  if (bashCommands.length > 0 && !tools.includes("bash")) {
-    throw new Error("Reviewer bash commands require bash tool");
-  }
-
-  return Object.freeze({
-    version: 1,
-    taskSha256,
-    ...immutableRequest({ tools, bashCommands, prerequisiteOperations }),
-  });
+  let request: ReviewerCapabilityRequest;
+  try { request = validateCapabilityRequestShape({ tools, bashCommands, prerequisiteOperations }); }
+  catch { throw new Error("Reviewer capabilities contain unknown or duplicate values"); }
+  return Object.freeze({ version: 1, taskSha256, ...immutableRequest(request) });
 }
 
 function validateRequest(
@@ -216,27 +211,7 @@ function validateRequest(
   ceiling: ReviewerCapabilitiesV1,
   hostTools: readonly string[],
 ): ReviewerCapabilityRequest {
-  if (!isExactObject(value, ["tools", "bashCommands", "prerequisiteOperations"])) {
-    throw new Error("Invalid capability request");
-  }
-  const { tools, bashCommands, prerequisiteOperations } = value;
-  if (
-    !Array.isArray(tools) ||
-    !Array.isArray(bashCommands) ||
-    !Array.isArray(prerequisiteOperations) ||
-    !tools.every((item): item is ReviewerChildToolName =>
-      typeof item === "string" && (REVIEWER_CHILD_TOOLS as readonly string[]).includes(item),
-    ) ||
-    !bashCommands.every((item): item is string => typeof item === "string") ||
-    !prerequisiteOperations.every((item): item is ReviewerPrerequisiteOperation =>
-      typeof item === "string" && (REVIEWER_PREREQUISITES as readonly string[]).includes(item),
-    ) ||
-    !hasUniqueValues(tools) ||
-    !hasUniqueValues(bashCommands) ||
-    !hasUniqueValues(prerequisiteOperations)
-  ) {
-    throw new Error("Invalid capability request values");
-  }
+  const { tools, bashCommands, prerequisiteOperations } = validateCapabilityRequestShape(value);
   if (
     tools.some((tool) => !ceiling.tools.includes(tool) || !hostTools.includes(tool)) ||
     bashCommands.some((command) => !ceiling.bashCommands.includes(command)) ||
@@ -244,14 +219,10 @@ function validateRequest(
   ) {
     throw new Error("Capability requirement exceeds ceiling or host availability");
   }
-  if (bashCommands.length > 0 && !tools.includes("bash")) {
-    throw new Error("Reviewer bash commands require bash tool");
-  }
   return immutableRequest({ tools, bashCommands, prerequisiteOperations });
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const SAFE_PATH_SEGMENT = /^[A-Za-z0-9._-]+$/;
 
 function validateMaterialSelection(
   value: unknown,
@@ -266,7 +237,8 @@ function validateMaterialSelection(
   const safeId = ` (id: ${value.id})`;
   if (typeof value.repositoryPath !== "string" || value.repositoryPath.length === 0 ||
       value.repositoryPath.startsWith("/") || value.repositoryPath.includes("\\") ||
-      value.repositoryPath.split("/").some((segment) => segment === "." || segment === ".." || !SAFE_PATH_SEGMENT.test(segment))) {
+      /[\u0000-\u001f\u007f]/u.test(value.repositoryPath) ||
+      value.repositoryPath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
     throw new Error(`Invalid ${location}${safeId}: repository-relative path`);
   }
 }
@@ -308,26 +280,32 @@ async function gitText(root: string, args: readonly string[]): Promise<string> {
 export async function createReviewerPinnedGitReader(root = process.cwd()): Promise<ReviewerPinnedGitReader> {
   const repositoryRoot = await realpath(root);
   const targetHead = await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]);
-  const rawRefs = await gitText(repositoryRoot, ["for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags", "refs/remotes"]);
-  const refs: Record<string, string> = {};
-  for (const line of rawRefs.split("\n").filter(Boolean)) {
-    const at = line.indexOf("\0");
-    if (at < 1) throw new Error("Malformed Git ref snapshot");
-    refs[line.slice(0, at)] = line.slice(at + 1);
-  }
+  const rawRefs = await gitText(repositoryRoot, reviewerRefSnapshotArgs());
+  const refs = parseReviewerRefSnapshot(rawRefs);
   const pin = Object.freeze({ repositoryRoot, targetHead, refs: Object.freeze(refs) });
   const symbolic = (base: string): string | undefined => {
     if (Object.hasOwn(refs, base)) return refs[base];
     const candidates = [`refs/heads/${base}`, `refs/tags/${base}`, `refs/remotes/${base}`]
       .filter((name) => Object.hasOwn(refs, name));
+    if (candidates.length > 1) throw new Error("Base revision alias is ambiguous in the pinned ref map");
     return candidates.length === 1 ? refs[candidates[0]!] : undefined;
   };
   return Object.freeze({
     pin,
     async resolve(base: string) {
-      const commit = /^[0-9a-f]{40}$/.test(base) ? base : symbolic(base);
+      if (!/^[A-Za-z0-9._/~^+-]+$/.test(base) || base.startsWith("-") || base.includes("..") || base.includes("@{"))
+        throw new Error("Unsafe base revision grammar");
+      let commit: string | undefined;
+      const headExpression = /^HEAD((?:~[0-9]+|\^[0-9]+)*)$/.exec(base);
+      if (headExpression) commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${targetHead}${headExpression[1]}^{commit}`]);
+      else if (/^[0-9a-f]{4,40}$/.test(base)) {
+        const matches = (await gitText(repositoryRoot, ["rev-parse", `--disambiguate=${base}`])).split("\n").filter(Boolean);
+        if (matches.length !== 1) throw new Error("Base commit abbreviation is unknown or ambiguous");
+        commit = matches[0];
+      } else commit = symbolic(base);
       if (commit === undefined) throw new Error("Base revision is not present in the pinned ref map");
-      await gitText(repositoryRoot, ["cat-file", "-e", `${commit}^{commit}`]);
+      try { commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${commit}^{commit}`]); }
+      catch { throw new Error("Base revision does not identify a commit"); }
       try { await gitText(repositoryRoot, ["merge-base", "--is-ancestor", commit, targetHead]); }
       catch { throw new Error("Base commit is not reachable from the pinned target"); }
       return commit;
@@ -385,8 +363,10 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     specSelections.forEach((selection, index) =>
       validateMaterialSelection(selection, proposal.spec.state === "established" ? "spec" : "no-spec evidence", index));
 
-    const identities = [...proposal.standardsMaterials, ...specSelections].map(({ id }) => id);
-    if (!hasUniqueValues(identities)) throw new Error("Duplicate or cross-axis material identity");
+    const allSelections = [...proposal.standardsMaterials, ...specSelections];
+    if (!hasUniqueValues(allSelections.map(({ id }) => id)) ||
+        !hasUniqueValues(allSelections.map(({ repositoryPath }) => repositoryPath.normalize("NFC"))))
+      throw new Error("Duplicate or cross-axis material identity or repository path");
     for (const operation of DISPATCH_PREREQUISITES) {
       if (!capabilities.prerequisiteOperations.includes(operation)) {
         throw new Error(`Missing preflight prerequisite: ${operation}`);
@@ -447,7 +427,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
           utf8Length: bytes.byteLength,
           sha256: sha256(bytes),
         }));
-        rendered.push(`${item.id} (${item.repositoryPath}):\n${text}`);
+        rendered.push(`${item.id}:\n${text}`);
       }
       return rendered.join("\n\n");
     };

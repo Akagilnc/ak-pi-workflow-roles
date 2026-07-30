@@ -5,6 +5,7 @@ import {
   type ReviewerMaterialEvidence,
   type ReviewerPinnedTarget,
   type ReviewerRange,
+  type AcceptedReviewerDispatch,
 } from "./reviewer-dispatch.ts";
 
 export type ReviewerUsage = Readonly<{
@@ -38,6 +39,14 @@ export type ReviewerAcceptedEvidence = Readonly<{
   }>;
   legs: readonly ReviewerCompiledLegEvidence[];
 }>;
+export function projectAcceptedDispatch(dispatch: AcceptedReviewerDispatch): ReviewerEvidenceEvent {
+  return {
+    source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
+    recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
+    range: dispatch.range, materials: dispatch.materials, legs: dispatch.legs,
+  };
+}
+
 export type ReviewerLegResultEvidence = Readonly<{
   dispatchIdentity: string;
   axis: "standards" | "spec";
