@@ -1,0 +1,13 @@
+{
+  "itemKey": "4da68c753a68d9ad1cb29ced384d2807971c63f3a70f1ce4a3409fbc6320d4f1",
+  "basename": "ak-roles-reviewer-v0-task.md",
+  "sourceSha256": "80b6285962c13eaba704bec5d2ccc1a1d74985ad2e350c71ee8fdf197283ddb8",
+  "recoveredSha256": "80b6285962c13eaba704bec5d2ccc1a1d74985ad2e350c71ee8fdf197283ddb8",
+  "sourceBytes": 6915,
+  "recoveredBytes": 6915,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

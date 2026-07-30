@@ -1,0 +1,13 @@
+{
+  "itemKey": "3a92048c8e3f8c467a3713f45284ecd6ac1e822f484ae5ac355ca9cea0e1c1de",
+  "basename": "issue-2-receipt-trail-receipt.md",
+  "sourceSha256": "f53e5a02ac397afd40c31a7de5da40867456f2ebe79867ffc8ea0a9f8b0642d8",
+  "recoveredSha256": "f53e5a02ac397afd40c31a7de5da40867456f2ebe79867ffc8ea0a9f8b0642d8",
+  "sourceBytes": 1354,
+  "recoveredBytes": 1354,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "fd421a23d249f73373bcf62727ed0c65c60531daaf0280fb95363364789bac52",
+  "basename": "ak-roles-postfix-review.md",
+  "sourceSha256": "1d50768f2462e92949cb37dc89886feb074dd3c9415b8016866af0e86e38c43c",
+  "recoveredSha256": "1d50768f2462e92949cb37dc89886feb074dd3c9415b8016866af0e86e38c43c",
+  "sourceBytes": 3494,
+  "recoveredBytes": 3494,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

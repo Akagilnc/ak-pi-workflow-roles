@@ -1,0 +1,13 @@
+{
+  "itemKey": "b77e5be3e134c03cb29945a421877a989091b4d19866778c2e725e4f2f0a5ab1",
+  "basename": "ak-collector-judge-pack.json",
+  "sourceSha256": "eb723ecd97013f18496e66c3681b3e1ee820001916473c3b254d60f712df214f",
+  "recoveredSha256": "eb723ecd97013f18496e66c3681b3e1ee820001916473c3b254d60f712df214f",
+  "sourceBytes": 3062,
+  "recoveredBytes": 3062,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

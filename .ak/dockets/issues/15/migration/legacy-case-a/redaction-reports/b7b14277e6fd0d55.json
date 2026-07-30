@@ -1,0 +1,13 @@
+{
+  "itemKey": "b7b14277e6fd0d55cf0d55ad296c92960855e3095a79ee3cdfd30151360fb671",
+  "basename": "ak-roles-93c-review.md",
+  "sourceSha256": "2f191665c0c944190699ce82872957987d23102a6fecf95c4fc762e28d11da58",
+  "recoveredSha256": "2f191665c0c944190699ce82872957987d23102a6fecf95c4fc762e28d11da58",
+  "sourceBytes": 1527,
+  "recoveredBytes": 1527,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

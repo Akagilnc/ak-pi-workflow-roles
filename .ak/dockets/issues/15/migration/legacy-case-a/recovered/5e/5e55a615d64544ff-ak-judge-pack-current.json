@@ -1,0 +1,86 @@
+[
+  {
+    "id": "@ak/pi-workflow-roles@0.1.0",
+    "name": "@ak/pi-workflow-roles",
+    "version": "0.1.0",
+    "size": 25848,
+    "unpackedSize": 97639,
+    "shasum": "f1416e0f477bc2cf3da57462aa012c83cd818128",
+    "integrity": "sha512-RIMFYjB1V+8lW/Qnqlaup9EYzWUpKZw3V3DCihu7g8xEDM/w3E/HzT3kg6lisx2Zyvv2G5f6zpaQWNmOltr1pQ==",
+    "filename": "ak-pi-workflow-roles-0.1.0.tgz",
+    "files": [
+      {
+        "path": "README.md",
+        "size": 7410,
+        "mode": 420
+      },
+      {
+        "path": "extensions/role-runtime.ts",
+        "size": 2023,
+        "mode": 420
+      },
+      {
+        "path": "package.json",
+        "size": 739,
+        "mode": 420
+      },
+      {
+        "path": "souls/coder.md",
+        "size": 671,
+        "mode": 420
+      },
+      {
+        "path": "souls/fixer.md",
+        "size": 3092,
+        "mode": 420
+      },
+      {
+        "path": "souls/judge.md",
+        "size": 2671,
+        "mode": 420
+      },
+      {
+        "path": "souls/reviewer.md",
+        "size": 528,
+        "mode": 420
+      },
+      {
+        "path": "src/compliance-transport.ts",
+        "size": 5615,
+        "mode": 420
+      },
+      {
+        "path": "src/reviewer-agent.ts",
+        "size": 15022,
+        "mode": 420
+      },
+      {
+        "path": "src/reviewer-auditor.ts",
+        "size": 2364,
+        "mode": 420
+      },
+      {
+        "path": "src/reviewer-execution-ledger.ts",
+        "size": 20340,
+        "mode": 420
+      },
+      {
+        "path": "src/reviewer-skill.ts",
+        "size": 1861,
+        "mode": 420
+      },
+      {
+        "path": "src/role-runtime.ts",
+        "size": 33371,
+        "mode": 420
+      },
+      {
+        "path": "src/soul-auditor.ts",
+        "size": 1932,
+        "mode": 420
+      }
+    ],
+    "entryCount": 14,
+    "bundled": []
+  }
+]

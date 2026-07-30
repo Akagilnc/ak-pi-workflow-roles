@@ -1,0 +1,13 @@
+{
+  "itemKey": "64b59f490fd6e8b7d08c67b800db7686ddddcabd48ca18e43ee585b4d87d752f",
+  "basename": "ak-harness-coder-plan.md",
+  "sourceSha256": "a3b9ecf9f50aed4b7aec2101afe292344c471cef1e87bda2b99619fe8db82ceb",
+  "recoveredSha256": "a3b9ecf9f50aed4b7aec2101afe292344c471cef1e87bda2b99619fe8db82ceb",
+  "sourceBytes": 8993,
+  "recoveredBytes": 8993,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

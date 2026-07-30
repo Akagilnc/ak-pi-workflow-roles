@@ -1,0 +1,13 @@
+{
+  "itemKey": "1bed71a513e5ea4b37275d10e8ffb0a13cc7c3845b877d00ee15ec0788090da2",
+  "basename": "ak-roles-e2e-latest-fixer-receipt.json",
+  "sourceSha256": "8325fe3c5b9e6b3f439427959f8fa562602cfc29f28b45a383aec039676711d5",
+  "recoveredSha256": "8325fe3c5b9e6b3f439427959f8fa562602cfc29f28b45a383aec039676711d5",
+  "sourceBytes": 1160,
+  "recoveredBytes": 1160,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "e16f4eb2417dcd56eef876931359b69720e11f13704a050523aa68045d9bfaf5",
+  "basename": "ak-roles-e2e-ordered-final-court.md",
+  "sourceSha256": "6c22c0287e41b8c8b03a93a09ac1bccc9a26984adafe03defef3b73ab4d35864",
+  "recoveredSha256": "6c22c0287e41b8c8b03a93a09ac1bccc9a26984adafe03defef3b73ab4d35864",
+  "sourceBytes": 2518,
+  "recoveredBytes": 2518,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

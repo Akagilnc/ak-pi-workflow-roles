@@ -1,0 +1,13 @@
+{
+  "itemKey": "5716b1d1171be1d83778558d078a8ca416faf42bfa1610b2da1e22bd6a23f623",
+  "basename": "ak-roles-ledger-deepening-task.md",
+  "sourceSha256": "cc3b1008ff6ba49db6b583dcb95b388a2db1bf23e4f9e96e8314a276ffd24ed7",
+  "recoveredSha256": "cc3b1008ff6ba49db6b583dcb95b388a2db1bf23e4f9e96e8314a276ffd24ed7",
+  "sourceBytes": 4287,
+  "recoveredBytes": 4287,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

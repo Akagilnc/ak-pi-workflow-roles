@@ -1,0 +1,13 @@
+{
+  "itemKey": "918bab831dba6cf0ce9c71c558dd6e3548f65b51bf81c07a477f54f8baba06a9",
+  "basename": "ak-roles-standards-review.md",
+  "sourceSha256": "d5afc3f497f964e9dc3652df9d7921cb247c105ce9749bc057307ecc55b4e4ab",
+  "recoveredSha256": "d5afc3f497f964e9dc3652df9d7921cb247c105ce9749bc057307ecc55b4e4ab",
+  "sourceBytes": 2523,
+  "recoveredBytes": 2523,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

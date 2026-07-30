@@ -1,0 +1,19 @@
+{
+  "itemKey": "af289a8e481f1cf51eea5f948b6a43b40ada81e6346d2f7ad2e7ea880167c0fb",
+  "basename": "reviewer-real-pi-snippet.ts",
+  "sourceSha256": "7b46d00de66ff21b732bd093dd4710c78e51f26651dca9f1c26934cb30f27954",
+  "recoveredSha256": "e5b36400cf6705888179fcead419b3b188e78be4f17e8c68628ce5e88a6150fc",
+  "sourceBytes": 6098,
+  "recoveredBytes": 6092,
+  "redacted": true,
+  "hits": [
+    {
+      "ruleId": "token-assignment",
+      "location": "reviewer-real-pi-snippet.ts",
+      "count": 2
+    }
+  ],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

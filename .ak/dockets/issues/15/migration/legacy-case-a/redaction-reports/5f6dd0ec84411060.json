@@ -1,0 +1,13 @@
+{
+  "itemKey": "5f6dd0ec84411060f920a4ac042df41c611108c61d68c8fa5c16522fc52ff09c",
+  "basename": "ak-collector-coder-plan-gpt.md",
+  "sourceSha256": "bb31f43fd559dbc0e93e02e939cbaa8a7c01007011790288f0b089932f5db571",
+  "recoveredSha256": "bb31f43fd559dbc0e93e02e939cbaa8a7c01007011790288f0b089932f5db571",
+  "sourceBytes": 17017,
+  "recoveredBytes": 17017,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

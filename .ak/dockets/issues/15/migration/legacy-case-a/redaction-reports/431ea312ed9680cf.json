@@ -1,0 +1,13 @@
+{
+  "itemKey": "431ea312ed9680cf2f1c8fb6327626a442a5531624b9bb82551fe83df94ae03f",
+  "basename": "ak-harness-review-receipt.md",
+  "sourceSha256": "e2d9494badf112241a22ce6e44fee93fa63d87e1c4573e2b7aac58a81da5ed80",
+  "recoveredSha256": "e2d9494badf112241a22ce6e44fee93fa63d87e1c4573e2b7aac58a81da5ed80",
+  "sourceBytes": 2080,
+  "recoveredBytes": 2080,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}
