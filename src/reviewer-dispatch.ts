@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
-import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs } from "./reviewer-git-snapshot.ts";
+import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs, type ReviewerRefMap } from "./reviewer-git-snapshot.ts";
 import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
@@ -57,7 +57,7 @@ export type ReviewerProposalV1 = Readonly<{
 export type ReviewerPinnedTarget = Readonly<{
   repositoryRoot: string;
   targetHead: string;
-  refs: Readonly<Record<string, string>>;
+  refs: ReviewerRefMap;
 }>;
 export type ReviewerRange = Readonly<{
   base: string;
@@ -122,11 +122,24 @@ type DispatcherDependencies = Readonly<{
   reader: ReviewerPinnedGitReader;
   hostTools: readonly string[];
   run(dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<unknown>;
+  /** Testable compiler boundary; production uses reviewerPromptIdentity. */
+  compilePrompt?: (prompt: string, axis: "standards" | "spec", pass: 1 | 2) => ReviewerPromptIdentity;
 }>;
 
-const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const sha256 = (bytes: string | Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
+
+function exactUtf8(bytes: Uint8Array, label: string): string {
+  let text: string;
+  try { text = utf8Decoder.decode(bytes); }
+  catch { throw new Error(`${label} is not valid UTF-8`); }
+  const encoded = new TextEncoder().encode(text);
+  if (encoded.byteLength !== bytes.byteLength || !encoded.every((byte, index) => byte === bytes[index])) {
+    throw new Error(`${label} does not round-trip as exact UTF-8`);
+  }
+  return text;
+}
 
 function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -284,11 +297,11 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   const refs = parseReviewerRefSnapshot(rawRefs);
   const pin = Object.freeze({ repositoryRoot, targetHead, refs: immutableReviewerRefs(refs) });
   const symbolic = (base: string): string | undefined => {
-    if (Object.hasOwn(refs, base)) return refs[base];
+    if (Object.hasOwn(refs, base)) return refs[base]?.peeledCommitId;
     const candidates = [`refs/heads/${base}`, `refs/tags/${base}`, `refs/remotes/${base}`]
       .filter((name) => Object.hasOwn(refs, name));
     if (candidates.length > 1) throw new Error("Base revision alias is ambiguous in the pinned ref map");
-    return candidates.length === 1 ? refs[candidates[0]!] : undefined;
+    return candidates.length === 1 ? refs[candidates[0]!]?.peeledCommitId : undefined;
   };
   return Object.freeze({
     pin,
@@ -420,12 +433,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       const rendered: string[] = [];
       for (const item of items) {
         const bytes = await dependencies.reader.material(item.repositoryPath, targetSnapshot.targetHead);
-        let text: string;
-        try {
-          text = utf8Decoder.decode(bytes);
-        } catch {
-          throw new Error(`Material is not valid UTF-8: ${item.id}`);
-        }
+        const text = exactUtf8(bytes, `Material ${item.id}`);
         materialEvidence.set(item.id, Object.freeze({
           ...item,
           bytes: text,
@@ -437,11 +445,13 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       return rendered.join("\n\n");
     };
 
-    const taskText = utf8Decoder.decode(task);
+    const taskText = exactUtf8(task, "Reviewer task");
     const taskEvidence: ReviewerPromptIdentity = reviewerPromptIdentity(taskText);
     const common = [
       `Task-SHA256: ${taskEvidence.sha256}`,
       `Task-UTF8-Length: ${taskEvidence.utf8Length}`,
+      "Task-Bytes:",
+      taskText,
       `Target: ${range.target}`,
       `Base: ${range.base}`,
       `Diff: ${range.diffCommand}`,
@@ -462,8 +472,18 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     } else {
       await renderMaterials(proposal.spec.evidence);
     }
-    const legs = Object.freeze(promptInputs.map(({ axis, prompt, grant }) => {
-      const identity: ReviewerPromptIdentity = reviewerPromptIdentity(prompt);
+    const compilePrompt = dependencies.compilePrompt ?? ((prompt: string) => reviewerPromptIdentity(prompt));
+    const firstCompilations = promptInputs.map(({ axis, prompt }) => compilePrompt(prompt, axis, 1));
+    const secondCompilations = promptInputs.map(({ axis, prompt }) => compilePrompt(prompt, axis, 2));
+    for (let index = 0; index < firstCompilations.length; index++) {
+      const first = firstCompilations[index]!;
+      const second = secondCompilations[index]!;
+      if (first.bytes !== second.bytes) {
+        throw new Error(`Reviewer ${promptInputs[index]!.axis} prompt recompilation mismatch (first ${first.utf8Length}/${first.sha256}, second ${second.utf8Length}/${second.sha256})`);
+      }
+    }
+    const legs = Object.freeze(promptInputs.map(({ axis, grant }, index) => {
+      const identity = firstCompilations[index]!;
       return Object.freeze({ axis, prompt: identity.bytes, utf8Length: identity.utf8Length, sha256: identity.sha256, grant });
     }));
     const evidenceFor = (items: readonly MaterialSelection[]) => Object.freeze(items.map((item) => materialEvidence.get(item.id)!));

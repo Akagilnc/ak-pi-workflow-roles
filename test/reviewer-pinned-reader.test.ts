@@ -24,10 +24,13 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     await git(root, "tag", "-a", "review-tag", base, "-m", "annotated");
     const target = await git(root, "rev-parse", "HEAD");
     const reader = await createReviewerPinnedGitReader(root);
+    const pinnedTagObject = await git(root, "rev-parse", "review-tag^{object}");
+    assert.deepEqual(reader.pin.refs["refs/tags/review-tag"], { objectId: pinnedTagObject, peeledCommitId: base });
     await git(root, "branch", "-f", "review-base", "HEAD");
     await git(root, "tag", "-f", "review-tag", "HEAD");
     assert.equal(await reader.resolve("review-base"), base);
     assert.equal(await reader.resolve("review-tag"), base);
+    assert.deepEqual(reader.pin.refs["refs/tags/review-tag"], { objectId: pinnedTagObject, peeledCommitId: base });
     assert.equal(await reader.resolve(base), base);
     assert.equal(await reader.resolve(base.slice(0, 8)), base);
     assert.equal(await reader.resolve("HEAD~1"), base);
@@ -44,11 +47,11 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
 });
 
 test("shared ref snapshot helper canonicalizes immutably and compares order-independently", () => {
-  const refs = immutableReviewerRefs({ "refs/tags/z": "2", "refs/heads/a": "1" });
+  const refs = immutableReviewerRefs({ "refs/tags/z": { objectId: "2", peeledCommitId: "2" }, "refs/heads/a": { objectId: "1", peeledCommitId: "1" } });
   assert.deepEqual(Object.keys(refs), ["refs/heads/a", "refs/tags/z"]);
-  assert.equal(sameReviewerRefs(refs, { "refs/tags/z": "2", "refs/heads/a": "1" }), true);
-  assert.equal(sameReviewerRefs(refs, { "refs/heads/a": "different" }), false);
-  assert.throws(() => (refs as Record<string, string>)["refs/heads/a"] = "changed");
+  assert.equal(sameReviewerRefs(refs, { "refs/tags/z": { objectId: "2", peeledCommitId: "2" }, "refs/heads/a": { objectId: "1", peeledCommitId: "1" } }), true);
+  assert.equal(sameReviewerRefs(refs, { "refs/heads/a": { objectId: "different", peeledCommitId: "different" } }), false);
+  assert.throws(() => (refs as unknown as Record<string, string>)["refs/heads/a"] = "changed");
 });
 
 test("shared prompt identity validates exact UTF-8 bytes, length, and SHA-256", () => {
