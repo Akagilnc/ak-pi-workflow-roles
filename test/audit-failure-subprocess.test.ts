@@ -65,12 +65,10 @@ async function runReviewerCli(
         home,
         "code-review",
       );
-      await writeFile(canonicalSkillPath, [
-        "---", "name: code-review", "description: fatal-stage fixture", "---", "",
-        "# Code review", "## Standards baseline", "Check correctness.",
-        "## Standards review burden", "Apply the baseline.",
-        "## Spec review burden", "Check each established requirement.", "",
-      ].join("\n"));
+      await writeFile(
+        canonicalSkillPath,
+        await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
+      );
       const cwd = packageRoot;
       const taskPath = resolve(packageRoot, "test/fixtures/reviewer-task.md");
       const taskBytes = await readFile(taskPath);
