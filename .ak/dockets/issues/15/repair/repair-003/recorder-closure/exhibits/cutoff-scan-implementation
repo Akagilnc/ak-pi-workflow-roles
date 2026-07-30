@@ -93,6 +93,44 @@ function gitTuple(commit, path) {
   };
 }
 
+/** Fail-closed required-path resolution: never omit; name the exact path. */
+function requireGitTuple(commit, path) {
+  try {
+    return gitTuple(commit, path);
+  } catch (err) {
+    fail(
+      {
+        ok: false,
+        gate: "required-tuple-unresolvable",
+        path,
+        commit,
+        error: String(err && err.message ? err.message : err),
+      },
+      8,
+    );
+  }
+}
+
+/** Reject dirty worktree bytes before they can affect selection or evidence. */
+function rejectWorktreeDrift(livePath, tuple, gate) {
+  if (!existsSync(livePath)) return;
+  const liveSha = sha256(readFileSync(livePath));
+  if (liveSha !== tuple.sha256) {
+    fail(
+      {
+        ok: false,
+        gate,
+        path: tuple.path,
+        commit: tuple.commit,
+        git: tuple.sha256,
+        worktree: liveSha,
+        note: "dirty worktree bytes rejected before affecting evidence",
+      },
+      8,
+    );
+  }
+}
+
 function matchesProjectRole(name, spec) {
   const prefixes = spec.projectRolePredicates.includeBasenamePrefixes;
   if (prefixes.some((p) => name.startsWith(p))) return true;
@@ -273,6 +311,9 @@ async function main() {
     process.exit(1);
   }
 
+  // One full execution commit; all mutable-path Git resolution binds here.
+  const executionHead = gitRevParse("HEAD");
+
   const gitTuples = [];
   const pushTuple = (t) => {
     gitTuples.push(t);
@@ -280,15 +321,15 @@ async function main() {
   };
 
   // Namespace inputs from immutable Git only.
-  const snapTuple = pushTuple(gitTuple(IMMUTABLE, NAMESPACE_SNAPSHOT));
+  const snapTuple = pushTuple(requireGitTuple(IMMUTABLE, NAMESPACE_SNAPSHOT));
   const specTuple = pushTuple(
-    gitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/discovery-spec.v1.json`),
+    requireGitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/discovery-spec.v1.json`),
   );
   const walkTuple = pushTuple(
-    gitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/construction-walk.json`),
+    requireGitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/construction-walk.json`),
   );
   const invTuple = pushTuple(
-    gitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/inventory.json`),
+    requireGitTuple(IMMUTABLE, `${IMMUTABLE_MIG}/inventory.json`),
   );
 
   const snap = JSON.parse(
@@ -334,8 +375,8 @@ async function main() {
   }
 
   // Scanner source + executable dist identity gates before import/execution.
-  const scannerSrcExpected = gitTuple("HEAD", SCANNER_SRC);
-  const scannerDistExpected = gitTuple("HEAD", SCANNER_DIST);
+  const scannerSrcExpected = requireGitTuple(executionHead, SCANNER_SRC);
+  const scannerDistExpected = requireGitTuple(executionHead, SCANNER_DIST);
   pushTuple(scannerSrcExpected);
   pushTuple(scannerDistExpected);
   const scanner = await verifyAndLoadScanner(
@@ -474,32 +515,18 @@ async function main() {
     }
   }
 
-  // Load dispositions from worktree (association-only edits); seal content hash.
-  // Prefer Git HEAD when path is committed; otherwise hash worktree bytes.
-  const dispPath = "dispositions.json";
-  const dispositionsLivePath = join(MIG, dispPath);
-  const dispositions = readJson(dispositionsLivePath);
+  // Load dispositions from the single execution commit (immutable Git bytes).
+  // Dirty worktree dispositions are rejected before selection/scanning.
   const dispRel = `${IMMUTABLE_MIG}/dispositions.json`;
-  let dispTuple;
-  try {
-    // Worktree may differ from HEAD during apply; record worktree sha and try HEAD tuple.
-    const headTuple = gitTuple("HEAD", dispRel);
-    const liveSha = sha256(readFileSync(dispositionsLivePath));
-    dispTuple = {
-      ...headTuple,
-      worktreeSha256: liveSha,
-      worktreeMatchesHead: headTuple.sha256 === liveSha,
-    };
-    pushTuple(headTuple);
-  } catch {
-    dispTuple = {
-      repository: SOLE_NAMESPACE,
-      commit: null,
-      path: dispRel,
-      blobOid: null,
-      sha256: sha256(readFileSync(dispositionsLivePath)),
-    };
-  }
+  const dispTuple = pushTuple(requireGitTuple(executionHead, dispRel));
+  rejectWorktreeDrift(
+    join(MIG, "dispositions.json"),
+    dispTuple,
+    "dispositions-worktree-drift",
+  );
+  const dispositions = JSON.parse(
+    gitShow(`${executionHead}:${dispRel}`).toString("utf8"),
+  );
 
   const admitted = dispositions.items.filter((d) =>
     ["recovered", "reference", "superseded"].includes(d.disposition),
@@ -523,16 +550,59 @@ async function main() {
     const sourceSha = d.evidence?.sourceSha256 || null;
     const basename = d.basename;
 
-    // Always ledger immutable reference tuples even when an external copy wins.
+    // Require immutable tuples for every admitted reference/report/derivative
+    // before any live byte can affect selection or scanning.
+    let refTuple = null;
     if (d.evidence?.reference) {
       const ref = d.evidence.reference;
-      const refTuple = pushTuple(gitTuple(ref.commitSha, ref.path));
+      refTuple = pushTuple(requireGitTuple(ref.commitSha, ref.path));
       referenceTuples.push({
         itemKey: d.itemKey,
         basename,
         disposition: d.disposition,
         tuple: refTuple,
       });
+    }
+
+    if (!d.evidence?.redactionReportPath) {
+      fail(
+        {
+          ok: false,
+          gate: "R2-report-path-missing",
+          basename,
+        },
+        4,
+      );
+    }
+    const reportRel = `${IMMUTABLE_MIG}/${d.evidence.redactionReportPath}`;
+    const reportTuple = pushTuple(requireGitTuple(executionHead, reportRel));
+    rejectWorktreeDrift(
+      join(MIG, d.evidence.redactionReportPath),
+      reportTuple,
+      "report-worktree-drift",
+    );
+
+    let derTuple = null;
+    if (d.evidence?.recoveredPath) {
+      const derRel = `${IMMUTABLE_MIG}/${d.evidence.recoveredPath}`;
+      derTuple = pushTuple(requireGitTuple(executionHead, derRel));
+      rejectWorktreeDrift(
+        join(MIG, d.evidence.recoveredPath),
+        derTuple,
+        "derivative-worktree-drift",
+      );
+    } else if (refTuple) {
+      // Reference dispositions store the clean derivative at the reference path.
+      derTuple = refTuple;
+    } else {
+      fail(
+        {
+          ok: false,
+          gate: "R2-derivative-path-missing",
+          basename,
+        },
+        4,
+      );
     }
 
     let sourceBuf = null;
@@ -551,12 +621,11 @@ async function main() {
         sourceOrigin = "tmp";
       }
     }
-    if (
-      !sourceBuf &&
-      d.evidence?.recoveredPath &&
-      existsSync(join(MIG, d.evidence.recoveredPath))
-    ) {
-      const buf = readFileSync(join(MIG, d.evidence.recoveredPath));
+    // Prefer immutable Git recovered/reference bytes over live worktree copies.
+    if (!sourceBuf && d.evidence?.recoveredPath) {
+      const buf = gitShow(
+        `${executionHead}:${IMMUTABLE_MIG}/${d.evidence.recoveredPath}`,
+      );
       if (!sourceSha || sha256(buf) === sourceSha) {
         sourceBuf = buf;
         sourceOrigin = "recovered-clean";
@@ -608,27 +677,12 @@ async function main() {
       },
     });
 
-    // Seal redaction report via git when possible
-    if (d.evidence?.redactionReportPath) {
-      const rp = `${IMMUTABLE_MIG}/${d.evidence.redactionReportPath}`;
-      try {
-        pushTuple(gitTuple("HEAD", rp));
-      } catch {
-        /* worktree-only */
-      }
-    }
-    if (d.evidence?.recoveredPath) {
-      const rp = `${IMMUTABLE_MIG}/${d.evidence.recoveredPath}`;
-      try {
-        pushTuple(gitTuple("HEAD", rp));
-      } catch {
-        /* worktree-only */
-      }
-    }
-
     const scanned = scanBytes(sourceBuf, basename);
     const derSha = sha256(scanned.value);
-    const report = readJson(join(MIG, d.evidence.redactionReportPath));
+    // Immutable report bytes from execution commit (not live worktree).
+    const report = JSON.parse(
+      gitShow(`${executionHead}:${reportRel}`).toString("utf8"),
+    );
     const hitKey = (h) => `${h.ruleId}|${h.location}|${h.count}`;
     const expectedHits = [...(report.hits || [])].map(hitKey).sort();
     const actualHits = [...scanned.report.hits].map(hitKey).sort();
@@ -636,7 +690,9 @@ async function main() {
       JSON.stringify(expectedHits) !== JSON.stringify(actualHits) ||
       Boolean(report.redacted) !== Boolean(scanned.report.redacted) ||
       report.sourceSha256 !== actualSourceSha ||
-      report.recoveredSha256 !== derSha
+      report.recoveredSha256 !== derSha ||
+      derSha !== derTuple.sha256 ||
+      report.recoveredSha256 !== derTuple.sha256
     ) {
       fail(
         {
@@ -651,6 +707,7 @@ async function main() {
           actualSource: actualSourceSha,
           reportDer: report.recoveredSha256,
           actualDer: derSha,
+          immutableDer: derTuple.sha256,
         },
         4,
       );
@@ -705,7 +762,8 @@ async function main() {
     uniqueTuples.push(t);
   }
 
-  // Independent required-tuple universe (not self-enumeration of the ledger).
+  // Independent required-tuple universe from immutable disposition bytes only.
+  // Fail-closed: every required path must resolve; never shrink the denominator.
   const requiredTuples = [];
   const pushRequired = (t) => {
     requiredTuples.push(t);
@@ -717,35 +775,25 @@ async function main() {
   pushRequired(invTuple);
   pushRequired(scannerSrcExpected);
   pushRequired(scannerDistExpected);
-  if (dispTuple.commit && dispTuple.blobOid && dispTuple.sha256) {
-    pushRequired({
-      repository: dispTuple.repository,
-      commit: dispTuple.commit,
-      path: dispTuple.path,
-      blobOid: dispTuple.blobOid,
-      sha256: dispTuple.sha256,
-    });
-  }
+  pushRequired({
+    repository: dispTuple.repository,
+    commit: dispTuple.commit,
+    path: dispTuple.path,
+    blobOid: dispTuple.blobOid,
+    sha256: dispTuple.sha256,
+  });
   for (const d of admitted) {
     if (d.evidence?.reference) {
       const ref = d.evidence.reference;
-      pushRequired(gitTuple(ref.commitSha, ref.path));
+      pushRequired(requireGitTuple(ref.commitSha, ref.path));
     }
     if (d.evidence?.redactionReportPath) {
       const rp = `${IMMUTABLE_MIG}/${d.evidence.redactionReportPath}`;
-      try {
-        pushRequired(gitTuple("HEAD", rp));
-      } catch {
-        /* worktree-only */
-      }
+      pushRequired(requireGitTuple(executionHead, rp));
     }
     if (d.evidence?.recoveredPath) {
       const rp = `${IMMUTABLE_MIG}/${d.evidence.recoveredPath}`;
-      try {
-        pushRequired(gitTuple("HEAD", rp));
-      } catch {
-        /* worktree-only */
-      }
+      pushRequired(requireGitTuple(executionHead, rp));
     }
   }
   const requiredKeys = new Set(requiredTuples.map(tupleKey));
@@ -826,6 +874,16 @@ async function main() {
     redactionAf289a: scanResults.some(
       (s) => s.itemKey.startsWith("af289a") && s.redacted,
     ),
+    // Immutable-input gates: dispositions/reports/derivatives bind executionHead.
+    dispositionsFromExecutionHead:
+      dispTuple.commit === executionHead &&
+      dispTuple.sha256.length === 64 &&
+      dispTuple.blobOid.length === 40,
+    requiredUniverseFailClosed:
+      requiredKeys.size === ledgerKeys.size && missingRequired.length === 0,
+    immutableReportDerivativeAgreement: scanResults.every(
+      (s) => s.recoveredSha256.length === 64 && s.sourceSha256.length === 64,
+    ),
   };
   for (const [k, v] of Object.entries(redGates)) {
     if (!v) {
@@ -833,7 +891,6 @@ async function main() {
     }
   }
 
-  const executionHead = gitRevParse("HEAD");
   const summary = {
     ok: true,
     recorderChild: "non-role-case-a-repair-003-cutoff-scan",
