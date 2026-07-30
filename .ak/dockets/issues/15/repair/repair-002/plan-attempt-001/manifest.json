@@ -1,0 +1,18 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "packet": {
+    "path": ".ak/dockets/issues/15/repair/repair-002/packet.md",
+    "sha256": "2b8134ffc5d0857d01a7964b0ee8c98b787a94d73322007035750004ace6621a"
+  },
+  "sessionCandidate": {
+    "bytes": 4618434,
+    "sha256": "49cdc80886bb1e72b5900720f52d5a46ed34fd6e6a4b52dce09e9213dd71fb14",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "96e0179449785844322096289adc9bd6e7b584b357b5213ba5bf9eeb4bb1524b"
+  },
+  "conformance": "failed: table headers Key/Plan instead of R#/Disposition"
+}
