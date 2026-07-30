@@ -115,19 +115,22 @@ The completed report must preserve TDD evidence plus the same-pattern, introduce
 
 ## Reviewer
 
-Reviewer performs a fixed-target, two-axis code review through the canonical external Skill at `~/.agents/skills/code-review/SKILL.md`. The package does not bundle or reproduce that method. Bind it explicitly and provide one non-empty opaque Markdown task:
+Reviewer performs a fixed-target, two-axis code review through the canonical external Skill at `~/.agents/skills/code-review/SKILL.md`. The package does not bundle or reproduce that method. Bind it explicitly and provide both the existing non-empty opaque Markdown task and a mandatory narrow V1 capability file bound to the task's exact bytes:
 
 ```bash
 pi --no-skills \
   --skill ~/.agents/skills/code-review/SKILL.md \
   --ak-role reviewer \
   --ak-review-task /path/to/review-task.md \
+  --ak-review-capabilities /path/to/review-capabilities.json \
   -p "Review the requested fixed point."
 ```
 
-The runtime transforms the first input through native `/skill:code-review` and verifies the complete expanded content against the canonical activation snapshot. Reviewer uses the active model/provider/auth and does not promise cross-model diversity.
+The capability file is a closed JSON object with exactly `version` (`1`), lowercase `taskSha256`, and unique arrays `tools`, `bashCommands`, and `prerequisiteOperations`. Tool vocabulary is `read|grep|find|ls|bash|write|edit`; prerequisite vocabulary is `preflight.git.pin-target|preflight.git.resolve-base|preflight.git.derive-range|preflight.git.list-ordered-commits|preflight.git.read-material|runner.git.materialize-mirror|runner.git.materialize-workspace|runner.git.verify-snapshot`. A bash command is authorized only by byte-exact string equality, and requires `bash` in `tools`. Unknown keys/values, duplicates, digest mismatch, unavailable host tools, and any requested widening fail closed; there is no fallback grant.
 
-The parent tool surface is narrowed to registered `read`, `grep`, `find`, `ls`, `bash`, `Agent`, and `ak_reviewer_output`. Each `Agent` call runs in-process with an independent history and writable temporary clone detached at one session-pinned target. Source heads, tags, and remote-tracking refs are preserved in every clone, while usable remotes are removed. Children may create probes and fixtures but must distinguish them from reviewed-target facts; successful workspaces are deleted and useful failure state is retained diagnostically. This is operational isolation, not hostile-code security. Supply a sandbox or container when security isolation is required.
+The runtime transforms the first input through native `/skill:code-review` and verifies the complete expanded content against the canonical activation snapshot. The parent submits one atomic V1 `Agent` proposal: `base.revision`, non-empty `standardsMaterials`, an established Spec with non-empty `materials` or a not-established Spec with non-empty `evidence`, and exact per-leg `required` capability subsets. Rejected preflight proposals start no child and may be corrected; acceptance is irreversible and permits exactly one dispatch. Established Spec runs isolated Standards and Spec legs; established no-Spec runs one complete Standards-only leg with no Spec prompt bytes. Generated prompts carry exact task digest/bytes, pinned target/base/range/commits, selected material bytes, and the applicable canonical Skill sections; their byte lengths and SHA-256 digests are retained for the post-run semantic audit.
+
+The parent tool surface is narrowed to registered `Agent` and `ak_reviewer_output`; each accepted leg runs in-process with an independent history and only its granted tools in a writable temporary clone detached at one session-pinned target. Source heads, tags, and remote-tracking refs are preserved in every clone, while usable remotes are removed. Children may create probes and fixtures but must distinguish them from reviewed-target facts; successful workspaces are deleted and useful failure state is retained diagnostically. This changes neither role topology nor active model/provider/auth inheritance and does not promise cross-model diversity. It is operational isolation, not hostile-code security; supply a sandbox or container when security isolation is required.
 
 Reviewer terminates with this exact receipt:
 
