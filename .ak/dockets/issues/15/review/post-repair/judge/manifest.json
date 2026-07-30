@@ -1,0 +1,17 @@
+{
+  "role": "judge",
+  "posture": "review",
+  "review": {
+    "path": ".ak/dockets/issues/15/review/post-repair/result/receipt.json",
+    "sha256": "5194bb1bf03e128d926a1403fd3781faa3bebb018415cc7bc454b0546ce89c3f"
+  },
+  "sessionCandidate": {
+    "bytes": 97539147,
+    "sha256": "1994a7ee473f7857a525b3003cc7a8351b6a8d14d2f03fa4d154fd6d2bf6d03c",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "6bba6fc0306236ce2b0840bd651b5336091be515fe41457c98388dd5ed99c18c"
+  }
+}
