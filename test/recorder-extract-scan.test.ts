@@ -18,6 +18,7 @@ import {
   decodeToolResultsFromEnvelope,
   decodeEnvelopeRows,
   collectLifecycleEvents,
+  canonicalizeLifecycleEvents,
   bindAcceptedLifecycle,
 } from "../src/recorder/extract.ts";
 import { RecorderError } from "../src/recorder/errors.ts";
@@ -1195,6 +1196,388 @@ test("judge/reviewer audit observation requires a uniquely bound acceptance", ()
     const extracted = extractAcceptedReceipt([envelope]);
     assert.equal(extracted.receipt, null);
     assert.equal(extracted.auditObservation, null);
+  }
+});
+
+/**
+ * Current Pi `--mode json` shape: one accepted call ends as both
+ * `tool_execution_end` and a later equivalent `message_end` toolResult.
+ */
+function combinedCrossRepresentationLifecycle(
+  tool: string,
+  options: {
+    callId?: string;
+    details?: unknown;
+    usage?: unknown;
+    /** Override only the message_end/toolResult half (conflict cases). */
+    toolResultDetails?: unknown;
+    toolResultText?: string;
+    toolResultIsError?: boolean;
+    toolResultToolName?: string;
+    toolResultCallId?: string;
+    /** Emit a second same-representation tool_execution_end after the pair. */
+    extraToolExecutionEnd?: boolean;
+    /** Emit toolResult before start (ordering violation with cross-rep pair). */
+    toolResultBeforeStart?: boolean;
+    omitIssued?: boolean;
+    omitStart?: boolean;
+  } = {},
+): string {
+  const callId = options.callId ?? "pi-combined-1";
+  const details = options.details ?? detailsFor(tool);
+  const text = ACCEPTED[tool] ?? "accepted";
+  const usage = options.usage;
+  const args = tool === COLLECTOR_OUTPUT_TOOL && isCollectorReceiptShape(details)
+    ? collectorLegsOnlyArgs(details)
+    : details;
+
+  const issued = {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "toolCall", id: callId, name: tool, arguments: args }],
+    },
+  };
+  const start = {
+    type: "tool_execution_start",
+    toolCallId: callId,
+    toolName: tool,
+    args,
+  };
+  const toolExecutionEnd = {
+    type: "tool_execution_end",
+    toolCallId: callId,
+    toolName: tool,
+    isError: false,
+    result: {
+      content: [{ type: "text", text }],
+      details,
+      ...(usage === undefined ? {} : { usage }),
+    },
+  };
+  const toolResultMessage = {
+    type: "message_end",
+    message: {
+      role: "toolResult",
+      toolCallId: options.toolResultCallId ?? callId,
+      toolName: options.toolResultToolName ?? tool,
+      isError: options.toolResultIsError ?? false,
+      details: options.toolResultDetails ?? details,
+      content: [{
+        type: "text",
+        text: options.toolResultText ?? text,
+      }],
+      ...(usage === undefined ? {} : { usage }),
+    },
+  };
+
+  const lines: unknown[] = [];
+  if (!options.omitIssued) lines.push(issued);
+  if (options.toolResultBeforeStart) {
+    lines.push(toolResultMessage);
+    if (!options.omitStart) lines.push(start);
+    lines.push(toolExecutionEnd);
+  } else {
+    if (!options.omitStart) lines.push(start);
+    lines.push(toolExecutionEnd);
+    lines.push(toolResultMessage);
+  }
+  if (options.extraToolExecutionEnd) {
+    lines.push({
+      type: "tool_execution_end",
+      toolCallId: callId,
+      toolName: tool,
+      isError: false,
+      result: {
+        content: [{ type: "text", text }],
+        details,
+      },
+    });
+  }
+  return lines.map((line) => JSON.stringify(line)).join("\n");
+}
+
+test("issue #16: combined tool_execution_end + message_end toolResult canonicalizes once", () => {
+  // R1/R2 — production-shaped dual representation must bind one typed Receipt.
+  for (const tool of [JUDGE_OUTPUT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME] as const) {
+    const details = detailsFor(tool);
+    const envelope = combinedCrossRepresentationLifecycle(tool, {
+      callId: `combined-${tool}`,
+      details,
+      usage: { input: 11, output: 7, totalTokens: 18 },
+    });
+
+    // Raw collection still sees both transport terminals before canonicalization.
+    const rawTerminals = collectLifecycleEvents(decodeEnvelopeRows(envelope))
+      .filter((event) => event.kind === "terminal");
+    assert.equal(rawTerminals.length, 2, `${tool} raw dual terminals`);
+    assert.deepEqual(
+      rawTerminals.map((event) =>
+        event.kind === "terminal" ? event.representation : null
+      ),
+      ["tool_execution_end", "toolResult"],
+    );
+
+    const canonical = canonicalizeLifecycleEvents(
+      collectLifecycleEvents(decodeEnvelopeRows(envelope)),
+    ).filter((event) => event.kind === "terminal");
+    assert.equal(canonical.length, 1, `${tool} canonical terminal count`);
+
+    const extracted = extractAcceptedReceipt([envelope]);
+    assert.ok(extracted.receipt, `${tool} combined envelope receipt`);
+    assert.equal(extracted.receipt!.toolName, tool);
+    assert.equal(extracted.receipt!.toolCallId, `combined-${tool}`);
+    assert.deepEqual(extracted.receipt!.details, details);
+    assert.ok(extracted.auditObservation, `${tool} audit observation`);
+    assert.equal(extracted.auditObservation!.auditPassed, true);
+    assert.equal(extracted.auditObservation!.toolCallId, `combined-${tool}`);
+    assert.equal(extracted.auditObservation!.toolName, tool);
+    assert.equal(extracted.auditObservation!.usage?.input, 11);
+    assert.equal(extracted.auditObservation!.usage?.output, 7);
+  }
+
+  // Non-audit tools also canonicalize the dual representation.
+  const coder = extractAcceptedReceipt([
+    combinedCrossRepresentationLifecycle(CODER_OUTPUT_TOOL_NAME, {
+      callId: "combined-coder",
+    }),
+  ]);
+  assert.ok(coder.receipt);
+  assert.equal(coder.receipt!.toolName, CODER_OUTPUT_TOOL_NAME);
+  assert.equal(coder.auditObservation, null);
+});
+
+test("issue #16: cross-representation conflicts and same-rep replays stay fail-closed", () => {
+  const judgeDetails = { judgeStatus: "converged" as const };
+  const reviewerDetails = { status: "completed" as const, report: "ok" };
+
+  const closed = [
+    {
+      name: "conflicting toolResult details",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        toolResultDetails: { judgeStatus: "continue", fix: { summary: "x" } },
+      }),
+    },
+    {
+      name: "conflicting acceptance text",
+      envelope: combinedCrossRepresentationLifecycle(REVIEWER_OUTPUT_TOOL_NAME, {
+        details: reviewerDetails,
+        toolResultText: `prefix ${ACCEPTED[REVIEWER_OUTPUT_TOOL_NAME]}`,
+      }),
+    },
+    {
+      name: "conflicting isError",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        toolResultIsError: true,
+      }),
+    },
+    {
+      name: "mismatched tool name on toolResult",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        toolResultToolName: REVIEWER_OUTPUT_TOOL_NAME,
+        toolResultDetails: reviewerDetails,
+        toolResultText: ACCEPTED[REVIEWER_OUTPUT_TOOL_NAME]!,
+      }),
+    },
+    {
+      name: "same-representation tool_execution_end replay after pair",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        extraToolExecutionEnd: true,
+      }),
+    },
+    {
+      name: "out-of-order toolResult before start",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        toolResultBeforeStart: true,
+      }),
+    },
+    {
+      name: "orphan dual terminals without issuance/start",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        omitIssued: true,
+        omitStart: true,
+      }),
+    },
+    // Existing matrix law: identical same-representation replay remains closed.
+    {
+      name: "machine same-representation duplicateTerminal",
+      envelope: lifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        envelope: "machine",
+        duplicateTerminal: true,
+      }),
+    },
+    {
+      name: "session same-representation duplicateTerminal",
+      envelope: lifecycle(REVIEWER_OUTPUT_TOOL_NAME, {
+        envelope: "session",
+        duplicateTerminal: true,
+      }),
+    },
+  ];
+
+  for (const item of closed) {
+    const extracted = extractAcceptedReceipt([item.envelope]);
+    assert.equal(extracted.receipt, null, item.name);
+    assert.equal(extracted.auditObservation, null, `${item.name} audit`);
+  }
+
+  // Foreign call-id toolResult is not a cross-rep pair and must not poison the
+  // complete matching lifecycle (call-identity mismatch does not canonicalize).
+  const foreign = extractAcceptedReceipt([
+    combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+      callId: "call-a",
+      details: judgeDetails,
+      toolResultCallId: "call-b",
+    }),
+  ]);
+  assert.ok(foreign.receipt, "foreign toolResult must not reject matching call");
+  assert.equal(foreign.receipt!.toolCallId, "call-a");
+  assert.ok(foreign.auditObservation);
+  assert.equal(foreign.auditObservation!.toolCallId, "call-a");
+});
+
+test("issue #16: complete Recorder path stores Receipt + audit from combined Pi envelope", async () => {
+  const root = makeTempDir("ak-recorder-combined-pi-");
+  try {
+    const archive = initGitRepo(join(root, "archive"));
+    const authority = commitFile(archive, "authority.md", "# authority\n");
+    const task = commitFile(archive, "task.md", "# task\n");
+    const counter = join(root, "counter.txt");
+
+    for (const role of [
+      {
+        tool: JUDGE_OUTPUT_TOOL_NAME,
+        details: { judgeStatus: "converged" as const },
+        docketId: "issues/16/apply/apply-combined-judge",
+        kind: "judge",
+      },
+      {
+        tool: REVIEWER_OUTPUT_TOOL_NAME,
+        details: { status: "completed" as const, report: "combined-ok" },
+        docketId: "issues/16/apply/apply-combined-reviewer",
+        kind: "reviewer",
+      },
+    ] as const) {
+      const envelope = combinedCrossRepresentationLifecycle(role.tool, {
+        callId: `store-${role.kind}`,
+        details: role.details,
+        usage: { input: 2, output: 3 },
+      });
+      const script = join(root, `${role.kind}-combined.mjs`);
+      writeFileSync(
+        script,
+        `const lines = ${JSON.stringify(envelope.split("\n"))};
+for (const line of lines) process.stdout.write(line + "\\n");
+process.exit(0);
+`,
+      );
+      const config = writeRecorderConfig(root, {
+        archiveRepo: archive,
+        cwd: root,
+        docketId: role.docketId,
+        authority: {
+          repositoryRoot: archive,
+          commit: authority.commit,
+          path: authority.path,
+          blobOid: authority.blobOid,
+          sha256: authority.sha256,
+        },
+        task: {
+          repositoryRoot: archive,
+          commit: task.commit,
+          path: task.path,
+          blobOid: task.blobOid,
+          sha256: task.sha256,
+        },
+      });
+      const result = await runRecorderBin(
+        ["--config", config, "--", process.execPath, script],
+        { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+      );
+      assert.equal(result.code, 0, `${role.kind} stderr=${result.stderr}`);
+
+      const dest = join(archive, ".ak/dockets", role.docketId);
+      assert.equal(existsSync(join(dest, "receipt.json")), true, role.kind);
+      assert.equal(
+        existsSync(join(dest, "audit-observation.json")),
+        true,
+        `${role.kind} audit file`,
+      );
+
+      const receipt = JSON.parse(
+        readFileSync(join(dest, "receipt.json"), "utf8"),
+      );
+      const audit = JSON.parse(
+        readFileSync(join(dest, "audit-observation.json"), "utf8"),
+      );
+      const manifest = JSON.parse(
+        readFileSync(join(dest, "manifest.json"), "utf8"),
+      );
+
+      assert.equal(receipt.toolName, role.tool);
+      assert.equal(receipt.toolCallId, `store-${role.kind}`);
+      assert.deepEqual(receipt.details, role.details);
+      assert.equal(receipt.artifactKind, "acceptedReceipt");
+      assert.equal(audit.toolName, role.tool);
+      assert.equal(audit.toolCallId, receipt.toolCallId);
+      assert.equal(audit.auditPassed, true);
+      assert.equal(audit.usage?.input, 2);
+      assert.equal(audit.usage?.output, 3);
+      assert.equal(manifest.receipt.toolCallId, receipt.toolCallId);
+      assert.equal(manifest.auditObservation.toolCallId, audit.toolCallId);
+      assert.equal(manifest.auditObservation.auditPassed, true);
+    }
+
+    // Lawful absent-Receipt path is unchanged: completed child, no package call.
+    const absentScript = join(root, "absent-receipt.mjs");
+    writeFileSync(
+      absentScript,
+      `process.stdout.write(JSON.stringify({ type: "input", value: "noop" }) + "\\n");
+process.exit(0);
+`,
+    );
+    const absentDocket = "issues/16/apply/apply-combined-absent";
+    const absentConfig = writeRecorderConfig(root, {
+      archiveRepo: archive,
+      cwd: root,
+      docketId: absentDocket,
+      authority: {
+        repositoryRoot: archive,
+        commit: authority.commit,
+        path: authority.path,
+        blobOid: authority.blobOid,
+        sha256: authority.sha256,
+      },
+      task: {
+        repositoryRoot: archive,
+        commit: task.commit,
+        path: task.path,
+        blobOid: task.blobOid,
+        sha256: task.sha256,
+      },
+    });
+    const absent = await runRecorderBin(
+      ["--config", absentConfig, "--", process.execPath, absentScript],
+      { cwd: root, env: { ...process.env, AK_RECORDER_COUNTER: counter } },
+    );
+    assert.equal(absent.code, 0, absent.stderr);
+    const absentDest = join(archive, ".ak/dockets", absentDocket);
+    assert.equal(existsSync(join(absentDest, "manifest.json")), true);
+    assert.equal(existsSync(join(absentDest, "receipt.json")), false);
+    assert.equal(existsSync(join(absentDest, "audit-observation.json")), false);
+    const absentManifest = JSON.parse(
+      readFileSync(join(absentDest, "manifest.json"), "utf8"),
+    );
+    assert.equal(absentManifest.receipt, null);
+    assert.equal(absentManifest.auditObservation, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

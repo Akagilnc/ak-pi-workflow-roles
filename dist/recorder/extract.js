@@ -111,6 +111,7 @@ export function collectLifecycleEvents(rows) {
                 contentText: contentTextFromUnknown(result?.content),
                 details: result?.details,
                 usage: result?.usage ?? row.usage,
+                representation: "tool_execution_end",
             });
             continue;
         }
@@ -154,11 +155,61 @@ export function collectLifecycleEvents(rows) {
                     contentText: contentTextFromUnknown(message.content),
                     details: message.details,
                     usage: message.usage,
+                    representation: "toolResult",
                 });
             }
         }
     }
     return events;
+}
+function terminalsEquivalent(left, right) {
+    if (left.toolCallId !== right.toolCallId ||
+        left.toolName !== right.toolName ||
+        left.isError !== right.isError ||
+        left.contentText !== right.contentText ||
+        !deepEqual(left.details, right.details)) {
+        return false;
+    }
+    // Usage may appear on only one transport form; when both carry it they must agree.
+    if (left.usage === undefined || right.usage === undefined)
+        return true;
+    return deepEqual(left.usage, right.usage);
+}
+/**
+ * Collapse only an equivalent cross-representation terminal pair for one call.
+ * Same-representation replays and any conflict keep every terminal so binding
+ * stays fail-closed.
+ */
+export function canonicalizeLifecycleEvents(events) {
+    const terminalsByCallId = new Map();
+    for (const event of events) {
+        if (event.kind !== "terminal")
+            continue;
+        const list = terminalsByCallId.get(event.toolCallId);
+        if (list)
+            list.push(event);
+        else
+            terminalsByCallId.set(event.toolCallId, [event]);
+    }
+    const drop = new Set();
+    for (const terminals of terminalsByCallId.values()) {
+        if (terminals.length !== 2)
+            continue;
+        const first = terminals[0];
+        const second = terminals[1];
+        if (first.representation === second.representation)
+            continue;
+        if (!terminalsEquivalent(first, second))
+            continue;
+        const [earlier, later] = first.index <= second.index ? [first, second] : [second, first];
+        if (earlier.usage === undefined && later.usage !== undefined) {
+            earlier.usage = later.usage;
+        }
+        drop.add(later);
+    }
+    if (drop.size === 0)
+        return events;
+    return events.filter((event) => event.kind !== "terminal" || !drop.has(event));
 }
 /** @deprecated Use decodeEnvelopeRows + collectLifecycleEvents. Kept for tests naming. */
 export function decodeToolResultsFromEnvelope(text) {
@@ -333,7 +384,7 @@ export function extractAcceptedReceipt(envelopes) {
     for (const text of envelopes) {
         rows.push(...decodeEnvelopeRows(text));
     }
-    const events = collectLifecycleEvents(rows);
+    const events = canonicalizeLifecycleEvents(collectLifecycleEvents(rows));
     let bound;
     try {
         bound = bindAcceptedLifecycle(events);
