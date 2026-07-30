@@ -7,6 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import { createReviewerPinnedGitReader, isReviewerPromptIdentity, reviewerPromptIdentity } from "../src/reviewer-dispatch.ts";
+import { immutableReviewerRefs, sameReviewerRefs } from "../src/reviewer-git-snapshot.ts";
 
 const exec = promisify(execFile);
 async function git(root: string, ...args: string[]): Promise<string> {
@@ -40,6 +41,14 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     await assert.rejects(withAliases.resolve("same"), /ambiguous/);
     await assert.rejects(ambiguous.resolve("HEAD:evil"), /Unsafe/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("shared ref snapshot helper canonicalizes immutably and compares order-independently", () => {
+  const refs = immutableReviewerRefs({ "refs/tags/z": "2", "refs/heads/a": "1" });
+  assert.deepEqual(Object.keys(refs), ["refs/heads/a", "refs/tags/z"]);
+  assert.equal(sameReviewerRefs(refs, { "refs/tags/z": "2", "refs/heads/a": "1" }), true);
+  assert.equal(sameReviewerRefs(refs, { "refs/heads/a": "different" }), false);
+  assert.throws(() => (refs as Record<string, string>)["refs/heads/a"] = "changed");
 });
 
 test("shared prompt identity validates exact UTF-8 bytes, length, and SHA-256", () => {

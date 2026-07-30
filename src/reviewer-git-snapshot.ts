@@ -21,3 +21,16 @@ export function reviewerRefSnapshotArgs(): string[] {
     ...REVIEW_REF_PREFIXES,
   ];
 }
+
+export function immutableReviewerRefs(refs: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  return Object.freeze(Object.fromEntries(Object.entries(refs).sort(([a], [b]) => a.localeCompare(b))));
+}
+
+export function sameReviewerRefs(
+  actual: Readonly<Record<string, string>>,
+  expected: Readonly<Record<string, string>>,
+): boolean {
+  const a = Object.entries(actual).sort(([left], [right]) => left.localeCompare(right));
+  const b = Object.entries(expected).sort(([left], [right]) => left.localeCompare(right));
+  return a.length === b.length && a.every(([name, value], index) => name === b[index]?.[0] && value === b[index]?.[1]);
+}
