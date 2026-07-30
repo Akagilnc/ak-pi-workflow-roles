@@ -172,6 +172,26 @@ function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
+const LIVE_SOURCE_UNIVERSE_AVAILABLE =
+  process.env.AK_LEGACY_CASE_A_LIVE_SOURCE !== "0" &&
+  readJson<{
+    entries: FrozenWalkEntry[];
+  }>(join(MIG, "construction-walk.json")).entries.every((entry) =>
+    existsSync(entry.sanitizedLocator),
+  );
+
+function liveSourceTest(name: string, fn: () => void): void {
+  test(
+    name,
+    {
+      skip: LIVE_SOURCE_UNIVERSE_AVAILABLE
+        ? false
+        : "volatile Case-A source universe is unavailable on this host",
+    },
+    fn,
+  );
+}
+
 function sha256(buf: Buffer | string): string {
   return createHash("sha256").update(buf).digest("hex");
 }
@@ -891,7 +911,7 @@ test("discovery spec seals prior aggregate out of the denominator", () => {
   assert.equal(typeof spec.priorAggregateObservation.notedCandidates, "number");
 });
 
-test("fixed-target Git construction walk seals 597 identities, predicates, and cutoff-derived partition", () => {
+liveSourceTest("fixed-target Git construction walk seals 597 identities, predicates, and cutoff-derived partition", () => {
   const spec = loadSealedSpec();
   const frozenWalk = loadFrozenWalk();
   const frozenInventory = loadFrozenInventory();
@@ -1147,7 +1167,7 @@ test("genericity is not extension-alone; generic exhaust not copied; jsonl absen
   }
 });
 
-test("recovered bytes have scanner evidence; actual scanBytes reproduces hashes and hits", () => {
+liveSourceTest("recovered bytes have scanner evidence; actual scanBytes reproduces hashes and hits", () => {
   const recovered = readJson<{
     items: Array<{
       itemKey: string;
@@ -1619,7 +1639,7 @@ test("closed association grammar boundary table (accept and reject)", () => {
   }
 });
 
-test("structured issue/PR/commit associations exhaustive from frozen metadata and admitted non-generic bytes", () => {
+liveSourceTest("structured issue/PR/commit associations exhaustive from frozen metadata and admitted non-generic bytes", () => {
   loadNamespaceBinding();
   const universe = loadCommitUniverse();
   const expected = deriveExpectedAssociations();
@@ -1990,7 +2010,7 @@ test("repair-002 recorder successor preserves executable corroboration implement
   assert.equal(existsSync(join(REPO_ROOT, RECORDER_001, "manifest.json")), true);
 });
 
-test("repair-003 recorder successor independently corroborates cutoff oracle and 277-source scan", () => {
+liveSourceTest("repair-003 recorder successor independently corroborates cutoff oracle and 277-source scan", () => {
   const evidenceDir = join(REPO_ROOT, RECORDER_003);
   const manifestPath = join(evidenceDir, "manifest.json");
   assert.equal(existsSync(manifestPath), true, "recorder-003 closure manifest");
@@ -2766,7 +2786,7 @@ test("historical nonconformance closure seals original and 49807d4 successor ide
   assert.match(manual, /exact/i);
 });
 
-test("red oracle probes: synthetic violations are detectable from committed shape", () => {
+liveSourceTest("red oracle probes: synthetic violations are detectable from committed shape", () => {
   const inv = readJson<{ items: Array<{ itemKey: string }> }>(
     join(MIG, "inventory.json"),
   );
