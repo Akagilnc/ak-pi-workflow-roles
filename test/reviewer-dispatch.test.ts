@@ -265,7 +265,8 @@ test("established Spec produces exact deterministic isolated two-leg prompts", a
     assert.equal(Buffer.byteLength(leg.prompt), leg.utf8Length);
     assert.equal(createHash("sha256").update(leg.prompt).digest("hex"), leg.sha256);
     assert.match(leg.prompt, new RegExp(`Task-SHA256: ${digest}`));
-    assert.match(leg.prompt, /Task-Bytes:\n review exactly — 逐字 \nSpec behavior: frobnicator must return 42\./);
+    assert.match(leg.prompt, new RegExp(`Task-UTF8-Length: ${task.byteLength}`));
+    assert.doesNotMatch(leg.prompt, /review exactly|frobnicator|Task-Bytes:/);
     assert.match(leg.prompt, /Target: B\nBase: A\nDiff: git diff A\.\.\.B\nDiff-SHA256: 1111111111111111111111111111111111111111111111111111111111111111\nCommits:\nC\nB/);
   }
   assert.deepEqual(dispatch.input.task, { bytes: task.toString("utf8"), utf8Length: task.byteLength, sha256: digest });
@@ -274,6 +275,60 @@ test("established Spec produces exact deterministic isolated two-leg prompts", a
   assert.deepEqual(second.calls[0], dispatch);
   assert.throws(() => (dispatch.targetSnapshot.refs as unknown as Record<string, string>).main = "DRIFT");
   assert.throws(() => (dispatch.range.commits as string[]).push("DRIFT"));
+});
+
+test("opaque task prose and selected material bytes remain isolated in compiled and delivered axis prompts", async () => {
+  const standardsSentinel = "STANDARDS_ONLY_SENTINEL: consult STYLE-PRIVATE.md";
+  const specSentinel = "SPEC_ONLY_SENTINEL: consult SPEC-PRIVATE.md";
+  const opaqueTask = Buffer.from(`\ufeff${standardsSentinel}\n${specSentinel}\n任务—逐字\n`);
+  const taskSha256 = createHash("sha256").update(opaqueTask).digest("hex");
+  const ceiling = parseReviewerCapabilities(Buffer.from(JSON.stringify({ ...capabilityValue, taskSha256 })), opaqueTask);
+  const standardsBytes = Buffer.from("\ufeffSTANDARDS_MATERIAL_ONLY—规范\n");
+  const specBytes = Buffer.from("\ufeffSPEC_MATERIAL_ONLY—需求\n");
+  const delivered: AcceptedReviewerDispatch[] = [];
+  const reader = fakeReader({
+    async material(path) { return path === "STYLE.md" ? standardsBytes : specBytes; },
+  });
+  const dispatcher = createReviewerDispatcher({
+    task: opaqueTask, canonicalSkill: skill, capabilities: ceiling, reader,
+    hostTools: REVIEWER_CHILD_TOOLS, async run(dispatch) { delivered.push(dispatch); },
+  });
+  const result = await dispatcher.propose(proposal);
+  assert.equal(result.status, "accepted");
+  if (result.status !== "accepted") return;
+  const [standardsLeg, specLeg] = result.dispatch.legs;
+  assert.equal(delivered[0], result.dispatch);
+  assert.ok(standardsLeg!.prompt.includes(standardsBytes.toString("utf8")));
+  assert.ok(specLeg!.prompt.includes(specBytes.toString("utf8")));
+  assert.doesNotMatch(standardsLeg!.prompt, new RegExp(`${specSentinel}|SPEC_MATERIAL_ONLY|SPEC-PRIVATE`));
+  assert.doesNotMatch(specLeg!.prompt, new RegExp(`${standardsSentinel}|STANDARDS_MATERIAL_ONLY|STYLE-PRIVATE`));
+  for (const leg of delivered[0]!.legs) {
+    assert.doesNotMatch(leg.prompt, /STANDARDS_ONLY_SENTINEL|SPEC_ONLY_SENTINEL|Task-Bytes:/);
+    assert.match(leg.prompt, new RegExp(`Task-SHA256: ${taskSha256}`));
+    assert.match(leg.prompt, new RegExp(`Task-UTF8-Length: ${opaqueTask.byteLength}`));
+  }
+  assert.deepEqual(result.dispatch.input.task, {
+    bytes: opaqueTask.toString("utf8"), utf8Length: opaqueTask.byteLength, sha256: taskSha256,
+  });
+
+  const noSpecProposal: ReviewerProposalV1 = {
+    ...proposal,
+    spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "NO-SPEC.md" }] },
+    required: { standards: required },
+  };
+  const noSpecDelivered: AcceptedReviewerDispatch[] = [];
+  const noSpecDispatcher = createReviewerDispatcher({
+    task: opaqueTask, canonicalSkill: skill, capabilities: ceiling,
+    reader: fakeReader({ async material(path) { return path === "STYLE.md" ? standardsBytes : specBytes; } }),
+    hostTools: REVIEWER_CHILD_TOOLS, async run(dispatch) { noSpecDelivered.push(dispatch); },
+  });
+  const noSpec = await noSpecDispatcher.propose(noSpecProposal);
+  assert.equal(noSpec.status, "accepted");
+  assert.equal(noSpecDelivered[0]!.legs.length, 1);
+  assert.doesNotMatch(noSpecDelivered[0]!.legs[0]!.prompt, /SPEC_ONLY_SENTINEL|SPEC_MATERIAL_ONLY|SPEC-PRIVATE|Task-Bytes:/);
+  assert.deepEqual(noSpecDelivered[0]!.input.task, {
+    bytes: opaqueTask.toString("utf8"), utf8Length: opaqueTask.byteLength, sha256: taskSha256,
+  });
 });
 
 test("canonical snapshot perturbation changes only extracted Standards evidence", async () => {
