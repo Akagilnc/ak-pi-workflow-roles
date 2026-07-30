@@ -1601,6 +1601,62 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
     "successful-retry",
   );
 
+  // R2 — every exact positional extra around a valid dual pair fails closed.
+  const extraTerminal = (
+    representation: "tool_execution_end" | "toolResult",
+    callId: string,
+  ): string => JSON.stringify(
+    representation === "tool_execution_end"
+      ? {
+        type: "tool_execution_end",
+        toolCallId: callId,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        result: {
+          content: [{ type: "text", text: ACCEPTED[JUDGE_OUTPUT_TOOL_NAME] }],
+          details: judgeDetails,
+        },
+      }
+      : {
+        type: "message_end",
+        message: {
+          role: "toolResult",
+          toolCallId: callId,
+          toolName: JUDGE_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: judgeDetails,
+          content: [{ type: "text", text: ACCEPTED[JUDGE_OUTPUT_TOOL_NAME] }],
+        },
+      },
+  );
+  const validPair = combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+    callId: "valid-pair",
+    details: judgeDetails,
+  });
+  const positionalExtras = [
+    {
+      name: "leading extra toolResult",
+      envelope: `${extraTerminal("toolResult", "extra-leading-result")}\n${validPair}`,
+    },
+    {
+      name: "leading extra tee",
+      envelope: `${extraTerminal("tool_execution_end", "extra-leading-tee")}\n${validPair}`,
+    },
+    {
+      name: "trailing extra toolResult",
+      envelope: `${validPair}\n${extraTerminal("toolResult", "extra-trailing-result")}`,
+    },
+    {
+      name: "trailing extra tee under another call id",
+      envelope: `${validPair}\n${extraTerminal("tool_execution_end", "extra-trailing-tee")}`,
+    },
+  ];
+  for (const positional of positionalExtras) {
+    const extracted = extractAcceptedReceipt([positional.envelope]);
+    assert.equal(extracted.receipt, null, positional.name);
+    assert.equal(extracted.auditObservation, null, `${positional.name} audit`);
+  }
+
   // R2 — mismatched cross-representation call identity must fail closed.
   const mismatchedIdentity = extractAcceptedReceipt([
     combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {

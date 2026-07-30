@@ -185,41 +185,35 @@ function terminalsEquivalent(left, right) {
         terminalPayloadsEquivalent(left, right));
 }
 /**
- * Analyze only bounded, production-shaped Pi terminal candidates. Each tee is
- * paired with the next message_end/toolResult; independent settled lifecycles
- * are never cross-producted. A mismatched pair, or an extra opposite terminal
- * after a pair, remains fail-closed.
+ * Validate the complete production-shaped dual-terminal candidate sequence.
+ * Once both supported representations occur, every candidate terminal must be
+ * an ordered one-to-one tee → message_end/toolResult pair with one call id.
+ * Envelopes carrying only one representation remain standalone lifecycles.
  */
 function hasMismatchedCrossRepCallIdentity(events) {
-    let pendingTee;
-    let sawCandidatePair = false;
-    for (const event of events) {
-        if (event.kind !== "terminal")
-            continue;
-        if (event.representation === "tool_execution_end") {
-            // Two tees without the documented corresponding result are not one
-            // current-Pi candidate; leave replay rejection to lifecycle binding.
-            pendingTee = event;
-            continue;
-        }
-        if (event.rowType !== "message_end")
-            continue;
-        if (pendingTee !== undefined) {
-            if (pendingTee.toolCallId !== event.toolCallId)
-                return true;
-            pendingTee = undefined;
-            sawCandidatePair = true;
-            continue;
-        }
-        if (sawCandidatePair)
+    const candidates = events.filter((event) => event.kind === "terminal" &&
+        (event.representation === "tool_execution_end" ||
+            (event.representation === "toolResult" && event.rowType === "message_end")));
+    const hasTee = candidates.some((event) => event.representation === "tool_execution_end");
+    const hasToolResult = candidates.some((event) => event.representation === "toolResult");
+    if (!hasTee || !hasToolResult)
+        return false;
+    if (candidates.length % 2 !== 0)
+        return true;
+    for (let index = 0; index < candidates.length; index += 2) {
+        const tee = candidates[index];
+        const toolResult = candidates[index + 1];
+        if (tee.representation !== "tool_execution_end" ||
+            toolResult.representation !== "toolResult" ||
+            tee.toolCallId !== toolResult.toolCallId) {
             return true;
+        }
     }
     return false;
 }
-/** True when start matches issued package under the same law binding uses. */
-function startMatchesIssuance(issued, start) {
-    return (issued.toolName === start.toolName &&
-        deepEqual(issued.args, start.args));
+/** Canonical issuance/start package match law, shared by collapse and binding. */
+function invocationMatches(issued, start) {
+    return issued.toolName === start.toolName && deepEqual(issued.args, start.args);
 }
 /**
  * Collapse only the documented production-order current-Pi pair:
@@ -298,7 +292,7 @@ export function canonicalizeLifecycleEvents(events) {
         const hasCompleteProductionOrder = issuedRefs.some((issued) => startRefs.some((start) => issued.index < start.index &&
             start.index < toolExecutionEnd.index &&
             toolExecutionEnd.index < toolResult.index &&
-            startMatchesIssuance(issued, start)));
+            invocationMatches(issued, start)));
         if (!hasCompleteProductionOrder)
             continue;
         // Preserve usage facts that appear only on the dropped transport form.
@@ -383,10 +377,10 @@ export function bindAcceptedLifecycle(events) {
         }
         if (event.kind === "start") {
             if (state.phase !== "issued" ||
-                state.toolName !== event.toolName ||
+                state.toolName === undefined ||
                 state.issuedIndex === undefined ||
                 !(state.issuedIndex < event.index) ||
-                !deepEqual(state.issuedArgs, event.args)) {
+                !invocationMatches({ toolName: state.toolName, args: state.issuedArgs }, event)) {
                 reject(state);
                 continue;
             }
