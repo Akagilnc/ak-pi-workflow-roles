@@ -4,18 +4,22 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
   lstatSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -2343,84 +2347,183 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
     assert.equal(omitted.includes(victim), true);
   }
 
-  // RED: dirty disposition/report/derivative bytes disagree with resolved tuples.
+  // RED (child-seam): dirty disposition/report/derivative and unresolvable
+  // required path must make the existing repair-003 child fail closed.
   {
-    const dispT = gitTuple(execHead, `${IMMUTABLE_MIG_PREFIX}/dispositions.json`);
-    const dirtyDispSha = sha256(Buffer.from("dirty-dispositions-counterexample\n"));
-    assert.notEqual(dirtyDispSha, dispT.sha256);
-    assert.equal(
-      dirtyDispSha === dispT.sha256,
-      false,
-      "dirty disposition bytes must fail exact-byte agreement",
-    );
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "case-a-child-seam-"));
+    const currentHead = gitRevParse("HEAD");
+    try {
+      execFileSync("git", ["clone", "--shared", "--quiet", REPO_ROOT, fixtureRoot], {
+        stdio: "ignore",
+      });
+      execFileSync(
+        "git",
+        ["-C", fixtureRoot, "checkout", "--detach", "--quiet", currentHead],
+        { stdio: "ignore" },
+      );
 
-    const sampleWithReport = admittedFromExec.find(
-      (d) => d.evidence?.redactionReportPath,
-    )!;
-    const reportT = gitTuple(
-      execHead,
-      `${IMMUTABLE_MIG_PREFIX}/${sampleWithReport.evidence!.redactionReportPath}`,
-    );
-    const dirtyReportSha = sha256(Buffer.from("dirty-report-counterexample\n"));
-    assert.notEqual(dirtyReportSha, reportT.sha256);
-    assert.equal(
-      dirtyReportSha === reportT.sha256,
-      false,
-      "dirty report bytes must fail exact-byte agreement",
-    );
+      const dispRel = `${IMMUTABLE_MIG_PREFIX}/dispositions.json`;
+      const fixtureDisp = JSON.parse(
+        execFileSync("git", ["-C", fixtureRoot, "show", `${currentHead}:${dispRel}`], {
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+        }),
+      ) as {
+        items: Array<{
+          disposition: string;
+          evidence?: {
+            redactionReportPath?: string;
+            recoveredPath?: string;
+          };
+        }>;
+      };
+      const fixtureAdmitted = fixtureDisp.items.filter((d) =>
+        ["recovered", "reference", "superseded"].includes(d.disposition),
+      );
+      const sample = fixtureAdmitted.find(
+        (d) =>
+          d.evidence?.redactionReportPath && d.evidence?.recoveredPath,
+      );
+      assert.ok(sample, "disposition-derived report+derivative sample");
+      const reportRel = `${IMMUTABLE_MIG_PREFIX}/${sample!.evidence!.redactionReportPath}`;
+      const derRel = `${IMMUTABLE_MIG_PREFIX}/${sample!.evidence!.recoveredPath}`;
 
-    const sampleWithDer = admittedFromExec.find((d) => d.evidence?.recoveredPath)!;
-    const derT = gitTuple(
-      execHead,
-      `${IMMUTABLE_MIG_PREFIX}/${sampleWithDer.evidence!.recoveredPath}`,
-    );
-    const dirtyDerSha = sha256(Buffer.from("dirty-derivative-counterexample\n"));
-    assert.notEqual(dirtyDerSha, derT.sha256);
-    assert.equal(
-      dirtyDerSha === derT.sha256,
-      false,
-      "dirty derivative bytes must fail exact-byte agreement",
-    );
-  }
+      const childPath = join(
+        fixtureRoot,
+        RECORDER_003,
+        "exhibits/cutoff-scan-implementation",
+      );
+      const runExistingChild = (
+        outName: string,
+      ): { exitCode: number; payload: Record<string, unknown> } => {
+        const outPath = join(fixtureRoot, outName);
+        const result = spawnSync(process.execPath, [childPath], {
+          env: {
+            ...process.env,
+            AK_REPAIR_REPO_ROOT: fixtureRoot,
+            AK_REPAIR_EVIDENCE_OUT: outPath,
+          },
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+        });
+        assert.equal(
+          existsSync(outPath),
+          true,
+          `child must write evidence out for ${outName}`,
+        );
+        const payload = JSON.parse(readFileSync(outPath, "utf8")) as Record<
+          string,
+          unknown
+        >;
+        return { exitCode: result.status ?? 1, payload };
+      };
 
-  // RED: one unresolvable required path fails closed rather than shrinking denominator.
-  {
-    const baselineCount = requiredKeySet.size;
-    assert.equal(baselineCount > 0, true);
-    const ghostPath = `${IMMUTABLE_MIG_PREFIX}/__unresolvable-required-path__.json`;
-    let threw = false;
-    let threwPath = "";
-    const built: GitTuple[] = [];
-    // Fail-closed construction: resolve every path; catch only to observe failure.
-    const paths = [
-      `${IMMUTABLE_MIG_PREFIX}/dispositions.json`,
-      ghostPath,
-    ];
-    for (const p of paths) {
-      try {
-        built.push(gitTuple(execHead, p));
-      } catch (err) {
-        threw = true;
-        threwPath = p;
-        // Do not continue omitting — stop; denominator must not be accepted reduced.
-        break;
+      const resetFixtureWorktree = () => {
+        execFileSync(
+          "git",
+          ["-C", fixtureRoot, "checkout", "--", "."],
+          { stdio: "ignore" },
+        );
+        execFileSync(
+          "git",
+          ["-C", fixtureRoot, "clean", "-fdq"],
+          { stdio: "ignore" },
+        );
+      };
+
+      const driftCases: Array<{ relPath: string; gate: string; dirty: string }> =
+        [
+          {
+            relPath: dispRel,
+            gate: "dispositions-worktree-drift",
+            dirty: "dirty-dispositions-counterexample\n",
+          },
+          {
+            relPath: reportRel,
+            gate: "report-worktree-drift",
+            dirty: "dirty-report-counterexample\n",
+          },
+          {
+            relPath: derRel,
+            gate: "derivative-worktree-drift",
+            dirty: "dirty-derivative-counterexample\n",
+          },
+        ];
+
+      for (const c of driftCases) {
+        resetFixtureWorktree();
+        // HEAD stays fixed; only live bytes are dirtied.
+        assert.equal(
+          execFileSync("git", ["-C", fixtureRoot, "rev-parse", "HEAD"], {
+            encoding: "utf8",
+          }).trim(),
+          currentHead,
+        );
+        writeFileSync(join(fixtureRoot, c.relPath), c.dirty);
+        const { exitCode, payload } = runExistingChild(`out-${c.gate}.json`);
+        assert.notEqual(exitCode, 0, `${c.gate} must be nonzero`);
+        assert.equal(payload.ok, false);
+        assert.equal(payload.gate, c.gate);
+        assert.equal(payload.path, c.relPath);
+        assert.equal(payload.commit, currentHead);
       }
+
+      // Required-universe path: delete one disposition-derived required file and
+      // commit while leaving the disposition reference intact; child must fail
+      // closed via requireGitTuple (not verifier-local tuple resolution).
+      resetFixtureWorktree();
+      execFileSync("git", ["-C", fixtureRoot, "rm", "-f", "--", reportRel], {
+        stdio: "ignore",
+      });
+      execFileSync(
+        "git",
+        [
+          "-C",
+          fixtureRoot,
+          "-c",
+          "user.email=child-seam@test",
+          "-c",
+          "user.name=child-seam",
+          "commit",
+          "-m",
+          "temp: delete required report for child-seam red proof",
+        ],
+        { stdio: "ignore" },
+      );
+      const tempCommit = execFileSync(
+        "git",
+        ["-C", fixtureRoot, "rev-parse", "HEAD"],
+        { encoding: "utf8" },
+      ).trim();
+      assert.notEqual(tempCommit, currentHead);
+      // Disposition still names the deleted path.
+      const dispAfter = JSON.parse(
+        execFileSync("git", ["-C", fixtureRoot, "show", `${tempCommit}:${dispRel}`], {
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+        }),
+      ) as {
+        items: Array<{ evidence?: { redactionReportPath?: string } }>;
+      };
+      assert.equal(
+        dispAfter.items.some(
+          (d) =>
+            d.evidence?.redactionReportPath ===
+            sample!.evidence!.redactionReportPath,
+        ),
+        true,
+        "disposition reference remains after required-path deletion",
+      );
+
+      const unres = runExistingChild("out-required-tuple-unresolvable.json");
+      assert.notEqual(unres.exitCode, 0, "unresolvable must be nonzero");
+      assert.equal(unres.payload.ok, false);
+      assert.equal(unres.payload.gate, "required-tuple-unresolvable");
+      assert.equal(unres.payload.path, reportRel);
+      assert.equal(unres.payload.commit, tempCommit);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
     }
-    assert.equal(threw, true, "unresolvable required path must fail");
-    assert.equal(threwPath, ghostPath, "failure names the exact unresolvable path");
-    assert.equal(
-      built.length < paths.length,
-      true,
-      "construction aborts before accepting a reduced required set",
-    );
-    // A catch-and-omit approach would yield built.length === 1 and silently
-    // shrink; fail-closed leaves the universe incomplete and unaccepted.
-    const reducedKeys = new Set(built.map(tupleKey));
-    assert.equal(
-      reducedKeys.size === baselineCount,
-      false,
-      "unresolvable path must not yield a complete required universe",
-    );
   }
 
   // All seven reference dispositions produce matching reference tuples.
