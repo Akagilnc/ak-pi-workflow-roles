@@ -27,6 +27,7 @@ import {
 import { createHash } from "node:crypto";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
 import type { AcceptedReviewerDispatch } from "../src/reviewer-dispatch.ts";
+import { createReviewerExecutionLedger, projectAcceptedDispatch } from "../src/reviewer-execution-ledger.ts";
 
 async function dispatch(root: string, prompts: readonly string[], tools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "write" | "edit")[] = ["read", "grep", "find", "ls", "bash", "write", "edit"], bashCommands: readonly string[] = []): Promise<AcceptedReviewerDispatch> {
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
@@ -361,6 +362,51 @@ test("Reviewer child provider delegates class-private streams to the original re
   } finally {
     await runner.shutdown();
     await rm(source.root, { recursive: true, force: true });
+  }
+});
+
+test("Reviewer Agent reports deterministic setup failures with bounded retention evidence", async () => {
+  const cases = [
+    ["mirror.before-create", "not-created"],
+    ["mirror.create", "retained"],
+    ["mirror.verify", "retained"],
+    ["workspace.before-create", "not-created"],
+    ["workspace.init", "retained"],
+    ["workspace.fetch", "retained"],
+    ["workspace.verify", "retained"],
+  ] as const;
+  for (const [fault, expected] of cases) {
+    const source = await repository();
+    const { context } = await parentContext(source.root, async () => {}, 1);
+    const runner = createReviewerAgentRunner({ fault(operation) { if (operation === fault) throw new Error(`injected ${fault}`); } });
+    const acceptedDispatch = await dispatch(source.root, [fault]);
+    let retained: string | undefined;
+    try {
+      await assert.rejects(
+        runner.run(acceptedDispatch, { context }),
+        (error: any) => {
+          const disposition = error.outcome.legs.standards.workspaceDisposition;
+          if (expected === "not-created") assert.equal(disposition, "not-created");
+          else {
+            retained = disposition.retained;
+            assert.ok(retained?.startsWith(tmpdir()));
+          }
+          const accepted = error.outcome;
+          const ledger = createReviewerExecutionLedger();
+          // Project the exact failed settlement through the durable ledger seam.
+          ledger.append(projectAcceptedDispatch({ ...acceptedDispatch, materials: { ...acceptedDispatch.materials, noSpecEvidence: [] } }));
+          ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: accepted.identity, cardinality: 1 });
+          ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: accepted.identity, axis: "standards", ...accepted.legs.standards });
+          assert.deepEqual(ledger.recordForAudit("refused").results.standards?.workspaceDisposition, disposition);
+          return true;
+        },
+      );
+      if (retained !== undefined) await access(retained);
+    } finally {
+      await runner.shutdown().catch(() => {});
+      if (retained !== undefined) await rm(retained, { recursive: true, force: true });
+      await rm(source.root, { recursive: true, force: true });
+    }
   }
 });
 

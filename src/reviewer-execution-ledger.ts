@@ -1,10 +1,7 @@
 import { sameReviewerRefs } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import {
-  type ReviewerCapabilityRequest,
-  type ReviewerMaterialEvidence,
   type ReviewerPinnedTarget,
-  type ReviewerRange,
   type AcceptedReviewerDispatch,
 } from "./reviewer-dispatch.ts";
 
@@ -17,27 +14,12 @@ export type ReviewerTargetSnapshot = ReviewerPinnedTarget;
 export type ReviewerWorkspaceDisposition = "deleted" | "not-created" | Readonly<{ retained: string }>;
 export type ReviewerFailureClassification = "cancelled" | "provider" | "snapshot" | "workspace" | "child" | "unknown";
 
-export type ReviewerCompiledLegEvidence = Omit<ReviewerPromptIdentity, "bytes"> & Readonly<{
-  axis: "standards" | "spec";
-  prompt: ReviewerPromptIdentity["bytes"];
-  grant: ReviewerCapabilityRequest;
-}>;
-export type ReviewerAcceptedEvidence = Readonly<{
-  identity: string;
-  recipe: "reviewer-dispatch-v1";
-  input: Readonly<{
-    task: ReviewerPromptIdentity;
-    canonicalSkillSha256: string;
-  }>;
-  target: ReviewerPinnedTarget;
-  range: ReviewerRange;
-  materials: Readonly<{
-    standards: readonly ReviewerMaterialEvidence[];
-    spec?: readonly ReviewerMaterialEvidence[];
-    noSpecEvidence?: readonly ReviewerMaterialEvidence[];
-  }>;
-  legs: readonly ReviewerCompiledLegEvidence[];
-}>;
+export type ReviewerCompiledLegEvidence = AcceptedReviewerDispatch["legs"][number];
+export type ReviewerAcceptedEvidence = Readonly<
+  Omit<AcceptedReviewerDispatch, "targetSnapshot"> & {
+    target: AcceptedReviewerDispatch["targetSnapshot"];
+  }
+>;
 export function projectAcceptedDispatch(dispatch: AcceptedReviewerDispatch): ReviewerEvidenceEvent {
   return {
     source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
