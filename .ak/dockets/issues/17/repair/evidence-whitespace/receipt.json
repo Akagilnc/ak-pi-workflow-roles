@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_xGA5VNNY09pNty3a9BKWpipq|fc_06d0d465eaed68df016a6b76000ecc819184129218f0387ae9",
+  "details": {
+    "status": "completed",
+    "report": "R1: Preserved coder-task, manifest, and receipt bytes; coder-task SHA-256 remains 2663ac0e9d9271a115f7a189ef31fc62ec419be0cc1dece5842f1723473ad4f9.\nR2: Added only `.ak/dockets/** whitespace=-trailing-space` in `.gitattributes`; normal checking remains unspecified and therefore active outside docket evidence.\nR3: `git diff --check cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5..HEAD` passed; manifest digest comparison passed; committed forward as 35d25ed326811d882c8018a4ffcf5335e9e0b98f.",
+    "commitSha": "35d25ed326811d882c8018a4ffcf5335e9e0b98f"
+  },
+  "artifactKind": "acceptedReceipt"
+}
