@@ -1,0 +1,34 @@
+{
+  "hits": [
+    {
+      "ruleId": "authorization-header",
+      "location": "receipt.details.note",
+      "count": 2
+    },
+    {
+      "ruleId": "authorization-header",
+      "location": "child.stdout",
+      "count": 487
+    },
+    {
+      "ruleId": "basic-credential",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "provider-package-token",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "session-credential",
+      "location": "child.stdout",
+      "count": 20
+    },
+    {
+      "ruleId": "token-assignment",
+      "location": "child.stdout",
+      "count": 45
+    }
+  ]
+}
