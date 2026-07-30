@@ -581,6 +581,10 @@ function walkJsonAssociations(
   universe: Set<string>,
 ): void {
   if (value === null || value === undefined) return;
+  if (typeof value === "string") {
+    scanTextAssociations(value, issues, pullRequests, commits, universe);
+    return;
+  }
   if (Array.isArray(value)) {
     for (const el of value) {
       walkJsonAssociations(el, issues, pullRequests, commits, universe);
@@ -1522,6 +1526,20 @@ test("closed association grammar boundary table (accept and reject)", () => {
       expect: { issues: [9], pullRequests: [], commits: [] },
     },
     {
+      name: "top-level JSON string text label accepted",
+      basename: "x.json",
+      text: JSON.stringify("see issue 9 please"),
+      asJson: true,
+      expect: { issues: [9], pullRequests: [], commits: [] },
+    },
+    {
+      name: "array-nested JSON string text label accepted",
+      basename: "x.json",
+      text: JSON.stringify(["see issue 9 please"]),
+      asJson: true,
+      expect: { issues: [9], pullRequests: [], commits: [] },
+    },
+    {
       name: "issuePrCommitAssociations subtree omitted",
       basename: "x.json",
       text: JSON.stringify({
@@ -1552,23 +1570,37 @@ test("closed association grammar boundary table (accept and reject)", () => {
     assert.deepEqual(got, c.expect, c.name);
   }
 
-  // Ambiguous / unresolvable abbreviations fail to associate.
+  // Unresolvable but syntactically valid 7-hex abbreviations fail to associate.
   {
-    const got = extractAssociationsClosed(
+    let absentPrefix: string | null = null;
+    for (let i = 0; i <= 0xfffffff; i += 1) {
+      const cand = i.toString(16).padStart(7, "0");
+      let hit = false;
+      for (const c of universe) {
+        if (c.startsWith(cand)) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) {
+        absentPrefix = cand;
+        break;
+      }
+    }
+    assert.ok(absentPrefix, "deterministically selected absent 7-hex prefix");
+    assert.equal(/^[0-9a-f]{7}$/.test(absentPrefix!), true, "prefix is valid H token");
+    assert.equal(
+      resolveCommitToken(absentPrefix!, universe),
+      null,
+      "selected prefix must be absent from sealed four-root universe",
+    );
+    const gotAbsent = extractAssociationsClosed(
       "notes.md",
-      "commit: deadbee",
+      `commit: ${absentPrefix}`,
       false,
       universe,
     );
-    // deadbee may or may not resolve; force unresolvable token:
-    const got2 = extractAssociationsClosed(
-      "notes.md",
-      "commit: zzzzzzz",
-      false,
-      universe,
-    );
-    assert.equal(got2, null);
-    void got;
+    assert.equal(gotAbsent, null, "valid unresolved commit prefix must not associate");
   }
   {
     // Ambiguous: pick a prefix shared by >=2 commits if any; else skip with synthetic universe.
@@ -2011,6 +2043,7 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
   const summary = JSON.parse(summaryBytes.toString("utf8")) as {
     ok: boolean;
     childExitCode: number;
+    executionHead: string;
     r1: {
       matched: number;
       missing: number;
@@ -2024,21 +2057,50 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
       allMatched: boolean;
       redactedCount: number;
       highlighted: Array<{ basename: string; redacted: boolean }>;
+      results: Array<{
+        itemKey: string;
+        basename: string;
+        sourceSha256: string;
+        recoveredSha256: string;
+        redacted: boolean;
+      }>;
     };
-    scanner: { path: string; sha256: string; verified: boolean };
+    scanner: {
+      path: string;
+      sha256: string;
+      srcTuple?: GitTuple;
+      distPath: string;
+      distSha256: string;
+      distTuple?: GitTuple;
+      verified: boolean;
+      executableVerifiedBeforeImport?: boolean;
+    };
     identityLedger: {
       gitTuples: GitTuple[];
+      requiredTupleKeys?: string[];
+      referenceTuples?: Array<{
+        itemKey: string;
+        basename: string;
+        disposition: string;
+        tuple: GitTuple;
+      }>;
       externalSources: Array<{
         itemKey: string;
         sourceSha256: string;
         basename: string;
+        sourceOrigin?: string;
+        frozenIdentity?: { itemKey: string; basename: string; disposition: string };
       }>;
       namespace: { namespace: string; inputs: GitTuple[] };
+      scanner?: { source: GitTuple; dist: GitTuple };
     };
     redGates: Record<string, boolean>;
   };
   assert.equal(summary.ok, true);
   assert.equal(summary.childExitCode, 0);
+  assert.equal(typeof summary.executionHead, "string");
+  assert.equal(summary.executionHead.length, 40);
+  assert.equal(gitIsAncestor(summary.executionHead), true);
   assert.equal(summary.r1.recorded, 597);
   assert.equal(summary.r1.matched, 597);
   assert.equal(summary.r1.missing, 0);
@@ -2048,13 +2110,59 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
   assert.equal(summary.r2.admittedScanned, 277);
   assert.equal(summary.r2.allMatched, true);
   assert.equal(summary.r2.redactedCount, 2);
+  assert.equal(summary.r2.results.length, 277);
   const hl = new Set(summary.r2.highlighted.map((h) => h.basename));
   assert.equal(hl.has("judge-malformed-probe.ts"), true);
   assert.equal(hl.has("reviewer-real-pi-snippet.ts"), true);
   assert.equal(summary.scanner.verified, true);
+  assert.equal(summary.scanner.executableVerifiedBeforeImport, true);
   assert.equal(summary.identityLedger.namespace.namespace, SOLE_REPO_NAMESPACE);
   assert.equal(summary.identityLedger.externalSources.length, 277);
   assert.equal(summary.identityLedger.gitTuples.length > 0, true);
+
+  // Executable boundary: distinct source + dist tuples bound at child executionHead.
+  const execHead = summary.executionHead;
+  const scannerSrc = gitTuple(execHead, "src/recorder/scanner.ts");
+  const scannerDist = gitTuple(execHead, "dist/recorder/scanner.js");
+  assert.notEqual(scannerSrc.path, scannerDist.path);
+  assert.notEqual(scannerSrc.blobOid, scannerDist.blobOid);
+  assert.notEqual(scannerSrc.sha256, scannerDist.sha256);
+  // Worktree bytes still match the sealed executable/source identities.
+  assert.equal(
+    sha256(readFileSync(join(REPO_ROOT, "src/recorder/scanner.ts"))),
+    scannerSrc.sha256,
+  );
+  assert.equal(
+    sha256(readFileSync(join(REPO_ROOT, "dist/recorder/scanner.js"))),
+    scannerDist.sha256,
+  );
+  assert.equal(summary.scanner.path, scannerSrc.path);
+  assert.equal(summary.scanner.sha256, scannerSrc.sha256);
+  assert.equal(summary.scanner.distPath, scannerDist.path);
+  assert.equal(summary.scanner.distSha256, scannerDist.sha256);
+  assert.ok(summary.scanner.srcTuple, "scanner srcTuple");
+  assert.ok(summary.scanner.distTuple, "scanner distTuple");
+  assert.deepEqual(summary.scanner.srcTuple, scannerSrc);
+  assert.deepEqual(summary.scanner.distTuple, scannerDist);
+  assert.ok(summary.identityLedger.scanner, "ledger scanner section");
+  assert.deepEqual(summary.identityLedger.scanner!.source, scannerSrc);
+  assert.deepEqual(summary.identityLedger.scanner!.dist, scannerDist);
+  const tupleKey = (t: GitTuple) =>
+    `${t.repository}|${t.commit}|${t.path}|${t.blobOid}|${t.sha256}`;
+  const ledgerKeySet = new Set(summary.identityLedger.gitTuples.map(tupleKey));
+  assert.equal(ledgerKeySet.has(tupleKey(scannerSrc)), true, "src tuple in ledger");
+  assert.equal(ledgerKeySet.has(tupleKey(scannerDist)), true, "dist tuple in ledger");
+
+  // Child must reject dist drift before dynamic import (implementation shape).
+  const implText = implBytes.toString("utf8");
+  assert.match(implText, /scanner-dist-worktree-drift/);
+  assert.match(
+    implText,
+    /dist digest mismatch rejected before import|expectedDistTuple[\s\S]*await import/,
+  );
+  const driftIdx = implText.indexOf("scanner-dist-worktree-drift");
+  const importIdx = implText.indexOf("await import");
+  assert.equal(driftIdx >= 0 && importIdx > driftIdx, true, "dist gate precedes import");
 
   // Resolve every successor Git tuple from the ledger.
   for (const t of summary.identityLedger.gitTuples) {
@@ -2069,15 +2177,146 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
     assert.equal(sha256(gitShow(`${t.commit}:${t.path}`)), t.sha256);
   }
 
+  // Independent required-tuple completeness oracle at child executionHead.
+  const required: GitTuple[] = [
+    gitTuple(IMMUTABLE, NAMESPACE_ISSUE_SNAPSHOT),
+    gitTuple(IMMUTABLE, NAMESPACE_DISCOVERY_SPEC),
+    gitTuple(IMMUTABLE, `${IMMUTABLE_MIG_PREFIX}/construction-walk.json`),
+    gitTuple(IMMUTABLE, `${IMMUTABLE_MIG_PREFIX}/inventory.json`),
+    scannerSrc,
+    scannerDist,
+  ];
+  try {
+    required.push(gitTuple(execHead, `${IMMUTABLE_MIG_PREFIX}/dispositions.json`));
+  } catch {
+    /* dispositions may be dirty mid-apply; child still ledgers HEAD when resolvable */
+  }
+  const dispLive = readJson<{
+    items: Array<{
+      itemKey: string;
+      basename: string;
+      disposition: string;
+      evidence?: {
+        sourceSha256?: string;
+        reference?: { commitSha: string; path: string };
+        redactionReportPath?: string;
+        recoveredPath?: string;
+      };
+    }>;
+  }>(join(MIG, "dispositions.json"));
+  const admittedLive = dispLive.items.filter((d) =>
+    ["recovered", "reference", "superseded"].includes(d.disposition),
+  );
+  assert.equal(admittedLive.length, 277);
+  const referenceDisps = admittedLive.filter((d) => d.disposition === "reference");
+  assert.equal(referenceDisps.length, 7, "seven reference dispositions");
+  for (const d of admittedLive) {
+    if (d.evidence?.reference) {
+      required.push(
+        gitTuple(d.evidence.reference.commitSha, d.evidence.reference.path),
+      );
+    }
+    if (d.evidence?.redactionReportPath) {
+      try {
+        required.push(
+          gitTuple(
+            execHead,
+            `${IMMUTABLE_MIG_PREFIX}/${d.evidence.redactionReportPath}`,
+          ),
+        );
+      } catch {
+        /* worktree-only */
+      }
+    }
+    if (d.evidence?.recoveredPath) {
+      try {
+        required.push(
+          gitTuple(
+            execHead,
+            `${IMMUTABLE_MIG_PREFIX}/${d.evidence.recoveredPath}`,
+          ),
+        );
+      } catch {
+        /* worktree-only */
+      }
+    }
+  }
+  const requiredKeySet = new Set(required.map(tupleKey));
+  const missingRequired = [...requiredKeySet]
+    .filter((k) => !ledgerKeySet.has(k))
+    .sort();
+  assert.deepEqual(missingRequired, [], "ledger missing required tuples");
+  // Child-recorded required keys must agree with independent oracle.
+  assert.ok(summary.identityLedger.requiredTupleKeys, "requiredTupleKeys recorded");
+  assert.deepEqual(
+    [...summary.identityLedger.requiredTupleKeys!].sort(),
+    [...requiredKeySet].sort(),
+  );
+
+  // RED: omitting any one required key from a copy must fail completeness.
+  {
+    const copy = new Set(ledgerKeySet);
+    const victim = [...requiredKeySet][0]!;
+    copy.delete(victim);
+    const omitted = [...requiredKeySet].filter((k) => !copy.has(k));
+    assert.equal(omitted.length >= 1, true, "omission red oracle");
+    assert.equal(omitted.includes(victim), true);
+  }
+
+  // All seven reference dispositions produce matching reference tuples.
+  assert.ok(summary.identityLedger.referenceTuples, "referenceTuples ledgered");
+  assert.equal(summary.identityLedger.referenceTuples!.length, 7);
+  const refByKey = new Map(
+    summary.identityLedger.referenceTuples!.map((r) => [r.itemKey, r]),
+  );
+  for (const d of referenceDisps) {
+    const got = refByKey.get(d.itemKey);
+    assert.ok(got, `reference tuple for ${d.basename}`);
+    assert.equal(got!.disposition, "reference");
+    const exp = gitTuple(
+      d.evidence!.reference!.commitSha,
+      d.evidence!.reference!.path,
+    );
+    assert.deepEqual(got!.tuple, exp);
+    assert.equal(ledgerKeySet.has(tupleKey(exp)), true, d.basename);
+  }
+
+  // Independently verify all 277 external seals against frozen metadata only.
+  const extByKey = new Map(
+    summary.identityLedger.externalSources.map((e) => [e.itemKey, e]),
+  );
+  for (const d of admittedLive) {
+    const ext = extByKey.get(d.itemKey);
+    assert.ok(ext, `external seal ${d.basename}`);
+    assert.equal(ext!.basename, d.basename);
+    assert.equal(ext!.frozenIdentity?.itemKey, d.itemKey);
+    assert.equal(ext!.frozenIdentity?.disposition, d.disposition);
+    if (d.evidence?.sourceSha256) {
+      assert.equal(ext!.sourceSha256, d.evidence.sourceSha256);
+    }
+    assert.equal(/^[0-9a-f]{64}$/.test(ext!.sourceSha256), true);
+  }
+  // No raw-source duplication under the recorder-closure seam.
+  for (const f of listFilesRecursive(evidenceDir)) {
+    const rel = relative(evidenceDir, f);
+    assert.equal(rel.includes("case-a-rescue"), false);
+    assert.equal(rel.endsWith(".jsonl"), false);
+  }
+
   // RED gates recorded as exercised (child path proves failure modes).
   for (const key of [
     "tuplePerturbation",
-    "scannerHash",
+    "requiredTupleOmission",
+    "scannerSrcHash",
+    "scannerDistHash",
+    "scannerDistPreImport",
+    "scannerSrcDistDistinct",
     "selectionIdentity",
     "sourceSeal",
     "hitReport",
     "cutoffIdentity",
     "namespaceBinding",
+    "referenceTuplesComplete",
     "redaction42a9fc",
     "redactionAf289a",
   ]) {

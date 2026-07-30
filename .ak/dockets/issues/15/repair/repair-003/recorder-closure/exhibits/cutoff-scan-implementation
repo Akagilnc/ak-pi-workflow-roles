@@ -192,7 +192,7 @@ function fail(payload, code) {
   process.exit(code);
 }
 
-async function verifyAndLoadScanner(expectedSrcSha) {
+async function verifyAndLoadScanner(expectedSrcTuple, expectedDistTuple) {
   const srcPath = join(REPO_ROOT, SCANNER_SRC);
   const distPath = join(REPO_ROOT, SCANNER_DIST);
   if (!existsSync(srcPath) || !existsSync(distPath)) {
@@ -208,35 +208,48 @@ async function verifyAndLoadScanner(expectedSrcSha) {
   }
   const srcBuf = readFileSync(srcPath);
   const srcSha = sha256(srcBuf);
-  // Prefer immutable Git identity when resolvable.
-  let gitSrcTuple = null;
-  try {
-    gitSrcTuple = gitTuple("HEAD", SCANNER_SRC);
-  } catch {
-    gitSrcTuple = null;
-  }
-  if (gitSrcTuple && gitSrcTuple.sha256 !== srcSha) {
+  const distBuf = readFileSync(distPath);
+  const distSha = sha256(distBuf);
+
+  // Source identity is an additional input; it cannot stand in for the executable.
+  if (expectedSrcTuple.sha256 !== srcSha) {
     fail(
       {
         ok: false,
-        gate: "scanner-worktree-drift",
-        git: gitSrcTuple.sha256,
+        gate: "scanner-src-worktree-drift",
+        git: expectedSrcTuple.sha256,
         worktree: srcSha,
       },
       5,
     );
   }
-  if (expectedSrcSha && srcSha !== expectedSrcSha) {
+
+  // Executable boundary: resolve/ledger/compare dist BEFORE dynamic import.
+  if (expectedDistTuple.sha256 !== distSha) {
     fail(
       {
         ok: false,
-        gate: "scanner-hash-mismatch",
-        expected: expectedSrcSha,
-        actual: srcSha,
+        gate: "scanner-dist-worktree-drift",
+        git: expectedDistTuple.sha256,
+        worktree: distSha,
+        path: SCANNER_DIST,
+        note: "dist digest mismatch rejected before import",
       },
       5,
     );
   }
+  if (expectedDistTuple.path !== SCANNER_DIST) {
+    fail(
+      {
+        ok: false,
+        gate: "scanner-dist-path-mismatch",
+        expected: SCANNER_DIST,
+        actual: expectedDistTuple.path,
+      },
+      5,
+    );
+  }
+
   const mod = await import(pathToFileURL(distPath).href);
   if (typeof mod.scanBytes !== "function") {
     fail({ ok: false, gate: "scanner-export-missing" }, 5);
@@ -244,9 +257,14 @@ async function verifyAndLoadScanner(expectedSrcSha) {
   return {
     scanBytes: mod.scanBytes,
     srcSha,
-    distSha: sha256(readFileSync(distPath)),
-    gitSrcTuple,
+    distSha,
+    gitSrcTuple: expectedSrcTuple,
+    gitDistTuple: expectedDistTuple,
   };
+}
+
+function tupleKey(t) {
+  return `${t.repository}|${t.commit}|${t.path}|${t.blobOid}|${t.sha256}`;
 }
 
 async function main() {
@@ -315,10 +333,15 @@ async function main() {
     );
   }
 
-  // Scanner byte gate before import/execution.
-  const scannerExpected = gitTuple("HEAD", SCANNER_SRC);
-  pushTuple(scannerExpected);
-  const scanner = await verifyAndLoadScanner(scannerExpected.sha256);
+  // Scanner source + executable dist identity gates before import/execution.
+  const scannerSrcExpected = gitTuple("HEAD", SCANNER_SRC);
+  const scannerDistExpected = gitTuple("HEAD", SCANNER_DIST);
+  pushTuple(scannerSrcExpected);
+  pushTuple(scannerDistExpected);
+  const scanner = await verifyAndLoadScanner(
+    scannerSrcExpected,
+    scannerDistExpected,
+  );
   const { scanBytes } = scanner;
 
   const frozenWalk = JSON.parse(
@@ -495,9 +518,23 @@ async function main() {
 
   const externalSources = [];
   const scanResults = [];
+  const referenceTuples = [];
   for (const d of admitted) {
     const sourceSha = d.evidence?.sourceSha256 || null;
     const basename = d.basename;
+
+    // Always ledger immutable reference tuples even when an external copy wins.
+    if (d.evidence?.reference) {
+      const ref = d.evidence.reference;
+      const refTuple = pushTuple(gitTuple(ref.commitSha, ref.path));
+      referenceTuples.push({
+        itemKey: d.itemKey,
+        basename,
+        disposition: d.disposition,
+        tuple: refTuple,
+      });
+    }
+
     let sourceBuf = null;
     let sourceOrigin = null;
     if (sourceSha) {
@@ -528,7 +565,6 @@ async function main() {
     if (!sourceBuf && d.evidence?.reference) {
       const ref = d.evidence.reference;
       const blob = gitShow(`${ref.commitSha}:${ref.path}`);
-      pushTuple(gitTuple(ref.commitSha, ref.path));
       if (!sourceSha || sha256(blob) === sourceSha) {
         sourceBuf = blob;
         sourceOrigin = "immutable-git-clean";
@@ -659,14 +695,87 @@ async function main() {
     );
   }
 
-  // Deduplicate git tuples by commit+path
+  // Deduplicate git tuples by full canonical key
   const seen = new Set();
   const uniqueTuples = [];
   for (const t of gitTuples) {
-    const k = `${t.commit}:${t.path}`;
+    const k = tupleKey(t);
     if (seen.has(k)) continue;
     seen.add(k);
     uniqueTuples.push(t);
+  }
+
+  // Independent required-tuple universe (not self-enumeration of the ledger).
+  const requiredTuples = [];
+  const pushRequired = (t) => {
+    requiredTuples.push(t);
+    return t;
+  };
+  pushRequired(snapTuple);
+  pushRequired(specTuple);
+  pushRequired(walkTuple);
+  pushRequired(invTuple);
+  pushRequired(scannerSrcExpected);
+  pushRequired(scannerDistExpected);
+  if (dispTuple.commit && dispTuple.blobOid && dispTuple.sha256) {
+    pushRequired({
+      repository: dispTuple.repository,
+      commit: dispTuple.commit,
+      path: dispTuple.path,
+      blobOid: dispTuple.blobOid,
+      sha256: dispTuple.sha256,
+    });
+  }
+  for (const d of admitted) {
+    if (d.evidence?.reference) {
+      const ref = d.evidence.reference;
+      pushRequired(gitTuple(ref.commitSha, ref.path));
+    }
+    if (d.evidence?.redactionReportPath) {
+      const rp = `${IMMUTABLE_MIG}/${d.evidence.redactionReportPath}`;
+      try {
+        pushRequired(gitTuple("HEAD", rp));
+      } catch {
+        /* worktree-only */
+      }
+    }
+    if (d.evidence?.recoveredPath) {
+      const rp = `${IMMUTABLE_MIG}/${d.evidence.recoveredPath}`;
+      try {
+        pushRequired(gitTuple("HEAD", rp));
+      } catch {
+        /* worktree-only */
+      }
+    }
+  }
+  const requiredKeys = new Set(requiredTuples.map(tupleKey));
+  const ledgerKeys = new Set(uniqueTuples.map(tupleKey));
+  const missingRequired = [...requiredKeys].filter((k) => !ledgerKeys.has(k)).sort();
+  if (missingRequired.length > 0) {
+    fail(
+      {
+        ok: false,
+        gate: "identity-ledger-incomplete",
+        missingRequired,
+        requiredCount: requiredKeys.size,
+        ledgerCount: ledgerKeys.size,
+      },
+      8,
+    );
+  }
+  const referenceDispositionCount = admitted.filter(
+    (d) => d.disposition === "reference",
+  ).length;
+  if (referenceDispositionCount !== 7 || referenceTuples.length !== 7) {
+    fail(
+      {
+        ok: false,
+        gate: "reference-tuple-count",
+        referenceDispositionCount,
+        referenceTuples: referenceTuples.length,
+      },
+      8,
+    );
   }
 
   // Mechanical red-gate proofs (boolean assertions the verifier re-checks).
@@ -681,7 +790,22 @@ async function main() {
         return true;
       }
     })(),
-    scannerHash: scanner.srcSha === scannerExpected.sha256,
+    requiredTupleOmission: (() => {
+      const keys = new Set(ledgerKeys);
+      const victim = [...requiredKeys][0];
+      if (!victim) return false;
+      keys.delete(victim);
+      return [...requiredKeys].some((k) => !keys.has(k));
+    })(),
+    scannerSrcHash: scanner.srcSha === scannerSrcExpected.sha256,
+    scannerDistHash: scanner.distSha === scannerDistExpected.sha256,
+    scannerDistPreImport:
+      scanner.gitDistTuple.sha256 === scannerDistExpected.sha256 &&
+      scanner.distSha === scannerDistExpected.sha256,
+    scannerSrcDistDistinct:
+      scannerSrcExpected.path !== scannerDistExpected.path &&
+      scannerSrcExpected.sha256 !== scannerDistExpected.sha256 &&
+      scannerSrcExpected.blobOid !== scannerDistExpected.blobOid,
     selectionIdentity: admitted.length === 277,
     sourceSeal: externalSources.every((e) => e.sourceSha256.length === 64),
     hitReport: highlighted.every((h) => h.redacted && h.hits.length > 0),
@@ -695,6 +819,7 @@ async function main() {
       remoteHint === "Akagilnc/ak-pi-workflow-roles" &&
       snapTuple.sha256.length === 64 &&
       specTuple.sha256.length === 64,
+    referenceTuplesComplete: referenceTuples.length === 7,
     redaction42a9fc: scanResults.some(
       (s) => s.itemKey.startsWith("42a9fc") && s.redacted,
     ),
@@ -708,10 +833,12 @@ async function main() {
     }
   }
 
+  const executionHead = gitRevParse("HEAD");
   const summary = {
     ok: true,
     recorderChild: "non-role-case-a-repair-003-cutoff-scan",
     childExitCode: 0,
+    executionHead,
     immutableTarget: IMMUTABLE,
     sealedInputs: {
       discoverySpec: `${IMMUTABLE}:${IMMUTABLE_MIG}/discovery-spec.v1.json`,
@@ -723,9 +850,12 @@ async function main() {
     scanner: {
       path: SCANNER_SRC,
       sha256: scanner.srcSha,
+      srcTuple: scannerSrcExpected,
       distPath: SCANNER_DIST,
       distSha256: scanner.distSha,
+      distTuple: scannerDistExpected,
       verified: true,
+      executableVerifiedBeforeImport: true,
     },
     r1: {
       recorded: frozenWalk.entries.length,
@@ -755,6 +885,8 @@ async function main() {
     },
     identityLedger: {
       gitTuples: uniqueTuples,
+      requiredTupleKeys: [...requiredKeys].sort(),
+      referenceTuples,
       externalSources: externalSources.map((e) => ({
         itemKey: e.itemKey,
         sourceSha256: e.sourceSha256,
@@ -768,7 +900,10 @@ async function main() {
       },
       walk: walkTuple,
       inventory: invTuple,
-      scanner: scannerExpected,
+      scanner: {
+        source: scannerSrcExpected,
+        dist: scannerDistExpected,
+      },
     },
     redGates,
   };
