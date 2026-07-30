@@ -1,0 +1,19 @@
+# Issue #17 Plan readiness judgment
+
+Judge the construction readiness of:
+
+- Authority: `.ak/dockets/issues/17/authority/judge-001/receipt.json`
+- Coder Plan: `.ak/dockets/issues/17/plan/coder-001/receipt.json`
+
+Check every proposed change for Behavior / Owner / Red / Green / Scope and exact reconciliation to A1–A6 and U1–U5.
+
+Pay particular attention to depth and bounded scope:
+
+- whether the new atomic construction/dispatch seam is deep rather than spreading prompt knowledge across role, runner, ledger, auditor, schema, and extension;
+- whether adding a new caller document/CLI flag is actually authorized and necessary versus compiling from existing canonical Skill/task/fixed target;
+- whether structured executable capabilities can be introduced without turning issue #17 into a generic sandbox/policy redesign;
+- whether explicit no-spec behavior is current required product scope or only an authority boundary that should remain unchanged unless existing Reviewer supports it;
+- whether exact prompt retention belongs in Reviewer execution evidence without generic session retention;
+- whether the plan safely replaces obsolete tests rather than layering a second dispatch path.
+
+Return `converged` only if construction can begin without unresolved owner choices or materially invented interface scope. Otherwise identify the smallest exact corrections. Return only through `ak_judge_output`; do not edit or commit.
