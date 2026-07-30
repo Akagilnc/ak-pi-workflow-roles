@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 
 import { exactUtf8 } from "./exact-utf8.ts";
 import { sameReviewerRefs } from "./reviewer-git-snapshot.ts";
-import { createReviewerPinnedGitReader, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
-export { createReviewerPinnedGitReader, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
+import { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
+export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
@@ -244,15 +244,11 @@ function proposalIdentity(proposal: unknown): string {
   return sha256(encoded);
 }
 
-function immutablePin(pin: ReviewerPinnedTarget): ReviewerPinnedTarget {
-  return Object.freeze({ repositoryRoot: pin.repositoryRoot, targetHead: pin.targetHead, refs: Object.freeze({ ...pin.refs }) });
-}
-
 export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   const task = Uint8Array.from(dependencies.task);
   const canonicalSkill = dependencies.canonicalSkill;
   const capabilities = dependencies.capabilities;
-  const targetSnapshot = immutablePin(dependencies.reader.pin);
+  const targetSnapshot = immutableReviewerPin(dependencies.reader.pin);
   const hostTools = freezeStrings(dependencies.hostTools);
   let accepted: ReviewerAcceptanceEvidence | undefined;
   let accepting = false;
@@ -285,17 +281,20 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     }
     proposal.standardsMaterials.forEach((selection, index) =>
       validateMaterialSelection(selection, "standards", index));
-    if (!isExactObject(proposal.required, proposal.spec?.state === "established" ? ["standards", "spec"] : ["standards"])) {
-      throw new Error("Capability requirements contradict Spec state");
-    }
-
-    if (!isExactObject(proposal.spec, ["state", proposal.spec?.state === "established" ? "materials" : "evidence"])) {
+    const axisPlan = proposal.spec?.state === "established"
+      ? Object.freeze({ kind: "two-leg" as const, selections: proposal.spec.materials, selectionLabel: "spec", requiredKeys: ["standards", "spec"] as const })
+      : proposal.spec?.state === "not-established"
+        ? Object.freeze({ kind: "standards-only" as const, selections: proposal.spec.evidence, selectionLabel: "no-spec evidence", requiredKeys: ["standards"] as const })
+        : undefined;
+    if (axisPlan === undefined || !isExactObject(proposal.spec, ["state", axisPlan.kind === "two-leg" ? "materials" : "evidence"])) {
       throw new Error("Invalid Spec state");
     }
-    const specSelections = proposal.spec.state === "established" ? proposal.spec.materials : proposal.spec.evidence;
+    if (!isExactObject(proposal.required, axisPlan.requiredKeys)) {
+      throw new Error("Capability requirements contradict Spec state");
+    }
+    const specSelections = axisPlan.selections;
     if (!Array.isArray(specSelections) || specSelections.length === 0) throw new Error("Spec state evidence is required");
-    specSelections.forEach((selection, index) =>
-      validateMaterialSelection(selection, proposal.spec.state === "established" ? "spec" : "no-spec evidence", index));
+    specSelections.forEach((selection, index) => validateMaterialSelection(selection, axisPlan.selectionLabel, index));
 
     const allSelections = [...proposal.standardsMaterials, ...specSelections];
     if (!hasUniqueValues(allSelections.map(({ id }) => id)) ||
@@ -308,7 +307,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     }
 
     const standardsGrant = validateRequest(proposal.required.standards, capabilities, hostTools);
-    const specGrant = proposal.spec.state === "established"
+    const specGrant = axisPlan.kind === "two-leg"
       ? validateRequest(proposal.required.spec, capabilities, hostTools)
       : undefined;
     const runnerOperations = REVIEWER_PREREQUISITES.filter((operation) => operation.startsWith("runner."));
@@ -378,12 +377,12 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     const promptInputs: Array<Readonly<{ axis: "standards" | "spec"; prompt: string; grant: ReviewerCapabilityRequest }>> = [
       { axis: "standards", prompt: standardsPrompt, grant: standardsGrant },
     ];
-    if (proposal.spec.state === "established") {
+    if (axisPlan.kind === "two-leg") {
       const specBurden = skillSection(canonicalSkill, "**Spec sub-agent prompt**", "### 5. Aggregate");
-      const specPrompt = `${common}\n\nSpec materials:\n${await renderMaterials(proposal.spec.materials)}\n\n${specBurden}\n`;
+      const specPrompt = `${common}\n\nSpec materials:\n${await renderMaterials(axisPlan.selections)}\n\n${specBurden}\n`;
       promptInputs.push({ axis: "spec", prompt: specPrompt, grant: specGrant! });
     } else {
-      await renderMaterials(proposal.spec.evidence);
+      await renderMaterials(axisPlan.selections);
     }
     const compilePrompt = dependencies.compilePrompt ?? ((prompt: string) => reviewerPromptIdentity(prompt));
     const firstCompilations = promptInputs.map(({ axis, prompt }) => compilePrompt(prompt, axis, 1));
@@ -402,9 +401,9 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     const evidenceFor = (items: readonly MaterialSelection[]) => Object.freeze(items.map((item) => materialEvidence.get(item.id)!));
     const materials = Object.freeze({
       standards: evidenceFor(proposal.standardsMaterials),
-      ...(proposal.spec.state === "established"
-        ? { spec: evidenceFor(proposal.spec.materials) }
-        : { noSpecEvidence: evidenceFor(proposal.spec.evidence) }),
+      ...(axisPlan.kind === "two-leg"
+        ? { spec: evidenceFor(axisPlan.selections) }
+        : { noSpecEvidence: evidenceFor(axisPlan.selections) }),
     });
     return Object.freeze({
       identity,

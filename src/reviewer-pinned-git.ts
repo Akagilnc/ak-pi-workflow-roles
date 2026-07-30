@@ -27,7 +27,7 @@ export type ReviewerPinnedGitReader = {
 
 const execFileAsync = promisify(execFile);
 const sha256 = (bytes: string | Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
-const immutablePin = (pin: ReviewerPinnedTarget): ReviewerPinnedTarget => Object.freeze({
+export const immutableReviewerPin = (pin: ReviewerPinnedTarget): ReviewerPinnedTarget => Object.freeze({
   repositoryRoot: pin.repositoryRoot, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
 async function gitText(root: string, args: readonly string[]): Promise<string> {
@@ -37,10 +37,11 @@ async function gitText(root: string, args: readonly string[]): Promise<string> {
 
 /** Concrete fixed-point Git I/O; dispatch owns all policy applied to these reads. */
 export async function createReviewerPinnedGitReader(root = process.cwd()): Promise<ReviewerPinnedGitReader> {
-  const repositoryRoot = await realpath(root);
+  const discoveredRoot = await gitText(root, ["rev-parse", "--show-toplevel"]);
+  const repositoryRoot = await realpath(discoveredRoot);
   const targetHead = await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]);
   const refs = parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs()));
-  const pin = immutablePin({ repositoryRoot, targetHead, refs });
+  const pin = immutableReviewerPin({ repositoryRoot, targetHead, refs });
   const symbolic = (base: string): string | undefined => {
     const selected = Object.hasOwn(refs, base) ? base : (() => {
       const candidates = [`refs/heads/${base}`, `refs/tags/${base}`, `refs/remotes/${base}`].filter((name) => Object.hasOwn(refs, name));
@@ -55,7 +56,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   return Object.freeze({
     pin,
     async snapshot() {
-      return immutablePin({ repositoryRoot, targetHead: await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]), refs: parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs())) });
+      return immutableReviewerPin({ repositoryRoot, targetHead: await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]), refs: parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs())) });
     },
     async resolve(base: string) {
       if (!/^[A-Za-z0-9._/~^+-]+$/.test(base) || base.startsWith("-") || base.includes("..") || base.includes("@{")) throw new Error("Unsafe base revision grammar");

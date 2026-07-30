@@ -48,11 +48,13 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const diffCommand = `git diff ${base}...${target}`;
     const request = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites };
     const root = await realpath(fixture);
+    const nestedCwd = resolve(fixture, "nested", "invocation");
+    await mkdir(nestedCwd, { recursive: true });
 
     const pack = await packIsolatedPackage(home);
-    assert.ok(pack.files.some((f) => f.path === "src/reviewer-dispatch.ts"));
-    assert.ok(pack.files.some((f) => f.path === "src/reviewer-pinned-git.ts"));
-    assert.equal(pack.files.some((f) => /(^|\/)SKILL\.md$/.test(f.path)), false);
+    assert.ok(pack.files.some((file) => file.path === "src/reviewer-dispatch.ts"));
+    assert.ok(pack.files.some((file) => file.path === "src/reviewer-pinned-git.ts"));
+    assert.equal(pack.files.some((file) => /(^|\/)SKILL\.md$/.test(file.path)), false);
     await writeFile(resolve(fixture, "package.json"), JSON.stringify({ private: true, dependencies: {
       "@ak/pi-workflow-roles": `file:${pack.tarball}`,
       "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
@@ -86,9 +88,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     ]);
 
     const originalCwd = process.cwd();
-    process.chdir(fixture);
+    process.chdir(nestedCwd);
     try {
-    await withInProcessPi({ cwd: fixture, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
+    await withInProcessPi({ cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
       assert.deepEqual(loader.getExtensions().errors, []);
       const before = await readFile(resolve(fixture, "consumer.txt"), "utf8");
       await session.prompt("Review this fixed point.");
