@@ -66,7 +66,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     await writeFile(capsPath, JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read"], bashCommands: [], prerequisiteOperations: prerequisites }));
 
     const proposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [{ id: "standards", repositoryPath: "STANDARDS.md" }], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: request, spec: request } };
-    const bad = { ...proposal, required: { standards: request, spec: { ...request, tools: ["read", "bash"], bashCommands: ["git diff review-base HEAD"] } } };
+    const bad = { ...proposal, required: { standards: request, spec: { ...request, tools: ["read", "bash"], bashCommands: [] } } };
     const candidate = { status: "completed", report: "## Standards\nReadable.\n\n## Spec\nSatisfied." };
     const corrected = { status: "completed", report: "## Standards\nReadable; no findings.\n\n## Spec\nRequirement satisfied; no findings.\n\nStandards: 0; Spec: 0." };
     const faux = fauxProvider({ api: "package-reviewer", provider: "package-reviewer", tokenSize: { min: 1000, max: 1000 } });
@@ -102,6 +102,11 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.equal(accepted.message.details.dispatch.legs.length, 2);
       assert.match(accepted.message.details.dispatch.legs[0].prompt, /\*\*Refused Bequest\*\*/);
       assert.match(accepted.message.details.dispatch.legs[1].prompt, /Quote the spec line for each finding/);
+      assert.doesNotMatch(accepted.message.details.dispatch.legs[0].prompt, /consumer text must become reviewed|Review current HEAD against/);
+      assert.equal(accepted.message.details.dispatch.input.task.bytes, taskBytes.toString("utf8"));
+      assert.equal(accepted.message.details.dispatch.input.task.sha256, createHash("sha256").update(taskBytes).digest("hex"));
+      assert.match(accepted.message.details.dispatch.range.diffCommand, /^git diff [0-9a-f]{40}\.\.\.[0-9a-f]{40}$/);
+      assert.match(accepted.message.details.dispatch.range.diffSha256, /^[0-9a-f]{64}$/);
       assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.axis), ["standards", "spec"]);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.repositoryRoot, root);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.targetHead, target);

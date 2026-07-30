@@ -59,6 +59,7 @@ export type ReviewerRange = Readonly<{
   base: string;
   target: string;
   diffCommand: string;
+  diffSha256: string;
   commits: readonly string[];
 }>;
 export type ReviewerPinnedGitReader = {
@@ -77,7 +78,10 @@ export type AcceptedReviewerLeg = Readonly<{
 export type AcceptedReviewerDispatch = Readonly<{
   identity: string;
   recipe: "reviewer-dispatch-v1";
-  input: Readonly<{ taskSha256: string; canonicalSkillSha256: string }>;
+  input: Readonly<{
+    task: Readonly<{ bytes: string; utf8Length: number; sha256: string }>;
+    canonicalSkillSha256: string;
+  }>;
   targetSnapshot: ReviewerPinnedTarget;
   range: ReviewerRange;
   materials: Readonly<{
@@ -235,6 +239,9 @@ function validateRequest(
   if (bashCommands.length > 0 && !tools.includes("bash")) {
     throw new Error("Reviewer bash commands require bash tool");
   }
+  if (tools.includes("bash") && bashCommands.length === 0) {
+    throw new Error("Reviewer bash tool requires at least one exact command");
+  }
   return immutableRequest({ tools, bashCommands, prerequisiteOperations });
 }
 
@@ -297,10 +304,22 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   const pin = Object.freeze({ repositoryRoot, targetHead, refs: Object.freeze(refs) });
   return Object.freeze({
     pin,
-    async resolve(base: string) { return gitText(repositoryRoot, ["rev-parse", `${base}^{commit}`]); },
+    async resolve(base: string) {
+      const resolved = await gitText(repositoryRoot, ["rev-parse", `${base}^{commit}`]);
+      const mergeBase = await gitText(repositoryRoot, ["merge-base", resolved, targetHead]);
+      if (!mergeBase) throw new Error("Unable to derive merge-base for pinned range");
+      return mergeBase;
+    },
     async range(base: string) {
-      const commitsText = await gitText(repositoryRoot, ["rev-list", "--reverse", `${base}..${targetHead}`]);
-      return Object.freeze({ base, target: targetHead, diffCommand: `git diff ${base} ${targetHead}`, commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
+      const mergeBase = await gitText(repositoryRoot, ["merge-base", base, targetHead]);
+      if (!mergeBase) throw new Error("Unable to derive merge-base for pinned range");
+      const diffCommand = `git diff ${mergeBase}...${targetHead}`;
+      const [{ stdout: diff }, commitsText] = await Promise.all([
+        execFileAsync("git", ["-C", repositoryRoot, "diff", `${mergeBase}...${targetHead}`], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 }),
+        gitText(repositoryRoot, ["rev-list", "--reverse", `${mergeBase}..${targetHead}`]),
+      ]);
+      if (diff.length === 0) throw new Error("Pinned three-dot diff is empty");
+      return Object.freeze({ base: mergeBase, target: targetHead, diffCommand, diffSha256: sha256(Uint8Array.from(diff)), commits: Object.freeze(commitsText ? commitsText.split("\n") : []) });
     },
     async material(path: string, revision: string) {
       if (revision !== targetHead) throw new Error("Material revision is not the pinned target");
@@ -361,7 +380,10 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       throw new Error("Range is inconsistent with immutable target pin");
     }
     if (
-      typeof readRange.diffCommand !== "string" ||
+      readRange.diffCommand !== `git diff ${base}...${targetSnapshot.targetHead}` ||
+      typeof readRange.diffSha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(readRange.diffSha256) ||
+      readRange.diffSha256 === sha256("") ||
       !Array.isArray(readRange.commits) ||
       !readRange.commits.every((commit) => typeof commit === "string") ||
       !hasUniqueValues(readRange.commits)
@@ -372,6 +394,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       base,
       target: readRange.target,
       diffCommand: readRange.diffCommand,
+      diffSha256: readRange.diffSha256,
       commits: freezeStrings(readRange.commits),
     });
 
@@ -392,13 +415,15 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       return rendered.join("\n\n");
     };
 
+    const taskText = utf8Decoder.decode(task);
+    const taskEvidence = Object.freeze({ bytes: taskText, utf8Length: task.byteLength, sha256: sha256(task) });
     const common = [
-      `Task-SHA256: ${sha256(task)}`,
-      "Task bytes:",
-      utf8Decoder.decode(task),
+      `Task-SHA256: ${taskEvidence.sha256}`,
+      `Task-UTF8-Length: ${taskEvidence.utf8Length}`,
       `Target: ${range.target}`,
       `Base: ${range.base}`,
       `Diff: ${range.diffCommand}`,
+      `Diff-SHA256: ${range.diffSha256}`,
       "Commits:",
       range.commits.join("\n"),
     ].join("\n");
@@ -430,7 +455,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     return Object.freeze({
       identity,
       recipe: "reviewer-dispatch-v1",
-      input: Object.freeze({ taskSha256: sha256(task), canonicalSkillSha256: sha256(canonicalSkill) }),
+      input: Object.freeze({ task: taskEvidence, canonicalSkillSha256: sha256(canonicalSkill) }),
       targetSnapshot,
       range,
       materials,
