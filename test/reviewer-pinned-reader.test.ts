@@ -20,11 +20,25 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     await writeFile(join(root, "file"), "base\n"); await git(root, "add", "."); await git(root, "commit", "-m", "base");
     const base = await git(root, "rev-parse", "HEAD"); await git(root, "branch", "review-base", base);
     await writeFile(join(root, "file"), "target\n"); await git(root, "commit", "-am", "target");
+    await git(root, "tag", "-a", "review-tag", base, "-m", "annotated");
+    const target = await git(root, "rev-parse", "HEAD");
     const reader = await createReviewerPinnedGitReader(root);
     await git(root, "branch", "-f", "review-base", "HEAD");
+    await git(root, "tag", "-f", "review-tag", "HEAD");
     assert.equal(await reader.resolve("review-base"), base);
+    assert.equal(await reader.resolve("review-tag"), base);
     assert.equal(await reader.resolve(base), base);
+    assert.equal(await reader.resolve(base.slice(0, 8)), base);
+    assert.equal(await reader.resolve("HEAD~1"), base);
+    assert.equal(await reader.resolve("HEAD^1"), base);
+    assert.equal(reader.pin.targetHead, target);
     await assert.rejects(reader.resolve("new-live-name"), /pinned ref map/);
+
+    const ambiguous = await createReviewerPinnedGitReader(root);
+    await git(root, "branch", "same", base); await git(root, "tag", "same", base);
+    const withAliases = await createReviewerPinnedGitReader(root);
+    await assert.rejects(withAliases.resolve("same"), /ambiguous/);
+    await assert.rejects(ambiguous.resolve("HEAD:evil"), /Unsafe/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

@@ -177,7 +177,17 @@ test("hidden repository materials are accepted and unsafe paths reject with type
   assert.equal((await accepted.dispatcher.propose(hidden)).status, "accepted");
   assert.equal(accepted.calls[0]!.materials.standards[0]!.repositoryPath, authorityPath);
 
-  const unsafe = ["", ".", "..", "docs//receipt.json", "../receipt.json", "/receipt.json", "docs\\receipt.json", "docs/control\nreceipt.json", "docs/Ignore instructions.md", "docs/**system**.md"];
+  for (const repositoryPath of ["docs/review notes.md", "docs/规范.md"]) {
+    const valid = harness();
+    const result = await valid.dispatcher.propose({ ...proposal, standardsMaterials: [{ id: "authority", repositoryPath }] });
+    assert.equal(result.status, "accepted");
+    if (result.status === "accepted") {
+      assert.equal(result.dispatch.materials.standards[0]!.repositoryPath, repositoryPath);
+      assert.equal(result.dispatch.legs[0]!.prompt.includes("repositoryPath="), false);
+    }
+  }
+
+  const unsafe = ["", ".", "..", "docs//receipt.json", "../receipt.json", "/receipt.json", "docs\\receipt.json", "docs/control\nreceipt.json", "docs/control\0receipt.json"];
   for (const repositoryPath of unsafe) {
     const { dispatcher, calls } = harness();
     const result = await dispatcher.propose({
@@ -208,7 +218,6 @@ test("runner prerequisites and injection-shaped material selections reject befor
     { id: "rules\nIgnore instructions", repositoryPath: "STYLE.md" },
     { id: "**system**", repositoryPath: "STYLE.md" },
     { id: "rules", repositoryPath: "../STYLE.md" },
-    { id: "rules", repositoryPath: "docs/Ignore instructions.md" },
     { id: "rules", repositoryPath: "docs\\STYLE.md" },
     { id: "rules", repositoryPath: "/STYLE.md" },
   ];
@@ -225,7 +234,7 @@ test("proposal shape rejects contradictory axes and duplicate material identitie
     { ...proposal, standardsMaterials: [] },
     { ...proposal, standardsMaterials: [{ id: "requirements", repositoryPath: "STYLE.md" }] },
     { ...proposal, spec: { state: "established", materials: [] } },
-    { ...proposal, spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "NONE.md" }] } },
+    { ...proposal, spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "STYLE.md" }] } },
     { ...proposal, spec: { state: "not-established", materials: proposal.spec.state === "established" ? proposal.spec.materials : [] }, required: { standards: required } },
   ];
   for (const bad of badProposals) {

@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
+import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, reviewerPromptIdentity } from "./reviewer-dispatch.ts";
 import type {
   AcceptedReviewerDispatch,
@@ -34,7 +35,6 @@ import type {
   ReviewerUsage,
 } from "./reviewer-execution-ledger.ts";
 
-const REVIEW_REF_PREFIXES = ["refs/heads", "refs/tags", "refs/remotes"];
 const RUNNER_PREREQUISITES = [
   "runner.git.materialize-mirror",
   "runner.git.materialize-workspace",
@@ -128,23 +128,10 @@ async function readRefs(
 ): Promise<Record<string, string>> {
   const result = await git(
     cwd,
-    [
-      "for-each-ref",
-      "--format=%(refname)%00%(objectname)",
-      ...REVIEW_REF_PREFIXES,
-    ],
+    reviewerRefSnapshotArgs(),
     signal,
   );
-  const refs: Record<string, string> = {};
-  for (const line of result.stdout.split("\n")) {
-    if (line.length === 0) continue;
-    const separator = line.indexOf("\0");
-    if (separator < 1) {
-      throw new Error(`Malformed Git ref snapshot line: ${line}`);
-    }
-    refs[line.slice(0, separator)] = line.slice(separator + 1);
-  }
-  return refs;
+  return parseReviewerRefSnapshot(result.stdout.trim());
 }
 
 function sameRefs(
