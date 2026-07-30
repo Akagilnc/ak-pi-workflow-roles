@@ -85,11 +85,16 @@ export type AcceptedReviewerDispatch = Readonly<{
   targetSnapshot: ReviewerPinnedTarget;
   range: ReviewerRange;
   materials: Readonly<{
-    standards: readonly Readonly<MaterialSelection & { sha256: string }>[];
-    spec?: readonly Readonly<MaterialSelection & { sha256: string }>[];
-    noSpecEvidence?: readonly Readonly<MaterialSelection & { sha256: string }>[];
+    standards: readonly ReviewerMaterialEvidence[];
+    spec?: readonly ReviewerMaterialEvidence[];
+    noSpecEvidence?: readonly ReviewerMaterialEvidence[];
   }>;
   legs: readonly AcceptedReviewerLeg[];
+}>;
+export type ReviewerMaterialEvidence = Readonly<MaterialSelection & {
+  bytes: string;
+  utf8Length: number;
+  sha256: string;
 }>;
 export type ReviewerRejectionEvidence = Readonly<{
   identity: string;
@@ -239,9 +244,6 @@ function validateRequest(
   if (bashCommands.length > 0 && !tools.includes("bash")) {
     throw new Error("Reviewer bash commands require bash tool");
   }
-  if (tools.includes("bash") && bashCommands.length === 0) {
-    throw new Error("Reviewer bash tool requires at least one exact command");
-  }
   return immutableRequest({ tools, bashCommands, prerequisiteOperations });
 }
 
@@ -305,10 +307,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   return Object.freeze({
     pin,
     async resolve(base: string) {
-      const resolved = await gitText(repositoryRoot, ["rev-parse", `${base}^{commit}`]);
-      const mergeBase = await gitText(repositoryRoot, ["merge-base", resolved, targetHead]);
-      if (!mergeBase) throw new Error("Unable to derive merge-base for pinned range");
-      return mergeBase;
+      return gitText(repositoryRoot, ["rev-parse", `${base}^{commit}`]);
     },
     async range(base: string) {
       const mergeBase = await gitText(repositoryRoot, ["merge-base", base, targetHead]);
@@ -398,7 +397,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       commits: freezeStrings(readRange.commits),
     });
 
-    const materialEvidence = new Map<string, Readonly<MaterialSelection & { sha256: string }>>();
+    const materialEvidence = new Map<string, ReviewerMaterialEvidence>();
     const renderMaterials = async (items: readonly MaterialSelection[]): Promise<string> => {
       const rendered: string[] = [];
       for (const item of items) {
@@ -409,7 +408,12 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         } catch {
           throw new Error(`Material is not valid UTF-8: ${item.id}`);
         }
-        materialEvidence.set(item.id, Object.freeze({ ...item, sha256: sha256(bytes) }));
+        materialEvidence.set(item.id, Object.freeze({
+          ...item,
+          bytes: text,
+          utf8Length: bytes.byteLength,
+          sha256: sha256(bytes),
+        }));
         rendered.push(`${item.id} (${item.repositoryPath}):\n${text}`);
       }
       return rendered.join("\n\n");
@@ -437,6 +441,8 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       const specBurden = skillSection(canonicalSkill, "**Spec sub-agent prompt**", "### 5. Aggregate");
       const specPrompt = `${common}\n\nSpec materials:\n${await renderMaterials(proposal.spec.materials)}\n\n${specBurden}\n`;
       promptInputs.push({ axis: "spec", prompt: specPrompt, grant: specGrant! });
+    } else {
+      await renderMaterials(proposal.spec.evidence);
     }
     const legs = Object.freeze(promptInputs.map(({ axis, prompt, grant }) => Object.freeze({
       axis,

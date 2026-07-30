@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type {
   ReviewerCapabilityRequest,
+  ReviewerMaterialEvidence,
   ReviewerPinnedTarget,
   ReviewerRange,
 } from "./reviewer-dispatch.ts";
@@ -14,9 +15,6 @@ export type ReviewerUsage = Readonly<{
 export type ReviewerTargetSnapshot = ReviewerPinnedTarget;
 export type ReviewerWorkspaceDisposition = "deleted" | Readonly<{ retained: string }>;
 
-export type ReviewerMaterialEvidence = Readonly<{
-  id: string; repositoryPath: string; sha256: string;
-}>;
 export type ReviewerCompiledLegEvidence = Readonly<{
   axis: "standards" | "spec";
   prompt: string;
@@ -122,6 +120,15 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       if (Buffer.byteLength(event.input.task.bytes, "utf8") !== event.input.task.utf8Length ||
           sha256(event.input.task.bytes) !== event.input.task.sha256)
         throw new Error("Accepted task bytes, length, or SHA disagree");
+      for (const material of [
+        ...event.materials.standards,
+        ...(event.materials.spec ?? []),
+        ...(event.materials.noSpecEvidence ?? []),
+      ]) {
+        if (Buffer.byteLength(material.bytes, "utf8") !== material.utf8Length ||
+            sha256(material.bytes) !== material.sha256)
+          throw new Error("Accepted material bytes, length, or SHA disagree");
+      }
       for (const leg of event.legs) {
         if (Buffer.byteLength(leg.prompt, "utf8") !== leg.utf8Length || sha256(leg.prompt) !== leg.sha256)
           throw new Error("Accepted compiled prompt bytes, length, or SHA disagree");

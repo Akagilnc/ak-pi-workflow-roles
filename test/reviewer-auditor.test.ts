@@ -24,7 +24,7 @@ const input = {
       input: { task: { bytes: "opaque task", utf8Length: 11, sha256: "task" }, canonicalSkillSha256: "skill" },
       target: { repositoryRoot: "/repo", targetHead: "head", refs: {} },
       range: { base: "base", target: "head", diffCommand: "git diff base...head", diffSha256: "diff", commits: ["head"] },
-      materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", sha256: "rules" }], noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", sha256: "absence" }] },
+      materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", bytes: "rules", utf8Length: 5, sha256: "rules" }], noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", bytes: "absence", utf8Length: 7, sha256: "absence" }] },
       legs: [{ axis: "standards" as const, prompt: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt", grant: { tools: ["read"] as const, bashCommands: [], prerequisiteOperations: [] } }],
     },
     started: { dispatchIdentity: "dispatch-1", cardinality: 1 as const },

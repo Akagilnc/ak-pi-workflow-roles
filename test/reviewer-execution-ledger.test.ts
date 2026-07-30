@@ -19,7 +19,7 @@ function accepted(spec = true): ReviewerEvidenceEvent {
   return {
     source: "reviewer-dispatch", type: "accepted", identity: "proposal-1", recipe: "reviewer-dispatch-v1",
     input: { task: { bytes: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha" }, target, range,
-    materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", sha256: "rules-sha" }], ...(spec ? { spec: [{ id: "requirements", repositoryPath: "SPEC.md", sha256: "spec-sha" }] } : { noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", sha256: "absence-sha" }] }) },
+    materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", bytes: "rules", utf8Length: 5, sha256: sha("rules") }], ...(spec ? { spec: [{ id: "requirements", repositoryPath: "SPEC.md", bytes: "spec", utf8Length: 4, sha256: sha("spec") }] } : { noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", bytes: "absence", utf8Length: 7, sha256: sha("absence") }] }) },
     legs: prompts.map(([axis, prompt]) => ({ axis, prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt), grant })),
   } as ReviewerEvidenceEvent;
 }
