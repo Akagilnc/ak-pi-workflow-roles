@@ -70,8 +70,8 @@
       "stored": {
         "identity": "stored",
         "path": "inputs/cutoff-scan-summary",
-        "sha256": "a7d69bfe7e773b0b4c0580d99c884a40893269902d5e49a5ebec0605c73a78cb",
-        "byteLength": 666812
+        "sha256": "daadad3bc2487de6eed761420dd3c50ff5ac301e4bc64149246146bd7d3d5c43",
+        "byteLength": 666816
       }
     },
     {
@@ -81,8 +81,8 @@
       "stored": {
         "identity": "stored",
         "path": "exhibits/cutoff-scan-implementation",
-        "sha256": "7c6db37c6fef4dd133f926a69c9a49cb15a128b00d117004960f54bd4e87a96c",
-        "byteLength": 27409
+        "sha256": "c5e2b0b6a651a4bd24b49d253d80f3d524126b8b874855509766c4f7e99bb504",
+        "byteLength": 29375
       }
     }
   ],

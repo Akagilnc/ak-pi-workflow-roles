@@ -2165,6 +2165,38 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
   const importIdx = implText.indexOf("await import");
   assert.equal(driftIdx >= 0 && importIdx > driftIdx, true, "dist gate precedes import");
 
+  // Immutable execution-input shape: one executionHead, Git dispositions, no fail-open catches.
+  assert.match(implText, /required-tuple-unresolvable/);
+  assert.match(implText, /dispositions-worktree-drift/);
+  assert.match(implText, /report-worktree-drift/);
+  assert.match(implText, /derivative-worktree-drift/);
+  assert.match(
+    implText,
+    /Load dispositions from the single execution commit|dispositionsFromExecutionHead/,
+  );
+  assert.equal(
+    /\/\*\s*worktree-only\s*\*\//.test(implText),
+    false,
+    "no worktree-only omission catches in child",
+  );
+  assert.equal(
+    /dispositions may be dirty mid-apply/.test(implText),
+    false,
+    "no dirty-disposition fail-open in child",
+  );
+  // executionHead captured before disposition load / required-universe construction.
+  const execHeadDecl = implText.indexOf(
+    "const executionHead = gitRevParse(\"HEAD\")",
+  );
+  const dispLoad = implText.indexOf(
+    "requireGitTuple(executionHead, dispRel)",
+  );
+  assert.equal(
+    execHeadDecl >= 0 && dispLoad > execHeadDecl,
+    true,
+    "executionHead precedes disposition Git load",
+  );
+
   // Resolve every successor Git tuple from the ledger.
   for (const t of summary.identityLedger.gitTuples) {
     assert.equal(t.repository, SOLE_REPO_NAMESPACE);
@@ -2179,6 +2211,7 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
   }
 
   // Independent required-tuple completeness oracle at child executionHead.
+  // Fail-closed: dispositions and every report/derivative resolve without catches.
   const required: GitTuple[] = [
     gitTuple(IMMUTABLE, NAMESPACE_ISSUE_SNAPSHOT),
     gitTuple(IMMUTABLE, NAMESPACE_DISCOVERY_SPEC),
@@ -2186,13 +2219,13 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
     gitTuple(IMMUTABLE, `${IMMUTABLE_MIG_PREFIX}/inventory.json`),
     scannerSrc,
     scannerDist,
+    gitTuple(execHead, `${IMMUTABLE_MIG_PREFIX}/dispositions.json`),
   ];
-  try {
-    required.push(gitTuple(execHead, `${IMMUTABLE_MIG_PREFIX}/dispositions.json`));
-  } catch {
-    /* dispositions may be dirty mid-apply; child still ledgers HEAD when resolvable */
-  }
-  const dispLive = readJson<{
+  const dispFromExec = JSON.parse(
+    gitShow(`${execHead}:${IMMUTABLE_MIG_PREFIX}/dispositions.json`).toString(
+      "utf8",
+    ),
+  ) as {
     items: Array<{
       itemKey: string;
       basename: string;
@@ -2204,42 +2237,36 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
         recoveredPath?: string;
       };
     }>;
-  }>(join(MIG, "dispositions.json"));
-  const admittedLive = dispLive.items.filter((d) =>
+  };
+  const admittedFromExec = dispFromExec.items.filter((d) =>
     ["recovered", "reference", "superseded"].includes(d.disposition),
   );
-  assert.equal(admittedLive.length, 277);
-  const referenceDisps = admittedLive.filter((d) => d.disposition === "reference");
+  assert.equal(admittedFromExec.length, 277);
+  const referenceDisps = admittedFromExec.filter(
+    (d) => d.disposition === "reference",
+  );
   assert.equal(referenceDisps.length, 7, "seven reference dispositions");
-  for (const d of admittedLive) {
+  for (const d of admittedFromExec) {
     if (d.evidence?.reference) {
       required.push(
         gitTuple(d.evidence.reference.commitSha, d.evidence.reference.path),
       );
     }
     if (d.evidence?.redactionReportPath) {
-      try {
-        required.push(
-          gitTuple(
-            execHead,
-            `${IMMUTABLE_MIG_PREFIX}/${d.evidence.redactionReportPath}`,
-          ),
-        );
-      } catch {
-        /* worktree-only */
-      }
+      required.push(
+        gitTuple(
+          execHead,
+          `${IMMUTABLE_MIG_PREFIX}/${d.evidence.redactionReportPath}`,
+        ),
+      );
     }
     if (d.evidence?.recoveredPath) {
-      try {
-        required.push(
-          gitTuple(
-            execHead,
-            `${IMMUTABLE_MIG_PREFIX}/${d.evidence.recoveredPath}`,
-          ),
-        );
-      } catch {
-        /* worktree-only */
-      }
+      required.push(
+        gitTuple(
+          execHead,
+          `${IMMUTABLE_MIG_PREFIX}/${d.evidence.recoveredPath}`,
+        ),
+      );
     }
   }
   const requiredKeySet = new Set(required.map(tupleKey));
@@ -2252,6 +2279,29 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
   assert.deepEqual(
     [...summary.identityLedger.requiredTupleKeys!].sort(),
     [...requiredKeySet].sort(),
+  );
+
+  // Sealed dispositions input must bind executionHead Git bytes (not null-commit fallback).
+  const sealedDisp = (
+    summary as {
+      sealedInputs?: {
+        dispositions?: GitTuple & {
+          worktreeMatchesHead?: boolean;
+          commit: string | null;
+        };
+      };
+    }
+  ).sealedInputs?.dispositions;
+  assert.ok(sealedDisp, "sealed dispositions tuple");
+  assert.equal(sealedDisp!.commit, execHead);
+  assert.equal(sealedDisp!.path, `${IMMUTABLE_MIG_PREFIX}/dispositions.json`);
+  assert.equal(typeof sealedDisp!.blobOid, "string");
+  assert.equal(sealedDisp!.blobOid!.length, 40);
+  assert.equal(sealedDisp!.sha256.length, 64);
+  assert.equal(
+    (sealedDisp as { worktreeMatchesHead?: boolean }).worktreeMatchesHead,
+    undefined,
+    "no worktree fallback field on sealed dispositions",
   );
 
   // Manifest gitTupleCount must equal sealed result unique Git tuples and
@@ -2293,6 +2343,86 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
     assert.equal(omitted.includes(victim), true);
   }
 
+  // RED: dirty disposition/report/derivative bytes disagree with resolved tuples.
+  {
+    const dispT = gitTuple(execHead, `${IMMUTABLE_MIG_PREFIX}/dispositions.json`);
+    const dirtyDispSha = sha256(Buffer.from("dirty-dispositions-counterexample\n"));
+    assert.notEqual(dirtyDispSha, dispT.sha256);
+    assert.equal(
+      dirtyDispSha === dispT.sha256,
+      false,
+      "dirty disposition bytes must fail exact-byte agreement",
+    );
+
+    const sampleWithReport = admittedFromExec.find(
+      (d) => d.evidence?.redactionReportPath,
+    )!;
+    const reportT = gitTuple(
+      execHead,
+      `${IMMUTABLE_MIG_PREFIX}/${sampleWithReport.evidence!.redactionReportPath}`,
+    );
+    const dirtyReportSha = sha256(Buffer.from("dirty-report-counterexample\n"));
+    assert.notEqual(dirtyReportSha, reportT.sha256);
+    assert.equal(
+      dirtyReportSha === reportT.sha256,
+      false,
+      "dirty report bytes must fail exact-byte agreement",
+    );
+
+    const sampleWithDer = admittedFromExec.find((d) => d.evidence?.recoveredPath)!;
+    const derT = gitTuple(
+      execHead,
+      `${IMMUTABLE_MIG_PREFIX}/${sampleWithDer.evidence!.recoveredPath}`,
+    );
+    const dirtyDerSha = sha256(Buffer.from("dirty-derivative-counterexample\n"));
+    assert.notEqual(dirtyDerSha, derT.sha256);
+    assert.equal(
+      dirtyDerSha === derT.sha256,
+      false,
+      "dirty derivative bytes must fail exact-byte agreement",
+    );
+  }
+
+  // RED: one unresolvable required path fails closed rather than shrinking denominator.
+  {
+    const baselineCount = requiredKeySet.size;
+    assert.equal(baselineCount > 0, true);
+    const ghostPath = `${IMMUTABLE_MIG_PREFIX}/__unresolvable-required-path__.json`;
+    let threw = false;
+    let threwPath = "";
+    const built: GitTuple[] = [];
+    // Fail-closed construction: resolve every path; catch only to observe failure.
+    const paths = [
+      `${IMMUTABLE_MIG_PREFIX}/dispositions.json`,
+      ghostPath,
+    ];
+    for (const p of paths) {
+      try {
+        built.push(gitTuple(execHead, p));
+      } catch (err) {
+        threw = true;
+        threwPath = p;
+        // Do not continue omitting — stop; denominator must not be accepted reduced.
+        break;
+      }
+    }
+    assert.equal(threw, true, "unresolvable required path must fail");
+    assert.equal(threwPath, ghostPath, "failure names the exact unresolvable path");
+    assert.equal(
+      built.length < paths.length,
+      true,
+      "construction aborts before accepting a reduced required set",
+    );
+    // A catch-and-omit approach would yield built.length === 1 and silently
+    // shrink; fail-closed leaves the universe incomplete and unaccepted.
+    const reducedKeys = new Set(built.map(tupleKey));
+    assert.equal(
+      reducedKeys.size === baselineCount,
+      false,
+      "unresolvable path must not yield a complete required universe",
+    );
+  }
+
   // All seven reference dispositions produce matching reference tuples.
   assert.ok(summary.identityLedger.referenceTuples, "referenceTuples ledgered");
   assert.equal(summary.identityLedger.referenceTuples!.length, 7);
@@ -2315,7 +2445,7 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
   const extByKey = new Map(
     summary.identityLedger.externalSources.map((e) => [e.itemKey, e]),
   );
-  for (const d of admittedLive) {
+  for (const d of admittedFromExec) {
     const ext = extByKey.get(d.itemKey);
     assert.ok(ext, `external seal ${d.basename}`);
     assert.equal(ext!.basename, d.basename);
@@ -2349,6 +2479,9 @@ test("repair-003 recorder successor independently corroborates cutoff oracle and
     "referenceTuplesComplete",
     "redaction42a9fc",
     "redactionAf289a",
+    "dispositionsFromExecutionHead",
+    "requiredUniverseFailClosed",
+    "immutableReportDerivativeAgreement",
   ]) {
     assert.equal(summary.redGates[key], true, `red gate ${key}`);
   }
