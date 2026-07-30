@@ -7,6 +7,8 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 import {
   createReviewerDispatcher,
   parseReviewerCapabilities,
+  REVIEWER_CHILD_TOOLS,
+  REVIEWER_PREREQUISITES,
   type AcceptedReviewerDispatch,
   type ReviewerCapabilitiesV1,
   type ReviewerPinnedGitReader,
@@ -21,13 +23,9 @@ export type { ReviewerOutput };
 export const AGENT_TOOL_NAME = "Agent";
 
 const requestSchema = Type.Object({
-  tools: Type.Array(StringEnum(["read", "grep", "find", "ls", "bash", "write", "edit"] as const), { uniqueItems: true }),
+  tools: Type.Array(StringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
   bashCommands: Type.Array(Type.String(), { uniqueItems: true }),
-  prerequisiteOperations: Type.Array(StringEnum([
-    "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
-    "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror",
-    "runner.git.materialize-workspace", "runner.git.verify-snapshot",
-  ] as const), { uniqueItems: true }),
+  prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
 }, { additionalProperties: false });
 const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }) }, { additionalProperties: false });
 const reviewerProposalSchema = Type.Object({
@@ -91,6 +89,9 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     try { task = new TextDecoder("utf-8", { fatal: true }).decode(taskBytes); } catch { throw new Error("Reviewer task is not valid UTF-8"); }
     if (!task.trim()) throw new Error("Reviewer task is empty");
     capabilities = parseReviewerCapabilities(await dependencies.loadCapabilities(capabilityPath), taskBytes);
+    if (!capabilities.prerequisiteOperations.includes("preflight.git.pin-target")) {
+      throw new Error("Missing preflight prerequisite: preflight.git.pin-target");
+    }
     const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
     if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
     binding = loaded;

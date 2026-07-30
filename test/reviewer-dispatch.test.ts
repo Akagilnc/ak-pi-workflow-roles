@@ -101,8 +101,8 @@ test("capability document is closed, exact-byte task-bound, and deeply immutable
 test("proposal grants are exact subsets of the closed vocabulary, ceiling, and host", async () => {
   const emptyBash = { ...proposal, required: { ...proposal.required, standards: { ...required, bashCommands: [] } } };
   const empty = harness();
-  assert.equal((await empty.dispatcher.propose(emptyBash as ReviewerProposalV1)).status, "rejected");
-  assert.equal(empty.calls.length, 0);
+  assert.equal((await empty.dispatcher.propose(emptyBash as ReviewerProposalV1)).status, "accepted");
+  assert.equal(empty.calls.length, 1);
 
   for (const changed of [
     `${exactCommand} `,
@@ -126,6 +126,7 @@ test("proposal grants are exact subsets of the closed vocabulary, ceiling, and h
 test("all pin-bound material and range failures reject atomically before runner", async () => {
   const failures: ReviewerPinnedGitReader[] = [
     fakeReader({ async resolve() { throw new Error("base unreachable"); } }),
+    fakeReader({ async resolve() { return "SUBMITTED"; }, async range() { return { base: "MERGE_BASE", target: "B", diffCommand: "git diff MERGE_BASE...B", diffSha256: "1".repeat(64), commits: ["B"] }; } }),
     fakeReader({ async range(base) { return { base, target: "DRIFT", diffCommand: `git diff ${base}...DRIFT`, diffSha256: "1".repeat(64), commits: [] }; } }),
     fakeReader({ async range(base) { return { base, target: "B", diffCommand: `git diff ${base} B`, diffSha256: "1".repeat(64), commits: ["B"] }; } }),
     fakeReader({ async range(base) { return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: createHash("sha256").update("").digest("hex"), commits: ["B"] }; } }),
@@ -219,7 +220,7 @@ test("canonical snapshot perturbation changes only extracted Standards evidence"
   assert.equal(original.calls[0]!.legs[1]!.sha256, changed.calls[0]!.legs[1]!.sha256);
 });
 
-test("no-spec produces one complete Standards leg and no Spec bytes", async () => {
+test("no-spec retains actual evidence bytes, length, and hash without creating a Spec leg", async () => {
   const one: ReviewerProposalV1 = {
     ...proposal,
     spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "NO-SPEC.md" }] },
@@ -230,6 +231,14 @@ test("no-spec produces one complete Standards leg and no Spec bytes", async () =
   assert.deepEqual(calls[0]!.legs.map(({ axis }) => axis), ["standards"]);
   assert.match(calls[0]!.legs[0]!.prompt, /Mysterious Name|NO-SPEC/);
   assert.doesNotMatch(calls[0]!.legs[0]!.prompt, /Spec sub-agent prompt|Quote the spec line/);
+  const evidence = calls[0]!.materials.noSpecEvidence![0]!;
+  assert.deepEqual(evidence, {
+    id: "absence",
+    repositoryPath: "NO-SPEC.md",
+    bytes: "B:NO-SPEC.md\n",
+    utf8Length: 13,
+    sha256: createHash("sha256").update("B:NO-SPEC.md\n").digest("hex"),
+  });
   assert.equal(dispatcher.acceptance?.cardinality, 1);
 });
 

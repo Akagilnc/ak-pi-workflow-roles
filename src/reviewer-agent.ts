@@ -25,6 +25,7 @@ import { prepareComplianceDispatch } from "./compliance-transport.ts";
 import type {
   AcceptedReviewerDispatch,
   AcceptedReviewerLeg,
+  ReviewerPrerequisiteOperation,
 } from "./reviewer-dispatch.ts";
 import type {
   ReviewerTargetSnapshot,
@@ -33,9 +34,11 @@ import type {
 } from "./reviewer-execution-ledger.ts";
 
 const REVIEW_REF_PREFIXES = ["refs/heads", "refs/tags", "refs/remotes"];
-const RUNNER_MIRROR = "runner.git.materialize-mirror";
-const RUNNER_WORKSPACE = "runner.git.materialize-workspace";
-const RUNNER_VERIFY = "runner.git.verify-snapshot";
+const RUNNER_PREREQUISITES = [
+  "runner.git.materialize-mirror",
+  "runner.git.materialize-workspace",
+  "runner.git.verify-snapshot",
+] as const satisfies readonly ReviewerPrerequisiteOperation[];
 
 export type ReviewerLegRunResult = Readonly<{
   report: string;
@@ -472,8 +475,8 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
         const actualLength = Buffer.byteLength(leg.prompt, "utf8");
         const actualSha = createHash("sha256").update(leg.prompt).digest("hex");
         if (actualLength !== leg.utf8Length || actualSha !== leg.sha256) throw new Error("Accepted Reviewer prompt evidence mismatch");
-        for (const operation of [RUNNER_MIRROR, RUNNER_WORKSPACE, RUNNER_VERIFY]) {
-          if (!leg.grant.prerequisiteOperations.includes(operation as any)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
+        for (const operation of RUNNER_PREREQUISITES) {
+          if (!leg.grant.prerequisiteOperations.includes(operation)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
         }
       }
       snapshotPromise = prepareSnapshot(dispatch.targetSnapshot, options.signal);

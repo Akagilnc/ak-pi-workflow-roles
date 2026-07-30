@@ -27,6 +27,14 @@ function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1
   return {...h,runtime,audits,get starts(){return starts;}};
 }
 
+test("activation authorizes pin-target before creating the pinned Git reader", async()=>{
+  let pins=0;
+  const withoutPin=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read"],bashCommands:[],prerequisiteOperations:operations.filter(operation=>operation!=="preflight.git.pin-target")}));
+  const h=setup({loadCapabilities:async()=>withoutPin,createPinnedGitReader:async()=>{pins++;throw new Error("must not pin");}});
+  await assert.rejects(h.runtime.activate(),/pin-target/);
+  assert.equal(pins,0);
+});
+
 test("activation fails closed for absent, malformed, and task-mismatched capabilities", async()=>{
   const missing=setup(); delete missing.flags["ak-review-capabilities"]; await assert.rejects(missing.runtime.activate(),/requires --ak-review-capabilities/);
   await assert.rejects(setup({loadCapabilities:async()=>new TextEncoder().encode("{}")}).runtime.activate(),/capabilities/);
@@ -51,6 +59,8 @@ test("completion audits projected facts and revise can be resubmitted without re
   await h.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
   const out=h.tools.get(REVIEWER_OUTPUT_TOOL_NAME); await assert.rejects(out.execute("one",{status:"completed",report:"report"},undefined,undefined,outputContext("one")),/aggregate/);
   const done=await out.execute("two",{status:"completed",report:"report"},undefined,undefined,outputContext("two")); assert.equal(done.terminate,true); assert.equal(h.starts,1); assert.equal(calls,2); assert.equal(h.audits[1]?.record.results.standards?.prompt.bytes,h.audits[1]?.record.accepted?.legs[0]?.prompt);
+  const evidence=h.audits[1]?.record.accepted?.materials.noSpecEvidence?.[0];
+  assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",bytes:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
 });
 
 test("runner infrastructure failure blocks refusal and completion before audit", async()=>{
