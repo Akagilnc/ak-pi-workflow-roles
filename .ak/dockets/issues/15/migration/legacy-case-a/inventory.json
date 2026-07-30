@@ -10295,12 +10295,12 @@
       "ino": 374711629,
       "mode": 33188,
       "sha256": "1d3d032739b6d37c384b6080fe6366ac1b161a8b59492db6b213aa00bc891353",
-      "digestPolicy": "sha256 of exact source bytes for inventory identity only; payload not semantically parsed; bytes never copied into Git",
+      "digestPolicy": "sha256 of exact rescued bytes after no-follow open; verified copy-then-hash",
       "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "provenanceClass": "ephemeral-cli-scratch",
-      "genericExhaust": true,
-      "classificationReasonCode": "ephemeral-cli-scratch",
-      "classificationReason": "Ephemeral CLI/path scratch; not durable decision-chain evidence.",
+      "provenanceClass": "decision-chain-artifact",
+      "genericExhaust": false,
+      "classificationReasonCode": "decision-chain-name-class",
+      "classificationReason": "Value-bearing decision-chain artifact by function/provenance name class (authority/plan/receipt/review/adjudication/probe/pack/commit-msg).",
       "axes": [
         "Fixer"
       ]
@@ -10655,12 +10655,12 @@
       "ino": 376040716,
       "mode": 33188,
       "sha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
-      "digestPolicy": "sha256 of exact source bytes for inventory identity only; payload not semantically parsed; bytes never copied into Git",
+      "digestPolicy": "sha256 of exact rescued bytes after no-follow open; verified copy-then-hash",
       "discoveryTime": "2026-07-30T03:26:50.842Z",
-      "provenanceClass": "ephemeral-cli-scratch",
-      "genericExhaust": true,
-      "classificationReasonCode": "ephemeral-cli-scratch",
-      "classificationReason": "Ephemeral CLI/path scratch; not durable decision-chain evidence.",
+      "provenanceClass": "decision-chain-artifact",
+      "genericExhaust": false,
+      "classificationReasonCode": "decision-chain-name-class",
+      "classificationReason": "Value-bearing decision-chain artifact by function/provenance name class (authority/plan/receipt/review/adjudication/probe/pack/commit-msg).",
       "axes": [
         "issue-1"
       ]

@@ -9,12 +9,13 @@
   "inventoryCount": 597,
   "dispositionCount": 597,
   "dispositionBreakdown": {
-    "recovered": 252,
-    "excluded": 322,
-    "superseded": 23
+    "recovered": 247,
+    "excluded": 320,
+    "superseded": 23,
+    "reference": 7
   },
-  "recoveredCount": 275,
-  "referenceCount": 0,
+  "recoveredCount": 270,
+  "referenceCount": 7,
   "knownMissingAxisCount": 0,
   "priorAggregateObservationExcludedFromDenominator": true,
   "privateRescueOmittedFromGit": true,
@@ -42,5 +43,17 @@
       "remoteHint": "Akagilnc/ak-pi-workflow-roles",
       "role": "designated"
     }
-  ]
+  ],
+  "repair": {
+    "immutableMigrationContentCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+    "repairedFindings": [
+      "R1",
+      "R2",
+      "R3",
+      "R4",
+      "R5"
+    ],
+    "probeLifecycleDisposedCount": 7,
+    "commitMsgRescuedCount": 2
+  }
 }

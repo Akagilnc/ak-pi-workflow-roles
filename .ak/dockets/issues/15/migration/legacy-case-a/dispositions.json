@@ -586,12 +586,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            4
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          4
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "75d564e3705102205024e21c37dfffbf8f10c033b0cf4a3d11d248da5c5ddc3f",
@@ -607,12 +621,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            4
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          4
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "7cf41c7666f249aa137b9c8789f511f57c060bc436d9f8487a3980b14563fa50",
@@ -628,12 +656,30 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "e68e3a2396fcde48ac6a49457c703dc04830ebc6a247e9777eb93ce4c61b5b6e",
@@ -649,12 +695,30 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "df54f97fadc60c7d82d8d2f03e7739edf7f6e4e285cc621a4cd38968e382143e",
@@ -670,12 +734,30 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "7a4b4dfcada6e8b14afd2358181353283cc2efcc1d8ee3771502f1d1ff6a3afb",
@@ -691,12 +773,30 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+        ]
+      }
     },
     {
       "itemKey": "16df6156fbdff68b89be0bc882d8d6630d9414110ae68a212f43764299180c74",
@@ -712,12 +812,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "eec33f4c3f669333068bd8876f2fa6b5069923ee931506dbc22563e5efa5f57a",
@@ -733,12 +847,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "2a052391cad07661a5f9baac654a5a2e6a15755f6ddea837ef78f0dc88f082a9",
@@ -754,12 +882,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "756fe800100de36223dd5c21ac2c15cfa3155260615d598c0762c72e35798def",
@@ -775,12 +917,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "e4c09978adbc1cef4b76c62ad256daef8cf2c8010f159c6ddbadd83f03f95111",
@@ -796,12 +952,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "1d69cc8abaa89deaecd43868aea0af80d0a87126b82df5be0c293a4d67962f87",
@@ -817,12 +987,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "b67d128901e31d92a73265031839982a044484fad6feb3461ffad4c0f668183b",
@@ -2501,30 +2685,43 @@
     {
       "itemKey": "f74d83d3725baf15484a822c249725db3e0066b6febb3f0d504362736170499d",
       "basename": "ak-collector-independent-probes.ts",
-      "disposition": "recovered",
-      "reasonCode": "recovered-after-scan",
-      "reason": "Decision-chain artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories.",
+      "disposition": "reference",
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target",
+      "reason": "Executable scratch probe/snippet deleted from the live tree after lifecycle disposal; value-bearing admitted bytes remain addressable at the immutable migration-content commit via complete Git reference tuple. Live behavior maps to existing seam regressions only — no archive, helper, or duplicate regression.",
       "evidence": {
         "sanitizedLocator": "/tmp/ak-collector-independent-probes.ts",
         "sourceSha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
-        "recoveredPath": "recovered/f7/f74d83d3725baf15-ak-collector-independent-probes.ts",
-        "recoveredSha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
-        "redactionReportPath": "redaction-reports/f74d83d3725baf15.json",
-        "redacted": false,
-        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "length": 5299,
         "redactionStatus": "clean",
-        "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+        "redacted": false,
+        "redactionReportPath": "redaction-reports/f74d83d3725baf15.json",
+        "admissionReason": "lifecycle-disposed probe; immutable target reference retains admitted identity",
         "associations": [
           "Collector"
-        ]
+        ],
+        "reference": {
+          "repositoryId": "designated-project",
+          "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/f7/f74d83d3725baf15-ak-collector-independent-probes.ts",
+          "blobOid": "e90c610ca47ca42579ba9cbeda89370269f9c552",
+          "sha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0"
+        },
+        "lifecycle": {
+          "action": "deleted-from-live-tree",
+          "immutableTargetCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/f7/f74d83d3725baf15-ak-collector-independent-probes.ts",
+          "blobOid": "e90c610ca47ca42579ba9cbeda89370269f9c552",
+          "sha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0"
+        },
+        "copiedIntoGit": false,
+        "recoveredPathRemoved": "recovered/f7/f74d83d3725baf15-ak-collector-independent-probes.ts"
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": true,
-      "contentHandling": "recovered"
+      "contentStored": false,
+      "contentHandling": "reference"
     },
     {
       "itemKey": "b77e5be3e134c03cb29945a421877a989091b4d19866778c2e725e4f2f0a5ab1",
@@ -3057,13 +3254,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "334545668fdbc4b8937773c85eb1f0a24ffd4ebf06f244d366d9c974250008ca",
@@ -3086,14 +3297,32 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "5949d09472b53ccd7bb6e29ef6d74ff0a8570347850acb1968e2f31460a88fe5",
@@ -3116,14 +3345,32 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "bc31ebc1f6feeef5bf39b3dc68d97a1c6a509ffee9351163fd6f016e962bb91b",
@@ -3139,13 +3386,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "dd10a25655287e49a64eda89c580bba3115ee0e84ec9d23adee887f7f060c126",
@@ -3168,14 +3433,32 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "5eb74627ef2ca9991d01c25305012c32d937461755635718e1c5cc28a057d19c",
@@ -3191,13 +3474,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "66694ab5f3e44eb036fb43b09ed4109dfd0f115923ee8d18e1b86a4bd5d788db",
@@ -3213,13 +3514,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "14ebd3ba324b685e73e33792a42ca75d33b58bd4e61cf639c68164bbc0b3dceb",
@@ -3235,14 +3554,32 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "b73cbfc8e6c9dcf7683dcffa51c67caae4cb602c72603569dcc2b5f2ebeda459",
@@ -3258,14 +3595,32 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "b9000828b29c11e87abee16cc6efe34e4a4df4f9e8c1e31ada902842416aa02f",
@@ -3288,14 +3643,32 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "b5c7924c54bd67116963007fa5a683a7b9399fbf62013c7229e390ebbcd92567",
@@ -3318,14 +3691,32 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "9e03e3658870ae942923439adeae04598cf6e046ee33e64746aeb9cb3145319c",
@@ -3341,13 +3732,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "1454bd6a275fc10849e551bd2593c4af365630cf1d1fb0be9baf515e2d6f6d11",
@@ -3369,13 +3778,31 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "ecec8803c114076294b1dda31b0de1a8901f2955d39c04cd360dd99840e5272e",
@@ -3397,13 +3824,31 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "6604a733886dfb5d074f558963e20e01e587aa6d"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "6604a733886dfb5d074f558963e20e01e587aa6d"
+        ]
+      }
     },
     {
       "itemKey": "94bae24b3af066091d5ca4868d3e4a8899918cf6e31d50cbcf822a7f41f093fb",
@@ -3426,14 +3871,32 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "ca1eee371dd158619364832da2de1ab048fad20263a319e9a806adc9c281a20e",
@@ -3449,13 +3912,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "47c55c55ae5a465fa0f07812f90de5f24f78a85ef6d0470100645dd8d43a547d",
@@ -3471,14 +3952,32 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "2ace75374fc032d428869e264e77bc5812bc20ceb7608d163f52c5cb99c368be",
@@ -3494,13 +3993,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "5411e3fb214ecc9ac2d4619066b47c76a305af55086b0ed26998cdcbccfaa404",
@@ -3523,14 +4040,32 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "8492a5278a99f685a31705b8fc4954617ce0a9975455111073edd09672126cbe",
@@ -3553,14 +4088,32 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "32c4a90cea159a59f5cd3df6ad2b77cd66bc2d82e9667e74f0bee5f14dc8600f",
@@ -3576,13 +4129,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "76af266775a69343c49ec9a2ba996c339b2283e8b431d52a4177000b6d7072a3",
@@ -3604,13 +4175,31 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "7ffbd3684fe41dc63c28cb7cb79696f2f5e0c3ed"
+        ]
+      }
     },
     {
       "itemKey": "b7e2a8ab6e07dc159a29c81690ccf0a81de1091002ccfb3e29db0ec11d93935a",
@@ -3626,13 +4215,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "b87d2e0cd09235a3f7fc90fb44bd08333bf5ef5aef514c59e1695104cb206ebc",
@@ -3648,13 +4255,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "8be7bb9bea50bc6d700f00ae403d80dd9cbab80bc9597acff30e2014e72c0cd9",
@@ -3670,13 +4295,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "59acc4e55e5ca9abff74ff5d91e8ef181da2ac45f47cdc8c498fd60a2bf6c6ad",
@@ -3698,13 +4341,31 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "c73bf31a3d22815b26b9a33a5d28fd1f242f5701"
+        ]
+      }
     },
     {
       "itemKey": "f8c5cc069a3ccc08f56aa6e539a048944e4943030700dfbaff1e7550e9fa8864",
@@ -3720,13 +4381,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+        ]
+      }
     },
     {
       "itemKey": "e9077cb4e1f57c95392009e832c33ed650a5ed57c8c5c909a350cb1754251d39",
@@ -3748,13 +4427,31 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+        ]
+      }
     },
     {
       "itemKey": "b3352cacfae3f4ff51ee5eb1eca7d7a933ca982a92b8290c82c7929715b51818",
@@ -3770,13 +4467,31 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+          ]
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+        ]
+      }
     },
     {
       "itemKey": "588443847289abd04867ade8bc6d81ec2f06c1ef559d8fc7f4cac07f3f5a5365",
@@ -3798,13 +4513,31 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "f01c9bf8540e46820fe1bfe012af3171a19a16a2"
+        ]
+      }
     },
     {
       "itemKey": "c935075a516e7332116c17b60ac21da2ca44fcf821c37e23a7a521ba1ccfb9fa",
@@ -3827,14 +4560,28 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "9b926dfa52aadd7fe4a805703908aab5474f60b9b259b8ee848e916c676ede0d",
@@ -3857,14 +4604,28 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "4fbffddae6a46ab57ee4533b67c70d5cc3c01efe8233fd18a96cb72004e8138f",
@@ -3880,13 +4641,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "1217edd5e623fc7cf32f3db289bd6c049c0781679d57f8f3d21ca1deb51a4c51",
@@ -3902,13 +4677,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "64849039408a2b1badda55dded9b69ae6ad8a6429796897b7129f9681bc4dda5",
@@ -3924,14 +4713,28 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Fixer",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "eef325385d54b0d642c5d17e3368d37f0a3906b28d494a2f131dcf257b91115e",
@@ -3954,14 +4757,28 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "25fa9f26180e267b570a797ffe2238a1d66b5444c22829658d7898351fbc46d4",
@@ -3984,14 +4801,28 @@
         "associations": [
           "Fixer",
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "1142db0fc4c16e652e296b73721569fc390eccfb6a90419d03324df5a4f6a5d0",
@@ -4007,13 +4838,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "3c64672e0b8c65aa940e5984c83d4c16add8cb1b26e300045b53ea1d4ee1996a",
@@ -4029,13 +4874,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "007989681fe178f6cb8e1946f6276223d79c54d919dd6293a04af3e74abd1dba",
@@ -4051,13 +4910,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": []
+      }
     },
     {
       "itemKey": "5e0df10a51874256e8d7291a63a4778c11304c5cfb62352e14f7c7b918c03019",
@@ -4079,13 +4952,31 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "Collector"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [
+            5
+          ],
+          "commits": [
+            "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac"
+          ]
+        }
       },
       "axes": [
         "Collector"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [
+          5
+        ],
+        "commits": [
+          "9cc03df314f3014e9cbfa57f3c010a9e1658b8ac"
+        ]
+      }
     },
     {
       "itemKey": "88890555ac3fb015703bf38b4ee84725695c345e25b96cfcf9d874dbca082665",
@@ -8397,7 +9288,14 @@
           "Fixer",
           "Judge",
           "Coder"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [],
+          "commits": [
+            "24e1cb46819f6e78b1af4e8d354e8b55844fdc0b"
+          ]
+        }
       },
       "axes": [
         "Fixer",
@@ -8405,7 +9303,14 @@
         "Coder"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [],
+        "commits": [
+          "24e1cb46819f6e78b1af4e8d354e8b55844fdc0b"
+        ]
+      }
     },
     {
       "itemKey": "da8fa1de1faa748a342b7f32ac6fc26158c0e71cd13ae6520f87ef7be8273255",
@@ -8594,7 +9499,14 @@
           "Fixer",
           "Judge",
           "Coder"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [],
+          "pullRequests": [],
+          "commits": [
+            "2357b36608dc70b397212c3a046149cf9d325895"
+          ]
+        }
       },
       "axes": [
         "Fixer",
@@ -8602,7 +9514,14 @@
         "Coder"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [],
+        "pullRequests": [],
+        "commits": [
+          "2357b36608dc70b397212c3a046149cf9d325895"
+        ]
+      }
     },
     {
       "itemKey": "65d22d05268e71e33f9a92fb04ef0352a635262b4ac8818e97bfc2b60821dd09",
@@ -11328,88 +12247,127 @@
     {
       "itemKey": "15442864e040bc0c55b753949084e889b6580bf0ae69d8d78f2b25a9b1cc074e",
       "basename": "collector-adjudication-probe.ts",
-      "disposition": "recovered",
-      "reasonCode": "recovered-after-scan",
-      "reason": "Decision-chain artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories.",
+      "disposition": "reference",
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target",
+      "reason": "Executable scratch probe/snippet deleted from the live tree after lifecycle disposal; value-bearing admitted bytes remain addressable at the immutable migration-content commit via complete Git reference tuple. Live behavior maps to existing seam regressions only — no archive, helper, or duplicate regression.",
       "evidence": {
         "sanitizedLocator": "/tmp/collector-adjudication-probe.ts",
         "sourceSha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb",
-        "recoveredPath": "recovered/15/15442864e040bc0c-collector-adjudication-probe.ts",
-        "recoveredSha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb",
-        "redactionReportPath": "redaction-reports/15442864e040bc0c.json",
-        "redacted": false,
-        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "length": 9806,
         "redactionStatus": "clean",
-        "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+        "redacted": false,
+        "redactionReportPath": "redaction-reports/15442864e040bc0c.json",
+        "admissionReason": "lifecycle-disposed probe; immutable target reference retains admitted identity",
         "associations": [
           "Judge",
           "Collector"
-        ]
+        ],
+        "reference": {
+          "repositoryId": "designated-project",
+          "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/15/15442864e040bc0c-collector-adjudication-probe.ts",
+          "blobOid": "cf244543e2e9601662cccdc91a1d30b2796968fa",
+          "sha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb"
+        },
+        "lifecycle": {
+          "action": "deleted-from-live-tree",
+          "immutableTargetCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/15/15442864e040bc0c-collector-adjudication-probe.ts",
+          "blobOid": "cf244543e2e9601662cccdc91a1d30b2796968fa",
+          "sha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb"
+        },
+        "copiedIntoGit": false,
+        "recoveredPathRemoved": "recovered/15/15442864e040bc0c-collector-adjudication-probe.ts"
       },
       "axes": [
         "Judge",
         "Collector"
       ],
-      "contentStored": true,
-      "contentHandling": "recovered"
+      "contentStored": false,
+      "contentHandling": "reference"
     },
     {
       "itemKey": "2ade6dc2dd7242f3d4b9277aa4415d5031a2f42fb9e35668a40ba8e046de14ca",
       "basename": "collector-cancel-probe.ts",
-      "disposition": "recovered",
-      "reasonCode": "recovered-after-scan",
-      "reason": "Decision-chain artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories.",
+      "disposition": "reference",
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target",
+      "reason": "Executable scratch probe/snippet deleted from the live tree after lifecycle disposal; value-bearing admitted bytes remain addressable at the immutable migration-content commit via complete Git reference tuple. Live behavior maps to existing seam regressions only — no archive, helper, or duplicate regression.",
       "evidence": {
         "sanitizedLocator": "/tmp/collector-cancel-probe.ts",
         "sourceSha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
-        "recoveredPath": "recovered/2a/2ade6dc2dd7242f3-collector-cancel-probe.ts",
-        "recoveredSha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
-        "redactionReportPath": "redaction-reports/2ade6dc2dd7242f3.json",
-        "redacted": false,
-        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "length": 911,
         "redactionStatus": "clean",
-        "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+        "redacted": false,
+        "redactionReportPath": "redaction-reports/2ade6dc2dd7242f3.json",
+        "admissionReason": "lifecycle-disposed probe; immutable target reference retains admitted identity",
         "associations": [
           "Collector"
-        ]
+        ],
+        "reference": {
+          "repositoryId": "designated-project",
+          "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/2a/2ade6dc2dd7242f3-collector-cancel-probe.ts",
+          "blobOid": "2a63bb9320e0776297b9ebddc9cd01b0a9c77661",
+          "sha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87"
+        },
+        "lifecycle": {
+          "action": "deleted-from-live-tree",
+          "immutableTargetCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/2a/2ade6dc2dd7242f3-collector-cancel-probe.ts",
+          "blobOid": "2a63bb9320e0776297b9ebddc9cd01b0a9c77661",
+          "sha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87"
+        },
+        "copiedIntoGit": false,
+        "recoveredPathRemoved": "recovered/2a/2ade6dc2dd7242f3-collector-cancel-probe.ts"
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": true,
-      "contentHandling": "recovered"
+      "contentStored": false,
+      "contentHandling": "reference"
     },
     {
       "itemKey": "23bc7d533fa98421a666533c2afdf6aab7ba6b45184820a233d7b67d7cc8fabd",
       "basename": "collector-cross-cutoff-probe.ts",
-      "disposition": "recovered",
-      "reasonCode": "recovered-after-scan",
-      "reason": "Decision-chain artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories.",
+      "disposition": "reference",
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target",
+      "reason": "Executable scratch probe/snippet deleted from the live tree after lifecycle disposal; value-bearing admitted bytes remain addressable at the immutable migration-content commit via complete Git reference tuple. Live behavior maps to existing seam regressions only — no archive, helper, or duplicate regression.",
       "evidence": {
         "sanitizedLocator": "/tmp/collector-cross-cutoff-probe.ts",
         "sourceSha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da",
-        "recoveredPath": "recovered/23/23bc7d533fa98421-collector-cross-cutoff-probe.ts",
-        "recoveredSha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da",
-        "redactionReportPath": "redaction-reports/23bc7d533fa98421.json",
-        "redacted": false,
-        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "length": 2197,
         "redactionStatus": "clean",
-        "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+        "redacted": false,
+        "redactionReportPath": "redaction-reports/23bc7d533fa98421.json",
+        "admissionReason": "lifecycle-disposed probe; immutable target reference retains admitted identity",
         "associations": [
           "Collector"
-        ]
+        ],
+        "reference": {
+          "repositoryId": "designated-project",
+          "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/23/23bc7d533fa98421-collector-cross-cutoff-probe.ts",
+          "blobOid": "58035b27e2dea0abfc97c149664e7c7f902efc4c",
+          "sha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da"
+        },
+        "lifecycle": {
+          "action": "deleted-from-live-tree",
+          "immutableTargetCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/23/23bc7d533fa98421-collector-cross-cutoff-probe.ts",
+          "blobOid": "58035b27e2dea0abfc97c149664e7c7f902efc4c",
+          "sha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da"
+        },
+        "copiedIntoGit": false,
+        "recoveredPathRemoved": "recovered/23/23bc7d533fa98421-collector-cross-cutoff-probe.ts"
       },
       "axes": [
         "Collector"
       ],
-      "contentStored": true,
-      "contentHandling": "recovered"
+      "contentStored": false,
+      "contentHandling": "reference"
     },
     {
       "itemKey": "1d91e5953afb59d77a661040d5fe31ceeea8ea9cf13f86d541e924f3fd044162",
@@ -11505,23 +12463,30 @@
     {
       "itemKey": "cd2b4c7a149b0ac249635a29a5ed60edad17ea46283eefd2df9b2199dc12ab3c",
       "basename": "fixer-commit-msg.txt",
-      "disposition": "excluded",
-      "reasonCode": "ephemeral-cli-scratch",
-      "reason": "Ephemeral CLI/path scratch; not durable decision-chain evidence.",
+      "disposition": "recovered",
+      "reasonCode": "recovered-after-scan",
+      "reason": "Decision-chain commit-msg artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories. Classifier precedence corrected: commit-msg is decision-chain, not ephemeral-cli-scratch.",
       "evidence": {
         "sanitizedLocator": "/tmp/fixer-commit-msg.txt",
-        "fileType": "regular",
-        "sizeBytes": 1602,
-        "sha256": "1d3d032739b6d37c384b6080fe6366ac1b161a8b59492db6b213aa00bc891353",
+        "sourceSha256": "1d3d032739b6d37c384b6080fe6366ac1b161a8b59492db6b213aa00bc891353",
+        "recoveredPath": "recovered/cd/cd2b4c7a149b0ac2-fixer-commit-msg.txt",
+        "recoveredSha256": "1d3d032739b6d37c384b6080fe6366ac1b161a8b59492db6b213aa00bc891353",
+        "redactionReportPath": "redaction-reports/cd2b4c7a149b0ac2.json",
+        "redacted": false,
+        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
-        "provenanceClass": "ephemeral-cli-scratch",
-        "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "length": 1602,
+        "redactionStatus": "clean",
+        "admissionReason": "decision-chain commit-msg artifact not git-resolvable; promoted once after credential scan/redaction",
+        "associations": [
+          "Fixer"
+        ]
       },
       "axes": [
         "Fixer"
       ],
-      "contentStored": false
+      "contentStored": true,
+      "contentHandling": "recovered"
     },
     {
       "itemKey": "bb1168a4490faee46195028d4441f647ff98589b660c6fe6e18fe72d94ee34fd",
@@ -11537,12 +12502,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "63c7c7943331948a49de1ec2d1a94688c96765a83f5fbfd1100408b02ec91a12",
@@ -11558,13 +12537,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "c3ed8ad547533eb4813289065d9d05ceaa8c0cf3939f03e5a4734da5e90c8e44",
@@ -11580,12 +12573,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "482edd79060ddf29ec8aea258d56ec55e8998de53e5b2c9ebe5c41045a086a26",
@@ -11607,13 +12614,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d3d9d7830721b196dd341d76450fbd31381b91ddc73286118fac32876c4d6e7a",
@@ -11635,13 +12656,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "374406995a8f148f40c92280d3451a4074cf32be70a8e8599bb2c5488db10641",
@@ -11663,13 +12698,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "b40bb020aee714aa82731cbad28ab60af91fddfc647960ea202048157c952957",
@@ -11685,13 +12734,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "44e3ed09e297b1e7a8e221b31a98c5927d631e681032ab199e792061f7596895",
@@ -11707,13 +12770,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e6612c38be3fbab964f5d4eb7b75dc663f794900215c5626650c2a6e0248152e",
@@ -11735,13 +12812,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "8b5f31d956284dac487f596e7c01b5ef34feaa7459a4b3c187934bb5df541390",
@@ -11763,13 +12854,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "cbaf0a1315333159f1446a3e4290c2ccc6522a7d3e80ec718640e706ac38c7f3",
@@ -11785,13 +12890,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "dee8ed5d7b60130147c29a00bae06c40a95560632101691b66bf9b238d1a7531",
@@ -11807,13 +12926,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "8f8d5dc75df7e56225c9390e17cf6b389e27f092b32a1f3862d5ddb91ecb87f6",
@@ -11829,13 +12962,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "0fb29f8706d008e6e963a4f694d323047cdba4725d2f22e414321f45f195d8fa",
@@ -11858,14 +13005,28 @@
         "associations": [
           "Coder",
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e279f3eb41f207a4f44913e9c62d8da81ca3ff9b6c679f6f6ccc97e3a72e8ba8",
@@ -11888,35 +13049,70 @@
         "associations": [
           "Coder",
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "7f96a41ae44a677b32dcdb08a7c1c0d978852625cf5ba32ed829bf7e81779d3d",
       "basename": "issue-1-commit-msg.txt",
-      "disposition": "excluded",
-      "reasonCode": "ephemeral-cli-scratch",
-      "reason": "Ephemeral CLI/path scratch; not durable decision-chain evidence.",
+      "disposition": "recovered",
+      "reasonCode": "recovered-after-scan",
+      "reason": "Decision-chain commit-msg artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories. Classifier precedence corrected: commit-msg is decision-chain, not ephemeral-cli-scratch.",
       "evidence": {
         "sanitizedLocator": "/tmp/issue-1-commit-msg.txt",
-        "fileType": "regular",
-        "sizeBytes": 503,
-        "sha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+        "sourceSha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+        "recoveredPath": "recovered/7f/7f96a41ae44a677b-issue-1-commit-msg.txt",
+        "recoveredSha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+        "redactionReportPath": "redaction-reports/7f96a41ae44a677b.json",
+        "redacted": false,
+        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
-        "provenanceClass": "ephemeral-cli-scratch",
-        "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "length": 503,
+        "redactionStatus": "clean",
+        "admissionReason": "decision-chain commit-msg artifact not git-resolvable; promoted once after credential scan/redaction",
+        "associations": [
+          "issue-1"
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": true,
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "1e68734a7b8ec29c7da53772784b5706b811a50bb912fd366e0eba2e8c2f4242",
@@ -11938,13 +13134,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "effbc404fea6f28b6c8a34dfacacbb6d5ab8e3f9d5415b6add6dcbce3635d0ab",
@@ -11960,13 +13170,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "94fa278f792082782422475ec719038be83344c00f7409011710a9bf7f7ed4a8",
@@ -11989,14 +13213,28 @@
         "associations": [
           "Reviewer",
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "1071dee3d0f7f6663e6326f80ce170c51503d37f4a6cd3162945cbd40eaf72f5",
@@ -12019,14 +13257,28 @@
         "associations": [
           "Reviewer",
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "87f62c052e6f4e87e207a64230b45d2297f993559e2667590c180dbd2f660717",
@@ -12042,41 +13294,82 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "47cc29d52cf223099fe31c16e7dd51c358e7e1885d6c49d5a8a9f9a50f6659af",
       "basename": "issue-1-independent-probe.ts",
-      "disposition": "recovered",
-      "reasonCode": "recovered-after-scan",
-      "reason": "Decision-chain artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories.",
+      "disposition": "reference",
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target",
+      "reason": "Executable scratch probe/snippet deleted from the live tree after lifecycle disposal; value-bearing admitted bytes remain addressable at the immutable migration-content commit via complete Git reference tuple. Live behavior maps to existing seam regressions only — no archive, helper, or duplicate regression.",
       "evidence": {
         "sanitizedLocator": "/tmp/issue-1-independent-probe.ts",
         "sourceSha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
-        "recoveredPath": "recovered/47/47cc29d52cf22309-issue-1-independent-probe.ts",
-        "recoveredSha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
-        "redactionReportPath": "redaction-reports/47cc29d52cf22309.json",
-        "redacted": false,
-        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "length": 7404,
         "redactionStatus": "clean",
-        "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+        "redacted": false,
+        "redactionReportPath": "redaction-reports/47cc29d52cf22309.json",
+        "admissionReason": "lifecycle-disposed probe; immutable target reference retains admitted identity",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "reference": {
+          "repositoryId": "designated-project",
+          "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/47/47cc29d52cf22309-issue-1-independent-probe.ts",
+          "blobOid": "f743cd6bc5cf0ffff538aff0a37dfaaa89456110",
+          "sha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c"
+        },
+        "lifecycle": {
+          "action": "deleted-from-live-tree",
+          "immutableTargetCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/47/47cc29d52cf22309-issue-1-independent-probe.ts",
+          "blobOid": "f743cd6bc5cf0ffff538aff0a37dfaaa89456110",
+          "sha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c"
+        },
+        "copiedIntoGit": false,
+        "recoveredPathRemoved": "recovered/47/47cc29d52cf22309-issue-1-independent-probe.ts",
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
-      "contentStored": true,
-      "contentHandling": "recovered"
+      "contentStored": false,
+      "contentHandling": "reference",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "ba7f52ad6a9ffcb56b5c8f6cc6dbc8f88584addba438e4aafd210f3c01931a3d",
@@ -12092,13 +13385,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "1aa4a913e8f3abb26af41dd11d2cfffbf29715a586dc676388d1e5e0a4ba1161",
@@ -12120,13 +13427,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "78f7e33526c9b5225150d9bc839d115e2df9c24edf9a281da36400ab99cd6c75",
@@ -12142,14 +13463,28 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Reviewer",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "ec132f8d2852c49a54c60f7a62d1605b562502d84a68bfa3c0eacef47796cde7",
@@ -12172,14 +13507,28 @@
         "associations": [
           "Reviewer",
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d962afd88d72db5ba0c517384277148abc411d37b2116b6d94eec0fe0cab28aa",
@@ -12202,14 +13551,28 @@
         "associations": [
           "Reviewer",
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "4754b872fd74d61f94a0ab0fb53ef092ece663fbb3e31505a6a5bd04123603ad",
@@ -12225,13 +13588,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "add6bd25b02411e03d2ece52de0c3b949142b5f18d1437ee22ee4bd5fe6827c2",
@@ -12247,12 +13624,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "c3d9ecc4ddc394f828c9c88ad2edcee02086078d4af825cfcc252591f193917c",
@@ -12268,13 +13659,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "6f1cd765f80158bfedca57477921fe7da916564abcb84df21c416608cad8b36b",
@@ -12290,12 +13695,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "69e5e684936410113c6f51ae27f3e90c36acfcaae34dd20de68dc0a14c07df05",
@@ -12317,13 +13736,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "73a9e166d2aea47ad01258ca991898189e8a8ad81637a946b2f8652cd09fa550",
@@ -12345,13 +13778,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "61530ab0cc886913b3e5c67f43ec2f4f0593c9732819857409feed33f686cf19",
@@ -12373,13 +13820,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-1"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-1"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "825c84855ef46bbe719c5e92cbc4039778c84c1d611da2b46d4de882de085bf0",
@@ -12395,13 +13856,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            1
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-1"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          1
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "23a2217308ea76f636ba1e55255abcd34f501a5c270538c9ffc03a02024d223d",
@@ -12424,14 +13899,28 @@
         "associations": [
           "Fixer",
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "991bd36cd4bbafb395a9c60d76c8a830f1ee002884ae32814e2bf59f1db0b4a5",
@@ -12447,13 +13936,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "b1df8dab3dfa4e5ebb14cf2698de15ce0b341ac766d3023c3571c5f8685e8326",
@@ -12469,13 +13972,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e4f03196f2ef649ab74042482f32e304a23fd64819d7e046a2325f5962cd3cd2",
@@ -12497,13 +14014,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "bbd9dde73b18980fc2d1db2374bc543e5f4f48ef8fc0637f4bc86632c9ed1fad",
@@ -12525,13 +14056,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "cca24b52247fbe611ba2007a9883a2300d9f663e5769a79271988415e25f5337",
@@ -12547,13 +14092,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "f2e8d23d31b579c2e8c2644293103f97cdb9f1bd5ebe29bf9189aab08aaf253c",
@@ -12569,13 +14128,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "4e70c8a5931806ea7dc7da0b33e58785c0eb47f8d4c5bda1f9df60bdeef8b20b",
@@ -12598,14 +14171,28 @@
         "associations": [
           "Coder",
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "93f38fe3512a99a8f2a59d536688c6e7aa85f112bc086655bf39a8c32e8fd596",
@@ -12628,14 +14215,28 @@
         "associations": [
           "Coder",
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "ba431807140ba6602bb6685cb9afff0998583938a916c35b6403622e2086258b",
@@ -12657,13 +14258,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "c81a0c402727655bf55f23bd7697454831d336b866adae41ff0091dedf993234",
@@ -12679,13 +14294,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "3630e9a7d63d26bb3aa88a746cd368653396c1356e2fcc1d6cc09ac9ecc36061",
@@ -12701,13 +14330,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "a085ac505a46842107bda8b860c61874e7bed0c27ce43a66cc79a46cb20096a6",
@@ -12723,14 +14366,28 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Fixer",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "db37a635b2729dd7e894d96d3fe1286e202754930fc51f5bd558a6ea04974428",
@@ -12746,13 +14403,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d5c68dbb32111db8c3ad75f9d7eb5380eb9f769f99137f53d511164ad8c089b4",
@@ -12775,14 +14446,28 @@
         "associations": [
           "Fixer",
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "04909187f7b9dcf43da825afa82aa2f93958ebe22c267ad548ab203fadbccb4a",
@@ -12805,14 +14490,28 @@
         "associations": [
           "Fixer",
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "8227fa0713a3d16e16a1ca6e90b0110d8967dc2710187c030ca516f72c497144",
@@ -12835,14 +14534,28 @@
         "associations": [
           "Judge",
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "fc6de52687db6f1baada5deb5c049dc9621af1fc9bada7aca2c526823c4a7d9d",
@@ -12858,13 +14571,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "68bbc19a0c8e22f20d78da9df988fe28bd49239c34d8ef34d45e182c7ac082f8",
@@ -12880,13 +14607,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "c754b1b6dd89d297eb98496a7edd88b09b775ff335cf24471bcdf5fa0c45c6e8",
@@ -12908,13 +14649,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "00c1c8be57b87efdefaaa5ad94cd39bdc97f87bc81350c604c422e2ff1c50457",
@@ -12930,12 +14685,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "8549b643c9a90d6ca538aeca349778be4fc14394c2c6f5ed214a19f4f96d854f",
@@ -12951,13 +14720,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "087216a8ce7c26ccf8d72b4dbbac1f6b8bfbf63e55a5c020d504a2c2d1c3fd8c",
@@ -12973,12 +14756,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "85cf04147400cb58a2856e15eef1f523a083d97cad5c1fcfad29b5151cc0ca83",
@@ -13000,13 +14797,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "3a92048c8e3f8c467a3713f45284ecd6ac1e822f484ae5ac355ca9cea0e1c1de",
@@ -13028,13 +14839,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "3a2d79f6653e947b320785bb6f5449d3bf6740be95df979441e0f31dba90d057",
@@ -13056,13 +14881,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "70b2e3c246df2530186d87709a3a4eecd5bf22ea6d99e4424c16a797fda4e568",
@@ -13078,14 +14917,28 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Reviewer",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d8c476507e4c1216afae76274c1dc4ffba62454171eb06b2393120d00ab35b35",
@@ -13108,14 +14961,28 @@
         "associations": [
           "Reviewer",
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "2e1c7d042fc6d3be3e171a40605a567c6a0b87ba22b037bd7cfb3f6cafff3996",
@@ -13138,14 +15005,28 @@
         "associations": [
           "Reviewer",
           "issue-2"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-2"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "81c45d95ba1db3832ce18a02ff64f9f5658c1a763fb6400771c29b3dae589315",
@@ -13161,13 +15042,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            2
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-2"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          2
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "7905dc4c9d6a7a8404dcecc24527fb5bb7b63466db56d0b337eb1f6b1428d953",
@@ -13190,14 +15085,28 @@
         "associations": [
           "Fixer",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "c670603ea3ebd8f3ffa127247287676e1431f8aef52ef487bd2812639e61b61a",
@@ -13213,13 +15122,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "655b583901a831ebb5da6550d140cf0e9452bc590b09730ec2ba2e6ec525875c",
@@ -13235,13 +15158,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "f24638e26f9bbabeddf74775075e074781b533caa0e4a5830506ac6863071e32",
@@ -13263,13 +15200,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "03f0f6300b8e4bbec970c1ce6a0cb3f7467507105e6ff38464948d30e8b235c2",
@@ -13285,13 +15236,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "deca3540f540df49fd910fbbfdae7d68b26849b340dbcfb78d8cbbdcb59dbf6d",
@@ -13307,13 +15272,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "8e1d59a074d0078253e3fe6c6fda1d7a7e6f4d327f7f402e5141d83c11ca91af",
@@ -13329,13 +15308,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "61e2c107ff9b2d8156dc3f83407f9275d5fb25b63626379d8e2ba586bc2220ad",
@@ -13358,14 +15351,28 @@
         "associations": [
           "Coder",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "216426e9aaf1bb8b9cb4ce5666286555ce2d6cde2b8269c9be5ac0dfdf8b1640",
@@ -13381,13 +15388,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "d150eb87dfdf262f5e431aa3d75c57deb9b222eb10ee4cc43f91e688ec9151c6",
@@ -13410,14 +15431,28 @@
         "associations": [
           "Coder",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "c3c0fad4e3d2df8d3082a893893d537c930e87b9ba0cb5e05f29ebc227850e64",
@@ -13433,13 +15468,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "0e525f44a336b9d46d0de7b490ea04213709e8e0add49a740527022397e44b94",
@@ -13462,14 +15511,28 @@
         "associations": [
           "Coder",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e51ec02865fc8afd0f9bf077a9a0c0219ef9e7a814fe9f33432f8940aadf17ca",
@@ -13492,14 +15555,28 @@
         "associations": [
           "Coder",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Coder",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "dd0c5e654beb5b0b0e6b198f80f5dca1224b591ae1b50cc5e3d6cad14254e0e5",
@@ -13515,13 +15592,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "9dcc1f7b5693e2a127b15c3b609f79501cb6b7e5cc80fd690fa178104828d128",
@@ -13537,13 +15628,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "c314589ad0ee0c93ae14c8d45106d5506b33a55643a1d36ddc8d49169b012d8a",
@@ -13559,13 +15664,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "ff48294f62ef4db509623f12ef90a7473064eeaca86836010cfa69f769835dcf",
@@ -13581,14 +15700,28 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Fixer",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "7a34d048af7ac707f1f3bc783979c5a30745201e721cc1e2499d8352f442aaaf",
@@ -13604,13 +15737,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "474ad08e93a066709a9dd677afe35e91ab759aff36a6463f0c78e9d1e5f64f00",
@@ -13633,14 +15780,28 @@
         "associations": [
           "Fixer",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "f9bf2e6d9c039c1425a91fd2c91d9ef3f9cfcffad3914ef21667bc5137f34714",
@@ -13663,14 +15824,28 @@
         "associations": [
           "Fixer",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "cfabf435f0c1cb63f69217ca6283e5407efe6b48e9f085364e47a47cf9897709",
@@ -13686,12 +15861,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "5f7f8acbad3e95377b7f7cbffcd0ac19e855c3755a3742c6a185af02feae17e3",
@@ -13707,13 +15896,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "59a40591907fe003e1cce159370434947efa5ee816dcef4039ff57078da15687",
@@ -13729,12 +15932,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e686804adc7617823eecab49fb25374740a6d374990413e00fdef020eccf9448",
@@ -13756,13 +15973,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "73eba658f670dfd408d83f89aefb7fb69f26f5c3a2d6ca3ef495ca923a2b621e",
@@ -13784,13 +16015,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "2c182424777ce12715b7a58977c40a547eb5037c764a356bf500be11314d9ab4",
@@ -13812,13 +16057,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e7ff0a251df4a329851b21f9bd459c9bc78e79770c7950f4f0504811c5eaf478",
@@ -13840,13 +16099,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "f0fdd387ff61cdffe251eeecd407650e19e3e86b31227e85e44af6eb8317d021",
@@ -13868,13 +16141,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "a8f884c7af08bd77e39f44ce6be612f014aa9019423a6808fc9030f4327f933e",
@@ -13890,13 +16177,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "bcba5a021cca443b26af8e7df9886a15521ce93eb6ac05a0d92c6e14477e857c",
@@ -13912,13 +16213,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "de54e195d62fd7f34c393517ad3841f5227712732dbbc56028624bba4448f07b",
@@ -13934,13 +16249,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e19a0bda7cb18c552b76946389e61ec079fec1aa23f131a80540d7a7beb74b7c",
@@ -13962,13 +16291,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "0a1afbba42846527660d386dc937bc070f609a540e1314d4d6eb62dc090a13c3",
@@ -13984,12 +16327,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "7402f5f928a6dfb826c4be64905ebdea4b60fcbeffc999c7f1040e957dd02cb1",
@@ -14005,13 +16362,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "81ec5bef607906fafaa41d75acedc4b0565b3a3996d672d5ddd97f2001ce865d",
@@ -14027,12 +16398,26 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "922894ea18acbc6e4600e32cba0433b393af2fdf6b3e632273b4d6589213a16b",
@@ -14054,13 +16439,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "50b01ed868e13d5464f6793fe284e8af830e31e89f8546da41945dc01f30300b",
@@ -14082,13 +16481,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "16269f4ef120234f99d33817e48a431beecf7640f1640aceab6828f39a768bac",
@@ -14110,13 +16523,27 @@
         "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
         "associations": [
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "89dd2e2773262444887d787cc3207e4c0d1928f247258364cb8fb71502f2f9ef",
@@ -14140,7 +16567,14 @@
           "Fixer",
           "Reviewer",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
@@ -14148,7 +16582,14 @@
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "a073e60330078faaded745a26d6e1695163d0e42664a3bc64b0f4e7097d5beb6",
@@ -14164,14 +16605,28 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "Reviewer",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "b4da5a65391578b137b553f741554ed2635a1b7e9d46494c67e3fde378121fa8",
@@ -14187,7 +16642,14 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
@@ -14195,7 +16657,14 @@
         "Reviewer",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "18b5a43d335340c591c5a443c2b73ae58a005c9f1e602e59fe9be52d3402ca99",
@@ -14211,14 +16680,28 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
         "Reviewer",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "564cf1799ebae581a9d92f4e7e626cbf538eb6192348a6a109638f7432c84040",
@@ -14242,7 +16725,14 @@
           "Fixer",
           "Reviewer",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
@@ -14250,7 +16740,14 @@
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "e774a7ebfd1c99657bc187d9ce1d239168aa973aaf27220b6eb161d569ee2f31",
@@ -14274,7 +16771,14 @@
           "Fixer",
           "Reviewer",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Fixer",
@@ -14282,7 +16786,14 @@
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "cd0714f5a0688cdfa1c0461988cd42c64e2933cc35c73d05948b9c0ad6cda71a",
@@ -14298,14 +16809,28 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "Reviewer",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "5cf2f85c65581053b2a00135906c1878d3d16715203e2d23a716ececb13c4487",
@@ -14328,14 +16853,28 @@
         "associations": [
           "Reviewer",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "da8b8dc7d4873117f27601906359a2d7f7872ca886640efe4ead7ed5ab7192a4",
@@ -14358,14 +16897,28 @@
         "associations": [
           "Reviewer",
           "issue-3"
-        ]
+        ],
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-3"
       ],
       "contentStored": true,
-      "contentHandling": "recovered"
+      "contentHandling": "recovered",
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "5102eae2dbc458d3ac751fdbbbb816eed080a02575ca85188a18d4316424c49f",
@@ -14381,13 +16934,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Reviewer",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "4d0d0cdf3bbb6b0eaf129eb10a9a807a9103eda342b600e0f53d6726f31f0906",
@@ -14403,13 +16970,27 @@
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "provenanceClass": "role-session-recording",
         "payloadSemanticallyRead": false,
-        "copiedIntoGit": false
+        "copiedIntoGit": false,
+        "issuePrCommitAssociations": {
+          "issues": [
+            3
+          ],
+          "pullRequests": [],
+          "commits": []
+        }
       },
       "axes": [
         "Judge",
         "issue-3"
       ],
-      "contentStored": false
+      "contentStored": false,
+      "issuePrCommitAssociations": {
+        "issues": [
+          3
+        ],
+        "pullRequests": [],
+        "commits": []
+      }
     },
     {
       "itemKey": "0dea0b0584d40a9c81494525af82857015b8850c719ba39340cd74f3ec361781",
@@ -14477,30 +17058,43 @@
     {
       "itemKey": "42a9fc2895acf1796351b2f7a06a73f46d10605a4138776ddb548d39a34607f1",
       "basename": "judge-malformed-probe.ts",
-      "disposition": "recovered",
-      "reasonCode": "recovered-after-scan",
-      "reason": "Decision-chain artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories.",
+      "disposition": "reference",
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target",
+      "reason": "Executable scratch probe/snippet deleted from the live tree after lifecycle disposal; value-bearing admitted bytes remain addressable at the immutable migration-content commit via complete Git reference tuple. Live behavior maps to existing seam regressions only — no archive, helper, or duplicate regression.",
       "evidence": {
         "sanitizedLocator": "/tmp/judge-malformed-probe.ts",
         "sourceSha256": "4306d0fe0d9c2139912a50bae8ea635d71e32bd56bb9ba98c22cc4e4e5a17918",
-        "recoveredPath": "recovered/42/42a9fc2895acf179-judge-malformed-probe.ts",
-        "recoveredSha256": "857682fe76fd6ea58d3b63a7946aadae69ca55fe3e1a2a6b32509a3d054dd48d",
-        "redactionReportPath": "redaction-reports/42a9fc2895acf179.json",
-        "redacted": true,
-        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "length": 3572,
         "redactionStatus": "redacted",
-        "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+        "redacted": true,
+        "redactionReportPath": "redaction-reports/42a9fc2895acf179.json",
+        "admissionReason": "lifecycle-disposed probe; immutable target reference retains admitted identity",
         "associations": [
           "Judge"
-        ]
+        ],
+        "reference": {
+          "repositoryId": "designated-project",
+          "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/42/42a9fc2895acf179-judge-malformed-probe.ts",
+          "blobOid": "c29e68fd02f1ebc8cc56b56a8f0755ea1f63f684",
+          "sha256": "857682fe76fd6ea58d3b63a7946aadae69ca55fe3e1a2a6b32509a3d054dd48d"
+        },
+        "lifecycle": {
+          "action": "deleted-from-live-tree",
+          "immutableTargetCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/42/42a9fc2895acf179-judge-malformed-probe.ts",
+          "blobOid": "c29e68fd02f1ebc8cc56b56a8f0755ea1f63f684",
+          "sha256": "857682fe76fd6ea58d3b63a7946aadae69ca55fe3e1a2a6b32509a3d054dd48d"
+        },
+        "copiedIntoGit": false,
+        "recoveredPathRemoved": "recovered/42/42a9fc2895acf179-judge-malformed-probe.ts"
       },
       "axes": [
         "Judge"
       ],
-      "contentStored": true,
-      "contentHandling": "recovered"
+      "contentStored": false,
+      "contentHandling": "reference"
     },
     {
       "itemKey": "f70ec0a1514500718693cfd2d7b640e54425018fe18db8dc72eb11d889ee8ca3",
@@ -15244,30 +17838,43 @@
     {
       "itemKey": "af289a8e481f1cf51eea5f948b6a43b40ada81e6346d2f7ad2e7ea880167c0fb",
       "basename": "reviewer-real-pi-snippet.ts",
-      "disposition": "recovered",
-      "reasonCode": "recovered-after-scan",
-      "reason": "Decision-chain artifact admitted once after credential scan/redaction; not git-resolvable in authorized repositories.",
+      "disposition": "reference",
+      "reasonCode": "probe-lifecycle-disposed-at-immutable-target",
+      "reason": "Executable scratch probe/snippet deleted from the live tree after lifecycle disposal; value-bearing admitted bytes remain addressable at the immutable migration-content commit via complete Git reference tuple. Live behavior maps to existing seam regressions only — no archive, helper, or duplicate regression.",
       "evidence": {
         "sanitizedLocator": "/tmp/reviewer-real-pi-snippet.ts",
         "sourceSha256": "7b46d00de66ff21b732bd093dd4710c78e51f26651dca9f1c26934cb30f27954",
-        "recoveredPath": "recovered/af/af289a8e481f1cf5-reviewer-real-pi-snippet.ts",
-        "recoveredSha256": "e5b36400cf6705888179fcead419b3b188e78be4f17e8c68628ce5e88a6150fc",
-        "redactionReportPath": "redaction-reports/af289a8e481f1cf5.json",
-        "redacted": true,
-        "supersededBy": null,
         "discoveryTime": "2026-07-30T03:26:50.842Z",
         "length": 6092,
         "redactionStatus": "redacted",
-        "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+        "redacted": true,
+        "redactionReportPath": "redaction-reports/af289a8e481f1cf5.json",
+        "admissionReason": "lifecycle-disposed probe; immutable target reference retains admitted identity",
         "associations": [
           "Reviewer"
-        ]
+        ],
+        "reference": {
+          "repositoryId": "designated-project",
+          "commitSha": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/af/af289a8e481f1cf5-reviewer-real-pi-snippet.ts",
+          "blobOid": "676134ef8279d8cb1e9eb5a921e277ef5bbdc1fb",
+          "sha256": "e5b36400cf6705888179fcead419b3b188e78be4f17e8c68628ce5e88a6150fc"
+        },
+        "lifecycle": {
+          "action": "deleted-from-live-tree",
+          "immutableTargetCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+          "path": ".ak/dockets/issues/15/migration/legacy-case-a/recovered/af/af289a8e481f1cf5-reviewer-real-pi-snippet.ts",
+          "blobOid": "676134ef8279d8cb1e9eb5a921e277ef5bbdc1fb",
+          "sha256": "e5b36400cf6705888179fcead419b3b188e78be4f17e8c68628ce5e88a6150fc"
+        },
+        "copiedIntoGit": false,
+        "recoveredPathRemoved": "recovered/af/af289a8e481f1cf5-reviewer-real-pi-snippet.ts"
       },
       "axes": [
         "Reviewer"
       ],
-      "contentStored": true,
-      "contentHandling": "recovered"
+      "contentStored": false,
+      "contentHandling": "reference"
     }
   ]
 }
