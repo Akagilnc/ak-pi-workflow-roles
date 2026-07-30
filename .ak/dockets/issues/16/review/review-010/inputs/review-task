@@ -1,0 +1,17 @@
+# Issue #16 candidate-pair review — corrected axis isolation
+
+Use exactly this range:
+
+```text
+git diff 78cd4e9807aa8a6ebf5a0d852b096b62180fb2da...1490fbe95bcadedd4f1a434213da712b06a4c8ff
+```
+
+Authority: issue #16 and prior closure under `.ak/dockets/issues/16/`.
+Prior invocation refusal: `.ak/dockets/issues/16/review/review-009/receipt.json`.
+
+Dispatch exactly one sibling-parallel batch with strict axis isolation:
+
+- Standards sibling: review only repository documented standards and baseline code-quality smells. Do not include or adjudicate issue #16 behavioral/spec requirements in that sibling prompt.
+- Spec sibling: review issue #16 completeness/correctness, including complete-content equality, linear candidate pairing without independent-lifecycle cross-products, failed-call then successful-retry acceptance, mismatch/extra-terminal rejection, non-mutating tee-only usage, and all prior lifecycle obligations.
+
+Aggregate only after both return. Reviewer and both legs use Codex Sol high. This is a fresh invocation; no second batch.
