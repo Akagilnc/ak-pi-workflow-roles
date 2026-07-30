@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "judge",
+  "posture": "review-closure",
+  "status": "converged",
+  "target": "a9ef5e8a65229a8fe709b480109b88728c20d5bf",
+  "request": {
+    "path": "request.md",
+    "sha256": "cdcf4f332863c4b4a7c4094c2ee4d0153c10228052f5b9bb5fd51683f5814c22"
+  },
+  "sessionCandidate": {
+    "bytes": 4446166,
+    "sha256": "249a5d01c64b62e78a715fcc76fe9ec8e39fcab46d3669671a968e810ea0c318",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "ab14feabc876f573704866d3a2394becd32d8f3414014e9f39928b17049e4791",
+    "acceptedBySoulAudit": true
+  }
+}
