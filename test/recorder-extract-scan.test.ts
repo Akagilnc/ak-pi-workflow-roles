@@ -1219,6 +1219,11 @@ function combinedCrossRepresentationLifecycle(
     extraToolExecutionEnd?: boolean;
     /** Emit toolResult before start (ordering violation with cross-rep pair). */
     toolResultBeforeStart?: boolean;
+    /**
+     * After start, emit toolResult before tool_execution_end (reversed pair order).
+     * Documented production order is tool_execution_end then toolResult only.
+     */
+    reversedTerminalOrder?: boolean;
     omitIssued?: boolean;
     omitStart?: boolean;
   } = {},
@@ -1277,6 +1282,10 @@ function combinedCrossRepresentationLifecycle(
     lines.push(toolResultMessage);
     if (!options.omitStart) lines.push(start);
     lines.push(toolExecutionEnd);
+  } else if (options.reversedTerminalOrder) {
+    if (!options.omitStart) lines.push(start);
+    lines.push(toolResultMessage);
+    lines.push(toolExecutionEnd);
   } else {
     if (!options.omitStart) lines.push(start);
     lines.push(toolExecutionEnd);
@@ -1322,6 +1331,14 @@ test("issue #16: combined tool_execution_end + message_end toolResult canonicali
       collectLifecycleEvents(decodeEnvelopeRows(envelope)),
     ).filter((event) => event.kind === "terminal");
     assert.equal(canonical.length, 1, `${tool} canonical terminal count`);
+    // R1 — retained terminal must be the public-contract toolResult representation.
+    assert.equal(
+      canonical[0]!.kind === "terminal"
+        ? canonical[0]!.representation
+        : null,
+      "toolResult",
+      `${tool} retains toolResult representation`,
+    );
 
     const extracted = extractAcceptedReceipt([envelope]);
     assert.ok(extracted.receipt, `${tool} combined envelope receipt`);
@@ -1397,6 +1414,13 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
       }),
     },
     {
+      name: "reversed toolResult before tool_execution_end after start",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        reversedTerminalOrder: true,
+      }),
+    },
+    {
       name: "orphan dual terminals without issuance/start",
       envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
         details: judgeDetails,
@@ -1427,19 +1451,59 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
     assert.equal(extracted.auditObservation, null, `${item.name} audit`);
   }
 
-  // Foreign call-id toolResult is not a cross-rep pair and must not poison the
-  // complete matching lifecycle (call-identity mismatch does not canonicalize).
-  const foreign = extractAcceptedReceipt([
+  // R2 — mismatched cross-representation call identity must fail closed.
+  const mismatchedIdentity = extractAcceptedReceipt([
     combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
       callId: "call-a",
       details: judgeDetails,
       toolResultCallId: "call-b",
     }),
   ]);
-  assert.ok(foreign.receipt, "foreign toolResult must not reject matching call");
-  assert.equal(foreign.receipt!.toolCallId, "call-a");
-  assert.ok(foreign.auditObservation);
-  assert.equal(foreign.auditObservation!.toolCallId, "call-a");
+  assert.equal(
+    mismatchedIdentity.receipt,
+    null,
+    "mismatched call-a/call-b cross-rep identity must reject",
+  );
+  assert.equal(mismatchedIdentity.auditObservation, null);
+
+  // R3 — reversed pair remains two terminals (no canonical collapse).
+  const reversedEvents = canonicalizeLifecycleEvents(
+    collectLifecycleEvents(
+      decodeEnvelopeRows(
+        combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+          details: judgeDetails,
+          reversedTerminalOrder: true,
+        }),
+      ),
+    ),
+  ).filter((event) => event.kind === "terminal");
+  assert.equal(reversedEvents.length, 2, "reversed pair keeps both terminals");
+
+  // R4 — opposite representations split across envelope inputs must not collapse.
+  const splitCallId = "split-envelope-1";
+  const splitDetails = judgeDetails;
+  const splitBase = combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+    callId: splitCallId,
+    details: splitDetails,
+    usage: { input: 1, output: 1 },
+  });
+  const splitRows = decodeEnvelopeRows(splitBase);
+  // Production dual pair is four rows when issued+start present: issued, start, tee, tr.
+  assert.equal(splitRows.length, 4);
+  const envelopeWithTee = [splitRows[0], splitRows[1], splitRows[2]]
+    .map((row) => JSON.stringify(row))
+    .join("\n");
+  const envelopeWithToolResult = JSON.stringify(splitRows[3]);
+  const splitExtracted = extractAcceptedReceipt([
+    envelopeWithTee,
+    envelopeWithToolResult,
+  ]);
+  assert.equal(
+    splitExtracted.receipt,
+    null,
+    "cross-envelope dual representation must fail closed",
+  );
+  assert.equal(splitExtracted.auditObservation, null);
 });
 
 test("issue #16: complete Recorder path stores Receipt + audit from combined Pi envelope", async () => {
