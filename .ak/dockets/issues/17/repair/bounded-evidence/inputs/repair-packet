@@ -1,0 +1,17 @@
+# Issue #17 bounded rejection and report fidelity repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-017/receipt.json` and minimal structured rejection evidence law.
+
+R1 — Persist only closed, bounded preflight violation codes for rejected proposals. Do not place arbitrary Error.message, Git command/stderr, repository paths, model text, or raw args in durable rejection/ledger/auditor evidence. Known validation failures map deterministically to specific corrective codes; unexpected failures map to a generic bounded infrastructure/preflight code and retain no raw diagnostic in evidence. Transient caller text must also remain bounded.
+
+R2 — Make each independent axis compilation return a full `ReviewerPromptIdentity`; validate each candidate’s exact bytes, UTF-8 length, and SHA-256 internally, then compare bytes, length, and digest across the two independent compilations before acceptance. Any malformed or unequal identity is a typed correctable preflight rejection with zero child effect. Ledger checks remain defense in depth.
+
+R3 — Preserve child report bytes/text exactly as returned by `getLastAssistantText()` for settlement evidence and parent aggregation. Use `report.trim().length` only to decide blankness; never store or expose the trimmed value. Add Markdown leading-indentation/trailing-newline counterexamples.
+
+R4 — Export one shared SHA-256 hex helper and use it in dispatch, pinned Git, prompt identity, and role task identity. Rename `a`/`b` ref comparison locals. Keep reviewer-dispatch as sole public owner; do not split policy for line count.
+
+R5 — Add red/green tests injecting Git errors with paths/stderr/secrets (none retained), every closed violation code, malformed compilation length/hash, equal bytes with bad metadata, exact report whitespace aggregation, and shared digest/ref helpers.
+
+R6 — Run package lifecycle, focused tests, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R6.
