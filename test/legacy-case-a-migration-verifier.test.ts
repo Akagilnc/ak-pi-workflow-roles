@@ -6,9 +6,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  closeSync,
   existsSync,
   lstatSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
   statSync,
@@ -27,6 +30,21 @@ const MIG = join(
 const IMMUTABLE = "ea64733e382c6dcf14906b3b52782ec3f1c07535";
 const IMMUTABLE_MIG_PREFIX =
   ".ak/dockets/issues/15/migration/legacy-case-a";
+const REPAIR_001_APPLY =
+  ".ak/dockets/issues/15/repair/repair-001/apply";
+const ORIGINAL_APPLY_COMMIT =
+  "702e36f97caa92f012470bf5a890e656a5859800";
+const NONCONFORMING_SUCCESSOR_COMMIT =
+  "49807d493861b5dc5e9c6a9813b2d7679a241df8";
+const RECORDER_001 =
+  ".ak/dockets/issues/15/repair/repair-001/recorder-closure";
+const RECORDER_002 =
+  ".ak/dockets/issues/15/repair/repair-002/recorder-closure";
+const HISTORICAL_NONCONFORMANCE =
+  ".ak/dockets/issues/15/repair/repair-002/historical-nonconformance.json";
+
+/** Sole separable post-cutoff addition under sealed predicates. */
+const EXPECTED_POST_CUTOFF = new Set(["coder.ts"]);
 
 const ALLOWED_DISPOSITIONS = new Set([
   "recovered",
@@ -56,6 +74,52 @@ const PROBE_BASENAMES = [
   "ak-collector-independent-probes.ts",
 ] as const;
 
+type IssuePrCommitAssociations = {
+  issues: number[];
+  pullRequests: number[];
+  commits: string[];
+};
+
+type SealedSpec = {
+  projectRolePredicates: {
+    includeBasenamePrefixes: string[];
+    includeBasenameRegexes: string[];
+  };
+  filesystemBoundaries: {
+    includeRegularFiles: boolean;
+    includeSymlinksAsEntries: boolean;
+    includeDirectories: boolean;
+    includeSpecialFiles: boolean;
+    followSymlinks: boolean;
+  };
+  canonicalSourceRoot: { topLevelOnly: boolean; logical: string };
+  priorAggregateObservation: {
+    excludedFromDenominator: boolean;
+    excludedFromInventorySeed: boolean;
+    excludedFromAdmissionOrCompleteness: boolean;
+    notedCandidates: number;
+  };
+  genericExhaustClassification: {
+    notByExtensionAlone: boolean;
+    jsonlExtensionNeitherAutoExcludeNorAdmit: boolean;
+  };
+  completenessClaim: string;
+};
+
+type FrozenWalkEntry = {
+  itemKey: string;
+  basename: string;
+  sanitizedLocator: string;
+  fileType: string;
+  sizeBytes: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  dev: number;
+  ino: number;
+  mode: number;
+  sha256: string | null;
+};
+
 function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
@@ -76,16 +140,33 @@ function gitRevParse(revPath: string): string {
   }).trim();
 }
 
-function gitIsAncestor(ancestor: string, head = "HEAD"): boolean {
+function gitIsAncestor(ancestor: string): boolean {
   try {
     execFileSync(
       "git",
-      ["-C", REPO_ROOT, "merge-base", "--is-ancestor", ancestor, head],
+      ["-C", REPO_ROOT, "merge-base", "--is-ancestor", ancestor, "HEAD"],
       { stdio: "ignore" },
     );
     return true;
   } catch {
     return false;
+  }
+}
+
+function noFollowRead(path: string): Buffer {
+  const fd = openSync(path, "r");
+  try {
+    const st = lstatSync(path);
+    const buf = Buffer.alloc(st.size);
+    let off = 0;
+    while (off < st.size) {
+      const n = readSync(fd, buf, off, st.size - off, off);
+      if (n <= 0) break;
+      off += n;
+    }
+    return buf.subarray(0, off);
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -100,6 +181,41 @@ function listFilesRecursive(root: string): string[] {
   };
   if (existsSync(root)) walk(root);
   return out;
+}
+
+function loadSealedSpec(): SealedSpec {
+  return JSON.parse(
+    gitShow(`${IMMUTABLE}:${IMMUTABLE_MIG_PREFIX}/discovery-spec.v1.json`).toString(
+      "utf8",
+    ),
+  ) as SealedSpec;
+}
+
+function loadFrozenWalk(): {
+  entries: FrozenWalkEntry[];
+  skipped: Array<{ basename: string; reason: string }>;
+  entryCount: number;
+} {
+  return JSON.parse(
+    gitShow(
+      `${IMMUTABLE}:${IMMUTABLE_MIG_PREFIX}/construction-walk.json`,
+    ).toString("utf8"),
+  ) as {
+    entries: FrozenWalkEntry[];
+    skipped: Array<{ basename: string; reason: string }>;
+    entryCount: number;
+  };
+}
+
+function loadFrozenInventory(): {
+  items: Array<{ itemKey: string; basename: string }>;
+  count: number;
+} {
+  return JSON.parse(
+    gitShow(`${IMMUTABLE}:${IMMUTABLE_MIG_PREFIX}/inventory.json`).toString(
+      "utf8",
+    ),
+  ) as { items: Array<{ itemKey: string; basename: string }>; count: number };
 }
 
 /** Independently coded sealed-predicate matcher (not the producer script). */
@@ -177,6 +293,83 @@ function independentSealedPredicateWalk(
     basenames.push(basename);
   }
   return { basenames, skipped };
+}
+
+/**
+ * Derive associations from frozen basename metadata and admitted non-generic
+ * recovered bytes only. Never reads generic JSONL/session payloads.
+ */
+function extractAssociationsFromBasenameAndOptionalJson(
+  basename: string,
+  jsonText: string | null,
+): {
+  issues: number[];
+  pullRequests: number[];
+  commits: string[];
+  shortCommitTokens: string[];
+} {
+  const issues = new Set<number>();
+  const pullRequests = new Set<number>();
+  const commits = new Set<string>();
+  const shortCommitTokens: string[] = [];
+
+  for (const m of basename.matchAll(/issue[-_]?(\d+)(?:[-_.]|$)/gi)) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= 20) issues.add(n);
+  }
+  for (const m of basename.matchAll(/pr[-_]?(\d+)/gi)) {
+    pullRequests.add(Number(m[1]));
+  }
+  for (const m of basename.matchAll(/pr\d+-([0-9a-f]{3,39})(?:[-_.]|$)/gi)) {
+    shortCommitTokens.push(m[1]!.toLowerCase());
+  }
+
+  if (jsonText !== null && basename.endsWith(".json")) {
+    try {
+      const j = JSON.parse(jsonText) as Record<string, unknown>;
+      if (typeof j.prNumber === "number") pullRequests.add(j.prNumber);
+      if (typeof j.pull_request === "number") pullRequests.add(j.pull_request);
+      for (const key of ["targetHead", "commitSha", "commit", "headSha"]) {
+        const v = j[key];
+        if (typeof v === "string" && /^[0-9a-f]{40}$/i.test(v)) {
+          commits.add(v.toLowerCase());
+        }
+      }
+    } catch {
+      /* non-JSON — basename-only */
+    }
+  }
+
+  return {
+    issues: [...issues].sort((a, b) => a - b),
+    pullRequests: [...pullRequests].sort((a, b) => a - b),
+    commits: [...commits].sort(),
+    shortCommitTokens,
+  };
+}
+
+function finalizeAssociations(
+  raw: ReturnType<typeof extractAssociationsFromBasenameAndOptionalJson>,
+  fullCommitIndex: string[],
+): IssuePrCommitAssociations | null {
+  const commits = new Set(raw.commits);
+  for (const tok of raw.shortCommitTokens) {
+    const hits = fullCommitIndex.filter((c) => c.startsWith(tok));
+    if (hits.length === 1) commits.add(hits[0]!);
+  }
+  const out: IssuePrCommitAssociations = {
+    issues: raw.issues,
+    pullRequests: raw.pullRequests,
+    commits: [...commits].sort(),
+  };
+  if (
+    out.issues.length === 0 &&
+    out.pullRequests.length === 0 &&
+    out.commits.length === 0
+  ) {
+    return null;
+  }
+  return out;
 }
 
 /** Corrected classifier: decision-chain (incl. commit-msg) before ephemeral. */
@@ -270,16 +463,7 @@ test("Case A migration artifacts exist at sealed seam path", () => {
 });
 
 test("discovery spec seals prior aggregate out of the denominator", () => {
-  const spec = readJson<{
-    priorAggregateObservation: {
-      excludedFromDenominator: boolean;
-      excludedFromInventorySeed: boolean;
-      excludedFromAdmissionOrCompleteness: boolean;
-      notedCandidates: number;
-    };
-    genericExhaustClassification: { notByExtensionAlone: boolean };
-    completenessClaim: string;
-  }>(join(MIG, "discovery-spec.v1.json"));
+  const spec = loadSealedSpec();
   assert.equal(spec.priorAggregateObservation.excludedFromDenominator, true);
   assert.equal(spec.priorAggregateObservation.excludedFromInventorySeed, true);
   assert.equal(
@@ -296,80 +480,115 @@ test("discovery spec seals prior aggregate out of the denominator", () => {
   assert.equal(typeof spec.priorAggregateObservation.notedCandidates, "number");
 });
 
-test("fixed-target Git construction walk joins inventory keys; independent sealed predicates agree", () => {
-  const frozenConstruction = JSON.parse(
-    gitShow(
-      `${IMMUTABLE}:${IMMUTABLE_MIG_PREFIX}/construction-walk.json`,
-    ).toString("utf8"),
-  ) as {
-    entries: Array<{ itemKey: string; basename: string; fileType: string }>;
-    skipped: Array<{ basename: string; reason: string }>;
-  };
-  const frozenInventory = JSON.parse(
-    gitShow(`${IMMUTABLE}:${IMMUTABLE_MIG_PREFIX}/inventory.json`).toString(
-      "utf8",
-    ),
-  ) as { items: Array<{ itemKey: string; basename: string }>; count: number };
+test("fixed-target Git construction walk seals 597 identities, predicates, and post-cutoff partition", () => {
+  const spec = loadSealedSpec();
+  const frozenWalk = loadFrozenWalk();
+  const frozenInventory = loadFrozenInventory();
   const liveInventory = readJson<{
     items: Array<{ itemKey: string; basename: string }>;
     count: number;
   }>(join(MIG, "inventory.json"));
-  const spec = readJson<{
-    projectRolePredicates: {
-      includeBasenamePrefixes: string[];
-      includeBasenameRegexes: string[];
-    };
-    filesystemBoundaries: {
-      includeRegularFiles: boolean;
-      includeSymlinksAsEntries: boolean;
-      includeDirectories: boolean;
-      includeSpecialFiles: boolean;
-      followSymlinks: boolean;
-    };
-    canonicalSourceRoot: { topLevelOnly: boolean; logical: string };
-  }>(join(MIG, "discovery-spec.v1.json"));
+
+  assert.equal(frozenWalk.entryCount, 597);
+  assert.equal(frozenWalk.entries.length, 597);
+  assert.equal(frozenInventory.count, 597);
+  assert.equal(liveInventory.count, frozenInventory.count);
 
   // Live inventory keys remain the frozen denominator (repair does not re-cut).
-  assert.equal(liveInventory.count, frozenInventory.count);
-  assert.equal(liveInventory.count, 597);
-  const frozenKeys = new Set(frozenConstruction.entries.map((e) => e.itemKey));
+  const frozenKeys = new Set(frozenWalk.entries.map((e) => e.itemKey));
   const invKeys = new Set(liveInventory.items.map((e) => e.itemKey));
   assert.equal(frozenKeys.size, invKeys.size);
   for (const k of frozenKeys) {
     assert.equal(invKeys.has(k), true, `inventory missing frozen key ${k}`);
   }
+  for (const k of frozenInventory.items.map((i) => i.itemKey)) {
+    assert.equal(frozenKeys.has(k), true, `walk missing inventory key ${k}`);
+  }
 
-  // Independently apply sealed predicates to the frozen walk snapshot entries:
-  // every frozen construction basename must match project predicates; directory
-  // skips must be recorded outside the file inventory.
-  for (const e of frozenConstruction.entries) {
+  // Every frozen construction basename matches sealed predicates; no directories.
+  for (const e of frozenWalk.entries) {
     assert.equal(
       matchesProjectRolePredicate(e.basename, spec),
       true,
-      e.basename,
+      `predicate drift: ${e.basename}`,
     );
     assert.notEqual(e.fileType, "directory");
   }
-  for (const s of frozenConstruction.skipped) {
+  for (const s of frozenWalk.skipped) {
     if (s.reason === "directory-outside-file-inventory") {
       assert.equal(matchesProjectRolePredicate(s.basename, spec), true);
     }
   }
 
-  // Independent walk implementation is executable against a real directory
-  // (uses /tmp only as a live oracle host; post-cutoff names are allowed extras).
-  const root = realpathSync(spec.canonicalSourceRoot.logical);
-  const walked = independentSealedPredicateWalk(root, spec);
-  const frozenBasenames = new Set(
-    frozenConstruction.entries.map((e) => e.basename),
-  );
-  for (const b of frozenBasenames) {
-    // Historical identities may still be present; if present they must match predicates.
-    if (walked.basenames.includes(b) || walked.skipped.some((s) => s.basename === b)) {
-      assert.equal(matchesProjectRolePredicate(b, spec), true);
+  // Exact identity oracle: fail on any omitted or changed of the 597.
+  let matched = 0;
+  let missing = 0;
+  let changed = 0;
+  for (const e of frozenWalk.entries) {
+    try {
+      const st = lstatSync(e.sanitizedLocator);
+      const type = st.isSymbolicLink()
+        ? "symlink"
+        : st.isFile()
+          ? "regular"
+          : st.isDirectory()
+            ? "directory"
+            : "other";
+      const metaOk =
+        type === e.fileType &&
+        st.size === e.sizeBytes &&
+        st.mtimeMs === e.mtimeMs &&
+        st.ctimeMs === e.ctimeMs &&
+        st.dev === e.dev &&
+        st.ino === e.ino &&
+        st.mode === e.mode;
+      let hashOk = true;
+      if (e.fileType === "regular" && e.sha256) {
+        hashOk = sha256(noFollowRead(e.sanitizedLocator)) === e.sha256;
+      }
+      if (metaOk && hashOk) matched += 1;
+      else changed += 1;
+    } catch {
+      missing += 1;
     }
   }
-  // Producer self-comparison alone is insufficient: this test pins IMMUTABLE via git show.
+  assert.equal(missing, 0, "frozen identity missing from source root");
+  assert.equal(changed, 0, "frozen identity metadata/hash changed");
+  assert.equal(matched, 597);
+
+  // Independent sealed-predicate walk: all-and-only post-cutoff partition.
+  const root = realpathSync(spec.canonicalSourceRoot.logical);
+  const walked = independentSealedPredicateWalk(root, spec);
+  const frozenBasenames = new Set(frozenWalk.entries.map((e) => e.basename));
+  const frozenSkipped = new Set(
+    (frozenWalk.skipped || []).map((s) => s.basename),
+  );
+  const postCutoff: string[] = [];
+  for (const b of walked.basenames) {
+    if (!frozenBasenames.has(b)) postCutoff.push(b);
+  }
+  for (const s of walked.skipped) {
+    if (
+      s.reason === "directory-outside-file-inventory" &&
+      !frozenSkipped.has(s.basename) &&
+      !frozenBasenames.has(s.basename)
+    ) {
+      postCutoff.push(s.basename);
+    }
+  }
+  assert.deepEqual(
+    [...new Set(postCutoff)].sort(),
+    [...EXPECTED_POST_CUTOFF].sort(),
+  );
+  // Frozen directory skip remains outside the denominator.
+  assert.equal(
+    frozenWalk.skipped.some(
+      (s) =>
+        s.basename === "collector-apply-evidence" &&
+        s.reason === "directory-outside-file-inventory",
+    ),
+    true,
+  );
   assert.equal(IMMUTABLE.length, 40);
 });
 
@@ -436,12 +655,7 @@ test("superseded value-bearing evidence is not merely excluded", () => {
 });
 
 test("genericity is not extension-alone; generic exhaust not copied; jsonl absent from recovered", () => {
-  const spec = readJson<{
-    genericExhaustClassification: {
-      notByExtensionAlone: boolean;
-      jsonlExtensionNeitherAutoExcludeNorAdmit: boolean;
-    };
-  }>(join(MIG, "discovery-spec.v1.json"));
+  const spec = loadSealedSpec();
   assert.equal(spec.genericExhaustClassification.notByExtensionAlone, true);
   assert.equal(
     spec.genericExhaustClassification.jsonlExtensionNeitherAutoExcludeNorAdmit,
@@ -657,51 +871,131 @@ test("commit-msg classifier precedence: decision-chain recovered, not ephemeral"
   }
 });
 
-test("structured issue/PR/commit associations present; ecec8803 binds PR5 and target commit", () => {
+test("structured issue/PR/commit associations exhaustive from frozen metadata and admitted non-generic bytes", () => {
+  const inv = readJson<{
+    items: Array<{ itemKey: string; basename: string; genericExhaust: boolean }>;
+  }>(join(MIG, "inventory.json"));
+  const invByKey = new Map(inv.items.map((i) => [i.itemKey, i]));
   const disp = readJson<{
     items: Array<{
       itemKey: string;
       basename: string;
-      issuePrCommitAssociations?: {
-        issues: number[];
-        pullRequests: number[];
-        commits: string[];
-      };
+      disposition: string;
+      contentHandling?: string;
+      evidence?: { recoveredPath?: string };
+      issuePrCommitAssociations?: IssuePrCommitAssociations;
     }>;
   }>(join(MIG, "dispositions.json"));
   const recovered = readJson<{
     items: Array<{
       itemKey: string;
       basename: string;
-      issuePrCommitAssociations?: {
-        issues: number[];
-        pullRequests: number[];
-        commits: string[];
-      };
+      path: string;
+      issuePrCommitAssociations?: IssuePrCommitAssociations;
     }>;
   }>(join(MIG, "recovered-index.json"));
+  const recoveredByKey = new Map(recovered.items.map((r) => [r.itemKey, r]));
 
-  const ecec = disp.items.find((d) => d.itemKey.startsWith("ecec8803"));
-  assert.ok(ecec, "ecec8803 disposition");
-  assert.deepEqual(ecec.issuePrCommitAssociations?.pullRequests, [5]);
+  // Full-commit index from admitted non-generic recovered JSON only.
+  const fullCommits = new Set<string>();
+  for (const item of recovered.items) {
+    const meta = invByKey.get(item.itemKey);
+    assert.ok(meta, item.itemKey);
+    if (meta.genericExhaust) continue;
+    if (!item.basename.endsWith(".json")) continue;
+    const text = readFileSync(join(MIG, item.path), "utf8");
+    const raw = extractAssociationsFromBasenameAndOptionalJson(
+      item.basename,
+      text,
+    );
+    for (const c of raw.commits) fullCommits.add(c);
+  }
+  const fullCommitIndex = [...fullCommits].sort();
+
+  // Exhaustive exact-set oracle over every disposition item.
+  const expected = new Map<string, IssuePrCommitAssociations>();
+  for (const d of disp.items) {
+    const meta = invByKey.get(d.itemKey);
+    assert.ok(meta, d.itemKey);
+    let jsonText: string | null = null;
+    if (
+      !meta.genericExhaust &&
+      d.basename.endsWith(".json") &&
+      d.evidence?.recoveredPath &&
+      existsSync(join(MIG, d.evidence.recoveredPath))
+    ) {
+      jsonText = readFileSync(join(MIG, d.evidence.recoveredPath), "utf8");
+    }
+    const assoc = finalizeAssociations(
+      extractAssociationsFromBasenameAndOptionalJson(d.basename, jsonText),
+      fullCommitIndex,
+    );
+    if (assoc) expected.set(d.itemKey, assoc);
+  }
+
+  assert.equal(expected.size > 0, true);
+  for (const d of disp.items) {
+    const exp = expected.get(d.itemKey) ?? null;
+    const got = d.issuePrCommitAssociations ?? null;
+    assert.deepEqual(
+      got,
+      exp,
+      `disposition association mismatch for ${d.basename}`,
+    );
+  }
+  for (const item of recovered.items) {
+    const exp = expected.get(item.itemKey) ?? null;
+    const got = item.issuePrCommitAssociations ?? null;
+    assert.deepEqual(
+      got,
+      exp,
+      `recovered-index association mismatch for ${item.basename}`,
+    );
+  }
+
+  // Named samples remain bound.
+  const pr5Disposition = disp.items.find((d) => d.itemKey.startsWith("ecec8803"));
+  assert.ok(pr5Disposition, "ecec8803 disposition");
+  assert.deepEqual(pr5Disposition.issuePrCommitAssociations?.pullRequests, [5]);
   assert.ok(
-    ecec.issuePrCommitAssociations?.commits.includes(
+    pr5Disposition.issuePrCommitAssociations?.commits.includes(
       "6604a733886dfb5d074f558963e20e01e587aa6d",
     ),
   );
-  const ececRec = recovered.items.find((d) => d.itemKey.startsWith("ecec8803"));
-  assert.ok(ececRec);
-  assert.deepEqual(ececRec.issuePrCommitAssociations?.pullRequests, [5]);
+  const pr5RecoveredItem = recovered.items.find((d) =>
+    d.itemKey.startsWith("ecec8803"),
+  );
+  assert.ok(pr5RecoveredItem);
+  assert.deepEqual(pr5RecoveredItem.issuePrCommitAssociations?.pullRequests, [5]);
 
-  // Basename-derived issue associations
-  const issue1 = disp.items.find((d) => d.basename === "issue-1-authority.md");
-  assert.ok(issue1?.issuePrCommitAssociations?.issues.includes(1));
+  const secondKnown = disp.items.find((d) => d.itemKey.startsWith("33454566"));
+  assert.ok(secondKnown, "33454566 disposition");
+  assert.deepEqual(secondKnown.issuePrCommitAssociations?.pullRequests, [5]);
+  assert.ok(
+    secondKnown.issuePrCommitAssociations?.commits.includes(
+      "6604a733886dfb5d074f558963e20e01e587aa6d",
+    ),
+  );
 
+  // RED: dropping a second known association must be detectable.
+  {
+    const mutated = new Map(expected);
+    mutated.delete(secondKnown.itemKey);
+    assert.equal(mutated.has(secondKnown.itemKey), false);
+    assert.notEqual(mutated.size, expected.size);
+    assert.notDeepEqual(
+      secondKnown.issuePrCommitAssociations ?? null,
+      mutated.get(secondKnown.itemKey) ?? null,
+    );
+  }
   // RED: association field required when frozen provenance establishes it
   assert.equal(
-    Array.isArray(ecec.issuePrCommitAssociations?.pullRequests),
+    Array.isArray(pr5Disposition.issuePrCommitAssociations?.pullRequests),
     true,
   );
+
+  // Touch recoveredByKey so exhaustive recovered join is exercised.
+  assert.equal(recoveredByKey.has(pr5RecoveredItem.itemKey), true);
 });
 
 test("eight-axis coverage matrix has explicit outcomes; no historical completeness claim", () => {
@@ -741,13 +1035,10 @@ test("eight-axis coverage matrix has explicit outcomes; no historical completene
   assert.equal(manifest.recoveredCount >= 1, true);
 });
 
-test("recorder formal invocation evidence exists with lawful receipt null", () => {
-  const evidenceDir = join(
-    REPO_ROOT,
-    ".ak/dockets/issues/15/repair/repair-001/recorder-closure",
-  );
+test("repair-001 recorder closure remains byte-sealed historical evidence with receipt null", () => {
+  const evidenceDir = join(REPO_ROOT, RECORDER_001);
   const manifestPath = join(evidenceDir, "manifest.json");
-  assert.equal(existsSync(manifestPath), true, "recorder closure manifest");
+  assert.equal(existsSync(manifestPath), true, "recorder-001 closure manifest");
   const manifest = readJson<{
     receipt: null | unknown;
     recorder: { status: string };
@@ -784,6 +1075,267 @@ test("recorder formal invocation evidence exists with lawful receipt null", () =
   const names = new Set(summary.r3.highlighted.map((h) => h.basename));
   assert.equal(names.has("judge-malformed-probe.ts"), true);
   assert.equal(names.has("reviewer-real-pi-snippet.ts"), true);
+});
+
+test("repair-002 recorder successor preserves executable corroboration implementation and 277-source scan result", () => {
+  const evidenceDir = join(REPO_ROOT, RECORDER_002);
+  const manifestPath = join(evidenceDir, "manifest.json");
+  assert.equal(existsSync(manifestPath), true, "recorder-002 closure manifest");
+  const manifest = readJson<{
+    receipt: null | unknown;
+    recorder: { status: string };
+    child: { status: string; exitCode: number | null };
+    provenance: { target: string | null };
+    artifacts: Array<{
+      id: string;
+      kind: string;
+      stored?: { path: string; sha256: string; byteLength: number };
+    }>;
+  }>(manifestPath);
+  assert.equal(manifest.receipt, null);
+  assert.equal(manifest.recorder.status, "completed");
+  assert.equal(manifest.child.status, "exited");
+  assert.equal(manifest.child.exitCode, 0);
+  assert.match(String(manifest.provenance.target), /repair-002/);
+
+  const implArt = manifest.artifacts.find(
+    (a) => a.id === "corroboration-scan-implementation",
+  );
+  assert.ok(implArt?.stored?.path, "implementation exhibit stored");
+  assert.equal(implArt!.kind, "exhibit");
+  const implPath = join(evidenceDir, implArt!.stored!.path);
+  assert.equal(existsSync(implPath), true);
+  const implBytes = readFileSync(implPath);
+  assert.equal(sha256(implBytes), implArt!.stored!.sha256);
+  assert.equal(implBytes.byteLength, implArt!.stored!.byteLength);
+  // Independently executable corroboration implementation is preserved.
+  assert.match(implBytes.toString("utf8"), /scanBytes/);
+  assert.match(implBytes.toString("utf8"), /R1-frozen-identity/);
+  assert.match(implBytes.toString("utf8"), /EXPECTED_POST_CUTOFF/);
+
+  const summaryArt = manifest.artifacts.find(
+    (a) => a.id === "corroboration-scan-summary",
+  );
+  assert.ok(summaryArt?.stored?.path, "summary artifact stored path");
+  const summaryPath = join(evidenceDir, summaryArt!.stored!.path);
+  assert.equal(existsSync(summaryPath), true);
+  const summaryBytes = readFileSync(summaryPath);
+  assert.equal(sha256(summaryBytes), summaryArt!.stored!.sha256);
+  const summary = JSON.parse(summaryBytes.toString("utf8")) as {
+    ok: boolean;
+    r1: {
+      recorded: number;
+      matched: number;
+      missing: number;
+      changed: number;
+      postCutoffAdditions: Array<{ basename: string }>;
+      expectedPostCutoff: string[];
+    };
+    r2: {
+      admittedScanned: number;
+      allMatched: boolean;
+      redactedCount: number;
+      highlighted: Array<{
+        itemKey: string;
+        basename: string;
+        redacted: boolean;
+        sourceSha256: string;
+        recoveredSha256: string;
+        hits: unknown[];
+      }>;
+      results: Array<{
+        itemKey: string;
+        basename: string;
+        sourceSha256: string;
+        recoveredSha256: string;
+        redacted: boolean;
+        hits: unknown[];
+      }>;
+    };
+  };
+  assert.equal(summary.ok, true);
+  assert.equal(summary.r1.recorded, 597);
+  assert.equal(summary.r1.matched, 597);
+  assert.equal(summary.r1.missing, 0);
+  assert.equal(summary.r1.changed, 0);
+  assert.deepEqual(
+    summary.r1.postCutoffAdditions.map((p) => p.basename).sort(),
+    [...EXPECTED_POST_CUTOFF].sort(),
+  );
+  assert.equal(summary.r2.admittedScanned, 277);
+  assert.equal(summary.r2.allMatched, true);
+  assert.equal(summary.r2.results.length, 277);
+  assert.equal(summary.r2.redactedCount, 2);
+
+  const byKey = new Map(summary.r2.results.map((r) => [r.itemKey, r]));
+  const probeA = [...byKey.keys()].find((k) => k.startsWith("42a9fc"));
+  const probeB = [...byKey.keys()].find((k) => k.startsWith("af289a"));
+  assert.ok(probeA, "42a9fc result present");
+  assert.ok(probeB, "af289a result present");
+  assert.equal(byKey.get(probeA!)!.redacted, true);
+  assert.equal(byKey.get(probeB!)!.redacted, true);
+  assert.equal(byKey.get(probeA!)!.hits.length > 0, true);
+  assert.equal(byKey.get(probeB!)!.hits.length > 0, true);
+  const hlNames = new Set(summary.r2.highlighted.map((h) => h.basename));
+  assert.equal(hlNames.has("judge-malformed-probe.ts"), true);
+  assert.equal(hlNames.has("reviewer-real-pi-snippet.ts"), true);
+
+  // repair-001 closure bytes must remain untouched by this successor.
+  assert.equal(existsSync(join(REPO_ROOT, RECORDER_001, "manifest.json")), true);
+});
+
+test("historical nonconformance closure seals original and 49807d4 successor identities", () => {
+  assert.equal(gitIsAncestor(ORIGINAL_APPLY_COMMIT), true);
+  assert.equal(gitIsAncestor(NONCONFORMING_SUCCESSOR_COMMIT), true);
+
+  const recordPath = join(REPO_ROOT, HISTORICAL_NONCONFORMANCE);
+  assert.equal(existsSync(recordPath), true);
+  const record = readJson<{
+    kind: string;
+    originalApplyCommit: string;
+    nonconformingSuccessorCommit: string;
+    original: {
+      receipt: { path: string; blobOid: string; sha256: string };
+      manifest: { path: string; blobOid: string; sha256: string };
+    };
+    nonconformingSuccessors: {
+      classification: string;
+      receipt: { path: string; blobOid: string; sha256: string };
+      manifest: { path: string; blobOid: string; sha256: string };
+    };
+    bindings: {
+      verifierPath: string;
+      recorderSuccessorPath: string;
+      manualReconciliation: {
+        path: string;
+        classification: string;
+      };
+    };
+    historicalPathsByteUnchanged: boolean;
+  }>(recordPath);
+
+  assert.equal(record.kind, "historical-nonconformance-closure");
+  assert.equal(record.originalApplyCommit, ORIGINAL_APPLY_COMMIT);
+  assert.equal(
+    record.nonconformingSuccessorCommit,
+    NONCONFORMING_SUCCESSOR_COMMIT,
+  );
+  assert.match(
+    record.nonconformingSuccessors.classification,
+    /nonconforming/i,
+  );
+  assert.equal(record.historicalPathsByteUnchanged, true);
+  assert.equal(
+    record.bindings.verifierPath,
+    "test/legacy-case-a-migration-verifier.test.ts",
+  );
+  assert.equal(
+    record.bindings.recorderSuccessorPath,
+    `${RECORDER_002}/manifest.json`,
+  );
+  assert.equal(
+    record.bindings.manualReconciliation.classification,
+    "exact-set-only",
+  );
+
+  const checks: Array<{
+    label: string;
+    commit: string;
+    path: string;
+    blobOid: string;
+    sha256: string;
+  }> = [
+    {
+      label: "original-receipt",
+      commit: ORIGINAL_APPLY_COMMIT,
+      path: record.original.receipt.path,
+      blobOid: record.original.receipt.blobOid,
+      sha256: record.original.receipt.sha256,
+    },
+    {
+      label: "original-manifest",
+      commit: ORIGINAL_APPLY_COMMIT,
+      path: record.original.manifest.path,
+      blobOid: record.original.manifest.blobOid,
+      sha256: record.original.manifest.sha256,
+    },
+    {
+      label: "successor-receipt",
+      commit: NONCONFORMING_SUCCESSOR_COMMIT,
+      path: record.nonconformingSuccessors.receipt.path,
+      blobOid: record.nonconformingSuccessors.receipt.blobOid,
+      sha256: record.nonconformingSuccessors.receipt.sha256,
+    },
+    {
+      label: "successor-manifest",
+      commit: NONCONFORMING_SUCCESSOR_COMMIT,
+      path: record.nonconformingSuccessors.manifest.path,
+      blobOid: record.nonconformingSuccessors.manifest.blobOid,
+      sha256: record.nonconformingSuccessors.manifest.sha256,
+    },
+  ];
+
+  // Judge-specified exact identities.
+  assert.equal(
+    record.original.receipt.blobOid,
+    "d1bf646ee019ea217612cc8d30100dfa635faf3b",
+  );
+  assert.equal(
+    record.original.receipt.sha256,
+    "0b29ebaf849d16aad4bf1821d571a83a08b67df0d6b53d56ab2727e375c6656a",
+  );
+  assert.equal(
+    record.original.manifest.blobOid,
+    "04fe1b57b745afcc8b18f2655412c854326a94fd",
+  );
+  assert.equal(
+    record.original.manifest.sha256,
+    "64d5cfdeaf0df40713c0f0f8a9f083107f708664abb812240c6c8bdef54405f0",
+  );
+  assert.equal(
+    record.nonconformingSuccessors.receipt.blobOid,
+    "b339d64d33f30e8a1eda80ec974b5f89e93e3a76",
+  );
+  assert.equal(
+    record.nonconformingSuccessors.receipt.sha256,
+    "4fd89914713ea6459dfb71d8997dd71e5a6c6c15e0890f43b2bdc6299e5408a8",
+  );
+  assert.equal(
+    record.nonconformingSuccessors.manifest.blobOid,
+    "62153db474b4e6cb1f77978a6e6ee1402ef2db3a",
+  );
+  assert.equal(
+    record.nonconformingSuccessors.manifest.sha256,
+    "0536d1c0f92dec60830cbd72bc7bbd6622fb37464e51b1f396af4eec489aff39",
+  );
+
+  for (const c of checks) {
+    assert.equal(c.path.startsWith(REPAIR_001_APPLY), true, c.label);
+    const oid = gitRevParse(`${c.commit}:${c.path}`);
+    assert.equal(oid, c.blobOid, `${c.label} blobOid`);
+    assert.equal(sha256(gitShow(`${c.commit}:${c.path}`)), c.sha256, c.label);
+  }
+
+  // Live paths remain the nonconforming successor bytes (not rewritten again).
+  for (const path of [
+    record.nonconformingSuccessors.receipt.path,
+    record.nonconformingSuccessors.manifest.path,
+  ]) {
+    const live = readFileSync(join(REPO_ROOT, path));
+    const liveOid = gitRevParse(`HEAD:${path}`);
+    assert.equal(liveOid, gitRevParse(`${NONCONFORMING_SUCCESSOR_COMMIT}:${path}`));
+    assert.equal(
+      sha256(live),
+      sha256(gitShow(`${NONCONFORMING_SUCCESSOR_COMMIT}:${path}`)),
+    );
+  }
+
+  // Manual reconciliation is exact-set only (not substantive Apply proof).
+  const manual = readFileSync(
+    join(REPO_ROOT, record.bindings.manualReconciliation.path),
+    "utf8",
+  );
+  assert.match(manual, /exact/i);
 });
 
 test("red oracle probes: synthetic violations are detectable from committed shape", () => {
