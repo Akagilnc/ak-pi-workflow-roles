@@ -450,8 +450,6 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     const common = [
       `Task-SHA256: ${taskEvidence.sha256}`,
       `Task-UTF8-Length: ${taskEvidence.utf8Length}`,
-      "Task-Bytes:",
-      taskText,
       `Target: ${range.target}`,
       `Base: ${range.base}`,
       `Diff: ${range.diffCommand}`,
