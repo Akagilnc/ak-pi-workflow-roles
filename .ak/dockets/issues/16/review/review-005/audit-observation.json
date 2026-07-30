@@ -1,0 +1,12 @@
+{
+  "toolName": "ak_reviewer_output",
+  "toolCallId": "call_5M0FMlE280zk3uwJxBSoPrr5|fc_03afd762f3689e02016a6b392de6d481989f76f1286d5f06bd",
+  "auditPassed": true,
+  "usage": {
+    "input": 11119,
+    "output": 203,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 11322
+  }
+}
