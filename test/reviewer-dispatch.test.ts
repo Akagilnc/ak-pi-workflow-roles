@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   REVIEWER_CHILD_TOOLS,
@@ -13,16 +14,7 @@ import {
 
 const task = Buffer.from(" review exactly — 逐字 \n");
 const digest = createHash("sha256").update(task).digest("hex");
-const skill = `# Code review
-## Standards baseline
-- Readability
-- Design
-- Tests
-## Standards review burden
-Apply every baseline item.
-## Spec review burden
-Check every requirement.
-`;
+const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
 const exactCommand = "git diff A..B -- 'space path'";
 const capabilityValue = {
   version: 1,
@@ -167,11 +159,15 @@ test("established Spec produces exact deterministic isolated two-leg prompts", a
   assert.equal(first.calls.length, 1);
   const dispatch = first.calls[0]!;
   assert.deepEqual(dispatch.legs.map(({ axis }) => axis), ["standards", "spec"]);
-  assert.match(dispatch.legs[0]!.prompt, /## Standards baseline\n- Readability\n- Design\n- Tests/);
+  const smells = ["Mysterious Name", "Duplicated Code", "Feature Envy", "Data Clumps", "Primitive Obsession", "Repeated Switches", "Shotgun Surgery", "Divergent Change", "Speculative Generality", "Message Chains", "Middle Man", "Refused Bequest"];
+  for (const smell of smells) assert.equal(dispatch.legs[0]!.prompt.split(`**${smell}**`).length - 1, 1);
+  assert.match(dispatch.legs[0]!.prompt, /### 3\. Identify the standards sources/);
+  assert.match(dispatch.legs[0]!.prompt, /\*\*Standards sub-agent prompt\*\*[\s\S]*Under 400 words\./);
   assert.match(dispatch.legs[0]!.prompt, /B:STYLE\.md/);
-  assert.doesNotMatch(dispatch.legs[0]!.prompt, /B:SPEC\.md|Check every requirement/);
+  assert.doesNotMatch(dispatch.legs[0]!.prompt, /B:SPEC\.md|\*\*Spec sub-agent prompt\*\*|### 5\. Aggregate/);
   assert.match(dispatch.legs[1]!.prompt, /B:SPEC\.md/);
-  assert.doesNotMatch(dispatch.legs[1]!.prompt, /Readability|Apply every baseline item|B:STYLE\.md/);
+  assert.match(dispatch.legs[1]!.prompt, /\*\*Spec sub-agent prompt\*\*[\s\S]*Under 400 words\./);
+  assert.doesNotMatch(dispatch.legs[1]!.prompt, /Mysterious Name|\*\*Standards sub-agent prompt\*\*|B:STYLE\.md|### 5\. Aggregate/);
   for (const leg of dispatch.legs) {
     assert.equal(Buffer.byteLength(leg.prompt), leg.utf8Length);
     assert.equal(createHash("sha256").update(leg.prompt).digest("hex"), leg.sha256);
@@ -188,7 +184,7 @@ test("established Spec produces exact deterministic isolated two-leg prompts", a
 test("canonical snapshot perturbation changes only extracted Standards evidence", async () => {
   const original = harness();
   await original.dispatcher.propose(proposal);
-  const changed = harness({ canonicalSkill: skill.replace("- Design", "- Architecture") });
+  const changed = harness({ canonicalSkill: skill.replace("**Duplicated Code**", "**Repeated Code**") });
   await changed.dispatcher.propose(proposal);
   assert.notEqual(original.calls[0]!.legs[0]!.sha256, changed.calls[0]!.legs[0]!.sha256);
   assert.equal(original.calls[0]!.legs[1]!.sha256, changed.calls[0]!.legs[1]!.sha256);
@@ -203,8 +199,8 @@ test("no-spec produces one complete Standards leg and no Spec bytes", async () =
   const { dispatcher, calls } = harness();
   assert.equal((await dispatcher.propose(one)).status, "accepted");
   assert.deepEqual(calls[0]!.legs.map(({ axis }) => axis), ["standards"]);
-  assert.match(calls[0]!.legs[0]!.prompt, /Readability|NO-SPEC/);
-  assert.doesNotMatch(calls[0]!.legs[0]!.prompt, /Spec review burden|Check every requirement/);
+  assert.match(calls[0]!.legs[0]!.prompt, /Mysterious Name|NO-SPEC/);
+  assert.doesNotMatch(calls[0]!.legs[0]!.prompt, /Spec sub-agent prompt|Quote the spec line/);
   assert.equal(dispatcher.acceptance?.cardinality, 1);
 });
 

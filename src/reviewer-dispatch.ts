@@ -258,13 +258,6 @@ function skillSection(skill: string, heading: string, nextHeading: string): stri
   return skill.slice(start, end).trim();
 }
 
-function terminalSkillSection(skill: string, heading: string): string {
-  const start = skill.indexOf(heading);
-  if (start < 0) throw new Error(`Canonical Skill lacks ${heading}`);
-  const next = skill.indexOf("\n## ", start + heading.length);
-  return skill.slice(start, next < 0 ? skill.length : next).trim();
-}
-
 function immutablePin(pin: ReviewerPinnedTarget): ReviewerPinnedTarget {
   return Object.freeze({
     repositoryRoot: pin.repositoryRoot,
@@ -409,14 +402,15 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       "Commits:",
       range.commits.join("\n"),
     ].join("\n");
-    const baseline = skillSection(canonicalSkill, "## Standards baseline", "## Standards review burden");
-    const standardsBurden = skillSection(canonicalSkill, "## Standards review burden", "## Spec review burden");
+    const baseline = skillSection(canonicalSkill, "### 3. Identify the standards sources", "### 4. Spawn both sub-agents in parallel");
+    const standardsBurden = skillSection(canonicalSkill, "**Standards sub-agent prompt**", "**Spec sub-agent prompt**");
     const standardsPrompt = `${common}\n\nStandards materials:\n${await renderMaterials(proposal.standardsMaterials)}\n\n${baseline}\n\n${standardsBurden}\n`;
     const promptInputs: Array<Readonly<{ axis: "standards" | "spec"; prompt: string; grant: ReviewerCapabilityRequest }>> = [
       { axis: "standards", prompt: standardsPrompt, grant: standardsGrant },
     ];
     if (proposal.spec.state === "established") {
-      const specPrompt = `${common}\n\nSpec materials:\n${await renderMaterials(proposal.spec.materials)}\n\n${terminalSkillSection(canonicalSkill, "## Spec review burden")}\n`;
+      const specBurden = skillSection(canonicalSkill, "**Spec sub-agent prompt**", "### 5. Aggregate");
+      const specPrompt = `${common}\n\nSpec materials:\n${await renderMaterials(proposal.spec.materials)}\n\n${specBurden}\n`;
       promptInputs.push({ axis: "spec", prompt: specPrompt, grant: specGrant! });
     }
     const legs = Object.freeze(promptInputs.map(({ axis, prompt, grant }) => Object.freeze({

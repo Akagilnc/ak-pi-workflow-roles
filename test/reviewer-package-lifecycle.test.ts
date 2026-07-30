@@ -32,7 +32,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const fixture = resolve(home, "consumer");
     const agentDir = resolve(fixture, ".pi-agent");
     const { path: skillPath } = await writeTestSkill(home, "code-review");
-    const skillRaw = ["---", "name: code-review", "description: package fixture", "---", "", "# Code review", "## Standards baseline", "Check correctness and tests.", "## Standards review burden", "Apply every baseline item.", "## Spec review burden", "Check every established requirement.", ""].join("\n");
+    const skillRaw = await readFile(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
     await writeFile(skillPath, skillRaw);
     await mkdir(fixture, { recursive: true });
     await git(fixture, "init");
@@ -100,6 +100,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.equal(rejected.message.details.status, "rejected");
       assert.equal(accepted.message.details.status, "accepted", JSON.stringify(accepted.message.details));
       assert.equal(accepted.message.details.dispatch.legs.length, 2);
+      assert.match(accepted.message.details.dispatch.legs[0].prompt, /\*\*Refused Bequest\*\*/);
+      assert.match(accepted.message.details.dispatch.legs[1].prompt, /Quote the spec line for each finding/);
       assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.axis), ["standards", "spec"]);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.repositoryRoot, root);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.targetHead, target);

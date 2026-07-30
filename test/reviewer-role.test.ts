@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -10,7 +11,7 @@ const task = new TextEncoder().encode("review exact bytes\n");
 const digest = createHash("sha256").update(task).digest("hex");
 const operations = ["preflight.git.pin-target","preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"] as const;
 const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read"], bashCommands: [], prerequisiteOperations: operations }));
-const skill = "## Standards baseline\nbaseline\n## Standards review burden\nstandards\n## Spec review burden\nspec";
+const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
 const pin = { repositoryRoot: "/repo", targetHead: "target", refs: { "refs/heads/main": "target" } };
 const request = { tools: ["read"] as const, bashCommands: [] as const, prerequisiteOperations: operations };
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, standardsMaterials: [{ id: "rules", repositoryPath: "RULES.md" }], spec: established ? { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] } : { state: "not-established", evidence: [{ id: "absence", repositoryPath: "README.md" }] }, required: established ? { standards: request, spec: request } : { standards: request } }; }
