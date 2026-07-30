@@ -33,7 +33,7 @@ async function dispatch(root: string, prompts: readonly string[], tools: readonl
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
   const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => { const [name, objectId, peeled, objectType, peeledType] = line.split("\0"); return [name!, { objectId: objectId!, peeledCommitId: objectType === "commit" ? objectId! : peeledType === "commit" ? peeled! : null }]; }));
   const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
-  return { identity: "accepted", recipe: "reviewer-dispatch-v1", input: { task: { bytes: "task", utf8Length: 4, sha256: createHash("sha256").update("task").digest("hex") }, canonicalSkillSha256: "skill" }, materials: { standards: [] }, targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex"), grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
+  return { identity: "accepted", recipe: "reviewer-dispatch-v1", prerequisiteOperations: prerequisites, input: { task: { bytes: "task", utf8Length: 4, sha256: createHash("sha256").update("task").digest("hex") }, canonicalSkillSha256: "skill" }, materials: { standards: [] }, targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex"), grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
 }
 
 const exec = promisify(execFile);
@@ -367,6 +367,8 @@ test("Reviewer child provider delegates class-private streams to the original re
 
 test("Reviewer Agent reports deterministic setup failures with bounded retention evidence", async () => {
   const cases = [
+    ["snapshot.head", "not-created", "snapshot"],
+    ["snapshot.refs", "not-created", "snapshot"],
     ["mirror.before-create", "not-created", "snapshot"],
     ["mirror.create", "retained", "snapshot"],
     ["mirror.verify", "retained", "snapshot"],

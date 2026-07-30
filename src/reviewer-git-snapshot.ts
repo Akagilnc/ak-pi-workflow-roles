@@ -36,6 +36,14 @@ export function immutableReviewerRefs(refs: ReviewerRefMap): ReviewerRefMap {
     .map(([name, entry]) => [name, Object.freeze({ objectId: entry.objectId, peeledCommitId: entry.peeledCommitId })])));
 }
 
+export function sameReviewerPinnedTarget(
+  actual: Readonly<{ repositoryRoot: string; targetHead: string; refs: ReviewerRefMap }>,
+  expected: Readonly<{ repositoryRoot: string; targetHead: string; refs: ReviewerRefMap }>,
+): boolean {
+  return actual.repositoryRoot === expected.repositoryRoot &&
+    actual.targetHead === expected.targetHead && sameReviewerRefs(actual.refs, expected.refs);
+}
+
 export function sameReviewerRefs(actual: ReviewerRefMap, expected: ReviewerRefMap): boolean {
   const a = Object.entries(actual).sort(([left], [right]) => left.localeCompare(right));
   const b = Object.entries(expected).sort(([left], [right]) => left.localeCompare(right));

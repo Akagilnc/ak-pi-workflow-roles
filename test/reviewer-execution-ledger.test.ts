@@ -18,7 +18,7 @@ function accepted(spec = true): ReviewerEvidenceEvent {
   const prompts = spec ? [["standards", "standards π"], ["spec", "spec prompt"]] as const : [["standards", "standards π"]] as const;
   return {
     source: "reviewer-dispatch", type: "accepted", identity: "proposal-1", recipe: "reviewer-dispatch-v1",
-    input: { task: { bytes: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha" }, target, range,
+    input: { task: { bytes: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha" }, target, prerequisiteOperations: [], range,
     materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", bytes: "rules", utf8Length: 5, sha256: sha("rules") }], ...(spec ? { spec: [{ id: "requirements", repositoryPath: "SPEC.md", bytes: "spec", utf8Length: 4, sha256: sha("spec") }] } : { noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", bytes: "absence", utf8Length: 7, sha256: sha("absence") }] }) },
     legs: prompts.map(([axis, prompt]) => ({ axis, prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt), grant })),
   } as ReviewerEvidenceEvent;

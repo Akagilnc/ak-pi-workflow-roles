@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { exactUtf8 } from "./exact-utf8.ts";
-import { sameReviewerRefs } from "./reviewer-git-snapshot.ts";
+import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
@@ -67,6 +67,7 @@ export type AcceptedReviewerDispatch = Readonly<{
     canonicalSkillSha256: string;
   }>;
   targetSnapshot: ReviewerPinnedTarget;
+  prerequisiteOperations: readonly ReviewerPrerequisiteOperation[];
   range: ReviewerRange;
   materials: Readonly<{
     standards: readonly ReviewerMaterialEvidence[];
@@ -269,7 +270,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     return Object.freeze({ status: "rejected" as const, identity, violations });
   }
 
-  async function compile(proposal: ReviewerProposalV1, identity: string): Promise<AcceptedReviewerDispatch> {
+  async function preflightAndCompileDispatch(proposal: ReviewerProposalV1, identity: string): Promise<AcceptedReviewerDispatch> {
     if (!isExactObject(proposal, ["version", "base", "standardsMaterials", "spec", "required"]) || proposal.version !== 1) {
       throw new Error("Invalid Reviewer proposal");
     }
@@ -311,10 +312,12 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       ? validateRequest(proposal.required.spec, capabilities, hostTools)
       : undefined;
     const runnerOperations = REVIEWER_PREREQUISITES.filter((operation) => operation.startsWith("runner."));
+    const acceptedPrerequisites = freezeStrings([...new Set([
+      ...standardsGrant.prerequisiteOperations,
+      ...(specGrant?.prerequisiteOperations ?? []),
+    ])]);
     for (const operation of runnerOperations) {
-      if (!capabilities.prerequisiteOperations.includes(operation) ||
-          !standardsGrant.prerequisiteOperations.includes(operation) ||
-          (specGrant !== undefined && !specGrant.prerequisiteOperations.includes(operation))) {
+      if (!capabilities.prerequisiteOperations.includes(operation) || !acceptedPrerequisites.includes(operation)) {
         throw new Error(`Missing accepted runner prerequisite: ${operation}`);
       }
     }
@@ -410,6 +413,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       recipe: "reviewer-dispatch-v1",
       input: Object.freeze({ task: taskEvidence, canonicalSkillSha256: sha256(canonicalSkill) }),
       targetSnapshot,
+      prerequisiteOperations: acceptedPrerequisites,
       range,
       materials,
       legs,
@@ -431,7 +435,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       if (accepted || accepting) return close(identity);
       let dispatch: AcceptedReviewerDispatch;
       try {
-        dispatch = await compile(proposal, identity);
+        dispatch = await preflightAndCompileDispatch(proposal, identity);
       } catch (error) {
         // Compilation awaits repository I/O; another proposal may accept meanwhile.
         if (accepted || accepting) return close(identity);
@@ -442,8 +446,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       if (accepted || accepting) return close(identity);
       try {
         const live = await dependencies.reader.snapshot();
-        if (live.repositoryRoot !== targetSnapshot.repositoryRoot || live.targetHead !== targetSnapshot.targetHead ||
-            !sameReviewerRefs(live.refs, targetSnapshot.refs)) {
+        if (!sameReviewerPinnedTarget(live, targetSnapshot)) {
           throw new Error("preflight.git.pin-target detected repository HEAD/ref drift");
         }
       } catch (error) {
