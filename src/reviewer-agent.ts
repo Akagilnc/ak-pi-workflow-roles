@@ -71,7 +71,8 @@ export type ReviewerAgentRunner = {
 export type ReviewerAgentFaultPoint =
   | "snapshot.head" | "snapshot.refs"
   | "mirror.before-create" | "mirror.create" | "mirror.verify"
-  | "workspace.before-create" | "workspace.init" | "workspace.fetch" | "workspace.verify";
+  | "workspace.before-create" | "workspace.init" | "workspace.fetch" | "workspace.verify"
+  | "child.reload" | "child.session";
 type ReviewerAgentDependencies = Readonly<{ fault?(operation: ReviewerAgentFaultPoint): void }>;
 
 type GitSnapshot = ReviewerTargetSnapshot & {
@@ -396,8 +397,10 @@ async function runChild(
   leg: AcceptedReviewerLeg,
   context: ExtensionContext,
   signal?: AbortSignal,
+  fault?: ReviewerAgentDependencies["fault"],
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptIdentity }> {
   const childConfigDir = await mkdtemp(join(tmpdir(), "ak-reviewer-child-"));
+  try {
   const settings = SettingsManager.inMemory({
     compaction: { enabled: false },
     retry: { enabled: false },
@@ -418,6 +421,7 @@ async function runChild(
       "Return one substantive non-blank review-leg report.",
     ].join("\n"),
   });
+  fault?.("child.reload");
   await loader.reload();
   let runtime: ModelRuntime;
   let model: Model<Api>;
@@ -438,6 +442,7 @@ async function runChild(
         },
       }]
     : [];
+  fault?.("child.session");
   const { session } = await createAgentSession({
     cwd: workspace,
     agentDir: childConfigDir,
@@ -464,9 +469,9 @@ async function runChild(
     if (JSON.stringify(visibleTools) !== JSON.stringify(leg.grant.tools)) {
       throw new Error(`Reviewer child tool isolation failed: ${visibleTools.join(", ")}`);
     }
-    const delivered = Object.freeze(reviewerPromptIdentity(leg.prompt));
+    const delivered = leg.prompt;
     try {
-      await session.prompt(delivered.bytes);
+      await session.prompt(delivered.text);
     } catch (error) {
       throw classifiedError(error, "provider");
     }
@@ -493,6 +498,10 @@ async function runChild(
     signal?.removeEventListener("abort", abortChild);
     unsubscribe();
     session.dispose();
+  }
+  } catch (error) {
+    throw classifiedError(error, "child");
+  } finally {
     await rm(childConfigDir, { recursive: true, force: true });
   }
 }
@@ -525,7 +534,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
       if (acceptedIdentity !== undefined) throw new Error("Reviewer runner accepts exactly one dispatch");
       acceptedIdentity = dispatch.identity;
       for (const leg of dispatch.legs) {
-        if (!isReviewerPromptIdentity({ bytes: leg.prompt, utf8Length: leg.utf8Length, sha256: leg.sha256 })) throw new Error("Accepted Reviewer prompt evidence mismatch");
+        if (!isReviewerPromptIdentity(leg.prompt)) throw new Error("Accepted Reviewer prompt evidence mismatch");
       }
       for (const operation of RUNNER_PREREQUISITES) {
         if (!dispatch.prerequisiteOperations.includes(operation)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
@@ -536,7 +545,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
       catch (error) {
         const evidence = failureEvidence(error, dispatch.targetSnapshot);
         const target = evidence.target;
-        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error, options.signal), target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition: evidence.workspaceDisposition })]));
+        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error, options.signal), target, prompt: leg.prompt, workspaceDisposition: evidence.workspaceDisposition })]));
         throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
       }
       const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
@@ -544,7 +553,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
         let workspace: string | undefined;
         try {
           workspace = await prepareWorkspace(snapshot, options.signal, dependencies);
-          const child = await runChild(workspace, leg, options.context, options.signal);
+          const child = await runChild(workspace, leg, options.context, options.signal, dependencies.fault);
           await rm(workspace, { recursive: true, force: false });
           return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const })] as const;
         } catch (error) {
@@ -552,7 +561,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
           const workspaceDisposition = workspace === undefined
             ? evidence.workspaceDisposition
             : Object.freeze({ retained: workspace });
-          return [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error, options.signal), target: evidence.target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition })] as const;
+          return [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error, options.signal), target: evidence.target, prompt: leg.prompt, workspaceDisposition })] as const;
         }
       }));
       const pairs = settled.map((item) => item.status === "fulfilled" ? item.value : (() => { throw item.reason; })());

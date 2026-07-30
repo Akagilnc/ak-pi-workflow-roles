@@ -104,10 +104,10 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.equal(rejected.message.details.status, "rejected");
       assert.equal(accepted.message.details.status, "accepted", JSON.stringify(accepted.message.details));
       assert.equal(accepted.message.details.dispatch.legs.length, 2);
-      assert.match(accepted.message.details.dispatch.legs[0].prompt, /\*\*Refused Bequest\*\*/);
-      assert.match(accepted.message.details.dispatch.legs[1].prompt, /Quote the spec line for each finding/);
-      assert.doesNotMatch(accepted.message.details.dispatch.legs[0].prompt, /consumer text must become reviewed|Review current HEAD against/);
-      assert.equal(accepted.message.details.dispatch.input.task.bytes, taskBytes.toString("utf8"));
+      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /\*\*Refused Bequest\*\*/);
+      assert.match(accepted.message.details.dispatch.legs[1].prompt.text, /Quote the spec line for each finding/);
+      assert.doesNotMatch(accepted.message.details.dispatch.legs[0].prompt.text, /consumer text must become reviewed|Review current HEAD against/);
+      assert.equal(accepted.message.details.dispatch.input.task.text, taskBytes.toString("utf8"));
       assert.equal(accepted.message.details.dispatch.input.task.sha256, createHash("sha256").update(taskBytes).digest("hex"));
       assert.match(accepted.message.details.dispatch.range.diffCommand, /^git diff [0-9a-f]{40}\.\.\.[0-9a-f]{40}$/);
       assert.match(accepted.message.details.dispatch.range.diffSha256, /^[0-9a-f]{64}$/);
@@ -115,8 +115,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.equal(accepted.message.details.dispatch.targetSnapshot.repositoryRoot, root);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.targetHead, target);
       for (const leg of accepted.message.details.dispatch.legs) {
-        assert.equal(createHash("sha256").update(leg.prompt).digest("hex"), leg.sha256);
-        assert.match(leg.prompt, /Task-SHA256: [0-9a-f]{64}/);
+        assert.equal(createHash("sha256").update(leg.prompt.text).digest("hex"), leg.prompt.sha256);
+        assert.match(leg.prompt.text, /Task-SHA256: [0-9a-f]{64}/);
       }
       assert.equal(audits.length, 2);
       assert.match(userText(audits[0]!), /structured_execution_record/);

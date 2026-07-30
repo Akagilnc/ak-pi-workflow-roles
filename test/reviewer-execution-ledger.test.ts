@@ -18,14 +18,14 @@ function accepted(spec = true): ReviewerEvidenceEvent {
   const prompts = spec ? [["standards", "standards π"], ["spec", "spec prompt"]] as const : [["standards", "standards π"]] as const;
   return {
     source: "reviewer-dispatch", type: "accepted", identity: "proposal-1", recipe: "reviewer-dispatch-v1",
-    input: { task: { bytes: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha" }, target, prerequisiteOperations: [], range,
-    materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", bytes: "rules", utf8Length: 5, sha256: sha("rules") }], ...(spec ? { spec: [{ id: "requirements", repositoryPath: "SPEC.md", bytes: "spec", utf8Length: 4, sha256: sha("spec") }] } : { noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", bytes: "absence", utf8Length: 7, sha256: sha("absence") }] }) },
-    legs: prompts.map(([axis, prompt]) => ({ axis, prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt), grant })),
+    input: { task: { text: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha" }, target, prerequisiteOperations: [], range,
+    materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", text: "rules", utf8Length: 5, sha256: sha("rules") }], ...(spec ? { spec: [{ id: "requirements", repositoryPath: "SPEC.md", text: "spec", utf8Length: 4, sha256: sha("spec") }] } : { noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", text: "absence", utf8Length: 7, sha256: sha("absence") }] }) },
+    legs: prompts.map(([axis, prompt]) => ({ axis, prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, grant })),
   } as ReviewerEvidenceEvent;
 }
 
 function settled(axis: "standards" | "spec", prompt: string): ReviewerEvidenceEvent {
-  return { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "successful", prompt: { bytes: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, report: `${axis} report`, usage, workspaceDisposition: "deleted" } as const;
+  return { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "successful", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, report: `${axis} report`, usage, workspaceDisposition: "deleted" } as const;
 }
 
 test("transport rejection is immutable, bounded, ordered, and retains no raw arguments", () => {
@@ -45,10 +45,10 @@ test("established Spec completion projects one accepted sibling dispatch and exa
   ledger.append(settled("spec", "spec prompt"));
 
   const record = ledger.recordForAudit("completed");
-  assert.equal(record.accepted?.legs[0]?.utf8Length, 12);
+  assert.equal(record.accepted?.legs[0]?.prompt.utf8Length, 12);
   assert.deepEqual(record.started, { dispatchIdentity: "proposal-1", cardinality: 2 });
   assert.deepEqual(Object.keys(record.results), ["standards", "spec"]);
-  assert.equal(record.results.spec?.prompt.bytes, "spec prompt");
+  assert.equal(record.results.spec?.prompt.text, "spec prompt");
   assert.ok(Object.isFrozen(record));
   assert.ok(Object.isFrozen(record.accepted?.target.refs));
   assert.throws(() => { (record.results.standards!.usage!.cost as any).total = 99; }, TypeError);
@@ -59,7 +59,7 @@ test("both sibling failures preserve exact settlement order and bounded evidence
   ledger.append(accepted(true));
   ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: "proposal-1", cardinality: 2 });
   for (const [axis, prompt, failure] of [["standards", "standards π", "provider"], ["spec", "spec prompt", "child"]] as const) {
-    ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "failed", prompt: { bytes: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, failure, workspaceDisposition: "not-created" });
+    ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: "proposal-1", axis, status: "failed", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, target, failure, workspaceDisposition: "not-created" });
   }
   const record = ledger.recordForAudit("refused");
   assert.deepEqual(Object.keys(record.results), ["standards", "spec"]);

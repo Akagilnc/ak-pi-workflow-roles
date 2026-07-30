@@ -3,6 +3,7 @@ import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 import { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 import { sha256Hex } from "./sha256.ts";
 export { sha256Hex } from "./sha256.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
@@ -54,9 +55,9 @@ export type ReviewerProposalV1 = Readonly<{
     spec?: ReviewerCapabilityRequest;
   }>;
 }>;
-export type AcceptedReviewerLeg = Omit<ReviewerPromptIdentity, "bytes"> & Readonly<{
+export type AcceptedReviewerLeg = Readonly<{
   axis: "standards" | "spec";
-  prompt: ReviewerPromptIdentity["bytes"];
+  prompt: ReviewerPromptIdentity;
   grant: ReviewerCapabilityRequest;
 }>;
 export type AcceptedReviewerDispatch = Readonly<{
@@ -120,6 +121,10 @@ class PreflightViolation extends Error {
   constructor(readonly code: ReviewerPreflightViolation) { super(code); }
 }
 const violation = (code: ReviewerPreflightViolation): never => { throw new PreflightViolation(code); };
+const classifyReadFailure = (error: unknown): never => {
+  if (error instanceof ReviewerCorrectablePreflightError) violation(error.code);
+  throw new PreflightViolation("preflight-infrastructure");
+};
 
 function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -344,7 +349,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     try {
       base = await dependencies.reader.resolve(proposal.base.revision);
       readRange = await dependencies.reader.range(base);
-    } catch { violation("preflight-infrastructure"); }
+    } catch (error) { classifyReadFailure(error); }
     if (readRange.base !== base || readRange.target !== targetSnapshot.targetHead) {
       throw new Error("Range is inconsistent with immutable target pin");
     }
@@ -372,13 +377,13 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       for (const item of items) {
         let bytes!: Uint8Array;
         try { bytes = await dependencies.reader.material(item.repositoryPath, targetSnapshot.targetHead); }
-        catch { violation("preflight-infrastructure"); }
+        catch (error) { classifyReadFailure(error); }
         let text!: string;
         try { text = exactUtf8(bytes, "Reviewer material"); }
         catch { violation("material-invalid"); }
         materialEvidence.set(item.id, Object.freeze({
           ...item,
-          bytes: text,
+          text: text,
           utf8Length: bytes.byteLength,
           sha256: sha256Hex(bytes),
         }));
@@ -421,13 +426,13 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       if (!isReviewerPromptIdentity(first) || !isReviewerPromptIdentity(second)) {
         violation("prompt-identity-invalid");
       }
-      if (first.bytes !== second.bytes || first.utf8Length !== second.utf8Length || first.sha256 !== second.sha256) {
+      if (first.text !== second.text || first.utf8Length !== second.utf8Length || first.sha256 !== second.sha256) {
         violation("prompt-identity-mismatch");
       }
     }
     const legs = Object.freeze(promptInputs.map(({ axis, grant }, index) => {
       const identity = firstCompilations[index]!;
-      return Object.freeze({ axis, prompt: identity.bytes, utf8Length: identity.utf8Length, sha256: identity.sha256, grant });
+      return Object.freeze({ axis, prompt: identity, grant });
     }));
     const evidenceFor = (items: readonly MaterialSelection[]) => Object.freeze(items.map((item) => materialEvidence.get(item.id)!));
     const materials = Object.freeze({
