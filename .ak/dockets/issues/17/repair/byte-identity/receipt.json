@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_WEqPr0gjoNwEnQzUas1qDcRT|fc_06bbd824cc16f4d9016a6b9fab61508191a0dee61b3dda46f0",
+  "details": {
+    "status": "completed",
+    "report": "R1: Fatal UTF-8 decode with BOM preservation and byte-equal round-trip now carries exact task/material representations into prompts; BOM, multibyte, and invalid-byte tests pass.\nR2: Immutable pins now use closed ref entries retaining both objectId and peeledCommitId; annotated-tag retargeting tests prove both pinned identities remain unchanged.\nR3: The delivered prompt identity is frozen immediately before session.prompt(delivered.bytes), and that same identity object is returned as execution evidence; runner seam tests pass.\nR4: Each axis compiles independently twice from accepted inputs and rejects byte mismatches before runner effects; the stateful compiler counterexample passes.\nR5: reviewer-dispatch remains the deep production owner; no production split or Soul implementation-detail expansion was introduced.\nR6: Commit 9f667aa created forward; focused Reviewer/lifecycle tests, full suite (351 passing), typecheck, npm pack --dry-run, and git diff --check passed with a clean worktree.",
+    "commitSha": "9f667aa"
+  },
+  "artifactKind": "acceptedReceipt"
+}
