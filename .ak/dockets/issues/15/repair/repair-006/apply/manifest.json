@@ -1,0 +1,20 @@
+{
+  "formatVersion": 1,
+  "role": "fixer",
+  "phase": "apply",
+  "status": "completed",
+  "packet": {
+    "path": ".ak/dockets/issues/15/repair/repair-006/packet.md",
+    "sha256": "f0d1f01620bc7d79c40f5445b008cd69b17da8132dbf21159a85e0037506de67"
+  },
+  "reportedCommit": "eb6bb68903bced53d49d06dfce086cccb8ccde17",
+  "sessionCandidate": {
+    "bytes": 5008430,
+    "sha256": "6e3125855657b1fcf3105b6ac437b1f783e5cf3555f700c4d42fb56e571c0185",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "b8a7400d8c82ce4bd2a83878b30cc4657aecfffb709fb9fda54127437f64648d"
+  }
+}
