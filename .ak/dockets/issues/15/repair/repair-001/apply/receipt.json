@@ -1,6 +1,5 @@
 {
   "status": "completed",
   "report": "| R# | Disposition |\n| --- | --- |\n| R1 | implemented(test: probe lifecycle: seven executable probes absent live; referenced at immutable target) |\n| R2 | implemented(test: fixed-target Git construction walk joins inventory keys; independent sealed predicates agree; recorder formal invocation evidence exists with lawful receipt null — r2 matched=597 missing=0 changed=0) |\n| R3 | implemented(test: recovered bytes have scanner evidence; actual scanBytes reproduces hashes and hits; recorder formal invocation evidence — r3 admittedScanned=277 including 42a9fc and af289a) |\n| R4 | implemented(test: structured issue/PR/commit associations present; ecec8803 binds PR5 and target commit) |\n| R5 | implemented(test: commit-msg classifier precedence: decision-chain recovered, not ephemeral) |",
-  "immutableMigrationContentCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
-  "recorderClosure": ".ak/dockets/issues/15/repair/repair-001/recorder-closure"
+  "commitSha": "702e36f97caa92f012470bf5a890e656a5859800"
 }
