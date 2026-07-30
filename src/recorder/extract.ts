@@ -329,11 +329,13 @@ export function hasMismatchedCrossRepCallIdentity(
 
 /**
  * Collapse only the documented production-order current-Pi pair:
- * `type:"tool_execution_end"` followed later by equivalent
+ * issuance → matching start → `type:"tool_execution_end"` → equivalent
  * `type:"message_end"` / `role:"toolResult"`.
  * Generic persisted-session `type:"message"` / `role:"toolResult"` remains a
  * supported standalone terminal and must not collapse with tool_execution_end.
  * Retain the toolResult representation (public Receipt trust contract).
+ * Terminal-to-terminal order alone is insufficient: an early tool_execution_end
+ * before matching start must stay visible so binding stays fail-closed.
  * Reversed order, same-representation replays, and conflicts keep every
  * terminal so binding stays fail-closed.
  */
@@ -341,15 +343,30 @@ export function canonicalizeLifecycleEvents(
   events: LifecycleEvent[],
 ): LifecycleEvent[] {
   const terminalsByCallId = new Map<string, TerminalLifecycleEvent[]>();
+  const issuedByCallId = new Map<string, number[]>();
+  const startsByCallId = new Map<string, number[]>();
   for (const event of events) {
-    if (event.kind !== "terminal") continue;
-    const list = terminalsByCallId.get(event.toolCallId);
-    if (list) list.push(event);
-    else terminalsByCallId.set(event.toolCallId, [event]);
+    if (event.kind === "terminal") {
+      const list = terminalsByCallId.get(event.toolCallId);
+      if (list) list.push(event);
+      else terminalsByCallId.set(event.toolCallId, [event]);
+      continue;
+    }
+    if (event.kind === "issued") {
+      const list = issuedByCallId.get(event.toolCallId);
+      if (list) list.push(event.index);
+      else issuedByCallId.set(event.toolCallId, [event.index]);
+      continue;
+    }
+    if (event.kind === "start") {
+      const list = startsByCallId.get(event.toolCallId);
+      if (list) list.push(event.index);
+      else startsByCallId.set(event.toolCallId, [event.index]);
+    }
   }
 
   const drop = new Set<TerminalLifecycleEvent>();
-  for (const terminals of terminalsByCallId.values()) {
+  for (const [callId, terminals] of terminalsByCallId) {
     if (terminals.length !== 2) continue;
     const first = terminals[0]!;
     const second = terminals[1]!;
@@ -359,9 +376,21 @@ export function canonicalizeLifecycleEvents(
       first.representation === "tool_execution_end" ? first : second;
     const toolResult =
       first.representation === "toolResult" ? first : second;
-    // Documented current-Pi pair only: tool_execution_end then message_end/toolResult.
+    // Documented current-Pi pair only: message_end/toolResult after tee.
     if (toolResult.rowType !== "message_end") continue;
-    if (!(toolExecutionEnd.index < toolResult.index)) continue;
+    // Complete production lifecycle order required before dropping tee:
+    // issuance → matching start → tool_execution_end → message_end/toolResult.
+    const issuedIndexes = issuedByCallId.get(callId) ?? [];
+    const startIndexes = startsByCallId.get(callId) ?? [];
+    const hasCompleteProductionOrder = issuedIndexes.some((issuedIndex) =>
+      startIndexes.some(
+        (startIndex) =>
+          issuedIndex < startIndex &&
+          startIndex < toolExecutionEnd.index &&
+          toolExecutionEnd.index < toolResult.index,
+      ),
+    );
+    if (!hasCompleteProductionOrder) continue;
     // Preserve usage facts that appear only on the dropped transport form.
     if (toolResult.usage === undefined && toolExecutionEnd.usage !== undefined) {
       toolResult.usage = toolExecutionEnd.usage;

@@ -1229,6 +1229,11 @@ function combinedCrossRepresentationLifecycle(
      * Documented production order is tool_execution_end then toolResult only.
      */
     reversedTerminalOrder?: boolean;
+    /**
+     * Emit tool_execution_end after issuance but before matching start, then toolResult.
+     * Terminal-to-terminal order alone must not authorize dual-rep collapse.
+     */
+    toolExecutionEndBeforeStart?: boolean;
     omitIssued?: boolean;
     omitStart?: boolean;
   } = {},
@@ -1287,6 +1292,11 @@ function combinedCrossRepresentationLifecycle(
     lines.push(toolResultMessage);
     if (!options.omitStart) lines.push(start);
     lines.push(toolExecutionEnd);
+  } else if (options.toolExecutionEndBeforeStart) {
+    // issued → tool_execution_end → start → message_end/toolResult
+    lines.push(toolExecutionEnd);
+    if (!options.omitStart) lines.push(start);
+    lines.push(toolResultMessage);
   } else if (options.reversedTerminalOrder) {
     if (!options.omitStart) lines.push(start);
     lines.push(toolResultMessage);
@@ -1423,6 +1433,13 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
       envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
         details: judgeDetails,
         reversedTerminalOrder: true,
+      }),
+    },
+    {
+      name: "tool_execution_end before matching start (early tee)",
+      envelope: combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+        details: judgeDetails,
+        toolExecutionEndBeforeStart: true,
       }),
     },
     {
@@ -1604,6 +1621,43 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
     ),
   ).filter((event) => event.kind === "terminal");
   assert.equal(reversedEvents.length, 2, "reversed pair keeps both terminals");
+
+  // Judge blocker — issued → tool_execution_end → start → message_end/toolResult.
+  // Terminal-to-terminal order alone must not drop the early tee; real extraction
+  // path must yield null Receipt and null audit observation.
+  const earlyTeeEnvelope = combinedCrossRepresentationLifecycle(
+    JUDGE_OUTPUT_TOOL_NAME,
+    {
+      details: judgeDetails,
+      toolExecutionEndBeforeStart: true,
+    },
+  );
+  const earlyTeeCanonical = canonicalizeLifecycleEvents(
+    collectLifecycleEvents(decodeEnvelopeRows(earlyTeeEnvelope)),
+  ).filter((event) => event.kind === "terminal");
+  assert.equal(
+    earlyTeeCanonical.length,
+    2,
+    "early tool_execution_end before start must keep both terminals",
+  );
+  assert.deepEqual(
+    earlyTeeCanonical.map((event) =>
+      event.kind === "terminal" ? event.representation : null,
+    ),
+    ["tool_execution_end", "toolResult"],
+    "early tee must remain visible beside toolResult",
+  );
+  const earlyTeeExtracted = extractAcceptedReceipt([earlyTeeEnvelope]);
+  assert.equal(
+    earlyTeeExtracted.receipt,
+    null,
+    "issued → tool_execution_end → start → toolResult must yield null Receipt",
+  );
+  assert.equal(
+    earlyTeeExtracted.auditObservation,
+    null,
+    "issued → tool_execution_end → start → toolResult must yield null audit",
+  );
 
   // R4 — opposite representations split across envelope inputs must not collapse.
   const splitCallId = "split-envelope-1";
