@@ -187,6 +187,8 @@ function terminalsEquivalent(left, right) {
  * Fail closed regardless of whether content/details/usage also conflict —
  * equivalence-only detection would let binding accept one valid lifecycle and
  * ignore the differently identified orphan.
+ * Callers must evaluate this against the complete raw collected terminal set
+ * before canonicalization can drop one representation of a dual pair.
  */
 export function hasMismatchedCrossRepCallIdentity(events) {
     const terminals = events.filter((event) => event.kind === "terminal");
@@ -420,10 +422,14 @@ function usageObservation(usage) {
 }
 export function extractAcceptedReceipt(envelopes) {
     const emptyReport = { hits: [], redacted: false };
-    // Canonicalize only within each decoded envelope input. Concatenating
+    // Collect raw lifecycle events across every supplied envelope/channel first.
+    // Mismatch detection must see the complete pre-canonical terminal set: dropping
+    // tool_execution_end during per-envelope collapse would erase opposite-rep
+    // identity evidence (valid call-a pair + extra call-b toolResult).
+    // Canonicalize only within each decoded envelope input afterward. Concatenating
     // stdout/stderr (or other channels) before dedup would collapse split
     // opposite representations that must remain fail-closed replay/conflict.
-    const events = [];
+    const perEnvelopeCollected = [];
     let rowOffset = 0;
     for (const text of envelopes) {
         const rows = decodeEnvelopeRows(text);
@@ -431,17 +437,23 @@ export function extractAcceptedReceipt(envelopes) {
             ...event,
             index: event.index + rowOffset,
         }));
-        events.push(...canonicalizeLifecycleEvents(collected));
+        perEnvelopeCollected.push(collected);
         rowOffset += rows.length;
     }
-    // Mismatched cross-representation call identity fails closed before binding.
-    if (hasMismatchedCrossRepCallIdentity(events)) {
+    const rawEvents = perEnvelopeCollected.flat();
+    // Mismatched cross-representation call identity fails closed on the raw set
+    // across all inputs, before any canonicalization can erase a representation.
+    if (hasMismatchedCrossRepCallIdentity(rawEvents)) {
         return {
             receipt: null,
             auditObservation: null,
             artifactKind: null,
             report: emptyReport,
         };
+    }
+    const events = [];
+    for (const collected of perEnvelopeCollected) {
+        events.push(...canonicalizeLifecycleEvents(collected));
     }
     let bound;
     try {

@@ -1492,6 +1492,76 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
     "call-a/call-b conflicting details must yield no audit",
   );
 
+  // Residual R1 — valid dual pair for call-a plus an extra opposite-id toolResult must
+  // fail closed before canonicalization can drop tool_execution_end(call-a) and leave
+  // only same-representation toolResult terminals for binding to accept call-a.
+  const pairedPlusExtraConflictingToolResult = (() => {
+    const pair = combinedCrossRepresentationLifecycle(JUDGE_OUTPUT_TOOL_NAME, {
+      callId: "call-a",
+      details: judgeDetails,
+    });
+    const extra = JSON.stringify({
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: "call-b",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: { judgeStatus: "continue", fix: { summary: "x" } },
+        content: [{ type: "text", text: ACCEPTED[JUDGE_OUTPUT_TOOL_NAME] }],
+      },
+    });
+    return `${pair}\n${extra}`;
+  })();
+  const pairedPlusExtraExtracted = extractAcceptedReceipt([
+    pairedPlusExtraConflictingToolResult,
+  ]);
+  assert.equal(
+    pairedPlusExtraExtracted.receipt,
+    null,
+    "call-a dual pair + extra call-b toolResult must reject before canonicalize",
+  );
+  assert.equal(
+    pairedPlusExtraExtracted.auditObservation,
+    null,
+    "call-a dual pair + extra call-b toolResult must yield no audit",
+  );
+
+  // Residual R2 — same mismatch must fail closed across envelope/channel inputs,
+  // not only within one concatenated envelope.
+  const pairOnlyEnvelope = combinedCrossRepresentationLifecycle(
+    JUDGE_OUTPUT_TOOL_NAME,
+    {
+      callId: "call-a",
+      details: judgeDetails,
+    },
+  );
+  const extraToolResultEnvelope = JSON.stringify({
+    type: "message_end",
+    message: {
+      role: "toolResult",
+      toolCallId: "call-b",
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: { judgeStatus: "continue", fix: { summary: "x" } },
+      content: [{ type: "text", text: ACCEPTED[JUDGE_OUTPUT_TOOL_NAME] }],
+    },
+  });
+  const crossEnvelopeMismatched = extractAcceptedReceipt([
+    pairOnlyEnvelope,
+    extraToolResultEnvelope,
+  ]);
+  assert.equal(
+    crossEnvelopeMismatched.receipt,
+    null,
+    "call-a dual pair envelope + call-b toolResult envelope must reject",
+  );
+  assert.equal(
+    crossEnvelopeMismatched.auditObservation,
+    null,
+    "cross-envelope call-a/call-b extra terminal must yield no audit",
+  );
+
   // Residual R2 — tool_execution_end + generic-session message/toolResult must not canonicalize.
   const mixedSessionPairEnvelope = combinedCrossRepresentationLifecycle(
     JUDGE_OUTPUT_TOOL_NAME,
