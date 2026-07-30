@@ -32,6 +32,7 @@ import type {
 import type {
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
+  ReviewerFailureClassification,
   ReviewerUsage,
 } from "./reviewer-execution-ledger.ts";
 
@@ -41,20 +42,30 @@ const RUNNER_PREREQUISITES = [
   "runner.git.verify-snapshot",
 ] as const satisfies readonly ReviewerPrerequisiteOperation[];
 
-export type ReviewerLegRunResult = Readonly<{
-  report: string;
-  usage: ReviewerUsage;
-  target: ReviewerTargetSnapshot;
-  prompt: ReviewerPromptIdentity;
+export type ReviewerSuccessfulLegRunResult = Readonly<{
+  status: "successful"; report: string; usage: ReviewerUsage;
+  target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity;
   workspaceDisposition: ReviewerWorkspaceDisposition;
 }>;
+export type ReviewerFailedLegRunResult = Readonly<{
+  status: "failed"; failure: ReviewerFailureClassification;
+  target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity;
+  workspaceDisposition: ReviewerWorkspaceDisposition;
+}>;
+export type ReviewerLegRunResult = ReviewerSuccessfulLegRunResult | ReviewerFailedLegRunResult;
 export type ReviewerDispatchRunResult = Readonly<{
-  identity: string;
-  target: ReviewerTargetSnapshot;
+  identity: string; target: ReviewerTargetSnapshot;
   legs: Readonly<{ standards: ReviewerLegRunResult; spec?: ReviewerLegRunResult }>;
 }>;
+export type ReviewerSuccessfulDispatchRunResult = Readonly<{
+  identity: string; target: ReviewerTargetSnapshot;
+  legs: Readonly<{ standards: ReviewerSuccessfulLegRunResult; spec?: ReviewerSuccessfulLegRunResult }>;
+}>;
+export class ReviewerDispatchExecutionError extends Error {
+  constructor(readonly outcome: ReviewerDispatchRunResult) { super("Reviewer dispatch execution failed"); this.name = "ReviewerDispatchExecutionError"; }
+}
 export type ReviewerAgentRunner = {
-  run(dispatch: AcceptedReviewerDispatch, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
+  run(dispatch: AcceptedReviewerDispatch, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>;
   shutdown(): Promise<void>;
 };
 
@@ -64,6 +75,16 @@ type GitSnapshot = ReviewerTargetSnapshot & {
 };
 
 type CommandResult = { stdout: string; stderr: string; code: number };
+
+function classifyFailure(error: unknown): ReviewerFailureClassification {
+  const text = error instanceof Error ? `${error.name} ${error.message}`.toLowerCase() : "";
+  if (/abort|cancel/.test(text)) return "cancelled";
+  if (/provider|model|auth/.test(text)) return "provider";
+  if (/snapshot|mirror|target|ref map/.test(text)) return "snapshot";
+  if (/workspace|clone|checkout|fetch/.test(text)) return "workspace";
+  if (/child|report|tool isolation/.test(text)) return "child";
+  return "unknown";
+}
 
 function infrastructureError(
   error: unknown,
@@ -459,19 +480,29 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
         }
       }
       snapshotPromise = prepareSnapshot(dispatch.targetSnapshot, options.signal);
-      const snapshot = await snapshotPromise;
+      let snapshot: GitSnapshot;
+      try { snapshot = await snapshotPromise; }
+      catch (error) {
+        const target = dispatch.targetSnapshot;
+        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error), target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition: "not-created" as const })]));
+        throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
+      }
       const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
-      const pairs = await Promise.all(dispatch.legs.map(async (leg) => {
-        const workspace = await prepareWorkspace(snapshot, options.signal);
+      const settled = await Promise.allSettled(dispatch.legs.map(async (leg) => {
+        let workspace: string | undefined;
         try {
+          workspace = await prepareWorkspace(snapshot, options.signal);
           const child = await runChild(workspace, leg, options.context, options.signal);
           await rm(workspace, { recursive: true, force: false });
-          return [leg.axis, Object.freeze({ report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const })] as const;
+          return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const })] as const;
         } catch (error) {
-          throw infrastructureError(error, { workspaceDisposition: { retained: workspace }, targetSnapshot: target });
+          return [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error), target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition: workspace === undefined ? "not-created" as const : Object.freeze({ retained: workspace }) })] as const;
         }
       }));
-      return Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(Object.fromEntries(pairs)) }) as ReviewerDispatchRunResult;
+      const pairs = settled.map((item) => item.status === "fulfilled" ? item.value : (() => { throw item.reason; })());
+      const outcome = Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(Object.fromEntries(pairs)) }) as ReviewerDispatchRunResult;
+      if (Object.values(outcome.legs).some((leg) => leg?.status === "failed")) throw new ReviewerDispatchExecutionError(outcome);
+      return outcome as ReviewerSuccessfulDispatchRunResult;
     },
     async shutdown() {
       if (snapshotPromise === undefined || snapshotDeleted) return;

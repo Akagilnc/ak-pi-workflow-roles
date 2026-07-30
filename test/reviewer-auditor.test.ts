@@ -18,6 +18,7 @@ const input = {
   canonicalSkill: "complete raw canonical Skill",
   task: "opaque task",
   record: {
+    transportRejections: [],
     rejections: [],
     accepted: {
       identity: "dispatch-1", recipe: "reviewer-dispatch-v1" as const,

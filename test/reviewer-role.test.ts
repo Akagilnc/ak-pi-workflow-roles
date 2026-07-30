@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createReviewerRoleRuntime, AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerAuditInput } from "../src/reviewer-role.ts";
 import type { AcceptedReviewerDispatch, ReviewerProposalV1 } from "../src/reviewer-dispatch.ts";
+import { ReviewerDispatchExecutionError } from "../src/reviewer-agent.ts";
 
 const task = new TextEncoder().encode("review exact bytes\n");
 const digest = createHash("sha256").update(task).digest("hex");
@@ -92,6 +93,27 @@ test("completion audits projected facts and revise can be resubmitted without re
   const done=await out.execute("two",{status:"completed",report:"report"},undefined,undefined,outputContext("two")); assert.equal(done.terminate,true); assert.equal(h.starts,1); assert.equal(calls,2); assert.equal(h.audits[1]?.record.results.standards?.prompt.bytes,h.audits[1]?.record.accepted?.legs[0]?.prompt);
   const evidence=h.audits[1]?.record.accepted?.materials.noSpecEvidence?.[0];
   assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",bytes:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
+});
+
+test("one failed and one successful sibling are both audited before infrastructure termination", async()=>{
+  const h=setup({runDispatch:async(dispatch)=>{const [standards,spec]=dispatch.legs; throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"provider",target:pin,prompt:{bytes:standards!.prompt,utf8Length:standards!.utf8Length,sha256:standards!.sha256},workspaceDisposition:"not-created"},spec:{status:"successful",report:"spec report",usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{bytes:spec!.prompt,utf8Length:spec!.utf8Length,sha256:spec!.sha256},workspaceDisposition:"deleted"}}});}});
+  await h.runtime.activate();
+  await assert.rejects(h.tools.get(AGENT_TOOL_NAME).execute("run",proposal(true),undefined,undefined,{} as ExtensionContext),/execution failed/);
+  await assert.rejects(h.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",report:"infra"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
+});
+
+test("transport schema error records once, clears raw args, then permits corrected acceptance", async()=>{
+  const h=setup(); await h.runtime.activate();
+  const secretArgs={version:1,secret:"DO_NOT_RETAIN"};
+  h.handlers.get("tool_execution_start")({toolName:AGENT_TOOL_NAME,toolCallId:"bad",args:secretArgs});
+  h.handlers.get("tool_execution_end")({toolName:AGENT_TOOL_NAME,toolCallId:"bad",isError:true,result:{}});
+  h.handlers.get("tool_result")({toolName:AGENT_TOOL_NAME,toolCallId:"bad",isError:true,input:secretArgs,content:[]});
+  await h.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(),undefined,undefined,{} as ExtensionContext);
+  h.handlers.get("input")({text:"review"}); h.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+  await h.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"done"},undefined,undefined,outputContext("out"));
+  assert.equal(h.audits.length,1);
+  assert.equal(h.audits[0]!.record.transportRejections.length,1);
+  assert.equal(JSON.stringify(h.audits[0]!.record).includes("DO_NOT_RETAIN"),false);
 });
 
 test("runner infrastructure failure blocks refusal and completion before audit", async()=>{
