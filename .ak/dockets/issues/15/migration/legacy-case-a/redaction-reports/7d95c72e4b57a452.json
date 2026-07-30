@@ -1,0 +1,13 @@
+{
+  "itemKey": "7d95c72e4b57a4526f48c332394c77db868d5194de440facc27a890c2daf4bdf",
+  "basename": "ak-collector-wait-fix-packet.md",
+  "sourceSha256": "8b18c85ac8e22335d6199dc33d1244142e9b1ef045a1bb119fc5efdc4bee67d4",
+  "recoveredSha256": "8b18c85ac8e22335d6199dc33d1244142e9b1ef045a1bb119fc5efdc4bee67d4",
+  "sourceBytes": 2402,
+  "recoveredBytes": 2402,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

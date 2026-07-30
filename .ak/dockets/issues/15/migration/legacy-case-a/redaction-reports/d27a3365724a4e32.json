@@ -1,0 +1,13 @@
+{
+  "itemKey": "d27a3365724a4e322df6f3e6350096e94c1996660fb64c541ba9af93f2936ac5",
+  "basename": "ak-reviewer-fix-packet.md",
+  "sourceSha256": "3876155a788259659eb04e5a790d1b5219a2b14ba8b1b044916c8cd2b983c1ad",
+  "recoveredSha256": "3876155a788259659eb04e5a790d1b5219a2b14ba8b1b044916c8cd2b983c1ad",
+  "sourceBytes": 3159,
+  "recoveredBytes": 3159,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,1 @@
+Packet key set `{R1,R2,R3}` exactly equals the Apply Receipt key set. The Markdown keyed headings begin with exact keys R1, R2, and R3; each occurs once and has a nonblank disposition. No missing, duplicate, or extra R key exists. Table-header spelling and status-word grammar were not used as conformance conditions.

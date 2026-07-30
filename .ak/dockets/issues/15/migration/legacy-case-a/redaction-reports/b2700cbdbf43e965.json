@@ -1,0 +1,13 @@
+{
+  "itemKey": "b2700cbdbf43e9654f1604e87e3a8ff9ed47c637f50793458f92fb5d63d88311",
+  "basename": "ak-runtime-coder-plan.md",
+  "sourceSha256": "0312039c20f30e40b053108ebcf124ed1db9e9c8cd79fe24204065c1212ed048",
+  "recoveredSha256": "0312039c20f30e40b053108ebcf124ed1db9e9c8cd79fe24204065c1212ed048",
+  "sourceBytes": 9774,
+  "recoveredBytes": 9774,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

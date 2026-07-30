@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "role": "fixer",
+  "phase": "plan",
+  "status": "planned",
+  "predecessor": ".ak/dockets/issues/15/repair/repair-003/plan/receipt.json",
+  "governingJudgment": ".ak/dockets/issues/15/repair/repair-003/plan/judge/receipt.json",
+  "packet": {
+    "path": ".ak/dockets/issues/15/repair/repair-003/packet.md",
+    "sha256": "0350f934d9131391c4b62549052bbc8425afb0738efa5bfb860f9bb88d77c791"
+  },
+  "sessionCandidate": {
+    "bytes": 63685146,
+    "sha256": "46b2ee281793c7be8500407e06e10394852a92a8cfb76430d5aa26505f761564",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "5746093dadd50588718d9f74194d1831064c2d73b939901f9ac48758395f6a09"
+  }
+}

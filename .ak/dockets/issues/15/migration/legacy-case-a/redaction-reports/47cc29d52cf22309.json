@@ -1,0 +1,13 @@
+{
+  "itemKey": "47cc29d52cf223099fe31c16e7dd51c358e7e1885d6c49d5a8a9f9a50f6659af",
+  "basename": "issue-1-independent-probe.ts",
+  "sourceSha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
+  "recoveredSha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
+  "sourceBytes": 7404,
+  "recoveredBytes": 7404,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

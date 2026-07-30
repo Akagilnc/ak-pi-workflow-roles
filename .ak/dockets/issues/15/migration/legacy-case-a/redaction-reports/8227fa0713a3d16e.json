@@ -1,0 +1,13 @@
+{
+  "itemKey": "8227fa0713a3d16e16a1ca6e90b0110d8967dc2710187c030ca516f72c497144",
+  "basename": "issue-2-judge-pack.json",
+  "sourceSha256": "971e6b33a87b604b71177754d329efa3b38b130092e40c8084d18d738a155120",
+  "recoveredSha256": "971e6b33a87b604b71177754d329efa3b38b130092e40c8084d18d738a155120",
+  "sourceBytes": 3062,
+  "recoveredBytes": 3062,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "c935075a516e7332116c17b60ac21da2ca44fcf821c37e23a7a521ba1ccfb9fa",
+  "basename": "ak-collector-pr5-fix-packet.md",
+  "sourceSha256": "3c95dd0fe9376f92444e27326fe89d350ef4e792697e0f1f899dd72d7d6d67f0",
+  "recoveredSha256": "3c95dd0fe9376f92444e27326fe89d350ef4e792697e0f1f899dd72d7d6d67f0",
+  "sourceBytes": 8244,
+  "recoveredBytes": 8244,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

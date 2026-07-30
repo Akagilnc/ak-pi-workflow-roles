@@ -1,0 +1,22 @@
+{
+  "formatVersion": 1,
+  "role": "reviewer",
+  "status": "completed",
+  "base": "8bc5db9837fff3aa7b16000cffeb888dfd76233a",
+  "target": "c71b947dff2c8103f5a48411b4e82ef54ad9b2cf",
+  "task": {
+    "path": ".ak/dockets/issues/15/review/final-closure-002/task.md",
+    "sha256": "4d7192dfb610cf732ecd2a4b7e1e6c1785c3688166f74484e3809ccb9911d60e"
+  },
+  "sessionCandidate": {
+    "bytes": 15798494,
+    "sha256": "a599d88e91d34f4c99c20febf518ddaecbba2a1f4bdaf6e4a912780d571355c1",
+    "retention": "not retained",
+    "reason": "routine review execution exhaust; accepted Reviewer Receipt and method-audit outcome carry the claim"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "b56bb4f1bf90af0936fc3e248335b36bc1815b51cd2a99a6c338132c2baba0eb",
+    "acceptedByMethodAudit": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "5cf2f85c65581053b2a00135906c1878d3d16715203e2d23a716ececb13c4487",
+  "basename": "issue-3-review-task.md",
+  "sourceSha256": "2ccb02676533c7ea9471f0a4d937094427722c9bee3dba42ca5c13258f26068b",
+  "recoveredSha256": "2ccb02676533c7ea9471f0a4d937094427722c9bee3dba42ca5c13258f26068b",
+  "sourceBytes": 1242,
+  "recoveredBytes": 1242,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

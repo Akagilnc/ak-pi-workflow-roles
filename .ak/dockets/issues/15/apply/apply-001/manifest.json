@@ -1,0 +1,18 @@
+{
+  "role": "fixer",
+  "phase": "apply",
+  "migrationContentCommit": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+  "plan": {
+    "path": ".ak/dockets/issues/15/plan/plan-002/receipt.json",
+    "sha256": "d13ac6d84c72d3f8fe7d0a5e81fd749b287255d11e14a355667344beaefcb913"
+  },
+  "sessionCandidate": {
+    "bytes": 7668538,
+    "sha256": "025d495af9ab2f6a56efa12f15af6a730ea9b778fea76c34401bf128d8a69650",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "614deaa1f0f8e2dec7df15dd83d97bff123a097b7f20082c13a693360a287512"
+  }
+}

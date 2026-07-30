@@ -1,0 +1,13 @@
+{
+  "itemKey": "e774a7ebfd1c99657bc187d9ce1d239168aa973aaf27220b6eb161d569ee2f31",
+  "basename": "issue-3-review-fixer-receipt.md",
+  "sourceSha256": "183e4df6173a8008b7c47e2a5533300f4ff29232c37d341944227106b640ae89",
+  "recoveredSha256": "183e4df6173a8008b7c47e2a5533300f4ff29232c37d341944227106b640ae89",
+  "sourceBytes": 2172,
+  "recoveredBytes": 2172,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "41b19118da7cbf6127f5e4b1424e6116d786eeb5e4b1723e05091bbb9aa8f5c8",
+  "basename": "ak-harness-review-task.md",
+  "sourceSha256": "1d9170fe7e49ccb0dbc0cdf9119f485dc0e12baaf324f69e905abc935bf7f6c6",
+  "recoveredSha256": "1d9170fe7e49ccb0dbc0cdf9119f485dc0e12baaf324f69e905abc935bf7f6c6",
+  "sourceBytes": 1120,
+  "recoveredBytes": 1120,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

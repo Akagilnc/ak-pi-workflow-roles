@@ -1,0 +1,13 @@
+{
+  "itemKey": "4644f370ad6fac46322967719549dea44e52e421a42d6c23e28c5b6d8271420e",
+  "basename": "ak-collector-fix-packet-3.md",
+  "sourceSha256": "da9c89f767fadcbcb30d277a2b895c2565c31bf9de7f0b2cbff4524f0b67bcea",
+  "recoveredSha256": "da9c89f767fadcbcb30d277a2b895c2565c31bf9de7f0b2cbff4524f0b67bcea",
+  "sourceBytes": 2695,
+  "recoveredBytes": 2695,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

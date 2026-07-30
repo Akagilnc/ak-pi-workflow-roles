@@ -1,0 +1,13 @@
+{
+  "itemKey": "0f72d23e326fc6aa0d1d29ddefcf4889b55757e62f7ff8f69001c66f3ab4ffd0",
+  "basename": "ak-roles-e2e-fix-packet-plan.md",
+  "sourceSha256": "95c5d893ed5d11a1d7d377eab2781cdb2148c0322b9bee762015bdad331c69c4",
+  "recoveredSha256": "95c5d893ed5d11a1d7d377eab2781cdb2148c0322b9bee762015bdad331c69c4",
+  "sourceBytes": 6950,
+  "recoveredBytes": 6950,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

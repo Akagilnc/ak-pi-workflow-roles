@@ -1,0 +1,13 @@
+{
+  "itemKey": "2ade6dc2dd7242f3d4b9277aa4415d5031a2f42fb9e35668a40ba8e046de14ca",
+  "basename": "collector-cancel-probe.ts",
+  "sourceSha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
+  "recoveredSha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
+  "sourceBytes": 911,
+  "recoveredBytes": 911,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

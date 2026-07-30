@@ -1,0 +1,13 @@
+{
+  "itemKey": "85130e6428c39fcc1e45ca3f1b9e061ec7941ca3243569e49d92cb6cec9cc71c",
+  "basename": "ak-roles-e2e-fresh-court-a7.md",
+  "sourceSha256": "a4fc96d9812dd9448b9de14793794803067bf4d268d5bbe1bcc606e10bb46bee",
+  "recoveredSha256": "a4fc96d9812dd9448b9de14793794803067bf4d268d5bbe1bcc606e10bb46bee",
+  "sourceBytes": 3856,
+  "recoveredBytes": 3856,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

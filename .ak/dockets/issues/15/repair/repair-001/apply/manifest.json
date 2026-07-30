@@ -1,0 +1,22 @@
+{
+  "role": "fixer",
+  "phase": "apply",
+  "resultCommit": "702e36f97caa92f012470bf5a890e656a5859800",
+  "packet": {
+    "path": ".ak/dockets/issues/15/repair/repair-001/packet.md",
+    "sha256": "63895889f31df2adc211a77de6a855bcfea27bbe50438d6858eb800a387ef183"
+  },
+  "plan": {
+    "path": ".ak/dockets/issues/15/repair/repair-001/plan/receipt.json",
+    "sha256": "cb5fca848896b6400892930ae1fc03b93422f0833fa9dc90cf158011d8a41e86"
+  },
+  "sessionCandidate": {
+    "bytes": 7719791,
+    "sha256": "13140ef9b72f55cc846322ae7f1ed9ab1f830f3069cf06d28dc44be4ad081afa",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "4fd89914713ea6459dfb71d8997dd71e5a6c6c15e0890f43b2bdc6299e5408a8"
+  }
+}

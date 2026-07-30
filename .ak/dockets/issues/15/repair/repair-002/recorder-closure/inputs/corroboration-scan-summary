@@ -1,0 +1,2579 @@
+{
+  "ok": true,
+  "recorderChild": "non-role-case-a-repair-002-corroboration-scan",
+  "immutableTarget": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+  "sealedInputs": {
+    "discoverySpec": "ea64733e382c6dcf14906b3b52782ec3f1c07535:.ak/dockets/issues/15/migration/legacy-case-a/discovery-spec.v1.json",
+    "constructionWalk": "ea64733e382c6dcf14906b3b52782ec3f1c07535:.ak/dockets/issues/15/migration/legacy-case-a/construction-walk.json",
+    "inventory": "ea64733e382c6dcf14906b3b52782ec3f1c07535:.ak/dockets/issues/15/migration/legacy-case-a/inventory.json"
+  },
+  "r1": {
+    "recorded": 597,
+    "matched": 597,
+    "missing": 0,
+    "changed": 0,
+    "postCutoffAdditions": [
+      {
+        "basename": "coder.ts",
+        "fileType": "regular",
+        "sizeBytes": 11579,
+        "note": "present now under sealed predicates; not in frozen cutoff denominator"
+      }
+    ],
+    "expectedPostCutoff": [
+      "coder.ts"
+    ],
+    "liveEntryCount": 598,
+    "liveSkipped": [
+      {
+        "basename": "collector-apply-evidence",
+        "reason": "directory-outside-file-inventory"
+      }
+    ],
+    "algorithm": "metadata-only no-follow lstat+hash+mode vs git-show ea64733 construction-walk; independent sealed-predicate readdir walk; exact post-cutoff partition; no JSONL semantic reads"
+  },
+  "r2": {
+    "admittedScanned": 277,
+    "redactedCount": 2,
+    "allMatched": true,
+    "highlighted": [
+      {
+        "itemKey": "42a9fc2895acf1796351b2f7a06a73f46d10605a4138776ddb548d39a34607f1",
+        "basename": "judge-malformed-probe.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "4306d0fe0d9c2139912a50bae8ea635d71e32bd56bb9ba98c22cc4e4e5a17918",
+        "recoveredSha256": "857682fe76fd6ea58d3b63a7946aadae69ca55fe3e1a2a6b32509a3d054dd48d",
+        "redacted": true,
+        "hits": [
+          {
+            "ruleId": "token-assignment",
+            "location": "judge-malformed-probe.ts",
+            "count": 2
+          }
+        ]
+      },
+      {
+        "itemKey": "af289a8e481f1cf51eea5f948b6a43b40ada81e6346d2f7ad2e7ea880167c0fb",
+        "basename": "reviewer-real-pi-snippet.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7b46d00de66ff21b732bd093dd4710c78e51f26651dca9f1c26934cb30f27954",
+        "recoveredSha256": "e5b36400cf6705888179fcead419b3b188e78be4f17e8c68628ce5e88a6150fc",
+        "redacted": true,
+        "hits": [
+          {
+            "ruleId": "token-assignment",
+            "location": "reviewer-real-pi-snippet.ts",
+            "count": 2
+          }
+        ]
+      }
+    ],
+    "results": [
+      {
+        "itemKey": "93db23eb4be737fbfefedb5e80d967a17ec195e55fb497ed359eb963f393b5bd",
+        "basename": "ak-collector-approved-synthesis.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b859b0d568c7d78b88e9e66558c6ad99d971da6d62f2187bf2ed137e3654fd7a",
+        "recoveredSha256": "b859b0d568c7d78b88e9e66558c6ad99d971da6d62f2187bf2ed137e3654fd7a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "84e1365027c8e7c5ab187521731c6ffbc5bf31d0c5b399b03a9805b0b48ba1cf",
+        "basename": "ak-collector-cancel-precedence-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "54542726d0772dd86b31622b274ffdd730b0e34e8fac034190c08e3064961d7f",
+        "recoveredSha256": "54542726d0772dd86b31622b274ffdd730b0e34e8fac034190c08e3064961d7f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "2800173e67738a633af9836703d8eaf1e00c6076fc42836c30851ca97aaa119e",
+        "basename": "ak-collector-cancel-precedence-plan-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "733a0247983e8642938ab3ef089ea5d316d607fbb502ee46f1385102fad4264b",
+        "recoveredSha256": "733a0247983e8642938ab3ef089ea5d316d607fbb502ee46f1385102fad4264b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0d230467ce2bf05d4283a630dc92aeb9afe84e6d95bc11e38917d63f1f22c9d3",
+        "basename": "ak-collector-cancel-precedence-plan-correction.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2403976565b1b19c592485d13173202e457c7817f5a31f4ca95a6c03c3af4f68",
+        "recoveredSha256": "2403976565b1b19c592485d13173202e457c7817f5a31f4ca95a6c03c3af4f68",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a011c8346b4b44bf6253230d4c22f2a32fffad30bedc85745e388aab82ab056b",
+        "basename": "ak-collector-cancel-precedence-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a9639be57040e8ae92d59ddfe831de206767a0b5860b3242acb0df1db3a90f35",
+        "recoveredSha256": "a9639be57040e8ae92d59ddfe831de206767a0b5860b3242acb0df1db3a90f35",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "603beb14c42fccc686bef79ad9a16e0e9bfd39c743e1047ea8da220707d9a9bf",
+        "basename": "ak-collector-cancel-precedence-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a4eb734583705c3f0385ee0f88410eb742c2a7549bef5e4547527f9bc9a4b59f",
+        "recoveredSha256": "a4eb734583705c3f0385ee0f88410eb742c2a7549bef5e4547527f9bc9a4b59f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5f6dd0ec84411060f920a4ac042df41c611108c61d68c8fa5c16522fc52ff09c",
+        "basename": "ak-collector-coder-plan-gpt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "bb31f43fd559dbc0e93e02e939cbaa8a7c01007011790288f0b089932f5db571",
+        "recoveredSha256": "bb31f43fd559dbc0e93e02e939cbaa8a7c01007011790288f0b089932f5db571",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "6ce76519585f5decbb95febc0e70654b8f498622d5634af527e79ae0b28796aa",
+        "basename": "ak-collector-coder-plan-grok.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "244c00a4b8ffd7b1226caf05d5f7dd84e86e73afb28f9ed151e327966d844ea9",
+        "recoveredSha256": "244c00a4b8ffd7b1226caf05d5f7dd84e86e73afb28f9ed151e327966d844ea9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "12a3486cd0f5d75449b4823d6c90787e2be21890bda46e2899f10308d9f91940",
+        "basename": "ak-collector-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ece856b822c09def0bf3239d8bdc08e394fc04a577fc7c70ac7d568384387814",
+        "recoveredSha256": "ece856b822c09def0bf3239d8bdc08e394fc04a577fc7c70ac7d568384387814",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "debd0cca585e5da8177692104233cf79b6eb0d07e92e5549654b129d200c6f71",
+        "basename": "ak-collector-codex-leg.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d1f03ec89937be467cce23261cc8738ad6049b366a9b6d680c311724b9df26f7",
+        "recoveredSha256": "d1f03ec89937be467cce23261cc8738ad6049b366a9b6d680c311724b9df26f7",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0c4846462a1c38b8f70859d41a31e6d2b714a29425f2f2593449e00ff7b2c89d",
+        "basename": "ak-collector-final-pack.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f680a92a2a89d59219b6b41a67fa445fdca042ebdd040e371354722bda769c13",
+        "recoveredSha256": "f680a92a2a89d59219b6b41a67fa445fdca042ebdd040e371354722bda769c13",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8bc9b74755bdb8c5e92f886bdee64f1a8a314a8b312f895806a5e7e42a58126f",
+        "basename": "ak-collector-final-review-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "eb2ebd1edecc98dcd7d25a1a9a5d20e160592ff2d1a72a7f191df92173a613da",
+        "recoveredSha256": "eb2ebd1edecc98dcd7d25a1a9a5d20e160592ff2d1a72a7f191df92173a613da",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "12faafa8731a8ff64baf6806edb6747af139ba753d9695c6a1a299d51b7241ab",
+        "basename": "ak-collector-final-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "0d69f899b905765279144d1bd07d978ad5a07fa10d2dbcb19c1aea48ae0f6395",
+        "recoveredSha256": "0d69f899b905765279144d1bd07d978ad5a07fa10d2dbcb19c1aea48ae0f6395",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a784452268fbe46cc04f61063c55748b1af022fdbb07cbb949bb4fea03175d63",
+        "basename": "ak-collector-fix-packet-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "997f6630228728810ce4ce7b6ea631d8983b83d0febe282c133982dd6dfbdd72",
+        "recoveredSha256": "997f6630228728810ce4ce7b6ea631d8983b83d0febe282c133982dd6dfbdd72",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4644f370ad6fac46322967719549dea44e52e421a42d6c23e28c5b6d8271420e",
+        "basename": "ak-collector-fix-packet-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "da9c89f767fadcbcb30d277a2b895c2565c31bf9de7f0b2cbff4524f0b67bcea",
+        "recoveredSha256": "da9c89f767fadcbcb30d277a2b895c2565c31bf9de7f0b2cbff4524f0b67bcea",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a4918cdaad011b41fa07942430f663843927139f4c49a88253a6f8959ebe0c6b",
+        "basename": "ak-collector-fix-packet-4.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b829e8fac96b2830b08f87343755423c04e08f51c378f09fe4f8833ee51fd594",
+        "recoveredSha256": "b829e8fac96b2830b08f87343755423c04e08f51c378f09fe4f8833ee51fd594",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "2026807230bb7768f012cffed8b4725b6b548f9790d70185cb9c94442ae1d85b",
+        "basename": "ak-collector-fix-packet-5.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1827947e88524e43b010c33c590935a2ca4d7a78ac6b611e188824ccea809c4c",
+        "recoveredSha256": "1827947e88524e43b010c33c590935a2ca4d7a78ac6b611e188824ccea809c4c",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f9870bcb4930cc5d99c68c634b13b00c1653b48330f40b37591eef14258db2fb",
+        "basename": "ak-collector-fix-packet-final.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3b71a760ff84812c36b2b31d04995da3da5562474d04fe25c0175a755f8f68d9",
+        "recoveredSha256": "3b71a760ff84812c36b2b31d04995da3da5562474d04fe25c0175a755f8f68d9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a7871f103ec85de6ddfdf3eecf62054307aa2a9f447505ee4405b268843ce18f",
+        "basename": "ak-collector-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b3abd0fda5d9e50a6cbe5d1d843d2467f9be9029254e297be4d932b2a913601c",
+        "recoveredSha256": "b3abd0fda5d9e50a6cbe5d1d843d2467f9be9029254e297be4d932b2a913601c",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "b9815520b7a7325251a6fdd403bf86e777b13c3c06e1f6c7100abe0a7cb0617d",
+        "basename": "ak-collector-fixer-apply-2-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b79ab775f2afb6c1eeb0db0ac52ef1f3e03eb5d2c39e29cbf0e2cb029dedb182",
+        "recoveredSha256": "b79ab775f2afb6c1eeb0db0ac52ef1f3e03eb5d2c39e29cbf0e2cb029dedb182",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "85848faba4b884977ab39ed1ffc1521bbc1591f712b641310d9a41bca2d03516",
+        "basename": "ak-collector-fixer-apply-3-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "641634ac8c1ea517325c74177c8d7aacd954bb5621c298c70ec4e23c1bd93869",
+        "recoveredSha256": "641634ac8c1ea517325c74177c8d7aacd954bb5621c298c70ec4e23c1bd93869",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "bc2dd17c0ddb9fff9d54914f3b0c590ea9e2c5b6fefa7fdfe68503a74383ae87",
+        "basename": "ak-collector-fixer-apply-5-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "af159f4c5eada5762bdb5424baa3a69bee817830eade30bfa376adc355aa8b17",
+        "recoveredSha256": "af159f4c5eada5762bdb5424baa3a69bee817830eade30bfa376adc355aa8b17",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "93993911596bafab60bd690e9a83c83ac41b3fa7d67004417b3bd0ccd35a0628",
+        "basename": "ak-collector-fixer-apply-final-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7bc7b659ab778464f75a335debfa62ae8a73e0f23b79390c110b44f81f1243a3",
+        "recoveredSha256": "7bc7b659ab778464f75a335debfa62ae8a73e0f23b79390c110b44f81f1243a3",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c90b21c1b0cd07429cb6cc71546432103b2226f815f6d39c4860e648cfc8d739",
+        "basename": "ak-collector-fixer-approved-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "182ef7c0ccc1d31ca4e1143495e32404c08ba34d5fbc10ae1c3f76ac8b2dea0d",
+        "recoveredSha256": "182ef7c0ccc1d31ca4e1143495e32404c08ba34d5fbc10ae1c3f76ac8b2dea0d",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "177fa70826fbeec3de7855be047b65ddeeb855df8d95b92599912fc704c9fc6d",
+        "basename": "ak-collector-fixer-plan-2-approved.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "fca8866750b283fe9cbb0e9fc9794851dc236939746d2d6c3d87d85543474cfa",
+        "recoveredSha256": "fca8866750b283fe9cbb0e9fc9794851dc236939746d2d6c3d87d85543474cfa",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "13f6568a53eb1eb5a06a4d105bf67cf94a454e93b4243154317dbaba634d424c",
+        "basename": "ak-collector-fixer-plan-2-construction-ready.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6580424f800046878f2161908654358c32688eeb81bc0579b2f0452af6e4fd3e",
+        "recoveredSha256": "6580424f800046878f2161908654358c32688eeb81bc0579b2f0452af6e4fd3e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "38ce803d10eefc3c250c012009d4709d3f3ae2eab5497089da3a9bbc41ca2936",
+        "basename": "ak-collector-fixer-plan-2-corrections-final.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2bc5801bd8ca41efecbe36a78348caaaebb962712d6287d6d212ca6a62dae410",
+        "recoveredSha256": "2bc5801bd8ca41efecbe36a78348caaaebb962712d6287d6d212ca6a62dae410",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e9d9273ef9cda4148cd9fe158f5523ef0bd77c85c84aca4085c5f48e4bc0728a",
+        "basename": "ak-collector-fixer-plan-2-corrections-final2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "542fccc41fc7889bd47f2f907cf3da25c5a22025aded78b3807a280ff78d47d2",
+        "recoveredSha256": "542fccc41fc7889bd47f2f907cf3da25c5a22025aded78b3807a280ff78d47d2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e702d2d707110816c28e68cf52516908e8edbc0e7557b839c1ebd8031249186f",
+        "basename": "ak-collector-fixer-plan-2-corrections.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "66a228bbf7d79107e04674ea663ac0d658ff96a90b812c3481afc1ade4ab93d2",
+        "recoveredSha256": "66a228bbf7d79107e04674ea663ac0d658ff96a90b812c3481afc1ade4ab93d2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8828bec55ee3aebb1661cbaf6174bb1a54275aa2e4f23d857bc9541656eb4a41",
+        "basename": "ak-collector-fixer-plan-2-final.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ac2c901aefe0a96ab85f90dd8a1b0271397994282ef00326a8f4b096207640b9",
+        "recoveredSha256": "ac2c901aefe0a96ab85f90dd8a1b0271397994282ef00326a8f4b096207640b9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "ebc9b4aa996ef94dc02adafba658c5ab7dda36e79f446ba4033595f5684c2237",
+        "basename": "ak-collector-fixer-plan-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "998b75269f538bcc6602619b5f7760b13548f43b114045294704e22374d37393",
+        "recoveredSha256": "998b75269f538bcc6602619b5f7760b13548f43b114045294704e22374d37393",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "35e98da26a9b3310fd666046d1e4a630ab8d5db16ff4959330f0e32ccad3f7f2",
+        "basename": "ak-collector-fixer-plan-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "56b9e87a2700d5940f7914590209dd945fdc69894f270779a54071d2ae6c6440",
+        "recoveredSha256": "56b9e87a2700d5940f7914590209dd945fdc69894f270779a54071d2ae6c6440",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "941d15569de7c64c921ad93b4715789d26abb09309ab5b32646f9ddb38f7f7cf",
+        "basename": "ak-collector-fixer-plan-4.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c9ad64bd24df59bfce524f65db0a3c8d0ceef58848d41672d6ae81ba58c30f61",
+        "recoveredSha256": "c9ad64bd24df59bfce524f65db0a3c8d0ceef58848d41672d6ae81ba58c30f61",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1ecac01220a83677b712427ebac73d832b9b3e52108caf9c1162235ef30ffab0",
+        "basename": "ak-collector-fixer-plan-5.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "9adf9d11bb52712c311a277030653a3cef55acf45159be05ee1cbe5dce529ed8",
+        "recoveredSha256": "9adf9d11bb52712c311a277030653a3cef55acf45159be05ee1cbe5dce529ed8",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "84119464e52eee8ea7a8314cd7568f11f02d515b12019b7adaef0efe1465baf9",
+        "basename": "ak-collector-fixer-plan-corrections.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "9b2692b231161c95460e67517218ad6f851395ced020813829bc1f02d2284a60",
+        "recoveredSha256": "9b2692b231161c95460e67517218ad6f851395ced020813829bc1f02d2284a60",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "600aba3459af9ae1678d2ca5d20bd9544fe8512e88c278acf928f04c0fb1f305",
+        "basename": "ak-collector-fixer-plan-final.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "4cc97418e33b0a99ffc9e0505fa6783a8ec0ab80568d7d90999a0bdc29dcb5a3",
+        "recoveredSha256": "4cc97418e33b0a99ffc9e0505fa6783a8ec0ab80568d7d90999a0bdc29dcb5a3",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a6cc582bfd00f1cda90c0c18f993e97d2f1fb529823c291fa53ff9462bf759e3",
+        "basename": "ak-collector-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "8963d3cb645240d2068107cc9baed482228528a146358c411af846f3492f6ae5",
+        "recoveredSha256": "8963d3cb645240d2068107cc9baed482228528a146358c411af846f3492f6ae5",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "6bc8f01c9bf3da8c3345c8342ad5665df3975617d07e5c31ee872afbff702bca",
+        "basename": "ak-collector-fixer-receipt-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "e12dc0518762f216d7289ff2677ef00d77a2e0fa285d53d0fa9a57368a9a11e1",
+        "recoveredSha256": "e12dc0518762f216d7289ff2677ef00d77a2e0fa285d53d0fa9a57368a9a11e1",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4b34604f6c8f8560a55a1c32c277960de996f2f495f07a1ebaf2ed720dc5a9e0",
+        "basename": "ak-collector-fixer-receipt-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "902eb808d2a8d95b327568c2f4fd7410edad8072f14750a6584159aa45583d08",
+        "recoveredSha256": "902eb808d2a8d95b327568c2f4fd7410edad8072f14750a6584159aa45583d08",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "64a89e52c74aca51ef2c5058ccf80ddd26f54a44c7a8d4248347ec082c799474",
+        "basename": "ak-collector-fixer-receipt-5.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "15ada1802dac0bb503b15d16fcd1c45dcc92a0b7e503a0c3e446000e322e950a",
+        "recoveredSha256": "15ada1802dac0bb503b15d16fcd1c45dcc92a0b7e503a0c3e446000e322e950a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d76c88f6057b084c72167454f6846945e5d99e6706bc505ba513aabd7795c7f5",
+        "basename": "ak-collector-fixer-receipt-final.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1be7bce3944ef798a9b968bb18c38807e983986c6ec9ad699af5b113ac41d93c",
+        "recoveredSha256": "1be7bce3944ef798a9b968bb18c38807e983986c6ec9ad699af5b113ac41d93c",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "aaf046789fe89203659bc0a1536867d8684fbff14f79f469a9848fc58003d4e9",
+        "basename": "ak-collector-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f113926634675718a5faf2fd60a8517bf1ecc02eba0989b8d78f43848359ad59",
+        "recoveredSha256": "f113926634675718a5faf2fd60a8517bf1ecc02eba0989b8d78f43848359ad59",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f74d83d3725baf15484a822c249725db3e0066b6febb3f0d504362736170499d",
+        "basename": "ak-collector-independent-probes.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
+        "recoveredSha256": "e7a64ed8cc82bda9272ea19d33f39ecef1b9dc52e9ce6ad835e521be7507feb0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "b77e5be3e134c03cb29945a421877a989091b4d19866778c2e725e4f2f0a5ab1",
+        "basename": "ak-collector-judge-pack.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "eb723ecd97013f18496e66c3681b3e1ee820001916473c3b254d60f712df214f",
+        "recoveredSha256": "eb723ecd97013f18496e66c3681b3e1ee820001916473c3b254d60f712df214f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d7c1bd83004db22d9cdc5241869554043082958020c745b077d88d377ac18e9f",
+        "basename": "ak-collector-observe-visibility-finding.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "905eb1d7d06c32df65d80d26eb9d4c10dbb436b0e79b0794d7810b409e99e804",
+        "recoveredSha256": "905eb1d7d06c32df65d80d26eb9d4c10dbb436b0e79b0794d7810b409e99e804",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e84012e8480e1ce7dc8a5df1d7bb4c3d89c548415a1e1d942baa98a19ef5ed90",
+        "basename": "ak-collector-observe-visibility-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6c74d6b9d951463e7e2207a49ecf8ba85b19a2ef8bfffee78569ddb09d6f0f21",
+        "recoveredSha256": "6c74d6b9d951463e7e2207a49ecf8ba85b19a2ef8bfffee78569ddb09d6f0f21",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "ef3a405eedeb5ba16ec9ce9096b9572f0d7c7e0d9e860280e99303377aedf141",
+        "basename": "ak-collector-observe-visibility-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "8655791f210fd505f0c95763f5967671f3868981418597844f7ea59007125d7d",
+        "recoveredSha256": "8655791f210fd505f0c95763f5967671f3868981418597844f7ea59007125d7d",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "af09a59ea91bb7f933c6b9b2c69572ec39c3d9d2d3575ef6e3951a9d409e507d",
+        "basename": "ak-collector-observe-visibility-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f4e4f6ee4a001fd7e0e2f683b6aaeeb433105a554d70cc426be87ed8e70ff9c2",
+        "recoveredSha256": "f4e4f6ee4a001fd7e0e2f683b6aaeeb433105a554d70cc426be87ed8e70ff9c2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "62c60b750bf0919728c502be78921ef66606757db55043c9cf4d8694fab5674a",
+        "basename": "ak-collector-owner-decision-skill.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b7267cab6f0540e61b04dad386ccdfd83ac9c12f372b4dcc65a32e864cc7d94d",
+        "recoveredSha256": "b7267cab6f0540e61b04dad386ccdfd83ac9c12f372b4dcc65a32e864cc7d94d",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d1e188fc31944e181456e02784db1dc83dad2c605922bf4dfe7597c1bdcfd2a5",
+        "basename": "ak-collector-pack-adjudication.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "476d64a01930cf88950542d9ab888efe89544a554be314ce7a9b1db283d8803f",
+        "recoveredSha256": "476d64a01930cf88950542d9ab888efe89544a554be314ce7a9b1db283d8803f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "930a59ba92c5fe6d3d1f79072a2fc703dc37c53618cc08c527fe5000dd74f267",
+        "basename": "ak-collector-pack.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "96d3dc618d65d7b08942c2f6176dbf762b6e549e71191789ae03020805fb9df8",
+        "recoveredSha256": "96d3dc618d65d7b08942c2f6176dbf762b6e549e71191789ae03020805fb9df8",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "334545668fdbc4b8937773c85eb1f0a24ffd4ebf06f244d366d9c974250008ca",
+        "basename": "ak-collector-pr5-6604-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "529c3f2715da1cfae8e384acacb9908ef1b79ba36385a19fd8c541826f39b6bf",
+        "recoveredSha256": "529c3f2715da1cfae8e384acacb9908ef1b79ba36385a19fd8c541826f39b6bf",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5949d09472b53ccd7bb6e29ef6d74ff0a8570347850acb1968e2f31460a88fe5",
+        "basename": "ak-collector-pr5-6604-fixer-apply-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3512d3c9df3c708f66d86f3191f0694a6252b926b5cef95eb651728b89872844",
+        "recoveredSha256": "3512d3c9df3c708f66d86f3191f0694a6252b926b5cef95eb651728b89872844",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "dd10a25655287e49a64eda89c580bba3115ee0e84ec9d23adee887f7f060c126",
+        "basename": "ak-collector-pr5-6604-fixer-plan-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "9ecb65b75de9d3630234042b474492d804aac49b289ce45748c028686bcaa815",
+        "recoveredSha256": "9ecb65b75de9d3630234042b474492d804aac49b289ce45748c028686bcaa815",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "b9000828b29c11e87abee16cc6efe34e4a4df4f9e8c1e31ada902842416aa02f",
+        "basename": "ak-collector-pr5-6604-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "0f8c07665c6c254fefb1004472d1bf17b92c1fb4745f922b4b4d1a296e068824",
+        "recoveredSha256": "0f8c07665c6c254fefb1004472d1bf17b92c1fb4745f922b4b4d1a296e068824",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "b5c7924c54bd67116963007fa5a683a7b9399fbf62013c7229e390ebbcd92567",
+        "basename": "ak-collector-pr5-6604-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "dbf5d3de534d4f1e604eca9d86ba2aa28b6fe88883f530176ff42c10edbdcea4",
+        "recoveredSha256": "dbf5d3de534d4f1e604eca9d86ba2aa28b6fe88883f530176ff42c10edbdcea4",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1454bd6a275fc10849e551bd2593c4af365630cf1d1fb0be9baf515e2d6f6d11",
+        "basename": "ak-collector-pr5-6604-plan-corrections.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1919c5d7774da0505bdad60c0178465ef3db67fa1a87473e942e887dd22a0193",
+        "recoveredSha256": "1919c5d7774da0505bdad60c0178465ef3db67fa1a87473e942e887dd22a0193",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "ecec8803c114076294b1dda31b0de1a8901f2955d39c04cd360dd99840e5272e",
+        "basename": "ak-collector-pr5-6604-receipt.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "742431310671995eaeb56ae633dd7392b76814f614879aa843aeb3693d0c92c2",
+        "recoveredSha256": "742431310671995eaeb56ae633dd7392b76814f614879aa843aeb3693d0c92c2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "94bae24b3af066091d5ca4868d3e4a8899918cf6e31d50cbcf822a7f41f093fb",
+        "basename": "ak-collector-pr5-7ff-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "84197d4577869a8b5760c8d2ca5232571efd06ba4dda0e586defb210792b9f94",
+        "recoveredSha256": "84197d4577869a8b5760c8d2ca5232571efd06ba4dda0e586defb210792b9f94",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5411e3fb214ecc9ac2d4619066b47c76a305af55086b0ed26998cdcbccfaa404",
+        "basename": "ak-collector-pr5-7ff-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c23db5ed6e3b35704c1059b3c0f9c7643215419167a3e0ea73ede7ddfccde2d2",
+        "recoveredSha256": "c23db5ed6e3b35704c1059b3c0f9c7643215419167a3e0ea73ede7ddfccde2d2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8492a5278a99f685a31705b8fc4954617ce0a9975455111073edd09672126cbe",
+        "basename": "ak-collector-pr5-7ff-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "fcee87fc28c7bbc26c906a089c88f928b3ec630b98dbc42d6137768f8c537bde",
+        "recoveredSha256": "fcee87fc28c7bbc26c906a089c88f928b3ec630b98dbc42d6137768f8c537bde",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "76af266775a69343c49ec9a2ba996c339b2283e8b431d52a4177000b6d7072a3",
+        "basename": "ak-collector-pr5-7ff-receipt.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "0d03d629fb82355f81b98b4f0d0c776d2c415b57c12a99ec8afc854ece87b1a7",
+        "recoveredSha256": "0d03d629fb82355f81b98b4f0d0c776d2c415b57c12a99ec8afc854ece87b1a7",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "59acc4e55e5ca9abff74ff5d91e8ef181da2ac45f47cdc8c498fd60a2bf6c6ad",
+        "basename": "ak-collector-pr5-c73-receipt.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3e1b8998a161a9213a76470f9cdb2d3ea71acb7c9a0fdccb368096902f57d47b",
+        "recoveredSha256": "3e1b8998a161a9213a76470f9cdb2d3ea71acb7c9a0fdccb368096902f57d47b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e9077cb4e1f57c95392009e832c33ed650a5ed57c8c5c909a350cb1754251d39",
+        "basename": "ak-collector-pr5-f01-owner-closure.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a30fe8b23abe414133e0a56abcffcfcd50746d09445531a90108c13cf421695a",
+        "recoveredSha256": "a30fe8b23abe414133e0a56abcffcfcd50746d09445531a90108c13cf421695a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "588443847289abd04867ade8bc6d81ec2f06c1ef559d8fc7f4cac07f3f5a5365",
+        "basename": "ak-collector-pr5-f01-receipt.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "58dad361c1a948dea3cf08b21e7ba974cd576064621b0d8c259a068588299af6",
+        "recoveredSha256": "58dad361c1a948dea3cf08b21e7ba974cd576064621b0d8c259a068588299af6",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c935075a516e7332116c17b60ac21da2ca44fcf821c37e23a7a521ba1ccfb9fa",
+        "basename": "ak-collector-pr5-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3c95dd0fe9376f92444e27326fe89d350ef4e792697e0f1f899dd72d7d6d67f0",
+        "recoveredSha256": "3c95dd0fe9376f92444e27326fe89d350ef4e792697e0f1f899dd72d7d6d67f0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "9b926dfa52aadd7fe4a805703908aab5474f60b9b259b8ee848e916c676ede0d",
+        "basename": "ak-collector-pr5-fixer-apply-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7fbe9cb3ee691826c66fbc55c493cda8c11cc8595d7c03bc6fa6e2531d45f451",
+        "recoveredSha256": "7fbe9cb3ee691826c66fbc55c493cda8c11cc8595d7c03bc6fa6e2531d45f451",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "eef325385d54b0d642c5d17e3368d37f0a3906b28d494a2f131dcf257b91115e",
+        "basename": "ak-collector-pr5-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "86fe22bd38c8239cde7ec2595043bfa8c1869a09c287551fd6fe1202b9ef24e0",
+        "recoveredSha256": "86fe22bd38c8239cde7ec2595043bfa8c1869a09c287551fd6fe1202b9ef24e0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "25fa9f26180e267b570a797ffe2238a1d66b5444c22829658d7898351fbc46d4",
+        "basename": "ak-collector-pr5-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6976c7671cae6fcd4238d1af26476c1f94fd4ba7ef876b5e23386f6cc7978d96",
+        "recoveredSha256": "6976c7671cae6fcd4238d1af26476c1f94fd4ba7ef876b5e23386f6cc7978d96",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5e0df10a51874256e8d7291a63a4778c11304c5cfb62352e14f7c7b918c03019",
+        "basename": "ak-collector-pr5-receipt.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "03ddbb19ea84ac3b8dc85c43b47758b3be4ae136a24bb50ece8bd061a0c0d894",
+        "recoveredSha256": "03ddbb19ea84ac3b8dc85c43b47758b3be4ae136a24bb50ece8bd061a0c0d894",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "88890555ac3fb015703bf38b4ee84725695c345e25b96cfcf9d874dbca082665",
+        "basename": "ak-collector-r10-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "5af7b8873ac1d5ef63ccd9b371d720d1c4157d2e859bb35bce43a908ea05402a",
+        "recoveredSha256": "5af7b8873ac1d5ef63ccd9b371d720d1c4157d2e859bb35bce43a908ea05402a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c8f003d69352ccfc00edc1a9bb81b8bfae9a059c355609f6b941f6de1452e795",
+        "basename": "ak-collector-r10-fixer-apply-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f4305008b166acc3e1393d2e28f9ee62670de266532fe2bb995979d97ad63c93",
+        "recoveredSha256": "f4305008b166acc3e1393d2e28f9ee62670de266532fe2bb995979d97ad63c93",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "00ecdece98b07d2dbd707da1cff49375e8ca2fcedbfa3cba27d678ca4f787c77",
+        "basename": "ak-collector-r10-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "72aef5df19eeeaf8a5890bf92d999236cdb9f7147b912e3c7982a8adc89d4a5f",
+        "recoveredSha256": "72aef5df19eeeaf8a5890bf92d999236cdb9f7147b912e3c7982a8adc89d4a5f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "3a274baec4a9681342924dae0505b9dcf5d17ebff5057cf1c6fd009207008666",
+        "basename": "ak-collector-r10-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "49d696c6bb1c40153a73268ad0be15cb2a6e91da61e176245bdf2c1ea5cf7523",
+        "recoveredSha256": "49d696c6bb1c40153a73268ad0be15cb2a6e91da61e176245bdf2c1ea5cf7523",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8961d3eb15b93263efdfaf331de4bc30236efb18e89cac9d061100675c0ed191",
+        "basename": "ak-collector-r6-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2e7118436fc8b6dfba781a0a6955368777623a20f1e84e01d17b951239aabc80",
+        "recoveredSha256": "2e7118436fc8b6dfba781a0a6955368777623a20f1e84e01d17b951239aabc80",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "294fe989b4e43bfeffb10a1cd863feb4e29df96b15af8acdb05967e616708a9b",
+        "basename": "ak-collector-r6-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "58f97ddebf6329ca34eaa667eabdf600c111e9d1915a5f62bec692c7d3d03cbe",
+        "recoveredSha256": "58f97ddebf6329ca34eaa667eabdf600c111e9d1915a5f62bec692c7d3d03cbe",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "eae841b6df0453b55125df5fb34655de3e18aa3de96b42eedaa280e800cf5a16",
+        "basename": "ak-collector-r6-residual-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "cc1bf6b56f72f8d00e9240d95d268761cf7c27e4f39ca4554bf8a1cab3788b26",
+        "recoveredSha256": "cc1bf6b56f72f8d00e9240d95d268761cf7c27e4f39ca4554bf8a1cab3788b26",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "519e483458ed6d53fb0e5298102906d545ad612f6594df9cf95e486852ef944c",
+        "basename": "ak-collector-reviewer-refusal.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f150efc78f92f776f288a5152b94681420bc3602ee76a7ccb829ed35ddb93b42",
+        "recoveredSha256": "f150efc78f92f776f288a5152b94681420bc3602ee76a7ccb829ed35ddb93b42",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "455a38387068075b1e4231a0ae7c7007b3897a57176f7091f8de46d2f0462d75",
+        "basename": "ak-collector-two-residual-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "fd6242035b462a62a5f39cf83c831d82eada565c4d0ea990925d74c7c4f5f4e9",
+        "recoveredSha256": "fd6242035b462a62a5f39cf83c831d82eada565c4d0ea990925d74c7c4f5f4e9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4de99d9947856b047a46b4e78a457a0095cdfdbe6d5425dbeb2ed1457832eff2",
+        "basename": "ak-collector-two-residual-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c7ac69d56c49bc0b1b1b7e0d42226c873e5cd771f07407bed691042c5d4921b5",
+        "recoveredSha256": "c7ac69d56c49bc0b1b1b7e0d42226c873e5cd771f07407bed691042c5d4921b5",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "289c77acf6aeb8f760592e8ac1b8eb106b90f1716741a34b2f1ab42d3dc00aa8",
+        "basename": "ak-collector-two-residual-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "268102a29b85125d0e455b559778d7c14abaf65c8c9c48f12cb87bb132496aee",
+        "recoveredSha256": "268102a29b85125d0e455b559778d7c14abaf65c8c9c48f12cb87bb132496aee",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "20d10461310851fe2f808029a67cb57d003d80cc5a2a279b9491a6e81e426f24",
+        "basename": "ak-collector-v1-authority-v2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "05bbfd7718d804c67a2bf9f379ce6027cb0e18f14e29f419f6a9156d5041961d",
+        "recoveredSha256": "05bbfd7718d804c67a2bf9f379ce6027cb0e18f14e29f419f6a9156d5041961d",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a50f38a508492c5df593eca60fe9d3fc14d2a5a1d86ac5c28607bb2a7c7f0fff",
+        "basename": "ak-collector-v1-authority-v3-addendum.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "04f736d8977a1bb15865e7c8d306c326f1edd0e845dbd433513d698dd186fd43",
+        "recoveredSha256": "04f736d8977a1bb15865e7c8d306c326f1edd0e845dbd433513d698dd186fd43",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "cbf93f1b82329886b6566cbe67af5eaeac95032431c559429c36d1df18a02675",
+        "basename": "ak-collector-v1-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "9661a2e244643051c62b7250ce202e9e9681af5a015e193e804deb4e732753b9",
+        "recoveredSha256": "9661a2e244643051c62b7250ce202e9e9681af5a015e193e804deb4e732753b9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4d87027fb5eee1e849f015991f3544af3f983584bc0f518af6273cd2c62e12d8",
+        "basename": "ak-collector-wait-cadence-finding.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "33b5cb19e34fd1ff2f41283500a5349e87978ff27b8ff4f86869ce88961255f3",
+        "recoveredSha256": "33b5cb19e34fd1ff2f41283500a5349e87978ff27b8ff4f86869ce88961255f3",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7d95c72e4b57a4526f48c332394c77db868d5194de440facc27a890c2daf4bdf",
+        "basename": "ak-collector-wait-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "8b18c85ac8e22335d6199dc33d1244142e9b1ef045a1bb119fc5efdc4bee67d4",
+        "recoveredSha256": "8b18c85ac8e22335d6199dc33d1244142e9b1ef045a1bb119fc5efdc4bee67d4",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "033a36754b2f605e9ac6232ec7119fae7ea16e6f5f403eb80c9e6e429ba93d44",
+        "basename": "ak-collector-wait-fixer-apply-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "4a79cba4e5393c721d1156c2037c973279b5ac4e9c5cd9d884e8f8cd6078ae74",
+        "recoveredSha256": "4a79cba4e5393c721d1156c2037c973279b5ac4e9c5cd9d884e8f8cd6078ae74",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1c25ba6089d1f3fce70e9bc143cc9949dcff39e0224dfd488d79cb4ca8671116",
+        "basename": "ak-collector-wait-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2d54b47888732026e4857a8e28552e3fe58660f38bab2fd692d576e2b19cf744",
+        "recoveredSha256": "2d54b47888732026e4857a8e28552e3fe58660f38bab2fd692d576e2b19cf744",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "23811e848573595398017640e11a7295a769b8328d39bcdc6c64770d3401de75",
+        "basename": "ak-collector-wait-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a511a134256f96080b8fdcc5a41363fb6fc6063b49a7d0dfb9e36d3ae3e506bc",
+        "recoveredSha256": "a511a134256f96080b8fdcc5a41363fb6fc6063b49a7d0dfb9e36d3ae3e506bc",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7457475300201063e2f75312de8048f5fb445d77c039b8118f6b5cb74b457ce9",
+        "basename": "ak-harness-approved-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "fc52c922d1a430d716c18550455e1b489924c0ae89d592dbf7ff8e043cfdc2a6",
+        "recoveredSha256": "fc52c922d1a430d716c18550455e1b489924c0ae89d592dbf7ff8e043cfdc2a6",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "64b59f490fd6e8b7d08c67b800db7686ddddcabd48ca18e43ee585b4d87d752f",
+        "basename": "ak-harness-coder-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a3b9ecf9f50aed4b7aec2101afe292344c471cef1e87bda2b99619fe8db82ceb",
+        "recoveredSha256": "a3b9ecf9f50aed4b7aec2101afe292344c471cef1e87bda2b99619fe8db82ceb",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "70687842f4cd24be78e92e51783532a675e5a56785532ad3508dcae98c11444d",
+        "basename": "ak-harness-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a52125e15e3a96e25ac4690a90cd464cea9221aa868d042e61f807383cec6494",
+        "recoveredSha256": "a52125e15e3a96e25ac4690a90cd464cea9221aa868d042e61f807383cec6494",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "2540fdf413f4ce569d2d87dc4425ce69e22303a5066aeb3f12d9d8da10e638d1",
+        "basename": "ak-harness-plan-revision.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7bf635a52f4d427416df2f97e84398c8d08092855485b69ae2f19299bfc1ed49",
+        "recoveredSha256": "7bf635a52f4d427416df2f97e84398c8d08092855485b69ae2f19299bfc1ed49",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "431ea312ed9680cf2f1c8fb6327626a442a5531624b9bb82551fe83df94ae03f",
+        "basename": "ak-harness-review-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "e2d9494badf112241a22ce6e44fee93fa63d87e1c4573e2b7aac58a81da5ed80",
+        "recoveredSha256": "e2d9494badf112241a22ce6e44fee93fa63d87e1c4573e2b7aac58a81da5ed80",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "41b19118da7cbf6127f5e4b1424e6116d786eeb5e4b1723e05091bbb9aa8f5c8",
+        "basename": "ak-harness-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1d9170fe7e49ccb0dbc0cdf9119f485dc0e12baaf324f69e905abc935bf7f6c6",
+        "recoveredSha256": "1d9170fe7e49ccb0dbc0cdf9119f485dc0e12baaf324f69e905abc935bf7f6c6",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "3f17c34bcdcac0618ffc87c27cf74c137b5c610d965efcd2273ee0255d78e974",
+        "basename": "ak-judge-pack-2.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c7471b0aa91732b8d39a179e4cc66d7903703b6109992484891db6ac23275d18",
+        "recoveredSha256": "c7471b0aa91732b8d39a179e4cc66d7903703b6109992484891db6ac23275d18",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5e55a615d64544ff2a9d05faae88b93691e8158c56ca2303fa2420a5ebeba22e",
+        "basename": "ak-judge-pack-current.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a6cb013096450e77dc01abab3842e43d1a8febc6d533b6229924c303cd280871",
+        "recoveredSha256": "a6cb013096450e77dc01abab3842e43d1a8febc6d533b6229924c303cd280871",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7fecb68f21804f222bcea39b6b17762696381c5b185e1ecc29a1379650e6d5c0",
+        "basename": "ak-ledger-approved-plan-candidate.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "9025cf5fdf99497126fb8a5be558e9c9b75bf089f4ecef29963452c39d00d97f",
+        "recoveredSha256": "9025cf5fdf99497126fb8a5be558e9c9b75bf089f4ecef29963452c39d00d97f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4aa67806059ca106d465e5dc512d2843daf0019c62b602ec9e571446cde43d45",
+        "basename": "ak-ledger-coder-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f91c671a29022fa0bed2925173513721005f17cf40d1bc11049df53f52037f14",
+        "recoveredSha256": "f91c671a29022fa0bed2925173513721005f17cf40d1bc11049df53f52037f14",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "06fec23bebabaf470ae701fa4537724bb4aa8f1062015a211a86a590e708bb7d",
+        "basename": "ak-ledger-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "35d625325e78fde6d2cfedead2590198adc59be0847e0314a043098e88cf485a",
+        "recoveredSha256": "35d625325e78fde6d2cfedead2590198adc59be0847e0314a043098e88cf485a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0065fc9c1adc3b2e08bdc77137b2d545fb07de046219d7389fd9df71ab134035",
+        "basename": "ak-ledger-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "5a9b72619d0c8acc1746004cc529e8f491406ff8c81795090f2fa542449a99d0",
+        "recoveredSha256": "5a9b72619d0c8acc1746004cc529e8f491406ff8c81795090f2fa542449a99d0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "85c51426954b3a9580fa8aefa7823f5e1c8ef84d9e3c43cffdfc73fb00cac47e",
+        "basename": "ak-ledger-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "39885ddef16f307f0aec97f1a307dd4167058571ec4243d97a9a77eecc87689e",
+        "recoveredSha256": "39885ddef16f307f0aec97f1a307dd4167058571ec4243d97a9a77eecc87689e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "306ddc1d296445a7b78e5c7472f55bfe6444cd3411d0fed8668062b463fa97a7",
+        "basename": "ak-ledger-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1eb89322085c8a6540bbdaf6d70d7cb0ae0fb76446588ae34785148c0d607cb0",
+        "recoveredSha256": "1eb89322085c8a6540bbdaf6d70d7cb0ae0fb76446588ae34785148c0d607cb0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "af80b1b776863a23bc7e5cc932ccfc9d8f9ba36cd1d62886202e7e0dc6cbd543",
+        "basename": "ak-ledger-plan-revision.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a2ab393664720a75de2d1228fd622b9a7ffaf11790724160d82f23f75b9233d2",
+        "recoveredSha256": "a2ab393664720a75de2d1228fd622b9a7ffaf11790724160d82f23f75b9233d2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "04a4d05d6e190379341712ee2a7cb999649bbf0fe7a710788524df7c03025b03",
+        "basename": "ak-ledger-review-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c76dad8fb92b0ba83f5061a0a765f5c0b1254820b686dbb12fc4cbec9d77f801",
+        "recoveredSha256": "c76dad8fb92b0ba83f5061a0a765f5c0b1254820b686dbb12fc4cbec9d77f801",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "652278dc73924f68579a514f5dbefa4f83a1bce90dab49845aa6022b61b30792",
+        "basename": "ak-ledger-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "5a8d47d4f129c8eed1d06196f3b774714b91122f82f394af1ddffa117bc1ea40",
+        "recoveredSha256": "5a8d47d4f129c8eed1d06196f3b774714b91122f82f394af1ddffa117bc1ea40",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "bdcac3e48d59c9bf5a2356716268b6b4331254b4fe29876c65f8b53d64c9c3ea",
+        "basename": "ak-reviewer-approved-plan-candidate.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a86408cba91097db59a6b5f7ab07819ee22ac1f99b9235dc9cd7c11ebd123d9b",
+        "recoveredSha256": "a86408cba91097db59a6b5f7ab07819ee22ac1f99b9235dc9cd7c11ebd123d9b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "36232e363c405a5333583b4c1d13492eee2b2b173100c0da4d590f063f3be485",
+        "basename": "ak-reviewer-coder-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "0f9dfc811e8e90e2daf1719edc1a22251fa60fc96fcac500c590f92c75bb8bc0",
+        "recoveredSha256": "0f9dfc811e8e90e2daf1719edc1a22251fa60fc96fcac500c590f92c75bb8bc0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f080ed5cf49b237038603713c7cc759c24ade7326c6df135d81d93af6e6e3384",
+        "basename": "ak-reviewer-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3f554641b674427cbbf7096c1962761bd444fcfd2c632f8575e5e549e3a55972",
+        "recoveredSha256": "3f554641b674427cbbf7096c1962761bd444fcfd2c632f8575e5e549e3a55972",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "84399412a928da7662747791ff68439e050ade059f664ebdda6a2a6de1105c5f",
+        "basename": "ak-reviewer-final-pack.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c9a62e5afb5d114f36dbcc92224500fb098f22c93a74c0c8b9578bfe8a75462b",
+        "recoveredSha256": "c9a62e5afb5d114f36dbcc92224500fb098f22c93a74c0c8b9578bfe8a75462b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "b6be18b0a963cd90f418c5556a6dffb8a0f1c02c02c5eb1291e9856b50180862",
+        "basename": "ak-reviewer-final-review-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "056a1adc9cb0413ff7bab0785083d973c66bd88b9d27869311a4f9d4cde72ddd",
+        "recoveredSha256": "056a1adc9cb0413ff7bab0785083d973c66bd88b9d27869311a4f9d4cde72ddd",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "3a9e790e1a6e4bee6bd067ad6a2a3a9d6406cbeedd3e722e5496f4b06ae728f3",
+        "basename": "ak-reviewer-final-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "e49e8d02e413c6cffdf072c81ff5c170270299cf59083f70d7bf9f49d9452fa8",
+        "recoveredSha256": "e49e8d02e413c6cffdf072c81ff5c170270299cf59083f70d7bf9f49d9452fa8",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "39b864c8f75cdc5674046e3f1913435785135c77bd24d128ef81c2b468248cfb",
+        "basename": "ak-reviewer-fix-packet-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "21987a56b3800626eb042708055fab5554d94d83f4c858be32e902d40e077bc0",
+        "recoveredSha256": "21987a56b3800626eb042708055fab5554d94d83f4c858be32e902d40e077bc0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "abd03fdaf259a4be48d44abc216bbacf1f89e2a579e7aa79b51145d7adb10c7b",
+        "basename": "ak-reviewer-fix-packet-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "4090bba16dfd9f92e32822a17e3f4325787e15a44f3187da07e7cafb5f36d16e",
+        "recoveredSha256": "4090bba16dfd9f92e32822a17e3f4325787e15a44f3187da07e7cafb5f36d16e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d27a3365724a4e322df6f3e6350096e94c1996660fb64c541ba9af93f2936ac5",
+        "basename": "ak-reviewer-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3876155a788259659eb04e5a790d1b5219a2b14ba8b1b044916c8cd2b983c1ad",
+        "recoveredSha256": "3876155a788259659eb04e5a790d1b5219a2b14ba8b1b044916c8cd2b983c1ad",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e94106c067bc8f078815398adb20585daad320f3647ce1c0f4a2f782dddd3490",
+        "basename": "ak-reviewer-fixer-plan-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "cfd42f16c4fbaaaad57ba5850b3e9432a6beafbce0c786d92aea48ac75f7b151",
+        "recoveredSha256": "cfd42f16c4fbaaaad57ba5850b3e9432a6beafbce0c786d92aea48ac75f7b151",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "43f4f91c5ee67972feb2e14700754b6390cf6b89eb4c2c2acd9e0f94f0dc6a2e",
+        "basename": "ak-reviewer-fixer-plan-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "21dba123f5ef7965e70f717d9cc23437f7e65f9c5e36e3349a737d1f8a9f169b",
+        "recoveredSha256": "21dba123f5ef7965e70f717d9cc23437f7e65f9c5e36e3349a737d1f8a9f169b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7fb606ff65dd6ccbcd2717b685097b35534362e8cd40b7964a6e3bceec3e4556",
+        "basename": "ak-reviewer-fixer-plan-4.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "94a9e317a87aeddabea26f0e3340fc1f41cf42330172ce5354ec0813ab20af22",
+        "recoveredSha256": "94a9e317a87aeddabea26f0e3340fc1f41cf42330172ce5354ec0813ab20af22",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d06ee40e73da6ce2a1a9f98e68f656b8f446e2a39c51fa1617a41fcbe561954e",
+        "basename": "ak-reviewer-fixer-plan-revision.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f54953fe560517eb6755026a9bf9e2a618f86eb51d9edfd48c90388c5ce368c7",
+        "recoveredSha256": "f54953fe560517eb6755026a9bf9e2a618f86eb51d9edfd48c90388c5ce368c7",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "54d4d45403be4edd7c68358d5699d00f2bb3eeabbf4feb05f7cf50256f5f2d52",
+        "basename": "ak-reviewer-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "e778cb42944ef6a9bf74dc296b90be74651a687b53d602dcc44b6993533ed328",
+        "recoveredSha256": "e778cb42944ef6a9bf74dc296b90be74651a687b53d602dcc44b6993533ed328",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8112d278e011cddafef45a49541b68a079a92789eb3cc893be68295c1e801f5d",
+        "basename": "ak-reviewer-fixer-receipt-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d26d489ce31cc873d369c843b1c3053ccf95f86122f872a4ec17432db3a56861",
+        "recoveredSha256": "d26d489ce31cc873d369c843b1c3053ccf95f86122f872a4ec17432db3a56861",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c2620f388eb916d068f6c9b6daf88d94fd5ad127e97a919a7da656ef2ecb281a",
+        "basename": "ak-reviewer-fixer-receipt-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "fa3f42ebc45952d8fe5b3b8c1a992a3a2a0cadf8c544bdd0786e774530e03396",
+        "recoveredSha256": "fa3f42ebc45952d8fe5b3b8c1a992a3a2a0cadf8c544bdd0786e774530e03396",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "23aee0308b757c73955f75e8919ef71c1273a8a4766ed9909c1340141f59ef61",
+        "basename": "ak-reviewer-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f0b2d75446acc3a30dbf1efb938a997272a9565643f105b07882a7ad801e244e",
+        "recoveredSha256": "f0b2d75446acc3a30dbf1efb938a997272a9565643f105b07882a7ad801e244e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "ee7d1d485034585749293660c34aae1f9516c5ada0b6290abafdd724588ca0e9",
+        "basename": "ak-reviewer-pack-baseline.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "5e785a07de92ae143ff7e4b00abb7575514bd23d7ac3323349c799357296b6b2",
+        "recoveredSha256": "5e785a07de92ae143ff7e4b00abb7575514bd23d7ac3323349c799357296b6b2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d196772fdfc29afd3114d9d05e1f5fced80628aafde81dbe4eee932006933cd7",
+        "basename": "ak-reviewer-pack-dry-run.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ecc52c8cde8d5ec09c5c6fd6fa2b9c011791074cdc17e3b585066b7130ba55ea",
+        "recoveredSha256": "ecc52c8cde8d5ec09c5c6fd6fa2b9c011791074cdc17e3b585066b7130ba55ea",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1e13ff435d87210518f94a475347d8af017a54f6386c2cf87998d2aaf18e2851",
+        "basename": "ak-reviewer-pack.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a2dc52c65e66668d14db03fd215c1a8fa6cd593c715639a543fd870424dd92d1",
+        "recoveredSha256": "a2dc52c65e66668d14db03fd215c1a8fa6cd593c715639a543fd870424dd92d1",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1b7f80d3ca6bc23cf9932265ba7f87e0958d0d3b6e5b04ef3c56acef1cfca63c",
+        "basename": "ak-reviewer-plan-revision.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ad17a54672d59e574350de5db21baed84ce8ae3c31f692b75a7ba5afb3505a3d",
+        "recoveredSha256": "ad17a54672d59e574350de5db21baed84ce8ae3c31f692b75a7ba5afb3505a3d",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "6bebc95a38ec0bb8f2e534d8cce1919172630075cfe5e652cbcb7613ea91c79b",
+        "basename": "ak-reviewer-refusal-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a4564df89e44ddeb1efb67d835dc84c69b51636683cc162b7745c0f0a392d2a3",
+        "recoveredSha256": "a4564df89e44ddeb1efb67d835dc84c69b51636683cc162b7745c0f0a392d2a3",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "534076fd9ea1586f6ee8d3606503160cb37884cf9c3102bf4e8d12067ab65740",
+        "basename": "ak-reviewer-self-review-2-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "87647c082ca94ef206d0729c6a270458e2947e1f528e488f081051d6e306a221",
+        "recoveredSha256": "87647c082ca94ef206d0729c6a270458e2947e1f528e488f081051d6e306a221",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "988eaf49389ac8cbd86a733250251dca501443f6ef4cc300dcfaf7287ed28b38",
+        "basename": "ak-reviewer-self-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "df1281369dec163f7fcffb92a29c93690de3ea7a1cc796d8c36b33ef14189b23",
+        "recoveredSha256": "df1281369dec163f7fcffb92a29c93690de3ea7a1cc796d8c36b33ef14189b23",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "b7b14277e6fd0d55cf0d55ad296c92960855e3095a79ee3cdfd30151360fb671",
+        "basename": "ak-roles-93c-review.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2f191665c0c944190699ce82872957987d23102a6fecf95c4fc762e28d11da58",
+        "recoveredSha256": "2f191665c0c944190699ce82872957987d23102a6fecf95c4fc762e28d11da58",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4f48434aed65f9ecf8d9f34f602e3977e09bd037812aef62c3b5546a5c284737",
+        "basename": "ak-roles-93c-spec.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b80ade35006a9f1b08dbfe79407f72f80b8c50f54820eb1683f822e101e574e3",
+        "recoveredSha256": "b80ade35006a9f1b08dbfe79407f72f80b8c50f54820eb1683f822e101e574e3",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "45fa1cb6b99f091affa562b4cc7757a28e906ee545294bc8dfeb7629f9e724fb",
+        "basename": "ak-roles-93c-standards.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "54a64c1f73f32b5908fe42c016e510d892954134d0ab6d35a0f391c6a75cd2d4",
+        "recoveredSha256": "54a64c1f73f32b5908fe42c016e510d892954134d0ab6d35a0f391c6a75cd2d4",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "764216bed502b1f31878d4a1500f3239a6b3fc91e605ba19867f921aa122cbb7",
+        "basename": "ak-roles-authority-v2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "85d6969000b3c546347e69534f30c166184e44f16c94df3c47c0c8ffaff6184c",
+        "recoveredSha256": "85d6969000b3c546347e69534f30c166184e44f16c94df3c47c0c8ffaff6184c",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "3aa46215f1b4e0c28f456fa922113a76b45343cfb37a30eb6e5d3e3d88d3c467",
+        "basename": "ak-roles-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "43356a045e0353e1ecb75265d1cf1f93ec886edf0c9a8515477a6f3dc9757c22",
+        "recoveredSha256": "43356a045e0353e1ecb75265d1cf1f93ec886edf0c9a8515477a6f3dc9757c22",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8775c6831629e82eee0981583285e3ecee245169546e2b2404c9d744041e6ef2",
+        "basename": "ak-roles-code-review.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ada764523ed363db9a0cb396fe5cdb9b6088d09932a5300a3280ea8476281ef1",
+        "recoveredSha256": "ada764523ed363db9a0cb396fe5cdb9b6088d09932a5300a3280ea8476281ef1",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "9abbda79b8fa5ccff8a641358dd46ad2cb294be20dd1ff677163aea825365f50",
+        "basename": "ak-roles-e2e-approved-apply.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "324a332ed15586efd228db43c7979661bb3a11ffe2029612b9a40c04d6dd6c38",
+        "recoveredSha256": "324a332ed15586efd228db43c7979661bb3a11ffe2029612b9a40c04d6dd6c38",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "3620bc2fd05c89129ca98b8e02e6c02fcf3a2566f60c863d5c1ef836bece2c90",
+        "basename": "ak-roles-e2e-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a6494b89b6d2766ee989f9a411d1b6a7be4c7c8c1728b0598e64691650b6ab72",
+        "recoveredSha256": "a6494b89b6d2766ee989f9a411d1b6a7be4c7c8c1728b0598e64691650b6ab72",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c41021fde320f42119791f9236e9e3505538e315783b9d212b89326981bea23f",
+        "basename": "ak-roles-e2e-final-spec.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
+        "recoveredSha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7bd91ae7a911d09eca5f6e1cb00d4949938f147c1b8ee7a2ff8b461479903aee",
+        "basename": "ak-roles-e2e-final-standards.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6911a58ea1883486afaa65a968e9c7588200829de1dbda31d39e3e1b517fb9b7",
+        "recoveredSha256": "6911a58ea1883486afaa65a968e9c7588200829de1dbda31d39e3e1b517fb9b7",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0f72d23e326fc6aa0d1d29ddefcf4889b55757e62f7ff8f69001c66f3ab4ffd0",
+        "basename": "ak-roles-e2e-fix-packet-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "95c5d893ed5d11a1d7d377eab2781cdb2148c0322b9bee762015bdad331c69c4",
+        "recoveredSha256": "95c5d893ed5d11a1d7d377eab2781cdb2148c0322b9bee762015bdad331c69c4",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4f89d177c48627a9bd28e6875647e636a46209d1abd6f63bd98aac2e1b114ea5",
+        "basename": "ak-roles-e2e-fixer-apply-report.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "477f65cc8e725cf4648094a46be43be875f7b84526cfbe1647dee901828ce2e3",
+        "recoveredSha256": "477f65cc8e725cf4648094a46be43be875f7b84526cfbe1647dee901828ce2e3",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "eca3580b46101a654d07cf334b3c66998d9cf9405b9167b19aaeaf6ceb145d4a",
+        "basename": "ak-roles-e2e-fixer-plan-report.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f9bf281e95e6e0902f7887b73e0176ae0a39416a45d69149b204ee5e0fcba0de",
+        "recoveredSha256": "f9bf281e95e6e0902f7887b73e0176ae0a39416a45d69149b204ee5e0fcba0de",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "85130e6428c39fcc1e45ca3f1b9e061ec7941ca3243569e49d92cb6cec9cc71c",
+        "basename": "ak-roles-e2e-fresh-court-a7.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a4fc96d9812dd9448b9de14793794803067bf4d268d5bbe1bcc606e10bb46bee",
+        "recoveredSha256": "a4fc96d9812dd9448b9de14793794803067bf4d268d5bbe1bcc606e10bb46bee",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a8ab166b77ed848b1e6bbba27cb0cfdae3e6243cd4ebb4f0ee8e65810c840153",
+        "basename": "ak-roles-e2e-fresh-spec-a7.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3b47131c1da5882e7cd3bd8bbdb6b5e3e1cb240d83c215f00a92b46b633fa46e",
+        "recoveredSha256": "3b47131c1da5882e7cd3bd8bbdb6b5e3e1cb240d83c215f00a92b46b633fa46e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "b13d2a2bd9be6250eb223a3e6bc6051366dac825b5849e083418a3c473fb77e9",
+        "basename": "ak-roles-e2e-help-approved-apply.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3519320a546c46bd9cda494db62b632adf92205651d69f0e407462a938c7b0b6",
+        "recoveredSha256": "3519320a546c46bd9cda494db62b632adf92205651d69f0e407462a938c7b0b6",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "6322f713e3906027be7a21fbe21a9e18961d78be072c94bdab7865ffcb3e0ae8",
+        "basename": "ak-roles-e2e-help-fix-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "dc8b4ca530cdbd2baac9279aee3d34e053e654fc4c1a1098d8ec2653e8f8a800",
+        "recoveredSha256": "dc8b4ca530cdbd2baac9279aee3d34e053e654fc4c1a1098d8ec2653e8f8a800",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f0e7fdb196ab8462a70ca6013f1e418e305cf0190d1ad812c9b925b1b2915f44",
+        "basename": "ak-roles-e2e-help-plan-report.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "573c6f4f6e862c2f08f03822898b32c2375c8572882eec2a7751765a60095282",
+        "recoveredSha256": "573c6f4f6e862c2f08f03822898b32c2375c8572882eec2a7751765a60095282",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7308b8a9f3fdd3659fdea4f8ad9ad2fc53fe519e5884ec3fc05c355ef542cc01",
+        "basename": "ak-roles-e2e-last-approved-apply.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d8f697532fd63ec5f6eac2dbbcb34b67a57b1cde78a217387de12c712d5bdd68",
+        "recoveredSha256": "d8f697532fd63ec5f6eac2dbbcb34b67a57b1cde78a217387de12c712d5bdd68",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "156c4d9aa4949b3db67637d50dc845b47647a070fae04ffd8c6c8a0e19b20b35",
+        "basename": "ak-roles-e2e-last-fixer-receipt.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "fc80e8bcc70b85413d7881014c3386609b5aeb70f847646af0267cf284ff7145",
+        "recoveredSha256": "fc80e8bcc70b85413d7881014c3386609b5aeb70f847646af0267cf284ff7145",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "75ce4b728544b21ab25294ea7a4524c0aca1824f5bfdd614236e21b2da947753",
+        "basename": "ak-roles-e2e-last-plan-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ecf8d2ae2f7cb1e71552758e85503ea41ee145683f284bbcbbf5059dd0e1c665",
+        "recoveredSha256": "ecf8d2ae2f7cb1e71552758e85503ea41ee145683f284bbcbbf5059dd0e1c665",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c5ada2a49f93e975ff8b5e6d54491b992a80bf28b2735362ff5d34952c12c311",
+        "basename": "ak-roles-e2e-last-plan-report.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7f4bcb038da6b4069c62119c7ee4ca0bc9d4be7a18349aafab962616dfcae0c7",
+        "recoveredSha256": "7f4bcb038da6b4069c62119c7ee4ca0bc9d4be7a18349aafab962616dfcae0c7",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "032e9070dcee1a0024cca80732519299e91e59292c34a50f2593687d5ab96b6a",
+        "basename": "ak-roles-e2e-last-postfixer.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3c5d3dbb1cf24a6fe87265de0e2fdc61cfaaf963e46e96735d6f3a558871b2e0",
+        "recoveredSha256": "3c5d3dbb1cf24a6fe87265de0e2fdc61cfaaf963e46e96735d6f3a558871b2e0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1bed71a513e5ea4b37275d10e8ffb0a13cc7c3845b877d00ee15ec0788090da2",
+        "basename": "ak-roles-e2e-latest-fixer-receipt.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "8325fe3c5b9e6b3f439427959f8fa562602cfc29f28b45a383aec039676711d5",
+        "recoveredSha256": "8325fe3c5b9e6b3f439427959f8fa562602cfc29f28b45a383aec039676711d5",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e16f4eb2417dcd56eef876931359b69720e11f13704a050523aa68045d9bfaf5",
+        "basename": "ak-roles-e2e-ordered-final-court.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6c22c0287e41b8c8b03a93a09ac1bccc9a26984adafe03defef3b73ab4d35864",
+        "recoveredSha256": "6c22c0287e41b8c8b03a93a09ac1bccc9a26984adafe03defef3b73ab4d35864",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "705f9595ea9772a6c57c2c29513e05cf4402c02543b6bf1ff25bb5d82f43b4a9",
+        "basename": "ak-roles-e2e-ordered-final-spec.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7b344cff02d83f75e8cdddd275dba89cc58408def6d428fcc9eab595803bb5d4",
+        "recoveredSha256": "7b344cff02d83f75e8cdddd275dba89cc58408def6d428fcc9eab595803bb5d4",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "280d13c58827b9d86294d133ddb7a461d8079e4d0c1b7fe6bdd52c5ebff4a849",
+        "basename": "ak-roles-e2e-plan-court.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f1f13dd3fa765ecc5ed9794ad9d7f2bf731517c7a1f34b2859e9e613101f4da6",
+        "recoveredSha256": "f1f13dd3fa765ecc5ed9794ad9d7f2bf731517c7a1f34b2859e9e613101f4da6",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1e8f7663a75f4c30edf1c6156ca757a07eb17b5e16be74138a0bd5fa1590c283",
+        "basename": "ak-roles-e2e-postfixer-court.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "81bb8e1cc680671fad8f7215968f2740836b977b38d20cff37d60a9ecec968b4",
+        "recoveredSha256": "81bb8e1cc680671fad8f7215968f2740836b977b38d20cff37d60a9ecec968b4",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "993b7bac8c2ffdc007adcfc92171f63e2d30815d2669c4ee2c83eb466bf3580b",
+        "basename": "ak-roles-e2e-review-18c.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d76438a0611b3474dc7a2e957ea365159bc437c4a9749b5a66ff17e32f99b7af",
+        "recoveredSha256": "d76438a0611b3474dc7a2e957ea365159bc437c4a9749b5a66ff17e32f99b7af",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "835a3ed01e463580721e15ff637938e7a7227977828c522f89ae691496bc3022",
+        "basename": "ak-roles-e2e-spec-18c.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "463142d43847de346e37db07947291d4b0d703a80e86ea17e758cd79ddb5419e",
+        "recoveredSha256": "463142d43847de346e37db07947291d4b0d703a80e86ea17e758cd79ddb5419e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e8ca0add17fc4c01a4c810266c24c40b24aefedc7277f33bb72efd59aa9a521f",
+        "basename": "ak-roles-e2e-spec.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "3d8d62c59c268de459116e8e5e32626d8dd46a9e8078bf86e1574294cf1888f5",
+        "recoveredSha256": "3d8d62c59c268de459116e8e5e32626d8dd46a9e8078bf86e1574294cf1888f5",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e868b1f8bafbedd1786a24f60f50dc913f5e6351e5df5b80da85d9b3a5d38390",
+        "basename": "ak-roles-e2e-standards-18c.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ae50e0b8722e3d677a7509fcc9ebe53eff902ee8cdf0cfbecf8ae38051e654a2",
+        "recoveredSha256": "ae50e0b8722e3d677a7509fcc9ebe53eff902ee8cdf0cfbecf8ae38051e654a2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0293f151dd373f104f30c203d6f15815245042dd955a176ec33997cd2fa5e548",
+        "basename": "ak-roles-e2e-standards.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "5496d40ff1e0a79e50e5e70d310d7272df59465c2a5150ef8943aac07002b443",
+        "recoveredSha256": "5496d40ff1e0a79e50e5e70d310d7272df59465c2a5150ef8943aac07002b443",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "cfcfc8a135780a18a95e43c0b0080483e3a9e6498dc7255b07e3bd6e4cb3c68f",
+        "basename": "ak-roles-final-review.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "324349f8bf5e2829acc8424a98a58cb4e0b654ffdef8fd99f592480221fe1a63",
+        "recoveredSha256": "324349f8bf5e2829acc8424a98a58cb4e0b654ffdef8fd99f592480221fe1a63",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "92db218a62a828021469b7f69f74286f2c1f01e218a048b80aeaa870392bf65a",
+        "basename": "ak-roles-final-spec-prompt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f422bfea9fb5cd6399e754dd853c4f08b2572ab531062bf6a0d9e23235d675cb",
+        "recoveredSha256": "f422bfea9fb5cd6399e754dd853c4f08b2572ab531062bf6a0d9e23235d675cb",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "20347a1438e6a843dc21871c2b91bf11f860e13115082ef5a58c14b5375fa1c0",
+        "basename": "ak-roles-final-spec.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "cbda01078636d9fdbe07ea02bcdd7d2aa2c6d46e9b4b36d9bfa90e4b5293a47c",
+        "recoveredSha256": "cbda01078636d9fdbe07ea02bcdd7d2aa2c6d46e9b4b36d9bfa90e4b5293a47c",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "3140ce122d7a36ccf09749e37c9bdf5c3d0da780f6ce17f039fd55140261ada5",
+        "basename": "ak-roles-final-standards-prompt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "75d2d8e33fe887256f7f86230260f9e99d6ee386b97ff9db616cc54bbe09ec6b",
+        "recoveredSha256": "75d2d8e33fe887256f7f86230260f9e99d6ee386b97ff9db616cc54bbe09ec6b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "012871d73b472d0ce6bb45f0a17fdb6fa72cb1b9314ce940fa313ef5ef3297d2",
+        "basename": "ak-roles-final-standards.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "77ed3ea94fd6aadf07b64f915192133517e7001c24e439b1cb2aa40990e94108",
+        "recoveredSha256": "77ed3ea94fd6aadf07b64f915192133517e7001c24e439b1cb2aa40990e94108",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "78815eb9ff01e9151379545a5f60db4117d2ed9a5c8a1448d9e707da95939d31",
+        "basename": "ak-roles-fix-packet-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c388243f2a69c9d653626a02a6bf31c55e300a0942b05a221914142748c33b3e",
+        "recoveredSha256": "c388243f2a69c9d653626a02a6bf31c55e300a0942b05a221914142748c33b3e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5680b37f1ed0047379b682a3bcf2736e24195228e25d5d13b052fa9d77ffb9dc",
+        "basename": "ak-roles-fix-packet-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "5dd1ffc62612e01b789bc920ba212188e4524c1d3f84289d5a1837ed32c758e3",
+        "recoveredSha256": "5dd1ffc62612e01b789bc920ba212188e4524c1d3f84289d5a1837ed32c758e3",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "38d1c27d719e0f73584703267d914edd17e90a8449d812e01459837abf24323d",
+        "basename": "ak-roles-fix-packet-4.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "513a4b55dcee6a6675b86d64728dc8379f4ad849c66411c7a534e331d1c6e373",
+        "recoveredSha256": "513a4b55dcee6a6675b86d64728dc8379f4ad849c66411c7a534e331d1c6e373",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "04c62f88fab3a1fe854158634cd67a29e4c5b6c823830a2ccb18f2a10b0d695a",
+        "basename": "ak-roles-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "27457a46bc103deb28a65057f98541856691f4162ebb8dddfc6fa750f3777035",
+        "recoveredSha256": "27457a46bc103deb28a65057f98541856691f4162ebb8dddfc6fa750f3777035",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "681695c010624aced69d1bc4922ea03970222bee4b42d84f01cff5155193b86a",
+        "basename": "ak-roles-fresh-review.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "72cfed9a62bc8cd4ecacb34a8cc8ebd8002211e9f62f0accf9e932467338ac2a",
+        "recoveredSha256": "72cfed9a62bc8cd4ecacb34a8cc8ebd8002211e9f62f0accf9e932467338ac2a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "291b0029a5d3481c5596995e2160d05fd8aca688a080129522bc97d9e601e1a2",
+        "basename": "ak-roles-fresh-spec-prompt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c0495ac63e55c82f652d5855cd0670a8f33c289be4dcfdc9e04fceb6c7f9111b",
+        "recoveredSha256": "c0495ac63e55c82f652d5855cd0670a8f33c289be4dcfdc9e04fceb6c7f9111b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f868f2f75871774d132d830f063d6d1bee022e0e322837fb17692534b4539402",
+        "basename": "ak-roles-fresh-spec.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "468b4ae8dcf35994a19b318269f3486c388bc97c05937da2bfac65466e9a7306",
+        "recoveredSha256": "468b4ae8dcf35994a19b318269f3486c388bc97c05937da2bfac65466e9a7306",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7c66e7aec1d7368314777c86ce270e2a7ff17f826b01cad81a7f0d7bea33aeb5",
+        "basename": "ak-roles-fresh-standards-prompt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "78afe3f28996906799cd48fba114522561c05349622d3f7a0b9fc71318d1d33e",
+        "recoveredSha256": "78afe3f28996906799cd48fba114522561c05349622d3f7a0b9fc71318d1d33e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f67c22337518e84ad0e57a63221831fd599f9468bd80dd4f1b7ac81fe2d25837",
+        "basename": "ak-roles-fresh-standards.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "09a4442582aa59748921743e7f368c24d04c954626e31c3e6bf3352323c87f53",
+        "recoveredSha256": "09a4442582aa59748921743e7f368c24d04c954626e31c3e6bf3352323c87f53",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5716b1d1171be1d83778558d078a8ca416faf42bfa1610b2da1e22bd6a23f623",
+        "basename": "ak-roles-ledger-deepening-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "cc3b1008ff6ba49db6b583dcb95b388a2db1bf23e4f9e96e8314a276ffd24ed7",
+        "recoveredSha256": "cc3b1008ff6ba49db6b583dcb95b388a2db1bf23e4f9e96e8314a276ffd24ed7",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5053ef8c7a79c067a64a0c3f70aca8b6b8068577ab4e691b9a0d02b311e0e203",
+        "basename": "ak-roles-open-issues.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1c9b6c7cf99f471cde0ed91a69cb8dac76ea67d169dd0b9cee1abdb810f4b6b2",
+        "recoveredSha256": "1c9b6c7cf99f471cde0ed91a69cb8dac76ea67d169dd0b9cee1abdb810f4b6b2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "9d403490c47c9033a09f2a2b9a8a737647b4c9f7b2a51a5b45a2e719017f483e",
+        "basename": "ak-roles-open-issues.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "82ddf65c9f56345c030f7a01aac7e3363a17bb792332f8de2e90493e75e685e8",
+        "recoveredSha256": "82ddf65c9f56345c030f7a01aac7e3363a17bb792332f8de2e90493e75e685e8",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "fd421a23d249f73373bcf62727ed0c65c60531daaf0280fb95363364789bac52",
+        "basename": "ak-roles-postfix-review.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1d50768f2462e92949cb37dc89886feb074dd3c9415b8016866af0e86e38c43c",
+        "recoveredSha256": "1d50768f2462e92949cb37dc89886feb074dd3c9415b8016866af0e86e38c43c",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "97d49a448a3b05435a7ce36c24b631374dfea0ce678b0b10d5da74beba3268ba",
+        "basename": "ak-roles-postfix-spec.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "eb54330132c13697a33f126b1b75ff515c535d96b3315f5d00fea5205be36114",
+        "recoveredSha256": "eb54330132c13697a33f126b1b75ff515c535d96b3315f5d00fea5205be36114",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f8017128b2847d2b0b03c2dcb87d1aad39a5b00624d87eda3aed2b76dacf766d",
+        "basename": "ak-roles-postfix-standards.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a5569cf4db543c2f69b4415aeb324c63ba0769a2e2a38df8eefb9528c918407b",
+        "recoveredSha256": "a5569cf4db543c2f69b4415aeb324c63ba0769a2e2a38df8eefb9528c918407b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4da68c753a68d9ad1cb29ced384d2807971c63f3a70f1ce4a3409fbc6320d4f1",
+        "basename": "ak-roles-reviewer-v0-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "80b6285962c13eaba704bec5d2ccc1a1d74985ad2e350c71ee8fdf197283ddb8",
+        "recoveredSha256": "80b6285962c13eaba704bec5d2ccc1a1d74985ad2e350c71ee8fdf197283ddb8",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c3c5e38761722a1ba97441c06078cf8d91b84f42c1c23976a5108d08a1674a63",
+        "basename": "ak-roles-runtime-deepening-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f35fc1dec1e59db84061b04b900bd88682fb22c6f517f1508964b6227133867b",
+        "recoveredSha256": "f35fc1dec1e59db84061b04b900bd88682fb22c6f517f1508964b6227133867b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e9e9d3065c86da64bdf28777d7b9451be1773ea407bee3553789ea60536f79b2",
+        "basename": "ak-roles-skill-binding-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "974a53e50bea1aaa7031ae187c44b10a0b03809722584bd386cc9ad292a9b7b7",
+        "recoveredSha256": "974a53e50bea1aaa7031ae187c44b10a0b03809722584bd386cc9ad292a9b7b7",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a36caa445b2e8cb3cc63635f8e003d59cfb1fb6a04da9b63c4b9feb019b25733",
+        "basename": "ak-roles-spec-prompt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d10476386fd1f7c5401f9329aff4bc1ebe7c599ee6d95afdbc3366a024ddbe2f",
+        "recoveredSha256": "d10476386fd1f7c5401f9329aff4bc1ebe7c599ee6d95afdbc3366a024ddbe2f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e34e195fdd1540c86e75f311b4ea6602c3c15ebe54d1c58ce8c64d0000deb4bb",
+        "basename": "ak-roles-spec-review.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "16f40509196841943b88106f48f66c67ed5f378d886de055cf00b55ef766be40",
+        "recoveredSha256": "16f40509196841943b88106f48f66c67ed5f378d886de055cf00b55ef766be40",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0d54947cf45c3d6d92ea399eae63a05a690b4f76c4b08e2ae06e6a21c1e0f9f9",
+        "basename": "ak-roles-standards-prompt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "24614decdf46b2810c6490e873c6e1aebb518c26368ede900afa0cd2c6b17d18",
+        "recoveredSha256": "24614decdf46b2810c6490e873c6e1aebb518c26368ede900afa0cd2c6b17d18",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "918bab831dba6cf0ce9c71c558dd6e3548f65b51bf81c07a477f54f8baba06a9",
+        "basename": "ak-roles-standards-review.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d5afc3f497f964e9dc3652df9d7921cb247c105ce9749bc057307ecc55b4e4ab",
+        "recoveredSha256": "d5afc3f497f964e9dc3652df9d7921cb247c105ce9749bc057307ecc55b4e4ab",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "cdafc9d03edbeef44204b62bdf3efbdbff6824d1c1441f53c7a1d396c0ed2687",
+        "basename": "ak-roles-test-harness-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "8cbb2b69fe6c8acc53ab7ea92a69c4d0186472654ced778c154c011e77b5bbb5",
+        "recoveredSha256": "8cbb2b69fe6c8acc53ab7ea92a69c4d0186472654ced778c154c011e77b5bbb5",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "b2700cbdbf43e9654f1604e87e3a8ff9ed47c637f50793458f92fb5d63d88311",
+        "basename": "ak-runtime-coder-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "0312039c20f30e40b053108ebcf124ed1db9e9c8cd79fe24204065c1212ed048",
+        "recoveredSha256": "0312039c20f30e40b053108ebcf124ed1db9e9c8cd79fe24204065c1212ed048",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "522694bc3c6dbf8ff85b25a3a6610e7fd7f8e3fc9f752e79f14fc70466725a8f",
+        "basename": "ak-runtime-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b4eb31b98ba7963e089aad845a4f5c1d08b339830a6a390189f5e6c719b549cf",
+        "recoveredSha256": "b4eb31b98ba7963e089aad845a4f5c1d08b339830a6a390189f5e6c719b549cf",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8a3c2f56856104a9bc79eb971f69345b05c8c039bbe8506588feb85e2e09cb05",
+        "basename": "ak-runtime-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d0835b0195a47e2582ee34f84c277cde2cf987c6b60eccf3971dabd6cc0363e9",
+        "recoveredSha256": "d0835b0195a47e2582ee34f84c277cde2cf987c6b60eccf3971dabd6cc0363e9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "18671c1ea368cb71a3e3356ac7e3311699c7379ceff1ae1b154412f5d9d7e2aa",
+        "basename": "ak-runtime-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2d60c279efdc008cba211ba782815bf30403000eefde6c90c8ce01956ac2ebc2",
+        "recoveredSha256": "2d60c279efdc008cba211ba782815bf30403000eefde6c90c8ce01956ac2ebc2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "63a63fd1f04052fee9c1ec3a1bfcab7821f72558a448bc6744a9dcaf27589175",
+        "basename": "ak-runtime-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f68fc2d7a689bed70686b7ce980e1a009c8b338f7b5c912d1f2ec24785406602",
+        "recoveredSha256": "f68fc2d7a689bed70686b7ce980e1a009c8b338f7b5c912d1f2ec24785406602",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4b602320221581b62576adf21d04bd17d8673eb110421b548f71fc1f9d491cfa",
+        "basename": "ak-runtime-review-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d167572247625b0d4f89a18c0f998b945d2388e953f9668b7d58f818ec0c9078",
+        "recoveredSha256": "d167572247625b0d4f89a18c0f998b945d2388e953f9668b7d58f818ec0c9078",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "75035da1855320baaea0ebf7f6678fc162fab3a9dacce1b66c5233f8c6772dc5",
+        "basename": "ak-runtime-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "933ee09c970274e9ed327a31eec318d73dc1475dc6ba2b7f941445d473daffb1",
+        "recoveredSha256": "933ee09c970274e9ed327a31eec318d73dc1475dc6ba2b7f941445d473daffb1",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "9fcb121b85b95c01155061cd588fe3bab200f1818ecd9654bc693547689d7302",
+        "basename": "ak-skill-coder-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "aa9eeb3cb99fc0266aca90412e4e608e4405f6103147fe149e046b88bbb966df",
+        "recoveredSha256": "aa9eeb3cb99fc0266aca90412e4e608e4405f6103147fe149e046b88bbb966df",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c0fbdf7fa851a5c98a247316cd97e25f6f18f99887f5c1875e80930582dd8bc6",
+        "basename": "ak-skill-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "90f61e644418e0c328040a9199695a5c7346eff94b82230b6dc86d5cd8a93180",
+        "recoveredSha256": "90f61e644418e0c328040a9199695a5c7346eff94b82230b6dc86d5cd8a93180",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0e711be289eda88fd83a46d63a737b5940a3ee6fb1f4a6b44988688d79e3b51e",
+        "basename": "ak-skill-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6b6252ca2ea3d5bb7b0ebb8df4607e28841b56748dba093f1726c7f864e7a259",
+        "recoveredSha256": "6b6252ca2ea3d5bb7b0ebb8df4607e28841b56748dba093f1726c7f864e7a259",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7e3c90c32c00c78852be6eda0cf5cbda7d85c9a9808fa1b481f3d6f793412b09",
+        "basename": "ak-skill-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2f7adac2e11aa37c2c54a4b45ac1f2d05b0e07f3644ab3bda362db409be9c44e",
+        "recoveredSha256": "2f7adac2e11aa37c2c54a4b45ac1f2d05b0e07f3644ab3bda362db409be9c44e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "37e15f0b6ed34afff8005aa4bcc8ebfc4ba153a3d42f786f1c197ea52d0de4f7",
+        "basename": "ak-skill-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1417b5f2f5d61c267ee08dd28e56838588c27ceb63b7cf4c6f7b459c15e980c9",
+        "recoveredSha256": "1417b5f2f5d61c267ee08dd28e56838588c27ceb63b7cf4c6f7b459c15e980c9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5cabfdb61f94c303c8df07aa4861a7c965cdaac3952d9ccdb362f7f7045a1dac",
+        "basename": "ak-skill-review-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "74a7c20c9c17c6492dbfd5b5e52670344412cb773b79c8580d20c81c89f0c3da",
+        "recoveredSha256": "74a7c20c9c17c6492dbfd5b5e52670344412cb773b79c8580d20c81c89f0c3da",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d82f8b0d7698925fc4b6a81f56a738ec98cae80120ef501a163728647e70a1b5",
+        "basename": "ak-skill-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "96501fb9d4f7e0bf21c389a0b6e4aed701c58ee484ab02cf801b5ff974081487",
+        "recoveredSha256": "96501fb9d4f7e0bf21c389a0b6e4aed701c58ee484ab02cf801b5ff974081487",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "15442864e040bc0c55b753949084e889b6580bf0ae69d8d78f2b25a9b1cc074e",
+        "basename": "collector-adjudication-probe.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb",
+        "recoveredSha256": "7f4c587fa0bff5594ba294804184fff6e35d8bb4070d1b6b49104248595f2abb",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "2ade6dc2dd7242f3d4b9277aa4415d5031a2f42fb9e35668a40ba8e046de14ca",
+        "basename": "collector-cancel-probe.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
+        "recoveredSha256": "9d21c6b24cb3e3d32da739c4fb8cef1d9625e128419c27da4594d25b3570dc87",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "23bc7d533fa98421a666533c2afdf6aab7ba6b45184820a233d7b67d7cc8fabd",
+        "basename": "collector-cross-cutoff-probe.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da",
+        "recoveredSha256": "8eeae0cd09dabf1bce0a4bdd62909b5e488cafb3640c1865b835019d76cc72da",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "a6073a84f07d41355237beeb9ce0fba3db321e37beff9954ef56d90665090ed5",
+        "basename": "collector-whitespace-author.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6d1960bf76486c89e22a204e499548b7580e462bf5750a3dbcea9df4d65ac38a",
+        "recoveredSha256": "6d1960bf76486c89e22a204e499548b7580e462bf5750a3dbcea9df4d65ac38a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "cd2b4c7a149b0ac249635a29a5ed60edad17ea46283eefd2df9b2199dc12ab3c",
+        "basename": "fixer-commit-msg.txt",
+        "sourceOrigin": "tmp",
+        "sourceSha256": "1d3d032739b6d37c384b6080fe6366ac1b161a8b59492db6b213aa00bc891353",
+        "recoveredSha256": "1d3d032739b6d37c384b6080fe6366ac1b161a8b59492db6b213aa00bc891353",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "482edd79060ddf29ec8aea258d56ec55e8998de53e5b2c9ebe5c41045a086a26",
+        "basename": "issue-1-adr3-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "801bc8d39b822ff071980a8ea2d5120658dd6c4230a4b02f4cedf0898579ec2a",
+        "recoveredSha256": "801bc8d39b822ff071980a8ea2d5120658dd6c4230a4b02f4cedf0898579ec2a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d3d9d7830721b196dd341d76450fbd31381b91ddc73286118fac32876c4d6e7a",
+        "basename": "issue-1-adr3-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "8ad457de8a73394a6065b8223fdfa5381081e6738db65919e806a1dc3b04ba9c",
+        "recoveredSha256": "8ad457de8a73394a6065b8223fdfa5381081e6738db65919e806a1dc3b04ba9c",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "374406995a8f148f40c92280d3451a4074cf32be70a8e8599bb2c5488db10641",
+        "basename": "issue-1-adr3-residual.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f5d6e9ae450fc7ffde8074f5e2dad04d4b944f3546e6e037f639c8f50502c5a2",
+        "recoveredSha256": "f5d6e9ae450fc7ffde8074f5e2dad04d4b944f3546e6e037f639c8f50502c5a2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e6612c38be3fbab964f5d4eb7b75dc663f794900215c5626650c2a6e0248152e",
+        "basename": "issue-1-authority-source.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "9653d03e0a3a54f188bfd1538cc58cf9a4168880d41c31a210f93258c6923419",
+        "recoveredSha256": "9653d03e0a3a54f188bfd1538cc58cf9a4168880d41c31a210f93258c6923419",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8b5f31d956284dac487f596e7c01b5ef34feaa7459a4b3c187934bb5df541390",
+        "basename": "issue-1-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6696862d0a7ec1da4f6119bee4b99db22707ae848572120a930f8a502f766267",
+        "recoveredSha256": "6696862d0a7ec1da4f6119bee4b99db22707ae848572120a930f8a502f766267",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0fb29f8706d008e6e963a4f694d323047cdba4725d2f22e414321f45f195d8fa",
+        "basename": "issue-1-coder-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c3e83e32cd188626b7771f33a3c08915402698d6ba5ddae5231063e31d8cb96a",
+        "recoveredSha256": "c3e83e32cd188626b7771f33a3c08915402698d6ba5ddae5231063e31d8cb96a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e279f3eb41f207a4f44913e9c62d8da81ca3ff9b6c679f6f6ccc97e3a72e8ba8",
+        "basename": "issue-1-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "0c15d0046d297248c94da40172bce9994f157da654efd367924d1445bd905629",
+        "recoveredSha256": "0c15d0046d297248c94da40172bce9994f157da654efd367924d1445bd905629",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7f96a41ae44a677b32dcdb08a7c1c0d978852625cf5ba32ed829bf7e81779d3d",
+        "basename": "issue-1-commit-msg.txt",
+        "sourceOrigin": "tmp",
+        "sourceSha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+        "recoveredSha256": "016daf89de974d8a7de4ba95de590fb5a75750dc87fce5e4347e68a9ec84ff15",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1e68734a7b8ec29c7da53772784b5706b811a50bb912fd366e0eba2e8c2f4242",
+        "basename": "issue-1-durable-disposition.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a7b7a7c1f1b9a8ff4f6de95694e261c3a9d9982240eab16429edec81d46be837",
+        "recoveredSha256": "a7b7a7c1f1b9a8ff4f6de95694e261c3a9d9982240eab16429edec81d46be837",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "94fa278f792082782422475ec719038be83344c00f7409011710a9bf7f7ed4a8",
+        "basename": "issue-1-final-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "602a63392de1cb609d33d5484b19d7d479fb7aa35d7340c34289a6f691c978c1",
+        "recoveredSha256": "602a63392de1cb609d33d5484b19d7d479fb7aa35d7340c34289a6f691c978c1",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1071dee3d0f7f6663e6326f80ce170c51503d37f4a6cd3162945cbd40eaf72f5",
+        "basename": "issue-1-final-reviewer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6564bbe4b6c3353a9058dadc2db935a58d55a278c4d612adc07876e2df6d3dd9",
+        "recoveredSha256": "6564bbe4b6c3353a9058dadc2db935a58d55a278c4d612adc07876e2df6d3dd9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "47cc29d52cf223099fe31c16e7dd51c358e7e1885d6c49d5a8a9f9a50f6659af",
+        "basename": "issue-1-independent-probe.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
+        "recoveredSha256": "0f31adb99835f71aeee9b66ffd67f7ed77c9c5860309ef0e042c0cb96fe9f10c",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1aa4a913e8f3abb26af41dd11d2cfffbf29715a586dc676388d1e5e0a4ba1161",
+        "basename": "issue-1-pr.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7b71835bd11220eca1cf96c2f946927d39f8149b1323565f3a3f35fa3a01d4c6",
+        "recoveredSha256": "7b71835bd11220eca1cf96c2f946927d39f8149b1323565f3a3f35fa3a01d4c6",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "ec132f8d2852c49a54c60f7a62d1605b562502d84a68bfa3c0eacef47796cde7",
+        "basename": "issue-1-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1fff07f960e573bb4476df0fd2ef909d600775bd724243d16237722522538e83",
+        "recoveredSha256": "1fff07f960e573bb4476df0fd2ef909d600775bd724243d16237722522538e83",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d962afd88d72db5ba0c517384277148abc411d37b2116b6d94eec0fe0cab28aa",
+        "basename": "issue-1-reviewer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "941bafb94e8917b75e98a173edb3ba87dcbbab33065161e11d934f1618c3fac6",
+        "recoveredSha256": "941bafb94e8917b75e98a173edb3ba87dcbbab33065161e11d934f1618c3fac6",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "69e5e684936410113c6f51ae27f3e90c36acfcaae34dd20de68dc0a14c07df05",
+        "basename": "issue-1-test-name-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b355b8ae02e12ebc3c0fa67d05325769896a1358177c3c94212ca9370a89dc1d",
+        "recoveredSha256": "b355b8ae02e12ebc3c0fa67d05325769896a1358177c3c94212ca9370a89dc1d",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "73a9e166d2aea47ad01258ca991898189e8a8ad81637a946b2f8652cd09fa550",
+        "basename": "issue-1-test-name-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "41aba2f15dae7d237b6359df18a25563f2ffdd486af402107186b35b82471320",
+        "recoveredSha256": "41aba2f15dae7d237b6359df18a25563f2ffdd486af402107186b35b82471320",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "61530ab0cc886913b3e5c67f43ec2f4f0593c9732819857409feed33f686cf19",
+        "basename": "issue-1-test-name-residual.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "b1be60223d8948bcc20a3be779e2e9c011c31f4056559f5468f499d94f8b6479",
+        "recoveredSha256": "b1be60223d8948bcc20a3be779e2e9c011c31f4056559f5468f499d94f8b6479",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "23a2217308ea76f636ba1e55255abcd34f501a5c270538c9ffc03a02024d223d",
+        "basename": "issue-2-apply-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "4a59e09765803aac8ceb42980b2172f0b6ada92bfcd09599295765c5bbba2ebc",
+        "recoveredSha256": "4a59e09765803aac8ceb42980b2172f0b6ada92bfcd09599295765c5bbba2ebc",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e4f03196f2ef649ab74042482f32e304a23fd64819d7e046a2325f5962cd3cd2",
+        "basename": "issue-2-authority-source.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d056d6569c7e2611a4b7a609ca39fd0d826f2e32aead99b3e30d3e7d843b2a65",
+        "recoveredSha256": "d056d6569c7e2611a4b7a609ca39fd0d826f2e32aead99b3e30d3e7d843b2a65",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "bbd9dde73b18980fc2d1db2374bc543e5f4f48ef8fc0637f4bc86632c9ed1fad",
+        "basename": "issue-2-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "c93f9708eced46c1c08e6395afdac0fcf864fc4aa58f1cddbccb9d2748aee691",
+        "recoveredSha256": "c93f9708eced46c1c08e6395afdac0fcf864fc4aa58f1cddbccb9d2748aee691",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "4e70c8a5931806ea7dc7da0b33e58785c0eb47f8d4c5bda1f9df60bdeef8b20b",
+        "basename": "issue-2-coder-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "95ccb2a9e26c2fe7722fe5102b96e7d7503d3b853a4dc5c3fd8b1e257fb6c8f1",
+        "recoveredSha256": "95ccb2a9e26c2fe7722fe5102b96e7d7503d3b853a4dc5c3fd8b1e257fb6c8f1",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "93f38fe3512a99a8f2a59d536688c6e7aa85f112bc086655bf39a8c32e8fd596",
+        "basename": "issue-2-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "47538c3b9e3f2f5d52b0af63046ad4e648e1b58826928dad8a5f4fb1c34de4c5",
+        "recoveredSha256": "47538c3b9e3f2f5d52b0af63046ad4e648e1b58826928dad8a5f4fb1c34de4c5",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "ba431807140ba6602bb6685cb9afff0998583938a916c35b6403622e2086258b",
+        "basename": "issue-2-durable-disposition.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "fbfc20007e709f7feee9f74a6bc49f7a423af5a43b74749688ca08ec05bc6b0d",
+        "recoveredSha256": "fbfc20007e709f7feee9f74a6bc49f7a423af5a43b74749688ca08ec05bc6b0d",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d5c68dbb32111db8c3ad75f9d7eb5380eb9f769f99137f53d511164ad8c089b4",
+        "basename": "issue-2-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "64fa155842e75a022ee85e18ef260f6409635ebcbc2098b9c0b09186b6c9752d",
+        "recoveredSha256": "64fa155842e75a022ee85e18ef260f6409635ebcbc2098b9c0b09186b6c9752d",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "04909187f7b9dcf43da825afa82aa2f93958ebe22c267ad548ab203fadbccb4a",
+        "basename": "issue-2-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2b794d54f3d6cbee219ff6ff00b65ca1590848bc5c982a7e88bc52af852bf8b3",
+        "recoveredSha256": "2b794d54f3d6cbee219ff6ff00b65ca1590848bc5c982a7e88bc52af852bf8b3",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "8227fa0713a3d16e16a1ca6e90b0110d8967dc2710187c030ca516f72c497144",
+        "basename": "issue-2-judge-pack.json",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "971e6b33a87b604b71177754d329efa3b38b130092e40c8084d18d738a155120",
+        "recoveredSha256": "971e6b33a87b604b71177754d329efa3b38b130092e40c8084d18d738a155120",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c754b1b6dd89d297eb98496a7edd88b09b775ff335cf24471bcdf5fa0c45c6e8",
+        "basename": "issue-2-pr.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ebfac83b0f84fb15a615f443965d6952263cf575cfa7ab10a982e4f11bb658e7",
+        "recoveredSha256": "ebfac83b0f84fb15a615f443965d6952263cf575cfa7ab10a982e4f11bb658e7",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "85cf04147400cb58a2856e15eef1f523a083d97cad5c1fcfad29b5151cc0ca83",
+        "basename": "issue-2-receipt-trail-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f6a5a3f9d202ecad1dddd922c243b1f05414a4af11561fbebab167ea828791e9",
+        "recoveredSha256": "f6a5a3f9d202ecad1dddd922c243b1f05414a4af11561fbebab167ea828791e9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "3a92048c8e3f8c467a3713f45284ecd6ac1e822f484ae5ac355ca9cea0e1c1de",
+        "basename": "issue-2-receipt-trail-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f53e5a02ac397afd40c31a7de5da40867456f2ebe79867ffc8ea0a9f8b0642d8",
+        "recoveredSha256": "f53e5a02ac397afd40c31a7de5da40867456f2ebe79867ffc8ea0a9f8b0642d8",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "3a2d79f6653e947b320785bb6f5449d3bf6740be95df979441e0f31dba90d057",
+        "basename": "issue-2-receipt-trail-residual.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "35ec83b103899c461a1a0e524438527a7ccd76eb471eeb3e806fc72a536d9e34",
+        "recoveredSha256": "35ec83b103899c461a1a0e524438527a7ccd76eb471eeb3e806fc72a536d9e34",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d8c476507e4c1216afae76274c1dc4ffba62454171eb06b2393120d00ab35b35",
+        "basename": "issue-2-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "e0fee33db0c47e10f38030c802a77e9d1c569a1b7251fc438c32104e9e720872",
+        "recoveredSha256": "e0fee33db0c47e10f38030c802a77e9d1c569a1b7251fc438c32104e9e720872",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "2e1c7d042fc6d3be3e171a40605a567c6a0b87ba22b037bd7cfb3f6cafff3996",
+        "basename": "issue-2-reviewer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f9d2a9ed984d49358df5b2302206f2824d4a56873102c8ff3f25fcabd0463e71",
+        "recoveredSha256": "f9d2a9ed984d49358df5b2302206f2824d4a56873102c8ff3f25fcabd0463e71",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "7905dc4c9d6a7a8404dcecc24527fb5bb7b63466db56d0b337eb1f6b1428d953",
+        "basename": "issue-3-apply-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2131aa74c8877c4368dbcd5dc16c0b6990c60cd73255cc22307693d6f61a48b9",
+        "recoveredSha256": "2131aa74c8877c4368dbcd5dc16c0b6990c60cd73255cc22307693d6f61a48b9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f24638e26f9bbabeddf74775075e074781b533caa0e4a5830506ac6863071e32",
+        "basename": "issue-3-authority.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2ab75b7d5cb3bae1ef599a2d0ba203ecf871e92f167b480d758dff4d5c1a8497",
+        "recoveredSha256": "2ab75b7d5cb3bae1ef599a2d0ba203ecf871e92f167b480d758dff4d5c1a8497",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "61e2c107ff9b2d8156dc3f83407f9275d5fb25b63626379d8e2ba586bc2220ad",
+        "basename": "issue-3-coder-plan-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "867f229e77f66644f43640ef24ba3547090d11e658b2ba0f8996533fa4073944",
+        "recoveredSha256": "867f229e77f66644f43640ef24ba3547090d11e658b2ba0f8996533fa4073944",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "d150eb87dfdf262f5e431aa3d75c57deb9b222eb10ee4cc43f91e688ec9151c6",
+        "basename": "issue-3-coder-plan-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "e6c3f9242c310cf5f814df43abb1d846e50a087ca4cefddd6547f19505145e28",
+        "recoveredSha256": "e6c3f9242c310cf5f814df43abb1d846e50a087ca4cefddd6547f19505145e28",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "0e525f44a336b9d46d0de7b490ea04213709e8e0add49a740527022397e44b94",
+        "basename": "issue-3-coder-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "547b67b2b84316bf9ce4cb4bebb2df37604aac4e0c48c6c84fd3cb805ea60e52",
+        "recoveredSha256": "547b67b2b84316bf9ce4cb4bebb2df37604aac4e0c48c6c84fd3cb805ea60e52",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e51ec02865fc8afd0f9bf077a9a0c0219ef9e7a814fe9f33432f8940aadf17ca",
+        "basename": "issue-3-coder-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "08d6b3dcb40533c4e79def99eb3aba398568aa30457507265239745878e4afb2",
+        "recoveredSha256": "08d6b3dcb40533c4e79def99eb3aba398568aa30457507265239745878e4afb2",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "474ad08e93a066709a9dd677afe35e91ab759aff36a6463f0c78e9d1e5f64f00",
+        "basename": "issue-3-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "99c8a298bc9cfeaa021f40d0423ccf5c8de7798faaf245ddcfae9783006cdc0a",
+        "recoveredSha256": "99c8a298bc9cfeaa021f40d0423ccf5c8de7798faaf245ddcfae9783006cdc0a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f9bf2e6d9c039c1425a91fd2c91d9ef3f9cfcffad3914ef21667bc5137f34714",
+        "basename": "issue-3-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a62cc5af534999c1b8235b622306772a173764f97f5be637ffeea7cb7a8b9d35",
+        "recoveredSha256": "a62cc5af534999c1b8235b622306772a173764f97f5be637ffeea7cb7a8b9d35",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e686804adc7617823eecab49fb25374740a6d374990413e00fdef020eccf9448",
+        "basename": "issue-3-lifecycle-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1527ff748dc4d0b7f1ba568e0d78b1cf5bc72985629da9c8c40f8f32313fdf6a",
+        "recoveredSha256": "1527ff748dc4d0b7f1ba568e0d78b1cf5bc72985629da9c8c40f8f32313fdf6a",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "73eba658f670dfd408d83f89aefb7fb69f26f5c3a2d6ca3ef495ca923a2b621e",
+        "basename": "issue-3-lifecycle-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "91a1fd579d2302aa35826a5ae425aa85f524f91c32bc3268f073fb13e36e6b70",
+        "recoveredSha256": "91a1fd579d2302aa35826a5ae425aa85f524f91c32bc3268f073fb13e36e6b70",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "2c182424777ce12715b7a58977c40a547eb5037c764a356bf500be11314d9ab4",
+        "basename": "issue-3-lifecycle-residual.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "d607daf134fb004d5b8809d79d754ebfa8b9878670452af519526c0df38beae8",
+        "recoveredSha256": "d607daf134fb004d5b8809d79d754ebfa8b9878670452af519526c0df38beae8",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e7ff0a251df4a329851b21f9bd459c9bc78e79770c7950f4f0504811c5eaf478",
+        "basename": "issue-3-plan-corrections-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "11b7117700e10fb5ef2ab45c41de968aaeb3170d589541ad89792339fe228f47",
+        "recoveredSha256": "11b7117700e10fb5ef2ab45c41de968aaeb3170d589541ad89792339fe228f47",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "f0fdd387ff61cdffe251eeecd407650e19e3e86b31227e85e44af6eb8317d021",
+        "basename": "issue-3-plan-corrections.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2c6ab6404df4fcea3a0cd31993a8a65532fffc0fc1e0c94fae6aa9a77886a9e4",
+        "recoveredSha256": "2c6ab6404df4fcea3a0cd31993a8a65532fffc0fc1e0c94fae6aa9a77886a9e4",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e19a0bda7cb18c552b76946389e61ec079fec1aa23f131a80540d7a7beb74b7c",
+        "basename": "issue-3-pr.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f2939b851d9b2566c7d58a69bd7317d5ce80f0971e86e37f81b754e97d8fcc42",
+        "recoveredSha256": "f2939b851d9b2566c7d58a69bd7317d5ce80f0971e86e37f81b754e97d8fcc42",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "922894ea18acbc6e4600e32cba0433b393af2fdf6b3e632273b4d6589213a16b",
+        "basename": "issue-3-provenance-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "df60dbdf178f6746e3e8989bf44e9c891b988f98074b29c11b075ee2bfefda96",
+        "recoveredSha256": "df60dbdf178f6746e3e8989bf44e9c891b988f98074b29c11b075ee2bfefda96",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "50b01ed868e13d5464f6793fe284e8af830e31e89f8546da41945dc01f30300b",
+        "basename": "issue-3-provenance-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "ad663a99f77e979dacd3fa9571a3dadf389049fd0c1eb92454671a1fca45073f",
+        "recoveredSha256": "ad663a99f77e979dacd3fa9571a3dadf389049fd0c1eb92454671a1fca45073f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "16269f4ef120234f99d33817e48a431beecf7640f1640aceab6828f39a768bac",
+        "basename": "issue-3-provenance-residual.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "e1c66a216abd6d36b40eb6a5f28b1cd9b3e95cb7857e23a6d452420199b9e1c6",
+        "recoveredSha256": "e1c66a216abd6d36b40eb6a5f28b1cd9b3e95cb7857e23a6d452420199b9e1c6",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "89dd2e2773262444887d787cc3207e4c0d1928f247258364cb8fb71502f2f9ef",
+        "basename": "issue-3-review-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "1874937c178e00bba0f4646835109b9b9fa29621b3cb401a226041c8b5c3d822",
+        "recoveredSha256": "1874937c178e00bba0f4646835109b9b9fa29621b3cb401a226041c8b5c3d822",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "564cf1799ebae581a9d92f4e7e626cbf538eb6192348a6a109638f7432c84040",
+        "basename": "issue-3-review-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6675883b25c3ef8033f2acf2a3b3cb76e9d5bee959fd02d733c144574a0b44e9",
+        "recoveredSha256": "6675883b25c3ef8033f2acf2a3b3cb76e9d5bee959fd02d733c144574a0b44e9",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e774a7ebfd1c99657bc187d9ce1d239168aa973aaf27220b6eb161d569ee2f31",
+        "basename": "issue-3-review-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "183e4df6173a8008b7c47e2a5533300f4ff29232c37d341944227106b640ae89",
+        "recoveredSha256": "183e4df6173a8008b7c47e2a5533300f4ff29232c37d341944227106b640ae89",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "5cf2f85c65581053b2a00135906c1878d3d16715203e2d23a716ececb13c4487",
+        "basename": "issue-3-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2ccb02676533c7ea9471f0a4d937094427722c9bee3dba42ca5c13258f26068b",
+        "recoveredSha256": "2ccb02676533c7ea9471f0a4d937094427722c9bee3dba42ca5c13258f26068b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "da8b8dc7d4873117f27601906359a2d7f7872ca886640efe4ead7ed5ab7192a4",
+        "basename": "issue-3-reviewer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "fa873221b4a441dceef0a0104eff59ee699beb9650831c87cbe3d1415ddbd6b4",
+        "recoveredSha256": "fa873221b4a441dceef0a0104eff59ee699beb9650831c87cbe3d1415ddbd6b4",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "42a9fc2895acf1796351b2f7a06a73f46d10605a4138776ddb548d39a34607f1",
+        "basename": "judge-malformed-probe.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "4306d0fe0d9c2139912a50bae8ea635d71e32bd56bb9ba98c22cc4e4e5a17918",
+        "recoveredSha256": "857682fe76fd6ea58d3b63a7946aadae69ca55fe3e1a2a6b32509a3d054dd48d",
+        "redacted": true,
+        "hits": [
+          {
+            "ruleId": "token-assignment",
+            "location": "judge-malformed-probe.ts",
+            "count": 2
+          }
+        ]
+      },
+      {
+        "itemKey": "05883343bd7817d04f33cc61340e0cfe1ee399a8c1c05a1fb8239c855dcaf5d1",
+        "basename": "reviewer-protocol-pr.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "4129d19408677c4a5e49d32d0aa75098a0af8aa4d24623178b5d3568128245b0",
+        "recoveredSha256": "4129d19408677c4a5e49d32d0aa75098a0af8aa4d24623178b5d3568128245b0",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "220d30c1f705e4d98437925b8e191ad079d1bf889e89d61e5aa0f1eac3e86727",
+        "basename": "reviewer-protocol-research-fix-packet.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "65702fa0284a22e9938f5b9599a3e2a66f0eaef71c6c2ab44e85768fcd2e6ed8",
+        "recoveredSha256": "65702fa0284a22e9938f5b9599a3e2a66f0eaef71c6c2ab44e85768fcd2e6ed8",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "51b6aa364310b723b909abcf7a3d73cf1699036d4d426c4988bf3e5885a152c0",
+        "basename": "reviewer-protocol-research-fixer-plan-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a6ecb7e1d786e6a82bda664ff61315a2d649704e3e4e6e5d901cc597b85a1efd",
+        "recoveredSha256": "a6ecb7e1d786e6a82bda664ff61315a2d649704e3e4e6e5d901cc597b85a1efd",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "80b6e7b7b5f43bcdd205be9d0b9cd753c0b7da36d637438d00b98b00cbf0e00e",
+        "basename": "reviewer-protocol-research-fixer-plan-3.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f98ae721b5491afa20a4b90d54f19d5b666c11a0dccf604dcb0a7807c7403b6f",
+        "recoveredSha256": "f98ae721b5491afa20a4b90d54f19d5b666c11a0dccf604dcb0a7807c7403b6f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "990bddad95cfae7e51da3cad364580cea67ede59ba58c4dfb5ddb6d0d81a10cd",
+        "basename": "reviewer-protocol-research-fixer-plan.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "a1bf40807a4a1ff5524225341a3e3ef67d4288a555b6e59844626584f44d295b",
+        "recoveredSha256": "a1bf40807a4a1ff5524225341a3e3ef67d4288a555b6e59844626584f44d295b",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "c355f6278288a419b9840c8a33750607b82b6dba3206aa86b61559c521cce158",
+        "basename": "reviewer-protocol-research-fixer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "f493044b861c53bd8d4c7c0fcd051045f71c745693f05db65d6c3b50cd5b0b6e",
+        "recoveredSha256": "f493044b861c53bd8d4c7c0fcd051045f71c745693f05db65d6c3b50cd5b0b6e",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "1312e8083efe1ca11b6ea84dec53a9806ff4236cc81d26f5f3e059a756a30e36",
+        "basename": "reviewer-protocol-research-plan-corrections-2.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "294c71ecd88e6ee41910fbe6f00dc325aa32ccd51642e8d2519ff44fc6c91829",
+        "recoveredSha256": "294c71ecd88e6ee41910fbe6f00dc325aa32ccd51642e8d2519ff44fc6c91829",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "08730476a5d5b70b91fe8fbfec0324536198a709e147ddd7f990024a2b884196",
+        "basename": "reviewer-protocol-research-plan-corrections.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "2372bb91fba0fbf2a5eeed94f824bacee38d5820f840d979bc81e9094dd5068f",
+        "recoveredSha256": "2372bb91fba0fbf2a5eeed94f824bacee38d5820f840d979bc81e9094dd5068f",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "e4f75162d2324b84a35263cc7e907519513f1d7f38c569aca5372f71a777c3e6",
+        "basename": "reviewer-protocol-research-review-task.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "6dd8f4344b9ff89711d88ab011b3e28c8da264dd88f102573b06de14c77d5d36",
+        "recoveredSha256": "6dd8f4344b9ff89711d88ab011b3e28c8da264dd88f102573b06de14c77d5d36",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "6ebf296330d56d3a7950008d7c4fbc9ca7a10dc4d5203b0ba1ef6d66713071a0",
+        "basename": "reviewer-protocol-research-reviewer-receipt.md",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "9b326c4b583a63fa00501c873b835cd50a296d20772162dd5eeff51ec6a209dd",
+        "recoveredSha256": "9b326c4b583a63fa00501c873b835cd50a296d20772162dd5eeff51ec6a209dd",
+        "redacted": false,
+        "hits": []
+      },
+      {
+        "itemKey": "af289a8e481f1cf51eea5f948b6a43b40ada81e6346d2f7ad2e7ea880167c0fb",
+        "basename": "reviewer-real-pi-snippet.ts",
+        "sourceOrigin": "private-rescue",
+        "sourceSha256": "7b46d00de66ff21b732bd093dd4710c78e51f26651dca9f1c26934cb30f27954",
+        "recoveredSha256": "e5b36400cf6705888179fcead419b3b188e78be4f17e8c68628ce5e88a6150fc",
+        "redacted": true,
+        "hits": [
+          {
+            "ruleId": "token-assignment",
+            "location": "reviewer-real-pi-snippet.ts",
+            "count": 2
+          }
+        ]
+      }
+    ]
+  }
+}

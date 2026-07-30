@@ -1,0 +1,13 @@
+{
+  "itemKey": "12faafa8731a8ff64baf6806edb6747af139ba753d9695c6a1a299d51b7241ab",
+  "basename": "ak-collector-final-review-task.md",
+  "sourceSha256": "0d69f899b905765279144d1bd07d978ad5a07fa10d2dbcb19c1aea48ae0f6395",
+  "recoveredSha256": "0d69f899b905765279144d1bd07d978ad5a07fa10d2dbcb19c1aea48ae0f6395",
+  "sourceBytes": 2784,
+  "recoveredBytes": 2784,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

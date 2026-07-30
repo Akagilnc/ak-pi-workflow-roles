@@ -1,0 +1,19 @@
+{
+  "role": "reviewer",
+  "status": "refused",
+  "base": "8063b4d6c4a425a5d2e240ff10ada85396926aca",
+  "target": "ea64733e382c6dcf14906b3b52782ec3f1c07535",
+  "task": {
+    "path": ".ak/dockets/issues/15/review/review-001/task.md",
+    "sha256": "72cb0ea11835783e7076d03e1840206fac06452098d3cf698522ac92ccda1427"
+  },
+  "sessionCandidate": {
+    "bytes": 72487673,
+    "sha256": "4027c1437f9bb6843a2c1d55bf71d89008b15808cc9efb241c45100a68859c63",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "66731886110ab85b3af9f0cead1808bd96592907f7d0fb36325e37906caf1528"
+  }
+}

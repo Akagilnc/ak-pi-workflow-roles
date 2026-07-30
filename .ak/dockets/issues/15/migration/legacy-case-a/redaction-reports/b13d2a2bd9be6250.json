@@ -1,0 +1,13 @@
+{
+  "itemKey": "b13d2a2bd9be6250eb223a3e6bc6051366dac825b5849e083418a3c473fb77e9",
+  "basename": "ak-roles-e2e-help-approved-apply.md",
+  "sourceSha256": "3519320a546c46bd9cda494db62b632adf92205651d69f0e407462a938c7b0b6",
+  "recoveredSha256": "3519320a546c46bd9cda494db62b632adf92205651d69f0e407462a938c7b0b6",
+  "sourceBytes": 1769,
+  "recoveredBytes": 1769,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

@@ -1,0 +1,13 @@
+{
+  "itemKey": "debd0cca585e5da8177692104233cf79b6eb0d07e92e5549654b129d200c6f71",
+  "basename": "ak-collector-codex-leg.json",
+  "sourceSha256": "d1f03ec89937be467cce23261cc8738ad6049b366a9b6d680c311724b9df26f7",
+  "recoveredSha256": "d1f03ec89937be467cce23261cc8738ad6049b366a9b6d680c311724b9df26f7",
+  "sourceBytes": 187,
+  "recoveredBytes": 187,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

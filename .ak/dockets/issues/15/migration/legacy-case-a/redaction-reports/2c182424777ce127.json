@@ -1,0 +1,13 @@
+{
+  "itemKey": "2c182424777ce12715b7a58977c40a547eb5037c764a356bf500be11314d9ab4",
+  "basename": "issue-3-lifecycle-residual.md",
+  "sourceSha256": "d607daf134fb004d5b8809d79d754ebfa8b9878670452af519526c0df38beae8",
+  "recoveredSha256": "d607daf134fb004d5b8809d79d754ebfa8b9878670452af519526c0df38beae8",
+  "sourceBytes": 962,
+  "recoveredBytes": 962,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

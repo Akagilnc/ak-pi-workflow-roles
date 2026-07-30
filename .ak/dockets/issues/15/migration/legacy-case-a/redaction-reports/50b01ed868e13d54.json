@@ -1,0 +1,13 @@
+{
+  "itemKey": "50b01ed868e13d5464f6793fe284e8af830e31e89f8546da41945dc01f30300b",
+  "basename": "issue-3-provenance-receipt.md",
+  "sourceSha256": "ad663a99f77e979dacd3fa9571a3dadf389049fd0c1eb92454671a1fca45073f",
+  "recoveredSha256": "ad663a99f77e979dacd3fa9571a3dadf389049fd0c1eb92454671a1fca45073f",
+  "sourceBytes": 1394,
+  "recoveredBytes": 1394,
+  "redacted": false,
+  "hits": [],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}

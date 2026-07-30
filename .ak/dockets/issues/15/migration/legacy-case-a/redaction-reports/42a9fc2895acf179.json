@@ -1,0 +1,19 @@
+{
+  "itemKey": "42a9fc2895acf1796351b2f7a06a73f46d10605a4138776ddb548d39a34607f1",
+  "basename": "judge-malformed-probe.ts",
+  "sourceSha256": "4306d0fe0d9c2139912a50bae8ea635d71e32bd56bb9ba98c22cc4e4e5a17918",
+  "recoveredSha256": "857682fe76fd6ea58d3b63a7946aadae69ca55fe3e1a2a6b32509a3d054dd48d",
+  "sourceBytes": 3581,
+  "recoveredBytes": 3572,
+  "redacted": true,
+  "hits": [
+    {
+      "ruleId": "token-assignment",
+      "location": "judge-malformed-probe.ts",
+      "count": 2
+    }
+  ],
+  "scanner": "src/recorder/scanner.ts scanBytes",
+  "admissionReason": "decision-chain artifact not git-resolvable; promoted once after credential scan/redaction",
+  "discoveryTime": "2026-07-30T03:26:50.842Z"
+}
