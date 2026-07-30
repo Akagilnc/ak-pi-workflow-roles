@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/repair/judge-020"
+  },
+  "invocation": {
+    "id": "1d5f452d-0cc4-4757-ad73-a9613566d1ce"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/17/judge-020-repair.md",
+      "-p",
+      "Apply the exact Judge-directed repair test-first, run package gates, commit, and submit through ak_fixer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "55600950bb6a56f8b831a72b3d1c214a6d68e247",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "judge-disposition",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "55600950bb6a56f8b831a72b3d1c214a6d68e247",
+        "path": ".ak/dockets/issues/17/judgment/review-020/receipt.json",
+        "blobOid": "9da0d9fc96a9a683b1be7579c6240d4a334ebf0e",
+        "sha256": "a2085fbb3a84204944c7337c97819e13b4bf58a73d09b9e8dc34320d22ca4b81",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/repair-packet",
+        "sha256": "e9fb9be11fdcf9fab3d5cad030a0313ce9fb1c55834bc3a30f83010e7b2d33d4",
+        "byteLength": 1494
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "d383728d6d05b6e5b51fa8e42f5ee80a45fd9f83e7389cacb65b0ce36ae7292f",
+        "byteLength": 727
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_sT03UksT3mDudcO7ckYkyBTP|fc_0a383b5e3c689430016a6bd73512608191864498861c49904e",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
