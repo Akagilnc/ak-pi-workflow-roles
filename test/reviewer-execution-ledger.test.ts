@@ -67,6 +67,15 @@ test("rejections remain no-start facts and cannot smuggle runner evidence", () =
   assert.throws(() => ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: "bad", cardinality: 1 }), /accepted dispatch/);
 });
 
+test("closed attempts project durably after acceptance without reopening lifecycle", () => {
+  const ledger = createReviewerExecutionLedger();
+  ledger.append(accepted(false));
+  ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: "late", reason: "acceptance-closed", started: false });
+  const record = ledger.recordForAudit("refused");
+  assert.deepEqual(record.closedAttempts, [{ identity: "late", reason: "acceptance-closed", started: false }]);
+  assert.throws(() => (record.closedAttempts as any[]).push({}));
+});
+
 test("projection is append-only and rejects duplicate, mismatched, or incomplete lifecycle evidence", () => {
   const ledger = createReviewerExecutionLedger();
   ledger.append(accepted());

@@ -3,7 +3,8 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
-import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs, type ReviewerRefMap } from "./reviewer-git-snapshot.ts";
+import { exactUtf8 } from "./exact-utf8.ts";
+import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerRefs, type ReviewerRefMap } from "./reviewer-git-snapshot.ts";
 import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
@@ -68,15 +69,14 @@ export type ReviewerRange = Readonly<{
 }>;
 export type ReviewerPinnedGitReader = {
   pin: ReviewerPinnedTarget;
+  snapshot(): Promise<ReviewerPinnedTarget>;
   resolve(base: string): Promise<string>;
   range(base: string): Promise<ReviewerRange>;
   material(path: string, revision: string): Promise<Uint8Array>;
 };
-export type AcceptedReviewerLeg = Readonly<{
+export type AcceptedReviewerLeg = Omit<ReviewerPromptIdentity, "bytes"> & Readonly<{
   axis: "standards" | "spec";
-  prompt: string;
-  utf8Length: number;
-  sha256: string;
+  prompt: ReviewerPromptIdentity["bytes"];
   grant: ReviewerCapabilityRequest;
 }>;
 export type AcceptedReviewerDispatch = Readonly<{
@@ -95,11 +95,7 @@ export type AcceptedReviewerDispatch = Readonly<{
   }>;
   legs: readonly AcceptedReviewerLeg[];
 }>;
-export type ReviewerMaterialEvidence = Readonly<MaterialSelection & {
-  bytes: string;
-  utf8Length: number;
-  sha256: string;
-}>;
+export type ReviewerMaterialEvidence = Readonly<MaterialSelection & ReviewerPromptIdentity>;
 export type ReviewerRejectionEvidence = Readonly<{
   identity: string;
   violations: readonly string[];
@@ -110,10 +106,15 @@ export type ReviewerAcceptanceEvidence = Readonly<{
   recipe: "reviewer-dispatch-v1";
   cardinality: 1 | 2;
 }>;
+export type ReviewerClosedAttemptEvidence = Readonly<{
+  identity: string;
+  reason: "acceptance-closed";
+  started: false;
+}>;
 export type ReviewerDispatchResult =
   | Readonly<{ status: "rejected"; identity: string; violations: readonly string[] }>
   | Readonly<{ status: "accepted"; dispatch: AcceptedReviewerDispatch; results: unknown }>
-  | Readonly<{ status: "closed" }>;
+  | Readonly<{ status: "closed"; identity: string; reason: "acceptance-closed"; started: false }>;
 
 type DispatcherDependencies = Readonly<{
   task: Uint8Array;
@@ -129,17 +130,6 @@ type DispatcherDependencies = Readonly<{
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const sha256 = (bytes: string | Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
-
-function exactUtf8(bytes: Uint8Array, label: string): string {
-  let text: string;
-  try { text = utf8Decoder.decode(bytes); }
-  catch { throw new Error(`${label} is not valid UTF-8`); }
-  const encoded = new TextEncoder().encode(text);
-  if (encoded.byteLength !== bytes.byteLength || !encoded.every((byte, index) => byte === bytes[index])) {
-    throw new Error(`${label} does not round-trip as exact UTF-8`);
-  }
-  return text;
-}
 
 function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -305,6 +295,11 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   };
   return Object.freeze({
     pin,
+    async snapshot() {
+      const currentHead = await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]);
+      const currentRefs = parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs()));
+      return immutablePin({ repositoryRoot, targetHead: currentHead, refs: currentRefs });
+    },
     async resolve(base: string) {
       if (!/^[A-Za-z0-9._/~^+-]+$/.test(base) || base.startsWith("-") || base.includes("..") || base.includes("@{"))
         throw new Error("Unsafe base revision grammar");
@@ -351,6 +346,13 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   let accepted: ReviewerAcceptanceEvidence | undefined;
   let accepting = false;
   const rejections: ReviewerRejectionEvidence[] = [];
+  const closedAttempts: ReviewerClosedAttemptEvidence[] = [];
+
+  function close(identity: string): ReviewerDispatchResult {
+    const evidence = Object.freeze({ identity, reason: "acceptance-closed" as const, started: false as const });
+    closedAttempts.push(evidence);
+    return Object.freeze({ status: "closed" as const, ...evidence });
+  }
 
   async function compile(proposal: ReviewerProposalV1, identity: string): Promise<AcceptedReviewerDispatch> {
     if (!isExactObject(proposal, ["version", "base", "standardsMaterials", "spec", "required"]) || proposal.version !== 1) {
@@ -422,12 +424,6 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       diffSha256: readRange.diffSha256,
       commits: freezeStrings(readRange.commits),
     });
-    for (const grant of [standardsGrant, ...(specGrant === undefined ? [] : [specGrant])]) {
-      if (!grant.tools.includes("bash") || !grant.bashCommands.includes(range.diffCommand)) {
-        throw new Error("Each Reviewer leg must authorize the exact canonical three-dot diff command");
-      }
-    }
-
     const materialEvidence = new Map<string, ReviewerMaterialEvidence>();
     const renderMaterials = async (items: readonly MaterialSelection[]): Promise<string> => {
       const rendered: string[] = [];
@@ -509,15 +505,18 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     get acceptance(): ReviewerAcceptanceEvidence | undefined {
       return accepted;
     },
+    get closedAttempts(): readonly ReviewerClosedAttemptEvidence[] {
+      return Object.freeze([...closedAttempts]);
+    },
     async propose(proposal: ReviewerProposalV1, invocation?: unknown): Promise<ReviewerDispatchResult> {
-      if (accepted || accepting) return Object.freeze({ status: "closed" });
       const identity = proposalIdentity(proposal);
+      if (accepted || accepting) return close(identity);
       let dispatch: AcceptedReviewerDispatch;
       try {
         dispatch = await compile(proposal, identity);
       } catch (error) {
         // Compilation awaits repository I/O; another proposal may accept meanwhile.
-        if (accepted || accepting) return Object.freeze({ status: "closed" });
+        if (accepted || accepting) return close(identity);
         const violations = Object.freeze([error instanceof Error ? error.message : String(error)]);
         const evidence = Object.freeze({ identity, violations, started: false as const });
         rejections.push(evidence);
@@ -525,7 +524,20 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       }
 
       // Another async proposal may have completed preflight while this one awaited pin reads.
-      if (accepted || accepting) return Object.freeze({ status: "closed" });
+      if (accepted || accepting) return close(identity);
+      try {
+        const live = await dependencies.reader.snapshot();
+        if (live.repositoryRoot !== targetSnapshot.repositoryRoot || live.targetHead !== targetSnapshot.targetHead ||
+            !sameReviewerRefs(live.refs, targetSnapshot.refs)) {
+          throw new Error("preflight.git.pin-target detected repository HEAD/ref drift");
+        }
+      } catch (error) {
+        if (accepted || accepting) return close(identity);
+        const violations = Object.freeze([error instanceof Error ? error.message : String(error)]);
+        rejections.push(Object.freeze({ identity, violations, started: false as const }));
+        return Object.freeze({ status: "rejected", identity, violations });
+      }
+      if (accepted || accepting) return close(identity);
       accepting = true;
       accepted = Object.freeze({
         identity,

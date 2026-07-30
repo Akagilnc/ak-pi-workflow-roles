@@ -50,6 +50,7 @@ const proposal: ReviewerProposalV1 = {
 function fakeReader(overrides: Partial<ReviewerPinnedGitReader> = {}): ReviewerPinnedGitReader {
   return {
     pin: { repositoryRoot: "/repo", targetHead: "B", refs: { "refs/heads/main": { objectId: "B", peeledCommitId: "B" } } },
+    async snapshot() { return this.pin; },
     async resolve(base) { return base; },
     async range(base) { return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: "1".repeat(64), commits: ["C", "B"] }; },
     async material(path, revision) { return Buffer.from(`${revision}:${path}\n`); },
@@ -100,13 +101,14 @@ test("capability document is closed, exact-byte task-bound, and deeply immutable
   assert.throws(() => parseReviewerCapabilities(capabilityBytes(), Buffer.from(task.toString().trim())));
 });
 
-test("proposal grants are exact subsets of the closed vocabulary, ceiling, and host", async () => {
-  const emptyBash = { ...proposal, required: { ...proposal.required, standards: { ...required, bashCommands: [] } } };
-  const empty = harness();
-  assert.equal((await empty.dispatcher.propose(emptyBash as ReviewerProposalV1)).status, "rejected");
-  assert.equal(empty.calls.length, 0);
+test("proposal grants allow no bash or empty bash while enforcing exact declared commands", async () => {
+  const noBashRequest = { ...required, tools: ["read"] as const, bashCommands: [] as const };
+  assert.equal((await harness().dispatcher.propose({ ...proposal, required: { standards: noBashRequest, spec: noBashRequest } })).status, "accepted");
+  const emptyBashRequest = { ...required, bashCommands: [] as const };
+  assert.equal((await harness().dispatcher.propose({ ...proposal, required: { standards: emptyBashRequest, spec: emptyBashRequest } })).status, "accepted");
 
   for (const changed of [
+
     `${exactCommand} `,
     ` ${exactCommand}`,
     `${exactCommand} --stat`,
@@ -147,6 +149,26 @@ test("all pin-bound material and range failures reject atomically before runner"
   const absent = harness({ ceiling });
   assert.equal((await absent.dispatcher.propose(proposal)).status, "rejected");
   assert.equal(absent.calls.length, 0);
+});
+
+test("HEAD/ref drift immediately before acceptance rejects without runner and permits corrected retry", async () => {
+  let drift = true;
+  const reader = fakeReader({
+    async snapshot() {
+      return drift
+        ? { repositoryRoot: "/repo", targetHead: "DRIFT", refs: { "refs/heads/main": { objectId: "DRIFT", peeledCommitId: "DRIFT" } } }
+        : { repositoryRoot: "/repo", targetHead: "B", refs: { "refs/heads/main": { objectId: "B", peeledCommitId: "B" } } };
+    },
+  });
+  const { dispatcher, calls } = harness({ reader });
+  const rejected = await dispatcher.propose(proposal);
+  assert.equal(rejected.status, "rejected");
+  if (rejected.status === "rejected") assert.match(rejected.violations[0]!, /pin-target/);
+  assert.equal(calls.length, 0);
+  assert.equal(dispatcher.acceptance, undefined);
+  drift = false;
+  assert.equal((await dispatcher.propose(proposal)).status, "accepted");
+  assert.equal(calls.length, 1);
 });
 
 test("range preflight corrections consume no runner before one acceptance", async () => {
@@ -411,7 +433,18 @@ test("slow invalid proposal cannot append rejection after another proposal accep
   release();
   assert.equal((await slow).status, "closed");
   assert.equal(dispatcher.rejections.length, 0);
+  assert.equal(dispatcher.closedAttempts.length, 1);
+  assert.equal(dispatcher.closedAttempts[0]?.started, false);
   assert.equal(calls.length, 1);
+});
+
+test("late proposals preserve immutable closed-attempt identity and outcome", async () => {
+  const { dispatcher } = harness();
+  await dispatcher.propose(proposal);
+  const late = await dispatcher.propose({ ...proposal, base: { revision: "late" } });
+  assert.equal(late.status, "closed");
+  if (late.status === "closed") assert.deepEqual(dispatcher.closedAttempts[0], { identity: late.identity, reason: "acceptance-closed", started: false });
+  assert.throws(() => (dispatcher.closedAttempts as any[]).push({}));
 });
 
 test("preserves BOM and multibyte task/material bytes and rejects invalid UTF-8 before child effects", async () => {

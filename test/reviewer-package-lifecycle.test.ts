@@ -67,7 +67,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     await writeFile(capsPath, JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }));
 
     const proposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [{ id: "standards", repositoryPath: "STANDARDS.md" }], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: request, spec: request } };
-    const bad = { ...proposal, required: { standards: request, spec: { ...request, bashCommands: [] } } };
+    const bad = { ...proposal, required: { standards: request, spec: { ...request, bashCommands: ["git status"] } } };
     const candidate = { status: "completed", report: "## Standards\nReadable.\n\n## Spec\nSatisfied." };
     const corrected = { status: "completed", report: "## Standards\nReadable; no findings.\n\n## Spec\nRequirement satisfied; no findings.\n\nStandards: 0; Spec: 0." };
     const faux = fauxProvider({ api: "package-reviewer", provider: "package-reviewer", tokenSize: { min: 1000, max: 1000 } });
