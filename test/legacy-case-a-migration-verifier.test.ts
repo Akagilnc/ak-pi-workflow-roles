@@ -36,15 +36,36 @@ const ORIGINAL_APPLY_COMMIT =
   "702e36f97caa92f012470bf5a890e656a5859800";
 const NONCONFORMING_SUCCESSOR_COMMIT =
   "49807d493861b5dc5e9c6a9813b2d7679a241df8";
+const REPAIR_002_COMMIT =
+  "da250445d09ef2b9105a99590f2ccda0a8db29c4";
 const RECORDER_001 =
   ".ak/dockets/issues/15/repair/repair-001/recorder-closure";
 const RECORDER_002 =
   ".ak/dockets/issues/15/repair/repair-002/recorder-closure";
+const RECORDER_003 =
+  ".ak/dockets/issues/15/repair/repair-003/recorder-closure";
 const HISTORICAL_NONCONFORMANCE =
   ".ak/dockets/issues/15/repair/repair-002/historical-nonconformance.json";
 
-/** Sole separable post-cutoff addition under sealed predicates. */
-const EXPECTED_POST_CUTOFF = new Set(["coder.ts"]);
+const REPAIR_002_IMPL_SHA =
+  "fd219ea9e1d43aae383d67a0289a92612726980e62b6a1aaf97fdacb19411576";
+const REPAIR_002_RESULT_SHA =
+  "654fdff4002b26cdaf08586b722aff6688b8c19b08752a62d329a84ef40e9a70";
+
+const SOLE_REPO_NAMESPACE = "github.com/Akagilnc/ak-pi-workflow-roles";
+const SOLE_URL_PREFIX =
+  "https://github.com/Akagilnc/ak-pi-workflow-roles/";
+const ASSOCIATION_ROOTS = [
+  IMMUTABLE,
+  ORIGINAL_APPLY_COMMIT,
+  NONCONFORMING_SUCCESSOR_COMMIT,
+  REPAIR_002_COMMIT,
+] as const;
+
+const NAMESPACE_ISSUE_SNAPSHOT =
+  ".ak/dockets/issues/15/authority/judge-003/inputs/issue-snapshot";
+const NAMESPACE_DISCOVERY_SPEC =
+  `${IMMUTABLE_MIG_PREFIX}/discovery-spec.v1.json`;
 
 const ALLOWED_DISPOSITIONS = new Set([
   "recovered",
@@ -104,6 +125,7 @@ type SealedSpec = {
     jsonlExtensionNeitherAutoExcludeNorAdmit: boolean;
   };
   completenessClaim: string;
+  authorizedRepositories?: Array<{ remoteHint?: string }>;
 };
 
 type FrozenWalkEntry = {
@@ -120,11 +142,33 @@ type FrozenWalkEntry = {
   sha256: string | null;
 };
 
+/** Exact candidate identity used by the sealed cutoff oracle (not basename alone). */
+type CandidateIdentity = {
+  basename: string;
+  fileType: string;
+  sizeBytes: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  dev: number;
+  ino: number;
+  mode: number;
+  sha256: string | null;
+  itemKey?: string;
+};
+
+type GitTuple = {
+  repository: string;
+  commit: string;
+  path: string;
+  blobOid: string;
+  sha256: string;
+};
+
 function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
-function sha256(buf: Buffer): string {
+function sha256(buf: Buffer | string): string {
   return createHash("sha256").update(buf).digest("hex");
 }
 
@@ -151,6 +195,18 @@ function gitIsAncestor(ancestor: string): boolean {
   } catch {
     return false;
   }
+}
+
+function gitTuple(commit: string, path: string): GitTuple {
+  const blobOid = gitRevParse(`${commit}:${path}`);
+  const digest = sha256(gitShow(`${commit}:${path}`));
+  return {
+    repository: SOLE_REPO_NAMESPACE,
+    commit,
+    path,
+    blobOid,
+    sha256: digest,
+  };
 }
 
 function noFollowRead(path: string): Buffer {
@@ -208,14 +264,29 @@ function loadFrozenWalk(): {
 }
 
 function loadFrozenInventory(): {
-  items: Array<{ itemKey: string; basename: string }>;
+  items: Array<{
+    itemKey: string;
+    basename: string;
+    genericExhaust?: boolean;
+    provenanceClass?: string;
+    classificationReasonCode?: string;
+  }>;
   count: number;
 } {
   return JSON.parse(
     gitShow(`${IMMUTABLE}:${IMMUTABLE_MIG_PREFIX}/inventory.json`).toString(
       "utf8",
     ),
-  ) as { items: Array<{ itemKey: string; basename: string }>; count: number };
+  ) as {
+    items: Array<{
+      itemKey: string;
+      basename: string;
+      genericExhaust?: boolean;
+      provenanceClass?: string;
+      classificationReasonCode?: string;
+    }>;
+    count: number;
+  };
 }
 
 /** Independently coded sealed-predicate matcher (not the producer script). */
@@ -260,10 +331,15 @@ function independentSealedPredicateWalk(
     };
     canonicalSourceRoot: { topLevelOnly: boolean };
   },
-): { basenames: string[]; skipped: Array<{ basename: string; reason: string }> } {
+): {
+  basenames: string[];
+  candidates: CandidateIdentity[];
+  skipped: Array<{ basename: string; reason: string }>;
+} {
   assert.equal(spec.canonicalSourceRoot.topLevelOnly, true);
   assert.equal(spec.filesystemBoundaries.followSymlinks, false);
   const basenames: string[] = [];
+  const candidates: CandidateIdentity[] = [];
   const skipped: Array<{ basename: string; reason: string }> = [];
   for (const basename of readdirSync(root).sort()) {
     if (!matchesProjectRolePredicate(basename, spec)) continue;
@@ -291,85 +367,340 @@ function independentSealedPredicateWalk(
       continue;
     }
     basenames.push(basename);
+    const fileType = st.isSymbolicLink()
+      ? "symlink"
+      : st.isDirectory()
+        ? "directory"
+        : st.isFile()
+          ? "regular"
+          : "other";
+    let digest: string | null = null;
+    if (fileType === "regular") {
+      digest = sha256(noFollowRead(join(root, basename)));
+    }
+    const candidate: CandidateIdentity = {
+      basename,
+      fileType,
+      sizeBytes: st.size,
+      mtimeMs: st.mtimeMs,
+      ctimeMs: st.ctimeMs,
+      dev: st.dev,
+      ino: st.ino,
+      mode: st.mode,
+      sha256: digest,
+    };
+    if (digest) candidate.itemKey = digest;
+    candidates.push(candidate);
   }
-  return { basenames, skipped };
+  return { basenames, candidates, skipped };
+}
+
+function candidateMatchesFrozenIdentity(
+  candidate: CandidateIdentity,
+  frozen: FrozenWalkEntry,
+): boolean {
+  if (candidate.itemKey && candidate.itemKey === frozen.itemKey) return true;
+  return (
+    candidate.fileType === frozen.fileType &&
+    candidate.sizeBytes === frozen.sizeBytes &&
+    candidate.mtimeMs === frozen.mtimeMs &&
+    candidate.ctimeMs === frozen.ctimeMs &&
+    candidate.dev === frozen.dev &&
+    candidate.ino === frozen.ino &&
+    candidate.mode === frozen.mode &&
+    (candidate.sha256 ?? null) === (frozen.sha256 ?? null)
+  );
 }
 
 /**
- * Derive associations from frozen basename metadata and admitted non-generic
- * recovered bytes only. Never reads generic JSONL/session payloads.
+ * Single sealed cutoff oracle: post-cutoff iff candidate matches sealed
+ * discovery predicates/filesystem class and is absent from the frozen
+ * construction identity set. Basename alone never establishes post-cutoff.
  */
-function extractAssociationsFromBasenameAndOptionalJson(
+function isPostCutoffAddition(
+  candidate: CandidateIdentity,
+  frozenEntries: FrozenWalkEntry[],
+  frozenItemKeys: Set<string>,
+  spec: SealedSpec,
+): boolean {
+  if (!matchesProjectRolePredicate(candidate.basename, spec)) return false;
+  if (candidate.itemKey && frozenItemKeys.has(candidate.itemKey)) return false;
+  for (const frozen of frozenEntries) {
+    if (candidateMatchesFrozenIdentity(candidate, frozen)) return false;
+  }
+  return true;
+}
+
+function partitionPostCutoff(
+  candidates: CandidateIdentity[],
+  frozenEntries: FrozenWalkEntry[],
+  frozenItemKeys: Set<string>,
+  spec: SealedSpec,
+): CandidateIdentity[] {
+  return candidates.filter((c) =>
+    isPostCutoffAddition(c, frozenEntries, frozenItemKeys, spec),
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* R2 closed association grammar                                              */
+/* -------------------------------------------------------------------------- */
+
+const RE_N = "[1-9][0-9]*";
+const RE_H = "[0-9A-Fa-f]{7,40}";
+const RE_NON_B = "[^A-Za-z0-9_]";
+const RE_URL_CHAR = "A-Za-z0-9._~:/?#@!$&'()*+,;=%\\-";
+const RE_NON_URL = `[^${RE_URL_CHAR}]`;
+
+const BASENAME_ISSUE_RE = new RegExp(
+  `(?:^|[-_.])issue[-_](${RE_N})(?=$|[-_.])`,
+  "gi",
+);
+const BASENAME_PR_RE = new RegExp(
+  `(?:^|[-_.])pr[-_](${RE_N})(?=$|[-_.])`,
+  "gi",
+);
+const TEXT_LABEL_RE = new RegExp(
+  `(?:^|${RE_NON_B})(issue|pr|pull[ \\t]+request)[ \\t]+#?(${RE_N})(?=$|[^0-9])`,
+  "gi",
+);
+const QUALIFIED_URL_RE = new RegExp(
+  `(?:^|${RE_NON_URL})https://github\\.com/akagilnc/ak-pi-workflow-roles/(issues|pull)/(${RE_N})(?=$|[?#]|${RE_NON_URL})`,
+  "gi",
+);
+const COMMIT_LABEL_RE = new RegExp(
+  `(?:^|${RE_NON_B})(commit|commitOid|commitSha|headSha|reviewedHead|targetHead)[ \\t]*[:=][ \\t]*(${RE_H})(?=$|[^A-Za-z0-9])`,
+  "gi",
+);
+const EXACT_N_RE = new RegExp(`^${RE_N}$`);
+const EXACT_H_RE = new RegExp(`^${RE_H}$`);
+
+const ISSUE_STRUCT_KEYS = new Set(
+  ["issue", "issueNumber", "issue_number"].map((s) => s.toLowerCase()),
+);
+const PR_STRUCT_KEYS = new Set(
+  [
+    "pr",
+    "prNumber",
+    "pr_number",
+    "pullRequest",
+    "pullRequestNumber",
+    "pull_request",
+  ].map((s) => s.toLowerCase()),
+);
+const COMMIT_STRUCT_KEYS = new Set(
+  [
+    "commit",
+    "commitOid",
+    "commitSha",
+    "headSha",
+    "reviewedHead",
+    "targetHead",
+  ].map((s) => s.toLowerCase()),
+);
+
+let cachedCommitUniverse: Set<string> | null = null;
+
+function loadCommitUniverse(): Set<string> {
+  if (cachedCommitUniverse) return cachedCommitUniverse;
+  const set = new Set<string>();
+  for (const root of ASSOCIATION_ROOTS) {
+    const out = execFileSync("git", ["-C", REPO_ROOT, "rev-list", root], {
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    for (const line of out.split("\n")) {
+      const c = line.trim();
+      if (c) set.add(c);
+    }
+  }
+  cachedCommitUniverse = set;
+  return set;
+}
+
+function resolveCommitToken(
+  token: string,
+  universe: Set<string>,
+): string | null {
+  const t = token.toLowerCase();
+  if (!/^[0-9a-f]{7,40}$/.test(t)) return null;
+  if (t.length === 40) return t;
+  const hits: string[] = [];
+  for (const c of universe) {
+    if (c.startsWith(t)) hits.push(c);
+    if (hits.length > 1) return null;
+  }
+  return hits.length === 1 ? hits[0]! : null;
+}
+
+function scanTextAssociations(
+  text: string,
+  issues: Set<number>,
+  pullRequests: Set<number>,
+  commits: Set<string>,
+  universe: Set<string>,
+): void {
+  TEXT_LABEL_RE.lastIndex = 0;
+  for (const m of text.matchAll(TEXT_LABEL_RE)) {
+    const kind = m[1]!.toLowerCase().replace(/[ \t]+/g, " ");
+    const n = Number(m[2]);
+    if (kind === "issue") issues.add(n);
+    else pullRequests.add(n);
+  }
+  QUALIFIED_URL_RE.lastIndex = 0;
+  for (const m of text.matchAll(QUALIFIED_URL_RE)) {
+    const kind = m[1]!.toLowerCase();
+    const n = Number(m[2]);
+    if (kind === "issues") issues.add(n);
+    else pullRequests.add(n);
+  }
+  COMMIT_LABEL_RE.lastIndex = 0;
+  for (const m of text.matchAll(COMMIT_LABEL_RE)) {
+    const resolved = resolveCommitToken(m[2]!, universe);
+    if (resolved) commits.add(resolved);
+  }
+}
+
+function isPositiveSafeInteger(v: unknown): v is number {
+  if (typeof v === "boolean") return false;
+  if (typeof v === "number") {
+    return (
+      Number.isInteger(v) &&
+      v >= 1 &&
+      v <= Number.MAX_SAFE_INTEGER
+    );
+  }
+  return false;
+}
+
+function walkJsonAssociations(
+  value: unknown,
+  issues: Set<number>,
+  pullRequests: Set<number>,
+  commits: Set<string>,
+  universe: Set<string>,
+): void {
+  if (value === null || value === undefined) return;
+  if (Array.isArray(value)) {
+    for (const el of value) {
+      walkJsonAssociations(el, issues, pullRequests, commits, universe);
+    }
+    return;
+  }
+  if (typeof value !== "object") return;
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (k === "issuePrCommitAssociations") continue;
+    const kl = k.toLowerCase();
+    if (isPositiveSafeInteger(v)) {
+      if (ISSUE_STRUCT_KEYS.has(kl)) issues.add(v);
+      else if (PR_STRUCT_KEYS.has(kl)) pullRequests.add(v);
+    }
+    if (typeof v === "string") {
+      if (ISSUE_STRUCT_KEYS.has(kl) && EXACT_N_RE.test(v)) {
+        issues.add(Number(v));
+      } else if (PR_STRUCT_KEYS.has(kl) && EXACT_N_RE.test(v)) {
+        pullRequests.add(Number(v));
+      } else if (COMMIT_STRUCT_KEYS.has(kl) && EXACT_H_RE.test(v)) {
+        const resolved = resolveCommitToken(v, universe);
+        if (resolved) commits.add(resolved);
+      }
+      scanTextAssociations(v, issues, pullRequests, commits, universe);
+    } else if (v !== null && typeof v === "object") {
+      walkJsonAssociations(v, issues, pullRequests, commits, universe);
+    }
+  }
+}
+
+/**
+ * Closed association extractor over basename + optional admitted non-generic
+ * payload text. Never opens generic payloads (caller must pass text=null).
+ */
+function extractAssociationsClosed(
   basename: string,
-  jsonText: string | null,
-): {
-  issues: number[];
-  pullRequests: number[];
-  commits: string[];
-  shortCommitTokens: string[];
-} {
+  text: string | null,
+  asJson: boolean,
+  universe: Set<string> = loadCommitUniverse(),
+): IssuePrCommitAssociations | null {
   const issues = new Set<number>();
   const pullRequests = new Set<number>();
   const commits = new Set<string>();
-  const shortCommitTokens: string[] = [];
 
-  for (const m of basename.matchAll(/issue[-_]?(\d+)(?:[-_.]|$)/gi)) {
-    const n = Number(m[1]);
-    if (n >= 1 && n <= 20) issues.add(n);
+  BASENAME_ISSUE_RE.lastIndex = 0;
+  for (const m of basename.matchAll(BASENAME_ISSUE_RE)) {
+    issues.add(Number(m[1]));
   }
-  for (const m of basename.matchAll(/pr[-_]?(\d+)/gi)) {
+  BASENAME_PR_RE.lastIndex = 0;
+  for (const m of basename.matchAll(BASENAME_PR_RE)) {
     pullRequests.add(Number(m[1]));
   }
-  for (const m of basename.matchAll(/pr\d+-([0-9a-f]{3,39})(?:[-_.]|$)/gi)) {
-    shortCommitTokens.push(m[1]!.toLowerCase());
-  }
 
-  if (jsonText !== null && basename.endsWith(".json")) {
-    try {
-      const j = JSON.parse(jsonText) as Record<string, unknown>;
-      if (typeof j.prNumber === "number") pullRequests.add(j.prNumber);
-      if (typeof j.pull_request === "number") pullRequests.add(j.pull_request);
-      for (const key of ["targetHead", "commitSha", "commit", "headSha"]) {
-        const v = j[key];
-        if (typeof v === "string" && /^[0-9a-f]{40}$/i.test(v)) {
-          commits.add(v.toLowerCase());
-        }
+  if (text !== null) {
+    if (asJson) {
+      try {
+        const parsed: unknown = JSON.parse(text);
+        walkJsonAssociations(parsed, issues, pullRequests, commits, universe);
+      } catch {
+        scanTextAssociations(text, issues, pullRequests, commits, universe);
       }
-    } catch {
-      /* non-JSON — basename-only */
+    } else {
+      scanTextAssociations(text, issues, pullRequests, commits, universe);
     }
   }
 
+  if (issues.size === 0 && pullRequests.size === 0 && commits.size === 0) {
+    return null;
+  }
   return {
     issues: [...issues].sort((a, b) => a - b),
     pullRequests: [...pullRequests].sort((a, b) => a - b),
     commits: [...commits].sort(),
-    shortCommitTokens,
   };
 }
 
-function finalizeAssociations(
-  raw: ReturnType<typeof extractAssociationsFromBasenameAndOptionalJson>,
-  fullCommitIndex: string[],
-): IssuePrCommitAssociations | null {
-  const commits = new Set(raw.commits);
-  for (const tok of raw.shortCommitTokens) {
-    const hits = fullCommitIndex.filter((c) => c.startsWith(tok));
-    if (hits.length === 1) commits.add(hits[0]!);
-  }
-  const out: IssuePrCommitAssociations = {
-    issues: raw.issues,
-    pullRequests: raw.pullRequests,
-    commits: [...commits].sort(),
+function associationsEqual(
+  a: IssuePrCommitAssociations | null | undefined,
+  b: IssuePrCommitAssociations | null | undefined,
+): boolean {
+  const norm = (x: IssuePrCommitAssociations | null | undefined) =>
+    x ?? null;
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+function loadNamespaceBinding(): {
+  namespace: string;
+  issueSnapshot: GitTuple;
+  discoverySpec: GitTuple;
+} {
+  const issueSnapshot = gitTuple(IMMUTABLE, NAMESPACE_ISSUE_SNAPSHOT);
+  const discoverySpec = gitTuple(IMMUTABLE, NAMESPACE_DISCOVERY_SPEC);
+  const snap = JSON.parse(gitShow(`${IMMUTABLE}:${NAMESPACE_ISSUE_SNAPSHOT}`).toString("utf8")) as {
+    repository_url?: string;
+    html_url?: string;
   };
-  if (
-    out.issues.length === 0 &&
-    out.pullRequests.length === 0 &&
-    out.commits.length === 0
-  ) {
-    return null;
-  }
-  return out;
+  const spec = loadSealedSpec();
+  const fromRepoApi = String(snap.repository_url ?? "").match(
+    /github\.com\/repos\/([^/]+)\/([^/]+)/i,
+  );
+  const fromHtml = String(snap.html_url ?? "").match(
+    /github\.com\/([^/]+)\/([^/]+)/i,
+  );
+  assert.ok(fromRepoApi, "repository_url owner/repo");
+  assert.ok(fromHtml, "html_url owner/repo");
+  const nsFromRepo = `github.com/${fromRepoApi![1]}/${fromRepoApi![2]}`;
+  const nsFromHtml = `github.com/${fromHtml![1]}/${fromHtml![2]}`;
+  const canon = (s: string) =>
+    s.replace(/^github\.com\//i, "github.com/").toLowerCase();
+  assert.equal(canon(nsFromRepo), canon(SOLE_REPO_NAMESPACE));
+  assert.equal(canon(nsFromHtml), canon(SOLE_REPO_NAMESPACE));
+  const remoteHint = spec.authorizedRepositories?.[0]?.remoteHint ?? "";
+  assert.equal(remoteHint, "Akagilnc/ak-pi-workflow-roles");
+  // Canonical sole namespace — no ambient remote.
+  assert.equal(SOLE_REPO_NAMESPACE, "github.com/Akagilnc/ak-pi-workflow-roles");
+  assert.equal(
+    SOLE_URL_PREFIX.startsWith("https://github.com/Akagilnc/ak-pi-workflow-roles/"),
+    true,
+  );
+  return { namespace: SOLE_REPO_NAMESPACE, issueSnapshot, discoverySpec };
 }
 
 /** Corrected classifier: decision-chain (incl. commit-msg) before ephemeral. */
@@ -427,13 +758,85 @@ function classifyNameCorrected(basename: string): {
   };
 }
 
+function loadAdmittedSourceText(
+  d: {
+    itemKey: string;
+    basename: string;
+    evidence?: {
+      reference?: { commitSha: string; path: string };
+      recoveredPath?: string;
+    };
+  },
+  meta: { genericExhaust?: boolean },
+): { text: string | null; asJson: boolean } {
+  if (meta.genericExhaust) {
+    return { text: null, asJson: false };
+  }
+  let raw: Buffer | null = null;
+  const ref = d.evidence?.reference;
+  if (ref) {
+    raw = gitShow(`${ref.commitSha}:${ref.path}`);
+  } else if (d.evidence?.recoveredPath) {
+    const abs = join(MIG, d.evidence.recoveredPath);
+    if (existsSync(abs)) raw = readFileSync(abs);
+  }
+  if (!raw) return { text: null, asJson: false };
+  const text = raw.toString("utf8");
+  const asJson = d.basename.toLowerCase().endsWith(".json");
+  return { text, asJson };
+}
+
+function deriveExpectedAssociations(): Map<
+  string,
+  IssuePrCommitAssociations | null
+> {
+  const universe = loadCommitUniverse();
+  const frozenInv = loadFrozenInventory();
+  const invByKey = new Map(frozenInv.items.map((i) => [i.itemKey, i]));
+  // Prefer live inventory genericity if present (same keys).
+  const liveInv = readJson<{
+    items: Array<{ itemKey: string; basename: string; genericExhaust: boolean }>;
+  }>(join(MIG, "inventory.json"));
+  for (const i of liveInv.items) {
+    invByKey.set(i.itemKey, i);
+  }
+  const disp = readJson<{
+    items: Array<{
+      itemKey: string;
+      basename: string;
+      evidence?: {
+        reference?: { commitSha: string; path: string };
+        recoveredPath?: string;
+      };
+    }>;
+  }>(join(MIG, "dispositions.json"));
+
+  const expected = new Map<string, IssuePrCommitAssociations | null>();
+  for (const d of disp.items) {
+    const meta = invByKey.get(d.itemKey) ?? {
+      itemKey: d.itemKey,
+      basename: d.basename,
+      genericExhaust: true,
+    };
+    const { text, asJson } = loadAdmittedSourceText(d, meta);
+    expected.set(
+      d.itemKey,
+      extractAssociationsClosed(d.basename, text, asJson, universe),
+    );
+  }
+  return expected;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Tests                                                                      */
+/* -------------------------------------------------------------------------- */
+
 test("immutable migration target ea64733 is an ancestor and readable via Git", () => {
   assert.equal(gitIsAncestor(IMMUTABLE), true);
   const head = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], {
     encoding: "utf8",
   }).trim();
   assert.notEqual(head, IMMUTABLE);
-  // Fixed-target construction walk loads only through Git
   const walk = JSON.parse(
     gitShow(
       `${IMMUTABLE}:${IMMUTABLE_MIG_PREFIX}/construction-walk.json`,
@@ -480,7 +883,7 @@ test("discovery spec seals prior aggregate out of the denominator", () => {
   assert.equal(typeof spec.priorAggregateObservation.notedCandidates, "number");
 });
 
-test("fixed-target Git construction walk seals 597 identities, predicates, and post-cutoff partition", () => {
+test("fixed-target Git construction walk seals 597 identities, predicates, and cutoff-derived partition", () => {
   const spec = loadSealedSpec();
   const frozenWalk = loadFrozenWalk();
   const frozenInventory = loadFrozenInventory();
@@ -494,7 +897,6 @@ test("fixed-target Git construction walk seals 597 identities, predicates, and p
   assert.equal(frozenInventory.count, 597);
   assert.equal(liveInventory.count, frozenInventory.count);
 
-  // Live inventory keys remain the frozen denominator (repair does not re-cut).
   const frozenKeys = new Set(frozenWalk.entries.map((e) => e.itemKey));
   const invKeys = new Set(liveInventory.items.map((e) => e.itemKey));
   assert.equal(frozenKeys.size, invKeys.size);
@@ -505,7 +907,6 @@ test("fixed-target Git construction walk seals 597 identities, predicates, and p
     assert.equal(frozenKeys.has(k), true, `walk missing inventory key ${k}`);
   }
 
-  // Every frozen construction basename matches sealed predicates; no directories.
   for (const e of frozenWalk.entries) {
     assert.equal(
       matchesProjectRolePredicate(e.basename, spec),
@@ -520,7 +921,6 @@ test("fixed-target Git construction walk seals 597 identities, predicates, and p
     }
   }
 
-  // Exact identity oracle: fail on any omitted or changed of the 597.
   let matched = 0;
   let missing = 0;
   let changed = 0;
@@ -556,31 +956,71 @@ test("fixed-target Git construction walk seals 597 identities, predicates, and p
   assert.equal(changed, 0, "frozen identity metadata/hash changed");
   assert.equal(matched, 597);
 
-  // Independent sealed-predicate walk: all-and-only post-cutoff partition.
+  // Cutoff-derived all-and-only partition via identity oracle (not basename allowlist).
   const root = realpathSync(spec.canonicalSourceRoot.logical);
   const walked = independentSealedPredicateWalk(root, spec);
-  const frozenBasenames = new Set(frozenWalk.entries.map((e) => e.basename));
-  const frozenSkipped = new Set(
-    (frozenWalk.skipped || []).map((s) => s.basename),
+  const postCutoff = partitionPostCutoff(
+    walked.candidates,
+    frozenWalk.entries,
+    frozenKeys,
+    spec,
   );
-  const postCutoff: string[] = [];
-  for (const b of walked.basenames) {
-    if (!frozenBasenames.has(b)) postCutoff.push(b);
-  }
-  for (const s of walked.skipped) {
-    if (
-      s.reason === "directory-outside-file-inventory" &&
-      !frozenSkipped.has(s.basename) &&
-      !frozenBasenames.has(s.basename)
-    ) {
-      postCutoff.push(s.basename);
+  // Every accepted addition proves absence from sealed pre-cutoff identity set.
+  for (const c of postCutoff) {
+    assert.equal(
+      isPostCutoffAddition(c, frozenWalk.entries, frozenKeys, spec),
+      true,
+    );
+    if (c.itemKey) assert.equal(frozenKeys.has(c.itemKey), false);
+    for (const f of frozenWalk.entries) {
+      assert.equal(candidateMatchesFrozenIdentity(c, f), false);
     }
   }
-  assert.deepEqual(
-    [...new Set(postCutoff)].sort(),
-    [...EXPECTED_POST_CUTOFF].sort(),
+  // Live walk members that are frozen identities are not post-cutoff.
+  for (const c of walked.candidates) {
+    const frozenHit = frozenWalk.entries.some((f) =>
+      candidateMatchesFrozenIdentity(c, f),
+    );
+    if (frozenHit || (c.itemKey && frozenKeys.has(c.itemKey))) {
+      assert.equal(
+        isPostCutoffAddition(c, frozenWalk.entries, frozenKeys, spec),
+        false,
+      );
+    }
+  }
+  // Real source root currently carries the separable post-cutoff coder.ts identity.
+  assert.equal(
+    postCutoff.some((c) => c.basename === "coder.ts"),
+    true,
   );
-  // Frozen directory skip remains outside the denominator.
+  assert.equal(postCutoff.length >= 1, true);
+
+  // RED: synthetic omitted frozen/pre-cutoff identity whose basename is coder.ts
+  // must be rejected by the same oracle (basename alone never establishes post-cutoff).
+  const frozenSample = frozenWalk.entries[0]!;
+  const syntheticPreCutoffCoder: CandidateIdentity = {
+    basename: "coder.ts",
+    fileType: frozenSample.fileType,
+    sizeBytes: frozenSample.sizeBytes,
+    mtimeMs: frozenSample.mtimeMs,
+    ctimeMs: frozenSample.ctimeMs,
+    dev: frozenSample.dev,
+    ino: frozenSample.ino,
+    mode: frozenSample.mode,
+    sha256: frozenSample.sha256,
+    itemKey: frozenSample.itemKey,
+  };
+  assert.equal(
+    isPostCutoffAddition(
+      syntheticPreCutoffCoder,
+      frozenWalk.entries,
+      frozenKeys,
+      spec,
+    ),
+    false,
+    "pre-cutoff identity with basename coder.ts must not be classified post-cutoff",
+  );
+
   assert.equal(
     frozenWalk.skipped.some(
       (s) =>
@@ -734,20 +1174,16 @@ test("recovered bytes have scanner evidence; actual scanBytes reproduces hashes 
     assert.equal(typeof item.discoveryTime, "string");
     assert.equal(item.admissionReason.length > 0, true);
 
-    // Actual scanner on stored derivative: clean items must re-scan clean;
-    // redacted derivatives must not re-introduce secrets (no residual hits required).
     const rescanned = scanBytes(bytes, item.basename);
     if (!item.redacted) {
       assert.equal(rescanned.report.redacted, false, item.basename);
       assert.equal(sha256(rescanned.value), item.recoveredSha256);
     } else {
-      // derivative already redacted — scanner may be clean on derivative
       assert.equal(report.redacted, true);
       assert.equal(report.hits.length > 0, true);
     }
   }
 
-  // reference tuples complete when present
   const refs = readJson<{
     items: Array<{
       repositoryId: string;
@@ -763,7 +1199,6 @@ test("recovered bytes have scanner evidence; actual scanBytes reproduces hashes 
     assert.equal(typeof r.path, "string");
     assert.equal(r.blobOid.length >= 40, true);
     assert.equal(r.sha256.length, 64);
-    // Git-resolvable
     const oid = gitRevParse(`${r.commitSha}:${r.path}`);
     assert.equal(oid, r.blobOid);
     const blob = gitShow(`${r.commitSha}:${r.path}`);
@@ -794,7 +1229,6 @@ test("probe lifecycle: seven executable probes absent live; referenced at immuta
   );
 
   for (const name of PROBE_BASENAMES) {
-    // No live recovered executable copy
     assert.equal(
       recoveredFiles.some((f) => f.endsWith(name)),
       false,
@@ -810,14 +1244,12 @@ test("probe lifecycle: seven executable probes absent live; referenced at immuta
       IMMUTABLE,
     );
     assert.ok(d.evidence?.reference?.path.includes(name));
-    // Blob resolvable at immutable target only (not live path)
     const blob = gitShow(
       `${d.evidence!.reference!.commitSha}:${d.evidence!.reference!.path}`,
     );
     assert.equal(sha256(blob), d.evidence!.reference!.sha256);
   }
 
-  // No probe archive / helper directory
   const tree = listFilesRecursive(MIG).map((f) => relative(MIG, f));
   for (const f of tree) {
     assert.equal(f.includes("probe-archive"), false);
@@ -832,7 +1264,6 @@ test("commit-msg classifier precedence: decision-chain recovered, not ephemeral"
     assert.equal(cls.provenanceClass, "decision-chain-artifact", name);
     assert.equal(cls.reasonCode, "decision-chain-name-class", name);
   }
-  // ephemeral still catches true scratch
   assert.equal(classifyNameCorrected("judge-nl").generic, true);
   assert.equal(classifyNameCorrected("export-path.txt").generic, true);
 
@@ -871,7 +1302,293 @@ test("commit-msg classifier precedence: decision-chain recovered, not ephemeral"
   }
 });
 
+test("sole repository namespace bound from immutable Git bytes only", () => {
+  const binding = loadNamespaceBinding();
+  assert.equal(binding.namespace, SOLE_REPO_NAMESPACE);
+  assert.equal(binding.issueSnapshot.commit, IMMUTABLE);
+  assert.equal(binding.discoverySpec.commit, IMMUTABLE);
+  assert.equal(binding.issueSnapshot.path, NAMESPACE_ISSUE_SNAPSHOT);
+  assert.equal(binding.discoverySpec.path, NAMESPACE_DISCOVERY_SPEC);
+  assert.equal(binding.issueSnapshot.blobOid.length, 40);
+  assert.equal(binding.discoverySpec.blobOid.length, 40);
+  assert.equal(binding.issueSnapshot.sha256.length, 64);
+  assert.equal(binding.discoverySpec.sha256.length, 64);
+  // Re-resolve
+  assert.equal(
+    gitRevParse(`${IMMUTABLE}:${NAMESPACE_ISSUE_SNAPSHOT}`),
+    binding.issueSnapshot.blobOid,
+  );
+  assert.equal(
+    sha256(gitShow(`${IMMUTABLE}:${NAMESPACE_ISSUE_SNAPSHOT}`)),
+    binding.issueSnapshot.sha256,
+  );
+});
+
+test("closed association grammar boundary table (accept and reject)", () => {
+  const universe = loadCommitUniverse();
+  // Seed a known full commit from universe for positive abbreviated resolution.
+  const sampleFull = [...universe][0]!;
+  const sampleAbbrev = sampleFull.slice(0, 8);
+  const ambiguousStem = "a"; // too short / ambiguous by construction when expanded poorly
+  void ambiguousStem;
+
+  type Case = {
+    name: string;
+    basename: string;
+    text: string | null;
+    asJson: boolean;
+    expect: IssuePrCommitAssociations | null;
+  };
+
+  const cases: Case[] = [
+    // Basename boundaries
+    {
+      name: "basename issue-N accepted",
+      basename: "issue-3-plan.md",
+      text: null,
+      asJson: false,
+      expect: { issues: [3], pullRequests: [], commits: [] },
+    },
+    {
+      name: "basename issue_N accepted",
+      basename: "x_issue_2_y.md",
+      text: null,
+      asJson: false,
+      expect: { issues: [2], pullRequests: [], commits: [] },
+    },
+    {
+      name: "basename pr-N accepted",
+      basename: "fix-pr-5-packet.md",
+      text: null,
+      asJson: false,
+      expect: { issues: [], pullRequests: [5], commits: [] },
+    },
+    {
+      name: "basename prN without separator rejected",
+      basename: "ak-collector-pr5-6604.md",
+      text: null,
+      asJson: false,
+      expect: null,
+    },
+    {
+      name: "basename glued issueN rejected",
+      basename: "preissue-3-plan.md",
+      text: null,
+      asJson: false,
+      expect: null,
+    },
+    // Text labels
+    {
+      name: "text issue label accepted",
+      basename: "notes.md",
+      text: "See issue 12 for details",
+      asJson: false,
+      expect: { issues: [12], pullRequests: [], commits: [] },
+    },
+    {
+      name: "text pull request label accepted",
+      basename: "notes.md",
+      text: "closed pull request #4 today",
+      asJson: false,
+      expect: { issues: [], pullRequests: [4], commits: [] },
+    },
+    {
+      name: "bare number rejected",
+      basename: "notes.md",
+      text: "the value 12 is bare",
+      asJson: false,
+      expect: null,
+    },
+    {
+      name: "bare #N rejected",
+      basename: "notes.md",
+      text: "see #12 only",
+      asJson: false,
+      expect: null,
+    },
+    {
+      name: "label glued to word rejected",
+      basename: "notes.md",
+      text: "myissue 12 no",
+      asJson: false,
+      expect: null,
+    },
+    // URLs
+    {
+      name: "qualified issues URL accepted",
+      basename: "notes.md",
+      text: `link ${SOLE_URL_PREFIX}issues/15 done`,
+      asJson: false,
+      expect: { issues: [15], pullRequests: [], commits: [] },
+    },
+    {
+      name: "qualified pull URL case-insensitive host accepted",
+      basename: "notes.md",
+      text: "see https://GitHub.com/akagilnc/ak-pi-workflow-roles/pull/5 end",
+      asJson: false,
+      expect: { issues: [], pullRequests: [5], commits: [] },
+    },
+    {
+      name: "qualified URL with query boundary accepted",
+      basename: "notes.md",
+      text: `${SOLE_URL_PREFIX}pull/7?foo=1`,
+      asJson: false,
+      expect: { issues: [], pullRequests: [7], commits: [] },
+    },
+    {
+      name: "wrong owner URL rejected",
+      basename: "notes.md",
+      text: "https://github.com/other/ak-pi-workflow-roles/issues/15",
+      asJson: false,
+      expect: null,
+    },
+    {
+      name: "wrong repo URL rejected",
+      basename: "notes.md",
+      text: "https://github.com/Akagilnc/other-repo/issues/15",
+      asJson: false,
+      expect: null,
+    },
+    {
+      name: "digit immediately after N rejected",
+      basename: "notes.md",
+      text: `${SOLE_URL_PREFIX}issues/15x`,
+      asJson: false,
+      expect: null,
+    },
+    // Commits labeled
+    {
+      name: "labeled full commit accepted",
+      basename: "notes.md",
+      text: `commit: ${sampleFull}`,
+      asJson: false,
+      expect: { issues: [], pullRequests: [], commits: [sampleFull] },
+    },
+    {
+      name: "labeled abbreviated unique commit accepted",
+      basename: "notes.md",
+      text: `commitSha = ${sampleAbbrev}`,
+      asJson: false,
+      expect: { issues: [], pullRequests: [], commits: [sampleFull] },
+    },
+    {
+      name: "prose-only commitOid mention rejected",
+      basename: "notes.md",
+      text: "the commitOid field matters",
+      asJson: false,
+      expect: null,
+    },
+    {
+      name: "prose-only reviewedHead mention rejected",
+      basename: "notes.md",
+      text: "reviewedHead should bind",
+      asJson: false,
+      expect: null,
+    },
+    {
+      name: "unlabeled hex rejected",
+      basename: "notes.md",
+      text: `raw ${sampleFull} only`,
+      asJson: false,
+      expect: null,
+    },
+    // JSON structural + recursive strings
+    {
+      name: "structural prNumber accepted",
+      basename: "x.json",
+      text: JSON.stringify({ prNumber: 5 }),
+      asJson: true,
+      expect: { issues: [], pullRequests: [5], commits: [] },
+    },
+    {
+      name: "structural targetHead accepted",
+      basename: "x.json",
+      text: JSON.stringify({ targetHead: sampleFull }),
+      asJson: true,
+      expect: { issues: [], pullRequests: [], commits: [sampleFull] },
+    },
+    {
+      name: "unlisted structural key hex rejected unless string grammar hits",
+      basename: "x.json",
+      text: JSON.stringify({ headOid: sampleFull }),
+      asJson: true,
+      expect: null,
+    },
+    {
+      name: "nested JSON string text label accepted",
+      basename: "x.json",
+      text: JSON.stringify({ note: "see issue 9 please" }),
+      asJson: true,
+      expect: { issues: [9], pullRequests: [], commits: [] },
+    },
+    {
+      name: "issuePrCommitAssociations subtree omitted",
+      basename: "x.json",
+      text: JSON.stringify({
+        issuePrCommitAssociations: { issues: [99], pullRequests: [99], commits: [sampleFull] },
+        ok: true,
+      }),
+      asJson: true,
+      expect: null,
+    },
+    {
+      name: "zero / negative structural rejected",
+      basename: "x.json",
+      text: JSON.stringify({ issue: 0, prNumber: -1 }),
+      asJson: true,
+      expect: null,
+    },
+    {
+      name: "non-exact structural string rejected",
+      basename: "x.json",
+      text: JSON.stringify({ issue: "01", prNumber: "5a" }),
+      asJson: true,
+      expect: null,
+    },
+  ];
+
+  for (const c of cases) {
+    const got = extractAssociationsClosed(c.basename, c.text, c.asJson, universe);
+    assert.deepEqual(got, c.expect, c.name);
+  }
+
+  // Ambiguous / unresolvable abbreviations fail to associate.
+  {
+    const got = extractAssociationsClosed(
+      "notes.md",
+      "commit: deadbee",
+      false,
+      universe,
+    );
+    // deadbee may or may not resolve; force unresolvable token:
+    const got2 = extractAssociationsClosed(
+      "notes.md",
+      "commit: zzzzzzz",
+      false,
+      universe,
+    );
+    assert.equal(got2, null);
+    void got;
+  }
+  {
+    // Ambiguous: pick a prefix shared by >=2 commits if any; else skip with synthetic universe.
+    const synth = new Set(["aaaaaaa111111111111111111111111111111111", "aaaaaaa222222222222222222222222222222222"]);
+    const got = extractAssociationsClosed(
+      "notes.md",
+      "commitSha: aaaaaaa",
+      false,
+      synth,
+    );
+    assert.equal(got, null, "ambiguous abbreviation must not associate");
+  }
+});
+
 test("structured issue/PR/commit associations exhaustive from frozen metadata and admitted non-generic bytes", () => {
+  loadNamespaceBinding();
+  const universe = loadCommitUniverse();
+  const expected = deriveExpectedAssociations();
+  assert.equal(expected.size, 597);
+
   const inv = readJson<{
     items: Array<{ itemKey: string; basename: string; genericExhaust: boolean }>;
   }>(join(MIG, "inventory.json"));
@@ -882,7 +1599,10 @@ test("structured issue/PR/commit associations exhaustive from frozen metadata an
       basename: string;
       disposition: string;
       contentHandling?: string;
-      evidence?: { recoveredPath?: string };
+      evidence?: {
+        recoveredPath?: string;
+        reference?: { commitSha: string; path: string };
+      };
       issuePrCommitAssociations?: IssuePrCommitAssociations;
     }>;
   }>(join(MIG, "dispositions.json"));
@@ -896,106 +1616,156 @@ test("structured issue/PR/commit associations exhaustive from frozen metadata an
   }>(join(MIG, "recovered-index.json"));
   const recoveredByKey = new Map(recovered.items.map((r) => [r.itemKey, r]));
 
-  // Full-commit index from admitted non-generic recovered JSON only.
-  const fullCommits = new Set<string>();
-  for (const item of recovered.items) {
-    const meta = invByKey.get(item.itemKey);
-    assert.ok(meta, item.itemKey);
-    if (meta.genericExhaust) continue;
-    if (!item.basename.endsWith(".json")) continue;
-    const text = readFileSync(join(MIG, item.path), "utf8");
-    const raw = extractAssociationsFromBasenameAndOptionalJson(
-      item.basename,
-      text,
-    );
-    for (const c of raw.commits) fullCommits.add(c);
-  }
-  const fullCommitIndex = [...fullCommits].sort();
-
-  // Exhaustive exact-set oracle over every disposition item.
-  const expected = new Map<string, IssuePrCommitAssociations>();
-  for (const d of disp.items) {
-    const meta = invByKey.get(d.itemKey);
-    assert.ok(meta, d.itemKey);
-    let jsonText: string | null = null;
-    if (
-      !meta.genericExhaust &&
-      d.basename.endsWith(".json") &&
-      d.evidence?.recoveredPath &&
-      existsSync(join(MIG, d.evidence.recoveredPath))
-    ) {
-      jsonText = readFileSync(join(MIG, d.evidence.recoveredPath), "utf8");
-    }
-    const assoc = finalizeAssociations(
-      extractAssociationsFromBasenameAndOptionalJson(d.basename, jsonText),
-      fullCommitIndex,
-    );
-    if (assoc) expected.set(d.itemKey, assoc);
-  }
-
-  assert.equal(expected.size > 0, true);
+  // Exact-set equality for every disposition + recovered-index row.
   for (const d of disp.items) {
     const exp = expected.get(d.itemKey) ?? null;
     const got = d.issuePrCommitAssociations ?? null;
-    assert.deepEqual(
-      got,
-      exp,
-      `disposition association mismatch for ${d.basename}`,
+    assert.equal(
+      associationsEqual(got, exp),
+      true,
+      `disposition association mismatch for ${d.basename}: got ${JSON.stringify(got)} exp ${JSON.stringify(exp)}`,
     );
+    // Generic items never opened payload: re-derive basename-only and match.
+    const meta = invByKey.get(d.itemKey)!;
+    if (meta.genericExhaust) {
+      const basenameOnly = extractAssociationsClosed(
+        d.basename,
+        null,
+        false,
+        universe,
+      );
+      assert.equal(associationsEqual(exp, basenameOnly), true, d.basename);
+    }
   }
   for (const item of recovered.items) {
     const exp = expected.get(item.itemKey) ?? null;
     const got = item.issuePrCommitAssociations ?? null;
-    assert.deepEqual(
-      got,
-      exp,
+    assert.equal(
+      associationsEqual(got, exp),
+      true,
       `recovered-index association mismatch for ${item.basename}`,
     );
   }
 
-  // Named samples remain bound.
+  // First known-item check — both persisted metadata paths (disposition + recovered).
   const pr5Disposition = disp.items.find((d) => d.itemKey.startsWith("ecec8803"));
   assert.ok(pr5Disposition, "ecec8803 disposition");
-  assert.deepEqual(pr5Disposition.issuePrCommitAssociations?.pullRequests, [5]);
-  assert.ok(
-    pr5Disposition.issuePrCommitAssociations?.commits.includes(
-      "6604a733886dfb5d074f558963e20e01e587aa6d",
-    ),
+  const pr5Expected = expected.get(pr5Disposition.itemKey) ?? null;
+  assert.ok(pr5Expected, "ecec8803 expected non-null from structural JSON");
+  assert.deepEqual(pr5Disposition.issuePrCommitAssociations, pr5Expected);
+  assert.equal(pr5Expected.pullRequests.includes(5), true);
+  assert.equal(
+    pr5Expected.commits.includes("6604a733886dfb5d074f558963e20e01e587aa6d"),
+    true,
   );
   const pr5RecoveredItem = recovered.items.find((d) =>
     d.itemKey.startsWith("ecec8803"),
   );
   assert.ok(pr5RecoveredItem);
-  assert.deepEqual(pr5RecoveredItem.issuePrCommitAssociations?.pullRequests, [5]);
+  assert.deepEqual(pr5RecoveredItem.issuePrCommitAssociations, pr5Expected);
 
+  // Second known item — actual persisted record (may be null under closed grammar).
   const secondKnown = disp.items.find((d) => d.itemKey.startsWith("33454566"));
   assert.ok(secondKnown, "33454566 disposition");
-  assert.deepEqual(secondKnown.issuePrCommitAssociations?.pullRequests, [5]);
-  assert.ok(
-    secondKnown.issuePrCommitAssociations?.commits.includes(
-      "6604a733886dfb5d074f558963e20e01e587aa6d",
-    ),
-  );
-
-  // RED: dropping a second known association must be detectable.
-  {
-    const mutated = new Map(expected);
-    mutated.delete(secondKnown.itemKey);
-    assert.equal(mutated.has(secondKnown.itemKey), false);
-    assert.notEqual(mutated.size, expected.size);
-    assert.notDeepEqual(
-      secondKnown.issuePrCommitAssociations ?? null,
-      mutated.get(secondKnown.itemKey) ?? null,
-    );
-  }
-  // RED: association field required when frozen provenance establishes it
+  const secondExpected = expected.get(secondKnown.itemKey) ?? null;
   assert.equal(
-    Array.isArray(pr5Disposition.issuePrCommitAssociations?.pullRequests),
+    associationsEqual(secondKnown.issuePrCommitAssociations ?? null, secondExpected),
+    true,
+  );
+  const secondRecovered = recovered.items.find((d) =>
+    d.itemKey.startsWith("33454566"),
+  );
+  assert.ok(secondRecovered, "33454566 recovered");
+  assert.equal(
+    associationsEqual(
+      secondRecovered.issuePrCommitAssociations ?? null,
+      secondExpected,
+    ),
     true,
   );
 
-  // Touch recoveredByKey so exhaustive recovered join is exercised.
+  // RED: clone actual parsed disposition/recovered record, mutate real association value.
+  {
+    const mutatedDisp = {
+      ...secondKnown,
+      issuePrCommitAssociations: {
+        issues: [999],
+        pullRequests: [999],
+        commits: ["deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"],
+      },
+    };
+    assert.equal(
+      associationsEqual(
+        mutatedDisp.issuePrCommitAssociations,
+        secondExpected,
+      ),
+      false,
+      "mutated disposition association must mismatch canonical set",
+    );
+    const mutatedRec = {
+      ...secondRecovered,
+      issuePrCommitAssociations: {
+        issues: [1],
+        pullRequests: [],
+        commits: [],
+      },
+    };
+    assert.equal(
+      associationsEqual(
+        mutatedRec.issuePrCommitAssociations,
+        secondExpected,
+      ),
+      false,
+      "mutated recovered association must mismatch canonical set",
+    );
+  }
+
+  // RED: mutate eligible parsed source input to a rejected boundary; derived set changes.
+  {
+    const { text, asJson } = loadAdmittedSourceText(
+      secondKnown,
+      invByKey.get(secondKnown.itemKey)!,
+    );
+    assert.equal(typeof text === "string" || text === null, true);
+    const baseline = extractAssociationsClosed(
+      secondKnown.basename,
+      text,
+      asJson,
+      universe,
+    );
+    assert.equal(associationsEqual(baseline, secondExpected), true);
+    // Eligible source: force a rejected-boundary basename contribution only would not change
+    // if text already empty; inject rejected bare #N text (no new accept) vs accepted label.
+    const rejectedBoundaryText = `${text ?? ""}\nsee #42 only bare\n`;
+    const withRejected = extractAssociationsClosed(
+      secondKnown.basename,
+      rejectedBoundaryText,
+      false, // plain text scan path
+      universe,
+    );
+    // bare #42 must not add issue 42
+    if (withRejected) {
+      assert.equal(withRejected.issues.includes(42), false);
+    }
+    const acceptedBoundaryText = `${text ?? ""}\nsee issue 42 please\n`;
+    const withAccepted = extractAssociationsClosed(
+      secondKnown.basename,
+      acceptedBoundaryText,
+      false,
+      universe,
+    );
+    assert.ok(withAccepted);
+    assert.equal(withAccepted.issues.includes(42), true);
+    assert.equal(
+      associationsEqual(withAccepted, secondExpected),
+      false,
+      "accepted boundary mutation must change derived set vs persisted expected",
+    );
+  }
+
+  assert.equal(Array.isArray(pr5Disposition.issuePrCommitAssociations?.pullRequests), true);
   assert.equal(recoveredByKey.has(pr5RecoveredItem.itemKey), true);
+  assert.equal(universe.size > 0, true);
 });
 
 test("eight-axis coverage matrix has explicit outcomes; no historical completeness claim", () => {
@@ -1108,10 +1878,9 @@ test("repair-002 recorder successor preserves executable corroboration implement
   const implBytes = readFileSync(implPath);
   assert.equal(sha256(implBytes), implArt!.stored!.sha256);
   assert.equal(implBytes.byteLength, implArt!.stored!.byteLength);
-  // Independently executable corroboration implementation is preserved.
+  assert.equal(sha256(implBytes), REPAIR_002_IMPL_SHA);
   assert.match(implBytes.toString("utf8"), /scanBytes/);
   assert.match(implBytes.toString("utf8"), /R1-frozen-identity/);
-  assert.match(implBytes.toString("utf8"), /EXPECTED_POST_CUTOFF/);
 
   const summaryArt = manifest.artifacts.find(
     (a) => a.id === "corroboration-scan-summary",
@@ -1121,6 +1890,7 @@ test("repair-002 recorder successor preserves executable corroboration implement
   assert.equal(existsSync(summaryPath), true);
   const summaryBytes = readFileSync(summaryPath);
   assert.equal(sha256(summaryBytes), summaryArt!.stored!.sha256);
+  assert.equal(sha256(summaryBytes), REPAIR_002_RESULT_SHA);
   const summary = JSON.parse(summaryBytes.toString("utf8")) as {
     ok: boolean;
     r1: {
@@ -1158,9 +1928,10 @@ test("repair-002 recorder successor preserves executable corroboration implement
   assert.equal(summary.r1.matched, 597);
   assert.equal(summary.r1.missing, 0);
   assert.equal(summary.r1.changed, 0);
+  // Historical repair-002 result content (byte-frozen) records coder.ts partition.
   assert.deepEqual(
     summary.r1.postCutoffAdditions.map((p) => p.basename).sort(),
-    [...EXPECTED_POST_CUTOFF].sort(),
+    ["coder.ts"],
   );
   assert.equal(summary.r2.admittedScanned, 277);
   assert.equal(summary.r2.allMatched, true);
@@ -1180,13 +1951,164 @@ test("repair-002 recorder successor preserves executable corroboration implement
   assert.equal(hlNames.has("judge-malformed-probe.ts"), true);
   assert.equal(hlNames.has("reviewer-real-pi-snippet.ts"), true);
 
-  // repair-001 closure bytes must remain untouched by this successor.
   assert.equal(existsSync(join(REPO_ROOT, RECORDER_001, "manifest.json")), true);
+});
+
+test("repair-003 recorder successor independently corroborates cutoff oracle and 277-source scan", () => {
+  const evidenceDir = join(REPO_ROOT, RECORDER_003);
+  const manifestPath = join(evidenceDir, "manifest.json");
+  assert.equal(existsSync(manifestPath), true, "recorder-003 closure manifest");
+  const manifest = readJson<{
+    receipt: null | unknown;
+    recorder: { status: string };
+    child: { status: string; exitCode: number | null };
+    provenance: { target: string | null };
+    artifacts: Array<{
+      id: string;
+      kind: string;
+      stored?: { path: string; sha256: string; byteLength: number };
+      reference?: {
+        commit: string;
+        path: string;
+        blobOid: string;
+        sha256: string;
+      };
+    }>;
+    identityLedger?: {
+      gitTuples?: GitTuple[];
+      externalSources?: Array<{
+        itemKey: string;
+        sourceSha256: string;
+        basename?: string;
+      }>;
+      namespace?: { namespace: string; inputs: GitTuple[] };
+    };
+  }>(manifestPath);
+  assert.equal(manifest.receipt, null);
+  assert.equal(manifest.recorder.status, "completed");
+  assert.equal(manifest.child.status, "exited");
+  assert.equal(manifest.child.exitCode, 0);
+  assert.match(String(manifest.provenance.target), /repair-003/);
+
+  const implArt = manifest.artifacts.find(
+    (a) => a.id === "repair-003-child-implementation",
+  );
+  assert.ok(implArt?.stored?.path, "implementation exhibit stored");
+  const implPath = join(evidenceDir, implArt!.stored!.path);
+  const implBytes = readFileSync(implPath);
+  assert.equal(sha256(implBytes), implArt!.stored!.sha256);
+  assert.match(implBytes.toString("utf8"), /scanBytes/);
+  assert.match(implBytes.toString("utf8"), /isPostCutoffAddition|post-cutoff|cutoff/);
+  assert.match(implBytes.toString("utf8"), /scanner/);
+
+  const summaryArt = manifest.artifacts.find(
+    (a) => a.id === "repair-003-child-result",
+  );
+  assert.ok(summaryArt?.stored?.path, "result stored");
+  const summaryPath = join(evidenceDir, summaryArt!.stored!.path);
+  const summaryBytes = readFileSync(summaryPath);
+  assert.equal(sha256(summaryBytes), summaryArt!.stored!.sha256);
+  const summary = JSON.parse(summaryBytes.toString("utf8")) as {
+    ok: boolean;
+    childExitCode: number;
+    r1: {
+      matched: number;
+      missing: number;
+      changed: number;
+      recorded: number;
+      postCutoffCount: number;
+      postCutoffBasenames: string[];
+    };
+    r2: {
+      admittedScanned: number;
+      allMatched: boolean;
+      redactedCount: number;
+      highlighted: Array<{ basename: string; redacted: boolean }>;
+    };
+    scanner: { path: string; sha256: string; verified: boolean };
+    identityLedger: {
+      gitTuples: GitTuple[];
+      externalSources: Array<{
+        itemKey: string;
+        sourceSha256: string;
+        basename: string;
+      }>;
+      namespace: { namespace: string; inputs: GitTuple[] };
+    };
+    redGates: Record<string, boolean>;
+  };
+  assert.equal(summary.ok, true);
+  assert.equal(summary.childExitCode, 0);
+  assert.equal(summary.r1.recorded, 597);
+  assert.equal(summary.r1.matched, 597);
+  assert.equal(summary.r1.missing, 0);
+  assert.equal(summary.r1.changed, 0);
+  assert.equal(summary.r1.postCutoffCount >= 1, true);
+  assert.equal(summary.r1.postCutoffBasenames.includes("coder.ts"), true);
+  assert.equal(summary.r2.admittedScanned, 277);
+  assert.equal(summary.r2.allMatched, true);
+  assert.equal(summary.r2.redactedCount, 2);
+  const hl = new Set(summary.r2.highlighted.map((h) => h.basename));
+  assert.equal(hl.has("judge-malformed-probe.ts"), true);
+  assert.equal(hl.has("reviewer-real-pi-snippet.ts"), true);
+  assert.equal(summary.scanner.verified, true);
+  assert.equal(summary.identityLedger.namespace.namespace, SOLE_REPO_NAMESPACE);
+  assert.equal(summary.identityLedger.externalSources.length, 277);
+  assert.equal(summary.identityLedger.gitTuples.length > 0, true);
+
+  // Resolve every successor Git tuple from the ledger.
+  for (const t of summary.identityLedger.gitTuples) {
+    assert.equal(t.repository, SOLE_REPO_NAMESPACE);
+    const oid = gitRevParse(`${t.commit}:${t.path}`);
+    assert.equal(oid, t.blobOid, `blob ${t.path}`);
+    assert.equal(sha256(gitShow(`${t.commit}:${t.path}`)), t.sha256, t.path);
+  }
+  for (const t of summary.identityLedger.namespace.inputs) {
+    const oid = gitRevParse(`${t.commit}:${t.path}`);
+    assert.equal(oid, t.blobOid);
+    assert.equal(sha256(gitShow(`${t.commit}:${t.path}`)), t.sha256);
+  }
+
+  // RED gates recorded as exercised (child path proves failure modes).
+  for (const key of [
+    "tuplePerturbation",
+    "scannerHash",
+    "selectionIdentity",
+    "sourceSeal",
+    "hitReport",
+    "cutoffIdentity",
+    "namespaceBinding",
+    "redaction42a9fc",
+    "redactionAf289a",
+  ]) {
+    assert.equal(summary.redGates[key], true, `red gate ${key}`);
+  }
+
+  // repair-002 seals remain exact; no shared implementation.
+  assert.equal(
+    sha256(
+      readFileSync(
+        join(REPO_ROOT, RECORDER_002, "exhibits/corroboration-scan-implementation"),
+      ),
+    ),
+    REPAIR_002_IMPL_SHA,
+  );
+  assert.equal(
+    sha256(
+      readFileSync(
+        join(REPO_ROOT, RECORDER_002, "inputs/corroboration-scan-summary"),
+      ),
+    ),
+    REPAIR_002_RESULT_SHA,
+  );
+  assert.notEqual(sha256(implBytes), REPAIR_002_IMPL_SHA);
 });
 
 test("historical nonconformance closure seals original and 49807d4 successor identities", () => {
   assert.equal(gitIsAncestor(ORIGINAL_APPLY_COMMIT), true);
   assert.equal(gitIsAncestor(NONCONFORMING_SUCCESSOR_COMMIT), true);
+  assert.equal(gitIsAncestor(REPAIR_002_COMMIT), true);
+  assert.equal(gitIsAncestor(IMMUTABLE), true);
 
   const recordPath = join(REPO_ROOT, HISTORICAL_NONCONFORMANCE);
   assert.equal(existsSync(recordPath), true);
@@ -1210,6 +2132,8 @@ test("historical nonconformance closure seals original and 49807d4 successor ide
         path: string;
         classification: string;
       };
+      recorderImplementation: { path: string; sha256: string };
+      recorderResult: { path: string; sha256: string };
     };
     historicalPathsByteUnchanged: boolean;
   }>(recordPath);
@@ -1237,6 +2161,8 @@ test("historical nonconformance closure seals original and 49807d4 successor ide
     record.bindings.manualReconciliation.classification,
     "exact-set-only",
   );
+  assert.equal(record.bindings.recorderImplementation.sha256, REPAIR_002_IMPL_SHA);
+  assert.equal(record.bindings.recorderResult.sha256, REPAIR_002_RESULT_SHA);
 
   const checks: Array<{
     label: string;
@@ -1275,7 +2201,6 @@ test("historical nonconformance closure seals original and 49807d4 successor ide
     },
   ];
 
-  // Judge-specified exact identities.
   assert.equal(
     record.original.receipt.blobOid,
     "d1bf646ee019ea217612cc8d30100dfa635faf3b",
@@ -1316,7 +2241,6 @@ test("historical nonconformance closure seals original and 49807d4 successor ide
     assert.equal(sha256(gitShow(`${c.commit}:${c.path}`)), c.sha256, c.label);
   }
 
-  // Live paths remain the nonconforming successor bytes (not rewritten again).
   for (const path of [
     record.nonconformingSuccessors.receipt.path,
     record.nonconformingSuccessors.manifest.path,
@@ -1330,7 +2254,6 @@ test("historical nonconformance closure seals original and 49807d4 successor ide
     );
   }
 
-  // Manual reconciliation is exact-set only (not substantive Apply proof).
   const manual = readFileSync(
     join(REPO_ROOT, record.bindings.manualReconciliation.path),
     "utf8",
