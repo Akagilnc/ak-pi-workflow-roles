@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -73,11 +74,14 @@ async function runReviewerCli(
       const taskPath = resolve(packageRoot, "test/fixtures/reviewer-task.md");
       const taskBytes = await readFile(taskPath);
       const capabilityPath = resolve(home, "reviewer-capabilities.json");
+      const base = execFileSync("git", ["rev-parse", "HEAD~1"], { cwd, encoding: "utf8" }).trim();
+      const target = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+      const diffCommand = `git diff ${base}...${target}`;
       await writeFile(capabilityPath, JSON.stringify({
         version: 1,
         taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
-        tools: ["read"],
-        bashCommands: [],
+        tools: ["read", "bash"],
+        bashCommands: [diffCommand],
         prerequisiteOperations: [
           "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
           "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror",

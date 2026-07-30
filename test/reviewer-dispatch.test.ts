@@ -15,7 +15,7 @@ import {
 const task = Buffer.from(" review exactly — 逐字 \nSpec behavior: frobnicator must return 42.\n");
 const digest = createHash("sha256").update(task).digest("hex");
 const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
-const exactCommand = "git diff A..B -- 'space path'";
+const exactCommand = "git diff A...B";
 const capabilityValue = {
   version: 1,
   taskSha256: digest,
@@ -101,8 +101,8 @@ test("capability document is closed, exact-byte task-bound, and deeply immutable
 test("proposal grants are exact subsets of the closed vocabulary, ceiling, and host", async () => {
   const emptyBash = { ...proposal, required: { ...proposal.required, standards: { ...required, bashCommands: [] } } };
   const empty = harness();
-  assert.equal((await empty.dispatcher.propose(emptyBash as ReviewerProposalV1)).status, "accepted");
-  assert.equal(empty.calls.length, 1);
+  assert.equal((await empty.dispatcher.propose(emptyBash as ReviewerProposalV1)).status, "rejected");
+  assert.equal(empty.calls.length, 0);
 
   for (const changed of [
     `${exactCommand} `,
@@ -177,13 +177,14 @@ test("hidden repository materials are accepted and unsafe paths reject with type
   assert.equal((await accepted.dispatcher.propose(hidden)).status, "accepted");
   assert.equal(accepted.calls[0]!.materials.standards[0]!.repositoryPath, authorityPath);
 
-  for (const repositoryPath of ["docs/review notes.md", "docs/规范.md"]) {
+  for (const repositoryPath of ["docs/review notes.md", "docs/规范.md", "docs/quote\" [x](y) `code`.md"]) {
     const valid = harness();
     const result = await valid.dispatcher.propose({ ...proposal, standardsMaterials: [{ id: "authority", repositoryPath }] });
     assert.equal(result.status, "accepted");
     if (result.status === "accepted") {
       assert.equal(result.dispatch.materials.standards[0]!.repositoryPath, repositoryPath);
-      assert.equal(result.dispatch.legs[0]!.prompt.includes("repositoryPath="), false);
+      assert.equal(result.dispatch.legs[0]!.prompt.includes(`Material-Identity: ${JSON.stringify({ id: "authority", repositoryPath })}\n`), true);
+      assert.equal(result.dispatch.legs[0]!.prompt.includes(`repositoryPath=${repositoryPath}`), false);
     }
   }
 
@@ -333,6 +334,26 @@ test("concurrent valid proposals cannot invoke the runner twice", async () => {
   release();
   const results = await Promise.all([first, second]);
   assert.deepEqual(results.map(({ status }) => status).sort(), ["accepted", "closed"]);
+  assert.equal(calls.length, 1);
+});
+
+test("slow invalid proposal cannot append rejection after another proposal accepts", async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const reader = fakeReader({
+    async material(path, revision) {
+      if (path === "SLOW.md") { await blocked; throw new Error("slow invalid material"); }
+      return Buffer.from(`${revision}:${path}\n`);
+    },
+  });
+  const { dispatcher, calls } = harness({ reader });
+  const slow = dispatcher.propose({ ...proposal, standardsMaterials: [{ id: "slow", repositoryPath: "SLOW.md" }] });
+  await new Promise((resolve) => setImmediate(resolve));
+  const accepted = await dispatcher.propose(proposal);
+  assert.equal(accepted.status, "accepted");
+  release();
+  assert.equal((await slow).status, "closed");
+  assert.equal(dispatcher.rejections.length, 0);
   assert.equal(calls.length, 1);
 });
 

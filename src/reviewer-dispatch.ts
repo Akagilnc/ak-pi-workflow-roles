@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
-import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs } from "./reviewer-git-snapshot.ts";
+import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs } from "./reviewer-git-snapshot.ts";
 import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
@@ -83,7 +83,7 @@ export type AcceptedReviewerDispatch = Readonly<{
   identity: string;
   recipe: "reviewer-dispatch-v1";
   input: Readonly<{
-    task: Readonly<{ bytes: string; utf8Length: number; sha256: string }>;
+    task: ReviewerPromptIdentity;
     canonicalSkillSha256: string;
   }>;
   targetSnapshot: ReviewerPinnedTarget;
@@ -121,7 +121,7 @@ type DispatcherDependencies = Readonly<{
   capabilities: ReviewerCapabilitiesV1;
   reader: ReviewerPinnedGitReader;
   hostTools: readonly string[];
-  run(dispatch: AcceptedReviewerDispatch): Promise<unknown>;
+  run(dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<unknown>;
 }>;
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
@@ -255,7 +255,7 @@ function immutablePin(pin: ReviewerPinnedTarget): ReviewerPinnedTarget {
   return Object.freeze({
     repositoryRoot: pin.repositoryRoot,
     targetHead: pin.targetHead,
-    refs: Object.freeze({ ...pin.refs }),
+    refs: immutableReviewerRefs(pin.refs),
   });
 }
 
@@ -282,7 +282,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   const targetHead = await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]);
   const rawRefs = await gitText(repositoryRoot, reviewerRefSnapshotArgs());
   const refs = parseReviewerRefSnapshot(rawRefs);
-  const pin = Object.freeze({ repositoryRoot, targetHead, refs: Object.freeze(refs) });
+  const pin = Object.freeze({ repositoryRoot, targetHead, refs: immutableReviewerRefs(refs) });
   const symbolic = (base: string): string | undefined => {
     if (Object.hasOwn(refs, base)) return refs[base];
     const candidates = [`refs/heads/${base}`, `refs/tags/${base}`, `refs/remotes/${base}`]
@@ -409,6 +409,11 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       diffSha256: readRange.diffSha256,
       commits: freezeStrings(readRange.commits),
     });
+    for (const grant of [standardsGrant, ...(specGrant === undefined ? [] : [specGrant])]) {
+      if (!grant.tools.includes("bash") || !grant.bashCommands.includes(range.diffCommand)) {
+        throw new Error("Each Reviewer leg must authorize the exact canonical three-dot diff command");
+      }
+    }
 
     const materialEvidence = new Map<string, ReviewerMaterialEvidence>();
     const renderMaterials = async (items: readonly MaterialSelection[]): Promise<string> => {
@@ -427,13 +432,13 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
           utf8Length: bytes.byteLength,
           sha256: sha256(bytes),
         }));
-        rendered.push(`${item.id}:\n${text}`);
+        rendered.push(`Material-Identity: ${JSON.stringify({ id: item.id, repositoryPath: item.repositoryPath })}\nMaterial-Bytes:\n${text}`);
       }
       return rendered.join("\n\n");
     };
 
     const taskText = utf8Decoder.decode(task);
-    const taskEvidence = Object.freeze({ bytes: taskText, utf8Length: task.byteLength, sha256: sha256(task) });
+    const taskEvidence: ReviewerPromptIdentity = reviewerPromptIdentity(taskText);
     const common = [
       `Task-SHA256: ${taskEvidence.sha256}`,
       `Task-UTF8-Length: ${taskEvidence.utf8Length}`,
@@ -486,13 +491,15 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     get acceptance(): ReviewerAcceptanceEvidence | undefined {
       return accepted;
     },
-    async propose(proposal: ReviewerProposalV1): Promise<ReviewerDispatchResult> {
+    async propose(proposal: ReviewerProposalV1, invocation?: unknown): Promise<ReviewerDispatchResult> {
       if (accepted || accepting) return Object.freeze({ status: "closed" });
       const identity = proposalIdentity(proposal);
       let dispatch: AcceptedReviewerDispatch;
       try {
         dispatch = await compile(proposal, identity);
       } catch (error) {
+        // Compilation awaits repository I/O; another proposal may accept meanwhile.
+        if (accepted || accepting) return Object.freeze({ status: "closed" });
         const violations = Object.freeze([error instanceof Error ? error.message : String(error)]);
         const evidence = Object.freeze({ identity, violations, started: false as const });
         rejections.push(evidence);
@@ -507,7 +514,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         recipe: "reviewer-dispatch-v1",
         cardinality: dispatch.legs.length as 1 | 2,
       });
-      const results = await dependencies.run(dispatch);
+      const results = await dependencies.run(dispatch, invocation);
       return Object.freeze({ status: "accepted", dispatch, results });
     },
   });

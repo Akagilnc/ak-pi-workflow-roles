@@ -98,11 +98,12 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     binding = loaded;
     reader = await dependencies.createPinnedGitReader();
 
-    const run = async (dispatch: AcceptedReviewerDispatch): Promise<ReviewerDispatchRunResult> => {
+    const run = async (dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
+      const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
       ledger.append(projectAcceptedDispatch(dispatch));
       ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: dispatch.identity, cardinality: dispatch.legs.length as 1 | 2 });
       try {
-        const result = await dependencies.runDispatch(dispatch, { context: currentContext!, ...(currentSignal === undefined ? {} : { signal: currentSignal }) });
+        const result = await dependencies.runDispatch(dispatch, { context, ...(signal === undefined ? {} : { signal }) });
         for (const leg of dispatch.legs) {
           const actual = result.legs[leg.axis];
           if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
@@ -111,19 +112,15 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
         return result;
       } catch (error) { throw ledger.recordInfrastructureFailure(error); }
     };
-    let currentContext: ExtensionContext | undefined;
-    let currentSignal: AbortSignal | undefined;
     dispatcher = createReviewerDispatcher({ task: taskBytes, canonicalSkill: binding.snapshot.raw, capabilities, reader, hostTools: dependencies.hostTools(), run });
 
     if (!registered) {
       registered = true;
       pi.registerTool({ name: AGENT_TOOL_NAME, label: "Reviewer Dispatch", description: "Validate and irreversibly run one atomic Reviewer proposal.", promptSnippet: "Propose the atomic Reviewer dispatch", promptGuidelines: ["Correct rejected proposals; an accepted proposal is irreversible."], parameters: reviewerProposalSchema,
         async execute(_id, proposal, signal, _update, toolCtx) {
-          currentContext = toolCtx; currentSignal = signal;
           let result;
-          try { result = await dispatcher!.propose(proposal as ReviewerProposalV1); }
+          try { result = await dispatcher!.propose(proposal as ReviewerProposalV1, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
           catch (error) { hostActions.failInfrastructure(error, toolCtx); }
-          finally { currentContext = undefined; currentSignal = undefined; }
           if (result.status === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: result.identity, violations: result.violations, started: false });
           return { content: [{ type: "text" as const, text: result.status === "rejected" ? `Reviewer proposal rejected: ${result.violations.join("; ")}` : result.status === "closed" ? "Reviewer dispatch is already closed" : "Reviewer dispatch completed" }], details: result };
         } });

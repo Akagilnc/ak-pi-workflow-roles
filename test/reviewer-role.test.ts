@@ -10,10 +10,11 @@ import type { AcceptedReviewerDispatch, ReviewerProposalV1 } from "../src/review
 const task = new TextEncoder().encode("review exact bytes\n");
 const digest = createHash("sha256").update(task).digest("hex");
 const operations = ["preflight.git.pin-target","preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"] as const;
-const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read"], bashCommands: [], prerequisiteOperations: operations }));
+const diffCommand = "git diff base...target";
+const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: operations }));
 const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
 const pin = { repositoryRoot: "/repo", targetHead: "target", refs: { "refs/heads/main": "target" } };
-const request = { tools: ["read"] as const, bashCommands: [] as const, prerequisiteOperations: operations };
+const request = { tools: ["read", "bash"] as const, bashCommands: [diffCommand] as const, prerequisiteOperations: operations };
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, standardsMaterials: [{ id: "rules", repositoryPath: "RULES.md" }], spec: established ? { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] } : { state: "not-established", evidence: [{ id: "absence", repositoryPath: "README.md" }] }, required: established ? { standards: request, spec: request } : { standards: request } }; }
 function harness() {
   const tools = new Map<string, any>(); const flags: Record<string,string> = { "ak-review-task":"/task", "ak-review-capabilities":"/caps" }; const handlers = new Map<string,any>();
@@ -23,7 +24,7 @@ function harness() {
 function outputContext(id:string): ExtensionContext { const sessionManager=SessionManager.inMemory(); sessionManager.appendMessage({role:"assistant",content:[{type:"toolCall",id,name:REVIEWER_OUTPUT_TOOL_NAME,arguments:{}}],api:"x",provider:"x",model:"x",usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:"toolUse",timestamp:Date.now()}); return {sessionManager,abort(){},mode:"tui"} as unknown as ExtensionContext; }
 function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> = {}) {
   const h=harness(); let starts=0; const audits:ReviewerAuditInput[]=[];
-  const runtime=createReviewerRoleRuntime(h.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>new TextEncoder().encode(path)}), hostTools:()=>["read"], runDispatch:async(dispatch:AcceptedReviewerDispatch)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{bytes:leg.prompt,utf8Length:leg.utf8Length,sha256:leg.sha256},workspaceDisposition:"deleted"}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
+  const runtime=createReviewerRoleRuntime(h.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>new TextEncoder().encode(path)}), hostTools:()=>["read", "bash"], runDispatch:async(dispatch:AcceptedReviewerDispatch)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{bytes:leg.prompt,utf8Length:leg.utf8Length,sha256:leg.sha256},workspaceDisposition:"deleted"}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
   return {...h,runtime,audits,get starts(){return starts;}};
 }
 
@@ -61,6 +62,15 @@ test("final-review proposal accepts durable hidden authority material after type
   assert.equal(accepted.details.status,"accepted");
   assert.equal(accepted.details.dispatch.materials.spec[0].repositoryPath,authorityPath);
   assert.equal(h.starts,1);
+});
+
+test("concurrent proposals keep each accepted invocation context and signal bound together", async()=>{
+  let release!:()=>void; const blocked=new Promise<void>(resolve=>{release=resolve;}); let resolves=0; const seen:any[]=[];
+  const h=setup({createPinnedGitReader:async()=>({pin,async resolve(){resolves++;if(resolves===1)await blocked;return "base";},range:async()=>({base:"base",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>new TextEncoder().encode(path)}),runDispatch:async(dispatch,options)=>{seen.push(options);const legs:any={};for(const leg of dispatch.legs)legs[leg.axis]={report:"ok",usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{bytes:leg.prompt,utf8Length:leg.utf8Length,sha256:leg.sha256},workspaceDisposition:"deleted"};return {identity:dispatch.identity,target:pin,legs};}});
+  await h.runtime.activate(); const tool=h.tools.get(AGENT_TOOL_NAME); const firstContext={mode:"tui"} as ExtensionContext; const secondContext={mode:"rpc"} as ExtensionContext; const firstSignal=new AbortController().signal; const secondSignal=new AbortController().signal;
+  const first=tool.execute("first",proposal(),firstSignal,undefined,firstContext); while(resolves<1)await new Promise(resolve=>setImmediate(resolve));
+  const second=await tool.execute("second",proposal(),secondSignal,undefined,secondContext); assert.equal(second.details.status,"accepted"); release(); assert.equal((await first).details.status,"closed");
+  assert.deepEqual(seen,[{context:secondContext,signal:secondSignal}]);
 });
 
 test("established Spec runs exactly two legs with actual prompts equal to compiled prompts", async()=>{

@@ -26,9 +26,11 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
     provider: "ak-reviewer-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
+  const base = execFileSync("git", ["rev-parse", "HEAD~1"], { encoding: "utf8" }).trim();
+  const target = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const request = {
-    tools: [],
-    bashCommands: [],
+    tools: ["bash"],
+    bashCommands: [`git diff ${base}...${target}`],
     prerequisiteOperations: [
       "preflight.git.resolve-base", "preflight.git.derive-range",
       "preflight.git.list-ordered-commits", "preflight.git.read-material",
@@ -39,7 +41,7 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   const agentCall = fauxAssistantMessage(
     fauxToolCall(AGENT_TOOL_NAME, {
       version: 1,
-      base: { revision: execFileSync("git", ["rev-parse", "HEAD~1"], { encoding: "utf8" }).trim() },
+      base: { revision: base },
       standardsMaterials: [{ id: "readme", repositoryPath: "README.md" }],
       spec: { state: "not-established", evidence: [{ id: "task", repositoryPath: "test/fixtures/reviewer-task.md" }] },
       required: { standards: request },

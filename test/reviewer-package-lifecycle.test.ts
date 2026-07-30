@@ -18,8 +18,6 @@ const prerequisites = [
   "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror",
   "runner.git.materialize-workspace", "runner.git.verify-snapshot",
 ];
-const request = { tools: ["read"], bashCommands: [], prerequisiteOperations: prerequisites };
-
 function userText(context: Context): string {
   const message = context.messages.find((item) => item.role === "user");
   if (!message || message.role !== "user") return "";
@@ -46,6 +44,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
     await git(fixture, "commit", "-am", "reviewed change");
     const target = await git(fixture, "rev-parse", "HEAD");
+    const base = await git(fixture, "rev-parse", "review-base");
+    const diffCommand = `git diff ${base}...${target}`;
+    const request = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites };
     const root = await realpath(fixture);
 
     const pack = await packIsolatedPackage(home);
@@ -63,10 +64,10 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const taskPath = resolve(fixture, "review-task.md");
     const capsPath = resolve(fixture, "review-capabilities.json");
     await writeFile(taskPath, taskBytes);
-    await writeFile(capsPath, JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read"], bashCommands: [], prerequisiteOperations: prerequisites }));
+    await writeFile(capsPath, JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }));
 
     const proposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [{ id: "standards", repositoryPath: "STANDARDS.md" }], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: request, spec: request } };
-    const bad = { ...proposal, required: { standards: request, spec: { ...request, tools: ["read", "bash"], bashCommands: [] } } };
+    const bad = { ...proposal, required: { standards: request, spec: { ...request, bashCommands: [] } } };
     const candidate = { status: "completed", report: "## Standards\nReadable.\n\n## Spec\nSatisfied." };
     const corrected = { status: "completed", report: "## Standards\nReadable; no findings.\n\n## Spec\nRequirement satisfied; no findings.\n\nStandards: 0; Spec: 0." };
     const faux = fauxProvider({ api: "package-reviewer", provider: "package-reviewer", tokenSize: { min: 1000, max: 1000 } });

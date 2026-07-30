@@ -1,6 +1,6 @@
+import { sameReviewerRefs } from "./reviewer-git-snapshot.ts";
+import { isReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import {
-  isReviewerPromptIdentity,
-  type ReviewerPromptIdentity,
   type ReviewerCapabilityRequest,
   type ReviewerMaterialEvidence,
   type ReviewerPinnedTarget,
@@ -27,7 +27,7 @@ export type ReviewerAcceptedEvidence = Readonly<{
   identity: string;
   recipe: "reviewer-dispatch-v1";
   input: Readonly<{
-    task: Readonly<{ bytes: string; utf8Length: number; sha256: string }>;
+    task: ReviewerPromptIdentity;
     canonicalSkillSha256: string;
   }>;
   target: ReviewerPinnedTarget;
@@ -90,7 +90,7 @@ function cloneFreeze<T>(value: T): T {
 }
 function sameTarget(a: ReviewerPinnedTarget, b: ReviewerPinnedTarget): boolean {
   return a.repositoryRoot === b.repositoryRoot && a.targetHead === b.targetHead &&
-    JSON.stringify(Object.entries(a.refs).sort()) === JSON.stringify(Object.entries(b.refs).sort());
+    sameReviewerRefs(a.refs, b.refs);
 }
 function fatal(error: unknown): FatalEvidence {
   const record = typeof error === "object" && error !== null ? error as Record<string, unknown> : undefined;

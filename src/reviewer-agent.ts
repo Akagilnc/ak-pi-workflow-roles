@@ -22,8 +22,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { prepareComplianceDispatch } from "./compliance-transport.ts";
-import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs } from "./reviewer-git-snapshot.ts";
-import { isReviewerPromptIdentity, reviewerPromptIdentity } from "./reviewer-dispatch.ts";
+import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerRefs } from "./reviewer-git-snapshot.ts";
+import { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import type {
   AcceptedReviewerDispatch,
   AcceptedReviewerLeg,
@@ -45,7 +45,7 @@ export type ReviewerLegRunResult = Readonly<{
   report: string;
   usage: ReviewerUsage;
   target: ReviewerTargetSnapshot;
-  prompt: Readonly<{ bytes: string; utf8Length: number; sha256: string }>;
+  prompt: ReviewerPromptIdentity;
   workspaceDisposition: ReviewerWorkspaceDisposition;
 }>;
 export type ReviewerDispatchRunResult = Readonly<{
@@ -134,15 +134,6 @@ async function readRefs(
   return parseReviewerRefSnapshot(result.stdout.trim());
 }
 
-function sameRefs(
-  actual: Readonly<Record<string, string>>,
-  expected: Readonly<Record<string, string>>,
-): boolean {
-  const actualEntries = Object.entries(actual).sort();
-  const expectedEntries = Object.entries(expected).sort();
-  return JSON.stringify(actualEntries) === JSON.stringify(expectedEntries);
-}
-
 async function verifySnapshot(
   cwd: string,
   snapshot: ReviewerTargetSnapshot,
@@ -155,7 +146,7 @@ async function verifySnapshot(
     );
   }
   const refs = await readRefs(cwd, signal);
-  if (!sameRefs(refs, snapshot.refs)) {
+  if (!sameReviewerRefs(refs, snapshot.refs)) {
     throw new Error("Review clone ref map does not match the pinned session snapshot");
   }
   for (const object of new Set(Object.values(snapshot.refs))) {
@@ -172,7 +163,7 @@ async function prepareSnapshot(
     await git(repositoryRoot, ["rev-parse", "HEAD^{commit}"], signal)
   ).stdout.trim();
   const refs = await readRefs(repositoryRoot, signal);
-  if (targetHead !== accepted.targetHead || !sameRefs(refs, accepted.refs)) {
+  if (targetHead !== accepted.targetHead || !sameReviewerRefs(refs, accepted.refs)) {
     throw new Error("Accepted Reviewer target/ref identity no longer matches the repository");
   }
   const mirrorRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-snapshot-"));
@@ -198,7 +189,7 @@ async function prepareSnapshot(
       );
     }
     const mirrorRefs = await readRefs(mirrorPath, signal);
-    if (!sameRefs(mirrorRefs, refs)) {
+    if (!sameReviewerRefs(mirrorRefs, refs)) {
       throw new Error("Bare review mirror ref map changed while the snapshot was prepared");
     }
     for (const object of new Set([targetHead, ...Object.values(refs)])) {
