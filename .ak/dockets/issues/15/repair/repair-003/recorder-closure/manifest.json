@@ -6,7 +6,7 @@
     "docketId": "issues/15/repair/repair-003/recorder-closure"
   },
   "invocation": {
-    "id": "2a434961-fc69-429b-874c-84e669e93b39"
+    "id": "e289b017-0726-42e6-99be-b370494fd0ca"
   },
   "execution": {
     "argv": [
@@ -42,7 +42,7 @@
       "reference": {
         "identity": "reference",
         "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
-        "commit": "6e1681ca01aa2aa97a4ee843426283c02b295d9c",
+        "commit": "d81605c5bcd478a01fbf5612c34399b8f4b44bdf",
         "path": ".ak/dockets/issues/15/repair/repair-003/packet.md",
         "blobOid": "8c893a923cd0fc8506e1ebd917be8f079152d87f",
         "sha256": "0350f934d9131391c4b62549052bbc8425afb0738efa5bfb860f9bb88d77c791",
@@ -56,7 +56,7 @@
       "reference": {
         "identity": "reference",
         "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
-        "commit": "6e1681ca01aa2aa97a4ee843426283c02b295d9c",
+        "commit": "d81605c5bcd478a01fbf5612c34399b8f4b44bdf",
         "path": ".ak/dockets/issues/15/repair/repair-003/plan-003/receipt.json",
         "blobOid": "ec3225c28782d7d733fff2410924aae40063d341",
         "sha256": "f4e27898a6754fdbbe8fe527c1790940a280c1a7976e92e0f46e9558510b2873",
@@ -70,8 +70,8 @@
       "stored": {
         "identity": "stored",
         "path": "inputs/cutoff-scan-summary",
-        "sha256": "4c9a72db00f8b3f2baacdacf2c547040b5de0e8a0617c98da34b728af75526f5",
-        "byteLength": 473612
+        "sha256": "8a5c379808904f61de14036ffdac64cdc5ee637df681441677137c8d36cdd690",
+        "byteLength": 493447
       }
     },
     {
@@ -81,8 +81,8 @@
       "stored": {
         "identity": "stored",
         "path": "exhibits/cutoff-scan-implementation",
-        "sha256": "264eed78e9697382f7cde6fa0122be758eb7374b3a4ba0c4f384d95d357495b6",
-        "byteLength": 23089
+        "sha256": "fe0e4cf7569710b02142bae5663373a89ca6fc162ba76163d006e888a8082e90",
+        "byteLength": 23218
       }
     }
   ],
