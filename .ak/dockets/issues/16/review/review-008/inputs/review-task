@@ -1,0 +1,14 @@
+# Issue #16 final PR-finding review
+
+Use exactly this range in both sibling prompts:
+
+```text
+git diff 78cd4e9807aa8a6ebf5a0d852b096b62180fb2da...0a07c12195e4376acf2234c378d04c5079ad7a0e
+```
+
+Authority: issue #16 plus final prior review/judgment under `.ak/dockets/issues/16/`.
+PR finding repair: canonicalization must copy rather than mutate caller-owned retained terminals when carrying tee-only usage, and Judge/Reviewer extraction must preserve exact audit usage when only `tool_execution_end` contains it.
+
+Verify those changes plus all previously converged #16 lifecycle, identity, provenance, ordering, replay, conflict, split-input, promotion, lawful-absence, source/dist, and scope obligations. Absolute path values in Recorder manifests are required exact closed-schema invocation/provenance facts and historical manifests must not be rewritten.
+
+Perform Standards and Spec review in exactly one sibling-parallel batch. Fresh invocation; no second batch.

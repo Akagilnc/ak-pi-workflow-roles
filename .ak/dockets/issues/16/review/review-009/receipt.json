@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_reviewer_output",
+  "toolCallId": "call_81GMtX6I6i8UuyTY3xlbpiOx|fc_0906fca284077dc5016a6b501b82a481918e4ec90dc90bc026",
+  "details": {
+    "status": "refused",
+    "report": "Unable to complete a method-compliant review within the task’s one-batch constraint. The sole permitted sibling batch was run, but the Standards prompt improperly included Spec behavioral verification criteria; the compliance audit therefore rejected the aggregation because Standards/Spec isolation was not demonstrated. Repair would require a second sibling batch with those requirements confined to the Spec leg, while the supplied task explicitly forbids any second batch. No additional batch was dispatched. The fixed target and non-empty range were established, but the required canonical review method cannot now be satisfied in this invocation."
+  },
+  "artifactKind": "acceptedReceipt"
+}

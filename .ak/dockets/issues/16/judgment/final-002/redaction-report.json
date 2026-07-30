@@ -1,0 +1,49 @@
+{
+  "hits": [
+    {
+      "ruleId": "bearer-credential",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "basic-credential",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "provider-package-token",
+      "location": "child.stdout",
+      "count": 20
+    },
+    {
+      "ruleId": "google-api-key",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "aws-access-key",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "pem-private-key",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "cookie-header",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "credential-url",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "token-assignment",
+      "location": "child.stdout",
+      "count": 5
+    }
+  ]
+}

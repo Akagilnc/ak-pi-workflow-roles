@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_E81W2qk9R0zc5js3ynaumFPR|fc_055f2a45e721c899016a6b41f9b6c481919d5f66745ee38a89",
+  "details": {
+    "judgeStatus": "converged",
+    "note": "Issue #16 is closed at immutable target ba5824558101d68275f19d772c9728d132cdd33d. Independent target-archive verification passed the focused Recorder extraction suite 21/21, typecheck, build, byte-identical checked-in/generated dist extraction output, package inclusion, and diff check. The canonicalization exception is confined to one input envelope and the exact issuance → genuinely matching start (tool and args) → tool_execution_end → equivalent message_end/role:toolResult order; it retains toolResult, validates raw cross-representation identity before collapse, and preserves exact message/message_end provenance. The early-terminal and mismatched-start counterexamples retain both terminals and produce null Receipt/audit. Conflict, replay, ordering, identity, split-input, orphan, extra-terminal, and generic-session negatives remain fail-closed; Judge/Reviewer typed Receipt, audit, full promotion, usage, and lawful absence are exercised. Source/dist are aligned, the mismatch helper is private, and excluded Souls/orchestration/migration/retention/README/package surfaces are unchanged. All historical findings and the final zero-finding review are therefore discharged."
+  },
+  "artifactKind": "acceptedReceipt"
+}
