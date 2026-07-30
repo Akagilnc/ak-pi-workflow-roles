@@ -9,6 +9,7 @@ import {
   createReviewerDispatcher,
   sha256Hex,
   parseReviewerCapabilities,
+  validateReviewerHostCeiling,
   REVIEWER_CHILD_TOOLS,
   REVIEWER_PREREQUISITES,
   type AcceptedReviewerDispatch,
@@ -86,7 +87,9 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     pendingTransport.delete(event.toolCallId);
     const admitted = admittedToolCalls.delete(event.toolCallId);
     if (identity !== undefined && event.isError && !admitted) {
-      ledger.append({ source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false });
+      ledger.append(dispatcher?.acceptance === undefined
+        ? { source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false }
+        : { source: "reviewer-transport", type: "closed-attempt", identity, reason: "transport-after-acceptance", started: false });
     }
   };
 
@@ -107,6 +110,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     if (!capabilities.prerequisiteOperations.includes("preflight.git.pin-target")) {
       throw new Error("Missing preflight prerequisite: preflight.git.pin-target");
     }
+    validateReviewerHostCeiling(capabilities, dependencies.hostTools());
     const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
     if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
     binding = loaded;

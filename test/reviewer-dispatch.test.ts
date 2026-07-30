@@ -174,12 +174,31 @@ test("generic capability shapes remain representable but the recipe requires eac
     assert.equal((await dispatcher.propose(bad as ReviewerProposalV1)).status, "rejected");
     assert.equal(calls.length, 0);
   }
-  const unavailable = harness({ hostTools: ["read"] });
-  assert.equal((await unavailable.dispatcher.propose(proposal)).status, "rejected");
-  assert.equal(unavailable.calls.length, 0);
+  assert.throws(() => harness({ hostTools: ["read"] }), /capability-invalid/);
+
+  let unavailableCeilingReads = 0;
+  const ceilingWithOmittedUnavailableTool = capabilities();
+  assert.throws(() => harness({
+    ceiling: ceilingWithOmittedUnavailableTool,
+    hostTools: ["read", "bash"],
+    reader: fakeReader({ async resolve(base) { unavailableCeilingReads++; return base; } }),
+  }), /capability-invalid/);
+  assert.equal(unavailableCeilingReads, 0);
 
   const unknown = { ...proposal, required: { ...proposal.required, standards: { ...required, tools: ["read", "curl"] } } };
   assert.equal((await harness().dispatcher.propose(unknown as ReviewerProposalV1)).status, "rejected");
+});
+
+test("proposal boundaries retain typed closed classifications without message matching", async () => {
+  for (const [candidate, code] of [
+    [{ ...proposal, base: { revision: "" } }, "base-invalid"],
+    [{ ...proposal, standardsMaterials: [] }, "material-invalid"],
+    [{ ...proposal, spec: { state: "unknown" } }, "spec-invalid"],
+    [{ ...proposal, required: { ...proposal.required, standards: { ...required, tools: ["curl"] } } }, "capability-invalid"],
+  ] as const) {
+    const result = await harness().dispatcher.propose(candidate as ReviewerProposalV1);
+    assert.deepEqual(result.status === "rejected" ? result.violations : [], [code]);
+  }
 });
 
 test("typed repository failures have closed correctable codes and no diagnostics", async () => {

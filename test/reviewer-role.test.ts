@@ -37,6 +37,14 @@ test("activation authorizes pin-target before creating the pinned Git reader", a
   assert.equal(pins,0);
 });
 
+test("activation validates the entire host capability ceiling before pinning", async()=>{
+  let pins=0; let runs=0;
+  const unavailable=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash","write"],bashCommands:[diffCommand],prerequisiteOperations:operations}));
+  const reviewerHarness=setup({loadCapabilities:async()=>unavailable,hostTools:()=>["read","bash"],createPinnedGitReader:async()=>{pins++;throw new Error("must not pin");},runDispatch:async()=>{runs++;throw new Error("must not run");}});
+  await assert.rejects(reviewerHarness.runtime.activate(),/capability-invalid/);
+  assert.equal(pins,0); assert.equal(runs,0);
+});
+
 test("activation fails closed for absent, malformed, and task-mismatched capabilities", async()=>{
   const missing=setup(); delete missing.flags["ak-review-capabilities"]; await assert.rejects(missing.runtime.activate(),/requires --ak-review-capabilities/);
   await assert.rejects(setup({loadCapabilities:async()=>new TextEncoder().encode("{}")}).runtime.activate(),/capabilities/);
@@ -160,6 +168,22 @@ test("transport schema error records once, clears raw args, then permits correct
   assert.equal(reviewerHarness.audits.length,1);
   assert.equal(reviewerHarness.audits[0]!.record.transportRejections.length,1);
   assert.equal(JSON.stringify(reviewerHarness.audits[0]!.record).includes("DO_NOT_RETAIN"),false);
+});
+
+test("schema-invalid transport settling after acceptance becomes one bounded closed attempt", async()=>{
+  const reviewerHarness=setup(); await reviewerHarness.runtime.activate();
+  const secretArgs={version:1,secret:"LATE_SECRET"};
+  reviewerHarness.handlers.get("tool_execution_start")({toolName:AGENT_TOOL_NAME,toolCallId:"late",args:secretArgs});
+  await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(),undefined,undefined,{} as ExtensionContext);
+  reviewerHarness.handlers.get("tool_result")({toolName:AGENT_TOOL_NAME,toolCallId:"late",isError:true,input:secretArgs,content:[]});
+  reviewerHarness.handlers.get("tool_execution_end")({toolName:AGENT_TOOL_NAME,toolCallId:"late",isError:true,result:{}});
+  reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+  await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"done"},undefined,undefined,outputContext("out"));
+  const record=reviewerHarness.audits[0]!.record;
+  assert.equal(record.transportRejections.length,0);
+  assert.deepEqual(record.closedAttempts,[{identity:`transport-${createHash("sha256").update(JSON.stringify(secretArgs)).digest("hex")}`,reason:"transport-after-acceptance",started:false}]);
+  assert.equal(JSON.stringify(record).includes("LATE_SECRET"),false);
+  assert.equal(reviewerHarness.starts,1);
 });
 
 test("runner infrastructure failure blocks refusal and completion before audit", async()=>{
