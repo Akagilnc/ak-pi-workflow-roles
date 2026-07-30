@@ -35,7 +35,7 @@ const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), reposito
 const reviewerProposalSchema = Type.Object({
   version: Type.Literal(1),
   base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-  standardsMaterials: Type.Array(materialSchema, { minItems: 1 }),
+  standardsMaterials: Type.Array(materialSchema),
   spec: Type.Union([
     Type.Object({ state: Type.Literal("established"), materials: Type.Array(materialSchema, { minItems: 1 }) }, { additionalProperties: false }),
     Type.Object({ state: Type.Literal("not-established"), evidence: Type.Array(materialSchema, { minItems: 1 }) }, { additionalProperties: false }),
@@ -116,13 +116,18 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     binding = loaded;
     reader = await dependencies.createPinnedGitReader();
 
-    const run = async (dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
+    const executeAndProjectDispatch = async (dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
       const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
       ledger.append(projectAcceptedDispatch(dispatch));
       ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: dispatch.identity, cardinality: dispatch.legs.length as 1 | 2 });
       const appendSettlements = (result: ReviewerDispatchRunResult) => {
         if (result.identity !== dispatch.identity) throw new Error("Reviewer runner identity does not match accepted dispatch");
         if (!sameReviewerPinnedTarget(result.target, dispatch.targetSnapshot)) throw new Error("Reviewer runner target does not match accepted pinned target");
+        const expectedAxes = dispatch.legs.map(({ axis }) => axis).sort();
+        const actualAxes = Object.keys(result.legs).sort();
+        if (actualAxes.length !== expectedAxes.length || actualAxes.some((axis, index) => axis !== expectedAxes[index])) {
+          throw new Error(`Reviewer runner result axes do not match accepted dispatch: expected ${expectedAxes.join(",")}; received ${actualAxes.join(",")}`);
+        }
         for (const leg of dispatch.legs) {
           const actual = result.legs[leg.axis];
           if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
@@ -143,7 +148,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
         throw ledger.recordInfrastructureFailure(error);
       }
     };
-    dispatcher = createReviewerDispatcher({ task: taskBytes, canonicalSkill: binding.snapshot.raw, capabilities, reader, hostTools: dependencies.hostTools(), run });
+    dispatcher = createReviewerDispatcher({ task: taskBytes, canonicalSkill: binding.snapshot.raw, capabilities, reader, hostTools: dependencies.hostTools(), run: executeAndProjectDispatch });
 
     if (!registered) {
       registered = true;

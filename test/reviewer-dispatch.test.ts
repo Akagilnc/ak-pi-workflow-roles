@@ -192,7 +192,6 @@ test("generic capability shapes remain representable but the recipe requires eac
 test("proposal boundaries retain typed closed classifications without message matching", async () => {
   for (const [candidate, code] of [
     [{ ...proposal, base: { revision: "" } }, "base-invalid"],
-    [{ ...proposal, standardsMaterials: [] }, "material-invalid"],
     [{ ...proposal, spec: { state: "unknown" } }, "spec-invalid"],
     [{ ...proposal, required: { ...proposal.required, standards: { ...required, tools: ["curl"] } } }, "capability-invalid"],
   ] as const) {
@@ -356,7 +355,6 @@ test("runner prerequisites and injection-shaped material selections reject befor
 
 test("proposal shape rejects contradictory axes and duplicate material identities", async () => {
   const badProposals = [
-    { ...proposal, standardsMaterials: [] },
     { ...proposal, standardsMaterials: [{ id: "requirements", repositoryPath: "STYLE.md" }] },
     { ...proposal, spec: { state: "established", materials: [] } },
     { ...proposal, spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "STYLE.md" }] } },
@@ -364,6 +362,23 @@ test("proposal shape rejects contradictory axes and duplicate material identitie
   ];
   for (const bad of badProposals) {
     assert.equal((await harness().dispatcher.propose(bad as ReviewerProposalV1)).status, "rejected");
+  }
+});
+
+test("baseline-only Standards prompts preserve the canonical baseline for one- and two-leg dispatches", async () => {
+  for (const candidate of [
+    { ...proposal, standardsMaterials: [] },
+    { ...proposal, standardsMaterials: [], spec: { state: "not-established" as const, evidence: [{ id: "absence", repositoryPath: "NO-SPEC.md" }] }, required: { standards: required } },
+  ]) {
+    const accepted = harness();
+    const result = await accepted.dispatcher.propose(candidate);
+    assert.equal(result.status, "accepted");
+    const dispatch = accepted.calls[0]!;
+    assert.deepEqual(dispatch.materials.standards, []);
+    assert.match(dispatch.legs[0]!.prompt.text, /### 3\. Identify the standards sources/);
+    assert.match(dispatch.legs[0]!.prompt.text, /\*\*Mysterious Name\*\*/);
+    assert.match(dispatch.legs[0]!.prompt.text, /Target: B\nBase: A\nDiff: git diff A\.\.\.B/);
+    assert.doesNotMatch(dispatch.legs[0]!.prompt.text, /Material-Identity:/);
   }
 });
 

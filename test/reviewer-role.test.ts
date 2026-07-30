@@ -17,6 +17,7 @@ const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", 
 const pin = { repositoryRoot: "/repo", targetHead: "target", refs: { "refs/heads/main": { objectId: "target", peeledCommitId: "target" } } };
 const request = { tools: ["read", "bash"] as const, bashCommands: [diffCommand] as const, prerequisiteOperations: operations };
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, standardsMaterials: [{ id: "rules", repositoryPath: "RULES.md" }], spec: established ? { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] } : { state: "not-established", evidence: [{ id: "absence", repositoryPath: "README.md" }] }, required: established ? { standards: request, spec: request } : { standards: request } }; }
+function successfulLeg(leg: AcceptedReviewerDispatch["legs"][number], report = `${leg.axis} report`) { return { status: "successful" as const, report, usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}, target:pin, prompt:leg.prompt, workspaceDisposition:"deleted" as const }; }
 function harness() {
   const tools = new Map<string, any>(); const flags: Record<string,string> = { "ak-review-task":"/task", "ak-review-capabilities":"/caps" }; const handlers = new Map<string,any>();
   const pi = { registerFlag() {}, getFlag(name:string){return flags[name];}, registerTool(tool:any){tools.set(tool.name,tool);}, getAllTools(){return [...tools.keys()].map(name=>({name}));}, setActiveTools() {}, on(name:string,handler:any){handlers.set(name,handler);} } as unknown as ExtensionAPI;
@@ -54,8 +55,8 @@ test("activation fails closed for absent, malformed, and task-mismatched capabil
 
 test("preflight rejection can be corrected, starts no rejected runner, and accepts only one dispatch", async()=>{
   const reviewerHarness=setup(); await reviewerHarness.runtime.activate(); const tool=reviewerHarness.tools.get(AGENT_TOOL_NAME); const extensionContext={} as ExtensionContext;
-  const bad:any={...proposal(),standardsMaterials:[]}; const rejected=await tool.execute("bad",bad,undefined,undefined,extensionContext); assert.equal(rejected.details.status,"rejected"); assert.equal(reviewerHarness.starts,0);
-  const accepted=await tool.execute("ok",proposal(),undefined,undefined,extensionContext); assert.equal(accepted.details.status,"accepted"); assert.equal(accepted.details.dispatch.legs.length,1); assert.equal(reviewerHarness.starts,1);
+  const bad:any={...proposal(),standardsMaterials:[{id:"bad id",repositoryPath:"RULES.md"}]}; const rejected=await tool.execute("bad",bad,undefined,undefined,extensionContext); assert.equal(rejected.details.status,"rejected"); assert.equal(reviewerHarness.starts,0);
+  const accepted=await tool.execute("ok",{...proposal(),standardsMaterials:[]},undefined,undefined,extensionContext); assert.equal(accepted.details.status,"accepted"); assert.equal(accepted.details.dispatch.legs.length,1); assert.equal(reviewerHarness.starts,1);
   const closed=await tool.execute("later",proposal(true),undefined,undefined,extensionContext); assert.equal(closed.details.status,"closed"); assert.equal(reviewerHarness.starts,1);
 });
 
@@ -101,6 +102,24 @@ test("aggregation preserves leading indentation and trailing newlines", async()=
   const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(false),undefined,undefined,{} as ExtensionContext);
   assert.equal(result.details.results.legs.standards.report,exact);
   assert.equal(result.content[0].text.includes(`>>>\n${exact}\n<<< END REVIEWER CHILD REPORT`),true);
+});
+
+test("runner result axes must exactly equal accepted one- and two-leg dispatch axes", async()=>{
+  const cases = [
+    { proposal: proposal(), legs: (dispatch: AcceptedReviewerDispatch) => ({ standards: successfulLeg(dispatch.legs[0]!), spec: { ...successfulLeg(dispatch.legs[0]!, "HIDDEN SPEC ARTIFACT"), prompt: dispatch.legs[0]!.prompt } }) },
+    { proposal: proposal(true), legs: (dispatch: AcceptedReviewerDispatch) => ({ standards: successfulLeg(dispatch.legs[0]!) }) },
+    { proposal: proposal(true), legs: (dispatch: AcceptedReviewerDispatch) => ({ standards: successfulLeg(dispatch.legs[0]!), spec: successfulLeg(dispatch.legs[1]!), surprise: successfulLeg(dispatch.legs[0]!, "EXTRA ARTIFACT") }) },
+  ];
+  for (const counterexample of cases) {
+    const reviewerHarness=setup({runDispatch:async(dispatch)=>({identity:dispatch.identity,target:pin,legs:counterexample.legs(dispatch) as any})});
+    await reviewerHarness.runtime.activate();
+    reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+    await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",counterexample.proposal,undefined,undefined,{} as ExtensionContext),/result axes/);
+    for (const status of ["completed","refused"] as const) {
+      await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(`out-${status}`,{status,report:"must not issue receipt"},undefined,undefined,outputContext(`out-${status}`)),/infrastructure previously failed/);
+    }
+    assert.equal(reviewerHarness.audits.length,0);
+  }
 });
 
 test("runner identity and pinned target must exactly match accepted dispatch before settlement projection", async()=>{

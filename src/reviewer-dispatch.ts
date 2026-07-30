@@ -296,7 +296,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     if (!isExactObject(proposal.base, ["revision"]) || typeof proposal.base.revision !== "string" || proposal.base.revision.length === 0) {
       violation("base-invalid");
     }
-    if (!Array.isArray(proposal.standardsMaterials) || proposal.standardsMaterials.length === 0) {
+    if (!Array.isArray(proposal.standardsMaterials)) {
       violation("material-invalid");
     }
     proposal.standardsMaterials.forEach((selection, index) =>
