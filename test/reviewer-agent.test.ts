@@ -24,7 +24,16 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { createHash } from "node:crypto";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
+import type { AcceptedReviewerDispatch } from "../src/reviewer-dispatch.ts";
+
+async function dispatch(root: string, prompts: readonly string[], tools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "write" | "edit")[] = ["read", "grep", "find", "ls", "bash", "write", "edit"], bashCommands: readonly string[] = []): Promise<AcceptedReviewerDispatch> {
+  const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
+  const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => line.split("\0")));
+  const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
+  return { identity: "accepted", recipe: "reviewer-dispatch-v1", targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex"), grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
+}
 
 const exec = promisify(execFile);
 
@@ -158,19 +167,15 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
     }, 1);
     const runner = createReviewerAgentRunner();
     try {
-      const result = await runner.runReviewerAgent(
-        { description: "Standards", prompt: "Shallow snapshot review" },
-        { context },
-      );
+      const result = await runner.run(await dispatch(shallowRoot, ["Shallow snapshot review"]), { context });
+      const leg = result.legs.standards;
       assert.equal(childReached, true);
-      assert.match(result.report, /\S/);
-      assert.equal(result.targetSnapshot?.targetHead, tip);
-      assert.equal(result.targetSnapshot?.refs["refs/heads/fixed-branch"], tip);
-      assert.equal(result.targetSnapshot?.refs["refs/tags/fixed-tag"], tip);
-      assert.equal(result.targetSnapshot?.refs["refs/remotes/upstream/fixed"], tip);
-      for (const [name, sha] of Object.entries(sourceRefs)) {
-        assert.equal(result.targetSnapshot?.refs[name], sha);
-      }
+      assert.match(leg.report, /\S/);
+      assert.equal(result.target.targetHead, tip);
+      assert.equal(result.target.refs["refs/heads/fixed-branch"], tip);
+      assert.equal(result.target.refs["refs/tags/fixed-tag"], tip);
+      assert.equal(result.target.refs["refs/remotes/upstream/fixed"], tip);
+      for (const [name, sha] of Object.entries(sourceRefs)) assert.equal(result.target.refs[name], sha);
     } finally {
       await runner.shutdown();
     }
@@ -213,16 +218,9 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
   };
 
   try {
-    const [standards, spec] = await Promise.all([
-      runner.runReviewerAgent(
-        { description: "Standards", prompt: "Standards prompt" },
-        { context },
-      ),
-      runner.runReviewerAgent(
-        { description: "Spec", prompt: "Spec prompt" },
-        { context },
-      ),
-    ]);
+    const batch = await runner.run(await dispatch(source.root, ["Standards prompt", "Spec prompt"]), { context });
+    const standards = batch.legs.standards;
+    const spec = batch.legs.spec!;
 
     assert.deepEqual(
       [standards.report, spec.report].sort(),
@@ -230,10 +228,12 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     );
     assert.equal(standards.workspaceDisposition, "deleted");
     assert.equal(spec.workspaceDisposition, "deleted");
-    assert.deepEqual(standards.targetSnapshot, spec.targetSnapshot);
-    assert.equal(standards.targetSnapshot?.refs["refs/heads/fixed-branch"], source.base);
-    assert.equal(standards.targetSnapshot?.refs["refs/tags/fixed-tag"], source.base);
-    assert.equal(standards.targetSnapshot?.refs["refs/remotes/upstream/fixed"], source.base);
+    assert.deepEqual(standards.target, spec.target);
+    assert.equal(standards.target.refs["refs/heads/fixed-branch"], source.base);
+    assert.equal(standards.target.refs["refs/tags/fixed-tag"], source.base);
+    assert.equal(standards.target.refs["refs/remotes/upstream/fixed"], source.base);
+    assert.equal(standards.prompt.bytes, "Standards prompt");
+    assert.equal(spec.prompt.bytes, "Spec prompt");
     assert.deepEqual(
       [...new Set(requests.map((request) => request.prompt))].sort(),
       ["Spec prompt", "Standards prompt"],
@@ -267,12 +267,17 @@ test("Reviewer child provider delegates class-private streams to the original re
     provider: "ak-review-private-provider",
     tokenSize: { min: 1000, max: 1000 },
   });
-  faux.setResponses([fauxAssistantMessage("private provider report")]);
+  faux.setResponses([
+    fauxAssistantMessage(fauxToolCall("bash", { command: "printf widened > forbidden.txt" }), { stopReason: "toolUse" }),
+    fauxAssistantMessage("private provider report"),
+  ]);
   const originalModel = {
     ...faux.getModel(),
     baseUrl: "https://default.invalid",
   };
   const dispatches: Array<Record<string, unknown>> = [];
+  const visibleTools: string[][] = [];
+  const toolResults: string[] = [];
 
   class PrivateProvider implements Provider {
     readonly id = faux.provider.id;
@@ -311,6 +316,8 @@ test("Reviewer child provider delegates class-private streams to the original re
       childContext: Context,
       options?: SimpleStreamOptions,
     ) {
+      visibleTools.push(childContext.tools?.map((tool) => tool.name) ?? []);
+      toolResults.push(...childContext.messages.filter((message) => message.role === "toolResult").flatMap((message) => message.content.map((part) => part.type === "text" ? part.text : "")));
       dispatches.push({
         baseUrl: model.baseUrl,
         apiKey: options?.apiKey,
@@ -334,17 +341,18 @@ test("Reviewer child provider delegates class-private streams to the original re
   } as unknown as ExtensionContext;
   const runner = createReviewerAgentRunner();
   try {
-    const result = await runner.runReviewerAgent(
-      { description: "Standards", prompt: "Inspect private provider dispatch" },
-      { context },
-    );
-    assert.equal(result.report, "private provider report");
-    assert.deepEqual(dispatches, [{
+    const result = await runner.run(await dispatch(source.root, ["Inspect private provider dispatch"], ["bash"], ["printf exact > allowed.txt"]), { context });
+    assert.equal(result.legs.standards.report, "private provider report");
+    assert.deepEqual(visibleTools, [["bash"], ["bash"]]);
+    assert.match(toolResults.join("\n"), /exact accepted member/);
+    await assert.rejects(access(join(source.root, "forbidden.txt")));
+    assert.equal(result.legs.standards.prompt.bytes, "Inspect private provider dispatch");
+    assert.deepEqual(dispatches, [0, 1].map(() => ({
       baseUrl: "https://private-resolved.invalid",
       apiKey: "private-secret",
       headers: { "x-private": "yes" },
       env: { PRIVATE_TENANT: "test" },
-    }]);
+    })));
   } finally {
     await runner.shutdown();
     await rm(source.root, { recursive: true, force: true });
@@ -364,10 +372,7 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
   }, 1);
   const runner = createReviewerAgentRunner();
   const controller = new AbortController();
-  const call = runner.runReviewerAgent(
-    { description: "Standards", prompt: "Long review" },
-    { context, signal: controller.signal },
-  );
+  const call = dispatch(source.root, ["Long review"]).then((accepted) => runner.run(accepted, { context, signal: controller.signal }));
   await started;
   controller.abort();
   let retained: string | undefined;
