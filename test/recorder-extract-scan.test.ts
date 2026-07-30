@@ -1659,6 +1659,97 @@ test("issue #16: cross-representation conflicts and same-rep replays stay fail-c
     "issued → tool_execution_end → start → toolResult must yield null audit",
   );
 
+  // Spec finding — issued(Judge) → mismatched Reviewer start(same ID) →
+  // Judge tool_execution_end → matching Judge start → Judge toolResult.
+  // Call-id index order alone must not authorize dropping the early tee; the
+  // start before tool_execution_end must match issued package tool+args.
+  const mismatchedStartCallId = "mismatched-start-1";
+  const mismatchedStartEnvelope = [
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: mismatchedStartCallId,
+          name: JUDGE_OUTPUT_TOOL_NAME,
+          arguments: judgeDetails,
+        }],
+      },
+    },
+    {
+      type: "tool_execution_start",
+      toolCallId: mismatchedStartCallId,
+      toolName: REVIEWER_OUTPUT_TOOL_NAME,
+      args: reviewerDetails,
+    },
+    {
+      type: "tool_execution_end",
+      toolCallId: mismatchedStartCallId,
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      result: {
+        content: [{ type: "text", text: ACCEPTED[JUDGE_OUTPUT_TOOL_NAME] }],
+        details: judgeDetails,
+      },
+    },
+    {
+      type: "tool_execution_start",
+      toolCallId: mismatchedStartCallId,
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      args: judgeDetails,
+    },
+    {
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: mismatchedStartCallId,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: judgeDetails,
+        content: [{ type: "text", text: ACCEPTED[JUDGE_OUTPUT_TOOL_NAME] }],
+      },
+    },
+  ].map((row) => JSON.stringify(row)).join("\n");
+  const mismatchedStartRaw = collectLifecycleEvents(
+    decodeEnvelopeRows(mismatchedStartEnvelope),
+  ).filter((event) => event.kind === "terminal");
+  assert.deepEqual(
+    mismatchedStartRaw.map((event) =>
+      event.kind === "terminal" ? event.representation : null
+    ),
+    ["tool_execution_end", "toolResult"],
+    "mismatched-start raw dual terminals",
+  );
+  const mismatchedStartCanonical = canonicalizeLifecycleEvents(
+    collectLifecycleEvents(decodeEnvelopeRows(mismatchedStartEnvelope)),
+  ).filter((event) => event.kind === "terminal");
+  assert.equal(
+    mismatchedStartCanonical.length,
+    2,
+    "non-matching start before tee must keep both terminals",
+  );
+  assert.deepEqual(
+    mismatchedStartCanonical.map((event) =>
+      event.kind === "terminal" ? event.representation : null
+    ),
+    ["tool_execution_end", "toolResult"],
+    "early tee must remain visible when pre-tee start does not match issuance",
+  );
+  const mismatchedStartExtracted = extractAcceptedReceipt([
+    mismatchedStartEnvelope,
+  ]);
+  assert.equal(
+    mismatchedStartExtracted.receipt,
+    null,
+    "issued(Judge) → mismatched Reviewer start → tee → matching start → toolResult must yield null Receipt",
+  );
+  assert.equal(
+    mismatchedStartExtracted.auditObservation,
+    null,
+    "issued(Judge) → mismatched Reviewer start → tee → matching start → toolResult must yield null audit",
+  );
+
   // R4 — opposite representations split across envelope inputs must not collapse.
   const splitCallId = "split-envelope-1";
   const splitDetails = judgeDetails;
