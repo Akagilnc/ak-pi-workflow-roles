@@ -1,0 +1,17 @@
+{
+  "role": "fixer",
+  "phase": "plan",
+  "authority": {
+    "path": ".ak/dockets/issues/15/authority/judge-004/receipt.json",
+    "sha256": "f41b9058cd1b1f4f43c42714d68c43fc74ed1f66afecb7dafa01f7764ed46e5a"
+  },
+  "sessionCandidate": {
+    "bytes": 41382818,
+    "sha256": "1b455fa1d80b88b4da66c6b4b51c3c2a38ffceab19d3a94b4c2e0629710e6d07",
+    "retention": "not retained"
+  },
+  "receipt": {
+    "path": "receipt.json",
+    "sha256": "41158920828b8306c013069ac17ecdb1a84aa72cbb867be00e3be9d97bcaf9f9"
+  }
+}
