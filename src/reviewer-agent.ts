@@ -68,6 +68,10 @@ export type ReviewerAgentRunner = {
   run(dispatch: AcceptedReviewerDispatch, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>;
   shutdown(): Promise<void>;
 };
+export type ReviewerAgentFaultPoint =
+  | "mirror.before-create" | "mirror.create" | "mirror.verify"
+  | "workspace.before-create" | "workspace.init" | "workspace.fetch" | "workspace.verify";
+type ReviewerAgentDependencies = Readonly<{ fault?(operation: ReviewerAgentFaultPoint): void }>;
 
 type GitSnapshot = ReviewerTargetSnapshot & {
   mirrorRoot: string;
@@ -181,6 +185,7 @@ async function verifySnapshot(
 async function prepareSnapshot(
   accepted: ReviewerTargetSnapshot,
   signal?: AbortSignal,
+  dependencies: ReviewerAgentDependencies = {},
 ): Promise<GitSnapshot> {
   const repositoryRoot = accepted.repositoryRoot;
   const targetHead = (
@@ -190,9 +195,12 @@ async function prepareSnapshot(
   if (targetHead !== accepted.targetHead || !sameReviewerRefs(refs, accepted.refs)) {
     throw new Error("Accepted Reviewer target/ref identity no longer matches the repository");
   }
-  const mirrorRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-snapshot-"));
-  const mirrorPath = join(mirrorRoot, "repository.git");
+  let mirrorRoot: string | undefined;
   try {
+    dependencies.fault?.("mirror.before-create");
+    mirrorRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-snapshot-"));
+    const mirrorPath = join(mirrorRoot, "repository.git");
+    dependencies.fault?.("mirror.create");
     await runCommand(
       "git",
       ["clone", "--mirror", "--no-hardlinks", repositoryRoot, mirrorPath],
@@ -212,6 +220,7 @@ async function prepareSnapshot(
         signal,
       );
     }
+    dependencies.fault?.("mirror.verify");
     const mirrorRefs = await readRefs(mirrorPath, signal);
     if (!sameReviewerRefs(mirrorRefs, refs)) {
       throw new Error("Bare review mirror ref map changed while the snapshot was prepared");
@@ -233,7 +242,7 @@ async function prepareSnapshot(
     return { repositoryRoot, targetHead, refs, mirrorRoot, mirrorPath };
   } catch (error) {
     throw infrastructureError(error, {
-      workspaceDisposition: { retained: mirrorRoot },
+      workspaceDisposition: mirrorRoot === undefined ? "not-created" : { retained: mirrorRoot },
       targetSnapshot: { repositoryRoot, targetHead, refs },
     });
   }
@@ -242,10 +251,15 @@ async function prepareSnapshot(
 async function prepareWorkspace(
   snapshot: GitSnapshot,
   signal?: AbortSignal,
+  dependencies: ReviewerAgentDependencies = {},
 ): Promise<string> {
-  const workspace = await mkdtemp(join(tmpdir(), "ak-reviewer-leg-"));
+  let workspace: string | undefined;
   try {
+    dependencies.fault?.("workspace.before-create");
+    workspace = await mkdtemp(join(tmpdir(), "ak-reviewer-leg-"));
+    dependencies.fault?.("workspace.init");
     await git(workspace, ["init", "--initial-branch=ak-reviewer-unborn"], signal);
+    dependencies.fault?.("workspace.fetch");
     await git(
       workspace,
       [
@@ -268,11 +282,12 @@ async function prepareWorkspace(
       [0, 5, 128],
     );
     await git(workspace, ["checkout", "--detach", snapshot.targetHead], signal);
+    dependencies.fault?.("workspace.verify");
     await verifySnapshot(workspace, snapshot, signal);
     return workspace;
   } catch (error) {
     throw infrastructureError(error, {
-      workspaceDisposition: { retained: workspace },
+      workspaceDisposition: workspace === undefined ? "not-created" : { retained: workspace },
       targetSnapshot: {
         repositoryRoot: snapshot.repositoryRoot,
         targetHead: snapshot.targetHead,
@@ -467,7 +482,21 @@ async function runChild(
   }
 }
 
-export function createReviewerAgentRunner(): ReviewerAgentRunner {
+function failureEvidence(error: unknown, fallbackTarget: ReviewerTargetSnapshot): {
+  target: ReviewerTargetSnapshot;
+  workspaceDisposition: ReviewerWorkspaceDisposition;
+} {
+  const attached = typeof error === "object" && error !== null ? error as {
+    targetSnapshot?: ReviewerTargetSnapshot;
+    workspaceDisposition?: ReviewerWorkspaceDisposition;
+  } : undefined;
+  return {
+    target: attached?.targetSnapshot ?? fallbackTarget,
+    workspaceDisposition: attached?.workspaceDisposition ?? "not-created",
+  };
+}
+
+export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencies = {}): ReviewerAgentRunner {
   let snapshotPromise: Promise<GitSnapshot> | undefined;
   let acceptedIdentity: string | undefined;
   let snapshotDeleted = false;
@@ -486,24 +515,29 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
           if (!leg.grant.prerequisiteOperations.includes(operation)) throw new Error(`Missing accepted runner prerequisite: ${operation}`);
         }
       }
-      snapshotPromise = prepareSnapshot(dispatch.targetSnapshot, options.signal);
+      snapshotPromise = prepareSnapshot(dispatch.targetSnapshot, options.signal, dependencies);
       let snapshot: GitSnapshot;
       try { snapshot = await snapshotPromise; }
       catch (error) {
-        const target = dispatch.targetSnapshot;
-        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error), target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition: "not-created" as const })]));
+        const evidence = failureEvidence(error, dispatch.targetSnapshot);
+        const target = evidence.target;
+        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error), target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition: evidence.workspaceDisposition })]));
         throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
       }
       const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
       const settled = await Promise.allSettled(dispatch.legs.map(async (leg) => {
         let workspace: string | undefined;
         try {
-          workspace = await prepareWorkspace(snapshot, options.signal);
+          workspace = await prepareWorkspace(snapshot, options.signal, dependencies);
           const child = await runChild(workspace, leg, options.context, options.signal);
           await rm(workspace, { recursive: true, force: false });
           return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const })] as const;
         } catch (error) {
-          return [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error), target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition: workspace === undefined ? "not-created" as const : Object.freeze({ retained: workspace }) })] as const;
+          const evidence = failureEvidence(error, target);
+          const workspaceDisposition = workspace === undefined
+            ? evidence.workspaceDisposition
+            : Object.freeze({ retained: workspace });
+          return [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error), target: evidence.target, prompt: Object.freeze(reviewerPromptIdentity(leg.prompt)), workspaceDisposition })] as const;
         }
       }));
       const pairs = settled.map((item) => item.status === "fulfilled" ? item.value : (() => { throw item.reason; })());

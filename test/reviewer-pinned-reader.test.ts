@@ -6,7 +6,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { createReviewerPinnedGitReader, isReviewerPromptIdentity, reviewerPromptIdentity } from "../src/reviewer-dispatch.ts";
+import { isReviewerPromptIdentity, reviewerPromptIdentity } from "../src/reviewer-dispatch.ts";
+import { createReviewerPinnedGitReader } from "../src/reviewer-pinned-git.ts";
 import { immutableReviewerRefs, sameReviewerRefs } from "../src/reviewer-git-snapshot.ts";
 
 const exec = promisify(execFile);

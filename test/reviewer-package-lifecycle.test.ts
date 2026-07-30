@@ -51,6 +51,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
 
     const pack = await packIsolatedPackage(home);
     assert.ok(pack.files.some((f) => f.path === "src/reviewer-dispatch.ts"));
+    assert.ok(pack.files.some((f) => f.path === "src/reviewer-pinned-git.ts"));
     assert.equal(pack.files.some((f) => /(^|\/)SKILL\.md$/.test(f.path)), false);
     await writeFile(resolve(fixture, "package.json"), JSON.stringify({ private: true, dependencies: {
       "@ak/pi-workflow-roles": `file:${pack.tarball}`,
