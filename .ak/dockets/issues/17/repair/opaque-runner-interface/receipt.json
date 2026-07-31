@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_ABSwPT85Cv211PNpWbRqffg6|fc_00e2eb7a285c8b4c016a6c019fe6d8819bab5d89deeb702b9b",
+  "details": {
+    "status": "completed",
+    "report": "R1 — Added closed immutable `AcceptedReviewerExecution` with only identity/recipe, pinned target, prerequisites, and ordered frozen legs/prompts/effective grants.\nR2 — Kept construction ownership/evidence in reviewer-dispatch and made its sole `toReviewerExecution` deep-frozen projection the only value accepted by dispatcher run dependencies, role `runDispatch`, and `ReviewerAgentRunner`.\nR3 — Preserved pre-start complete ledger projection and accepted-evidence outcome checks; added compile-time exact-key and runtime fake-runner absence/preservation/deep-freeze coverage.\nR4 — No broad extraction; focused tests, package lifecycle, full 379-test suite, typecheck, prepack, pack/dry-run, and diff check passed; committed forward as fbe7ad8ba7b921687ba6681634b4dfffae582c48.",
+    "commitSha": "fbe7ad8ba7b921687ba6681634b4dfffae582c48"
+  },
+  "artifactKind": "acceptedReceipt"
+}
