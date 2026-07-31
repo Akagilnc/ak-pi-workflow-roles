@@ -19,9 +19,12 @@ test("Doctor consumers share recursive canonical JSON semantics", () => {
 test("canonical JSON rejects the closed domain counterexamples with typed structural paths", () => {
   const sparse = Array(1);
   const cyclic: Record<string, unknown> = {}; cyclic.self = cyclic;
+  const objectSymbol = {}; Object.defineProperty(objectSymbol, Symbol("alias"), { value: undefined });
+  const arrayExtra: unknown[] = []; Object.defineProperty(arrayExtra, "extra", { value: undefined });
   const cases: Array<[unknown, string]> = [
     [[undefined], "$/0"], [Number.NaN, "$"], [new Date(0), "$"],
     [{ nested: Infinity }, "$/nested"], [sparse, "$/0"], [cyclic, "$/self"],
+    [objectSymbol, "$/<symbol>"], [arrayExtra, "$/extra"],
     [new (class extends Array<number> {})(1), "$"], [1n, "$"], [Symbol("x"), "$"], [() => undefined, "$"],
   ];
   for (const [value, path] of cases) assert.throws(

@@ -13,6 +13,13 @@ export class CanonicalJsonValidationError extends Error {
 function childPath(path, segment) {
     return `${path}/${String(segment).replaceAll("~", "~0").replaceAll("/", "~1")}`;
 }
+function ownStringKeys(value, path) {
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key === "symbol")) {
+        throw new CanonicalJsonValidationError(childPath(path, "<symbol>"), "symbol-keyed member is not a JSON member");
+    }
+    return keys;
+}
 /** Deterministic serialization of the closed JSON value domain. */
 export function canonicalJson(value) {
     const ancestors = new WeakSet();
@@ -40,6 +47,10 @@ export function canonicalJson(value) {
                     if (Array.isArray(item)) {
                         if (Object.getPrototypeOf(item) !== Array.prototype)
                             throw new CanonicalJsonValidationError(path, "array must not be a custom object");
+                        const keys = ownStringKeys(item, path);
+                        const extraKey = keys.find((key) => key !== "length" && (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= item.length));
+                        if (extraKey !== undefined)
+                            throw new CanonicalJsonValidationError(childPath(path, extraKey), "non-index array member is not a JSON member");
                         const values = [];
                         for (let index = 0; index < item.length; index += 1) {
                             if (!Object.hasOwn(item, index))
@@ -51,7 +62,7 @@ export function canonicalJson(value) {
                     const prototype = Object.getPrototypeOf(item);
                     if (prototype !== Object.prototype && prototype !== null)
                         throw new CanonicalJsonValidationError(path, "object must be a plain record");
-                    return `{${Object.keys(item).sort().map((key) => `${JSON.stringify(key)}:${serialize(item[key], childPath(path, key))}`).join(",")}}`;
+                    return `{${ownStringKeys(item, path).sort().map((key) => `${JSON.stringify(key)}:${serialize(item[key], childPath(path, key))}`).join(",")}}`;
                 }
                 finally {
                     ancestors.delete(item);
