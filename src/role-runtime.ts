@@ -20,7 +20,7 @@ import {
   createReviewerRoleRuntime,
   type ReviewerAuditInput,
 } from "./reviewer-role.ts";
-import type { AcceptedReviewerDispatch, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import type { AcceptedReviewerExecution, ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   createCoderRoleRuntime,
@@ -58,7 +58,7 @@ export type {
   ReviewerUsage,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
-export type { AcceptedReviewerDispatch, ReviewerPinnedGitReader, ReviewerProposalV1 } from "./reviewer-dispatch.ts";
+export type { AcceptedReviewerDispatch, AcceptedReviewerExecution, ReviewerPinnedGitReader, ReviewerProposalV1 } from "./reviewer-dispatch.ts";
 export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
@@ -83,7 +83,7 @@ export type RoleRuntimeDependencies = {
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
   runReviewerDispatch?(
-    dispatch: AcceptedReviewerDispatch,
+    dispatch: AcceptedReviewerExecution,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ReviewerDispatchRunResult>;
   shutdownReviewerAgent?(): Promise<void>;

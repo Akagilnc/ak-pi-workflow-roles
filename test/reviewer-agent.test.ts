@@ -26,14 +26,14 @@ import {
 
 import { createHash } from "node:crypto";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
-import type { AcceptedReviewerDispatch } from "../src/reviewer-dispatch.ts";
+import type { AcceptedReviewerExecution } from "../src/reviewer-dispatch.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch } from "../src/reviewer-execution-ledger.ts";
 
-async function dispatch(root: string, prompts: readonly string[], tools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "write" | "edit")[] = ["read", "grep", "find", "ls", "bash", "write", "edit"], bashCommands: readonly string[] = []): Promise<AcceptedReviewerDispatch> {
+async function dispatch(root: string, prompts: readonly string[], tools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "write" | "edit")[] = ["read", "grep", "find", "ls", "bash", "write", "edit"], bashCommands: readonly string[] = []): Promise<AcceptedReviewerExecution> {
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
   const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => { const [name, objectId, peeled, objectType, peeledType] = line.split("\0"); return [name!, { objectId: objectId!, peeledCommitId: objectType === "commit" ? objectId! : peeledType === "commit" ? peeled! : null }]; }));
   const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
-  return { identity: "accepted", recipe: "reviewer-dispatch-v1", prerequisiteOperations: prerequisites, input: { task: { text: "task", utf8Length: 4, sha256: createHash("sha256").update("task").digest("hex") }, canonicalSkillSha256: "skill", capabilityDocument: { text: "{}", utf8Length: 2, sha256: createHash("sha256").update("{}").digest("hex") } }, materials: { standards: [] }, targetSnapshot: { repositoryRoot: root, targetHead, refs }, range: { base: targetHead, target: targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex") }, grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerDispatch;
+  return { identity: "accepted", recipe: "reviewer-dispatch-v1", prerequisiteOperations: prerequisites, targetSnapshot: { repositoryRoot: root, targetHead, refs }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex") }, grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerExecution;
 }
 
 const exec = promisify(execFile);
@@ -400,7 +400,12 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
           assert.equal(accepted.legs.standards.failure, classification);
           const ledger = createReviewerExecutionLedger();
           // Project the exact failed settlement through the durable ledger seam.
-          ledger.append(projectAcceptedDispatch({ ...acceptedDispatch, materials: { ...acceptedDispatch.materials, noSpecEvidence: [] } }));
+          ledger.append(projectAcceptedDispatch({
+            ...acceptedDispatch,
+            input: { task: acceptedDispatch.legs[0]!.prompt, canonicalSkillSha256: "skill", capabilityDocument: acceptedDispatch.legs[0]!.prompt },
+            range: { base: acceptedDispatch.targetSnapshot.targetHead, target: acceptedDispatch.targetSnapshot.targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] },
+            materials: { standards: [], noSpecEvidence: [] },
+          }));
           ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: accepted.identity, cardinality: 1 });
           ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: accepted.identity, axis: "standards", ...accepted.legs.standards });
           assert.deepEqual(ledger.recordForAudit("refused").results.standards?.workspaceDisposition, disposition);

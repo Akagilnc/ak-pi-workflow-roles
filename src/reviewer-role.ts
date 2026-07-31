@@ -12,6 +12,7 @@ import {
   REVIEWER_CHILD_TOOLS,
   REVIEWER_PREREQUISITES,
   type AcceptedReviewerDispatch,
+  type AcceptedReviewerExecution,
   type ReviewerCapabilitiesV1,
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
@@ -51,7 +52,7 @@ export type ReviewerRoleDependencies = {
   loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
   hostTools(): readonly string[];
-  runDispatch(dispatch: AcceptedReviewerDispatch, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
+  runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
   shutdownAgent?(): Promise<void>;
   auditCompliance(input: ReviewerAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
@@ -113,11 +114,14 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     binding = loaded;
     reader = await dependencies.createPinnedGitReader();
 
-    const executeAndProjectDispatch = async (dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
+    let acceptedDispatch: AcceptedReviewerDispatch | undefined;
+    const executeAndProjectDispatch = async (execution: AcceptedReviewerExecution, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
+      const dispatch = acceptedDispatch;
+      if (dispatch === undefined || dispatch.identity !== execution.identity) throw new Error("Reviewer execution lacks accepted construction evidence");
       const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
-      ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: dispatch.identity, cardinality: dispatch.legs.length as 1 | 2 });
+      ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: execution.identity, cardinality: execution.legs.length as 1 | 2 });
       try {
-        const result = await dependencies.runDispatch(dispatch, { context, ...(signal === undefined ? {} : { signal }) });
+        const result = await dependencies.runDispatch(execution, { context, ...(signal === undefined ? {} : { signal }) });
         projectReviewerDispatchOutcome(ledger, dispatch, result);
         return result;
       } catch (error) {
@@ -136,8 +140,10 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       hostTools: dependencies.hostTools(),
       decisionEvidence(decision) {
         try {
-          if (decision.disposition === "accepted") ledger.append(projectAcceptedDispatch(decision.dispatch));
-          else if (decision.disposition === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
+          if (decision.disposition === "accepted") {
+            ledger.append(projectAcceptedDispatch(decision.dispatch));
+            acceptedDispatch = decision.dispatch;
+          } else if (decision.disposition === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
           else ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: decision.identity, reason: decision.reason, started: false });
         } catch (error) {
           throw ledger.recordInfrastructureFailure(error);

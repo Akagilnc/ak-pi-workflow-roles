@@ -9,10 +9,16 @@ import {
   parseReviewerCapabilities,
   sameReviewerPromptIdentity,
   type AcceptedReviewerDispatch,
+  type AcceptedReviewerExecution,
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
 } from "../src/reviewer-dispatch.ts";
 import { ReviewerCorrectablePreflightError } from "../src/reviewer-preflight-error.ts";
+
+type ExecutionKeys = keyof AcceptedReviewerExecution;
+type ExpectedExecutionKeys = "identity" | "recipe" | "targetSnapshot" | "prerequisiteOperations" | "legs";
+const executionKeysAreClosed: [ExecutionKeys, ExpectedExecutionKeys] extends [ExpectedExecutionKeys, ExecutionKeys] ? true : never = true;
+void executionKeysAreClosed;
 
 const task = Buffer.from(" review exactly — 逐字 \nSpec behavior: frobnicator must return 42.\n");
 const digest = createHash("sha256").update(task).digest("hex");
@@ -65,22 +71,26 @@ function harness(options: {
   ceiling?: ReturnType<typeof capabilities>;
   canonicalSkill?: string;
   hostTools?: readonly string[];
-  run?: (dispatch: AcceptedReviewerDispatch) => Promise<unknown>;
+  run?: (execution: AcceptedReviewerExecution) => Promise<unknown>;
   compilePrompt?: Parameters<typeof createReviewerDispatcher>[0]["compilePrompt"];
   renderMaterial?: Parameters<typeof createReviewerDispatcher>[0]["renderMaterial"];
   decisionEvidence?: Parameters<typeof createReviewerDispatcher>[0]["decisionEvidence"];
 } = {}) {
   const calls: AcceptedReviewerDispatch[] = [];
+  let acceptedEvidence: AcceptedReviewerDispatch | undefined;
   const dispatcher = createReviewerDispatcher({
     task,
     canonicalSkill: options.canonicalSkill ?? skill,
     capabilities: options.ceiling ?? capabilities(),
     reader: options.reader ?? fakeReader(),
     hostTools: options.hostTools ?? REVIEWER_CHILD_TOOLS,
-    run: options.run ?? (async (dispatch) => { calls.push(dispatch); return { ok: true }; }),
+    run: options.run ?? (async () => { calls.push(acceptedEvidence!); return { ok: true }; }),
+    decisionEvidence(decision) {
+      if (decision.disposition === "accepted") acceptedEvidence = decision.dispatch;
+      options.decisionEvidence?.(decision);
+    },
     ...(options.compilePrompt === undefined ? {} : { compilePrompt: options.compilePrompt }),
     ...(options.renderMaterial === undefined ? {} : { renderMaterial: options.renderMaterial }),
-    ...(options.decisionEvidence === undefined ? {} : { decisionEvidence: options.decisionEvidence }),
   });
   return { dispatcher, calls };
 }
@@ -480,7 +490,7 @@ test("opaque task prose and selected material bytes remain isolated in compiled 
   const ceiling = parseReviewerCapabilities(Buffer.from(JSON.stringify({ ...capabilityValue, taskSha256 })), opaqueTask);
   const standardsBytes = Buffer.from("\ufeffSTANDARDS_MATERIAL_ONLY—规范\n");
   const specBytes = Buffer.from("\ufeffSPEC_MATERIAL_ONLY—需求\n");
-  const delivered: AcceptedReviewerDispatch[] = [];
+  const delivered: AcceptedReviewerExecution[] = [];
   const reader = fakeReader({
     async material(path) { return path === "STYLE.md" ? standardsBytes : specBytes; },
   });
@@ -492,7 +502,19 @@ test("opaque task prose and selected material bytes remain isolated in compiled 
   assert.equal(result.status, "accepted");
   if (result.status !== "accepted") return;
   const [standardsLeg, specLeg] = result.dispatch.legs;
-  assert.equal(delivered[0], result.dispatch);
+  assert.notEqual(delivered[0], result.dispatch);
+  assert.deepEqual(Object.keys(delivered[0]!), ["identity", "recipe", "targetSnapshot", "prerequisiteOperations", "legs"]);
+  for (const forbidden of ["input", "capabilityDocument", "range", "materials", "proposal", "canonicalSkill", "constructionRecipeInputs"]) {
+    assert.equal(Object.hasOwn(delivered[0]!, forbidden), false);
+  }
+  assert.deepEqual(delivered[0], {
+    identity: result.dispatch.identity,
+    recipe: result.dispatch.recipe,
+    targetSnapshot: result.dispatch.targetSnapshot,
+    prerequisiteOperations: result.dispatch.prerequisiteOperations,
+    legs: result.dispatch.legs,
+  });
+  assert.ok(Object.isFrozen(delivered[0]) && Object.isFrozen(delivered[0]!.legs) && Object.isFrozen(delivered[0]!.legs[0]!.grant.tools));
   assert.ok(standardsLeg!.prompt.text.includes(standardsBytes.toString("utf8")));
   assert.ok(specLeg!.prompt.text.includes(specBytes.toString("utf8")));
   assert.doesNotMatch(standardsLeg!.prompt.text, new RegExp(`${specSentinel}|SPEC_MATERIAL_ONLY|SPEC-PRIVATE`));
@@ -511,7 +533,7 @@ test("opaque task prose and selected material bytes remain isolated in compiled 
     spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "NO-SPEC.md" }] },
     required: { standards: required },
   };
-  const noSpecDelivered: AcceptedReviewerDispatch[] = [];
+  const noSpecDelivered: AcceptedReviewerExecution[] = [];
   const noSpecDispatcher = createReviewerDispatcher({
     task: opaqueTask, canonicalSkill: skill, capabilities: ceiling,
     reader: fakeReader({ async material(path) { return path === "STYLE.md" ? standardsBytes : specBytes; } }),
@@ -521,7 +543,8 @@ test("opaque task prose and selected material bytes remain isolated in compiled 
   assert.equal(noSpec.status, "accepted");
   assert.equal(noSpecDelivered[0]!.legs.length, 1);
   assert.doesNotMatch(noSpecDelivered[0]!.legs[0]!.prompt.text, /SPEC_ONLY_SENTINEL|SPEC_MATERIAL_ONLY|SPEC-PRIVATE|Task-Bytes:/);
-  assert.deepEqual(noSpecDelivered[0]!.input.task, {
+  assert.equal(Object.hasOwn(noSpecDelivered[0]!, "input"), false);
+  assert.deepEqual(noSpec.status === "accepted" ? noSpec.dispatch.input.task : undefined, {
     text: opaqueTask.toString("utf8"), utf8Length: opaqueTask.byteLength, sha256: taskSha256,
   });
 });
@@ -687,7 +710,7 @@ test("preserves BOM and multibyte task/material bytes and rejects invalid UTF-8 
   const bomTask = Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("任务\n")]);
   const bomMaterial = Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("材料—逐字\n")]);
   const ceiling = parseReviewerCapabilities(Buffer.from(JSON.stringify({ ...capabilityValue, taskSha256: createHash("sha256").update(bomTask).digest("hex") })), bomTask);
-  const calls: AcceptedReviewerDispatch[] = [];
+  const calls: AcceptedReviewerExecution[] = [];
   const reader = fakeReader({ async material() { return bomMaterial; } });
   const dispatcher = createReviewerDispatcher({ task: bomTask, canonicalSkill: skill, capabilities: ceiling, reader, hostTools: REVIEWER_CHILD_TOOLS, async run(dispatch) { calls.push(dispatch); } });
   const accepted = await dispatcher.propose(proposal);
