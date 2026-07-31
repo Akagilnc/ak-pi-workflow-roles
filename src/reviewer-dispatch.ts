@@ -6,7 +6,7 @@ import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIde
 import { reviewerScopePrompt } from "./reviewer-scope-prompt.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 import { sha256Hex } from "./sha256.ts";
-import { bundlePromptReferences, compileMechanicalBundle, type CanonicalSkillIdentity, type PinnedMechanicalBundleV1, type ReviewerConstructionIdentity } from "./reviewer-construction.ts";
+import { bundlePromptReferences, compileMechanicalBundle, reviewerAxisMethodAdapter, type CanonicalSkillIdentity, type PinnedMechanicalBundleV1, type ReviewerConstructionIdentity } from "./reviewer-construction.ts";
 export { sha256Hex } from "./sha256.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
@@ -362,7 +362,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     ].join("\n");
     const axes: Array<{axis:"standards"|"spec"; grant:ReviewerCapabilityRequest}> = [{ axis:"standards", grant:standardsGrant }, ...(specGrant ? [{axis:"spec" as const, grant:specGrant}] : [])];
     const compilePrompt = dependencies.compilePrompt ?? ((prompt: string) => reviewerPromptIdentity(prompt));
-    const build = (axis:"standards"|"spec", grant:ReviewerCapabilityRequest, pass:1|2) => compilePrompt(`${common}\nGrant: ${JSON.stringify(grant)}\nQuestion: ${axis === "standards" ? "Apply the complete canonical Standards brief and baseline from the bundle." : "Apply the canonical Spec brief from the bundle."}\n`, axis, pass);
+    const build = (axis:"standards"|"spec", grant:ReviewerCapabilityRequest, pass:1|2) => compilePrompt(`${common}\nGrant: ${JSON.stringify(grant)}\n${reviewerAxisMethodAdapter(axis)}\n`, axis, pass);
     const first = axes.map(x => build(x.axis,x.grant,1)); const second = axes.map(x => build(x.axis,x.grant,2));
     for (let i=0;i<first.length;i++) if (!isReviewerPromptIdentity(first[i]!) || !isReviewerPromptIdentity(second[i]!) || !sameReviewerPromptIdentity(first[i]!,second[i]!)) violation(!isReviewerPromptIdentity(first[i]!) || !isReviewerPromptIdentity(second[i]!) ? "prompt-identity-invalid" : "prompt-identity-mismatch");
     const legs = Object.freeze(axes.map((x,i) => Object.freeze({ axis:x.axis, prompt:first[i]!, grant:x.grant })));

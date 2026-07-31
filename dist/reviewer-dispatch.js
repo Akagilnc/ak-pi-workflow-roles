@@ -6,7 +6,7 @@ import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIde
 import { reviewerScopePrompt } from "./reviewer-scope-prompt.js";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.js";
 import { sha256Hex } from "./sha256.js";
-import { bundlePromptReferences, compileMechanicalBundle } from "./reviewer-construction.js";
+import { bundlePromptReferences, compileMechanicalBundle, reviewerAxisMethodAdapter } from "./reviewer-construction.js";
 export { sha256Hex } from "./sha256.js";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
 export const REVIEWER_CHILD_TOOLS = [
@@ -291,7 +291,7 @@ export function createReviewerDispatcher(dependencies) {
         ].join("\n");
         const axes = [{ axis: "standards", grant: standardsGrant }, ...(specGrant ? [{ axis: "spec", grant: specGrant }] : [])];
         const compilePrompt = dependencies.compilePrompt ?? ((prompt) => reviewerPromptIdentity(prompt));
-        const build = (axis, grant, pass) => compilePrompt(`${common}\nGrant: ${JSON.stringify(grant)}\nQuestion: ${axis === "standards" ? "Apply the complete canonical Standards brief and baseline from the bundle." : "Apply the canonical Spec brief from the bundle."}\n`, axis, pass);
+        const build = (axis, grant, pass) => compilePrompt(`${common}\nGrant: ${JSON.stringify(grant)}\n${reviewerAxisMethodAdapter(axis)}\n`, axis, pass);
         const first = axes.map(x => build(x.axis, x.grant, 1));
         const second = axes.map(x => build(x.axis, x.grant, 2));
         for (let i = 0; i < first.length; i++)

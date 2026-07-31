@@ -159,7 +159,10 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
         "runner.git.materialize-workspace",
         "runner.git.verify-snapshot",
       ]);
-      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Question: Apply the complete canonical Standards brief/);
+      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Answer only the canonical Standards question/);
+      assert.match(accepted.message.details.dispatch.legs[1].prompt.text, /Answer only the canonical Spec question/);
+      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Do not emit a Spec assessment/);
+      assert.match(accepted.message.details.dispatch.legs[1].prompt.text, /Do not emit a Standards assessment/);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.repositoryRoot, root);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.targetHead, target);
       for (const leg of accepted.message.details.dispatch.legs) {
