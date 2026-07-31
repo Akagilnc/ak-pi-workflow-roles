@@ -143,6 +143,7 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
         "src/reviewer-auditor.ts",
         "src/reviewer-execution-ledger.ts",
         "src/reviewer-role.ts",
+        "src/reviewer-verification-policy.ts",
         "src/role-runtime.ts",
         "src/soul-auditor.ts",
         "src/worker-role.ts",
