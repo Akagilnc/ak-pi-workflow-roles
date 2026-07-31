@@ -198,8 +198,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.equal(accepted.message.details.dispatch.targetSnapshot.objectFormat, "sha1");
       assert.deepEqual(accepted.message.details.dispatch.legs.map((leg: any) => leg.axis), ["standards"]);
       assert.equal(accepted.message.details.materials?.spec, undefined);
-      assert.equal(accepted.message.details.dispatch.materials.spec, undefined);
-      assert.equal(accepted.message.details.dispatch.materials.noSpecEvidence.length, 1);
+      assert.deepEqual(accepted.message.details.dispatch.materials.map((item: any) => item.id), ["no-spec"]);
       assert.equal(noSpecChildren.length, 1); assert.equal(noSpecAudits.length, 1);
       assert.doesNotMatch(userText(noSpecChildren[0]!), /Quote the spec line for each finding/);
       assert.doesNotMatch(userText(noSpecAudits[0]!), /\"axis\":\"spec\"/);
