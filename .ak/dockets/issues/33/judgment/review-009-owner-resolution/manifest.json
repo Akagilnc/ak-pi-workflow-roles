@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/judgment/review-009-owner-resolution"
+  },
+  "invocation": {
+    "id": "6a08e35e-4056-40ae-b127-16203db28a14"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/review-009-owner-resolution/session",
+      "--name",
+      "issue-33-review-009-owner-resolution",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #33 owner-resolution disposition\n\nOwner resolved the sole Review-009 decision gate by choosing option 4:\n\n> Relax compact-state policy for package call IDs and retain full strings within existing row/line limits.\n\nAuthoritative tracker comment: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/33#issuecomment-5145249654\n\nAt fixed HEAD `c81ef25f38df2984fd708c0057cc8e1ab5a05801`, convert `.ak/dockets/issues/33/judgment/review-009/receipt.json` into complete class-oriented direct Fixer Apply authority:\n\n- preserve exact full package call-ID replay state as an explicit compactness exception; authorize no digest, invented call-ID bound, or external index;\n- sustain native row-ID canonical-domain enforcement before exact retention;\n- carry forward the bounded security-source readability repair;\n- carry forward only the factually sustained `{path,dev,ino}` domain-type repair;\n- authorize only the narrowly identified ADR-0016 test thinning;\n- keep the lifecycle fixture-duplication finding rejected.\n\nNo Plan. Do not reopen closed Review-005 classes or alter the owner resolution. Return `continue` with stable class keys and exact boundaries, unless the resolution itself is internally impossible. Submit only through `ak_judge_output`; do not edit code."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "c81ef25f38df2984fd708c0057cc8e1ab5a05801",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review009-judgment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "c81ef25f38df2984fd708c0057cc8e1ab5a05801",
+        "path": ".ak/dockets/issues/33/judgment/review-009/receipt.json",
+        "blobOid": "16906d30364b57d0de966b2d089ef7c3f7e24cd5",
+        "sha256": "6365964bc2ec61ef3c1dce916958bd823d859e0f5ba4b599587ce3b33c88aeda",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review009",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "c81ef25f38df2984fd708c0057cc8e1ab5a05801",
+        "path": ".ak/dockets/issues/33/review/review-009/receipt.json",
+        "blobOid": "b8e2014b032ce378acf2ef5174e0f38fcb91ccac",
+        "sha256": "456f1176af91fab4af53ab2d379bca9b49544a2a92c878f361acdd9df8505a23",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "c8-amendment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "c81ef25f38df2984fd708c0057cc8e1ab5a05801",
+        "path": ".ak/dockets/issues/33/judgment/c8-legality-recheck/receipt.json",
+        "blobOid": "9197e1171d5d8f8109f701473dc515e8a3ee4604",
+        "sha256": "26f3993f4cf829b355a38538a9b796a792741991907f10737a36fab5012861fe",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "issue-33-owner-resolution",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-33-owner-resolution",
+        "sha256": "526e4b74b324c35043c105edca437f4c677b0afc28a5c3ccc8ae098fce069a83",
+        "byteLength": 11229
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "6d3bb7fec6c26a5530a28674590dfddb52000afc9e95db6399b58a735a5b73eb",
+        "byteLength": 1276
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "176da2d28ef4c268926385d93487d66eca958d7f5c7e7f49c9f27486657f62e4",
+        "byteLength": 5530
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "fd3a36fa40e411589d018497c18624718417942fbab09b8756c18ca6d702d761",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_LHLkezCbY2KrswvDf3vxAQ46|fc_0b434882c947405d016a6cd04e0738819198170a725aac4c17",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_LHLkezCbY2KrswvDf3vxAQ46|fc_0b434882c947405d016a6cd04e0738819198170a725aac4c17",
+    "auditPassed": true,
+    "usage": {
+      "input": 12938,
+      "output": 241,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 13179
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}
