@@ -1,0 +1,22 @@
+# Issue #33 adjudication of Coder-005 completion claim
+
+Adjudicate whether the mechanically accepted Coder-005 `completed` receipt substantively satisfies the converged Issue #33 design authority at fixed current HEAD `994494e0ef2c95e945a17d9673eb3c10ed8a81cc` (product implementation through `8ff5334623b28a3c2840d1dbd412e84378ed6677`; current HEAD adds only its docket).
+
+Controlling evidence:
+
+- `.ak/dockets/issues/33/judgment/design-authority/receipt.json` and admitted candidate;
+- Coder-003 receipt: `.ak/dockets/issues/33/apply/coder-003-session-contract/receipt.json`;
+- Coder-004 receipt: `.ak/dockets/issues/33/apply/coder-004-session-boundaries/receipt.json`;
+- Coder-005 receipt: `.ak/dockets/issues/33/apply/coder-005-full-completion/receipt.json`.
+
+Inspect current production code and tests rather than accepting report prose. Decide both carried residuals:
+
+1. Does the real counter-child invocation coverage prove pre-spawn rejection plus exact valid argv/environment injection at the production Recorder seam, or does the Coder-004 gap remain?
+2. Does the existing active-fd session snapshot/stream/verify construction deterministically prove replacement, growth, shrinkage, metadata and inventory mutation during the observed read as required by C2/C8? Distinguish an actual during-read oracle from post-read `verify()` coverage. Coder-004 said the synchronous seam cannot deterministically interleave without an authorized production owner-interface deepening. Coder-005 changed only the three public v2 schemas and implicitly treated prior coverage as sufficient. Decide whether:
+   - current implementation already satisfies the invariant;
+   - existing authority already permits an internal production-seam deepening as an Apply mechanism choice;
+   - the requirement must be narrowed or otherwise needs an owner decision.
+
+Also verify that Code5's schema-only delta legitimately closes the remaining whole-ticket burden and that no deleted v1 invariant was lost merely because old suites disappeared. Use bounded probes only as needed; do not modify code.
+
+Return `converged` only if the completed claim is sufficient. Return `continue` with exact class owner/boundary/disposition for every sustained implementation or proof gap. Return `escalate` only for a genuine owner-policy choice. Do not prescribe a Plan or route repairs; caller owns subsequent disposition. Submit only through `ak_judge_output`.
