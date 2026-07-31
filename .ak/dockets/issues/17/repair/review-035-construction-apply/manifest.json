@@ -1,0 +1,120 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/repair/review-035-construction-apply"
+  },
+  "invocation": {
+    "id": "0198f1a0-1700-7000-8000-000000000018"
+  },
+  "session": {
+    "id": "0198f1a0-1700-7000-8000-000000000018",
+    "directory": ".ak/work/issues/17/runs/review-035-construction-fix/session",
+    "basename": "2026-07-31T20-06-47-342Z_0198f1a0-1700-7000-8000-000000000018.jsonl",
+    "sha256": "e864f565d7e75f7aa67fa6faa120a41b22605b22240b33b5c299e4b2c32dffff",
+    "byteLength": 363633,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work/issues/17/runs/review-035-construction-fix/session",
+      "--session-id",
+      "0198f1a0-1700-7000-8000-000000000018",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--name",
+      "issue-17-review-035-construction-fix",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/17/review-035-construction-fix.md",
+      "-p",
+      "Apply the authorized Reviewer construction ownership class."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": [
+        "PI_SESSION_DIR"
+      ]
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "9f33450a52c7627b1860b65e9ac02f5165dc94d9",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "judge-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "9f33450a52c7627b1860b65e9ac02f5165dc94d9",
+        "path": ".ak/dockets/issues/17/judgment/review-035/receipt.json",
+        "blobOid": "9fc36782b3a7b40784ab2b0638577264cdc5666c",
+        "sha256": "b85c2b3f810bf055c89b87161e0d99845147a281f7d740c9c7d7c4506e704152",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "fix-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/fix-task",
+        "sha256": "533266a20e506cf589c1265654728df32622586fa518457640a1638f5b736ed5",
+        "byteLength": 1123
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "d999d671d284e3136c477c6eb4b44a0bdc3f20f57c93a1c3aff46029b3615275",
+        "byteLength": 2174
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_K4S72Z2jBJRvDcUrh8hPrWZ5|fc_0aad1c9f219b58e7016a6d0217778481919f90f6f97adb1b25",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
