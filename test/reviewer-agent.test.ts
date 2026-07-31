@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,6 +21,7 @@ import {
 import {
   ModelRegistry,
   ModelRuntime,
+  SessionManager,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
@@ -121,6 +122,7 @@ async function parentContext(
       model,
       thinkingLevel: "off",
       modelRegistry: new ModelRegistry(runtime),
+      sessionManager: SessionManager.inMemory(cwd),
     } as unknown as ExtensionContext,
     faux,
   };
@@ -255,6 +257,27 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
   }
 });
 
+test("Reviewer persists child sessions beside a persisted parent session", async () => {
+  const source = await repository();
+  const sessionRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-session-test-"));
+  const { context } = await parentContext(source.root, async () => {}, 1);
+  Object.assign(context, {
+    sessionManager: SessionManager.create(source.root, sessionRoot),
+  });
+  try {
+    const runner = createReviewerAgentRunner();
+    await runner.runReviewerAgent(
+      { description: "Standards", prompt: "Persist this child session" },
+      { context },
+    );
+    const files = await readdir(join(sessionRoot, "reviewer-legs"));
+    assert.equal(files.some((file) => file.endsWith(".jsonl")), true);
+  } finally {
+    await rm(sessionRoot, { recursive: true, force: true });
+    await rm(source.root, { recursive: true, force: true });
+  }
+});
+
 test("Reviewer child provider delegates class-private streams to the original receiver", async () => {
   const source = await repository();
   const faux = fauxProvider({
@@ -326,6 +349,7 @@ test("Reviewer child provider delegates class-private streams to the original re
     model: originalModel,
     thinkingLevel: "off",
     modelRegistry: new ModelRegistry(runtime),
+    sessionManager: SessionManager.inMemory(source.root),
   } as unknown as ExtensionContext;
   const runner = createReviewerAgentRunner();
   try {

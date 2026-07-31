@@ -379,7 +379,12 @@ async function runChild(
     modelRuntime: runtime,
     resourceLoader: loader,
     tools: CHILD_TOOLS,
-    sessionManager: SessionManager.inMemory(workspace),
+    sessionManager: context.sessionManager.getSessionFile() === undefined
+      ? SessionManager.inMemory(workspace)
+      : SessionManager.create(
+          workspace,
+          join(context.sessionManager.getSessionDir(), "reviewer-legs"),
+        ),
     settingsManager: settings,
   });
   const usage = emptyUsage();
