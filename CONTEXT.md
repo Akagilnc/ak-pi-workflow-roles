@@ -22,6 +22,6 @@
 - **Doctor(医生)**:对工厂做体检并开方的举证角色;不施工、不裁决、不改法。唯一病人=工厂,方子走正常法链。
 - **工厂(Factory)**:车间整体——角色、闸、法、包模板、流程站点。医生的唯一病人;案子只是症状载体,永远不是病人。
 - **方子(Prescription)**:医生的 finding 加处置建议(`keep|thin|delete`);治系统不治症状,同任何提案一样走法链。
-- **真咬人(Real bite)**:某道闸最近真拦下东西的证据——dockets 里的回执/判词引用;回声与散文不构成证据。
-- **生命体征(Vital sign)**:issue 立案到 PR 并入 default 的墙钟,按跨案人口统计读;校准:一天=正常速度。
-- **计数行(Stats line)**:结案时从 dockets 机械导出的每案计数;closure 产出,recurrence 受理在环内消费,医生在环外消费。
+- **真咬人(Real bite)**:某道闸最近真拦下东西的证据——dockets 里的实际 Receipt/verdict 引用;回声与散文不构成证据。完整有界检索得到的 `noRealBite` 是无咬人证明,不是一次咬人。
+- **生命体征(Vital sign)**:issue 立案到 PR 并入 default 的墙钟,按跨案人口统计读;一天仅是 owner 校准语境,不是 SLA 或判定。
+- **计数行(Stats line)**:closure 从目标 commit 的本案 dockets 已提交人口确定性导出的版本化每案计数;可证值与 typed unavailable 均保真,closure 保存于同一账本,医生只消费累积行。

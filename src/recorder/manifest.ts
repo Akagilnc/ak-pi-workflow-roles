@@ -63,18 +63,29 @@ export function loadPublicManifestSchema() {
 export function validatePublicManifest(
   value: unknown,
 ): asserts value is RecorderManifestV2 {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const record = (candidate: unknown): candidate is Record<string, unknown> =>
+    typeof candidate === "object" && candidate !== null && !Array.isArray(candidate);
+  const exact = (candidate: Record<string, unknown>, keys: readonly string[]) => {
+    const actual = Object.keys(candidate);
+    return actual.length === keys.length && keys.every((key) => Object.hasOwn(candidate, key));
+  };
+  if (!record(value) || !exact(value, ["version", "archive", "invocation", "session", "execution", "provenance", "artifacts", "receipt", "auditObservation", "child", "recorder", "redaction"])) {
     throw internalRecorderError("manifest", new Error("manifest shape"));
   }
-  const manifest = value as RecorderManifestV2;
-  if (
-    manifest.version !== 2 ||
-    manifest.invocation.id !== manifest.session.id ||
-    !manifest.receipt ||
-    manifest.execution.stdio.stdout !== "pass-through" ||
-    manifest.execution.stdio.diagnosticTailBytes !== 4096
-  ) {
+  const manifest = value as unknown as RecorderManifestV2;
+  if (!record(manifest.invocation) || !record(manifest.session) || !record(manifest.execution) ||
+      !record(manifest.execution.stdio) || !record(manifest.receipt) || !Array.isArray(manifest.artifacts) ||
+      manifest.version !== 2 || manifest.invocation.id !== manifest.session.id ||
+      typeof manifest.invocation.id !== "string" || manifest.invocation.id.length === 0 ||
+      !Array.isArray(manifest.execution.argv) || !manifest.execution.argv.every((arg) => typeof arg === "string") ||
+      manifest.receipt.artifactId !== "receipt" ||
+      !["acceptedReceipt", "sanitizedDerivativeOfAcceptedReceipt"].includes(manifest.receipt.artifactKind) ||
+      manifest.execution.stdio.stdout !== "pass-through" || manifest.execution.stdio.diagnosticTailBytes !== 4096) {
     throw internalRecorderError("manifest", new Error("manifest invariant"));
+  }
+  const receipts = manifest.artifacts.filter((artifact) => artifact && typeof artifact === "object" && artifact.id === "receipt" && artifact.kind === "receipt" && artifact.stored?.identity === "stored");
+  if (receipts.length !== 1) {
+    throw internalRecorderError("manifest", new Error("manifest receipt invariant"));
   }
 }
 

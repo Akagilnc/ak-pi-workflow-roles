@@ -8,12 +8,12 @@ import {
   type AcceptedDetails,
   type TerminatingToolName,
 } from "../package-contracts/terminating-tools.ts";
-import type { CollectorReceipt, JudgeVerdict, RuntimeReviewerReceiptV2, WorkerOutput } from "../package-contracts/terminating-tools.ts";
+import type { CollectorReceipt, DoctorOutput, JudgeVerdict, RuntimeReviewerReceiptV2, WorkerOutput } from "../package-contracts/terminating-tools.ts";
 import { RecorderError } from "./errors.ts";
 import { combineReports, scanJsonValue, type ScanReport } from "./scanner.ts";
 
-export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt; kind: "worker" | "reviewer" | "judge" | "collector" };
-export type AuditObservation = { toolName: "ak_judge_output" | "ak_reviewer_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
+export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt | DoctorOutput; kind: "worker" | "reviewer" | "judge" | "collector" | "doctor" };
+export type AuditObservation = { toolName: "ak_judge_output" | "ak_reviewer_output" | "ak_doctor_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
 export type ExtractionResult = { receipt: AcceptedReceipt; auditObservation: AuditObservation | null; artifactKind: "acceptedReceipt" | "sanitizedDerivativeOfAcceptedReceipt"; report: ScanReport };
 
 type DirectIssuance = { index: number; rowId: unknown; toolCallId: string; toolName: TerminatingToolName; arguments: unknown };
@@ -48,6 +48,7 @@ function receiptKind(toolName: TerminatingToolName): AcceptedReceipt["kind"] {
   if (toolName === "ak_collector_output") return "collector";
   if (toolName === "ak_judge_output") return "judge";
   if (toolName === "ak_reviewer_output") return "reviewer";
+  if (toolName === "ak_doctor_output") return "doctor";
   return "worker";
 }
 

@@ -165,7 +165,7 @@ test("stable factory registers all role flags in exact help order and stays iner
 
   assert.deepEqual([...harness.flags], [
     ["ak-role", {
-      description: "Activate a packaged workflow role: judge, fixer, coder, reviewer, or collector",
+      description: "Activate a packaged workflow role: judge, fixer, coder, reviewer, collector, or doctor",
       type: "string",
     }],
     ["ak-fix-packet", {
@@ -194,6 +194,10 @@ test("stable factory registers all role flags in exact help order and stays iner
     }],
     ["ak-review-scope-keys", {
       description: "Optional comma-separated exact class keys limiting Reviewer scope",
+      type: "string",
+    }],
+    ["ak-doctor-evidence", {
+      description: "Path to a frozen Doctor v1 evidence index JSON file",
       type: "string",
     }],
     ["ak-collector-repo", {
