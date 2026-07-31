@@ -44,6 +44,12 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 **接住可以，洗白不行**：未识别异常不得冒用具体标签；真因必须落痕；catch 后照常继续视同缺陷，除非「此失败下继续」是文档化契约。
 
+## Role invocation evidence
+
+所有 Judge、Fixer、Coder、Reviewer、Collector 调用必须使用 Pi 原生 session 持久化：以 `--session-dir .ak/work/<issue>/runs/<invocation>/session` 取代 `--no-session`，stdout 可丢弃；同目录以 `0600` 保存 `stderr.log` 与 `invocation.json`（至少包含开始、结束、耗时、退出码和 session 目录）。`.ak/work/` 必须保持 gitignored；原始 session、stderr 和 invocation metadata 不得提交，确认无用后手工删除。
+
+上游/provider 诊断必须原样保留为素材，但不得过度声称：例如只有 `WebSocket error` 而没有 close code、close reason 或底层 cause 时，只能证明 WebSocket 层失败，真因仍为 `insufficient-evidence`。
+
 ## 锚定宪法
 
 **机器只咬契约，不咬呈现**：对自由文本的正则/措辞/表头机械依赖、对图像的像素机械依赖，视同缺陷；机器要消费的信息必须以键、typed 字段或 schema 提供。呈现为人服务，随时可重排。
