@@ -1,0 +1,15 @@
+# Issue #17 Skill binding and recipe recompilation repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-029/receipt.json`, exact canonical Skill snapshot binding, independent construction replay, and deepest-owner documentation law.
+
+R1 — Include the exact canonical Skill snapshot SHA-256 in the common deterministic provenance block of every compiled child prompt. Any canonical Skill byte change, including outside extracted axis sections, must change both Standards and Spec prompt identities while source constants remain unchanged. Keep full raw Skill prose out of prompts except selected canonical sections.
+
+R2 — Recompile each axis prompt twice by invoking the complete pure construction recipe independently from the same frozen inputs: axis instructions, canonical Skill snapshot/sections/digest, task identity, target/range/commits, selected material identities/paths/exact text, and grant facts as applicable. Do not prebuild one prompt string and hash it twice. Validate each full identity and compare exact text/length/hash before acceptance.
+
+R3 — Add a stateful/nondeterministic seam at a real recipe input/render stage (not only identity hashing) and prove preflight rejects with zero child effects. Add canonical Skill unextracted-byte mutation tests proving both prompt hashes change; exact replay green tests remain byte-identical.
+
+R4 — Reduce README Reviewer documentation to caller-facing invocation flags/example and references to exported runtime schema/TypeScript as authority. Remove duplicated exact field lists, vocabularies, optionality, and cardinality semantics. Extract the repeated Reviewer test activation/expansion helper.
+
+R5 — Run focused tests, package lifecycle, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R5.
