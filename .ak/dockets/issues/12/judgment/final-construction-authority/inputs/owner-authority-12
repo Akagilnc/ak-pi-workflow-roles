@@ -1,0 +1,16 @@
+# Owner comment 12
+
+URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5140773944
+Created: 2026-07-31T08:11:23Z
+Author: Akagilnc
+
+## Owner 裁定(2026-07-31 傍晚,多次重申后正式记档):修理围栏=issue/authority 范围,不是修理包范围
+
+soul 现行条款「最小、不得扩大到修理包和 authority 之外」将围栏立在包上——owner 裁定此为错误定界:**包是抽样派单载体,不是法域**;边界由本次 issue 的立法范围与 authority(票面 mandate+判官处置)划定,同类实例凡落在 issue 范围内即为在权,修之天经地义。
+
+法理依据:全家宪法四理由法对 scope_creep 的定义(「修法发明 authority/spec 未授权的新行为」)明文排除「邻接文件/偶然发现的 bug」——包级围栏比宪法严一圈,系未经决策台的私自加严。
+
+实测代价(#23,2026-07-31):包级围栏 × 无清单义务 → fixer 每轮只修点名样本,同类残留逐轮由 review 全价发现,五轮平坡(7→?→7→6→7)。
+
+与本票既有材料的关系:直接解决「问题二」所记 soul 反向拉力;与 fixer 身份裁定(修类不修点)配对——身份定「修类」,本裁定定「类的边界在哪」。soul 文本修订走 #25 持久化+车间闸,owner 全文过目后落笔。
+

@@ -1,0 +1,27 @@
+# Owner comment 3
+
+URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5139064115
+Created: 2026-07-31T03:53:11Z
+Author: Akagilnc
+
+## 医生开机第一轮体检素材(2026-07-31 午后,owner 拍定记档)
+
+两个现成病例,均有完整案卷:
+
+### 病例一:runner 席位——无笼、无档、损失集中
+
+- **无笼**:`souls/` 五份法典无 runner;交卷穷审计只盖 worker 腿,不盖 runner 的手。
+- **无档**:runner 行为的唯一证据源是 Pi session 尾气,而尾气按小核法属默认删除的执行废气——工厂对驾驶座既无闸也不建档。
+- **损失集中(07-31 实测)**:两条 ~920s 腿烧在 runner 操作判断上(config 未经本地校验点火、根因未复现即换猜想重试);finding 裁量(该不该修)在 runner 编包步完成,31/32 轮零驳回记录且无对账,静默漏不可探测。
+- 关联案卷:#23(含三次事实反转全过程)、#13(重试纪律)、#15B(裁量对账形状)。
+- 附注:全局家法经 V2 仓 AGENTS.md 指针达 runner(session 指纹 44 处),但仅为自觉层;执法机器(reviewer/judge/审计)只读仓内法。
+
+### 病例二:法典住错楼——README 越权承载法
+
+- README 编制(按本仓 CLAUDE.md 分层表)=「CLI 参数、安装方式和调用方使用说明」,实际 261 行里塞着回执契约、失败语义、Recorder config 法条;32 轮评审引它 20 次当 Standards 法源,法的权威锚在使用说明的行号上。
+- README §Config 逐条复述 config.ts 校验器已机械执行的规则=同一契约双真源(DRY 违例),代码与文档漂移时 reviewer 会拿旧法咬新码。
+
+### 已立之法(体检时可用作宪法依据)
+
+- 失败诚实宪法已入仓内 CLAUDE.md(分支 `design/failure-honesty-constitution`,9d80a23,待主刀收编):「接住可以,洗白不行」——未识别异常不得冒用具体标签;真因必须落痕;swallow-and-continue 视同缺陷除非文档化契约。体检可据此横扫各角落 catch 的合宪性(实证:run.ts:557 catch-all 冒标 invalid-config 案,#23)。
+
