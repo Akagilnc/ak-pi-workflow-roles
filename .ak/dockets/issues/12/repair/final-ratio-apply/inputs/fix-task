@@ -1,0 +1,7 @@
+# Issue #12 Fixer Apply — remaining StatsLine ratio-state invariant
+
+Sole authority: `.ak/dockets/issues/12/judgment/final-convergence/receipt.json`.
+
+Complete the remaining `F5-closed-statsline-metric-validation` boundary: if recorded unclassified > 0, ratio must be unavailable `unclassifiable-receipt`; if zero, that reason is invalid. Reject measured or `no-apply-receipts` with unclassified receipts. Add the exact table-driven contradictions, preserve producer complement law and all other metric validation.
+
+Regenerate `dist/stats-line.js`; run focused, typecheck, isolated-HOME full, package/cold-install/parity, pack dry-run, diff check; commit forward and submit exactly this class.
