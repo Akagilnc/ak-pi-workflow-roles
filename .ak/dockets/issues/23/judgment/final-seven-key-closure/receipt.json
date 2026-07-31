@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_d7jbns3Ql6LJxgyrpnp2DzIl|fc_0840d97966a5e4e7016a6c6ffeb06081919e68e26e07407896",
+  "details": {
+    "judgeStatus": "converged",
+    "note": "K1 `no-mislabel` — DELIVERED: unknown/non-Recorder exceptions terminate as `internal-error`; specific labels remain owner-proven.\nK2 `cause-trace` — DELIVERED: caught causes produce scanner-safe typed `stage`/`category` diagnostics without raw cause text.\nK3 `structural-pointer` — DELIVERED: config failures carry typed schema paths with numeric indices where applicable.\nK4 `mine-removed` — DELIVERED: the evidenced catch-all and pre-spawn cost-order mechanisms are removed; no historical 920-second root cause is claimed.\nK5 `static-before-expensive` — DELIVERED: pure structure precedes metadata scanning, stateful filesystem/Git admission, scratch/stage allocation, and spawn.\nK6 `shared-entry` — DELIVERED: Recorder is one role-neutral command wrapper and all Recorder-wrapped role commands traverse the same `runRecorder` entry without role-specific bypass.\nK7 `corrected-case` — DELIVERED: durable authority/plan/apply evidence preserves child `not-spawned`, the valid historical config, the former catch-all impostor label, and indeterminate historical timing/root without reviving superseded allegations.\nConstruction posture — CLOSED: issue #23 requires no further construction, Reviewer, or Fixer; Review-009 residuals and unknown constitutional debt remain transferred to issue #26. Current HEAD retains the class repair unchanged, the worktree is clean, `git diff --check` passes, and focused production-seam verification passes 39/39."
+  },
+  "artifactKind": "acceptedReceipt"
+}
