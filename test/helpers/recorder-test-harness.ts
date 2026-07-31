@@ -260,11 +260,11 @@ if (mode === "native-session") {
   const sessionId = process.argv[process.argv.indexOf("--session-id") + 1];
   mkdirSync(sessionDir, { recursive: true });
   const details = { status: "completed", report: process.env.AK_REPORT ?? "done" };
-  const issuedId = "issued";
+  const issuedId = "00000001";
   const rows = [
     { type: "session", version: 3, id: sessionId, timestamp: "2026-01-01T00:00:00.000Z", cwd: process.cwd() },
     { type: "message", id: issuedId, parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "call-1", name: "ak_coder_output", arguments: details }], stopReason: "toolUse", timestamp: Date.now() } },
-    { type: "message", id: "result", parentId: issuedId, timestamp: "2026-01-01T00:00:02.000Z", message: { role: "toolResult", toolCallId: "call-1", toolName: "ak_coder_output", content: [{ type: "text", text: "presentation" }], isError: false, details, timestamp: Date.now() } },
+    { type: "message", id: "00000002", parentId: issuedId, timestamp: "2026-01-01T00:00:02.000Z", message: { role: "toolResult", toolCallId: "call-1", toolName: "ak_coder_output", content: [{ type: "text", text: "presentation" }], isError: false, details, timestamp: Date.now() } },
   ];
   writeFileSync(join(sessionDir, "native_" + sessionId + ".jsonl"), rows.map(JSON.stringify).join("\n") + "\n");
   process.stdout.write("OUT:native\n");
