@@ -180,8 +180,23 @@ export function parseRecorderConfigStructure(text) {
         ]);
     const overrides = {};
     for (const [key, value] of Object.entries(environment.overrides)) {
+        // v1 environment name: nonempty, no NUL, no '=' (name/value boundary).
+        // Reject at the container path — never expose the attacker-controlled key.
+        if (key.length === 0 || key.includes("\0") || key.includes("="))
+            invalid("environment override name is unlawful", [
+                "execution",
+                "environment",
+                "overrides",
+            ]);
         if (typeof value !== "string")
             invalid("override values must be strings", [
+                "execution",
+                "environment",
+                "overrides",
+            ]);
+        // Values must not contain NUL (Node rejects NUL at spawn).
+        if (value.includes("\0"))
+            invalid("environment override value contains NUL", [
                 "execution",
                 "environment",
                 "overrides",
@@ -199,6 +214,14 @@ export function parseRecorderConfigStructure(text) {
     for (const [index, value] of environment.unset.entries()) {
         if (typeof value !== "string" || !value)
             invalid("unset entry must be a non-empty string", [
+                "execution",
+                "environment",
+                "unset",
+                index,
+            ]);
+        // Same name lexical rules as overrides.
+        if (value.includes("\0") || value.includes("="))
+            invalid("environment unset name is unlawful", [
                 "execution",
                 "environment",
                 "unset",

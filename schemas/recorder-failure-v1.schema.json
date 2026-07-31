@@ -50,15 +50,45 @@
             "array",
             "null"
           ],
+          "maxItems": 4,
           "items": {
             "oneOf": [
               {
                 "type": "string",
-                "maxLength": 128
+                "enum": [
+                  "version",
+                  "archive",
+                  "repositoryRoot",
+                  "root",
+                  "docketId",
+                  "execution",
+                  "cwd",
+                  "environment",
+                  "inherit",
+                  "overrides",
+                  "unset",
+                  "stdin",
+                  "declarations",
+                  "gitReferences",
+                  "externalInputs",
+                  "exhibits",
+                  "id",
+                  "commit",
+                  "path",
+                  "blobOid",
+                  "sha256",
+                  "kind",
+                  "sourcePath",
+                  "provenance",
+                  "package",
+                  "model",
+                  "target"
+                ]
               },
               {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "maximum": 2147483647
               }
             ]
           }
@@ -91,7 +121,8 @@
                     "generated-artifacts",
                     "manifest",
                     "cleanup",
-                    "promotion"
+                    "promotion",
+                    "launcher"
                   ]
                 },
                 "category": {
@@ -137,6 +168,127 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "internal-error"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "diagnostic": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "code": { "const": "invalid-argv" },
+                "message": { "const": "invalid Recorder argv" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "invalid-config" },
+                "message": { "const": "invalid Recorder config" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "invalid-archive" },
+                "message": { "const": "invalid archive worktree" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "invalid-path" },
+                "message": { "const": "invalid path" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "destination-exists" },
+                "message": { "const": "archive destination already exists" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "spawn-failed" },
+                "message": { "const": "failed to spawn child process" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "scan-failed" },
+                "message": { "const": "credential scan failed" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "admission-failed" },
+                "message": { "const": "declaration admission failed" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "reference-failed" },
+                "message": { "const": "git reference verification failed" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "extraction-failed" },
+                "message": { "const": "receipt extraction failed" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "cleanup-failed" },
+                "message": { "const": "required raw scratch cleanup failed" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "promotion-failed" },
+                "message": { "const": "atomic promotion failed" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "opaque-content" },
+                "message": { "const": "unsupported opaque content cannot be promoted" }
+              },
+              "required": ["code", "message"]
+            },
+            {
+              "properties": {
+                "code": { "const": "internal-error" },
+                "message": { "const": "internal Recorder failure" }
+              },
+              "required": ["code", "message"]
+            }
+          ]
         }
       ]
     },
@@ -180,7 +332,9 @@
               "const": "exited"
             },
             "exitCode": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
             },
             "signal": {
               "type": "null"
@@ -212,8 +366,42 @@
             },
             "signal": {
               "type": "string",
-              "minLength": 1,
-              "maxLength": 32
+              "enum": [
+                "SIGABRT",
+                "SIGALRM",
+                "SIGBUS",
+                "SIGCHLD",
+                "SIGCONT",
+                "SIGFPE",
+                "SIGHUP",
+                "SIGILL",
+                "SIGINT",
+                "SIGIO",
+                "SIGIOT",
+                "SIGKILL",
+                "SIGPIPE",
+                "SIGPOLL",
+                "SIGPROF",
+                "SIGPWR",
+                "SIGQUIT",
+                "SIGSEGV",
+                "SIGSTKFLT",
+                "SIGSTOP",
+                "SIGSYS",
+                "SIGTERM",
+                "SIGTRAP",
+                "SIGTSTP",
+                "SIGTTIN",
+                "SIGTTOU",
+                "SIGUNUSED",
+                "SIGURG",
+                "SIGUSR1",
+                "SIGUSR2",
+                "SIGVTALRM",
+                "SIGWINCH",
+                "SIGXCPU",
+                "SIGXFSZ"
+              ]
             },
             "diagnostic": {
               "type": [

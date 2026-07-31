@@ -142,10 +142,16 @@ function destinationPath(config: RecorderConfig): string {
   );
 }
 
-function destinationOccupied(dest: string): boolean {
+/** Proved destination probe: occupancy requires successful lstat. */
+type DestinationProbe =
+  | { kind: "occupied" }
+  | { kind: "absent" }
+  | { kind: "error"; cause: unknown };
+
+function probeDestination(dest: string): DestinationProbe {
   try {
     lstatSync(dest);
-    return true;
+    return { kind: "occupied" };
   } catch (error) {
     const code =
       typeof error === "object" &&
@@ -154,9 +160,8 @@ function destinationOccupied(dest: string): boolean {
       typeof (error as { code: unknown }).code === "string"
         ? (error as { code: string }).code
         : null;
-    if (code === "ENOENT") return false;
-    // Unreadable destination name is treated as occupied/unsafe.
-    return true;
+    if (code === "ENOENT") return { kind: "absent" };
+    return { kind: "error", cause: error };
   }
 }
 
@@ -196,15 +201,26 @@ function promoteStageAtomically(
     renameNoReplace(stageRoot, dest);
   } catch (error) {
     if (error instanceof RecorderError) throw error;
-    // Occupied final name (file/dir/symlink/empty dir) — never mutate it.
-    if (isOccupiedRenameError(error) || destinationOccupied(dest)) {
+    // Occupancy is proved only by the finite native no-replace collision predicate
+    // (or a successful occupancy observation). Always retain the rename cause.
+    if (isOccupiedRenameError(error)) {
       throw new RecorderError(
         "destination-exists",
         "archive destination already exists",
+        { cause: error, diagnostic: safeDiagnostic("promotion", error) },
+      );
+    }
+    const probe = probeDestination(dest);
+    if (probe.kind === "occupied") {
+      throw new RecorderError(
+        "destination-exists",
+        "archive destination already exists",
+        { cause: error, diagnostic: safeDiagnostic("promotion", error) },
       );
     }
     throw new RecorderError("promotion-failed", "atomic promotion failed", {
       cause: error,
+      diagnostic: safeDiagnostic("promotion", error),
     });
   }
 }
@@ -284,12 +300,21 @@ export async function runRecorder(options: {
       config.archive.repositoryRoot,
       "archive destination",
     );
-    if (destinationOccupied(dest)) {
+    const destProbe = probeDestination(dest);
+    if (destProbe.kind === "occupied") {
       return fail(
         new RecorderError(
           "destination-exists",
           "archive destination already exists",
         ),
+      );
+    }
+    if (destProbe.kind === "error") {
+      return fail(
+        new RecorderError("internal-error", undefined, {
+          cause: destProbe.cause,
+          diagnostic: safeDiagnostic("destination", destProbe.cause),
+        }),
       );
     }
 

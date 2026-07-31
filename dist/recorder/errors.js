@@ -7,21 +7,46 @@ export const RECORDER_FAILURE_CODES = [
 export const RECORDER_STAGES = [
     "argv", "config-read", "config-structure", "config-metadata-scan", "config-state",
     "destination", "stage-allocation", "admission", "spawn", "extraction",
-    "generated-artifacts", "manifest", "cleanup", "promotion",
+    "generated-artifacts", "manifest", "cleanup", "promotion", "launcher",
 ];
 export const RECORDER_DIAGNOSTIC_CATEGORIES = [
     "filesystem-missing", "filesystem-inaccessible", "filesystem-not-file",
     "filesystem", "process", "platform-error", "error", "non-error-throw",
 ];
-const PUBLIC_MESSAGES = {
-    "invalid-argv": "invalid Recorder argv", "invalid-config": "invalid Recorder config",
-    "invalid-archive": "invalid archive worktree", "invalid-path": "invalid path",
-    "destination-exists": "archive destination already exists", "spawn-failed": "failed to spawn child process",
-    "scan-failed": "credential scan failed", "admission-failed": "declaration admission failed",
-    "reference-failed": "git reference verification failed", "extraction-failed": "receipt extraction failed",
-    "cleanup-failed": "required raw scratch cleanup failed", "promotion-failed": "atomic promotion failed",
-    "opaque-content": "unsupported opaque content cannot be promoted", "internal-error": "internal Recorder failure",
+/** Fixed public messages — one per code; schema must enumerate the same pairs. */
+export const RECORDER_PUBLIC_MESSAGES = {
+    "invalid-argv": "invalid Recorder argv",
+    "invalid-config": "invalid Recorder config",
+    "invalid-archive": "invalid archive worktree",
+    "invalid-path": "invalid path",
+    "destination-exists": "archive destination already exists",
+    "spawn-failed": "failed to spawn child process",
+    "scan-failed": "credential scan failed",
+    "admission-failed": "declaration admission failed",
+    "reference-failed": "git reference verification failed",
+    "extraction-failed": "receipt extraction failed",
+    "cleanup-failed": "required raw scratch cleanup failed",
+    "promotion-failed": "atomic promotion failed",
+    "opaque-content": "unsupported opaque content cannot be promoted",
+    "internal-error": "internal Recorder failure",
 };
+/** Finite supported darwin/linux signal names for the failure wire. */
+export const RECORDER_SUPPORTED_SIGNALS = [
+    "SIGABRT", "SIGALRM", "SIGBUS", "SIGCHLD", "SIGCONT", "SIGFPE", "SIGHUP",
+    "SIGILL", "SIGINT", "SIGIO", "SIGIOT", "SIGKILL", "SIGPIPE", "SIGPOLL",
+    "SIGPROF", "SIGPWR", "SIGQUIT", "SIGSEGV", "SIGSTKFLT", "SIGSTOP", "SIGSYS",
+    "SIGTERM", "SIGTRAP", "SIGTSTP", "SIGTTIN", "SIGTTOU", "SIGUNUSED", "SIGURG",
+    "SIGUSR1", "SIGUSR2", "SIGVTALRM", "SIGWINCH", "SIGXCPU", "SIGXFSZ",
+];
+/** Finite v1 location path segment vocabulary (string keys only). */
+export const RECORDER_LOCATION_SEGMENTS = [
+    "version", "archive", "repositoryRoot", "root", "docketId",
+    "execution", "cwd", "environment", "inherit", "overrides", "unset", "stdin",
+    "declarations", "gitReferences", "externalInputs", "exhibits",
+    "id", "commit", "path", "blobOid", "sha256", "kind", "sourcePath",
+    "provenance", "package", "model", "target",
+];
+const PUBLIC_MESSAGES = RECORDER_PUBLIC_MESSAGES;
 function platformCode(value) {
     if (typeof value !== "object" || value === null || !("code" in value))
         return null;
@@ -58,6 +83,29 @@ export class RecorderError extends Error {
     get publicMessage() { return PUBLIC_MESSAGES[this.code]; }
 }
 export const RECORDER_FAILURE_EXIT = 125;
-export function internalRecorderError(stage, cause) { return new RecorderError("internal-error", undefined, { cause, diagnostic: safeDiagnostic(stage, cause) }); }
-export function toPublicFailure(error, child) { return { recorder: { status: "failed", code: error.code, message: error.publicMessage, location: error.location, diagnostic: error.diagnostic }, child }; }
-export function serializePublicFailure(error, child) { return `${JSON.stringify(toPublicFailure(error, child))}\n`; }
+export function internalRecorderError(stage, cause) {
+    return new RecorderError("internal-error", undefined, { cause, diagnostic: safeDiagnostic(stage, cause) });
+}
+export function toPublicFailure(error, child) {
+    const diagnostic = error.diagnostic ??
+        (error.code === "internal-error" && error.cause !== undefined
+            ? safeDiagnostic("launcher", error.cause)
+            : error.diagnostic);
+    // internal-error always carries a diagnostic on the public wire.
+    const publicDiagnostic = error.code === "internal-error"
+        ? (diagnostic ?? { stage: "launcher", category: "error" })
+        : diagnostic;
+    return {
+        recorder: {
+            status: "failed",
+            code: error.code,
+            message: error.publicMessage,
+            location: error.location,
+            diagnostic: publicDiagnostic,
+        },
+        child,
+    };
+}
+export function serializePublicFailure(error, child) {
+    return `${JSON.stringify(toPublicFailure(error, child))}\n`;
+}

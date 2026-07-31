@@ -15,16 +15,55 @@ import { fileURLToPath } from "node:url";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const entry = resolve(packageRoot, "dist/recorder/cli.js");
 
-function writeLauncherFailure() {
-  // Fixed sanitized JSON — never interpolate attacker-controlled text.
+/**
+ * Finite platform-code → category map (mirrors errors.ts safeDiagnostic).
+ * Never interpolates message, stack, path, argv, or environment.
+ */
+function categoryFromCause(cause) {
+  const code =
+    typeof cause === "object" &&
+    cause !== null &&
+    typeof cause.code === "string"
+      ? cause.code
+      : null;
+  if (code === "ENOENT") return "filesystem-missing";
+  if (code === "EACCES" || code === "EPERM") return "filesystem-inaccessible";
+  if (code === "EISDIR") return "filesystem-not-file";
+  const filesystem = new Set([
+    "EEXIST",
+    "ENOTDIR",
+    "ENOTEMPTY",
+    "EROFS",
+    "EXDEV",
+    "ELOOP",
+    "ENOSPC",
+    "EMFILE",
+    "ENFILE",
+  ]);
+  const processCodes = new Set(["ECHILD", "ENOEXEC", "ESRCH"]);
+  if (code !== null && filesystem.has(code)) return "filesystem";
+  if (code !== null && processCodes.has(code)) return "process";
+  if (code !== null) return "platform-error";
+  if (cause instanceof Error) return "error";
+  return "non-error-throw";
+}
+
+function writeLauncherFailure(code, cause) {
+  const message =
+    code === "spawn-failed"
+      ? "failed to spawn child process"
+      : "internal Recorder failure";
   console.error(
     JSON.stringify({
       recorder: {
         status: "failed",
-        code: "spawn-failed",
-        message: "failed to spawn child process",
+        code,
+        message,
         location: null,
-        diagnostic: null,
+        diagnostic: {
+          stage: "launcher",
+          category: categoryFromCause(cause),
+        },
       },
       child: {
         status: "not-spawned",
@@ -38,19 +77,26 @@ function writeLauncherFailure() {
 
 try {
   accessSync(entry, constants.R_OK);
-} catch {
-  writeLauncherFailure();
+} catch (error) {
+  // Package entry unavailability is not a spawn failure.
+  writeLauncherFailure("internal-error", error);
   process.exit(125);
 }
 
-const child = spawn(process.execPath, [entry, ...process.argv.slice(2)], {
-  cwd: process.cwd(),
-  env: process.env,
-  stdio: "inherit",
-});
+let child;
+try {
+  child = spawn(process.execPath, [entry, ...process.argv.slice(2)], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: "inherit",
+  });
+} catch (error) {
+  writeLauncherFailure("spawn-failed", error);
+  process.exit(125);
+}
 
-child.on("error", () => {
-  writeLauncherFailure();
+child.on("error", (error) => {
+  writeLauncherFailure("spawn-failed", error);
   process.exit(125);
 });
 

@@ -9,7 +9,9 @@ import { Check } from "typebox/value";
 import {
   RECORDER_DIAGNOSTIC_CATEGORIES,
   RECORDER_FAILURE_CODES,
+  RECORDER_PUBLIC_MESSAGES,
   RECORDER_STAGES,
+  RECORDER_SUPPORTED_SIGNALS,
 } from "../src/recorder/errors.ts";
 import { spawnOnce } from "../src/recorder/spawn.ts";
 import {
@@ -73,6 +75,81 @@ test("shipped failure schema vocabulary exactly matches TypeScript", () => {
   assert.deepEqual(schema.properties.recorder.properties.code.enum, [...RECORDER_FAILURE_CODES]);
   assert.deepEqual(diagnosticProperties.stage.enum, [...RECORDER_STAGES]);
   assert.deepEqual(diagnosticProperties.category.enum, [...RECORDER_DIAGNOSTIC_CATEGORIES]);
+  const signaled = schema.properties.child.oneOf.find((x: any) => x.properties.status.const === "signaled");
+  assert.deepEqual(signaled.properties.signal.enum, [...RECORDER_SUPPORTED_SIGNALS]);
+  for (const code of RECORDER_FAILURE_CODES) {
+    assert.equal(typeof RECORDER_PUBLIC_MESSAGES[code], "string");
+  }
+});
+
+test("schema rejects unlawful wire combinations", () => {
+  const base = {
+    recorder: {
+      status: "failed",
+      code: "spawn-failed",
+      message: "failed to spawn child process",
+      location: null,
+      diagnostic: null,
+    },
+    child: { status: "not-spawned", exitCode: null, signal: null, diagnostic: null },
+  };
+  const rejects: Array<[string, any]> = [
+    ["wrong message", { ...base, recorder: { ...base.recorder, message: "fabricated" } }],
+    ["unknown signal", {
+      recorder: { ...base.recorder, code: "extraction-failed", message: "receipt extraction failed" },
+      child: { status: "signaled", exitCode: null, signal: "SIGMADEUP", diagnostic: null },
+    }],
+    ["overlong location", {
+      recorder: {
+        status: "failed",
+        code: "invalid-config",
+        message: "invalid Recorder config",
+        location: ["a", "b", "c", "d", "e"],
+        diagnostic: null,
+      },
+      child: base.child,
+    }],
+    ["unlawful location segment", {
+      recorder: {
+        status: "failed",
+        code: "invalid-config",
+        message: "invalid Recorder config",
+        location: ["not-a-real-field"],
+        diagnostic: null,
+      },
+      child: base.child,
+    }],
+    ["location on non-config", {
+      recorder: { ...base.recorder, location: ["execution"] },
+      child: base.child,
+    }],
+    ["internal-error without diagnostic", {
+      recorder: {
+        status: "failed",
+        code: "internal-error",
+        message: "internal Recorder failure",
+        location: null,
+        diagnostic: null,
+      },
+      child: base.child,
+    }],
+    ["exited with signal", {
+      recorder: base.recorder,
+      child: { status: "exited", exitCode: 1, signal: "SIGTERM", diagnostic: null },
+    }],
+    ["exit out of bounds", {
+      recorder: base.recorder,
+      child: { status: "exited", exitCode: 999, signal: null, diagnostic: null },
+    }],
+    ["not-spawned with exit", {
+      recorder: base.recorder,
+      child: { status: "not-spawned", exitCode: 1, signal: null, diagnostic: null },
+    }],
+  ];
+  for (const [name, value] of rejects) {
+    assert.equal(Check(schema, value), false, name);
+  }
+  assert.equal(Check(schema, base), true);
 });
 
 test("actual Recorder bin emits schema-valid not-spawned failure", async () => {
@@ -110,7 +187,7 @@ for (const childCase of [
   });
 }
 
-test("launcher fallback is fixed, schema-valid, and sanitized", async () => {
+test("launcher missing entry is internal-error with launcher diagnostic, not spawn-failed", async () => {
   const root = mkdtempSync(join(tmpdir(), "recorder-launcher-fallback-"));
   try {
     const bin = join(root, "bin", "ak-docket-record.js");
@@ -120,8 +197,18 @@ test("launcher fallback is fixed, schema-valid, and sanitized", async () => {
     const result = await runRecorderBin([secret], { cwd: root, binPath: bin });
     assert.equal(result.code, 125);
     const value = emittedFailure(result.stderr);
+    assert.equal(value.recorder.code, "internal-error");
+    assert.equal(value.recorder.message, "internal Recorder failure");
     assert.deepEqual(value.recorder.location, null);
-    assert.deepEqual(value.recorder.diagnostic, null);
+    assert.equal(value.recorder.diagnostic.stage, "launcher");
+    assert.ok(RECORDER_DIAGNOSTIC_CATEGORIES.includes(value.recorder.diagnostic.category));
+    assert.deepEqual(value.child, {
+      status: "not-spawned",
+      exitCode: null,
+      signal: null,
+      diagnostic: null,
+    });
+    assert.equal(JSON.stringify(value).includes(secret), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -195,4 +282,61 @@ for (const childCase of [
 
 test("tee regressions leave no owned temporary roots", () => {
   assert.deepEqual(readdirSync(tmpdir()).filter((name) => name.startsWith("recorder-tee-test-")), []);
+});
+
+test("destination preflight: occupied yields destination-exists without spawn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "recorder-dest-occupied-"));
+  try {
+    const archiveRepo = initGitRepo(join(root, "archive"));
+    const destParent = join(archiveRepo, ".ak", "dockets", "issues", "23", "apply");
+    mkdirSync(destParent, { recursive: true });
+    writeFileSync(join(destParent, "x"), "occupied\n");
+    const config = fixture(root, { archiveRepo });
+    // rewrite docketId to x via re-read
+    const text = JSON.parse(readFileSync(config, "utf8"));
+    text.archive.docketId = "issues/23/apply/x";
+    writeFileSync(config, JSON.stringify(text, null, 2));
+    const result = await runRecorderBin(
+      ["--config", config, "--", process.execPath, "-e", `console.log(${JSON.stringify(secret)}); process.exit(0)`],
+      { cwd: root },
+    );
+    assert.equal(result.code, 125);
+    const value = emittedFailure(result.stderr);
+    assert.equal(value.recorder.code, "destination-exists");
+    assert.equal(value.recorder.message, "archive destination already exists");
+    assert.deepEqual(value.child, {
+      status: "not-spawned",
+      exitCode: null,
+      signal: null,
+      diagnostic: null,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("environment lexical defects reject structurally before spawn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "recorder-env-lex-"));
+  try {
+    const config = fixture(root);
+    const text = JSON.parse(readFileSync(config, "utf8"));
+    text.execution.environment.overrides = { ["BAD\u0000NAME"]: "x" };
+    writeFileSync(config, JSON.stringify(text));
+    const result = await runRecorderBin(
+      ["--config", config, "--", process.execPath, "-e", "process.exit(0)"],
+      { cwd: root },
+    );
+    assert.equal(result.code, 125);
+    const value = emittedFailure(result.stderr);
+    assert.equal(value.recorder.code, "invalid-config");
+    assert.deepEqual(value.recorder.location, ["execution", "environment", "overrides"]);
+    assert.deepEqual(value.child, {
+      status: "not-spawned",
+      exitCode: null,
+      signal: null,
+      diagnostic: null,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
