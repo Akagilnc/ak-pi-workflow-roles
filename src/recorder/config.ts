@@ -74,31 +74,32 @@ const RESERVED_PATHS = new Set([
   "manifest.json",
   "redaction-report.json",
 ]);
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function exact(v: Record<string, unknown>, keys: readonly string[]) {
-  const actual = Object.keys(v);
+function exact(record: Record<string, unknown>, keys: readonly string[]) {
+  const actual = Object.keys(record);
   return (
-    actual.length === keys.length && keys.every((k) => Object.hasOwn(v, k))
+    actual.length === keys.length &&
+    keys.every((key) => Object.hasOwn(record, key))
   );
 }
 function invalid(message: string, location: Location): never {
   throw new RecorderError("invalid-config", message, { location });
 }
-function stringAt(v: unknown, location: Location): string {
-  if (typeof v !== "string" || v.length === 0)
+function stringAt(value: unknown, location: Location): string {
+  if (typeof value !== "string" || value.length === 0)
     invalid("value must be a non-empty string", location);
-  return v;
+  return value;
 }
-function nullableStringAt(v: unknown, location: Location): string | null {
-  if (v === null) return null;
-  if (typeof v !== "string")
+function nullableStringAt(value: unknown, location: Location): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string")
     invalid("value must be a string or null", location);
-  return v;
+  return value;
 }
-function relativeAt(v: unknown, location: Location): string {
-  const text = stringAt(v, location);
+function relativeAt(value: unknown, location: Location): string {
+  const text = stringAt(value, location);
   try {
     return normalizeRepoRelativePath(text, "config path");
   } catch (error) {
@@ -111,82 +112,82 @@ function relativeAt(v: unknown, location: Location): string {
   }
 }
 function closed(
-  v: unknown,
+  value: unknown,
   keys: readonly string[],
   location: Location,
   label: string,
 ): Record<string, unknown> {
-  if (!isRecord(v) || !exact(v, keys))
+  if (!isRecord(value) || !exact(value, keys))
     invalid(`${label} shape is invalid`, location);
-  return v;
+  return value;
 }
-function idAt(v: unknown, location: Location): string {
-  const id = stringAt(v, location);
+function idAt(value: unknown, location: Location): string {
+  const id = stringAt(value, location);
   if (!ID_RE.test(id)) invalid("declaration id is unlawful", location);
   return id;
 }
 function shaAt(
-  v: unknown,
-  re: RegExp,
+  value: unknown,
+  pattern: RegExp,
   location: Location,
   label: string,
 ): string {
-  const s = stringAt(v, location);
-  if (!re.test(s)) invalid(`${label} is invalid`, location);
+  const s = stringAt(value, location);
+  if (!pattern.test(s)) invalid(`${label} is invalid`, location);
   return s.toLowerCase();
 }
-function absoluteAt(v: unknown, location: Location): string {
-  const s = stringAt(v, location);
+function absoluteAt(value: unknown, location: Location): string {
+  const s = stringAt(value, location);
   if (!isAbsolute(s)) invalid("path must be absolute", location);
   return s;
 }
 
-function parseGit(v: unknown, i: number): GitReferenceDeclaration {
-  const p: [string, string, number] = ["declarations", "gitReferences", i];
-  const r = closed(
-    v,
+function parseGit(value: unknown, index: number): GitReferenceDeclaration {
+  const location: [string, string, number] = ["declarations", "gitReferences", index];
+  const record = closed(
+    value,
     ["id", "repositoryRoot", "commit", "path", "blobOid", "sha256", "kind"],
-    p,
+    location,
     "git reference",
   );
-  const k = r.kind;
-  if (k !== "authority" && k !== "task" && k !== "input" && k !== "exhibit")
-    invalid("git reference kind is invalid", [...p, "kind"]);
+  const kind = record.kind;
+  if (kind !== "authority" && kind !== "task" && kind !== "input" && kind !== "exhibit")
+    invalid("git reference kind is invalid", [...location, "kind"]);
   return {
-    id: idAt(r.id, [...p, "id"]),
-    repositoryRoot: absoluteAt(r.repositoryRoot, [...p, "repositoryRoot"]),
-    commit: shaAt(r.commit, FULL_SHA_RE, [...p, "commit"], "commit"),
-    path: relativeAt(r.path, [...p, "path"]),
-    blobOid: shaAt(r.blobOid, FULL_SHA_RE, [...p, "blobOid"], "blob oid"),
-    sha256: shaAt(r.sha256, SHA256_RE, [...p, "sha256"], "sha256"),
-    kind: k,
+    id: idAt(record.id, [...location, "id"]),
+    repositoryRoot: absoluteAt(record.repositoryRoot, [...location, "repositoryRoot"]),
+    commit: shaAt(record.commit, FULL_SHA_RE, [...location, "commit"], "commit"),
+    path: relativeAt(record.path, [...location, "path"]),
+    blobOid: shaAt(record.blobOid, FULL_SHA_RE, [...location, "blobOid"], "blob oid"),
+    sha256: shaAt(record.sha256, SHA256_RE, [...location, "sha256"], "sha256"),
+    kind: kind,
   };
 }
-function parseExternal(v: unknown, i: number): ExternalInputDeclaration {
-  const p: [string, string, number] = ["declarations", "externalInputs", i];
-  const r = closed(
-    v,
+function parseExternal(value: unknown, index: number): ExternalInputDeclaration {
+  const location: [string, string, number] = ["declarations", "externalInputs", index];
+  const record = closed(
+    value,
     ["id", "sourcePath", "sha256", "kind"],
-    p,
+    location,
     "external input",
   );
-  const k = r.kind;
-  if (k !== "authority" && k !== "task" && k !== "input")
-    invalid("external input kind is invalid", [...p, "kind"]);
+  const kind = record.kind;
+  if (kind !== "authority" && kind !== "task" && kind !== "input")
+    invalid("external input kind is invalid", [...location, "kind"]);
   return {
-    id: idAt(r.id, [...p, "id"]),
-    sourcePath: absoluteAt(r.sourcePath, [...p, "sourcePath"]),
-    sha256: shaAt(r.sha256, SHA256_RE, [...p, "sha256"], "sha256"),
-    kind: k,
+    id: idAt(record.id, [...location, "id"]),
+    sourcePath: absoluteAt(record.sourcePath, [...location, "sourcePath"]),
+    sha256: shaAt(record.sha256, SHA256_RE, [...location, "sha256"], "sha256"),
+    kind: kind,
   };
 }
-function parseExhibit(v: unknown, i: number): ExhibitDeclaration {
-  const p: [string, string, number] = ["declarations", "exhibits", i];
-  const r = closed(v, ["id", "sourcePath", "sha256"], p, "exhibit");
+function parseExhibit(value: unknown, index: number): ExhibitDeclaration {
+  const location: [string, string, number] = ["declarations", "exhibits", index];
+  const record = closed(value, ["id", "sourcePath", "sha256"], location, "exhibit");
   return {
-    id: idAt(r.id, [...p, "id"]),
-    sourcePath: absoluteAt(r.sourcePath, [...p, "sourcePath"]),
-    sha256: shaAt(r.sha256, SHA256_RE, [...p, "sha256"], "sha256"),
+    id: idAt(record.id, [...location, "id"]),
+    sourcePath: absoluteAt(record.sourcePath, [...location, "sourcePath"]),
+    sha256: shaAt(record.sha256, SHA256_RE, [...location, "sha256"], "sha256"),
   };
 }
 
@@ -299,27 +300,27 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
     ]);
   const unset: string[] = [];
   const seenUnset = new Set<string>();
-  for (const [i, value] of environment.unset.entries()) {
+  for (const [index, value] of environment.unset.entries()) {
     if (typeof value !== "string" || !value)
       invalid("unset entry must be a non-empty string", [
         "execution",
         "environment",
         "unset",
-        i,
+        index,
       ]);
     if (seenUnset.has(value))
       invalid("unset entry is duplicated", [
         "execution",
         "environment",
         "unset",
-        i,
+        index,
       ]);
     if (Object.hasOwn(overrides, value))
       invalid("unset conflicts with overrides", [
         "execution",
         "environment",
         "unset",
-        i,
+        index,
       ]);
     seenUnset.add(value);
     unset.push(value);
@@ -340,17 +341,17 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
     docketId = relativeAt(archive.docketId, ["archive", "docketId"]),
     cwd = absoluteAt(execution.cwd, ["execution", "cwd"]);
   const indexed = [
-    ...gitReferences.map((item, i) => ({
+    ...gitReferences.map((item, index) => ({
       item,
-      loc: ["declarations", "gitReferences", i, "id"] as Location,
+      loc: ["declarations", "gitReferences", index, "id"] as Location,
     })),
-    ...externalInputs.map((item, i) => ({
+    ...externalInputs.map((item, index) => ({
       item,
-      loc: ["declarations", "externalInputs", i, "id"] as Location,
+      loc: ["declarations", "externalInputs", index, "id"] as Location,
     })),
-    ...exhibits.map((item, i) => ({
+    ...exhibits.map((item, index) => ({
       item,
-      loc: ["declarations", "exhibits", i, "id"] as Location,
+      loc: ["declarations", "exhibits", index, "id"] as Location,
     })),
   ];
   const ids = new Set<string>();
@@ -361,7 +362,7 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
     ids.add(item.id);
   }
   const identities = new Set<string>();
-  for (const [i, ref] of gitReferences.entries()) {
+  for (const [index, ref] of gitReferences.entries()) {
     if (
       [...RESERVED_PATHS].some(
         (reservedPath) =>
@@ -371,7 +372,7 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
       invalid("git reference uses a reserved generated path", [
         "declarations",
         "gitReferences",
-        i,
+        index,
         "path",
       ]);
     const key = [
@@ -384,15 +385,15 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
       invalid("git reference identity is duplicated", [
         "declarations",
         "gitReferences",
-        i,
+        index,
       ]);
     identities.add(key);
   }
   if (
-    ![...gitReferences, ...externalInputs].some((x) => x.kind === "authority")
+    ![...gitReferences, ...externalInputs].some((item) => item.kind === "authority")
   )
     invalid("authority declaration is required", ["declarations"]);
-  if (![...gitReferences, ...externalInputs].some((x) => x.kind === "task"))
+  if (![...gitReferences, ...externalInputs].some((item) => item.kind === "task"))
     invalid("task declaration is required", ["declarations"]);
   return {
     version: 1,
@@ -418,22 +419,22 @@ export function scanRecorderConfigMetadata(
     [config.archive.root, ["archive", "root"]],
     [config.archive.docketId, ["archive", "docketId"]],
     ...config.declarations.gitReferences.map(
-      (x, i) =>
-        [x.id, ["declarations", "gitReferences", i, "id"]] as [
+      (item, index) =>
+        [item.id, ["declarations", "gitReferences", index, "id"]] as [
           string,
           Location,
         ],
     ),
     ...config.declarations.externalInputs.map(
-      (x, i) =>
-        [x.id, ["declarations", "externalInputs", i, "id"]] as [
+      (item, index) =>
+        [item.id, ["declarations", "externalInputs", index, "id"]] as [
           string,
           Location,
         ],
     ),
     ...config.declarations.exhibits.map(
-      (x, i) =>
-        [x.id, ["declarations", "exhibits", i, "id"]] as [string, Location],
+      (item, index) =>
+        [item.id, ["declarations", "exhibits", index, "id"]] as [string, Location],
     ),
   ];
   for (const [value, location] of values) {
@@ -479,11 +480,11 @@ export function loadRecorderConfig(path: string): RecorderConfig {
   return validateRecorderConfigState(loadRecorderConfigStructure(path));
 }
 export function buildChildEnv(
-  parent: NodeJS.ProcessEnv,
-  e: RecorderConfig["execution"]["environment"],
+  parentEnvironment: NodeJS.ProcessEnv,
+  environment: RecorderConfig["execution"]["environment"],
 ): NodeJS.ProcessEnv {
-  const result: NodeJS.ProcessEnv = e.inherit ? { ...parent } : {};
-  for (const n of e.unset) delete result[n];
-  for (const [n, v] of Object.entries(e.overrides)) result[n] = v;
+  const result: NodeJS.ProcessEnv = environment.inherit ? { ...parentEnvironment } : {};
+  for (const name of environment.unset) delete result[name];
+  for (const [name, value] of Object.entries(environment.overrides)) result[name] = value;
   return result;
 }

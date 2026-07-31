@@ -11,15 +11,15 @@ export function requireAbsoluteExistingDirectory(value, label) {
     try {
         real = realpathSync(value);
     }
-    catch {
-        throw new RecorderError("invalid-path", `${label} must resolve to an existing path`);
+    catch (error) {
+        throw new RecorderError("invalid-path", `${label} must resolve to an existing path`, { cause: error });
     }
     let st;
     try {
         st = statSync(real);
     }
-    catch {
-        throw new RecorderError("invalid-path", `${label} must resolve to an existing directory`);
+    catch (error) {
+        throw new RecorderError("invalid-path", `${label} must resolve to an existing directory`, { cause: error });
     }
     if (!st.isDirectory()) {
         throw new RecorderError("invalid-path", `${label} must resolve to a directory`);
@@ -41,15 +41,15 @@ export function requireCanonicalGitWorktree(value, label) {
     try {
         toplevel = execFileSync("git", ["-C", real, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
     }
-    catch {
-        throw new RecorderError("invalid-archive", `${label} must be a Git worktree`);
+    catch (error) {
+        throw new RecorderError("invalid-archive", `${label} must be a Git worktree`, { cause: error });
     }
     let topReal;
     try {
         topReal = realpathSync(toplevel);
     }
-    catch {
-        throw new RecorderError("invalid-archive", `${label} toplevel is unreadable`);
+    catch (error) {
+        throw new RecorderError("invalid-archive", `${label} toplevel is unreadable`, { cause: error });
     }
     if (topReal !== real) {
         throw new RecorderError("invalid-archive", `${label} must equal Git canonical worktree root`);

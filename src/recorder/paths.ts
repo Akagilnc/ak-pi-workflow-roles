@@ -26,19 +26,21 @@ export function requireAbsoluteExistingDirectory(
   let real: string;
   try {
     real = realpathSync(value);
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "invalid-path",
       `${label} must resolve to an existing path`,
+      { cause: error },
     );
   }
   let st;
   try {
     st = statSync(real);
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "invalid-path",
       `${label} must resolve to an existing directory`,
+      { cause: error },
     );
   }
   if (!st.isDirectory()) {
@@ -74,19 +76,21 @@ export function requireCanonicalGitWorktree(
       ["-C", real, "rev-parse", "--show-toplevel"],
       { encoding: "utf8" },
     ).trim();
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "invalid-archive",
       `${label} must be a Git worktree`,
+      { cause: error },
     );
   }
   let topReal: string;
   try {
     topReal = realpathSync(toplevel);
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "invalid-archive",
       `${label} toplevel is unreadable`,
+      { cause: error },
     );
   }
   if (topReal !== real) {
