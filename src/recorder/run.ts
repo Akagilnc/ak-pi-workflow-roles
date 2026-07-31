@@ -25,8 +25,11 @@ import {
 import {
   RECORDER_FAILURE_EXIT,
   RecorderError,
+  internalRecorderError,
+  safeDiagnostic,
   serializePublicFailure,
   type ChildOutcome,
+  type RecorderStage,
 } from "./errors.ts";
 import { extractAcceptedReceipt } from "./extract.ts";
 import { buildManifest, validatePublicManifest } from "./manifest.ts";
@@ -240,7 +243,7 @@ export async function runRecorder(options: {
   let scratchRoot: string | null = null;
   let stageRoot: string | null = null;
   let requiredCleanupDone = false;
-  let currentStage = "argv";
+  let currentStage: RecorderStage = "argv";
 
   const fail = (error: RecorderError): RunResult => {
     // Cause observability is deliberately allow-listed: no message, stack, argv,
@@ -250,12 +253,7 @@ export async function runRecorder(options: {
       : new RecorderError(error.code, error.message, {
           cause: error.cause,
           ...(error.location === null ? {} : { location: error.location }),
-          diagnostic: {
-            stage: currentStage,
-            category: error.cause instanceof Error
-              ? error.cause.constructor.name.slice(0, 64)
-              : "NonErrorThrow",
-          },
+          diagnostic: safeDiagnostic(currentStage, error.cause),
         });
     // Best-effort cleanup only after the required raw-cleanup decision point.
     // Before that decision, still attempt best-effort so we leave no complete docket.
@@ -269,10 +267,9 @@ export async function runRecorder(options: {
     const diagnostic = child.diagnostic === null
       ? null
       : scanString(child.diagnostic, "child.diagnostic").value;
-    const publicChild: ChildOutcome = {
-      ...child,
-      diagnostic,
-    };
+    const publicChild: ChildOutcome = child.status === "not-spawned"
+      ? child
+      : { ...child, diagnostic };
     const line = serializePublicFailure(publicError, publicChild);
     // Ensure the failure object itself is scanned (fixed literals + scanned diagnostic).
     const scannedLine = scanString(line.trim(), "failure").value;
@@ -322,11 +319,7 @@ export async function runRecorder(options: {
       stage = allocateIgnoredStageRoot(config.archive.repositoryRoot);
     } catch (error) {
       if (error instanceof RecorderError) return fail(error);
-      return fail(
-        new RecorderError("invalid-path", "failed to allocate publication stage", {
-          cause: error,
-        }),
-      );
+      return fail(internalRecorderError(currentStage, error));
     }
     stageRoot = stage;
 
@@ -355,11 +348,7 @@ export async function runRecorder(options: {
       if (error instanceof RecorderError) {
         return fail(error);
       }
-      return fail(
-        new RecorderError("admission-failed", "admission failed", {
-          cause: error,
-        }),
-      );
+      return fail(internalRecorderError(currentStage, error));
     }
 
     currentStage = "spawn";
@@ -378,11 +367,7 @@ export async function runRecorder(options: {
       });
     } catch (error) {
       if (error instanceof RecorderError) return fail(error);
-      return fail(
-        new RecorderError("spawn-failed", "failed to spawn child process", {
-          cause: error,
-        }),
-      );
+      return fail(internalRecorderError(currentStage, error));
     }
 
     const stdoutText = readFileSync(stdoutPath);
@@ -413,11 +398,7 @@ export async function runRecorder(options: {
       ]);
     } catch (error) {
       if (error instanceof RecorderError) return fail(error);
-      return fail(
-        new RecorderError("extraction-failed", "receipt extraction failed", {
-          cause: error,
-        }),
-      );
+      return fail(internalRecorderError(currentStage, error));
     }
 
     const artifacts: AdmittedArtifact[] = [...admitted.artifacts];
@@ -484,11 +465,7 @@ export async function runRecorder(options: {
       });
     } catch (error) {
       if (error instanceof RecorderError) return fail(error);
-      return fail(
-        new RecorderError("admission-failed", "manifest build failed", {
-          cause: error,
-        }),
-      );
+      return fail(internalRecorderError(currentStage, error));
     }
 
     // Persist the already-closed final scan result. Do not recombine or rescan
@@ -499,11 +476,7 @@ export async function runRecorder(options: {
       validatePublicManifest(manifestBuild.manifest);
     } catch (error) {
       if (error instanceof RecorderError) return fail(error);
-      return fail(
-        new RecorderError("admission-failed", "manifest schema validation failed", {
-          cause: error,
-        }),
-      );
+      return fail(internalRecorderError(currentStage, error));
     }
 
     const manifestStored = storeGeneratedJson(
@@ -547,11 +520,7 @@ export async function runRecorder(options: {
       requiredCleanupDone = true;
     } catch (error) {
       if (error instanceof RecorderError) return fail(error);
-      return fail(
-        new RecorderError("cleanup-failed", "raw scratch cleanup failed", {
-          cause: error,
-        }),
-      );
+      return fail(internalRecorderError(currentStage, error));
     }
 
     // One-tree atomic no-replace publication (stage ownership transfers on success).
@@ -561,11 +530,7 @@ export async function runRecorder(options: {
       stageRoot = null;
     } catch (error) {
       if (error instanceof RecorderError) return fail(error);
-      return fail(
-        new RecorderError("promotion-failed", "atomic promotion failed", {
-          cause: error,
-        }),
-      );
+      return fail(internalRecorderError(currentStage, error));
     }
 
     // Success: preserve exact child exit/signal. No Recorder diagnostic.
@@ -583,17 +548,7 @@ export async function runRecorder(options: {
     };
   } catch (error) {
     if (error instanceof RecorderError) return fail(error);
-    return fail(
-      new RecorderError("internal-error", "recorder failed", {
-        cause: error,
-        diagnostic: {
-          stage: currentStage,
-          category: error instanceof Error
-            ? error.constructor.name.slice(0, 64)
-            : "NonErrorThrow",
-        },
-      }),
-    );
+    return fail(internalRecorderError(currentStage, error));
   }
 }
 

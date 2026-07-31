@@ -1,7 +1,7 @@
 import { accessSync, constants, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { RecorderError } from "./errors.js";
-import { assertNotReservedArtifactId, assertPathNotSymlinkEscape, normalizeRepoRelativePath, requireAbsoluteExistingDirectory, requireCanonicalGitWorktree, resolveInsideRoot, } from "./paths.js";
+import { RecorderError, safeDiagnostic } from "./errors.js";
+import { assertPathNotSymlinkEscape, normalizeRepoRelativePath, requireAbsoluteExistingDirectory, requireCanonicalGitWorktree, resolveInsideRoot, } from "./paths.js";
 import { scanString } from "./scanner.js";
 const FULL_SHA_RE = /^[0-9a-f]{40}$/i;
 const SHA256_RE = /^[0-9a-f]{64}$/i;
@@ -15,9 +15,15 @@ function hasExactKeys(value, expected) {
     return (keys.length === expected.length &&
         expected.every((key) => Object.hasOwn(value, key)));
 }
+function labelLocation(label) {
+    return label.split(".").flatMap((part) => {
+        const match = /^(.*)\[(\d+)\]$/.exec(part);
+        return match ? [match[1], Number(match[2])] : [part];
+    });
+}
 function requireString(value, label) {
     if (typeof value !== "string" || value.length === 0) {
-        throw new RecorderError("invalid-config", `${label} must be a non-empty string`);
+        throw new RecorderError("invalid-config", `${label} must be a non-empty string`, { location: labelLocation(label) });
     }
     return value;
 }
@@ -36,7 +42,7 @@ function requireStringOrNull(value, label) {
     if (value === null)
         return null;
     if (typeof value !== "string") {
-        throw new RecorderError("invalid-config", `${label} must be a string or null`);
+        throw new RecorderError("invalid-config", `${label} must be a string or null`, { location: labelLocation(label) });
     }
     return value;
 }
@@ -45,12 +51,14 @@ function requireStringOrNull(value, label) {
  * and report locations. Redaction would damage identity, so a scanner hit fails
  * closed before path construction or later diagnostics can observe the raw value.
  */
-function requireCredentialFreeMetadata(value, label) {
-    const scanned = scanString(value, label);
+function requireCredentialFreeMetadata(value, _label) {
+    return value; // scanner-free structural phase
+}
+function scanMetadata(value, location) {
+    const scanned = scanString(value, "config metadata");
     if (scanned.report.redacted || scanned.value !== value) {
-        throw new RecorderError("invalid-config", `${label} must not be credential-shaped`);
+        throw new RecorderError("invalid-config", "metadata must not be credential-shaped", { location });
     }
-    return value;
 }
 function parseGitReference(raw, index) {
     if (!isRecord(raw) || !hasExactKeys(raw, [
@@ -62,11 +70,11 @@ function parseGitReference(raw, index) {
         "sha256",
         "kind",
     ])) {
-        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}] has invalid shape`);
+        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}] has invalid shape`, { location: [] });
     }
     const id = requireCredentialFreeMetadata(requireString(raw.id, `declarations.gitReferences[${index}].id`), `declarations.gitReferences[${index}].id`);
     if (!ID_RE.test(id)) {
-        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].id is unlawful`);
+        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].id is unlawful`, { location: [] });
     }
     const kind = raw.kind;
     if (kind !== "authority" && kind !== "task" && kind !== "input" &&
@@ -75,15 +83,15 @@ function parseGitReference(raw, index) {
     }
     const commit = requireString(raw.commit, `declarations.gitReferences[${index}].commit`);
     if (!FULL_SHA_RE.test(commit)) {
-        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].commit must be a full SHA`);
+        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].commit must be a full SHA`, { location: [] });
     }
     const blobOid = requireString(raw.blobOid, `declarations.gitReferences[${index}].blobOid`);
     if (!BLOB_OID_RE.test(blobOid)) {
-        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].blobOid must be a full Git object id`);
+        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].blobOid must be a full Git object id`, { location: [] });
     }
     const sha256 = requireString(raw.sha256, `declarations.gitReferences[${index}].sha256`);
     if (!SHA256_RE.test(sha256)) {
-        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].sha256 must be sha256 hex`);
+        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].sha256 must be sha256 hex`, { location: [] });
     }
     return {
         id,
@@ -97,11 +105,11 @@ function parseGitReference(raw, index) {
 }
 function parseExternalInput(raw, index) {
     if (!isRecord(raw) || !hasExactKeys(raw, ["id", "sourcePath", "sha256", "kind"])) {
-        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}] has invalid shape`);
+        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}] has invalid shape`, { location: [] });
     }
     const id = requireCredentialFreeMetadata(requireString(raw.id, `declarations.externalInputs[${index}].id`), `declarations.externalInputs[${index}].id`);
     if (!ID_RE.test(id)) {
-        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].id is unlawful`);
+        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].id is unlawful`, { location: [] });
     }
     const kind = raw.kind;
     if (kind !== "authority" && kind !== "task" && kind !== "input") {
@@ -109,29 +117,29 @@ function parseExternalInput(raw, index) {
     }
     const sourcePath = requireString(raw.sourcePath, `declarations.externalInputs[${index}].sourcePath`);
     if (!isAbsolute(sourcePath)) {
-        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].sourcePath must be absolute`);
+        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].sourcePath must be absolute`, { location: [] });
     }
     const sha256 = requireString(raw.sha256, `declarations.externalInputs[${index}].sha256`);
     if (!SHA256_RE.test(sha256)) {
-        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].sha256 must be sha256 hex`);
+        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].sha256 must be sha256 hex`, { location: [] });
     }
     return { id, sourcePath, sha256: sha256.toLowerCase(), kind };
 }
 function parseExhibit(raw, index) {
     if (!isRecord(raw) || !hasExactKeys(raw, ["id", "sourcePath", "sha256"])) {
-        throw new RecorderError("invalid-config", `declarations.exhibits[${index}] has invalid shape`);
+        throw new RecorderError("invalid-config", `declarations.exhibits[${index}] has invalid shape`, { location: [] });
     }
     const id = requireCredentialFreeMetadata(requireString(raw.id, `declarations.exhibits[${index}].id`), `declarations.exhibits[${index}].id`);
     if (!ID_RE.test(id)) {
-        throw new RecorderError("invalid-config", `declarations.exhibits[${index}].id is unlawful`);
+        throw new RecorderError("invalid-config", `declarations.exhibits[${index}].id is unlawful`, { location: [] });
     }
     const sourcePath = requireString(raw.sourcePath, `declarations.exhibits[${index}].sourcePath`);
     if (!isAbsolute(sourcePath)) {
-        throw new RecorderError("invalid-config", `declarations.exhibits[${index}].sourcePath must be absolute`);
+        throw new RecorderError("invalid-config", `declarations.exhibits[${index}].sourcePath must be absolute`, { location: [] });
     }
     const sha256 = requireString(raw.sha256, `declarations.exhibits[${index}].sha256`);
     if (!SHA256_RE.test(sha256)) {
-        throw new RecorderError("invalid-config", `declarations.exhibits[${index}].sha256 must be sha256 hex`);
+        throw new RecorderError("invalid-config", `declarations.exhibits[${index}].sha256 must be sha256 hex`, { location: [] });
     }
     return { id, sourcePath, sha256: sha256.toLowerCase() };
 }
@@ -171,8 +179,12 @@ export function loadRecorderConfigStructure(configPath) {
         accessSync(configPath, constants.R_OK);
         text = readFileSync(configPath, "utf8");
     }
-    catch {
-        throw new RecorderError("invalid-config", "config JSON is unreadable");
+    catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error ? error.code : null;
+        if (code === "ENOENT" || code === "EACCES" || code === "EPERM" || code === "EISDIR") {
+            throw new RecorderError("invalid-path", "config path is unreadable", { cause: error, location: null, diagnostic: safeDiagnostic("config-read", error) });
+        }
+        throw error;
     }
     let raw;
     try {
@@ -231,39 +243,39 @@ export function loadRecorderConfigStructure(configPath) {
         throw new RecorderError("invalid-config", "execution.environment.inherit must be boolean");
     }
     if (!isRecord(raw.execution.environment.overrides)) {
-        throw new RecorderError("invalid-config", "execution.environment.overrides must be an object");
+        throw new RecorderError("invalid-config", "execution.environment.overrides must be an object", { location: [] });
     }
     const overrides = {};
     for (const [key, value] of Object.entries(raw.execution.environment.overrides)) {
         if (typeof value !== "string") {
-            throw new RecorderError("invalid-config", "execution.environment.overrides values must be strings");
+            throw new RecorderError("invalid-config", "execution.environment.overrides values must be strings", { location: [] });
         }
         overrides[key] = value;
     }
     if (!Array.isArray(raw.execution.environment.unset)) {
-        throw new RecorderError("invalid-config", "execution.environment.unset must be an array");
+        throw new RecorderError("invalid-config", "execution.environment.unset must be an array", { location: [] });
     }
     const unset = [];
     const unsetSeen = new Set();
     for (const name of raw.execution.environment.unset) {
         if (typeof name !== "string" || name.length === 0) {
-            throw new RecorderError("invalid-config", "execution.environment.unset entries must be non-empty strings");
+            throw new RecorderError("invalid-config", "execution.environment.unset entries must be non-empty strings", { location: [] });
         }
         if (unsetSeen.has(name)) {
-            throw new RecorderError("invalid-config", "execution.environment.unset must not contain duplicates");
+            throw new RecorderError("invalid-config", "execution.environment.unset must not contain duplicates", { location: [] });
         }
         unsetSeen.add(name);
         unset.push(name);
     }
     for (const name of unset) {
         if (Object.hasOwn(overrides, name)) {
-            throw new RecorderError("invalid-config", "execution.environment unset/overrides must not overlap");
+            throw new RecorderError("invalid-config", "execution.environment unset/overrides must not overlap", { location: [] });
         }
     }
     if (!Array.isArray(raw.declarations.gitReferences) ||
         !Array.isArray(raw.declarations.externalInputs) ||
         !Array.isArray(raw.declarations.exhibits)) {
-        throw new RecorderError("invalid-config", "declaration collections must be arrays");
+        throw new RecorderError("invalid-config", "declaration collections must be arrays", { location: [] });
     }
     // Parse every structure-only declaration before consulting filesystem or Git.
     const gitReferences = raw.declarations.gitReferences.map(parseGitReference);
@@ -285,11 +297,17 @@ export function loadRecorderConfigStructure(configPath) {
         });
     }
     const ids = new Set();
-    for (const item of [...gitReferences, ...externalInputs, ...exhibits]) {
-        assertNotReservedArtifactId(item.id, `declaration ${item.id}`);
-        if (ids.has(item.id)) {
-            throw new RecorderError("invalid-config", `declaration id is duplicated: ${item.id}`);
-        }
+    const indexed = [
+        ...gitReferences.map((item, index) => ({ item, location: ["declarations", "gitReferences", index, "id"] })),
+        ...externalInputs.map((item, index) => ({ item, location: ["declarations", "externalInputs", index, "id"] })),
+        ...exhibits.map((item, index) => ({ item, location: ["declarations", "exhibits", index, "id"] })),
+    ];
+    const reserved = new Set(["receipt", "audit-observation", "manifest", "redaction-report"]);
+    for (const { item, location } of indexed) {
+        if (reserved.has(item.id))
+            throw new RecorderError("invalid-config", "declaration uses a reserved generated id", { location });
+        if (ids.has(item.id))
+            throw new RecorderError("invalid-config", "declaration id is duplicated", { location });
         ids.add(item.id);
     }
     // Reject generated-as-future reference claims: git references must not use reserved generated ids
@@ -301,6 +319,13 @@ export function loadRecorderConfigStructure(configPath) {
     if (!hasAuthority || !hasTask) {
         throw new RecorderError("invalid-config", "declarations must include at least one authority and one task", { location: ["declarations"] });
     }
+    // Credential policy follows the complete scanner-free structural pass.
+    scanMetadata(repositoryRoot, ["archive", "repositoryRoot"]);
+    scanMetadata(root, ["archive", "root"]);
+    scanMetadata(docketId, ["archive", "docketId"]);
+    gitReferences.forEach((item, index) => scanMetadata(item.id, ["declarations", "gitReferences", index, "id"]));
+    externalInputs.forEach((item, index) => scanMetadata(item.id, ["declarations", "externalInputs", index, "id"]));
+    exhibits.forEach((item, index) => scanMetadata(item.id, ["declarations", "exhibits", index, "id"]));
     return {
         version: 1,
         archive: { repositoryRoot, root, docketId },

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ak.local/schemas/recorder-failure-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recorder", "child"],
+  "properties": {
+    "recorder": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "code", "message", "location", "diagnostic"],
+      "properties": {
+        "status": {"const": "failed"},
+        "code": {"enum": ["invalid-argv","invalid-config","invalid-archive","invalid-path","destination-exists","spawn-failed","scan-failed","admission-failed","reference-failed","extraction-failed","cleanup-failed","promotion-failed","opaque-content","internal-error"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 128},
+        "location": {"type": ["array","null"], "items": {"oneOf": [{"type":"string","maxLength":128},{"type":"integer","minimum":0}]}},
+        "diagnostic": {"oneOf": [{"type":"null"},{"type":"object","additionalProperties":false,"required":["stage","category"],"properties":{"stage":{"enum":["argv","config-read","config-structure","config-metadata-scan","config-state","destination","git-state","stage-allocation","admission","spawn","extraction","generated-artifacts","manifest","cleanup","promotion"]},"category":{"enum":["filesystem-missing","filesystem-inaccessible","filesystem-not-file","filesystem","process","platform-error","error","non-error-throw"]}}}]}
+      },
+      "allOf": [{"if":{"properties":{"code":{"const":"invalid-config"}},"required":["code"]},"then":{"properties":{"location":{"type":"array"}}},"else":{"properties":{"location":{"type":"null"}}}}]
+    },
+    "child": {"oneOf": [
+      {"type":"object","additionalProperties":false,"required":["status","exitCode","signal","diagnostic"],"properties":{"status":{"const":"not-spawned"},"exitCode":{"type":"null"},"signal":{"type":"null"},"diagnostic":{"type":"null"}}},
+      {"type":"object","additionalProperties":false,"required":["status","exitCode","signal","diagnostic"],"properties":{"status":{"const":"exited"},"exitCode":{"type":"integer"},"signal":{"type":"null"},"diagnostic":{"type":["string","null"],"maxLength":4096}}},
+      {"type":"object","additionalProperties":false,"required":["status","exitCode","signal","diagnostic"],"properties":{"status":{"const":"signaled"},"exitCode":{"type":"null"},"signal":{"type":"string","minLength":1,"maxLength":32},"diagnostic":{"type":["string","null"],"maxLength":4096}}}
+    ]}
+  }
+}
