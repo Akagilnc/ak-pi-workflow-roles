@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_Q4pZILSdeBKA4XTkno2J7nVr|fc_00f5d6fe1deec40c016a6bcc10c3088191a6ace2ee7ff81b25",
+  "details": {
+    "status": "completed",
+    "report": "R1=typed closed base/range/material/infrastructure classification with bounded code-only evidence; R2=child config reload/session/execution/cancellation cleanup boundary with failed workspace retention; R3=prompt identity remains one {text,utf8Length,sha256} value through dispatch/runner/ledger/auditor and prompt.text is delivered; R4=red/green classification, diagnostics, initialization/cancellation cleanup, retention, and prompt-delivery regressions pass; R5=package lifecycle, focused 45 tests, full 367 tests, typecheck, pack dry-run, and diff checks pass; committed forward as de9579734a2b010f7aa7f81a924e2e26df95d531.",
+    "commitSha": "de9579734a2b010f7aa7f81a924e2e26df95d531"
+  },
+  "artifactKind": "acceptedReceipt"
+}

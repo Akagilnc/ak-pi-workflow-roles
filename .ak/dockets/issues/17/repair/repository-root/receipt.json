@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_JF20Vdy0vEHhUG4KyjqfTyZh|fc_0885c24bfc2401d8016a6bbc6c8fb08191ade0af78710a186b",
+  "details": {
+    "status": "completed",
+    "report": "R1=Git now discovers `--show-toplevel` from invocation cwd, canonicalizes it, pins from that root, and rejects non-worktree invocations before acceptance.\nR2=Nested installed-package lifecycle succeeds with canonical top-level evidence; focused coverage proves nested/symlink canonicalization plus non-repository and bare-repository rejection before runner availability.\nR3=Removed message-regex inference; snapshot, workspace, child, and provider owners attach closed classifications, cancellation uses signal/error identity, and target/disposition evidence remains preserved.\nR4=Exported one deep immutable pin helper for reader/dispatch, normalized Spec state into one internal axis plan, and renamed flagged terse test callbacks.\nR5=Passed nested package lifecycle, focused Reviewer tests, full suite (362 tests), typecheck, pack dry-run, diff check; committed forward as 90532359521941b721c2a6a2b605704069951015.",
+    "commitSha": "90532359521941b721c2a6a2b605704069951015"
+  },
+  "artifactKind": "acceptedReceipt"
+}

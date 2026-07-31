@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_pMLmNvkWXeDth1kHgoBehGBL|fc_07d755d0dd812fb3016a6b83d20660819192cc6fec164d896b",
+  "details": {
+    "status": "completed",
+    "report": "R1: Preserved resolved submitted-base identity, retained canonical three-dot range derivation/non-empty enforcement, and added divergent merge-base rejection coverage.\nR2: Read every no-spec evidence material and retained exact UTF-8 bytes, byte length, and SHA-256 through accepted dispatch, ledger, and semantic audit input.\nR3: Required task-bound `preflight.git.pin-target` authority before pinned-reader creation, with a zero-pin regression test.\nR4: Restored valid empty-command bash grants while preserving exact-command and ceiling enforcement.\nR5: Built Reviewer TypeBox enums from exported vocabularies and replaced runner prerequisite casts with the exported domain type and closed typed checks.\nR6: Added red/green regressions; focused tests, installed package lifecycle, full suite (340 tests), typecheck, npm pack, and diff check passed; committed as 8443d628f0776ac23f283c8992427b4c2d53b1e8.",
+    "commitSha": "8443d628f0776ac23f283c8992427b4c2d53b1e8"
+  },
+  "artifactKind": "acceptedReceipt"
+}

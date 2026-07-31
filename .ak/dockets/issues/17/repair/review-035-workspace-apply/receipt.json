@@ -1,0 +1,17 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_YR5b1dKBlr4Rm0A0KyLgLD1I|fc_0b7b85cd50defbb2016a6d03583e4c8191bc3caf32d510fbe2",
+  "details": {
+    "status": "completed",
+    "report": "Repaired exactly Reviewer workspace ownership. Added `reviewer-workspace` as owner of pinned mirror verification, all-leg clone/bundle preparation, leases, disposal, and truthful retained/not-created evidence; added `reviewer-child-executor` as owner of provider/runtime/session setup, accepted tool/bash enforcement, prompt execution, usage, cleanup, and child/provider classification. Reduced `reviewer-agent` to irreversible single-batch orchestration and settlement while preserving prepare/install-all-before-provider, concurrent children, all-sibling settlement, cancellation, exact outcomes, and shutdown. Added direct seam regressions proving provider-free workspace preparation and Git-free execution against a prepared workspace; retained lifecycle tests cover concurrency, cleanup, cancellation, and failure honesty. Regenerated tracked dist artifacts. Verification passed: focused Reviewer tests (12), typecheck, isolated-HOME full suite (326 pass, 5 skip), package lifecycle/cold-install within full suite, recorder/package build, pack dry-run, and diff check. No findings were left unaddressed within this class; construction ownership and Thin Agent result were not altered.",
+    "commitSha": "feee5ea9b93e197aec2f05da4d0aff6eea700f9f",
+    "classesRepaired": [
+      {
+        "name": "Reviewer workspace ownership",
+        "searchScope": "`src/reviewer-agent.ts`, extracted `src/reviewer-workspace.ts` and `src/reviewer-child-executor.ts`, Reviewer agent/materializer/package lifecycle tests, and generated `dist` counterparts",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

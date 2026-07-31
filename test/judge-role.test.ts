@@ -10,6 +10,7 @@ import {
 
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
+import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
@@ -47,6 +48,7 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
       path: tddPath,
       baseDir: tddBaseDir,
       body: tddBody,
+      snapshotIdentity: reviewerPromptIdentity(`---\nname: tdd\ndescription: test\n---\n\n${tddBody}`),
     },
     invocation(originalRequest) {
       return `/skill:tdd ${originalRequest}`;
@@ -149,7 +151,7 @@ async function startJudge(
   return { harness, tool };
 }
 
-test("stable factory registers all six flags in exact help order and stays inert without a role", async () => {
+test("stable factory registers all role flags in exact help order and stays inert without a role", async () => {
   let loads = 0;
   const harness = extensionHarness(undefined);
   createRoleRuntimeExtension({
@@ -184,6 +186,10 @@ test("stable factory registers all six flags in exact help order and stays inert
     }],
     ["ak-review-task", {
       description: "Opaque Markdown review task assigned to the reviewer role",
+      type: "string",
+    }],
+    ["ak-review-capabilities", {
+      description: "Closed Reviewer capability grant bound to the exact task bytes",
       type: "string",
     }],
     ["ak-review-scope-keys", {
@@ -431,8 +437,8 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       fixture.role === "judge"
         ? ["judgeStatus", "fix", "classes", "note", "decisionGate"]
         : fixture.role === "fixer"
-        ? ["status", "report", "commitSha", "classesRepaired"]
-        : ["status", "report", "commitSha"],
+          ? ["status", "report", "commitSha", "classesRepaired"]
+          : ["status", "report", "commitSha"],
     );
     const result = await tool.execute(
       "receipt",
@@ -497,10 +503,10 @@ test("judge role accepts valid examples of all three verdict shapes", async () =
       judgeStatus: "continue",
       fix: { summary: "Repair the parser" },
       classes: [{
-        name: "parser-boundary",
-        owner: "src/parser.ts",
-        boundary: "all parser entry points",
-        disposition: "repair every occurrence",
+        name: "parser-contract",
+        owner: "parser",
+        boundary: "input parsing",
+        disposition: "repair malformed input handling",
       }],
     },
     {
@@ -530,12 +536,7 @@ test("judge preserves an optional advisory note on every verdict", async () => {
     {
       judgeStatus: "continue",
       fix: { summary: "Repair the live defect." },
-      classes: [{
-        name: "live-defect",
-        owner: "repair owner",
-        boundary: "all live occurrences",
-        disposition: "repair",
-      }],
+      classes: [{ name: "LiveDefect", owner: "runtime", boundary: "live seam", disposition: "repair" }],
       note: "Keep the fresh test output with the repair record.",
     },
     {

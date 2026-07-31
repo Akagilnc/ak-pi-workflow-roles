@@ -1,0 +1,12 @@
+# Issue #17 direct Fixer Apply — first amended invocation defects
+
+Sole authority: `.ak/dockets/issues/17/judgment/review-033-invocation/receipt.json`. No Plan.
+
+Repair completely:
+
+- `Canonical Skill content identity projection`
+- `Typed Reviewer intent-to-runtime-receipt contract`
+
+Follow exact boundaries. Preserve canonical Skill content identity—not path—in accepted and pre-acceptance-refused receipts. Separate thin Reviewer intent from validated runtime V2 receipt; add package-owned intent/receipt projection and complete receipt invariant validation; Recorder must consume that projection and return runtime receipt details for Reviewer while preserving all other tool equality/projection laws. Cover completed/refused enriched native sessions and all mismatch/tamper cases, including revalidation after scanning.
+
+Do not repair the dismissed Standards-child behavior, parse reports, add allowlists, or rerun legs. Preserve the atomic/bundle/settlement architecture and other roles. Run focused tests, typecheck, isolated-HOME full tests, package/cold-install, pack dry-run, and diff check; commit forward. Submit exactly the two repaired keys.

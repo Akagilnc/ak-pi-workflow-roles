@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_7OHktUeUKDmflXHMCSzvE8dT|fc_0b500acc0d2f4d4b016a6bb8e93fb48191855de24b6457a2a3",
+  "details": {
+    "status": "completed",
+    "report": "R1=Attached target snapshots and actual bounded workspace dispositions now survive snapshot/workspace setup, verification, child failure, and cancellation without automatic retained-artifact deletion; R2=Deterministic mirror create/verify and workspace init/fetch/verify fault tests prove exact retained ledger paths exist, pre-creation reports not-created, cancellation retains, and success reports deleted; R3=Pinned Git I/O moved to src/reviewer-pinned-git.ts, dispatch ownership stayed intact, ledger types derive from accepted dispatch shapes, and opaque Reviewer harness locals were renamed; R4=Focused failure/package lifecycle tests, full suite (360 passed), typecheck, npm pack, diff checks, clean forward commit 6d8e11c8f0dea62595f1addc2135fa8758ddff75 all passed.",
+    "commitSha": "6d8e11c8f0dea62595f1addc2135fa8758ddff75"
+  },
+  "artifactKind": "acceptedReceipt"
+}

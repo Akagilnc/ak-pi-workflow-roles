@@ -1,0 +1,15 @@
+# Issue #17 settlement and transport evidence repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-012/receipt.json`; fixed capability law permits no bash and bash with zero or more exact commands.
+
+R1 — Correct README’s stale contradictory sentence. Each leg grant is a task-bound subset: bash is optional; when granted, every command must be listed exactly in both proposal and task-bound ceiling. Do not reintroduce mandatory bash/diff admission. The caller may grant the canonical diff command when its task requires it.
+
+R2 — Settle the entire sibling batch before returning/throwing. Use all-settled semantics so one child failure does not hide the other leg’s outcome. Return or throw a typed dispatch execution outcome containing each axis’s immutable successful or failed settlement, actual delivered prompt identity, pinned target, workspace disposition, and a bounded non-secret failure classification. Reviewer role must append exactly one `leg-settled` event per started leg before infrastructure failure terminates.
+
+R3 — Preserve transport/schema rejection evidence without weakening the closed TypeBox proposal schema. Track `ak_reviewer_agent` tool start args by toolCallId and, when Pi emits an error terminal before tool execute/dispatcher admission, append a distinct immutable `transport-rejected` ledger event with deterministic proposal identity, bounded violation class, and `started:false`. Clear tracking on every terminal; never retain raw args/session payloads. Avoid double-recording dispatcher-level typed rejection.
+
+R4 — Extend execution-ledger/auditor closed schemas for failed settlements and transport rejection, preserving exact counts/order and semantic-audit input. Add tests for one failed/one successful sibling, both failed, transport schema rejection followed by corrected acceptance, no duplicate event, and no raw args retained.
+
+R5 — Run package lifecycle, focused tests including subprocess transport behavior, full suite, typecheck, pack, and diff check; commit forward and preserve the historical contradictory review.
+
+Return exactly one nonblank keyed line for R1–R5.

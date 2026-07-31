@@ -1,0 +1,208 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/judgment/review-035"
+  },
+  "invocation": {
+    "id": "0198f1a0-1700-7000-8000-000000000017"
+  },
+  "session": {
+    "id": "0198f1a0-1700-7000-8000-000000000017",
+    "directory": ".ak/work/issues/17/runs/review-035-judge/session",
+    "basename": "2026-07-31T20-04-07-635Z_0198f1a0-1700-7000-8000-000000000017.jsonl",
+    "sha256": "d30922cda021136c2ed3fee6d011cf0625ed8551b6b0defc6b77a06cfe45b0c8",
+    "byteLength": 407381,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work/issues/17/runs/review-035-judge/session",
+      "--session-id",
+      "0198f1a0-1700-7000-8000-000000000017",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--name",
+      "issue-17-review-035-judge",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #17 Review-035 adjudication\n\nAdjudicate the accepted Review-035 receipt at `.ak/dockets/issues/17/review/review-035-closure/receipt.json` against current HEAD and amended authority. It is the first fully published real runtime review after the amended construction.\n\nFindings:\n\n1. Standards: `src/reviewer-dispatch.ts::preflightAndCompileDispatch` still combines proposal/schema admission, capability checks, Git range/material I/O, task decoding, bundle and prompt compilation, target-drift validation, and acceptance evidence. Review says amended authority retained a split among admission, bundle/compiler, and lifecycle owners; possible Divergent Change.\n2. Standards: `src/reviewer-agent.ts` still owns Git/snapshot/mirror/workspace lifecycle, child provider/session execution, authorization, usage/failure classification, settlement, and cleanup. Review says amended authority retained separation of workspace materialization from child execution; possible Divergent Change.\n3. Spec: accepted Agent tool result returns `dispatch: result.dispatch` and per-axis prompt identities/outcomes. This exposes grants, prompts, pinned material bytes, bundle entries, and target evidence to the driver, while amended authority requires the Agent result presented to the driver to contain settlement status/identity only, not construction evidence or reports. Runtime ledger/receipt assembly may retain the rich evidence.\n\nFor architecture findings, distinguish an authorized class that is still incomplete from a merely large coordinator with deep delegated seams; define concrete owner/boundary, not line-count cleanup. For the Agent result, preserve runtime receipt assembly, accepted-leg validation, semantic audit, and failure honesty while narrowing only the driver-facing return. No Plan unless a genuine unresolved interface choice exists. Return direct Fixer classes or converge. Submit via `ak_judge_output`; no code edits."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": [
+        "PI_SESSION_DIR"
+      ]
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "be9302d85804c3289b360e87c94b85fecc25f607",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "be9302d85804c3289b360e87c94b85fecc25f607",
+        "path": ".ak/dockets/issues/17/review/review-035-closure/receipt.json",
+        "blobOid": "9b3ccd489609d95d19e19d4f2b4ef7203ef2a42c",
+        "sha256": "e7351936652fc41094e344d3ee5615e273d6b74d24c8592915b477cc8f69ca78",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "amended-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "be9302d85804c3289b360e87c94b85fecc25f607",
+        "path": ".ak/dockets/issues/17/judgment/owner-amendment-design-recheck-003/receipt.json",
+        "blobOid": "a203895975a0920a475a4c91bc6944101c85b9cc",
+        "sha256": "9da5f1fe18639e9cd1df3d42b632efdeae8ab6f086a01558724653ed8ee1c22c",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "full-admission",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "be9302d85804c3289b360e87c94b85fecc25f607",
+        "path": ".ak/dockets/issues/17/judgment/full-finding-admission-current/receipt.json",
+        "blobOid": "858b73d15848c935efa1578b5fd239f0143742f9",
+        "sha256": "477515e321072b6f74014618e69967ac1e4621180dcf8424e80c04e935b3ab1d",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "dispatch",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "be9302d85804c3289b360e87c94b85fecc25f607",
+        "path": "src/reviewer-dispatch.ts",
+        "blobOid": "62ec6a4b3935a307051525654a02d30c69f694ea",
+        "sha256": "b0f1d46353f2b5dfb3420ef3aa44326714c67240f6664f5cca85ef6ea4a31ebb",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "agent",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "be9302d85804c3289b360e87c94b85fecc25f607",
+        "path": "src/reviewer-agent.ts",
+        "blobOid": "07387e693d15f79664d324928ab9d75d8e0d0b87",
+        "sha256": "01ff7d11b33108daa3d7b63f4e284b247af915cabedf19f58547a1e701039261",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "role",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "be9302d85804c3289b360e87c94b85fecc25f607",
+        "path": "src/reviewer-role.ts",
+        "blobOid": "656c76f85fb04c14b8480e321e340c2dd679bae5",
+        "sha256": "20d6d7a6d43f01acd1dee33cab9d7f601980aa53d5d9a5fcbaa867a79933adf0",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "1f353d6abb07bb9535f30ded41fdcede0d8977e0fe5adad0a1f144222cf19e61",
+        "byteLength": 1936
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "b85c2b3f810bf055c89b87161e0d99845147a281f7d740c9c7d7c4506e704152",
+        "byteLength": 6813
+      }
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "d49362dc73ca7fe37afa33ef0dc6a235a9058868a75f20feac64791c2c9b16ba",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_qohKmGRbUvRgvn7vkt3boEGS|fc_0e66269128c83f23016a6d0019eca8819183551c110a8400df",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_qohKmGRbUvRgvn7vkt3boEGS|fc_0e66269128c83f23016a6d0019eca8819183551c110a8400df",
+    "auditPassed": true,
+    "usage": {
+      "input": 16924,
+      "output": 312,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 17236
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

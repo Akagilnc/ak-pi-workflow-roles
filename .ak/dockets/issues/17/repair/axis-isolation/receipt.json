@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_AYZqwExinPk6Qb9uiY1FZnNJ|fc_012c079567eafe16016a6ba6636f18819184d9911f3d152f59",
+  "details": {
+    "status": "completed",
+    "report": "R1 — Removed opaque parent task bytes/prose from both axis prompts; prompts retain only task SHA-256/UTF-8 length identity, while accepted dispatch evidence and capability binding retain exact task bytes.\nR2 — Preserved exact per-axis selected material UTF-8 bytes, including BOM/multibyte content, with existing recompilation, delivery-identity, ledger, and semantic-audit checks intact.\nR3 — Added production-shaped two-axis and Standards-only regressions proving task sentinels and opposite-axis material references never enter compiled/delivered prompts while exact task evidence remains bound.\nR4 — Passed focused Reviewer tests, Reviewer package lifecycle, full suite (352 tests), typecheck, pack/dry-run, prepack lifecycle, and diff check; committed forward as 59ebe5fee86f34bda1d26618c3999e4056ba5a70 without reinterpreting the refusal as success.",
+    "commitSha": "59ebe5fee86f34bda1d26618c3999e4056ba5a70"
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -1,0 +1,1425 @@
+# Issue #17 full constitutional finding-admission docket
+
+Construction HEAD: `e9434e7306d3a2c152556ab800a3358d6dfcf21f`
+Base: `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5`
+
+## Court question
+
+Audit every finding in every Reviewer receipt below. Reviewer has discovery authority only. Except review-020, the listed repairs were performed without an intervening workflow Judge. Do not infer authorization from `auditPassed`, Recorder artifact kind `authority`, Fixer completion, tests, or later Reviewer silence.
+
+For every Standards and Spec finding, including judgement-call/Nit findings: identify it by review number and a stable short key; decide `sustain | dismiss | superseded | insufficient-evidence`; state whether the original Authority/Plan already authorized the behavior; state whether the associated repair, if any, is admissible in the current construction; and state any current residual action. Distinguish factual code verification from documentary inference. Reconcile contradictory findings explicitly.
+
+Then issue one construction-level posture: `converged`, `continue`, or `escalate`. If `continue`, provide a bounded exact forward-only admission/repair/revert packet. Historical process violations remain evidence and cannot be erased or retroactively described as pre-authorized. Do not require history rewrite.
+
+## Governing evidence
+
+### Authority — `.ak/dockets/issues/17/authority/judge-001/receipt.json`
+
+Authority converges for issue #17. This is construction authority only; it authorizes later Plan/Apply work and is not implementation proof.
+
+Evidence basis: the sealed issue statement is corroborated by the current implementation and durable refusals. `src/reviewer-role.ts` exposes arbitrary per-leg prompt strings and calls `runAgent` immediately after the first leg’s ledger admission; it has no all-legs construction gate. `src/reviewer-execution-ledger.ts` and `src/reviewer-auditor.ts` already preserve the actual attempted prompts and send them, the canonical Skill, task, child reports, batch provenance, and candidate Receipt to the post-run audit. `.ak/dockets/issues/15/review/review-001/result/receipt.json`, `review-002/result/receipt.json`, and `review-003/result/receipt.json` establish the over-broad command, impossible free-text allowlist, and abbreviated Fowler-baseline failures after the sole batch had run. The canonical external `code-review` Skill requires the complete baseline, fixed range, separate Standards/Spec burdens, parallel dispatch, and separate aggregation.
+
+## Clause disposition
+
+A1–A6 are accepted. They govern every proposed two-leg Standards/Spec dispatch. The canonical no-spec path remains a prerequisite/skip path: an explicitly established “no spec available” state creates no Spec prompt and consumes no two-leg batch. It must not be represented as a malformed or one-legged batch.
+
+## Boundary decisions
+
+**U1 — Interface seam: one atomic two-leg construction/dispatch seam.** Replace the parent-visible arbitrary per-leg prompt dispatch surface for this method with one atomic Standards/Spec proposal. The proposal contains structured review declarations, not child prompt prose. The Reviewer runtime owns compilation and validates both complete legs before the dispatcher may create a workspace, invoke a provider, or mark either child started. One accepted atomic call starts the two isolated legs as one sibling-parallel batch. A rejected proposal is an ordinary preflight rejection, not infrastructure failure and not a batch. This internal two-leg seam is not role topology and does not alter caller-owned role ordering or repetition.
+
+**U2 — Compilation ownership: deterministic construction, semantic sufficiency retained by the existing audit.** Runtime-owned deterministic construction must bind: (1) the exact canonical Skill snapshot; (2) the exact opaque task identity; (3) resolved base, target, range/diff command, and commit list; (4) exact identified material bytes and identities; (5) the complete canonical Standards baseline and fixed axis briefs; and (6) the per-leg capability declaration. Standards receives only the common target/provenance block, standards materials, complete baseline, and Standards burden. Spec receives only the common target/provenance block, spec materials, and Spec burden. There is no model-authored free-text instruction slot through which requirements can be abbreviated or blended.
+
+Preflight mechanically rejects incomplete canonical sections, wrong or duplicate axes, cross-axis material placement, missing identities/bytes, range inconsistency, capability inconsistency, and any output not reproduced exactly by the selected construction recipe. It is deterministic and uses no model. The post-run compliance audit remains the sole semantic method auditor: it decides whether the selected sources were semantically sufficient, resolves genuinely ambiguous material classification, verifies actual dispatch identity and fixed-target traceability from runtime evidence, checks successful child evidence and axis isolation, and checks faithful separate aggregation. It does not redo the substantive review. Thus C4 is addressed by eliminating arbitrary prompt prose and enforcing axis-owned compartments, not by a nonblank/digest-only check; irreducible source sufficiency is deliberately left to the existing audit under A4.
+
+**U3 — Executable policy: structured least-privilege capabilities are the exclusive executable authority.** Executable restrictions must not be inferred from or imposed by opaque task prose. Caller-authorized capabilities are supplied as structured input and bound to the task identity; the Reviewer proposal declares the exact capabilities each leg needs. The effective grant is the declared set only, and preflight requires it to be a subset of both caller authorization and host availability. Canonical prerequisite operations and every declared verification operation must be satisfiable before dispatch. A missing requirement rejects both legs before start; the runtime must never repair it by widening access. Child execution is mechanically confined to the accepted grant, and undeclared operations remain unavailable. Legacy free-text “only run …” language has no independent executable-policy force and must not be copied wholesale into child prompts; callers that intend such a restriction must express it in the structured policy. This resolves C2 without granting broad shell access.
+
+**U4 — Correction law: correction is allowed before the sole accepted dispatch; the bound is lifecycle, not a numeric retry count.** After a typed preflight rejection, the parent may submit a corrected structured proposal in the same invocation. Corrections cease permanently when the atomic dispatcher records the accepted dispatch-start transition; no correction or second batch is then legal. There is no package-owned numeric attempt cap: ADR 0007 rejects fixed retry brakes absent failure evidence, and ADR 0010 leaves invocation budget/abort policy to the caller. The invocation/caller abort boundary is the budget bound.
+
+The construction ledger must monotonically record each proposal identity and preflight disposition. A rejection proves no child started by containing no dispatch-start transition, child start identity, workspace creation, provider invocation, or child usage; the dispatcher owning all child starts must make those states unrepresentable before acceptance. Rejected proposal records are minimal structured evidence, not retained generic session/tool-event payloads.
+
+**U5 — Evidence identity: retain the exact compiled prompts.** For the accepted batch, durable Reviewer method evidence retains each exact compiled prompt byte sequence, byte length, and SHA-256, together with the exact canonical Skill/task/range/material/capability identities and construction-recipe version. Dispatch must use those immutable bytes without a later prompt transformation; the dispatch seam records the actual prompt identity/SHA, while the existing execution record continues to give the audit the exact actual prompt. This permits direct byte/hash equality proof without retaining a generic session transcript or generic tool-event payload. Rejected proposals retain only their structured identity, digest, violations, and no-start lifecycle evidence unless compilation produced exact candidate prompts needed to explain the rejection.
+
+## Counterexample closure
+
+- C1: the complete canonical baseline is runtime-owned construction, so abbreviation cannot reach a child.
+- C2: an unsatisfied structured capability set rejects before dispatch and cannot auto-widen.
+- C3: the atomic owner cannot start either leg before both pass.
+- C4: arbitrary axis prose is removed and typed material compartments are validated; remaining semantic source sufficiency stays with the post-run audit.
+- C5: preflight is deterministic and non-model-based.
+
+## Scope/Soul
+
+The current Reviewer Soul already contains only the irreducible judgment kernel and remains unchanged. Fowler text, prompt templates, fields, CLI/transport mechanics, lifecycle counts, and task policy belong in the canonical Skill, schema/runtime, documentation, or host input—not Soul. Existing post-run audit authority, exactly-one started sibling-batch law, active-model behavior, role boundaries, caller-owned orchestration, and the reserved cross-model-panel concept remain unchanged.
+
+### Plan — `.ak/dockets/issues/17/plan/coder-002/receipt.json`
+
+## Replacement construction Plan
+
+### Construction seam and bounded interface
+
+Add one deep module, `src/reviewer-dispatch.ts`, as the **sole** owner of proposal validation, exact-byte resolution, target/range resolution, prompt compilation, capability intersection, and the irreversible `open → accepted-and-started` transition. `src/reviewer-role.ts` and `extensions/role-runtime.ts` only load canonical inputs and adapt the Pi tool call; `src/reviewer-agent.ts` only executes an opaque accepted immutable dispatch; `src/reviewer-execution-ledger.ts` only appends evidence emitted by dispatch/runner and never decides lifecycle.
+
+Canonical inputs remain:
+
+- opaque bytes loaded by existing `--ak-review-task`;
+- the exact `code-review` canonical Skill snapshot already loaded through `canonical-skill-binding.ts`;
+- the repository target pinned by the runtime snapshot.
+
+Do **not** add a broad review-input document or caller-supplied target/material/spec-state bytes. If host authorization cannot be conveyed through existing activation dependencies, add only an optional `--ak-review-capabilities` transport shaped as `{ version, taskSha256, tools, bashCommands, prerequisiteOperations }`: `tools` are names from the existing Reviewer child-tool vocabulary, `bashCommands` are exact complete command strings, and `prerequisiteOperations` are package-owned named operations needed to prepare/verify the snapshot. Exact task-digest equality is mandatory. No globs, paths, network/process/filesystem rules, wildcard entries, or generic sandbox vocabulary are admitted.
+
+The atomic proposal is bounded to:
+
+```ts
+type ReviewerProposalV1 = Readonly<{
+  version: 1;
+  base: Readonly<{ revision: string }>;
+  standardsMaterials: readonly MaterialSelection[];
+  spec:
+    | Readonly<{ state: "established"; materials: readonly MaterialSelection[] }>
+    | Readonly<{ state: "not-established"; evidence: readonly MaterialSelection[] }>;
+  required: Readonly<{
+    standards: ReviewerCapabilityRequest;
+    spec?: ReviewerCapabilityRequest;
+  }>;
+}>;
+
+type MaterialSelection = Readonly<{
+  id: string;
+  repositoryPath: string;
+}>;
+
+type ReviewerCapabilityRequest = Readonly<{
+  tools: readonly ExistingReviewerChildToolName[];
+  bashCommands: readonly string[];
+  prerequisiteOperations: readonly ReviewerPrerequisiteOperation[];
+}>;
+
+type AcceptedReviewerDispatch = Readonly<{
+  identity: string;
+  targetSnapshot: RuntimePinnedTargetIdentity;
+  legs: readonly OpaqueAcceptedLeg[]; // exactly [Standards] or [Standards, Spec]
+}>;
+
+type OpaqueAcceptedLeg = Readonly<{
+  axis: "standards" | "spec";
+  prompt: string;
+  utf8Length: number;
+  sha256: string;
+  grant: EffectiveReviewerGrant;
+}>;
+```
+
+`MaterialSelection` is only a repository-owned identity/path selection in the proposal. The dispatch owner resolves the base revision against the pinned snapshot and reads every selected item from that snapshot to obtain exact bytes; the caller cannot inject material content. Established no-spec state is proposal state and evidence, not a separate dispatch API.
+
+### 1. Canonical inputs, proposal validation, and narrow capability ceiling
+
+- **Behavior:** Preserve opaque task, exact canonical Skill snapshot, and runtime-pinned target. Validate one atomic proposal containing base, axis-specific material selections, established spec state, and required Reviewer-local capabilities. Resolve selections to immutable exact bytes in the dispatch owner. Reject missing/duplicate/cross-axis identities, paths not resolvable in the pinned target, contradictory spec state, task-digest mismatch, unknown tools/operations, non-exact bash entries, or requirements outside the accepted ceiling. Task prose has no capability authority.
+- **Owner:** `src/reviewer-dispatch.ts` owns parsing, validation, byte resolution, and grant intersection. `src/reviewer-role.ts` only adapts proposal parameters. `extensions/role-runtime.ts` only loads task/Skill and, only if needed, the narrow capability-ceiling file.
+- **Red:** Tests reject a broad document carrying target/material bytes/spec prose; wrong task digest; wildcard tool/command/path/policy entries; unknown tools or prerequisite operations; duplicate/cross-axis material identity; unavailable selected bytes; established Spec without Spec materials; no-spec with Spec materials/grant; and proposal requirements exceeding the ceiling. Prove task prose cannot widen or narrow the grant.
+- **Green:** One frozen validated proposal whose exact task/Skill identities, snapshot-resolved base/material bytes, spec state, and effective per-leg Reviewer-local grants are known before any workspace/provider/child start.
+- **Scope:** No `--ak-review-input`; no generic authorization or sandbox framework; no caller-selected target; no Soul/output-schema changes. Capability vocabulary is limited to existing child tool names, exact bash command strings, and package-owned snapshot prerequisite operations.
+
+### 2. Deterministic range and prompt compiler
+
+- **Behavior:** Resolve proposal base against the already runtime-pinned target, derive canonical range/diff/ordered commits, and reject inconsistency or an unreachable base. Compile byte-stable axis prompts from the exact canonical Skill snapshot, opaque task, pinned target/range, and resolved material bytes. Extract the **complete Standards baseline from that snapshot at compile time** and place it only in the Standards prompt. Established Spec produces Standards and Spec prompts; established no-spec produces one complete Standards prompt and no Spec prompt. Record UTF-8 length and SHA-256 and verify recompilation identity before acceptance.
+- **Owner:** Pure target resolver, canonical-Skill baseline extractor, and compiler in `src/reviewer-dispatch.ts`; `canonical-skill-binding.ts` remains owner of the snapshot itself.
+- **Red:** Golden/perturbation tests prove exact deterministic bytes/hashes/lengths, complete baseline extraction from the supplied snapshot, task/target/range/commit/material binding, axis isolation, wrong/duplicate axes rejection, and compile/recompile mismatch rejection. A changed canonical snapshot must change extracted prompt evidence without changing source constants.
+- **Green:** A deeply frozen candidate dispatch containing exactly one Standards leg or one Standards plus one Spec leg, with immutable opaque prompt/grant bytes and common pinned-target evidence.
+- **Scope:** Do not copy Fowler/Standards baseline text into source constants, schema, auditor, tests as an alternate baseline, README, or Soul. Tests assert extraction against fixture snapshot structure/content rather than maintaining a second production baseline. Preflight does not judge substantive finding quality.
+
+### 3. Sole-owner atomic lifecycle and corrected no-spec transition
+
+- **Behavior:** Replace arbitrary `{description,prompt}` Agent calls with one atomic proposal tool. `reviewer-dispatch` fully preflights every required leg before the sole irreversible acceptance/start transition. Rejected proposals append typed rejection evidence and start nothing; corrected proposals remain legal while open. Once accepted, all later proposals are rejected. Established Spec accepts one two-leg sibling dispatch. Established no-spec accepts and starts one complete Standards-only dispatch through the same owner, creates no Spec prompt, and never records a two-leg sibling batch.
+- **Owner:** The state machine and dispatch invocation live only in `src/reviewer-dispatch.ts`. `src/reviewer-role.ts` registers/adapts the tool and renders typed results; it has no lifecycle state. The old arbitrary Agent overload and same-message provenance authority are removed.
+- **Red:** Prove N rejected corrections cause zero snapshot/workspace/provider/child starts; a corrected proposal can then start; failure to preflight either planned leg starts neither; acceptance is irreversible; no second batch is possible; and no-spec starts exactly one Standards child with complete compiled Standards prompt, zero Spec prompt/start, and no sibling-batch record.
+- **Green:** Exactly one accepted dispatch per invocation: cardinality one for no-spec, cardinality two concurrently for established Spec, both issued by the same transition owner.
+- **Scope:** No retry counter, retained arbitrary dispatcher, parent-authored prompt field, model preflight, caller orchestration, panel behavior, or alternate no-spec path.
+
+### 4. Opaque least-privilege runner
+
+- **Behavior:** Replace `runReviewerAgent({description,prompt})` with `runReviewerDispatch(acceptedDispatch)`. The runner cannot inspect/recompile proposal semantics: it receives only frozen accepted prompt bytes/grants and pinned identity. It prepares the shared pinned snapshot/workspaces only after acceptance, runs one Standards child or two isolated concurrent siblings as directed, sends prompt bytes unchanged, selects exactly granted existing tools, and wraps `bash` so only exact accepted command strings execute. Package prerequisite operations are performed only when present in the accepted operational grant. Undeclared tools/commands are unavailable and no layer auto-widens.
+- **Owner:** `src/reviewer-agent.ts` owns snapshot/workspace/provider mechanics, child tool selection, exact-command bash guard, and execution. Effective-grant calculation remains exclusively in `src/reviewer-dispatch.ts`; extension wiring only passes the opaque value.
+- **Red:** Instrumented tests prove no mkdtemp/git/provider/session call before acceptance; exact visible tool sets; allowed exact bash succeeds while any changed/undeclared command is rejected; absent grants never widen; no wildcard interpretation exists; provider-facing prompts equal compiled bytes; no-spec starts one child; established Spec starts two overlapping isolated children at the same target.
+- **Green:** Axis-keyed execution results with actual prompt bytes/hash, shared target evidence, reports/usages, and workspace dispositions, without runner-side proposal or lifecycle decisions.
+- **Scope:** Preserve active model/provider/auth, writable-clone behavior, cancellation/failure retention, scratch distinction, and the documented operational—not security-boundary—nature. No generic filesystem/network/process policy or reusable sandbox subsystem.
+
+### 5. Append-only execution evidence projection
+
+- **Behavior:** Refactor `ReviewerExecutionRecord` into an append-only projection of dispatch-owner and runner events: rejected proposal identities/violations/no-start facts; accepted recipe/input identities; exact compiled prompts, UTF-8 lengths, SHA-256 and grants; dispatch-start identity/cardinality; and actual child prompt/target/result evidence. It derives no transition and cannot accept, reject, start, or reopen a proposal. Accepted evidence is defensively cloned/frozen. Completed established-Spec evidence requires one accepted two-child sibling dispatch; completed no-spec evidence requires one accepted Standards-only dispatch and no Spec artifacts.
+- **Owner:** `src/reviewer-execution-ledger.ts` provides event append/projection APIs only. `reviewer-dispatch` emits proposal/acceptance events; runner emits start/settlement evidence; role only requests the projected audit record.
+- **Red:** Tests prove monotonic event order, no start fields after rejection, immutability, exact compiled-versus-actual prompt identity, one-vs-two cardinality, shared target, and inability of ledger APIs to perform lifecycle transitions. Preserve infrastructure-failure/refusal evidence tests.
+- **Green:** One audit-ready record proving construction and actual dispatch without generic transcript/tool-event retention and without duplicating authority.
+- **Scope:** Remove arbitrary Agent-call, persisted-assistant-message, bash-transcript lifecycle, and fake-Spec fixtures rather than preserving parallel paths. Do not change package `ReviewerOutput` or Recorder Receipt extraction.
+
+### 6. Semantic audit, package contract, and documentation
+
+- **Behavior:** Keep `src/reviewer-auditor.ts` as the sole model-based semantic method auditor. Supply record evidence so it checks compiled/actual identity, pinned target/range traceability, successful required child evidence, Standards/Spec isolation, semantic material sufficiency, valid established no-spec evidence, and faithful aggregation. A valid no-spec completion has one substantive Standards report and no Spec prompt/result. Document atomic proposal ownership and the narrow operational grant.
+- **Owner:** `src/reviewer-auditor.ts`, `README.md`, `test/reviewer-package-lifecycle.test.ts`, `test/package-entrypoint.integration.test.ts`, and audit fixtures.
+- **Red:** Audit/integration fixtures revise altered actual bytes, target mismatch, blended axes, insufficient selected materials, missing/failed required children, malformed no-spec with zero children, fake Spec in no-spec, and unfaithful aggregation. Valid two-leg and Standards-only no-spec records pass. Preserve output-correction and fatal audit-infrastructure behavior.
+- **Green:** Packaged Reviewer crosses native Skill expansion, atomic construction, one accepted one-or-two-leg dispatch, exact evidence, and existing audit/termination boundaries.
+- **Scope:** Auditor references the canonical snapshot/evidence but does not embed the Standards baseline. No Soul edits; no Judge/Collector/Coder/Fixer, generic retention, or cross-model selection changes.
+
+## Test migration and incremental implementation order
+
+1. Add red pure tests for proposal shape, snapshot byte resolution, narrow capability ceiling/algebra, range resolution, canonical-Skill baseline extraction, compiler determinism, and one/two-leg cardinality; implement these as pure pieces inside `reviewer-dispatch.ts`.
+2. Add transition tests with a fake runner; implement the sole-owner state machine, corrected Standards-only no-spec transition, immutable accepted dispatch, and typed event emission.
+3. Migrate `test/reviewer-agent.test.ts` to opaque accepted dispatches; implement exact tool selection/bash guarding and one-or-two child execution while retaining existing snapshot/provider internals.
+4. Migrate `test/reviewer-execution-ledger.test.ts` to append-only event projection, then simplify the ledger. Delete obsolete arbitrary-call, persisted-message, bash-lifecycle, zero-child no-spec, and fake-Spec fixtures; graduate each required behavior exactly once into the owning suite.
+5. Migrate `test/reviewer-role.test.ts` to the atomic proposal schema and correction flow; wire only task/Skill and optional narrow ceiling loading; remove parent-authored prompt and role-owned lifecycle hooks.
+6. Update auditor and package lifecycle/integration fixtures for both valid cardinalities, then README/CLI help. Run focused Reviewer tests, full `npm test`, and `npm run typecheck`.
+
+Apply-phase evidence must preserve: red-before-green runs; a same-pattern search showing no arbitrary Reviewer `{description,prompt}` dispatch or second lifecycle owner; introduced-regression checks for other roles and Recorder; and behavior facts proving rejection performs zero starts, no-spec performs exactly one Standards start/no Spec construction, established Spec overlaps exactly two siblings, undeclared tools/commands cannot execute, and provider-facing prompt identity is exact. `src/` and `extensions/` ship directly; no hand-edited `dist/` Reviewer artifact is required.
+
+### Plan addendum — `.ak/dockets/issues/17/plan/coder-003/receipt.json`
+
+## Binding Plan addendum — capability schema and target chronology
+
+This addendum replaces only the two unresolved parts of the replacement Plan. All other sections remain settled.
+
+### Blocker 1 — freeze the capability contract
+
+#### Behavior
+
+Reviewer activation has one mandatory authorization transport:
+
+```text
+--ak-review-capabilities <json-path>
+```
+
+The referenced file is UTF-8 JSON with exactly this version-1 schema (`additionalProperties: false` at every object level):
+
+```ts
+type ReviewerCapabilitiesV1 = Readonly<{
+  version: 1;
+  taskSha256: string; // exactly 64 lowercase hexadecimal characters
+  tools: readonly ReviewerChildToolName[];
+  bashCommands: readonly string[];
+  prerequisiteOperations: readonly ReviewerPrerequisiteOperation[];
+}>;
+
+type ReviewerChildToolName =
+  | "read" | "grep" | "find" | "ls" | "bash" | "write" | "edit";
+
+type ReviewerPrerequisiteOperation =
+  // dispatch-owned, pre-acceptance Git identity/read operations
+  | "preflight.git.pin-target"
+  | "preflight.git.resolve-base"
+  | "preflight.git.derive-range"
+  | "preflight.git.list-ordered-commits"
+  | "preflight.git.read-material"
+  // runner-owned, post-acceptance Git setup/verification operations
+  | "runner.git.materialize-mirror"
+  | "runner.git.materialize-workspace"
+  | "runner.git.verify-snapshot";
+```
+
+All three arrays are required, may be empty, contain no duplicates, and admit only the closed values above. `taskSha256` is SHA-256 over the exact existing `--ak-review-task` file bytes—not trimmed text, decoded/re-encoded text, a path, or proposal prose. Activation reads those bytes once, verifies the digest before exposing Reviewer tools, and thereafter uses the same bytes as the opaque task input. Missing flags/files, unreadable files, malformed JSON/UTF-8, wrong version/keys/types/digest casing, duplicate entries, unknown entries, or digest mismatch fail Reviewer activation/preflight. There is no implicit/default capability document, legacy fallback, empty-file interpretation, task-prose authority, or widening to host availability.
+
+Each `bashCommands` member is the exact complete `command` string accepted by the child `bash` tool. Authorization is byte-for-byte JavaScript string equality against an accepted member. No trim, normalization, glob, prefix, regex, tokenization, argv parsing, quoting interpretation, shell inference, or task-text interpretation occurs. `bashCommands` must be empty unless `tools` contains `bash`; granting `bash` with an empty command array exposes the tool but permits no command. A command entry does not itself grant `bash`.
+
+Proposal requirements retain the settled per-axis shape. For each accepted leg, effective child tools, exact bash strings, and package prerequisite operations equal that leg’s declared requirement after proving it is a subset of this task-bound ceiling and current host availability; they are never the entire ceiling by default. Common preflight requirements are checked against the ceiling before performing them; accepted runner setup requirements are the union required by the recipe and accepted legs. The closed prerequisite enum authorizes only package implementation operations at those named seams. It does not create child-visible commands or a generic filesystem, network, process, path, or sandbox policy.
+
+The operation meanings are frozen as follows:
+
+- `preflight.git.pin-target`: identify repository root and pin HEAD commit plus the review ref map/object identities before proposals are handled.
+- `preflight.git.resolve-base`: resolve the declared base commit only within the immutable pin.
+- `preflight.git.derive-range`: verify base ancestry/reachability and derive the canonical base-to-target range/diff identity.
+- `preflight.git.list-ordered-commits`: obtain the deterministic ordered commits for that range.
+- `preflight.git.read-material`: read proposal-selected repository material bytes from the pinned target/base identity; it grants no arbitrary working-tree read.
+- `runner.git.materialize-mirror`: after acceptance, create/populate the accepted immutable mirror from the pin.
+- `runner.git.materialize-workspace`: after acceptance, create each isolated writable leg workspace at the accepted target.
+- `runner.git.verify-snapshot`: verify materialized HEAD, refs, and required objects against accepted pinned evidence.
+
+#### Owner
+
+`extensions/role-runtime.ts`/`src/reviewer-role.ts` register and load the mandatory flag through a narrow raw-byte loader. `src/reviewer-dispatch.ts` validates schema/digest, checks proposal subsets and host availability, and compiles immutable effective grants. `src/reviewer-agent.ts` enforces accepted child-tool visibility and exact bash-string equality and performs only accepted runner-prefixed operations. Task prose, the role adapter, and the runner never calculate or widen authority.
+
+#### Red
+
+Owning tests first reject: absent capability flag; missing/unreadable file; invalid UTF-8/JSON; extra keys; version other than `1`; uppercase/non-64-byte digest; a digest of trimmed task text; task mutation after digest/load; unknown/duplicate tools or operations; duplicate bash strings; command without `bash`; proposal requirement outside ceiling/host availability; and task prose claiming a wider grant. Bash tests prove `"git status"` does not authorize leading/trailing whitespace, extra flags, prefixes/suffixes, alternate quoting, shell composition, or any other string. Operation tests prove preflight names cannot authorize mirror/workspace setup and runner names cannot authorize target resolution/material reads.
+
+#### Green
+
+A valid task-digest-bound V1 document yields only exact proposal-subset grants. Children see only the accepted names from the seven-name vocabulary, and `bash` executes only exact accepted complete strings. Dispatch and runner can invoke only their respective closed prerequisite operations.
+
+#### Scope and test ownership
+
+Schema/digest/subset/enum tests belong to new `test/reviewer-dispatch.test.ts`; CLI loading/default failure belongs to `test/reviewer-role.test.ts` and `test/package-entrypoint.integration.test.ts`; visible-tool and exact-command enforcement belongs to `test/reviewer-agent.test.ts`; package lifecycle has one end-to-end valid file plus missing/mismatch refusal cases. Do not add aliases, `--ak-review-input`, generic policy vocabulary, task-prose parsing, or Soul text.
+
+### Blocker 2 — freeze target chronology and ownership
+
+#### Behavior
+
+The irreversible sequence is:
+
+1. **Activation pin:** before proposal handling is enabled, Reviewer runtime pins repository root, target HEAD, ref map, and required object identities. This immutable `RuntimePinnedTarget` is the only target authority for the invocation. No mirror or leg workspace is created.
+2. **Proposal preflight reads:** while lifecycle remains `open`, `reviewer-dispatch` uses a narrow `ReviewerPinnedGitReader` against that pin to resolve the proposal’s declared base, prove reachability, derive canonical range/diff identity and ordered commits, and read exact selected material bytes. The adapter exposes only the five `preflight.git.*` operations above and rejects data not reachable in the pin; it cannot clone, create a workspace, invoke a provider, or start a child.
+3. **Compile and validate:** dispatch compiles both required legs—or the one complete Standards leg for established no-spec—from the exact pinned evidence/task/Skill/material bytes, computes prompt identities and effective grants, reproduces them, and validates the entire candidate atomically.
+4. **Reject or accept:** rejection records typed proposal identity/violations and no-start facts, leaves lifecycle `open`, and permits correction. These bounded Git identity/read operations are allowed on rejected attempts, but rejection creates no mirror/workspace, invokes no provider, starts no child, and consumes no batch. Acceptance deep-freezes target/base/range/ordered-commit/material evidence, exact compiled prompt bytes/hashes/lengths, grants, recipe identity, and cardinality, then records the sole irreversible `open → accepted-and-started` transition.
+5. **Post-acceptance materialization/execution:** only after that transition does `reviewer-agent` receive the opaque `AcceptedReviewerDispatch`. It materializes/verifies the mirror and one or two workspaces from accepted pinned evidence, exposes accepted child grants, and sends accepted prompt bytes unchanged. It never resolves a base/target/material, derives a range, reads proposal materials, compiles/recompiles prompts, intersects grants, accepts/rejects proposals, or decides/reopens lifecycle.
+
+The activation pin is identity capture/read-only Git work, not runner snapshot preparation. “Snapshot preparation” in the prior Plan is therefore split and renamed: dispatch-side immutable pin/read preflight occurs before acceptance; runner-side mirror/workspace materialization occurs only after acceptance. Accepted-and-started records the irreversible dispatch commitment before setup begins; setup/provider failure is post-acceptance infrastructure evidence and cannot reopen correction or permit another batch.
+
+#### Owner
+
+`reviewer-dispatch` owns the pin-reader interface, base/range/commit/material resolution, compilation, grant validation, rejection/acceptance, and sole transition. A package Git adapter implements only pin-bound reads. `reviewer-agent` owns mirror/workspace materialization, snapshot verification, provider/session mechanics, and opaque execution after transition. The ledger remains an append-only projection and owns neither sequence nor decisions; role/runtime wiring only constructs these dependencies.
+
+#### Red
+
+A fake chronology test proves activation pin precedes tool availability. Rejected proposals may increment only pin-reader calls and ledger rejection events; assertions require zero `mkdtemp`, clone/fetch/workspace, provider, session, child-start, and batch-consumption calls. Counterexamples reject a base/material outside the pin, ref/HEAD drift, inconsistent range, changed material bytes, or a missing preflight operation. Tests make runner methods fail if called before acceptance and make accepted opaque inputs impossible to reinterpret. They also prove runner setup failure occurs after the irreversible transition and does not allow correction, and prove the runner has no target resolver/compiler/grant/lifecycle dependency.
+
+#### Green
+
+A corrected proposal can follow any number of bounded read-only rejections, accept exactly once with frozen evidence, and only then cause one accepted Standards workspace/child or two isolated overlapping Standards/Spec workspaces/children. Materialized HEAD/refs/objects and provider-facing prompt bytes exactly match accepted evidence.
+
+#### Scope and test ownership
+
+Pin-reader and state-order tests belong to `test/reviewer-dispatch.test.ts`; mirror/workspace post-acceptance and opaque-runner tests belong to `test/reviewer-agent.test.ts`; append-only ordering/no-start evidence belongs to `test/reviewer-execution-ledger.test.ts`; one rejection-then-correction and both accepted cardinalities belong to `test/reviewer-package-lifecycle.test.ts`. Replace contradictory old assertions that every rejection performs zero snapshot reads with the precise rule: bounded immutable pin reads are permitted, while materialization/provider/child/batch effects remain zero. No second snapshot authority, pre-acceptance mirror, caller-supplied bytes, runner-side resolution, or parallel lifecycle seam is introduced.
+
+### Plan judgment — `.ak/dockets/issues/17/plan/judge-003/receipt.json`
+
+The combined Plan is construction-ready. The binding addendum closes both remaining blockers without reopening settled authority: `--ak-review-capabilities` is mandatory, bound to the exact loaded task bytes, has no absent/mismatch/default widening path, fixes the seven existing child tool names, defines exact complete bash-command string equality, and closes prerequisite authority to named preflight-versus-runner Git operations. Ownership and chronology are explicit: activation captures the immutable target pin; `reviewer-dispatch` alone performs pin-bound base/range/commit/material reads, compilation, capability intersection, rejection/correction, evidence freezing, and the sole irreversible acceptance transition; rejected attempts have no mirror/workspace/provider/child/batch effects; only afterward may the opaque runner materialize and execute, with no resolution, compilation, grant, acceptance, or lifecycle authority. The replacement Plan’s settled no-spec Standards-only path, canonical-Skill baseline extraction, append-only ledger, sole semantic auditor, evidence identities, obsolete-path migration, five-fact coverage, scope boundaries, and Apply verification obligations remain intact. No public interface, default, owner, cardinality, or chronology decision remains for construction planning; implementation mechanics and proof now belong to Apply.
+
+### Review-020 judgment — `.ak/dockets/issues/17/judgment/review-020/receipt.json`
+
+The later docket-only commits do not change the reviewed production seams. Finding 1 is a recipe minimum, not a widening of the capability schema; finding 2 violates the accepted immutable-pin chronology directly.
+
+## Complete Reviewer finding record
+
+### Review 001 — refused — `.ak/dockets/issues/17/review/review-001/receipt.json`
+
+Unable to run the atomic two-axis review. The Reviewer validator rejected the dispatch because the supplied canonical code-review skill lacks a literal `## Standards` baseline section. No child review effects ran, so a complete fixed-target report cannot be produced without a corrected canonical skill.
+
+### Review 002 — refused — `.ak/dockets/issues/17/review/review-002/receipt.json`
+
+Unable to issue a method-compliant final two-axis review for `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...1860795ebc97189b5d334ac1119c85fb310ee1cb`. The atomic dispatch granted `bash` with no authorized commands, used a two-dot rather than the required three-dot fixed-range diff, and did not establish the required pre-dispatch non-empty-diff check. Its outputs also failed axis isolation: the Standards leg included a Spec-oriented capability claim, while the Spec leg emitted a Standards section and combined cross-axis summary. Consequently semantic post-audit cannot faithfully aggregate the child reports. The partial record indicates 2 Standards judgment-call findings and 3 P1 Spec findings, but reporting completion or reconstructing their details would be misleading.
+
+### Review 003 — completed — `.ak/dockets/issues/17/review/review-003/receipt.json`
+
+Fixed target: `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...1506bf9aedd96d72fb62b06282eb952702dc2278`.
+
+## Standards
+No hard `CLAUDE.md` violation was found.
+
+1. **Judgement call — Duplicated Code (`src/reviewer-role.ts:23-30`):** the role layer repeats the tool and prerequisite-operation vocabularies already owned by the structured proposal/dispatch contract, creating parallel lists that can drift.
+2. **Judgement call — Primitive Obsession / Duplicated Code (`src/reviewer-agent.ts:36-38,475-476`):** prerequisite operations are handled as untyped strings and then forced through `as any`, duplicating the contract vocabulary while bypassing its domain type.
+3. **Judgement call — Data Clumps:** the same three-part byte identity—content bytes, byte length, and SHA-256 identity—is carried together across three reviewer files and wants a shared value type.
+
+## Spec
+1. **Divergent base (`src/reviewer-dispatch.ts:307-315`):** range derivation accepts the merge base even when it differs from the submitted resolved base, silently changing the fixed comparison base instead of rejecting the proposal.
+2. **Unread no-spec evidence (`src/reviewer-dispatch.ts:448-453`):** selected evidence for `state: "not-established"` is never read; the semantic auditor receives `[null]`, so it cannot audit the evidence supporting the no-spec conclusion.
+3. **Effect before authorization (`src/reviewer-role.ts:93-97`):** the implementation pins the target before capability authorization, violating the required atomic preflight ordering by allowing a prerequisite effect before the task-bound grant is accepted.
+4. **Valid empty-command grant rejected (`src/reviewer-dispatch.ts:242-243`):** the implementation rejects `bash` paired with an empty command list even though the contract explicitly permits that least-privilege grant, narrowing a valid schema/runtime state.
+
+Summary: Standards — 3 judgement-call findings and no hard violation; worst is the duplicated contract vocabularies at `src/reviewer-role.ts:23-30`. Spec — 4 findings; worst is the divergent-base defect at `src/reviewer-dispatch.ts:307-315`.
+
+### Review 004 — refused — `.ak/dockets/issues/17/review/review-004/receipt.json`
+
+Unable to submit a compliant two-axis review receipt for `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...5f31da3f250eeaa3061c778acf9be71e98a87e65`.
+
+The sole Standards child based its only P1 finding on `README.md:131`, but the atomic proposal established only `CLAUDE.md` as Standards authority. Faithfully aggregating that finding would exceed the fixed authority; excluding or substantively readjudicating it would alter the child result, and the structured execution record contains no separate semantic-auditor decision authorizing such an override. Therefore a complete, authority-traceable Standards axis cannot be formed from this execution, so the combined report is refused rather than guessed.
+
+### Review 005 — completed — `.ak/dockets/issues/17/review/review-005/receipt.json`
+
+## Standards
+
+- **Hard violation — missing canonical native Skill expansion verification** (`src/reviewer-role.ts:128-129` and completion tests). `binding.captureExpansion` is never called, and completion tests still succeed when it is a no-op. The target therefore does not verify the canonical native Skill expansion required by the reviewer public contract.
+- **Judgement call — possible Duplicated Code / Data Clumps** (`src/reviewer-dispatch.ts:60-65,430-456`; `src/reviewer-execution-ledger.ts:100-117,138-141`; `src/reviewer-agent.ts:449-469`). The `{bytes, utf8Length, sha256}` shape and its validation are repeated across dispatch, ledger, and agent code. Consolidate the clump into one shared type/validator.
+
+The Standards leg reported no probe changes; scratch artifacts are not fixed-target facts.
+
+## Spec
+
+- **P1 — Runner prerequisites are checked after acceptance** (`src/reviewer-dispatch.ts:365-374`; `src/reviewer-agent.ts:474-480`). The proposal is irreversibly accepted before runner prerequisites are checked, contrary to correction-before-acceptance and the required package lifecycle.
+- **P1 — Material IDs are prompt-injectable** (`src/reviewer-dispatch.ts:250-257,417`). Material IDs are interpolated into prompt text without a grammar or escaping boundary, creating a model-authored free-text instruction slot that the plan expressly prohibits.
+- **P1 — Base resolution is not bound to the activation pin** (`src/reviewer-dispatch.ts:309-318`). Base resolution uses the live repository rather than the repository state fixed by the activation pin, contrary to fixed-target preflight.
+- **P2 — Native Skill expansion is not captured or verified** (`src/reviewer-role.ts:128-129` and completion tests). `binding.captureExpansion` is never called, and completion tests pass with a no-op implementation, so canonical native Skill expansion remains unverified.
+
+Verification: `npm run typecheck` could not execute because `tsc` was absent; it did not pass.
+
+Summary: Standards — 2 findings (worst: missing canonical native Skill expansion verification); Spec — 4 findings (worst: three coequal P1s — post-acceptance prerequisite checks, prompt-injectable material IDs, and base resolution against live repository state).
+
+### Review 006 — refused — `.ak/dockets/issues/17/review/review-006/receipt.json`
+
+The atomic Reviewer proposal failed validation with: “Invalid material selection identity or repository-relative path.” The execution record does not identify the invalid selection or path. No child review ran, so there is no evidence-backed Standards or Spec report to submit.
+
+### Review 007 — completed — `.ak/dockets/issues/17/review/review-007/receipt.json`
+
+## Standards
+No hard documented-standard breach was reported. Each item is a fixed-target smell-baseline judgement call; scratch/workspace artifacts are excluded.
+
+1. **Possible Duplicated Code — capability validation** — `src/reviewer-dispatch.ts:187-204, 223-249`. Capability-file parsing at lines 187-204 and proposal-request validation at lines 223-249 duplicate the capability-validation shape for `tools`, `bashCommands`, and `prerequisiteOperations`. Extract one shared validator.
+2. **Possible Duplicated Code / Data Clumps — dispatch/evidence types** — `src/reviewer-dispatch.ts`, `src/reviewer-execution-ledger.ts`, with projection evidence at `src/reviewer-role.ts:102`. The cited dispatch and ledger declarations repeat the same grouped record fields, and the role projects between them. Reuse the dispatch-owned types or use an explicit projection function.
+3. **Possible Duplicated Code — Git ref parsing** — `src/reviewer-dispatch.ts:311-317`; `src/reviewer-agent.ts:125-147`. Both locations run `git for-each-ref --format=%(refname)%00%(objectname)` and independently parse NUL-separated ref lines into a map. Share that parser.
+
+## Spec
+1. **Fixed-point resolution failures** — changed resolution code in `src/reviewer-dispatch.ts`. The canonical Skill permits “a commit SHA, branch name, tag, `main`, `HEAD~5`, etc.” The reported concrete valid cases are `HEAD~5`, an abbreviated SHA, and an annotated tag; the implementation rejects or mishandles them rather than resolving the supplied fixed point.
+2. **Cross-axis placement is not mechanically rejected** — changed proposal/material validation in `src/reviewer-dispatch.ts`. The same `repositoryPath` is accepted in Standards and Spec when represented by different IDs, a mechanical counterexample to enforced axis isolation.
+3. **Material-path grammar is over-restrictive** — changed repository-path validation in `src/reviewer-dispatch.ts`. The grammar rejects valid repository-owned paths containing a space (`docs/review notes.md`) or non-ASCII characters (`docs/规范.md`), although the Plan selects materials by repository ownership rather than this narrower character grammar.
+
+Summary: Standards — 3 judgement-call findings; worst: duplicated capability validation. Spec — 3 findings; worst: `HEAD~5`, abbreviated-SHA, and annotated-tag fixed points can fail resolution.
+
+### Review 008 — completed — `.ak/dockets/issues/17/review/review-008/receipt.json`
+
+## Standards
+
+- **Hard — `src/reviewer-dispatch.ts` prompt compiler and its regression test, against the exact-task-bytes clause in `README.md`:** the implementation serializes task identity metadata but omits the opaque task bytes themselves. The regression test explicitly enforces that absence. Thus the generated canonical prompt cannot satisfy the documented requirement to carry the exact opaque task bytes.
+- **Possible Divergent Change — `src/reviewer-dispatch.ts`:** the same changed module owns capability admission, Git snapshot/range I/O, and prompt compilation/lifecycle.
+- **Possible Data Clumps — `src/reviewer-agent.ts:48`, `src/reviewer-dispatch.ts:86`, `src/reviewer-execution-ledger.ts:30`:** `{ bytes, utf8Length, sha256 }` is repeated as the same identity record.
+- **Possible Duplicated Code — `src/reviewer-agent.ts:137-143`, `src/reviewer-execution-ledger.ts:91-93`:** both sites sort refs and compare their JSON serialization.
+
+No probe or scratch changes were made.
+
+## Spec
+
+- **P1 — capability admission in `src/reviewer-dispatch.ts` and its regression test:** validation rejects unauthorized requested bash commands but does not require a leg to request authorization for the fixed-range `git diff` command at all; the regression shape therefore admits a leg without the command. This violates the requirement for mandatory task-bound least-privilege grants and exact bash enforcement.
+- **P1 — `src/reviewer-role.ts:105,114-126` and `src/reviewer-dispatch.ts:489-503`:** shared mutable `currentContext`/`currentSignal` can be overwritten or cleared by concurrent calls, while dispatch lacks a post-compilation closed-state check. The resulting interleaving permits correction/rejection after acceptance and possible post-acceptance rejection evidence, violating correction-before-acceptance.
+- **P2 — standards prompt construction in `src/reviewer-dispatch.ts` and its prompt test:** standards materials are rendered without `repositoryPath`. That omission prevents the required file-level citation of the applicable repository standard.
+
+No product files or remotes were changed; inspection was against the pinned target.
+
+Summary: Standards — 4 findings; worst: hard README exact-task-bytes violation. Spec — 3 findings; worst: P1 missing required-diff capability and P1 concurrent shared-context lifecycle race.
+
+### Review 009 — completed — `.ak/dockets/issues/17/review/review-009/receipt.json`
+
+## Standards
+
+- **Possible Divergent Change** *(judgement call)* — `src/reviewer-dispatch.ts:168-510` combines capability parsing, Git pin/range/material I/O, baseline extraction, prompt compilation, and lifecycle in one changed area, creating several reasons to change.
+- **Possible Mysterious Name** *(judgement call)* — `test/reviewer-role.test.ts`: opaque helper code such as `const h=harness(); ... invocation:x=>x` obscures the fixture and invocation roles at call sites.
+- **Possible Duplicated Code** *(judgement call)* — `test/reviewer-role.test.ts`: the zero-token/cost usage fixture, shaped as `{input:0, output:0, ... cost:{...}}`, is repeated instead of shared.
+
+No documented-standard breach was reported; all three are Fowler-style judgement calls. The Standards leg also observed an external tool-created diff-output file, but explicitly classified it as scratch evidence outside the clone—not as a fact about the fixed target.
+
+## Spec
+
+- **Exact task/material byte preservation** — `.ak/dockets/issues/17/plan/coder-003/receipt.json` requires raw material bytes—not a decoded reconstruction—to remain identity-bearing through canonical prompt construction. At `src/reviewer-role.ts:89-92`, `TextDecoder` consumes the bytes; `src/reviewer-dispatch.ts:127,429-441` uses that decoded text while retaining the raw-byte hash. A UTF-8 BOM can therefore disappear from prompt text while the recorded hash identifies BOM-bearing bytes.
+- **Annotated-tag object identity** — `.ak/dockets/issues/17/plan/coder-003/receipt.json` requires immutable pinning to retain an annotated tag object’s identity rather than collapse it into the peeled commit. `src/reviewer-git-snapshot.ts:5-14` models the pin, while `src/reviewer-agent.ts:149-153,192-196` chooses `peeledObjectId || objectId`, recording the commit for an annotated tag.
+- **Actual-prompt evidence identity** — `.ak/dockets/issues/17/plan/coder-002/receipt.json` and `.ak/dockets/issues/17/plan/judge-003/receipt.json` require evidence to bind the prompt actually delivered to each opaque runner leg. `src/reviewer-agent.ts:411,463-467` instead recomputes that evidence from `leg.prompt`.
+- **Missing independent prompt recompilation equality check** — `.ak/dockets/issues/17/plan/coder-003/receipt.json` and `.ak/dockets/issues/17/plan/judge-003/receipt.json` require an independent canonical-prompt recompilation and byte-equality check before acceptance. `src/reviewer-dispatch.ts:452-478` has no such independent compile/recompile comparison.
+
+Summary: Standards — 3 judgement-call findings; that axis did not single out a worst finding. Spec — 4 findings; worst: exact task/material byte preservation and immutable annotated-tag identity.
+
+### Review 010 — refused — `.ak/dockets/issues/17/review/review-010/receipt.json`
+
+Fixed review target: base `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5`, target `369fb4533333782e56f51fe8e69925db1ea8151a`, range `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...369fb4533333782e56f51fe8e69925db1ea8151a`. Both children verified the pinned target and snapshot, and compiled-prompt/actual-prompt identity evidence matches. Both attempted `npm run typecheck`, but it could not run successfully because `tsc`/package prerequisites were unavailable.
+
+## Standards
+**P1 — Cross-axis prompt contamination.** The compiled and actual Standards prompt includes the complete opaque parent `Task-Bytes`, exposing Spec instructions and material references. The method requires an axis-specific Standards prompt containing only its instructions/materials plus task identity or digest.
+
+## Spec
+**P1 — Cross-axis prompt contamination.** The compiled and actual Spec prompt includes the complete opaque parent `Task-Bytes`, exposing Standards instructions and material references. The method and issue authority require an axis-specific Spec prompt containing only its instructions/materials plus task identity or digest.
+
+Semantic post-audit: although the child findings are preserved separately, the dispatch itself did not maintain the required Standards/Spec isolation. Because both review contexts were contaminated by the other axis, I cannot represent this run as a method-compliant completed two-axis review.
+
+Summary: Standards — 1 P1 finding, cross-axis prompt contamination. Spec — 1 P1 finding, cross-axis prompt contamination. Receipt refused because the review method’s independence precondition failed.
+
+### Review 011 — completed — `.ak/dockets/issues/17/review/review-011/receipt.json`
+
+## Standards
+
+All are judgment-call smells rather than hard documented-standard violations.
+
+1. **Duplicated Code — `src/reviewer-dispatch.ts`, `src/reviewer-role.ts`.** Both contain the same exact UTF-8 decode/round-trip validation shape; extract one shared validator.
+2. **Data Clumps — prompt identity.** The repeated `prompt` / `utf8Length` / `sha256` triple behaves as one domain value and should be represented by one type.
+3. **Divergent Change — `src/reviewer-dispatch.ts`.** One module now changes for capability parsing, pinned Git access, Skill extraction/prompt rendering, proposal validation, concurrency admission, and dispatch execution.
+
+## Spec
+
+1. **Ref/HEAD drift is detected too late and consumes the sole dispatch.** `createReviewerPinnedGitReader` is established at `src/reviewer-dispatch.ts:295-298`, but proposal preflight does not revalidate drift before acceptance at `src/reviewer-dispatch.ts:529-535`. Drift is detected only post-acceptance at `src/reviewer-agent.ts:163-168`; because acceptance is irreversible, the failed attempt consumes the one dispatch instead of satisfying “atomic preflight before child effects” and correction-before-acceptance.
+2. **Closed/racing proposals lack durable evidence.** The closed/racing rejection paths at `src/reviewer-dispatch.ts:513`, `:520`, and `:528` return/throw without recording the attempted proposal in append-only evidence. This leaves those race outcomes unauditable despite the append-only-evidence requirement.
+3. **Mandatory bash authorization is unrequested policy widening.** The implementation requires every leg to authorize `bash` and include the exact diff command. That rejects schema-valid read-only and empty-command grants even though the authority requires exact enforcement of commands that are granted, not that every leg must grant bash.
+
+Summary: Standards — 3 judgment-call findings (worst: Divergent Change); Spec — 3 findings (worst: late ref/HEAD drift detection consuming the sole dispatch).
+
+### Review 012 — completed — `.ak/dockets/issues/17/review/review-012/receipt.json`
+
+Review target: `776979da01ec9d6231234c0045046049877cb7f4`, fixed against base `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5`.
+
+## Standards
+
+1. **Hard violation — required review grants can omit both `bash` and the canonical three-dot diff command.** In the changed `src/reviewer-dispatch.ts`, the accepted grant shape does not require the `bash` tool or `git diff <base>...<target>`; the changed assertions in `test/reviewer-dispatch.test.ts` preserve/accept that weaker shape. This conflicts with the reviewer public contract in `README.md`, which requires each leg’s task-bound grant to include bash and the exact canonical fixed-range diff command. The repository standard therefore overrides any argument that this is merely a smell.
+
+## Spec
+
+1. **Failed-leg settlement is not recorded as evidence.** The issue #17 authority/plan requires append-only evidence for the package lifecycle, but the changed dispatch flow does not append settlement evidence for a leg that rejects/fails. The final package can therefore lack the required trace of a failed child effect.
+
+2. **Transport/schema rejection bypasses the construction ledger.** Validation can reject the proposal before the construction ledger records the attempt and outcome. That conflicts with the plan’s append-only construction/evidence requirement: invalid transport/schema input takes an unrecorded path rather than being represented in the package lifecycle.
+
+3. **`README.md` adds out-of-scope broad grant requirements.** The changed public contract requires a general `bash`/diff grant rather than preserving the authority’s mandatory, task-bound least-privilege model. This is scope creep beyond the issue #17 authority and weakens the intended per-task grant semantics.
+
+Summary: Standards — 1 finding; worst: `src/reviewer-dispatch.ts` and its test permit omission of bash and the exact canonical three-dot diff command. Spec — 3 findings; worst: failed child legs can settle without append-only settlement evidence.
+
+### Review 013 — completed — `.ak/dockets/issues/17/review/review-013/receipt.json`
+
+## Standards
+1. **Judgement call — Duplicated Code (`src/reviewer-role.ts:161-172`):** the `tool_execution_end` and `tool_result` handlers duplicate the same handling logic; extract the shared shape and call it from both handlers.
+2. **Judgement call — Duplicated Code (`src/reviewer-dispatch.ts:517-538`):** rejection construction is duplicated in this dispatch path; extract one rejection-construction helper and reuse it.
+3. **Judgement call — Mysterious Name (`test/reviewer-role.test.ts:27-120`):** the test uses opaque names `const h=setup()` and `(x:any)=>x.axis`; rename them so the harness/value and selected report axis are evident.
+
+No documented-standard hard violation was reported.
+
+## Spec
+1. **P1 — Child-report visibility/aggregation failure:** after successful dispatch, `Agent` exposes only `Reviewer dispatch completed`, not the Standards and Spec child reports. The caller therefore cannot present those reports verbatim or lightly cleaned through `ak_reviewer_output`, as the required review method demands.
+2. **P2 — Non-commit tag snapshot verification (`src/reviewer-agent.ts:173-175`):** verification applies `^{commit}` to every preserved ref’s `peeledCommitId`. Preserved refs may legitimately be unrelated blob/tree tags, so this forces them through commit peeling and fails package snapshot verification.
+
+Summary: Standards 3 findings (worst: Duplicated Code in `src/reviewer-role.ts:161-172`); Spec 2 findings (worst: P1 child-report visibility/aggregation failure).
+
+### Review 014 — completed — `.ak/dockets/issues/17/review/review-014/receipt.json`
+
+## Standards
+
+No hard violation of `CLAUDE.md` was found; Reviewer Soul remains free of the new schema/runtime mechanics, and no permanent adjudication probes were added.
+
+- **Judgement call — possible Divergent Change:** `src/reviewer-dispatch.ts:283-561` combines Git pin/range/material I/O with capability parsing, prompt compilation, and acceptance lifecycle. Relevant hunks include `createReviewerPinnedGitReader(...)` and `createReviewerDispatcher(...)`. These concerns will change for different reasons; move pinned Git reading into its own module while retaining dispatch as the capability/compiler/transition owner.
+
+- **Judgement call — possible Duplicated Code:** `src/reviewer-dispatch.ts:77-97` defines `AcceptedReviewerLeg`/`AcceptedReviewerDispatch`, while `src/reviewer-execution-ledger.ts:20-40` repeats nearly the same structures as `ReviewerCompiledLegEvidence`/`ReviewerAcceptedEvidence`:
+  > `axis: "standards" | "spec";`  
+  > `prompt: ReviewerPromptIdentity["bytes"];`  
+  > `grant: ReviewerCapabilityRequest;`
+
+  Derive the projected evidence types from the accepted dispatch types so their shapes cannot drift.
+
+- **Judgement call — possible Mysterious Name:** throughout `test/reviewer-role.test.ts`, especially lines 48 and 56:
+  > `const h=setup(); ... const ctx={} as ExtensionContext;`
+
+  `h` does not reveal that it is the Reviewer harness. The same file already uses the clearer `reviewerHarness`; use that naming consistently.
+
+No repository probe changes were made during this review.
+
+## Spec
+
+1. **P1 — Failure-retention evidence is incorrect (`src/reviewer-agent.ts:491-506`).** The Plan requires preserving “**cancellation/failure retention**” and recording actual “**workspace dispositions**.” `prepareWorkspace()` creates and retains a temporary workspace on setup failure, attaching its path to the thrown error. However, because assignment to `workspace` never completes, the outer catch at line 506 records `"not-created"` and discards that retained path. The snapshot failure path similarly replaces retained mirror evidence with `"not-created"` at line 494. Failed setup therefore leaks retained directories while the durable ledger falsely reports that none were created. This requirement is only partially implemented and the resulting evidence is wrong.
+
+No additional scope creep was identified.
+
+Inspection was against pinned target `bbffa3ab6bacafad05dc43fe2062434e80dd46a5`. No product or probe changes were made; tool-generated scratch remained outside the review clone.
+
+**Summary:** Standards: 3 judgement-call findings; worst is possible Divergent Change in `src/reviewer-dispatch.ts`. Spec: 1 finding; worst is P1 incorrect failure-retention evidence in `src/reviewer-agent.ts`.
+
+### Review 015 — completed — `.ak/dockets/issues/17/review/review-015/receipt.json`
+
+## Standards
+
+No hard documented-standard violation found. Reviewer Soul remains free of runtime/schema mechanics, and no permanent probe was added.
+
+- **Judgement call — possible Primitive Obsession:** `src/reviewer-agent.ts:83-91` derives domain failure categories from message text:
+  > `if (/provider|model|auth/.test(text)) return "provider";`
+
+  Prefer typed execution errors carrying `ReviewerFailureClassification`; wording changes can otherwise silently alter evidence.
+
+- **Judgement call — possible Repeated Switches:** `src/reviewer-dispatch.ts:295-405` repeatedly branches on:
+  > `proposal.spec.state === "established"`
+
+  The same discriminant controls selections, grants, prompt creation, and evidence projection. Normalize the proposal state once, then compile the normalized shape.
+
+- **Judgement call — possible Duplicated Code:** pin freezing is independently implemented in `src/reviewer-dispatch.ts:247-249` and `src/reviewer-pinned-git.ts:29-31`:
+  > `function immutablePin(...)`
+
+  Export one implementation. The current shallow `Object.freeze({ ...pin.refs })` versus `immutableReviewerRefs(...)` difference demonstrates drift risk.
+
+- **Judgement call — possible Mysterious Name:** `test/reviewer-role.test.ts:21-28` uses terse callback names such as `n`, `t`, `f`, and `x`; prefer `name`, `tool`, `handler`, and `request`.
+
+## Spec
+
+1. **P1 — Repository-root pinning is implemented incorrectly** (`src/reviewer-pinned-git.ts:39-42`, `src/reviewer-agent.ts:204-206`).
+
+   Spec:
+   > “`preflight.git.pin-target`: identify repository root and pin HEAD commit…”
+
+   The reader records `realpath(root)` as `repositoryRoot` rather than discovering Git’s top-level directory. When Reviewer is launched from a repository subdirectory, preflight Git commands still succeed through parent discovery, but the accepted pin contains that subdirectory. Post-acceptance execution then attempts `git clone --mirror <subdirectory>`, which is not itself a repository and fails after the irreversible transition. This prevents otherwise valid nested-directory invocations and incorrectly turns a root-identification defect into post-acceptance infrastructure failure.
+
+No scope creep identified.
+
+**Summary:** Standards: 4 judgement-call findings; worst is possible Primitive Obsession in message-text failure classification. Spec: 1 finding; worst is P1 repository-root pinning.
+
+### Review 016 — completed — `.ak/dockets/issues/17/review/review-016/receipt.json`
+
+## Standards
+
+No documented-standard breach found. No Soul files changed, and no duplicate probe artifacts were introduced.
+
+### Judgement calls
+
+- **Duplicated Code** — pinned-target equality is independently reimplemented in `src/reviewer-dispatch.ts:445-446`, `src/reviewer-agent.ts:209`, and `src/reviewer-execution-ledger.ts:76-78`:
+  > `repositoryRoot !== ... || targetHead !== ... || !sameReviewerRefs(...)`
+
+  The checks appropriately occur at multiple lifecycle stages, but the comparison logic should be one shared `sameReviewerPinnedTarget` helper to prevent semantic drift.
+
+- **Mysterious Name** — `src/reviewer-dispatch.ts:272`:
+  > `async function compile(...)`
+
+  This function validates proposal policy and capabilities, resolves Git range/materials, compiles prompts, and constructs the accepted dispatch. `compile` understates its responsibilities; a name such as `preflightAndCompileDispatch` would reveal the behavior.
+
+- **Middle Man** — `src/reviewer-agent.ts:108-117`:
+  > `function infrastructureError(...) { return classifiedError(...) }`
+
+  This wrapper only delegates and adds no behavior. Inline `classifiedError` at its two callers.
+
+No probe changes were made during review; the temporary diff-capture log was tool scratch outside the reviewed target.
+
+## Spec
+
+### Missing or partial
+
+1. **P1 — Canonical Skill expansion failure is not fatal.**
+   Spec: “**active-model behavior … remain unchanged**” and “**Preserve … fatal audit-infrastructure behavior.**”
+   `src/reviewer-role.ts:185-188` merely throws on an invalid expansion without recording infrastructure failure or aborting. Since `src/reviewer-role.ts:160-166` requires expansion only for `completed`, a later `refused` receipt can still reach and pass audit. The prior fatal boundary has therefore been weakened.
+
+2. **P1 — Runner prerequisite authorization uses intersection, not the specified union.**
+   Spec: “**accepted runner setup requirements are the union required by the recipe and accepted legs**” and each leg’s effective grant must equal its declaration.
+   `src/reviewer-dispatch.ts:313-318` requires every runner operation in the ceiling, Standards grant, and Spec grant individually. A valid two-leg proposal that distributes package operations across per-leg declarations is rejected despite its union satisfying the recipe. This is an unrequested least-privilege restriction.
+
+### Implemented incorrectly
+
+3. **P2 — Initial snapshot drift is misclassified.**
+   Spec: “`runner.git.verify-snapshot`: **verify materialized HEAD, refs, and required objects against accepted pinned evidence**,” while preserving bounded failure evidence.
+   The HEAD/ref verification at `src/reviewer-agent.ts:204-210` occurs outside the `try` that attaches `"snapshot"` classification. Consequently, the catch at `src/reviewer-agent.ts:543-548` classifies ordinary post-acceptance drift as `"unknown"` rather than `"snapshot"`, weakening durable settlement evidence.
+
+No additional scope creep found. Inspection created no product or probe changes.
+
+Summary: Standards — 3 judgement-call findings; worst: duplicated pinned-target comparison logic. Spec — 3 findings; worst: two P1 issues (non-fatal canonical Skill expansion failure and incorrect runner-prerequisite intersection).
+
+### Review 017 — completed — `.ak/dockets/issues/17/review/review-017/receipt.json`
+
+Reviewed fixed range `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...cd23c9ba4313d1a4a8cd1e13c080312f7d529782`.
+
+## Standards
+
+No hard breach of `CLAUDE.md` or `README.md` was found. Reviewer Soul remains free of schema/runtime detail, and no permanent probe was added.
+
+1. **Judgement call — Duplicated Code.** SHA-256 encoding is repeated in `src/reviewer-dispatch.ts:112-113`, `src/reviewer-pinned-git.ts:29`, `src/reviewer-prompt-identity.ts:14`, and `src/reviewer-role.ts:180`:
+   > `createHash("sha256").update(bytes).digest("hex")`
+
+   A shared digest helper would reduce encoding drift.
+
+2. **Judgement call — Mysterious Name.** `src/reviewer-git-snapshot.ts:48-52` uses `a` and `b` for actual and expected entries:
+   > `const a = Object.entries(actual)...`
+   > `const b = Object.entries(expected)...`
+
+   Prefer `actualEntries` and `expectedEntries`.
+
+3. **Judgement call — possible Divergent Change.** `src/reviewer-dispatch.ts` owns capability parsing, path validation, canonical-Skill extraction, prompt compilation, Git-range validation, and acceptance concurrency. These concerns have independent reasons to change; smaller internal components could preserve the module as sole public owner while reducing concentration.
+
+## Spec
+
+1. **P1 — Rejection evidence is not bounded or typed.** The authority requires: “Rejected proposal records are minimal structured evidence, not retained generic session/tool-event payloads.” `src/reviewer-dispatch.ts:265-269` persists arbitrary `Error.message` text. Git-reader errors may include commands, repository paths, stderr, or other unbounded diagnostics. Map failures to bounded violation codes/details before durable retention.
+
+2. **P1 — Recompilation identity is only partially verified.** The plan requires the runtime to “verify recompilation identity before acceptance” and reproduce and validate the entire candidate atomically. `src/reviewer-dispatch.ts:391-398` compares only `first.bytes !== second.bytes`; it neither validates each compilation’s `utf8Length` and SHA-256 against its bytes nor compares those identity fields. Equal text with incorrect metadata can reach irreversible acceptance at lines 457-463, with the ledger detecting it only afterward as an infrastructure failure rather than a correctable preflight rejection.
+
+3. **P2 — Child reports are modified before aggregation.** The auditor must check “faithful separate aggregation.” `src/reviewer-agent.ts:485` applies `.trim()` before evidence and aggregation. This can change Markdown semantics, such as leading indentation for a code block, so `src/reviewer-role.ts:152-159` does not expose the child’s exact report.
+
+`git diff --check` passed. `npm run typecheck` could not execute successfully in the isolated review clone because `tsc` was unavailable. No target or probe files were changed.
+
+**Summary:** Standards: 3 judgement-call findings, worst possible duplicated digest logic; Spec: 3 findings, worst P1 unbounded rejection evidence and incomplete pre-acceptance prompt-identity validation.
+
+### Review 018 — completed — `.ak/dockets/issues/17/review/review-018/receipt.json`
+
+## Standards
+
+No hard violations of `CLAUDE.md` found. Bundled Souls were not changed, and the added tests reside in their affected regression suites.
+
+- **Judgement call — Data Clumps** (`src/reviewer-dispatch.ts:57-61`, repeated at `src/reviewer-agent.ts:528` and `src/reviewer-execution-ledger.ts:142`): the change defines `ReviewerPromptIdentity`, then splits its fields across `AcceptedReviewerLeg` and repeatedly reconstructs it:
+  ```ts
+  export type AcceptedReviewerLeg = Omit<ReviewerPromptIdentity, "bytes"> & {
+    prompt: ReviewerPromptIdentity["bytes"];
+  };
+  ```
+  ```ts
+  isReviewerPromptIdentity({
+    bytes: leg.prompt,
+    utf8Length: leg.utf8Length,
+    sha256: leg.sha256,
+  })
+  ```
+  Keep `prompt: ReviewerPromptIdentity` intact so the established domain value travels as one unit.
+
+- **Judgement call — Mysterious Name** (`src/reviewer-prompt-identity.ts:4-7`):
+  ```ts
+  type ReviewerPromptIdentity = {
+    bytes: string;
+    utf8Length: number;
+    sha256: string;
+  };
+  ```
+  `bytes` actually holds JavaScript text, not bytes. Naming it `text`/`utf8Text`, or storing an actual byte sequence, would make the evidence representation unambiguous.
+
+No scratch artifacts or probe changes were created during this review.
+
+## Spec
+
+1. **P1 — Correctable proposal errors are misclassified as infrastructure failures.**  
+   Spec: “After a **typed preflight rejection**, the parent may submit a corrected structured proposal” and preflight rejects “missing identities/bytes [and] range inconsistency.”  
+   `src/reviewer-dispatch.ts:342-347` maps every base-resolution or range-reader exception—including unsafe/unknown/unreachable bases and empty ranges—to `preflight-infrastructure`. Likewise, `src/reviewer-dispatch.ts:373-375` maps a missing selected material to that code rather than `material-invalid`. Conversely, genuine Git/I/O outages receive the same ordinary rejection. The parent and durable ledger therefore cannot distinguish correctable proposal defects from host failures, despite dedicated `base-invalid`, `range-invalid`, and `material-invalid` dispositions.
+
+2. **P2 — Child initialization can leak unrecorded scratch state.**  
+   Spec: preserve “cancellation/failure retention” and “scratch distinction,” with actual workspace dispositions recorded.  
+   `src/reviewer-agent.ts:400` creates `childConfigDir`, but `loader.reload()` at line 421 and `createAgentSession()` at line 441 execute before the cleanup `finally` beginning near line 492. If either initialization step throws, line 496 never removes the directory. The outer runner records only the leg workspace disposition, so this additional retained scratch directory is neither cleaned nor represented in failure evidence.
+
+No scope creep finding beyond these failures. Inspection did not modify the reviewed target or create probe artifacts.
+
+**Summary:** Standards: 2 judgement-call findings, worst is the repeated splitting/reconstruction of prompt identity. Spec: 2 findings, worst is correctable proposal defects being conflated with infrastructure failures.
+
+### Review 019 — refused — `.ak/dockets/issues/17/review/review-019/receipt.json`
+
+# Refusal: isolated two-axis review could not be completed
+
+The fixed target and authority were established, and the sole atomic dispatch was accepted. However, the accepted Spec child exceeded its axis-only brief by adding a Standards conclusion and its own combined two-axis summary. The semantic audit therefore found that Standards/Spec isolation was not demonstrated.
+
+Because acceptance is irreversible and permits exactly one dispatch, no second Agent proposal or replacement Spec child can lawfully be started in this invocation. Editing the aggregation cannot repair the accepted child evidence. I therefore cannot truthfully submit a completed two-axis report from this invocation.
+
+### Review 020 — completed — `.ak/dockets/issues/17/review/review-020/receipt.json`
+
+## Standards
+
+No hard breach of `CLAUDE.md` or the Reviewer contract in `README.md` found. No Soul files or permanent probes were added; regression behavior lives in the affected test suites.
+
+- **Possible Divergent Change** *(judgement call)* — `src/reviewer-dispatch.ts:143-500` combines capability parsing, material/path validation, Skill-section extraction, Git range/material resolution, prompt compilation, and acceptance concurrency:
+  > `parseReviewerCapabilities(...)`  
+  > `preflightAndCompileDispatch(...)`  
+  > `async propose(...)`
+
+  These concerns have independent reasons to change. Smaller private components could preserve `reviewer-dispatch` as sole public owner while reducing concentration.
+
+- **Duplicated Code** *(judgement call)* — `test/reviewer-role.test.ts:28,70,91` repeatedly constructs the same successful-leg fixture:
+  > `usage:{input:0,...}, target:pin, prompt:{text:leg.prompt.text,...}, workspaceDisposition:"deleted"`
+
+  Extract a shared successful-leg/result builder so future evidence-shape changes require one edit.
+
+- **Mysterious Name** *(judgement call)* — `src/reviewer-role.ts:114`:
+  > `const run = async (dispatch: AcceptedReviewerDispatch, invocation: unknown)`
+
+  This function projects acceptance, records dispatch start and settlements, invokes the runner, and records fatality. A name such as `executeAndProjectAcceptedDispatch` would expose that role.
+
+Inspection created no product changes or probes. The temporary diff-capture log was tool scratch outside the reviewed target.
+
+## Spec
+
+1. **P1 — Preflight accepts legs incapable of reviewing the diff.**  
+   > “The Reviewer proposal declares the exact capabilities each leg needs.”  
+   > “A missing requirement rejects both legs before start.”
+
+   `src/reviewer-dispatch.ts:332-373` validates grants before deriving the canonical diff command, but never requires each leg to grant `bash` and that exact command. `test/reviewer-dispatch.test.ts:104-110` explicitly accepts both no-bash and empty-bash proposals. Because prompts contain the diff command—not the diff bytes—such children cannot inspect the change. `README.md:131` additionally codifies this unrequested weakening by making `bash` optional.
+
+2. **P2 — Abbreviated base resolution is not confined to the activation pin.**  
+   > “resolve the declared base commit only within the immutable pin.”  
+   > “This immutable `RuntimePinnedTarget` is the only target authority for the invocation.”
+
+   `src/reviewer-pinned-git.ts:60-65` resolves abbreviated SHAs using live `git rev-parse --disambiguate`, which searches the mutable object database rather than captured pin identities. Adding an unrelated colliding object after activation can change a valid pinned base from accepted to ambiguous while HEAD and refs remain unchanged, violating deterministic pin-bound preflight.
+
+No reviewed-target files or probe changes were created. The diff tool created one truncated-output scratch log outside the clone; it is not evidence about the target.
+
+**Summary:** Standards: 3 judgement-call findings, worst is possible Divergent Change in `src/reviewer-dispatch.ts`; Spec: 2 findings, worst is P1 because accepted children may lack the capability to inspect the reviewed diff.
+
+### Review 021 — refused — `.ak/dockets/issues/17/review/review-021/receipt.json`
+
+Fixed-target review could not be dispatched.
+
+Target: `5a3c6a06d4d5be35bb5acf308d4b80b319483988`
+Base: `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5`
+Dispatcher result: `Reviewer proposal rejected: capability-invalid` (twice).
+
+Rejected proposal payload:
+```json
+{
+  "version": 1,
+  "base": {"revision": "cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5"},
+  "standardsMaterials": [
+    {"id": "repository-standards", "repositoryPath": "CLAUDE.md"},
+    {"id": "reviewer-public-contract", "repositoryPath": "README.md"}
+  ],
+  "spec": {
+    "state": "established",
+    "materials": [
+      {"id": "issue-17-authority", "repositoryPath": ".ak/dockets/issues/17/authority/judge-001/receipt.json"},
+      {"id": "issue-17-plan", "repositoryPath": ".ak/dockets/issues/17/plan/coder-002/receipt.json"},
+      {"id": "issue-17-addendum", "repositoryPath": ".ak/dockets/issues/17/plan/coder-003/receipt.json"},
+      {"id": "issue-17-plan-judgment", "repositoryPath": ".ak/dockets/issues/17/plan/judge-003/receipt.json"}
+    ]
+  },
+  "required": {
+    "standards": {
+      "tools": ["read", "grep", "find", "ls", "bash"],
+      "bashCommands": [
+        "git rev-parse HEAD",
+        "git status --short",
+        "git diff cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...5a3c6a06d4d5be35bb5acf308d4b80b319483988",
+        "git diff --check cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...5a3c6a06d4d5be35bb5acf308d4b80b319483988",
+        "npm run typecheck"
+      ],
+      "prerequisiteOperations": [
+        "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range", "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"
+      ]
+    },
+    "spec": {
+      "tools": ["read", "grep", "find", "ls", "bash"],
+      "bashCommands": [
+        "git rev-parse HEAD",
+        "git status --short",
+        "git diff cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...5a3c6a06d4d5be35bb5acf308d4b80b319483988",
+        "git diff --check cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...5a3c6a06d4d5be35bb5acf308d4b80b319483988",
+        "npm run typecheck"
+      ],
+      "prerequisiteOperations": [
+        "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range", "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"
+      ]
+    }
+  }
+}
+```
+
+Because the required atomic proposal was never accepted, no child effects or independent Standards/Spec reports exist. Producing a two-axis compliance report without those fixed-snapshot executions would be unsupported.
+
+### Review 022 — completed — `.ak/dockets/issues/17/review/review-022/receipt.json`
+
+# Fixed-target review
+
+Base: `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5`  
+Target: `b5a8ed555aef99768b61a4cfe87a0c07e52b816a`
+
+## Standards
+
+Standards sources: `CLAUDE.md`, `README.md`.
+
+No hard documented-standard violations found. Bundled Souls were not modified, and no temporary probe was retained under `test/adjudication/`.
+
+### Judgment calls
+
+- **Possible Divergent Change — `src/reviewer-dispatch.ts:143–507`.** The new module combines capability/schema validation, material-path policy, canonical-Skill Markdown parsing, Git-range validation, prompt compilation, evidence construction, concurrency control, and dispatch execution:
+  > `function validateCapabilityRequestShape(...)`  
+  > `function validateMaterialSelection(...)`  
+  > `function skillSection(...)`  
+  > `async function preflightAndCompileDispatch(...)`  
+  > `async propose(...)`
+
+  These responsibilities are likely to evolve for different reasons. Consider separating proposal/capability validation, prompt compilation, and dispatch lifecycle coordination.
+
+- **Possible Divergent Change — `src/reviewer-agent.ts:190–590`.** The runner now owns Git snapshot/mirror/workspace lifecycle alongside provider/auth inheritance, child-session construction, bash authorization, report collection, usage aggregation, and failure classification:
+  > `async function prepareSnapshot(...)`  
+  > `async function prepareWorkspace(...)`  
+  > `async function createChildRuntime(...)`  
+  > `async function runChild(...)`
+
+  Consider extracting Git workspace materialization from model/session execution so each module has one primary reason to change.
+
+## Spec
+
+1. **P1 — Declared verification commands are rejected (missing behavior / scope creep).**  
+   Spec: “**Canonical prerequisite operations and every declared verification operation must be satisfiable before dispatch.**” The addendum also says each leg’s effective exact bash strings must equal its declared subset of the task-bound ceiling.
+
+   `src/reviewer-dispatch.ts:369-373` instead requires every leg’s `bashCommands` to contain **exactly one** entry—the canonical diff command. Consequently, valid exact commands such as `npm run typecheck` or `git diff --check`, even when authorized by the ceiling and explicitly declared, reject the entire atomic proposal. The capability contract’s verification-command support is therefore unimplemented, and the one-command restriction was not requested. The implementation would also need to validate every declared command against the ceiling rather than simply removing this restriction.
+
+2. **P2 — Actual runner dispatch identity is not verified.**  
+   Spec: the post-run audit “**verifies actual dispatch identity and fixed-target traceability from runtime evidence**.”
+
+   `src/reviewer-role.ts:117-129` receives `ReviewerDispatchRunResult.identity`, but `appendSettlements` ignores it and records `dispatch.identity` from the accepted input instead. A runner returning an outcome for a different identity can therefore be projected as belonging to the accepted dispatch, leaving the auditor no actual-result identity evidence to compare. Validate `result.identity === dispatch.identity` before recording settlements and retain the verified runtime identity.
+
+No product or probe files were changed.
+
+**Summary:** Standards: 2 judgment-call findings; worst is the possible divergent concentration of dispatch responsibilities. Spec: 2 findings; worst is rejection of authorized declared verification commands.
+
+### Review 023 — completed — `.ak/dockets/issues/17/review/review-023/receipt.json`
+
+## Standards
+
+Standards sources: `CLAUDE.md`, `README.md`, plus the supplied smell baseline.
+
+### Hard violations
+
+1. **`src/reviewer-dispatch.ts:376-380` violates the `README.md` Reviewer contract.** README requires every accepted leg to grant “exactly that one byte-exact command.” The check only requires inclusion of the canonical diff and permits additional ceiling-authorized commands:
+
+```ts
+!grant.bashCommands.includes(range.diffCommand) ||
+grant.bashCommands.some((command) =>
+  !capabilities.bashCommands.includes(command))
+```
+
+Thus `bashCommands: [range.diffCommand, "other ceiling command"]` can be accepted and exposed to the child.
+
+2. **`src/reviewer-dispatch.ts:212-215` does not fully enforce README’s “unavailable host tools … fail closed” rule.** Host availability is checked only for tools requested by a proposal:
+
+```ts
+tools.some((tool) =>
+  !ceiling.tools.includes(tool) || !hostTools.includes(tool))
+```
+
+A capability file may contain an unavailable tool while a narrower proposal omits it, allowing activation and dispatch rather than rejecting the invalid invocation ceiling.
+
+### Judgement call
+
+- **Possible Primitive Obsession — `src/reviewer-dispatch.ts:278-288`.** Although `ReviewerPreflightViolation` and `PreflightViolation` exist, most domain failures are communicated as generic `Error` strings and recovered through regexes such as `/material|UTF-8/i` and `/capability|bash commands/i`. This makes classification dependent on message wording. Prefer carrying the closed violation code through typed errors at validation boundaries.
+
+No scratch artifacts or probe changes were created during this review leg.
+
+## Spec
+
+- **[P1] Schema-invalid sibling calls can crash after acceptance instead of closing cleanly.**
+
+  > “Once accepted, all later proposals are rejected.”
+  > “No correction or second batch is then legal.”
+
+  `src/reviewer-role.ts:84-90` records every schema-rejected `Agent` transport event as `transport-rejected`, but `src/reviewer-execution-ledger.ts:103` throws if that event arrives after acceptance. Thus, if a model emits one valid atomic proposal alongside a malformed sibling and the valid call accepts first, the malformed call’s terminal event throws rather than becoming bounded no-start/closed evidence. This creates ordering-dependent infrastructure failure after the sole batch has already started. Existing tests cover transport rejection before corrected acceptance, but not this post-acceptance ordering.
+
+No scratch artifacts or probe changes were created. The pinned target and supplied diff command were inspected; additional test commands were unavailable under the accepted bash grant.
+
+Summary: Standards — 3 findings; worst: accepted legs can receive extra bash commands contrary to the exact-command contract. Spec — 1 finding; worst: a malformed sibling call can cause an ordering-dependent post-acceptance infrastructure failure.
+
+### Review 024 — completed — `.ak/dockets/issues/17/review/review-024/receipt.json`
+
+## Standards
+
+Standards sources: `CLAUDE.md`, `README.md`, plus the supplied smell baseline.
+
+No hard documented-standard violations found. Bundled Souls were unchanged, and regression behavior was added to the affected test suites rather than retained as duplicate probes.
+
+- **Mysterious Name — judgement call** (`src/reviewer-role.ts:119`):
+  ```ts
+  const run = async (dispatch: AcceptedReviewerDispatch, invocation: unknown)
+  ```
+  This function executes the accepted dispatch, projects lifecycle evidence, validates results, and records failures. A name such as `executeAndProjectDispatch` would reveal its responsibility.
+
+- **Duplicated Code — judgement call** (`test/reviewer-role.test.ts:28,78,99,115,150`): successful-leg fixtures repeatedly rebuild the same `usage`, `target`, `prompt`, and `workspaceDisposition` structure:
+  ```ts
+  usage:{input:0,...}, target:pin,
+  prompt:{text:leg.prompt.text,...},
+  workspaceDisposition:"deleted"
+  ```
+  Extract a shared result builder so evidence-shape changes require one edit.
+
+No reviewed-target files or probes were changed. The truncated diff-capture log was tool-generated scratch outside the clone, not a fact about the pinned target.
+
+## Spec
+
+- **[P1] Baseline-only Standards reviews are rejected** — `src/reviewer-role.ts:38` and `src/reviewer-dispatch.ts:299` require at least one `standardsMaterials` entry. The established Plan requires: “**Extract the complete Standards baseline from that snapshot at compile time and place it only in the Standards prompt**” (`issue-17-plan`, §2), while the bound canonical Skill says that baseline applies even when a repository documents nothing. A repository without standards documentation therefore cannot submit the legitimate empty material selection and run the required baseline. Selecting an unrelated file is not valid evidence and may fail the semantic audit.
+
+- **[P2] Extra Spec execution can be hidden on the no-spec path** — `src/reviewer-role.ts:123-132` validates and projects only the legs declared in `dispatch.legs`; it never rejects extra keys in `result.legs`. Since `ReviewerDispatchRunResult` permits an optional `spec` result regardless of accepted cardinality, a Standards-only dispatch can return an actual Spec artifact which is silently discarded, leaving an apparently compliant audit record. This violates the established Plan requirement: “**Completed no-spec evidence requires one accepted Standards-only dispatch and no Spec artifacts.**” (`issue-17-plan`, §5). Validate the result axes exactly against the accepted dispatch before projection.
+
+Reviewed pinned target `f0d7547c565de2e393e7e2c4428331d44026698c`. No probe changes or scratch artifacts were created; test execution was unavailable under the exact-command grant.
+
+**Summary:** Standards: 2 judgement-call smells, worst is duplicated test-fixture evidence construction; Spec: 2 findings, worst is P1 baseline-only Standards reviews being rejected.
+
+### Review 025 — completed — `.ak/dockets/issues/17/review/review-025/receipt.json`
+
+## Standards
+
+No hard violation of `CLAUDE.md` or `README.md` found. Bundled Souls were unchanged, and probe behavior was placed in affected regression suites rather than `test/adjudication/`.
+
+- **Possible Divergent Change — judgement call** (`src/reviewer-dispatch.ts:283–505`). `preflightAndCompileDispatch` handles proposal/schema validation, capability intersection, Git range/material I/O, canonical-Skill section extraction, prompt compilation, evidence construction, and acceptance concurrency:
+  ```ts
+  async function preflightAndCompileDispatch(...)
+  ...
+  const baseline = skillSection(...)
+  ...
+  accepting = true;
+  ```
+  These are several reasons for one module to change. Extract focused validation, material-rendering, and prompt-compilation helpers while retaining dispatch as the sole lifecycle owner.
+
+- **Possible Duplicated Code — judgement call** (`src/reviewer-execution-ledger.ts:99–131`). Four event branches independently repeat closed-key validation:
+  ```ts
+  const allowed = ["source", "type", ...];
+  if (Object.keys(event).some((key) => !allowed.includes(key)) ...)
+  ```
+  A shared exact-event-shape validator would centralize this security-sensitive pattern and reduce drift when event schemas evolve.
+
+- **Possible Speculative Generality — judgement call** (`src/reviewer-dispatch.ts:230–234`). Every caller supplies axis and index, but both parameters are deliberately unused:
+  ```ts
+  function validateMaterialSelection(
+    value: unknown,
+    _axis: ...,
+    _index: number,
+  )
+  ```
+  Remove them until diagnostics or validation actually require that context.
+
+No reviewed-target files or probes were changed. The truncated diff capture was tool-generated scratch outside the clone.
+
+## Spec
+
+- **[P1] Capability activation is stricter than specified.** The addendum requires: “effective child tools … equal that leg’s declared requirement after proving it is a subset of this task-bound ceiling and current host availability; they are never the entire ceiling by default.” Yet `src/reviewer-role.ts:113` calls `validateReviewerHostCeiling`, which rejects when *any ceiling tool* is unavailable (`src/reviewer-dispatch.ts:222-226`), even if no leg requests it. A ceiling authorizing `edit` therefore prevents a valid read/bash-only proposal on a host lacking `edit`. Validate host availability against each declared grant instead.
+
+- **[P2] README still excludes the required baseline-only case.** The Plan requires compilation of “the complete canonical Standards baseline” and explicitly supports repositories with no standards material. Runtime/schema now correctly allow `standardsMaterials: []` (`src/reviewer-role.ts:38`, `src/reviewer-dispatch.ts:299-303`), but `README.md:131` still documents “non-empty `standardsMaterials`.” Callers following the public contract may fabricate unrelated material or conclude a legitimate baseline-only review is impossible.
+
+No additional scope creep found. No reviewed-target or probe files were changed; test commands beyond the authorized exact diff command were unavailable.
+
+**Summary:** Standards — 3 judgement-call findings, worst: possible Divergent Change in `preflightAndCompileDispatch`; Spec — 2 findings, worst: P1 host availability is checked against the full ceiling rather than each declared grant.
+
+### Review 026 — completed — `.ak/dockets/issues/17/review/review-026/receipt.json`
+
+# Fixed-target review
+
+Base: `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5`  
+Target: `04c300de9c2858339f0ddaa68c42d875c8268939`
+
+## Standards
+
+- **Judgement call — Duplicated Code:** `src/reviewer-dispatch.ts` compares prompt identities via `first.text !== second.text || first.utf8Length !== second.utf8Length || first.sha256 !== second.sha256`, while `src/reviewer-execution-ledger.ts` repeats the same three-field comparison for `event.prompt` and `compiled.prompt`. Consider a shared `sameReviewerPromptIdentity` helper beside `isReviewerPromptIdentity` to prevent equality rules drifting.
+
+- **Judgement call — possible Feature Envy:** In `src/reviewer-role.ts`, `executeAndProjectDispatch` deeply interprets dispatcher and runner internals through `dispatch.legs`, `result.legs`, per-leg extraction, and conversion into ledger events. Consider moving exact runner-result validation and settlement projection behind the execution-ledger seam.
+
+No documented-standard breach was established. The Reviewer Soul remains concise and free of newly added schema/runtime/CLI mechanics, consistent with `CLAUDE.md`; no permanent scratch probe was added.
+
+## Spec
+
+- **[P1] Accepted evidence omits the task-bound authorization ceiling identity.** The authority requires that “durable Reviewer method evidence retains … the exact canonical Skill/task/range/material/capability identities and construction-recipe version.” However, `AcceptedReviewerDispatch.input` records only the task and canonical Skill hash (`src/reviewer-dispatch.ts:66-69,443-451`). Effective per-leg grants are retained, but neither the exact capability document nor its digest/identity is recorded. The durable audit record therefore cannot prove those grants were subsets of the specific task-bound caller authorization; different ceilings producing identical grants are indistinguishable. Retain a byte/digest identity for the validated capability document in accepted construction evidence.
+
+No scope creep or other incorrect implementation was identified.
+
+**Summary:** Standards: 2 judgement-call findings, with duplicated prompt-identity comparison the clearest maintainability risk. Spec: 1 finding; worst is the missing durable capability-ceiling identity.
+
+### Review 027 — completed — `.ak/dockets/issues/17/review/review-027/receipt.json`
+
+## Standards
+
+No hard violation of `CLAUDE.md` or the Reviewer contract in `README.md` was found at pinned target `9b8551a3b38828a715da59267582e2ede2aec249`. The unchanged Reviewer Soul remains principles-only; mechanical capability and dispatch rules stay in runtime/schema/docs.
+
+### Judgement-call smells
+
+- **Possible Divergent Change — `src/reviewer-dispatch.ts:166–451`**  
+  The new module handles capability-file decoding, proposal validation, Git-range policy, material loading, canonical-Skill section parsing, prompt compilation, concurrency, and dispatch lifecycle:
+  > `export function parseReviewerCapabilities(...)`  
+  > `export function createReviewerDispatcher(...)`
+
+  These concerns will change for different reasons. Consider separating the capability codec, prompt/material compiler, and acceptance lifecycle.
+
+- **Possible Feature Envy — `src/reviewer-role.ts:117–143`**  
+  `executeAndProjectDispatch` extensively navigates and validates another seam’s outcome:
+  > `result.identity !== dispatch.identity`  
+  > `sameReviewerPinnedTarget(result.target, dispatch.targetSnapshot)`  
+  > `Object.keys(result.legs)`  
+  > `const actual = result.legs[leg.axis]`
+
+  Move outcome validation/projection beside the runner-result or ledger abstraction so the role runtime only orchestrates it.
+
+## Spec
+
+### [P1] Concurrent rejection can become an unrecorded tool failure
+
+> “The construction ledger must monotonically record each proposal identity and preflight disposition.”  
+> “A rejected proposal is an ordinary preflight rejection, not infrastructure failure…”
+
+`src/reviewer-dispatch.ts:485` finalizes a rejection internally, but `src/reviewer-role.ts:159` appends that disposition only after `await dispatcher.propose(...)` resumes. During this gap, another concurrent valid proposal can accept and synchronously append acceptance/start evidence at `src/reviewer-role.ts:119–120`. The delayed rejection then reaches `src/reviewer-execution-ledger.ts:123`, which throws because acceptance already exists.
+
+Consequently, a proposal rejected before acceptance can surface as an uncaught tool error, disappear from durable rejection evidence, and prevent normal correction behavior. Rejection/closure projection must be ordered atomically with the dispatcher’s lifecycle decision, or otherwise carry sequencing that lets the ledger preserve the true pre-acceptance disposition.
+
+No reviewed-target or probe files were changed. The diff-capture file created by the child tool was scratch outside the clone.
+
+**Summary:** Standards: 2 judgement-call findings, worst is possible Divergent Change in `src/reviewer-dispatch.ts`; Spec: 1 finding, worst is the P1 rejection/acceptance race.
+
+### Review 028 — completed — `.ak/dockets/issues/17/review/review-028/receipt.json`
+
+## Standards
+
+1. **Hard violation — `README.md:131`.** The new paragraph documents mechanical invariants: “Rejected preflight proposals start no child… acceptance is irreversible and permits exactly one dispatch” plus exact leg/cardinality and evidence behavior. `CLAUDE.md:12–15,36` assigns field semantics to schemas, mechanical invariants to TypeScript runtime, and README to CLI usage, requiring duplicated rules to remain only at their deepest owner. Keep only caller-facing usage here; the runtime already owns these lifecycle rules.
+
+2. **Judgement call — possible Duplicated Code, `src/reviewer-agent.ts:547,563`.** Both failure paths construct essentially the same frozen failed-leg envelope: `status`, `failure`, `target`, `prompt`, and `workspaceDisposition`. A single failed-leg evidence constructor would prevent the two paths drifting.
+
+3. **Judgement call — possible Mysterious Name, `src/reviewer-role.ts:61–65`.** `function singleton(...)` actually verifies that `ak_reviewer_output` is the sole final tool call. The previous intent-revealing name was replaced by a vague one; something like `requireSoleReviewerOutputCall` would expose its purpose.
+
+## Spec
+
+1. **[P2] Recipe-owned runner prerequisites are incorrectly required in per-leg declarations.**
+
+   Spec: “**accepted runner setup requirements are the union required by the recipe and accepted legs**.”
+
+   `src/reviewer-dispatch.ts:337–345` builds `acceptedPrerequisites` solely from the legs’ declared operations, then rejects unless that union already contains all three recipe-required `runner.git.*` operations. Thus a proposal whose leg arrays are empty—but whose task-bound ceiling authorizes every canonical runner operation—is rejected as `prerequisite-missing`.
+
+   The recipe’s mandatory setup operations should be added to the accepted runner grant after confirming ceiling/host availability; leg declarations should contribute only additional requirements. The current behavior imposes an unrequested declaration requirement and makes the documented “arrays … may be empty” shape unusable for an otherwise fully authorized review.
+
+No other missing behavior, incorrect implementation, or scope creep was established. All findings concern the pinned target; no probes or scratch artifacts were created.
+
+**Summary:** Standards: 3 findings; worst is the hard `CLAUDE.md` layering violation in `README.md`. Spec: 1 finding; worst is the P2 incorrect requirement that legs declare recipe-owned runner prerequisites.
+
+### Review 029 — completed — `.ak/dockets/issues/17/review/review-029/receipt.json`
+
+## Standards
+
+1. **Hard violation — `README.md:129–131`.** The new documentation reproduces exact schema/runtime-owned details: “closed JSON object with exactly `version`…”, complete allowed tool/prerequisite vocabularies, proposal field optionality, and cardinality rules. `CLAUDE.md:12` assigns field names, types, optionality, and semantics to schemas; `CLAUDE.md:36` requires duplicated rules to remain at their deepest owner. Keep README caller-facing usage and reference the authoritative schema rather than duplicating its complete vocabulary.
+
+2. **Judgement call — possible Duplicated Code, `test/reviewer-role.test.ts:116,143,160,185,199`.** Multiple tests repeat the same activation sequence:
+
+   > `handlers.get("input")({text:"review"}); handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});`
+
+   Extracting a small expansion/activation helper would reduce repetition and prevent setup details drifting between tests.
+
+No other documented-standard breach or baseline smell was established. No probe changes or scratch artifacts were added to the reviewed clone.
+
+## Spec
+
+1. **[P1] Compiled child prompts do not bind the exact canonical Skill snapshot.**  
+   Spec: “**A changed canonical snapshot must change extracted prompt evidence without changing source constants.**”
+
+   `src/reviewer-dispatch.ts:411-429` includes task/range provenance and selected Skill excerpts, but no canonical-Skill identity in either prompt. Although `canonicalSkillSha256` is stored separately at line 463, changing any unextracted Skill content leaves both provider-facing prompt bytes and hashes unchanged. This fails the required snapshot-to-prompt binding. The Skill digest should be part of the common provenance block.
+
+2. **[P2] The recompilation check does not reproduce the construction recipe.**  
+   Spec: “**verify recompilation identity before acceptance**” and mechanically reject “**any output not reproduced exactly by the selected construction recipe**.”
+
+   At `src/reviewer-dispatch.ts:423-436`, each prompt string is constructed once and placed in `promptInputs`; both “compilations” then merely hash that same already-built string. Material rendering, Skill-section extraction, provenance assembly, and axis composition are never replayed. Consequently, the check cannot detect nondeterminism or divergence in the actual construction recipe—only a stateful hashing hook. Recompile twice from the frozen construction inputs instead.
+
+No additional scope creep was established. No reviewed-clone files or probe changes were created; the diff tool’s capture was scratch outside the clone.
+
+**Summary:** Standards: 2 findings; worst is the hard README/schema-runtime ownership violation. Spec: 2 findings; worst is the P1 failure to bind compiled prompts to the exact canonical Skill snapshot.
+
+### Review 030 — completed — `.ak/dockets/issues/17/review/review-030/receipt.json`
+
+## Standards
+
+No hard violation of `CLAUDE.md` or `README.md` was established. Souls were unchanged, mechanical contracts remain in schema/runtime, and no permanent probe was introduced.
+
+### Judgement-call smells
+
+1. **Possible Divergent Change — `src/reviewer-agent.ts`**
+
+   The module now owns several independently changing concerns:
+
+   > `async function prepareSnapshot(...)`  
+   > `async function prepareWorkspace(...)`  
+   > `async function createChildRuntime(...)`  
+   > `async function runChild(...)`  
+   > `export function createReviewerAgentRunner(...)`
+
+   Git snapshotting, temporary-workspace lifecycle, provider/auth inheritance, child-session execution, usage accounting, and dispatch coordination are distinct responsibilities. Consider separating workspace materialization, child runtime/session management, and orchestration.
+
+2. **Possible Divergent Change — `src/reviewer-dispatch.ts`**
+
+   > `export function parseReviewerCapabilities(...)`  
+   > `async function preflightAndCompileDispatch(...)`  
+   > `export function createReviewerDispatcher(...)`
+
+   Capability-document decoding, proposal validation, Git-range/material policy, canonical-Skill prompt compilation, and concurrent acceptance lifecycle share one module. Extracting the capability codec and deterministic prompt compiler would reduce unrelated reasons for this file to change.
+
+No reviewed-target or probe files were modified during review. The diff capture produced by the permitted command was scratch outside the clone.
+
+## Spec
+
+**[P2] The runner interface still exposes construction semantics.**
+
+Spec: “**The runner cannot inspect/recompile proposal semantics: it receives only frozen accepted prompt bytes/grants and pinned identity.**”
+
+`AcceptedReviewerDispatch` includes exact task and capability-document text, range data, and all resolved material bytes (`src/reviewer-dispatch.ts:63–79`). `src/reviewer-role.ts:120` forwards that entire object unchanged to `runDispatch`, and `src/reviewer-agent.ts:536` accepts it directly. Although the current runner does not read every field, the interface does not make inspection unrepresentable as required.
+
+Project the complete accepted evidence directly to the ledger, but pass the runner a narrower opaque execution value containing only dispatch identity, pinned target, accepted operational prerequisites, and immutable legs/prompts/grants.
+
+No additional scope creep or incorrect behavior was established. No probe changes or scratch artifacts were created.
+
+**Summary:** Standards — 2 judgement-call findings; worst is the concentration of Git, provider, child-session, and orchestration responsibilities in `src/reviewer-agent.ts`. Spec — 1 finding; worst is the P2 runner-interface violation exposing construction semantics.
+
+### Review 031 — completed — `.ak/dockets/issues/17/review/review-031/receipt.json`
+
+## Standards
+
+### Hard documented-contract violation — `src/reviewer-dispatch.ts:139–141, 310–318, 515–530`
+
+`README.md:137` states: **“Infrastructure failures instead abort the action and exit nonzero.”** However, unexpected preflight infrastructure failures are converted into ordinary correctable proposal rejections:
+
+> `throw new ReviewerPreflightError("preflight-infrastructure");`
+> `return reject(identity, error);`
+
+Consequently, failures such as Git process/I/O errors from `reader.resolve`, `range`, `material`, or `snapshot`, and malformed canonical-Skill section extraction, return a successful `Agent` tool result with `status: "rejected"` rather than invoking the fatal infrastructure path. The parent may retry even though changing the proposal cannot repair the underlying infrastructure or Skill snapshot. Preserve bounded diagnostics in evidence if required, but propagate this class through `failInfrastructure` so the action aborts nonzero as documented.
+
+No baseline smell is reported: the otherwise broad ownership in `reviewer-dispatch.ts` is explicitly endorsed by repository authority as the sole capability/compiler/transition owner, overriding the Divergent Change heuristic.
+
+Review facts concern pinned target `562bb9e74f04b0969c2eb774b224ea02d61d1d36`. The diff capture was tool scratch outside the clone; no probe or reviewed-target files were changed.
+
+## Spec
+
+- **[P2] Full commit IDs fail in SHA-256 Git repositories** — `src/reviewer-pinned-git.ts:62-72` recognizes full IDs only with `/^[0-9a-f]{40}$/`; a valid 64-character SHA-256 commit falls through to symbolic lookup and becomes `base-invalid`. This contradicts: “resolve the declared base commit only within the immutable pin.” The contract defines `revision: string`, not SHA-1-only revisions. Accept object IDs according to the repository’s object format or resolve them safely against the pinned reachable set.
+
+- **[P2] Required packaged no-Spec lifecycle coverage is missing** — `test/reviewer-package-lifecycle.test.ts` contains only the established-Spec two-leg installed-package lifecycle. No packaged test exercises a Standards-only `not-established` proposal through dispatch, runner, audit, and receipt. The Plan explicitly requires: “one rejection-then-correction and both accepted cardinalities belong to `test/reviewer-package-lifecycle.test.ts`.” Unit tests cover the one-leg shape, but not the shipped extension/package boundary, so this Apply obligation is only partial.
+
+No scope creep identified. The exact permitted diff command was run; broader test/typecheck commands were not authorized.
+
+Summary: Standards — 1 finding; worst: infrastructure failures are misclassified as correctable rejections. Spec — 2 findings; worst: tied P2 issues in SHA-256 base resolution and missing packaged no-Spec lifecycle coverage.
+
+### Review 032 — completed — `.ak/dockets/issues/17/review/review-032/receipt.json`
+
+# Fixed-target review
+
+Target: `f41560e3deea95bd8dca1219cfbf3b70e5b81d31`  
+Base: `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5`
+
+## Standards
+
+No hard documented-standard violations found. `souls/reviewer.md` remains limited to irreducible role principles, while proposal fields, lifecycle rules, and invocation details stay in schema/runtime/README as required by `CLAUDE.md`. Reviewer probes are represented in the ordinary regression suite; no duplicate `test/adjudication/` scratch probe was found.
+
+### Judgement calls
+
+- **Possible Divergent Change — `src/reviewer-dispatch.ts`, `preflightAndCompileDispatch`**  
+  This function validates proposal and capability shapes, resolves Git ranges, reads materials, extracts canonical-Skill sections, compiles prompts twice, verifies identities, and constructs evidence:
+  > `base = await dependencies.reader.resolve(...)`  
+  > `bytes = await dependencies.reader.material(...)`  
+  > `const burden = ... skillSection(...)`  
+  > `const firstCompilations = ...`
+
+  These are several independent reasons to modify one function. Consider separating proposal admission, pinned evidence collection, and prompt compilation.
+
+- **Possible Divergent Change — `src/reviewer-agent.ts`**  
+  The module combines process execution, Git mirror/workspace management, provider authentication forwarding, child-tool isolation, model-session execution, usage accounting, failure classification, and cleanup:
+  > `prepareSnapshot(...)`  
+  > `prepareWorkspace(...)`  
+  > `createChildRuntime(...)`  
+  > `runChild(...)`  
+  > `createReviewerAgentRunner(...)`
+
+  Splitting Git materialization from child-model execution would reduce the module’s change surface and make lifecycle ownership clearer.
+
+No scratch artifacts or probe changes were created during this review.
+
+## Spec
+
+- **[P1] Cross-axis material placement is not mechanically rejected** — `src/reviewer-dispatch.ts:326-331` checks only duplicate IDs/paths; any unique Spec document can be placed in `standardsMaterials` and vice versa. The batch then runs with blended inputs, leaving detection to the post-run audit. This violates: **“Preflight mechanically rejects … cross-axis material placement”** and limits the auditor to **“genuinely ambiguous material classification.”**
+
+- **[P1] Declared verification commands are not proven satisfiable before dispatch** — `src/reviewer-dispatch.ts:398-405` verifies only that commands are authorized strings and that `bash` is available. It never checks whether additional declared commands can execute in the accepted environment. A missing executable or otherwise impossible verification command is therefore discovered only after irreversible acceptance. This violates: **“Canonical prerequisite operations and every declared verification operation must be satisfiable before dispatch. A missing requirement rejects both legs before start.”**
+
+No clear scope creep identified.
+
+Inspection created only a truncated scratch diff log outside the reviewed target; the pinned target was not modified.
+
+**Summary:** Standards — 2 judgement-call findings; co-worst: possible Divergent Change in `src/reviewer-dispatch.ts` and `src/reviewer-agent.ts`. Spec — 2 findings; co-worst: both `[P1]` preflight gaps.
+
+## Complete repair receipt record
+
+### Repair aggregation-tag — `.ak/dockets/issues/17/repair/aggregation-tag/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-013/receipt.json
+
+R1: Successful dispatch now returns exact, deterministic, axis/prompt-delimited Standards and optional Spec reports while preserving the opaque accepted result in details and exposing nothing before complete success.
+R2: Ref snapshots retain objectId plus nullable peeledCommitId; commit checks are limited to commit-peelable refs, non-commit bases reject cleanly, and unrelated blob/tree tags remain pinned.
+R3: Shared transport-terminal handling preserves dual-event deduplication/provenance; shared preflight rejection construction removes duplicate paths; flagged opaque test names were clarified.
+R4: Regression coverage proves exact report aggregation, failed-settlement non-leakage, annotated commit tags, blob/tree refs, non-commit-base rejection, and dual-terminal deduplication.
+R5: Focused tests passed (18), full suite passed (359 tests), typecheck passed, npm pack/prepack lifecycle passed, diff check passed, and forward commit 1fa4a5f was created.
+
+### Repair axis-isolation — `.ak/dockets/issues/17/repair/axis-isolation/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-010/receipt.json
+
+R1 — Removed opaque parent task bytes/prose from both axis prompts; prompts retain only task SHA-256/UTF-8 length identity, while accepted dispatch evidence and capability binding retain exact task bytes.
+R2 — Preserved exact per-axis selected material UTF-8 bytes, including BOM/multibyte content, with existing recompilation, delivery-identity, ledger, and semantic-audit checks intact.
+R3 — Added production-shaped two-axis and Standards-only regressions proving task sentinels and opposite-axis material references never enter compiled/delivered prompts while exact task evidence remains bound.
+R4 — Passed focused Reviewer tests, Reviewer package lifecycle, full suite (352 tests), typecheck, pack/dry-run, prepack lifecycle, and diff check; committed forward as 59ebe5fee86f34bda1d26618c3999e4056ba5a70 without reinterpreting the refusal as success.
+
+### Repair baseline-cardinality — `.ak/dockets/issues/17/repair/baseline-cardinality/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-024/receipt.json
+
+R1: Empty Standards materials now pass closed schema/preflight; baseline-only two-leg and Standards-only no-spec tests prove canonical baseline, smell list, fixed range identity, and no fabricated material.
+R2: Runner axes are compared exactly with accepted dispatch before settlement projection; one-leg/two-leg result unions now encode Spec absence/presence.
+R3: Regressions cover hidden Spec on no-spec plus missing/extra two-leg axes, block completed/refused receipts and audit projection, while existing exact one-leg/two-leg successes pass.
+R4: Renamed closure to executeAndProjectDispatch and extracted successfulLeg fixture.
+R5: Focused tests, full npm test (374 passed), typecheck, npm pack/package lifecycle, and git diff --check passed; committed forward as 23a52990fd924216b760b349c1effe6bd3f03323.
+
+### Repair bounded-evidence — `.ak/dockets/issues/17/repair/bounded-evidence/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-017/receipt.json
+
+R1=closed typed preflight codes with ledger enforcement and no raw diagnostics; R2=both full prompt identities internally validated and cross-compared before child effects; R3=exact child report whitespace preserved and Markdown counterexample covered; R4=shared SHA-256 helper exported by dispatch and ref locals renamed; R5=bounded Git-error, identity-metadata, whitespace, ledger, digest, and ref regressions pass; R6=focused tests, package lifecycle, full suite (366/366), typecheck, dry-run pack, and diff check pass; committed forward as ee692fd
+
+### Repair byte-identity — `.ak/dockets/issues/17/repair/byte-identity/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-009/receipt.json
+
+R1: Fatal UTF-8 decode with BOM preservation and byte-equal round-trip now carries exact task/material representations into prompts; BOM, multibyte, and invalid-byte tests pass.
+R2: Immutable pins now use closed ref entries retaining both objectId and peeledCommitId; annotated-tag retargeting tests prove both pinned identities remain unchanged.
+R3: The delivered prompt identity is frozen immediately before session.prompt(delivered.bytes), and that same identity object is returned as execution evidence; runner seam tests pass.
+R4: Each axis compiles independently twice from accepted inputs and rejects byte mismatches before runner effects; the stateful compiler counterexample passes.
+R5: reviewer-dispatch remains the deep production owner; no production split or Soul implementation-detail expansion was introduced.
+R6: Commit 9f667aa created forward; focused Reviewer/lifecycle tests, full suite (351 passing), typecheck, npm pack --dry-run, and git diff --check passed with a clean worktree.
+
+### Repair canonical-skill-sections — `.ak/dockets/issues/17/repair/canonical-skill-sections/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-001/receipt.json
+
+R1 — Updated `reviewer-dispatch` to extract step 3’s complete twelve-smell baseline and the exact Standards/Spec briefs using the real canonical headings, without embedding Fowler text in source.
+R2 — Replaced synthetic Reviewer skill markers with `test/fixtures/canonical-code-review-SKILL.md`, byte-identical to the canonical Skill, and added complete twelve-smell, brief-completeness, isolation, and deterministic-hash coverage.
+R3 — The installed npm tarball lifecycle passed with canonical Skill expansion; preflight accepted and dispatched both isolated child legs rather than refusing extraction.
+R4 — Focused Reviewer/package tests passed (23/23), full suite passed (338/338), typecheck and `git diff --check` passed; committed forward as `9cccb9a`.
+
+### Repair capability-identity — `.ak/dockets/issues/17/repair/capability-identity/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-026/receipt.json
+
+R1 — Preserved exact validated capability-document UTF-8 text, byte length, and SHA-256 beside task and canonical Skill identity; leg grants remain projections.
+R2 — Projected and validated that identity through the append-only ledger into auditor input, with fatal mismatch rejection and no child-prompt prose exposure.
+R3 — Added byte-distinct/equal-grant counterexamples, text/length/hash mutation rejection, and installed-tarball acceptance/audit/child-isolation evidence.
+R4 — Exported and used one sameReviewerPromptIdentity helper for compilation and ledger equality while retaining separate validation and existing policy ownership.
+R5 — Passed focused tests, installed package lifecycle, full suite (376 tests), typecheck, prepack, pack dry-run, and diff check; committed forward as ad49f9d.
+
+### Repair classification-scratch — `.ak/dockets/issues/17/repair/classification-scratch/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-018/receipt.json
+
+R1=typed closed base/range/material/infrastructure classification with bounded code-only evidence; R2=child config reload/session/execution/cancellation cleanup boundary with failed workspace retention; R3=prompt identity remains one {text,utf8Length,sha256} value through dispatch/runner/ledger/auditor and prompt.text is delivered; R4=red/green classification, diagnostics, initialization/cancellation cleanup, retention, and prompt-delivery regressions pass; R5=package lifecycle, focused 45 tests, full 367 tests, typecheck, pack dry-run, and diff checks pass; committed forward as de9579734a2b010f7aa7f81a924e2e26df95d531.
+
+### Repair concurrency-capability — `.ak/dockets/issues/17/repair/concurrency-capability/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-008/receipt.json
+
+R1=README now distinguishes retained exact parent-task evidence from axis-isolated child prompts; R2=each leg must grant bash plus the exact compiled canonical three-dot diff before runner effect; R3=proposal-local context/signal binding and post-await closed-state checks eliminate shared context and stale rejection races; R4=material paths are deterministic JSON-escaped data labels with spaces/Unicode/quotes/Markdown-shaped regression coverage; R5=shared ReviewerPromptIdentity and immutable ref canonicalization/equality helpers now span dispatch/agent/ledger while dispatch remains the lifecycle owner; R6=committed b93cec1 after focused Reviewer/package-lifecycle/fatal-stage tests, typecheck, pack dry-run, and diff check passed; full suite’s Reviewer-related failure was fixed and passed on rerun, while the final full-suite run had one unrelated recorder large-binary tee flake (196608 vs 262161) that passed immediately in focused rerun.
+
+### Repair decision-order — `.ak/dockets/issues/17/repair/decision-order/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-027/receipt.json
+
+R1: Reviewer-dispatch now synchronously projects immutable rejected/accepted/closed decisions before lifecycle mutation or child start, preserving monotonic concurrent ordering.
+R2: Reviewer role supplies the ledger-backed decision sink, removed post-await decision appends, and latches sink failures as fatal infrastructure before acceptance/start visibility.
+R3: Added deterministic barrier coverage for fast rejection, slow invalid completion, simultaneous valid proposals, post-acceptance closure, exact once-only ordered identities/dispositions, one accepted batch, and fatal sink failure.
+R4: Exported projectReviewerDispatchOutcome from the execution ledger and replaced role-side outcome traversal while preserving exact identity, target, axis, and settlement checks.
+R5: Passed focused concurrency/fatal tests, package lifecycle within the 378-test full suite, full suite, typecheck, standalone npm pack, and git diff check; committed forward as 547580d.
+
+### Repair dispatch-preflight — `.ak/dockets/issues/17/repair/dispatch-preflight/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-002/receipt.json
+
+R1 — Implemented merge-base-derived `git diff <base>...<target>` evidence, exact command validation, non-empty diff digest enforcement, and ordered `<base>..<target>` commits.
+R2 — Rejects any leg granting `bash` without at least one exact command while preserving subset and byte-exact checks.
+R3 — Preserves exact task bytes/length/digest in accepted and audit evidence; child prompts contain only task identity plus range evidence and axis-owned material, with Spec prose isolation regression coverage.
+R4 — Added no-run rejection/correction tests for two-dot and empty diffs, empty bash grants, cross-axis prose isolation, one irreversible dispatch, installed-package lifecycle, and semantic post-run audit.
+R5 — Focused Reviewer tests, installed package lifecycle, full suite (338 passed), typecheck, and `git diff --check` passed; committed forward as 84a637e.
+
+### Repair drift-closure — `.ak/dockets/issues/17/repair/drift-closure/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-011/receipt.json
+
+R1=live HEAD/ref pin revalidated immediately pre-acceptance with typed correctable drift and zero runner effects; R2=immutable closed-attempt identity/reason/started:false evidence projected append-only to audit; R3=no-bash and empty-bash grants accepted while undeclared/excess commands remain rejected; R4=shared exact UTF-8 validator and ReviewerPromptIdentity-based declarations added without splitting reviewer-dispatch; R5=deterministic drift/retry, race/late closure, capability, UTF-8, and identity coverage passes focused lifecycle, full 355-test suite, typecheck, pack, and diff check in forward commit 7b51f0e.
+
+### Repair evidence-whitespace — `.ak/dockets/issues/17/repair/evidence-whitespace/receipt.json`
+
+Declared source: .ak/dockets/issues/17/authority/judge-001/receipt.json
+
+R1: Preserved coder-task, manifest, and receipt bytes; coder-task SHA-256 remains 2663ac0e9d9271a115f7a189ef31fc62ec419be0cc1dece5842f1723473ad4f9.
+R2: Added only `.ak/dockets/** whitespace=-trailing-space` in `.gitattributes`; normal checking remains unspecified and therefore active outside docket evidence.
+R3: `git diff --check cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5..HEAD` passed; manifest digest comparison passed; committed forward as 35d25ed326811d882c8018a4ffcf5335e9e0b98f.
+
+### Repair fatality-union — `.ak/dockets/issues/17/repair/fatality-union/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-016/receipt.json
+
+R1 — Invalid canonical Skill expansion now records fatal infrastructure and calls hostActions.failInfrastructure; refused/completed receipts remain impossible.
+R2 — Dispatch validates the accepted cross-leg prerequisite union against recipe requirements and ceiling, persists it for runner consumption, and preserves exact per-leg tool/bash/prerequisite grants.
+R3 — Initial HEAD/ref/object snapshot failures are classified snapshot across the whole preparation boundary with not-created pre-allocation and retained mirror evidence post-allocation.
+R4 — Exported sameReviewerPinnedTarget is used by dispatch, runner, and ledger; compile is renamed preflightAndCompileDispatch and the no-op infrastructureError wrapper is removed.
+R5 — Added regression coverage for fatal expansion followed by refusal, distributed and incomplete unions, unchanged per-leg grants, and pre/post-allocation snapshot classification/disposition.
+R6 — Commit b641b3b created forward; fatal subprocess, focused tests, package lifecycle (one transient ECONNRESET passed on rerun), full suite (363/363), typecheck, npm pack --dry-run, and git diff --check passed.
+
+### Repair final-review-findings — `.ak/dockets/issues/17/repair/final-review-findings/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-005/receipt.json
+
+R1–R6: completed in forward commit 565f9654dd596cd0c31f6d828f62039b8cb70b83; canonical expansion capture, pre-acceptance runner authorization, closed material grammar, pin-bound base resolution, shared prompt identity, and red/green regressions are implemented; focused Reviewer tests, installed tarball lifecycle, typecheck, pack, diff check, audit-failure subprocess, and full suite passed (the initial full run exposed one stale HEAD~1 fixture, corrected to use a full reachable commit, then its failing gate passed).
+
+### Repair fixed-point-material — `.ak/dockets/issues/17/repair/fixed-point-material/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-007/receipt.json
+
+R1: Canonical full/abbreviated SHA, pinned HEAD ancestry, peeled annotated tags, and unambiguous captured aliases now resolve without mutable ref lookup; unsafe/unknown/ambiguous/non-commit/unreachable forms reject while merge-base and non-empty three-dot laws remain enforced.
+R2: Standards and Spec/no-spec selections now reject duplicate IDs or NFC-normalized repository paths before reads or runner effects.
+R3: Safe UTF-8 repository paths with spaces/Unicode are admitted; controls, NUL/newlines, absolute/backslash/empty/dot/traversal forms reject, and raw paths are omitted from child prompt prose while exact evidence remains recorded.
+R4: Capability request validation, peeled NUL ref snapshots, and dispatch-to-ledger projection each have one explicit shared owner.
+R5: Added fixed-point, ref-movement, annotated-tag, ambiguity, cross-axis-path, Unicode/space, control/injection, and seam regression coverage; focused tests, typecheck, package lifecycle, npm pack, diff check, and full suite ran (the full run’s sole failure was the new prompt-omission assertion inspecting fake material content; corrected assertion then passed focused tests); committed as c1b66fd.
+
+### Repair hidden-material — `.ak/dockets/issues/17/repair/hidden-material/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-006/receipt.json
+
+R1 — Permitted ordinary dot-prefixed path segments including `.ak` while retaining empty, dot, traversal, absolute, backslash, control/newline, delimiter, and instruction-shaped rejection.
+R2 — Typed preflight rejection now identifies standards/spec/no-spec axis, selection index, and validated safe ID without echoing repository path bytes; correction remains open before acceptance.
+R3 — Added red/green dispatch and focused role-integration coverage for `.ak/dockets/issues/17/authority/judge-001/receipt.json` plus unsafe negatives; packaged Reviewer lifecycle passed.
+R4 — Focused tests, full suite (346 passed), typecheck, npm pack dry-run/prepack, and `git diff --check` passed; committed forward as 212d1c5 while preserving refusal commit 3743e7d.
+
+### Repair host-grant-readme — `.ak/dockets/issues/17/repair/host-grant-readme/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-025/receipt.json
+
+R1 — Removed full-ceiling host rejection; atomic leg preflight now enforces ceiling+host subsets with exact grants, including green unused-edit/read-only and red requested-unavailable-edit coverage.
+R2 — Corrected README host-tool and material cardinality contracts, including empty Standards materials with mandatory canonical baseline and nonempty Spec/no-Spec evidence.
+R3 — Removed unused material validation context and centralized Reviewer ledger exact-event-shape checks without changing closed schemas or dispatcher lifecycle ownership.
+R4 — Added packaged baseline-only/ceiling-subset/README regression; focused tests, 374-test full suite, typecheck, npm pack, and diff check passed; committed 0c84bff24c277d9b11dab0f2ad79f7440fbf06fa.
+
+### Repair infrastructure-sha256-nospec — `.ak/dockets/issues/17/repair/infrastructure-sha256-nospec/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-031/receipt.json
+
+R1: Removed infrastructure from correctable dispositions; unexpected preflight failures now propagate, latch, abort via role fatal infrastructure, start no child, retain no rejection, and store only bounded fatal classification.
+R2: Pinned immutable sha1/sha256 object format through target equality, snapshots, runner verification, ledger/auditor evidence, and drift checks; format-width full/abbreviated resolution rejects cross-format/nonhex inputs safely.
+R3: Added real feature-detected SHA-256 tests for full/abbreviated IDs, ancestry/range, pin/ref snapshots, material reads, and runner workspace materialization while retaining SHA-1 tests.
+R4: Added installed-tarball Standards-only not-established lifecycle proving atomic one-child dispatch, no Spec leg/prompt/artifact, semantic audit, and accepted completed receipt alongside existing two-leg correction coverage.
+R5: Added fatal Git I/O and malformed Skill subprocess coverage; focused tests, package lifecycle, full suite (382 passed), typecheck, npm pack dry-run, and diff check passed; committed forward as 5f9938735b268d6f9afc33d52b9509ab07d46edd.
+
+### Repair judge-020 — `.ak/dockets/issues/17/repair/judge-020/receipt.json`
+
+Declared source: .ak/dockets/issues/17/judgment/review-020/receipt.json
+
+R1=Generic V1 shapes remain representable; concrete legs and ceiling now require the exact canonical diff command with red/green regressions and README correction; R2=abbreviations resolve only against activation-captured target-reachable commits, with unreachable and reachable-collision regressions; R3=focused 47 tests, full 368 tests, typecheck, package lifecycle/pack, and diff check passed; committed forward as e8e82f1.
+
+### Repair opaque-runner-interface — `.ak/dockets/issues/17/repair/opaque-runner-interface/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-030/receipt.json
+
+R1 — Added closed immutable `AcceptedReviewerExecution` with only identity/recipe, pinned target, prerequisites, and ordered frozen legs/prompts/effective grants.
+R2 — Kept construction ownership/evidence in reviewer-dispatch and made its sole `toReviewerExecution` deep-frozen projection the only value accepted by dispatcher run dependencies, role `runDispatch`, and `ReviewerAgentRunner`.
+R3 — Preserved pre-start complete ledger projection and accepted-evidence outcome checks; added compile-time exact-key and runtime fake-runner absence/preservation/deep-freeze coverage.
+R4 — No broad extraction; focused tests, package lifecycle, full 379-test suite, typecheck, prepack, pack/dry-run, and diff check passed; committed forward as fbe7ad8ba7b921687ba6681634b4dfffae582c48.
+
+### Repair recipe-prerequisite-layering — `.ak/dockets/issues/17/repair/recipe-prerequisite-layering/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-028/receipt.json
+
+R1=Recipe runner operations now union with leg-declared extras only after ceiling authorization, preserving exact child grants; R2=README Reviewer section is reduced to caller-facing invocation and closed input shapes; R3=Unit and installed-tarball lifecycle coverage proves empty-leg/complete-ceiling acceptance, missing-recipe-ceiling rejection, leg-extra union, and no per-leg injection; R4=Failed-leg evidence construction is shared and singleton is renamed requireSoleReviewerOutputCall; R5=Focused tests, installed package lifecycle, typecheck, npm pack dry-run, and diff check passed, while the full 379-test run had one concurrent-load child.reload scratch-cleanup failure that passed immediately in focused rerun; committed forward as d223a20.
+
+### Repair repository-root — `.ak/dockets/issues/17/repair/repository-root/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-015/receipt.json
+
+R1=Git now discovers `--show-toplevel` from invocation cwd, canonicalizes it, pins from that root, and rejects non-worktree invocations before acceptance.
+R2=Nested installed-package lifecycle succeeds with canonical top-level evidence; focused coverage proves nested/symlink canonicalization plus non-repository and bare-repository rejection before runner availability.
+R3=Removed message-regex inference; snapshot, workspace, child, and provider owners attach closed classifications, cancellation uses signal/error identity, and target/disposition evidence remains preserved.
+R4=Exported one deep immutable pin helper for reader/dispatch, normalized Spec state into one internal axis plan, and renamed flagged terse test callbacks.
+R5=Passed nested package lifecycle, focused Reviewer tests, full suite (362 tests), typecheck, pack dry-run, diff check; committed forward as 90532359521941b721c2a6a2b605704069951015.
+
+### Repair retention-evidence — `.ak/dockets/issues/17/repair/retention-evidence/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-014/receipt.json
+
+R1=Attached target snapshots and actual bounded workspace dispositions now survive snapshot/workspace setup, verification, child failure, and cancellation without automatic retained-artifact deletion; R2=Deterministic mirror create/verify and workspace init/fetch/verify fault tests prove exact retained ledger paths exist, pre-creation reports not-created, cancellation retains, and success reports deleted; R3=Pinned Git I/O moved to src/reviewer-pinned-git.ts, dispatch ownership stayed intact, ledger types derive from accepted dispatch shapes, and opaque Reviewer harness locals were renamed; R4=Focused failure/package lifecycle tests, full suite (360 passed), typecheck, npm pack, diff checks, clean forward commit 6d8e11c8f0dea62595f1addc2135fa8758ddff75 all passed.
+
+### Repair review-findings — `.ak/dockets/issues/17/repair/review-findings/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-003/receipt.json
+
+R1: Preserved resolved submitted-base identity, retained canonical three-dot range derivation/non-empty enforcement, and added divergent merge-base rejection coverage.
+R2: Read every no-spec evidence material and retained exact UTF-8 bytes, byte length, and SHA-256 through accepted dispatch, ledger, and semantic audit input.
+R3: Required task-bound `preflight.git.pin-target` authority before pinned-reader creation, with a zero-pin regression test.
+R4: Restored valid empty-command bash grants while preserving exact-command and ceiling enforcement.
+R5: Built Reviewer TypeBox enums from exported vocabularies and replaced runner prerequisite casts with the exported domain type and closed typed checks.
+R6: Added red/green regressions; focused tests, installed package lifecycle, full suite (340 tests), typecheck, npm pack, and diff check passed; committed as 8443d628f0776ac23f283c8992427b4c2d53b1e8.
+
+### Repair runtime-identity-command — `.ak/dockets/issues/17/repair/runtime-identity-command/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-022/receipt.json
+
+R1=Implemented exact canonical diff inclusion plus optional byte-exact task-ceiling verification commands, with green diff/check/typecheck and red missing/extra/mismatch coverage; R2=Runner identity and complete pinned target now fail fatally before settlement projection while verified runtime evidence is retained; R3=Added wrong-identity, wrong-ref-map, and exact-identity/target counterexamples proving accepted-input substitution cannot conceal mismatch; R4=Kept dispatch/runner ownership, committed forward as 00360dc; focused 36 tests, typecheck, pack dry-run, and diff check pass; full suite reached 368/369 with one unrelated large-binary recorder tee length flake, whose isolated rerun passed.
+
+### Repair settlement-transport — `.ak/dockets/issues/17/repair/settlement-transport/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-012/receipt.json
+
+R1: Corrected README to state task-bound subset grants, optional bash, and byte-exact proposal/ceiling command membership.
+R2: Added all-settled sibling execution with immutable typed successful/failed outcomes and complete per-started-leg settlement recording before infrastructure termination.
+R3: Added deterministic bounded transport-rejected evidence, terminal cleanup, execute-admission deduplication, and no raw argument retention while preserving the closed proposal schema.
+R4: Extended ledger/auditor evidence for failed settlements and transport rejection; added one-failed/one-successful, both-failed, corrected retry, deduplication, and secret-retention tests.
+R5: Passed focused reviewer and subprocess lifecycle tests, full suite (359/359), typecheck, package lifecycle, npm pack dry-run, and diff checks; committed forward as 61f7fa2 while retaining review-012 history.
+
+### Repair skill-binding-recompile — `.ak/dockets/issues/17/repair/skill-binding-recompile/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-029/receipt.json
+
+R1=Canonical Skill SHA-256 bound in both prompt provenance blocks with unextracted-byte mutation coverage; R2=each axis independently reconstructs and validates two complete frozen-input recipe passes; R3=stateful material-render seam rejects preflight with zero child effects while deterministic replay remains byte-identical; R4=README defers to exported runtime/TypeScript authorities and repeated expansion setup is extracted; R5=focused Reviewer tests, installed package lifecycle, full suite (379 passed), typecheck, prepack/npm pack dry-run, and diff check passed; committed forward as c899ce7.
+
+### Repair transport-order-ceiling — `.ak/dockets/issues/17/repair/transport-order-ceiling/receipt.json`
+
+Declared source: .ak/dockets/issues/17/review/review-023/receipt.json
+
+R1: README now requires the byte-exact canonical diff command while permitting only explicitly declared, ceiling-member verification commands.
+R2: The complete host tool ceiling is validated before Git reader creation/pinning; zero-pin, zero-read, and zero-run regressions pass while proposal subsets remain no-widening.
+R3: Exported typed ReviewerPreflightError codes now classify proposal, base/range/material, capability, prerequisite, drift, and prompt boundaries; unexpected errors close as preflight-infrastructure without diagnostics.
+R4: Malformed Agent transport settling after acceptance records one immutable transport-after-acceptance closed attempt with bounded identity and started:false; pre-acceptance rejection/correction and dual-terminal deduplication remain intact.
+R5: Deterministic acceptance/late-malformed, malformed/corrected-acceptance, and racing proposal coverage passes with one dispatch, bounded evidence, no duplicate batch, and no crash; host-ceiling and typed-classification coverage added.
+R6: Focused dispatch/role/ledger, package lifecycle and audit subprocess tests, full 372-test suite, typecheck, prepack/native build, npm pack, and git diff --check passed; committed forward as 542179b.
