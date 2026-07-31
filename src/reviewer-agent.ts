@@ -7,8 +7,9 @@ import { executeReviewerChild, type ReviewerExecutorFaultPoint } from "./reviewe
 import { createReviewerWorkspaceOwner, type ReviewerWorkspaceFaultPoint } from "./reviewer-workspace.ts";
 
 const RUNNER_PREREQUISITES = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const satisfies readonly ReviewerPrerequisiteOperation[];
-export type ReviewerSuccessfulLegRunResult = Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity; workspaceDisposition: ReviewerWorkspaceDisposition; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>;
-export type ReviewerFailedLegRunResult = Readonly<{ status: "failed"; failure: ReviewerFailureClassification; target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity; workspaceDisposition: ReviewerWorkspaceDisposition; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>;
+type ReviewerLegRunResultCommon = Readonly<{ target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity; workspaceDisposition: ReviewerWorkspaceDisposition }>;
+export type ReviewerSuccessfulLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; failure?: never; runtimeConstructionEvidence: MaterializedBundleEvidenceV1 }>;
+export type ReviewerFailedLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "failed"; failure: ReviewerFailureClassification; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>;
 export type ReviewerLegRunResult = ReviewerSuccessfulLegRunResult | ReviewerFailedLegRunResult;
 type Envelope<L> = Readonly<{ identity: string; target: ReviewerTargetSnapshot; legs: Readonly<L> }>;
 export type ReviewerDispatchRunResult = Envelope<{ standards: ReviewerLegRunResult; spec?: never }> | Envelope<{ standards: ReviewerLegRunResult; spec: ReviewerLegRunResult }>;

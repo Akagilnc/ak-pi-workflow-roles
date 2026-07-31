@@ -296,9 +296,9 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     assert.equal(standards.workspaceDisposition, "deleted");
     assert.equal(spec.workspaceDisposition, "deleted");
     for (const [axis, leg] of [["standards", standards], ["spec", spec]] as const) {
-      assert.equal(leg.runtimeConstructionEvidence?.leg, axis);
-      assert.equal(leg.runtimeConstructionEvidence?.manifestSha256, acceptedDispatch.bundle.manifestSha256);
-      assert.deepEqual(leg.runtimeConstructionEvidence?.entries, acceptedDispatch.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256, verified: true })));
+      assert.equal(leg.runtimeConstructionEvidence.leg, axis);
+      assert.equal(leg.runtimeConstructionEvidence.manifestSha256, acceptedDispatch.bundle.manifestSha256);
+      assert.deepEqual(leg.runtimeConstructionEvidence.entries, acceptedDispatch.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256, verified: true })));
     }
     assert.deepEqual(standards.target, spec.target);
     assert.equal(standards.target.refs["refs/heads/fixed-branch"]?.objectId, source.base);

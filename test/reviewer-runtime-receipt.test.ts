@@ -61,6 +61,7 @@ test("accepted projection authenticates exact canonical terminal leg and report 
     (r:any) => r.outcomes.spec.prompt = prompt("wrong"),
     (r:any) => r.acceptedBatch.legs.reverse(),
     (r:any) => delete r.reports.spec,
+    (r:any) => delete r.outcomes.spec.runtimeConstructionEvidence,
   ]) { const value = receipt(["standards", "spec"]) as any; mutate(value); assert.throws(() => validateRuntimeReviewerReceipt(value)); }
   const pre = receipt([], "refused") as any; delete pre.acceptedBatch; delete pre.identities.construction; delete pre.identities.target; validateRuntimeReviewerReceipt(pre);
   pre.reports.standards = { text: "x", utf8Length: 1, sha256: sha256Hex("x") }; assert.throws(() => validateRuntimeReviewerReceipt(pre));

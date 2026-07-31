@@ -21,10 +21,12 @@ export function assembleRuntimeReviewerReceipt(input: {
   for (const axis of ["standards", "spec"] as const) {
     const result = input.record.results[axis];
     if (result === undefined) continue;
-    outcomes[axis] = { status: result.status, prompt: result.prompt, workspaceDisposition: result.workspaceDisposition, ...(result.failure === undefined ? {} : { failure: result.failure }), ...(result.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: result.runtimeConstructionEvidence }) };
     if (result.status === "successful") {
-      const text = result.report!;
+      outcomes[axis] = { status: "successful", prompt: result.prompt, workspaceDisposition: result.workspaceDisposition, runtimeConstructionEvidence: result.runtimeConstructionEvidence };
+      const text = result.report;
       reports[axis] = { text, utf8Length: Buffer.byteLength(text, "utf8"), sha256: sha256Hex(text) };
+    } else {
+      outcomes[axis] = { status: "failed", prompt: result.prompt, workspaceDisposition: result.workspaceDisposition, failure: result.failure, ...(result.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: result.runtimeConstructionEvidence }) };
     }
   }
   const accepted = input.record.accepted;
