@@ -185,8 +185,9 @@ test("focused Reviewer controller owns its flag, tools, hooks, narrowing, and pr
   ]]);
   for (const hook of [
     "input", "before_agent_start", "tool_execution_start", "tool_execution_end",
-    "tool_call", "tool_result", "session_shutdown",
+    "tool_call", "tool_result",
   ]) assert.ok(h.handlers.has(hook), hook);
+  assert.equal(h.handlers.has("session_shutdown"), false);
   const prompt = await h.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE", prompt: "idle" },
     {},
@@ -982,77 +983,46 @@ test("refused can be audited before Skill or Agent and revise is resubmittable",
   assert.equal(calls, 2);
 });
 
-test("Reviewer cleanup failure is fatal before a receipt can be accepted", async () => {
+test("accepted Reviewer receipt does not require automatic snapshot cleanup", async () => {
   let aborts = 0;
-  const { handlers, tools } = extension({
-    shutdownReviewerAgent: async () => { throw new Error("snapshot cleanup failed"); },
-  });
+  const { handlers, tools } = extension();
   await handlers.get("session_start")?.({}, {});
   const refusal = { status: "refused", report: "Cannot establish the target." };
-  const ctx = context("cleanup");
+  const ctx = context("retention");
+  (ctx as any).abort = () => { aborts += 1; };
+  const accepted = await tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+    "retention", refusal, undefined, undefined, ctx,
+  );
+  assert.equal(accepted.terminate, true);
+  assert.equal(aborts, 0);
+});
+
+test("audit infrastructure preserves exact non-Error throw identity", async () => {
+  const auditFailure = "audit string sentinel";
+  let aborts = 0;
+  const fixture = extension({
+    auditReviewerCompliance: async () => { throw auditFailure; },
+  });
+  await fixture.handlers.get("session_start")?.({}, {});
+  const ctx = context("audit-identity");
   (ctx as any).abort = () => { aborts += 1; };
   await assert.rejects(
-    tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
-      "cleanup", refusal, undefined, undefined, ctx,
+    fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
+      "audit-identity",
+      { status: "refused", report: "reach the audit adapter" },
+      undefined,
+      undefined,
+      ctx,
     ),
-    /snapshot cleanup failed/,
+    (error) => {
+      assert.equal(error, auditFailure);
+      return true;
+    },
   );
   assert.equal(aborts, 1);
 });
 
-test("audit and cleanup infrastructure preserve exact non-Error throw identity", async () => {
-  const auditFailure = "audit string sentinel";
-  {
-    let aborts = 0;
-    const fixture = extension({
-      auditReviewerCompliance: async () => { throw auditFailure; },
-    });
-    await fixture.handlers.get("session_start")?.({}, {});
-    const ctx = context("audit-identity");
-    (ctx as any).abort = () => { aborts += 1; };
-    await assert.rejects(
-      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
-        "audit-identity",
-        { status: "refused", report: "reach the audit adapter" },
-        undefined,
-        undefined,
-        ctx,
-      ),
-      (error) => {
-        assert.equal(error, auditFailure);
-        return true;
-      },
-    );
-    assert.equal(aborts, 1);
-  }
-
-  const cleanupFailure = { kind: "cleanup sentinel" };
-  {
-    let aborts = 0;
-    const fixture = extension({
-      shutdownReviewerAgent: async () => { throw cleanupFailure; },
-    });
-    await fixture.handlers.get("session_start")?.({}, {});
-    const ctx = context("cleanup-identity");
-    (ctx as any).abort = () => { aborts += 1; };
-    await assert.rejects(
-      fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
-        "cleanup-identity",
-        { status: "refused", report: "reach the cleanup adapter" },
-        undefined,
-        undefined,
-        ctx,
-      ),
-      (error) => {
-        assert.equal(error, cleanupFailure);
-        return true;
-      },
-    );
-    assert.equal(aborts, 1);
-  }
-});
-
-test("a refusal cannot turn prior fatal Skill, Agent, audit, or cleanup state into a receipt", async () => {
+test("a refusal cannot turn prior fatal Skill, Agent, or audit state into a receipt", async () => {
   {
     let audits = 0;
     const fixture = extension({
@@ -1125,44 +1095,36 @@ test("a refusal cannot turn prior fatal Skill, Agent, audit, or cleanup state in
     assert.equal(audits, 0);
   }
 
-  for (const stage of ["audit", "cleanup"] as const) {
+  {
     let audits = 0;
     const fixture = extension({
       auditReviewerCompliance: async () => {
         audits += 1;
-        if (stage === "audit") throw new Error("audit infrastructure failed");
-        return { status: "pass" as const };
+        throw new Error("audit infrastructure failed");
       },
-      ...(stage === "cleanup"
-        ? {
-            shutdownReviewerAgent: async () => {
-              throw new Error("cleanup infrastructure failed");
-            },
-          }
-        : {}),
     });
     await fixture.handlers.get("session_start")?.({}, {});
     await assert.rejects(
       fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
-        `${stage}-first`,
+        "audit-first",
         { status: "refused", report: "first submission reaches fatal seam" },
         undefined,
         undefined,
-        context(`${stage}-first`),
+        context("audit-first"),
       ),
-      new RegExp(`${stage} infrastructure failed`),
+      /audit infrastructure failed/,
     );
     await assert.rejects(
       fixture.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
-        `${stage}-second`,
+        "audit-second",
         { status: "refused", report: "must remain fatal" },
         undefined,
         undefined,
-        context(`${stage}-second`),
+        context("audit-second"),
       ),
       /infrastructure previously failed/,
     );
-    assert.equal(audits, 1, `${stage} fatal state blocks resubmission before audit`);
+    assert.equal(audits, 1, "audit fatal state blocks resubmission before audit");
   }
 });
 
@@ -1372,7 +1334,7 @@ test("real Pi rejects completed when a schema-invalid Agent sibling never enters
   );
 });
 
-test("Reviewer lifecycle chronology preserves Skill, Agent, bash, audit, cleanup, and termination", async () => {
+test("Reviewer lifecycle chronology preserves Skill, Agent, bash, audit, and termination without automatic snapshot cleanup", async () => {
   const chronology: string[] = [];
   const baseBinding = reviewerBinding();
   const fixture = extension({
@@ -1408,7 +1370,6 @@ test("Reviewer lifecycle chronology preserves Skill, Agent, bash, audit, cleanup
       }]);
       return { status: "pass" as const, usage };
     },
-    shutdownReviewerAgent: async () => { chronology.push("shutdown"); },
   });
   await fixture.handlers.get("session_start")?.({}, {});
   const request = "Review the requested fixed point.";
@@ -1468,7 +1429,6 @@ test("Reviewer lifecycle chronology preserves Skill, Agent, bash, audit, cleanup
     "Skill capture",
     "child result",
     "output validation and audit",
-    "shutdown",
   ]);
   assert.deepEqual(accepted.content, [{ type: "text", text: "Reviewer report accepted" }]);
   assert.deepEqual(accepted.usage, usage);

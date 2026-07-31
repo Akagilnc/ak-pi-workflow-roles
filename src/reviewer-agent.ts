@@ -36,7 +36,6 @@ export type RunReviewerAgent = (
 
 export type ReviewerAgentRunner = {
   runReviewerAgent: RunReviewerAgent;
-  shutdown(): Promise<void>;
 };
 
 type GitSnapshot = ReviewerTargetSnapshot & {
@@ -431,7 +430,6 @@ async function runChild(
 export function createReviewerAgentRunner(): ReviewerAgentRunner {
   let snapshotPromise: Promise<GitSnapshot> | undefined;
   let pinnedCwd: string | undefined;
-  let snapshotDeleted = false;
 
   const runReviewerAgent: RunReviewerAgent = async (input, options) => {
     if (snapshotPromise === undefined) {
@@ -472,13 +470,7 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
     }
   };
 
-  return {
-    runReviewerAgent,
-    async shutdown() {
-      if (snapshotPromise === undefined || snapshotDeleted) return;
-      const snapshot = await snapshotPromise;
-      await rm(snapshot.mirrorRoot, { recursive: true, force: false });
-      snapshotDeleted = true;
-    },
-  };
+  // Session bare mirrors stay on disk for manual cleanup. Automatic deletion is
+  // not part of the Reviewer lifecycle (owner-authorized retention policy).
+  return { runReviewerAgent };
 }
