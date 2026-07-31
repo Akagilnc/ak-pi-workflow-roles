@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
+import { compileMechanicalBundle } from "../src/reviewer-construction.ts";
 import {
   createReviewerExecutionLedger,
   type ReviewerEvidenceEvent,
@@ -16,10 +17,13 @@ const usage: ReviewerUsage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0,
 
 function accepted(spec = true): ReviewerEvidenceEvent {
   const prompts = spec ? [["standards", "standards π"], ["spec", "spec prompt"]] as const : [["standards", "standards π"]] as const;
+  const materials = spec
+    ? [{ id: "rules", repositoryPath: "RULES.md", text: "rules", utf8Length: 5, sha256: sha("rules") }, { id: "requirements", repositoryPath: "SPEC.md", text: "spec", utf8Length: 4, sha256: sha("spec") }]
+    : [{ id: "rules", repositoryPath: "RULES.md", text: "rules", utf8Length: 5, sha256: sha("rules") }, { id: "absence", repositoryPath: "README.md", text: "absence", utf8Length: 7, sha256: sha("absence") }];
+  const compiled = compileMechanicalBundle({ canonicalSkill: "skill", task: "task", range, materials });
   return {
-    source: "reviewer-dispatch", type: "accepted", identity: "proposal-1", recipe: "reviewer-dispatch-v1",
-    input: { task: { text: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha", capabilityDocument: { text: "{\"ceiling\":1}", utf8Length: 13, sha256: sha("{\"ceiling\":1}") } }, target, prerequisiteOperations: [], range,
-    materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", text: "rules", utf8Length: 5, sha256: sha("rules") }], ...(spec ? { spec: [{ id: "requirements", repositoryPath: "SPEC.md", text: "spec", utf8Length: 4, sha256: sha("spec") }] } : { noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", text: "absence", utf8Length: 7, sha256: sha("absence") }] }) },
+    source: "reviewer-dispatch", type: "accepted", identity: "proposal-1", recipe: "reviewer-common-bundle-v1",
+    input: { task: { text: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkill: compiled.canonicalSkill, construction: compiled.construction, capabilityDocument: { text: "{\"ceiling\":1}", utf8Length: 13, sha256: sha("{\"ceiling\":1}") } }, target, prerequisiteOperations: [], range, materials, bundle: compiled.bundle,
     legs: prompts.map(([axis, prompt]) => ({ axis, prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, grant })),
   } as ReviewerEvidenceEvent;
 }

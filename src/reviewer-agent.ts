@@ -30,6 +30,7 @@ import type {
   ReviewerPrerequisiteOperation,
 } from "./reviewer-dispatch.ts";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
+import { materializeMechanicalBundle } from "./reviewer-bundle-materializer.ts";
 import type {
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
@@ -546,7 +547,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
 
   return {
     async run(dispatch, options) {
-      if (dispatch.recipe !== "reviewer-dispatch-v1" || dispatch.legs.length < 1 || dispatch.legs.length > 2 ||
+      if (dispatch.recipe !== "reviewer-common-bundle-v1" || dispatch.legs.length < 1 || dispatch.legs.length > 2 ||
           dispatch.legs[0]?.axis !== "standards" || (dispatch.legs.length === 2 && dispatch.legs[1]?.axis !== "spec")) {
         throw new Error("Invalid accepted Reviewer dispatch cardinality or axes");
       }
@@ -567,10 +568,20 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
         throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
       }
       const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, objectFormat: snapshot.objectFormat, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
-      const settled = await Promise.allSettled(dispatch.legs.map(async (leg) => {
-        let workspace: string | undefined;
+      const prepared: Array<{ leg: AcceptedReviewerLeg; workspace: string }> = [];
+      try {
+        // Verify every clone before any sibling provider starts.
+        for (const leg of dispatch.legs) {
+          const workspace = await prepareWorkspace(snapshot, options.signal, dependencies);
+          await materializeMechanicalBundle(workspace, leg.axis, dispatch.bundle);
+          prepared.push({ leg, workspace });
+        }
+      } catch (error) {
+        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, failedLegEvidence(error, target, leg.prompt, options.signal, prepared.find(x => x.leg.axis === leg.axis)?.workspace)]));
+        throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
+      }
+      const settled = await Promise.allSettled(prepared.map(async ({ leg, workspace }) => {
         try {
-          workspace = await prepareWorkspace(snapshot, options.signal, dependencies);
           const child = await runChild(workspace, leg, options.context, options.signal, dependencies.fault);
           await rm(workspace, { recursive: true, force: false });
           return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const })] as const;

@@ -34,11 +34,9 @@ const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), reposito
 export const reviewerProposalSchema = Type.Object({
   version: Type.Literal(1),
   base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
-  standardsMaterials: Type.Array(materialSchema),
-  spec: Type.Union([
-    Type.Object({ state: Type.Literal("established"), materials: Type.Array(materialSchema, { minItems: 1 }) }, { additionalProperties: false }),
-    Type.Object({ state: Type.Literal("not-established"), evidence: Type.Array(materialSchema, { minItems: 1 }) }, { additionalProperties: false }),
-  ]),
+  materials: Type.Array(materialSchema),
+  relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: false })),
+  spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: false }),
   required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: false }),
 }, { additionalProperties: false });
 const reviewerOutputSchema = Type.Object({ status: StringEnum(["completed", "refused"] as const), report: Type.String({ minLength: 1 }) }, { additionalProperties: false });
