@@ -1,0 +1,32 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_Qe0jYjfyDmOPGAskIbjxWvlv|fc_02c223972da6d782016a6cd1cc36b88191b3cb9dc62cfa34e2",
+  "details": {
+    "status": "completed",
+    "report": "Committed the four authorized Review-009 repairs. Native non-header row IDs are now admitted only as lowercase 8-hex IDs or canonical UUIDs before exact duplicate/chain retention; package call IDs remain unbounded and exact. Named Recorder trust code was reformatted for auditability, and createSessionLeaf/readSession now share SessionOwner. Removed only the Judge-listed redundant boundary/object-extra cases. Rebuilt Recorder dist artifacts. Validation passed: focused row-ID/package-ID tests, typecheck, isolated-HOME full suite (298 passed, 5 skipped), package/cold-install tests within that suite, npm pack --dry-run, and git diff --check. The rejected lifecycle-fixture class was untouched; no digests, package-ID bounds, indexes, or unrelated behavior were added.",
+    "commitSha": "44b2edd0cf5525155bd067054e4e7766e8263b43",
+    "classesRepaired": [
+      {
+        "name": "ISS33-COMPACT-SESSION-STATE",
+        "searchScope": "src/recorder/session.ts and extract.ts identity-retention seams, generated Recorder artifacts, and focused session/lifecycle tests",
+        "exceptions": []
+      },
+      {
+        "name": "ISS33-SECURITY-SOURCE-READABILITY",
+        "searchScope": "src/recorder/session.ts, run.ts, manifest.ts, spawn.ts and generated counterparts",
+        "exceptions": []
+      },
+      {
+        "name": "ISS33-SESSION-OWNER-IDENTITY",
+        "searchScope": "createSessionLeaf producer and readSession consumer boundaries in src/recorder/session.ts plus generated counterpart",
+        "exceptions": []
+      },
+      {
+        "name": "ISS33-ADR0016-TEST-THINNING",
+        "searchScope": "exact redundant cases in test/recorder-config-session-integrity.test.ts",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
