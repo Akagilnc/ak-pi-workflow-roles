@@ -1,6 +1,7 @@
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+import type { MaterializedBundleEvidenceV1 } from "./reviewer-bundle-materializer.ts";
 import {
   REVIEWER_PREFLIGHT_VIOLATIONS,
   type ReviewerPreflightViolation,
@@ -41,6 +42,7 @@ export type ReviewerLegResultEvidence = Readonly<{
   report?: string;
   failure?: ReviewerFailureClassification;
   usage?: ReviewerUsage;
+  runtimeConstructionEvidence?: MaterializedBundleEvidenceV1;
   workspaceDisposition: ReviewerWorkspaceDisposition;
 }>;
 export type ReviewerEvidenceEvent =
@@ -84,7 +86,7 @@ export function projectReviewerDispatchOutcome(
     if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
     ledger.append(actual.status === "failed"
       ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, workspaceDisposition: actual.workspaceDisposition }
-      : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, workspaceDisposition: actual.workspaceDisposition });
+      : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition });
   }
 }
 

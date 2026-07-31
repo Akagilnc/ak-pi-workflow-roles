@@ -30,7 +30,7 @@ import type {
   ReviewerPrerequisiteOperation,
 } from "./reviewer-dispatch.ts";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
-import { materializeMechanicalBundle } from "./reviewer-bundle-materializer.ts";
+import { materializeMechanicalBundle, type MaterializedBundleEvidenceV1 } from "./reviewer-bundle-materializer.ts";
 import type {
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
@@ -48,6 +48,7 @@ export type ReviewerSuccessfulLegRunResult = Readonly<{
   status: "successful"; report: string; usage: ReviewerUsage;
   target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity;
   workspaceDisposition: ReviewerWorkspaceDisposition;
+  runtimeConstructionEvidence?: MaterializedBundleEvidenceV1;
 }>;
 export type ReviewerFailedLegRunResult = Readonly<{
   status: "failed"; failure: ReviewerFailureClassification;
@@ -568,23 +569,23 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
         throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
       }
       const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, objectFormat: snapshot.objectFormat, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
-      const prepared: Array<{ leg: AcceptedReviewerLeg; workspace: string }> = [];
+      const prepared: Array<{ leg: AcceptedReviewerLeg; workspace: string; evidence: MaterializedBundleEvidenceV1 }> = [];
       try {
         // Verify every clone before any sibling provider starts.
         for (const leg of dispatch.legs) {
           const workspace = await prepareWorkspace(snapshot, options.signal, dependencies);
-          await materializeMechanicalBundle(workspace, leg.axis, dispatch.bundle);
-          prepared.push({ leg, workspace });
+          const evidence = await materializeMechanicalBundle(workspace, leg.axis, dispatch.bundle);
+          prepared.push({ leg, workspace, evidence });
         }
       } catch (error) {
         const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, failedLegEvidence(error, target, leg.prompt, options.signal, prepared.find(x => x.leg.axis === leg.axis)?.workspace)]));
         throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
       }
-      const settled = await Promise.allSettled(prepared.map(async ({ leg, workspace }) => {
+      const settled = await Promise.allSettled(prepared.map(async ({ leg, workspace, evidence }) => {
         try {
           const child = await runChild(workspace, leg, options.context, options.signal, dependencies.fault);
           await rm(workspace, { recursive: true, force: false });
-          return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const })] as const;
+          return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const, runtimeConstructionEvidence: evidence })] as const;
         } catch (error) {
           return [leg.axis, failedLegEvidence(error, target, leg.prompt, options.signal, workspace)] as const;
         }
