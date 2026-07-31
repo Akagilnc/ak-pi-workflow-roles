@@ -1,0 +1,16 @@
+# Owner comment 4
+
+URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5139156319
+Created: 2026-07-31T04:08:06Z
+Author: Akagilnc
+
+## 优先级提升(owner 裁定,2026-07-31 午后)
+
+医生角色实施优先级**上调**,排位于 #1145 大考之前(#1145 后移,考期另定)。案由:07-31 全天工厂呈自我修理集中日(2×~920s 腿烧毁、#23 立案、产品面零落地),owner 判「与 V2 同形」——需要医生把「当天抓住系统病」从 owner 亲自盯机械化为常设职务。
+
+现成开工件:
+- 设计全套在 `design/doctor-role` 分支(f393cd6,ADR 0012-0014 + CONTEXT 七词条 + materials),待收编;
+- 开机病历两例已挂本票(runner 无笼无档 + README 越权法典);
+- 生命体征基线:issue→并 main 墙钟(一天=正常);
+- 已入主线的两条宪法(失败诚实+锚定,`58da62e`)可作体检依据。
+

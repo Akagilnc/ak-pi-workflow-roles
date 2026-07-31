@@ -1,0 +1,15 @@
+# Owner comment 15
+
+URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5143814845
+Created: 2026-07-31T14:12:17Z
+Author: Akagilnc
+
+## Infrastructure disposition for the unarchived Judge attempt
+
+Root-cause class is now reproduced and recorded in #26:
+https://github.com/Akagilnc/ak-pi-workflow-roles/issues/26#issuecomment-5143813324
+
+Recorder materializes the complete Pi `--mode json` stdout with `readFileSync`; a 2 GiB stream deterministically produces the exact observed `internal-error / extraction / platform-error` after child exit 0. Pi JSON `message_update` events carry the accumulated message, so long high-reasoning calls can quadratically inflate transport bytes. The retained accepted Judge lifecycle itself extracts cleanly in isolation.
+
+The failed attempt remains infrastructure evidence only, not a lawful receipt. Issue #12 construction still requires one fresh archived Judge receipt after the R1+L1 owner decision; #12 does not authorize repairing Recorder.
+
