@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "taskSha256": "a7dccdd8ee491b363c374dd0532762c76fdefa67343a6b8fe6aa32714864ddd2",
+  "tools": [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "bash"
+  ],
+  "bashCommands": [
+    "git diff cd7eb3a43b33a0de775dcd6645e2f4ac8cfab256...7e2a123f62649947f6a7d0fa76176d143ba4eb81"
+  ],
+  "prerequisiteOperations": [
+    "preflight.git.pin-target",
+    "preflight.git.resolve-base",
+    "preflight.git.derive-range",
+    "preflight.git.list-ordered-commits",
+    "preflight.git.read-material",
+    "runner.git.materialize-mirror",
+    "runner.git.materialize-workspace",
+    "runner.git.verify-snapshot"
+  ]
+}
