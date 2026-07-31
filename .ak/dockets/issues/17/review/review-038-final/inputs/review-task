@@ -1,0 +1,14 @@
+# Issue #17 final closure review
+
+Review base `8ee916e36604a9193bec8b6c571c090ecb3d7e8c` through target `e6a0657011480cbed7b7240ccef4b7efccf34a79`.
+
+Use one atomic Reviewer proposal. Common materials:
+
+- `claude` → `CLAUDE.md`
+- `adr0016` → `docs/adr/0016-tests-follow-logic-not-format.md`
+- `amended-authority` → `.ak/dockets/issues/17/judgment/owner-amendment-design-recheck-003/receipt.json`
+- `full-admission` → `.ak/dockets/issues/17/judgment/full-finding-admission-current/receipt.json`
+- `review037-judgment` → `.ak/dockets/issues/17/judgment/review-037/receipt.json`
+- `review037-repair` → `.ak/dockets/issues/17/repair/review-037-apply/receipt.json`
+
+Spec established. Both legs request `read,grep,find,ls,bash`, exact `git diff 8ee916e36604a9193bec8b6c571c090ecb3d7e8c...e6a0657011480cbed7b7240ccef4b7efccf34a79`, and all eight prerequisite operations. Apply fixed single-axis adapters; all material remains readable. Check all current authority, especially runtime per-leg materialization evidence, failed-outcome preservation, ADR 0016 tracer discipline, owner seams, thin driver result, receipt/package parity, failure honesty, and no compatibility core. Do not rerun batteries or replace legs. Submit completed intent only after settlement.
