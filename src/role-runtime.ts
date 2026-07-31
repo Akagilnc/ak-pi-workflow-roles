@@ -37,7 +37,7 @@ export {
   AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
   type ReviewerAuditInput,
-  type ReviewerOutput,
+  type ReviewerIntent,
 } from "./reviewer-role.ts";
 export {
   CODER_OUTPUT_TOOL_NAME,

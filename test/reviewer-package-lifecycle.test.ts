@@ -76,6 +76,11 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     await writeFile(capsPath, capabilityText);
 
     const installedDispatch = await import(new URL(`file://${resolve(fixture, "node_modules/@ak/pi-workflow-roles/src/reviewer-dispatch.ts")}`).href);
+    const installedContracts = await import(new URL(`file://${resolve(fixture, "node_modules/@ak/pi-workflow-roles/src/package-contracts/reviewer-output.ts")}`).href);
+    assert.equal("validateAcceptedReviewerDetails" in installedContracts, false);
+    assert.equal(typeof installedContracts.validateReviewerIntent, "function");
+    assert.equal(typeof installedContracts.validateRuntimeReviewerReceipt, "function");
+    assert.equal(typeof installedContracts.projectReviewerIntentToReceipt, "function");
     const missingRecipeText = JSON.stringify({
       version: 1,
       taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
@@ -182,6 +187,23 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.doesNotMatch(userText(noSpecAudits[0]!), /\"axis\":\"spec\"/);
       assert.equal(output.message.isError, false); assert.equal(output.message.details.status, "completed");
       assert.equal(noSpecFaux.getPendingResponseCount(), 0);
+    });
+
+    const refusedFaux = fauxProvider({ api: "package-reviewer-refused", provider: "package-reviewer-refused", tokenSize: { min: 1000, max: 1000 } });
+    refusedFaux.setResponses([
+      fauxAssistantMessage(fauxToolCall(Output, { status: "refused", diagnostic: "No review can be started." }, { id: "refused-output" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }),
+    ]);
+    await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-refused"), faux: refusedFaux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ session, sessionManager }) => {
+      await session.prompt("Refuse before dispatch.");
+      const output = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "refused-output") as any;
+      assert.equal(output.message.isError, false);
+      assert.equal(output.message.details.version, 2);
+      assert.equal(output.message.details.status, "refused");
+      assert.equal(output.message.details.diagnostic, "No review can be started.");
+      assert.deepEqual(output.message.details.reports, {});
+      assert.deepEqual(output.message.details.outcomes, {});
+      installedContracts.projectReviewerIntentToReceipt({ status: "refused", diagnostic: "No review can be started." }, output.message.details);
     });
     } finally {
       process.chdir(originalCwd);

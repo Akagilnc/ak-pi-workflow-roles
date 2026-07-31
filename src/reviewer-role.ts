@@ -1,6 +1,6 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import { Type } from "typebox";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
@@ -23,7 +23,7 @@ import { assembleRuntimeReviewerReceipt, type RuntimeReviewerReceiptV2 } from ".
 import { REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
-export type { ReviewerIntent as ReviewerOutput };
+export type { ReviewerIntent };
 export const AGENT_TOOL_NAME = "Agent";
 
 const requestSchema = Type.Object({
@@ -44,8 +44,6 @@ const reviewerOutputSchema = Type.Union([
   Type.Object({ status: Type.Literal("completed") }, { additionalProperties: false }),
   Type.Object({ status: Type.Literal("refused"), diagnostic: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
 ]);
-type ReviewerOutputParameters = Static<typeof reviewerOutputSchema>;
-
 export type ReviewerAuditInput = { soul: string; canonicalSkill: string; task: string; record: ReviewerExecutionRecord; candidate: RuntimeReviewerReceiptV2 };
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
@@ -60,7 +58,6 @@ export type ReviewerRoleDependencies = {
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext): never };
 
-export function validateReviewerOutput(output: ReviewerOutputParameters): ReviewerIntent { return validateReviewerIntent(output); }
 function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Reviewer output must be the sole final tool call");
@@ -203,7 +200,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
         async execute(id, parameters, signal, _update, toolCtx) {
           if (!soul || task === undefined || !binding) throw new Error("Reviewer inputs were not loaded");
           requireSoleReviewerOutputCall(id, toolCtx);
-          const output = validateReviewerOutput(parameters);
+          const output = validateReviewerIntent(parameters);
           if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
           let record: ReviewerExecutionRecord;
           try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx); throw error; }

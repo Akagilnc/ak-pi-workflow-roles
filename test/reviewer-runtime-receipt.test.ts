@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { compileMechanicalBundle } from "../src/reviewer-construction.ts";
-import { validateRuntimeReviewerReceipt } from "../src/package-contracts/reviewer-output.ts";
+import * as reviewerContracts from "../src/package-contracts/reviewer-output.ts";
+import { projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, type ReviewerIntent } from "../src/package-contracts/reviewer-output.ts";
+// @ts-expect-error ReviewerOutput was a compatibility alias and is intentionally absent.
+import type { ReviewerOutput } from "../src/package-contracts/reviewer-output.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import { sha256Hex } from "../src/sha256.ts";
 
@@ -13,6 +16,14 @@ function receipt(axes: readonly ("standards" | "spec")[] = ["standards"], status
   const outcomes = Object.fromEntries(axes.map(axis => [axis, { status: "successful", prompt: prompt(axis), workspaceDisposition: "deleted" }]));
   return { version: 2, status, ...(status === "refused" ? { diagnostic: "stopped" } : {}), acceptedBatch: { identity: "dispatch", legs: axes.map(axis => ({ axis, prompt: prompt(axis) })) }, reports, outcomes, identities: { canonicalSkill: { sha256: skill.sha256, utf8Length: skill.utf8Length, snapshotIdentity: skill }, construction: { recipe: "reviewer-common-bundle-v1", bundle }, target: { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "a".repeat(40), refs: { tag: { objectId: "b".repeat(40), peeledCommitId: null } } } } };
 }
+
+test("Reviewer intent and receipt leaves remain distinct without legacy runtime exports", () => {
+  const completed: ReviewerIntent = validateReviewerIntent({ status: "completed" });
+  const refused: ReviewerIntent = validateReviewerIntent({ status: "refused", diagnostic: "stopped" });
+  assert.equal(projectReviewerIntentToReceipt(completed, receipt()).version, 2);
+  assert.equal(projectReviewerIntentToReceipt(refused, receipt(["standards"], "refused")).diagnostic, "stopped");
+  assert.equal("validateAcceptedReviewerDetails" in reviewerContracts, false);
+});
 
 test("Reviewer receipts accept object-format-aware IDs and nullable peeled commits", () => {
   validateRuntimeReviewerReceipt(receipt());

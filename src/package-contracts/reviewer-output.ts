@@ -11,8 +11,6 @@ export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
 export type ReviewerIntent =
   | Readonly<{ status: "completed" }>
   | Readonly<{ status: "refused"; diagnostic: string }>;
-/** Compatibility name for callers that submit the terminating-tool arguments. */
-export type ReviewerOutput = ReviewerIntent;
 export type VerbatimChildReport = Readonly<{ text: string; utf8Length: number; sha256: string }>;
 export type RuntimeReviewerOutcome = Readonly<{
   status: "successful" | "failed";
@@ -125,6 +123,3 @@ export function projectReviewerIntentToReceipt(intentValue: unknown, receiptValu
   }
   return receipt;
 }
-
-/** Legacy entry point validates only terminating-tool arguments. */
-export const validateAcceptedReviewerDetails = validateReviewerIntent;
