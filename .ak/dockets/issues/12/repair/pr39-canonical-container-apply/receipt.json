@@ -1,0 +1,17 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_ulgwl3QpTST4p5bJc2YtzxIY|fc_052ad9a334fbfb51016a6d25da84608191b6f4602c701b5b07",
+  "details": {
+    "status": "completed",
+    "report": "Closed the canonical container domain by auditing Reflect.ownKeys: symbol-keyed object/array members now receive typed stable $/<symbol> rejection, arrays reject every non-index own property at its escaped structural path, and all plain-record string own keys participate in canonical serialization. Reflection and getter exceptions remain unwrapped. Added the authorized object-symbol and array-extra alias regressions once and regenerated the shipped artifact. Verified focused canonical tests, typecheck, isolated-HOME full suite (358 pass, 5 skip), package/cold-install coverage within that suite, npm pack --dry-run (111 files), build, and git diff --check. No other PR39 class changed; worktree is clean.",
+    "commitSha": "04a311ccef8dc24088d1b9d1f0feac15e999380b",
+    "classesRepaired": [
+      {
+        "name": "closed-canonical-json-domain",
+        "searchScope": "Canonical serialization boundary in src/canonical-json.ts, its focused regression suite, and shipped dist/canonical-json.js artifact.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
