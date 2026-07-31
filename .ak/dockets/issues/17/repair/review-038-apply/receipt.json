@@ -1,0 +1,22 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_Y46SdaGtG41fpOJ08kJP0j5K|fc_03ae76a29eea4413016a6d0d2206808191ac8598a49312f374",
+  "details": {
+    "status": "completed",
+    "report": "Repaired the outcome-contract root cause by replacing shared optional-field shapes with status-discriminated unions across public V2 receipts, runner results, and ledger evidence. Successful outcomes now require materialization evidence and exclude failure; failed outcomes require classification and preserve optional post-materialization evidence. Settlement now projects each branch directly, and the ledger rejects successful settlements lacking evidence. Added compile-time contract assertions and validator, assembly, ledger, runner, and production-lifecycle regressions. Regenerated tracked artifacts. Verification passed: focused tests, typecheck, isolated-HOME full suite (331 pass, 5 skipped), package/cold-install lifecycle, npm pack dry-run, and git diff check. Historical dockets were not modified; the dismissed historical-manifest finding was not adopted because immutable invocation receipts are outside this authorized class.",
+    "commitSha": "eb366f3c7281ae7906e923ac890503babeaa08fc",
+    "classesRepaired": [
+      {
+        "name": "Discriminated successful materialization outcomes",
+        "searchScope": "Public receipt contract, Reviewer agent runner outcomes, execution-ledger settlement evidence, settlement assembly, tracked production artifact, and all repository tests/usages of runtimeConstructionEvidence.",
+        "exceptions": [
+          {
+            "where": "Historical docket invocation manifests",
+            "reason": "Explicitly excluded by authority; immutable historical receipts must not be rewritten."
+          }
+        ]
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
