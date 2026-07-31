@@ -1,33 +1,52 @@
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import { RecorderError } from "./errors.js";
-async function teeStream(stream, sinkPath, mirror) {
-    await mkdir(dirname(sinkPath), { recursive: true });
-    const file = createWriteStream(sinkPath);
-    stream.on("data", (chunk) => {
-        const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-        mirror.write(buf);
-        file.write(buf);
-    });
-    await new Promise((resolve, reject) => {
-        stream.on("error", reject);
-        file.on("error", reject);
-        stream.on("end", () => {
-            file.end(() => resolve());
-        });
-    });
+export class TailRing {
+    capacity;
+    #data = Buffer.alloc(0);
+    constructor(capacity = 4096) {
+        this.capacity = capacity;
+    }
+    push(chunk) {
+        if (chunk.length >= this.capacity) {
+            this.#data = Buffer.from(chunk.subarray(chunk.length - this.capacity));
+            return;
+        }
+        const joined = Buffer.concat([this.#data, chunk]);
+        this.#data =
+            joined.length > this.capacity
+                ? joined.subarray(joined.length - this.capacity)
+                : joined;
+    }
+    bytes() {
+        return Buffer.from(this.#data);
+    }
+}
+export async function forwardStream(stream, sink, ring) {
+    for await (const value of stream) {
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        ring.push(chunk);
+        if (!sink.write(chunk)) {
+            await new Promise((resolve, reject) => {
+                const drained = () => {
+                    sink.off("error", failed);
+                    resolve();
+                };
+                const failed = (error) => {
+                    sink.off("drain", drained);
+                    reject(error);
+                };
+                sink.once("drain", drained);
+                sink.once("error", failed);
+            });
+        }
+    }
 }
 export async function spawnOnce(options) {
-    if (options.argv.length === 0) {
-        throw new RecorderError("invalid-argv", "child argv must not be empty");
-    }
-    const command = options.argv[0];
-    const args = options.argv.slice(1);
+    if (!options.argv.length)
+        throw new RecorderError("invalid-argv");
     let child;
     try {
-        child = spawn(command, args, {
+        child = spawn(options.argv[0], options.argv.slice(1), {
             cwd: options.cwd,
             env: options.env,
             shell: false,
@@ -35,30 +54,23 @@ export async function spawnOnce(options) {
         });
     }
     catch (error) {
-        throw new RecorderError("spawn-failed", "failed to spawn child process", {
-            cause: error,
-        });
+        throw new RecorderError("spawn-failed", undefined, { cause: error });
     }
-    const stdoutMirror = options.stdoutMirror ?? process.stdout;
-    const stderrMirror = options.stderrMirror ?? process.stderr;
-    if (child.stdout === null || child.stderr === null) {
-        throw new RecorderError("spawn-failed", "child stdio pipes unavailable");
-    }
-    const stdoutDone = teeStream(child.stdout, options.stdoutPath, stdoutMirror);
-    const stderrDone = teeStream(child.stderr, options.stderrPath, stderrMirror);
-    const close = await new Promise((resolve, reject) => {
-        child.on("error", (error) => {
-            reject(new RecorderError("spawn-failed", "child process error", { cause: error }));
-        });
-        child.on("close", (exitCode, signal) => {
-            resolve({ exitCode, signal });
-        });
+    if (!child.stdout || !child.stderr)
+        throw new RecorderError("spawn-failed");
+    const stdoutTail = new TailRing();
+    const stderrTail = new TailRing();
+    const streamCompletion = Promise.all([
+        forwardStream(child.stdout, options.stdoutMirror ?? process.stdout, stdoutTail),
+        forwardStream(child.stderr, options.stderrMirror ?? process.stderr, stderrTail),
+    ]).then(() => undefined);
+    void streamCompletion.catch(() => { });
+    const settlement = new Promise((resolve) => {
+        child.once("close", (exitCode, signal) => resolve({ exitCode, signal }));
     });
-    await Promise.all([stdoutDone, stderrDone]);
-    return {
-        stdoutPath: options.stdoutPath,
-        stderrPath: options.stderrPath,
-        exitCode: close.exitCode,
-        signal: close.signal,
-    };
+    await new Promise((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", (error) => reject(new RecorderError("spawn-failed", undefined, { cause: error })));
+    });
+    return { settlement, streamCompletion, stdoutTail, stderrTail };
 }

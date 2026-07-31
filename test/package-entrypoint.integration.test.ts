@@ -99,6 +99,7 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
 
   assert.match(extensionHelp ?? "", /--ak-fixer-phase <value>\s+Fixer phase: plan .* or apply/);
   assert.match(extensionHelp ?? "", /--ak-review-capabilities <value>\s*Closed Reviewer capability grant/);
+  assert.match(extensionHelp ?? "", /--ak-review-scope-keys <value>\s*Optional comma-separated exact class keys/);
 });
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {

@@ -1,0 +1,642 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ak.local/schemas/recorder-failure-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "recorder",
+    "child"
+  ],
+  "properties": {
+    "recorder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "code",
+        "message",
+        "location",
+        "diagnostic",
+        "cleanup"
+      ],
+      "properties": {
+        "status": {
+          "const": "failed"
+        },
+        "code": {
+          "enum": [
+            "invalid-argv",
+            "invalid-config",
+            "invalid-archive",
+            "invalid-path",
+            "destination-exists",
+            "spawn-failed",
+            "scan-failed",
+            "admission-failed",
+            "reference-failed",
+            "session-collision",
+            "session-missing",
+            "session-ambiguous",
+            "session-corrupt",
+            "session-modified",
+            "acceptance-missing",
+            "acceptance-invalid",
+            "extraction-failed",
+            "promotion-failed",
+            "opaque-content",
+            "internal-error"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "location": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 4,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "version",
+                  "archive",
+                  "repositoryRoot",
+                  "root",
+                  "docketId",
+                  "session",
+                  "directory",
+                  "execution",
+                  "cwd",
+                  "environment",
+                  "inherit",
+                  "overrides",
+                  "unset",
+                  "stdin",
+                  "declarations",
+                  "gitReferences",
+                  "externalInputs",
+                  "exhibits",
+                  "id",
+                  "commit",
+                  "path",
+                  "blobOid",
+                  "sha256",
+                  "kind",
+                  "sourcePath",
+                  "provenance",
+                  "package",
+                  "model",
+                  "target"
+                ]
+              },
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647
+              }
+            ]
+          }
+        },
+        "cleanup": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "category"
+              ],
+              "properties": {
+                "status": {
+                  "const": "failed"
+                },
+                "category": {
+                  "enum": [
+                    "filesystem-missing",
+                    "filesystem-inaccessible",
+                    "filesystem-not-file",
+                    "filesystem",
+                    "process",
+                    "platform-error",
+                    "error",
+                    "non-error-throw"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "diagnostic": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stage",
+                "category"
+              ],
+              "properties": {
+                "stage": {
+                  "enum": [
+                    "argv",
+                    "config-read",
+                    "config-structure",
+                    "config-metadata-scan",
+                    "config-state",
+                    "destination",
+                    "stage-allocation",
+                    "admission",
+                    "session",
+                    "spawn",
+                    "extraction",
+                    "generated-artifacts",
+                    "manifest",
+                    "promotion",
+                    "launcher"
+                  ]
+                },
+                "category": {
+                  "enum": [
+                    "filesystem-missing",
+                    "filesystem-inaccessible",
+                    "filesystem-not-file",
+                    "filesystem",
+                    "process",
+                    "platform-error",
+                    "error",
+                    "non-error-throw"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "invalid-config"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "location": {
+                "type": "array"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "location": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "internal-error"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "diagnostic": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "code": {
+                  "const": "invalid-argv"
+                },
+                "message": {
+                  "const": "invalid Recorder argv"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "invalid-config"
+                },
+                "message": {
+                  "const": "invalid Recorder config"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "invalid-archive"
+                },
+                "message": {
+                  "const": "invalid archive worktree"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "invalid-path"
+                },
+                "message": {
+                  "const": "invalid path"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "destination-exists"
+                },
+                "message": {
+                  "const": "archive destination already exists"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "spawn-failed"
+                },
+                "message": {
+                  "const": "failed to spawn child process"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "scan-failed"
+                },
+                "message": {
+                  "const": "credential scan failed"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "admission-failed"
+                },
+                "message": {
+                  "const": "declaration admission failed"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "reference-failed"
+                },
+                "message": {
+                  "const": "git reference verification failed"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "session-collision"
+                },
+                "message": {
+                  "const": "session directory already exists"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "session-missing"
+                },
+                "message": {
+                  "const": "native session is missing"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "session-ambiguous"
+                },
+                "message": {
+                  "const": "native session inventory is ambiguous"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "session-corrupt"
+                },
+                "message": {
+                  "const": "native session is corrupt"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "session-modified"
+                },
+                "message": {
+                  "const": "native session changed while sealing"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "acceptance-missing"
+                },
+                "message": {
+                  "const": "accepted package result is missing"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "acceptance-invalid"
+                },
+                "message": {
+                  "const": "package acceptance lifecycle is invalid"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "extraction-failed"
+                },
+                "message": {
+                  "const": "receipt extraction failed"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "promotion-failed"
+                },
+                "message": {
+                  "const": "atomic promotion failed"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "opaque-content"
+                },
+                "message": {
+                  "const": "unsupported opaque content cannot be promoted"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "internal-error"
+                },
+                "message": {
+                  "const": "internal Recorder failure"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "child": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "exitCode",
+            "signal",
+            "diagnostic"
+          ],
+          "properties": {
+            "status": {
+              "const": "not-spawned"
+            },
+            "exitCode": {
+              "type": "null"
+            },
+            "signal": {
+              "type": "null"
+            },
+            "diagnostic": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "exitCode",
+            "signal",
+            "diagnostic"
+          ],
+          "properties": {
+            "status": {
+              "const": "exited"
+            },
+            "exitCode": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "signal": {
+              "type": "null"
+            },
+            "diagnostic": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 4096
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "exitCode",
+            "signal",
+            "diagnostic"
+          ],
+          "properties": {
+            "status": {
+              "const": "signaled"
+            },
+            "exitCode": {
+              "type": "null"
+            },
+            "signal": {
+              "type": "string",
+              "enum": [
+                "SIGABRT",
+                "SIGALRM",
+                "SIGBUS",
+                "SIGCHLD",
+                "SIGCONT",
+                "SIGFPE",
+                "SIGHUP",
+                "SIGILL",
+                "SIGINT",
+                "SIGIO",
+                "SIGIOT",
+                "SIGKILL",
+                "SIGPIPE",
+                "SIGPOLL",
+                "SIGPROF",
+                "SIGPWR",
+                "SIGQUIT",
+                "SIGSEGV",
+                "SIGSTKFLT",
+                "SIGSTOP",
+                "SIGSYS",
+                "SIGTERM",
+                "SIGTRAP",
+                "SIGTSTP",
+                "SIGTTIN",
+                "SIGTTOU",
+                "SIGUNUSED",
+                "SIGURG",
+                "SIGUSR1",
+                "SIGUSR2",
+                "SIGVTALRM",
+                "SIGWINCH",
+                "SIGXCPU",
+                "SIGXFSZ"
+              ]
+            },
+            "diagnostic": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 4096
+            }
+          }
+        }
+      ]
+    }
+  },
+  "title": "Recorder failure v2"
+}

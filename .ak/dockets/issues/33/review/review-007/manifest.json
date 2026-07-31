@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/review/review-007"
+  },
+  "invocation": {
+    "id": "2db1eb4b-f208-42be-b0d3-f9bb10f11be1"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/review-007/session",
+      "--name",
+      "issue-33-review-007",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/33/review-007-task.md",
+      "-p",
+      "Use the two supplied child prompt bodies byte-for-byte in one parallel batch, then faithfully aggregate through ak_reviewer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "2fb287e624630c3f8caaa8197e07243bbc320fdb",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "design-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "2fb287e624630c3f8caaa8197e07243bbc320fdb",
+        "path": ".ak/dockets/issues/33/judgment/design-authority/receipt.json",
+        "blobOid": "07f23b2a3595130c4dcd64570b3e6c6981c71a12",
+        "sha256": "6c485d2b6ed2326b904b1a33b4558a751a15072b50207e034a13e5a7ad45a994",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "c8-amendment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "2fb287e624630c3f8caaa8197e07243bbc320fdb",
+        "path": ".ak/dockets/issues/33/judgment/c8-legality-recheck/receipt.json",
+        "blobOid": "9197e1171d5d8f8109f701473dc515e8a3ee4604",
+        "sha256": "26f3993f4cf829b355a38538a9b796a792741991907f10737a36fab5012861fe",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review005-judgment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "2fb287e624630c3f8caaa8197e07243bbc320fdb",
+        "path": ".ak/dockets/issues/33/judgment/review-005/receipt.json",
+        "blobOid": "1cea94332349deb9810697b3f74463d099289ec5",
+        "sha256": "db9ed53e178a3542eaf87703f6241cb33bfe04d3927c235b5701cab3b685eb80",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review005-fix",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "2fb287e624630c3f8caaa8197e07243bbc320fdb",
+        "path": ".ak/dockets/issues/33/repair/review-005-apply/receipt.json",
+        "blobOid": "fc8826144497249934afb937fab4e27f4d3021fe",
+        "sha256": "29993ee18a942415f4cad56de5d57f7c1be62013c3014dfd74a7633db22d8eb6",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review006-failure",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "2fb287e624630c3f8caaa8197e07243bbc320fdb",
+        "path": ".ak/dockets/issues/33/review/review-006/manifest.json",
+        "blobOid": "754926150d64a4bd30a94ece8647493dd77922a8",
+        "sha256": "c8e66427caf71217c861688f8048c4c591f27fe5aa59cc1f5bcfdd37d7092f7c",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "issue-33-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-33-authority",
+        "sha256": "74964bd6b3c94a35c435f0c67e2961da76b5d1fde11f8a532dd3c08058ef7af2",
+        "byteLength": 10186
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "2559ffb410068ea88ae358fc8f6f8312d270fc4b1ac370af12d6bd24a3b29889",
+        "byteLength": 6420
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "c8c421b51611ead3f955f2f02a69a00a52d2f4bc1ee7d2527ab6cdb13257fb74",
+        "byteLength": 712
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "380b32baa983eda9d80a66abb3043b145f0a50395875e1d111e91212df35e571",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_8D4KNatEh7rnnkgj72T2PpXB|fc_0e81478b4a5fc497016a6ccc6fd31c8191b4c584daa823b2a4",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_8D4KNatEh7rnnkgj72T2PpXB|fc_0e81478b4a5fc497016a6ccc6fd31c8191b4c584daa823b2a4",
+    "auditPassed": true,
+    "usage": {
+      "input": 11425,
+      "output": 201,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 11626
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

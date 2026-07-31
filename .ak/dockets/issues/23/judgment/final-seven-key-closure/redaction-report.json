@@ -1,0 +1,9 @@
+{
+  "hits": [
+    {
+      "ruleId": "provider-package-token",
+      "location": "child.stdout",
+      "count": 25
+    }
+  ]
+}

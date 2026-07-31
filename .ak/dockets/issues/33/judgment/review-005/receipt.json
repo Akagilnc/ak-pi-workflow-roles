@@ -1,0 +1,68 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_3UZhORAwXLm1IH38g68qQLWD|fc_03309b07238c059a016a6cc92f9a1081919280436c8eef3adf",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Direct Fixer Apply at fixed HEAD 0022128643d9bf51c02b9d8643fb7bf9febfadf6. Repair only the sustained classes below under amended C8. Do not add a Plan, restore active-read timing, old suite mass, role/failure cross-products, or work on #12/#13/#22/#26."
+    },
+    "classes": [
+      {
+        "name": "ISS33-ACCEPTED-TEXT-ANCHORING",
+        "owner": "Native lifecycle extractor and package-contract boundary (`src/recorder/extract.ts`, `src/package-contracts/terminating-tools.ts`)",
+        "boundary": "Mechanical proof that a direct package terminating-tool result was accepted",
+        "disposition": "Sustained standards/authority conflict, resolved without escalation. CLAUDE.md's anchoring constitution governs machine-consumed information and overrides C3 only to the extent C3 requires an exact human-facing accepted literal; ADR 0016 independently rejects a wording-format oracle. The direct typed `toolName`/`toolCallId`, `isError:false`, issuance/result details equality or Collector projection, and package-owned details validator are sufficient acceptance evidence. Remove Recorder's `acceptedTextFor(...)` comparison and the wrong-text rejection test; package UI text may remain for presentation. Preserve required direct native row/content shape where independently needed, but do not consume prose wording as state."
+      },
+      {
+        "name": "ISS33-COMPACT-SESSION-STATE",
+        "owner": "Native JSONL session parser/extractor seam (`src/recorder/session.ts`, `src/recorder/extract.ts`)",
+        "boundary": "Streaming lifecycle extraction with compact package-attempt state rather than retention of every package row payload",
+        "disposition": "Sustained implementation defect. `AcceptanceCollector.#rows` retains every package issuance/result, including full arguments/details, and `finish` creates a second all-occurrences collection. Irrelevant-row sparsity does not satisfy the compact-state law when a lawful session has many rejected package attempts. Validate and reduce each adjacent completed attempt immediately: discard rejected attempt payloads, retain at most bounded pending/final candidate payload state plus the minimal scalar/hash replay state needed by C3, and preserve missing/invalid, replay, uniqueness, and final-position laws. Do not maintain a parallel array extractor with duplicate logic. Replace the irrelevant-row-only test and test-only `retainedRowCount` hook with an observable production-seam bounded-memory regression containing many package rejection attempts."
+      },
+      {
+        "name": "ISS33-COUNTER-CHILD-INVOCATION",
+        "owner": "Recorder invocation boundary (`src/recorder/config.ts`, `src/recorder/run.ts`, `src/recorder/spawn.ts`)",
+        "boundary": "Pre-spawn rejection and one valid real child invocation through Recorder",
+        "disposition": "Sustained amended-C8 proof gap. No test calls `runRecorder`, and `runRecorderBin` is only defined, not used. Add one representative invalid real invocation proving zero child starts and one valid real-child production vertical proving exactly one spawn; injected absolute `--session-dir` and configured `--session-id` immediately follow the executable, remaining argv is preserved, inherited `PI_SESSION_DIR` is removed, configured environment wins, stdin is inherited, and stdout/stderr remain separate. Parser tables continue to own rejection breadth."
+      },
+      {
+        "name": "ISS33-LIFECYCLE-SHAPE-DEDUPLICATION",
+        "owner": "Native lifecycle extractor (`src/recorder/extract.ts`)",
+        "boundary": "One domain-named direct issuance/result pair validator with accepted-only semantics layered once",
+        "disposition": "Sustained maintainability defect. Current extraction repeats closed row/message checks between pair iteration and final acceptance and uses opaque `m`, `im`, `p`, `i`, `raw`, `bad`, and `good` names around trust decisions. The compact-state repair must centralize common direct-pair validation/reduction once, then apply success-only details, projection, scanning, and audit semantics once. Rename touched lifecycle values/helpers by domain role. Do not add a second validator framework or duplicate package-owned validators."
+      },
+      {
+        "name": "ISS33-RECORDER-EXTRACTION-VERTICALS",
+        "owner": "Recorder extractor/dispatch and generated-artifact seam (`src/recorder/extract.ts`, `src/recorder/scanner.ts`, `src/recorder/admit.ts`, `src/recorder/run.ts`)",
+        "boundary": "Representative worker, audited-role, and Collector sealing plus truthful promoted-derivative scanning",
+        "disposition": "Sustained amended-C8 proof gap. Existing tests are Coder-only leaf extraction and do not cross `runRecorder`. Keep cheap terminating-tool leaf/dispatch evidence for all five tools, including Collector projection and audited-role observation/usage, then add only a representative production vertical set for an ordinary worker, one audited role, and Collector (or equivalently strong coverage). Across that set prove credential-bearing accepted derivative sanitization, revalidation, derivative labeling/reporting, clean derivative acceptance, scan-induced invalid derivative abort, and that raw session/stdout secrets are neither promoted nor claimed as scanned. Do not form a role × corruption matrix or assert accepted prose."
+      },
+      {
+        "name": "ISS33-TRANSACTION-PUBLICATION-VERTICALS",
+        "owner": "Recorder transaction/publication boundary (`src/recorder/run.ts`, `src/recorder/errors.ts`, `src/recorder/rename-no-replace.ts`, `src/recorder/manifest.ts`)",
+        "boundary": "Settled child truth, independent sealer-failure precedence, final snapshot verification, atomic publication, and raw-source exclusion",
+        "disposition": "Sustained amended-C8 proof gap. Add minimal production-seam verticals proving: nonzero exit plus valid session publishes and returns that code; signal plus valid session publishes and preserves/re-raises the signal; settled child plus independent sealer failure publishes nothing, returns 125, and records the known child outcome and honest cause; competing publications produce one intact winner without overwrite; and a successful docket contains promoted derivatives but excludes main/leg sessions and raw streams. At least one successful path must cross the existing immediate pre-promotion `session.verify()`. Combine compatible assertions; no role/failure cross-product."
+      },
+      {
+        "name": "ISS33-PACKAGED-RECORDER-SEAM",
+        "owner": "Recorder package boundary (`package.json`, `bin/ak-docket-record.js`, generated `dist/recorder/**`, shipped v2 schemas)",
+        "boundary": "Cold-installed Recorder CLI crossing the shipped native-session v2 implementation",
+        "disposition": "Sustained amended-C8 proof gap. Tarball inventory lists the binary and assets but no test installs and invokes the Recorder binary. Add one minimal cold-tarball installed-bin smoke that runs a real child producing a valid native session and crosses the packaged Recorder success seam; add only the failure assertion needed to prove invocation if it cannot be combined. Rebuild dist and retain source/package inventory evidence that no v1 transport core is shipped. Do not cold-run all roles."
+      },
+      {
+        "name": "ISS33-ONE-CORE-DELETION",
+        "owner": "Recorder test support (`test/helpers/recorder-test-harness.ts`)",
+        "boundary": "Absence of helpers whose only subject is the deleted v1 machine-stdout/scratch transport",
+        "disposition": "Sustained concrete C8 cleanup defect. The current helper still exports unused `sabotageRawScratchCleanup`, constructs config `version:1`, and contains a `json-receipt` mode emitting `tool_execution_start/end` machine stdout. C8 expressly requires deletion of scratch sabotage and fake machine-stdout Receipt fixtures. Delete these obsolete branches/helpers rather than adapting them; build the new real-child fixture solely around v2 native-session production behavior."
+      },
+      {
+        "name": "ISS33-SECURITY-SOURCE-READABILITY",
+        "owner": "Security-sensitive Recorder implementation (`src/recorder/session.ts`, `src/recorder/run.ts`, `src/recorder/manifest.ts`, `src/recorder/spawn.ts`)",
+        "boundary": "Human reviewability of identity, mutation, child-outcome, manifest, and stream-forwarding decisions",
+        "disposition": "Sustained style-only but security-relevant defect. The prior repair did not apply this class: current trust logic remains compressed into dense one-line control flow with names such as `s`, `ds`, `x`, `m`, `c`, and `o`. Reformat the touched owner logic into readable statement boundaries and use domain-revealing names without changing contracts or adding guards/mechanisms. This authorizes production trust-path readability, not a repository-wide style pass."
+      }
+    ],
+    "note": "HEAD and clean worktree were verified. Focused current-head tests pass 16/16, but that does not close the absent production verticals; repository search finds no test invocation of `runRecorder` and no use of `runRecorderBin`. Public-v2 synchronization and the previously removed format-only/custom lifecycle branches remain closed and are not reopened. The exact-text test is disposed under the separate anchoring conflict above. Reviewer fixture-name findings in `recorder-config-session-integrity.test.ts` and the proposed generic corrupt-session case runner are rejected as standalone Apply work: they establish no behavior defect, and the varied filesystem mutations do not justify another abstraction. Rename only fixtures directly touched by the authorized lifecycle/vertical work where doing so clarifies domain roles."
+  },
+  "artifactKind": "acceptedReceipt"
+}

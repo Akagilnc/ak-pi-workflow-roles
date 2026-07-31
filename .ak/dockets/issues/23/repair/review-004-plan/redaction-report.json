@@ -1,0 +1,9 @@
+{
+  "hits": [
+    {
+      "ruleId": "authorization-header",
+      "location": "externalInput.repair-packet",
+      "count": 1
+    }
+  ]
+}

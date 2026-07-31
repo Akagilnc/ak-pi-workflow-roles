@@ -1,0 +1,15 @@
+# Issue #23 Review-003 finding adjudication
+
+Construction target: `0e5cb41fb58300f49e1e7e2eec7e0f4adb4ffcaf`; product repair `cb1b94d76e2ca650175cd2561165acef85404148`.
+
+Adjudicate every Review-003 Must, Should, and Nit before repair. Address:
+
+- cause/diagnostic trace for manifest invariant `internal-error`;
+- `captureGitState` swallowing failure and continuing despite no contract;
+- TypeScript/schema vocabulary synchronization;
+- reserved generated-path prefixes and canonical repository/path alias duplicate identities before spawn;
+- restoration of admission semantics without returning structure-only work to late admission;
+- child-start/settlement truth when tee completion rejects after the child settles;
+- the naming Nit.
+
+Do not infer the historical incident root from these findings. If sustained, return one bounded forward-only repair packet; preserve issue #13 exclusion. Submit only through `ak_judge_output`.
