@@ -1,0 +1,148 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/repair/settlement-vertical-apply"
+  },
+  "invocation": {
+    "id": "0198f1a0-1700-7000-8000-000000000007"
+  },
+  "session": {
+    "id": "0198f1a0-1700-7000-8000-000000000007",
+    "directory": ".ak/work/issues/17/runs/settlement-vertical-fix/session",
+    "basename": "2026-07-31T19-12-11-786Z_0198f1a0-1700-7000-8000-000000000007.jsonl",
+    "sha256": "d602ea6571b4a2f030526c135b88f24059cade89f33cf0001b09a3d57a676748",
+    "byteLength": 874069,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work/issues/17/runs/settlement-vertical-fix/session",
+      "--session-id",
+      "0198f1a0-1700-7000-8000-000000000007",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--name",
+      "issue-17-settlement-fix",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/17/settlement-vertical-fix.md",
+      "-p",
+      "Apply the three-class Issue #17 settlement/output vertical directly."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": [
+        "PI_SESSION_DIR"
+      ]
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "abc4294a0305ea977376ad77f7ee4c15d960ad73",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "full-admission",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "abc4294a0305ea977376ad77f7ee4c15d960ad73",
+        "path": ".ak/dockets/issues/17/judgment/full-finding-admission-current/receipt.json",
+        "blobOid": "858b73d15848c935efa1578b5fd239f0143742f9",
+        "sha256": "477515e321072b6f74014618e69967ac1e4621180dcf8424e80c04e935b3ab1d",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "amended-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "abc4294a0305ea977376ad77f7ee4c15d960ad73",
+        "path": ".ak/dockets/issues/17/judgment/owner-amendment-design-recheck-003/receipt.json",
+        "blobOid": "a203895975a0920a475a4c91bc6944101c85b9cc",
+        "sha256": "9da5f1fe18639e9cd1df3d42b632efdeae8ab6f086a01558724653ed8ee1c22c",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "bundle-repair",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "abc4294a0305ea977376ad77f7ee4c15d960ad73",
+        "path": ".ak/dockets/issues/17/repair/bundle-vertical-apply/receipt.json",
+        "blobOid": "8c7acb92c7386449f68a89ddc58c6b92ee3a7443",
+        "sha256": "afa107f0f47afeac8454e1b9c801a207d211e499f714b4d438ea4e1b71b03f20",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "fix-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/fix-task",
+        "sha256": "a4fa4cc5821a4365dcc01aedfab17b3b2fdcd83496f74aafef5f453a3643e5e1",
+        "byteLength": 2250
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "529d53715193a1618f1916f85d19b14d6852d1e9f2848c08819922e682931357",
+        "byteLength": 2568
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_1pXm3cj0WF4ZlxgCGquGlnCo|fc_054c95c66e7bd3a0016a6cf649ed60819191a9385656d55057",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
