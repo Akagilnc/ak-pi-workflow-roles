@@ -1,0 +1,7 @@
+# Issue #12 Fixer Apply — raw versus normalized evidence identity
+
+Sole authority: `.ak/dockets/issues/12/judgment/review-002/receipt.json`.
+
+Repair exactly `raw-versus-normalized-evidence-identity` under its complete boundary. Introduce an explicit typed distinction: committed claim-chain identity is exact resolver-read target bytes; normalized StatsLine/Git/tracker identity is canonical serialization after closed validation. One identity-validation owner must preserve raw committed digest/length through final index validation and actual-bite joins; canonical store rendering must not redefine it.
+
+Add multi-key indentation/trailing-newline/noncanonical-order greens and preserve all caller mismatch, malformed/inaccessible, duplicate, wrong-target, escape, normalized canonical, bounded tool and package/cold laws. Regenerate artifacts; run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this class.
