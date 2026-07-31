@@ -17,8 +17,7 @@ import {
   type ReviewerProposalV1,
 } from "./reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult, type ReviewerSuccessfulDispatchRunResult } from "./reviewer-agent.ts";
-import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
-import { createReviewerExecutionLedger, projectAcceptedDispatch, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
+import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedReviewerDetails, type ReviewerOutput } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -116,37 +115,36 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
 
     const executeAndProjectDispatch = async (dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
       const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
-      ledger.append(projectAcceptedDispatch(dispatch));
       ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: dispatch.identity, cardinality: dispatch.legs.length as 1 | 2 });
-      const appendSettlements = (result: ReviewerDispatchRunResult) => {
-        if (result.identity !== dispatch.identity) throw new Error("Reviewer runner identity does not match accepted dispatch");
-        if (!sameReviewerPinnedTarget(result.target, dispatch.targetSnapshot)) throw new Error("Reviewer runner target does not match accepted pinned target");
-        const expectedAxes = dispatch.legs.map(({ axis }) => axis).sort();
-        const actualAxes = Object.keys(result.legs).sort();
-        if (actualAxes.length !== expectedAxes.length || actualAxes.some((axis, index) => axis !== expectedAxes[index])) {
-          throw new Error(`Reviewer runner result axes do not match accepted dispatch: expected ${expectedAxes.join(",")}; received ${actualAxes.join(",")}`);
-        }
-        for (const leg of dispatch.legs) {
-          const actual = result.legs[leg.axis];
-          if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
-          ledger.append(actual.status === "failed"
-            ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, workspaceDisposition: actual.workspaceDisposition }
-            : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, workspaceDisposition: actual.workspaceDisposition });
-        }
-      };
       try {
         const result = await dependencies.runDispatch(dispatch, { context, ...(signal === undefined ? {} : { signal }) });
-        appendSettlements(result);
+        projectReviewerDispatchOutcome(ledger, dispatch, result);
         return result;
       } catch (error) {
         if (error instanceof ReviewerDispatchExecutionError) {
-          try { appendSettlements(error.outcome); }
+          try { projectReviewerDispatchOutcome(ledger, dispatch, error.outcome); }
           catch (mismatch) { throw ledger.recordInfrastructureFailure(mismatch); }
         }
         throw ledger.recordInfrastructureFailure(error);
       }
     };
-    dispatcher = createReviewerDispatcher({ task: taskBytes, canonicalSkill: binding.snapshot.raw, capabilities, reader, hostTools: dependencies.hostTools(), run: executeAndProjectDispatch });
+    dispatcher = createReviewerDispatcher({
+      task: taskBytes,
+      canonicalSkill: binding.snapshot.raw,
+      capabilities,
+      reader,
+      hostTools: dependencies.hostTools(),
+      decisionEvidence(decision) {
+        try {
+          if (decision.disposition === "accepted") ledger.append(projectAcceptedDispatch(decision.dispatch));
+          else if (decision.disposition === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
+          else ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: decision.identity, reason: decision.reason, started: false });
+        } catch (error) {
+          throw ledger.recordInfrastructureFailure(error);
+        }
+      },
+      run: executeAndProjectDispatch,
+    });
 
     if (!registered) {
       registered = true;
@@ -156,8 +154,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           let result;
           try { result = await dispatcher!.propose(proposal as ReviewerProposalV1, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
           catch (error) { hostActions.failInfrastructure(error, toolCtx); }
-          if (result.status === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: result.identity, violations: result.violations, started: false });
-          if (result.status === "closed") ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: result.identity, reason: result.reason, started: false });
           const text = result.status === "rejected"
             ? `Reviewer proposal rejected: ${result.violations.join("; ")}`
             : result.status === "closed"

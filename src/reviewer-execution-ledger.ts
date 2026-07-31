@@ -1,5 +1,6 @@
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   REVIEWER_PREFLIGHT_VIOLATIONS,
   type ReviewerPreflightViolation,
@@ -65,6 +66,27 @@ export type ReviewerExecutionLedger = Readonly<{
   recordInfrastructureFailure<T>(error: T): T;
   recordForAudit(status: "completed" | "refused"): ReviewerExecutionRecord;
 }>;
+
+export function projectReviewerDispatchOutcome(
+  ledger: ReviewerExecutionLedger,
+  dispatch: AcceptedReviewerDispatch,
+  result: ReviewerDispatchRunResult,
+): void {
+  if (result.identity !== dispatch.identity) throw new Error("Reviewer runner identity does not match accepted dispatch");
+  if (!sameReviewerPinnedTarget(result.target, dispatch.targetSnapshot)) throw new Error("Reviewer runner target does not match accepted pinned target");
+  const expectedAxes = dispatch.legs.map(({ axis }) => axis).sort();
+  const actualAxes = Object.keys(result.legs).sort();
+  if (actualAxes.length !== expectedAxes.length || actualAxes.some((axis, index) => axis !== expectedAxes[index])) {
+    throw new Error(`Reviewer runner result axes do not match accepted dispatch: expected ${expectedAxes.join(",")}; received ${actualAxes.join(",")}`);
+  }
+  for (const leg of dispatch.legs) {
+    const actual = result.legs[leg.axis];
+    if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
+    ledger.append(actual.status === "failed"
+      ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, workspaceDisposition: actual.workspaceDisposition }
+      : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, workspaceDisposition: actual.workspaceDisposition });
+  }
+}
 
 type FatalEvidence = { diagnostics: string; targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition };
 
