@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_coder_output",
+  "toolCallId": "call_jEunkmwxLFOjtEsPb2Wm00W1|fc_0fd0363c2f67cb02016a6c72d9a40c81919e22eb826f91feea",
+  "details": {
+    "status": "completed",
+    "report": "Forward repair committed as `4b5797f1a9d1f704538e08287153c057b11a3f22` (`test: include reviewer policy in package inventory`). Changed only `test/reviewer-package-lifecycle.test.ts`, adding `src/reviewer-verification-policy.ts` once to the exact tarball inventory; no production behavior or Recorder scope changed.\n\nEvidence:\n- TDD red: `node --import tsx --test test/reviewer-package-lifecycle.test.ts` failed 0/1 because actual inventory had the policy source and expected inventory did not.\n- TDD green / behavior fact: same focused command passed 1/1; installed tarball lifecycle behavior completed successfully.\n- Same-pattern check: exact inventory string occurs once (`grep -c` = 1).\n- Introduced-regression/unified gates:\n  - `npm run typecheck`: passed.\n  - isolated-HOME `npm test`: passed, 370 tests, 0 failures (349 top-level subtests).\n  - `npm pack --dry-run`: passed; 65 files and `src/reviewer-verification-policy.ts` listed exactly once.\n  - `git diff --check`: passed.\n- Post-commit worktree is clean (`git status --short --branch` reports only branch/ahead state).",
+    "commitSha": "4b5797f1a9d1f704538e08287153c057b11a3f22"
+  },
+  "artifactKind": "acceptedReceipt"
+}
