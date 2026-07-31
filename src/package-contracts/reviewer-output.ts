@@ -13,13 +13,14 @@ export type ReviewerIntent =
   | Readonly<{ status: "completed" }>
   | Readonly<{ status: "refused"; diagnostic: string }>;
 export type VerbatimChildReport = Readonly<{ text: string; utf8Length: number; sha256: string }>;
-export type RuntimeReviewerOutcome = Readonly<{
-  status: "successful" | "failed";
+type RuntimeReviewerOutcomeCommon = Readonly<{
   prompt: ReviewerPromptIdentity;
   workspaceDisposition: ReviewerWorkspaceDisposition;
-  failure?: ReviewerFailureClassification;
-  runtimeConstructionEvidence?: MaterializedBundleEvidenceV1;
 }>;
+export type RuntimeReviewerOutcome = RuntimeReviewerOutcomeCommon & (
+  | Readonly<{ status: "successful"; failure?: never; runtimeConstructionEvidence: MaterializedBundleEvidenceV1 }>
+  | Readonly<{ status: "failed"; failure: ReviewerFailureClassification; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>
+);
 export type RuntimeReviewerAcceptedBatch = Readonly<{
   identity: string;
   legs: readonly Readonly<{ axis: "standards" | "spec"; prompt: ReviewerPromptIdentity }>[];

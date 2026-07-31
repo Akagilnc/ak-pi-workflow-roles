@@ -25,7 +25,7 @@ export function projectReviewerDispatchOutcome(ledger, dispatch, result) {
             throw new Error(`Reviewer runner omitted ${leg.axis} result`);
         ledger.append(actual.status === "failed"
             ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
-            : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition });
+            : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, runtimeConstructionEvidence: actual.runtimeConstructionEvidence, workspaceDisposition: actual.workspaceDisposition });
     }
 }
 function cloneFreeze(value) {
@@ -146,8 +146,8 @@ export function createReviewerExecutionLedger() {
         if (!sameReviewerPinnedTarget(event.target, accepted.target))
             throw new Error("Runner target does not match shared pinned target");
         if (event.status === "successful") {
-            if (typeof event.report !== "string" || event.report.length === 0 || event.failure !== undefined)
-                throw new Error("Successful settlement requires only a report");
+            if (typeof event.report !== "string" || event.report.length === 0 || event.failure !== undefined || event.runtimeConstructionEvidence === undefined)
+                throw new Error("Successful settlement requires a report and materialization evidence");
         }
         else if (event.failure === undefined || event.report !== undefined) {
             throw new Error("Failed settlement requires a bounded failure classification and no report");

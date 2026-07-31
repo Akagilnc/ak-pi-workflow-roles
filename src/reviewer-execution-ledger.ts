@@ -33,18 +33,17 @@ export function projectAcceptedDispatch(dispatch: AcceptedReviewerDispatch): Rev
   };
 }
 
-export type ReviewerLegResultEvidence = Readonly<{
+type ReviewerLegResultEvidenceCommon = Readonly<{
   dispatchIdentity: string;
   axis: "standards" | "spec";
-  status: "successful" | "failed";
   prompt: ReviewerPromptIdentity;
   target: ReviewerPinnedTarget;
-  report?: string;
-  failure?: ReviewerFailureClassification;
-  usage?: ReviewerUsage;
-  runtimeConstructionEvidence?: MaterializedBundleEvidenceV1;
   workspaceDisposition: ReviewerWorkspaceDisposition;
 }>;
+export type ReviewerLegResultEvidence = ReviewerLegResultEvidenceCommon & (
+  | Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; failure?: never; runtimeConstructionEvidence: MaterializedBundleEvidenceV1 }>
+  | Readonly<{ status: "failed"; failure: ReviewerFailureClassification; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>
+);
 export type ReviewerEvidenceEvent =
   | Readonly<{ source: "reviewer-transport"; type: "transport-rejected"; identity: string; violation: "schema"; started: false }>
   | Readonly<{ source: "reviewer-transport"; type: "closed-attempt"; identity: string; reason: "transport-after-acceptance"; started: false }>
@@ -86,7 +85,7 @@ export function projectReviewerDispatchOutcome(
     if (actual === undefined) throw new Error(`Reviewer runner omitted ${leg.axis} result`);
     ledger.append(actual.status === "failed"
       ? { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "failed", prompt: actual.prompt, target: actual.target, failure: actual.failure, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition }
-      : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, ...(actual.runtimeConstructionEvidence === undefined ? {} : { runtimeConstructionEvidence: actual.runtimeConstructionEvidence }), workspaceDisposition: actual.workspaceDisposition });
+      : { source: "reviewer-agent", type: "leg-settled", dispatchIdentity: dispatch.identity, axis: leg.axis, status: "successful", prompt: actual.prompt, target: actual.target, report: actual.report, usage: actual.usage, runtimeConstructionEvidence: actual.runtimeConstructionEvidence, workspaceDisposition: actual.workspaceDisposition });
   }
 }
 
@@ -199,7 +198,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       throw new Error("Actual runner prompt does not exactly match compiled prompt bytes, length, and SHA");
     if (!sameReviewerPinnedTarget(event.target, accepted.target)) throw new Error("Runner target does not match shared pinned target");
     if (event.status === "successful") {
-      if (typeof event.report !== "string" || event.report.length === 0 || event.failure !== undefined) throw new Error("Successful settlement requires only a report");
+      if (typeof event.report !== "string" || event.report.length === 0 || event.failure !== undefined || event.runtimeConstructionEvidence === undefined) throw new Error("Successful settlement requires a report and materialization evidence");
     } else if (event.failure === undefined || event.report !== undefined) {
       throw new Error("Failed settlement requires a bounded failure classification and no report");
     }
