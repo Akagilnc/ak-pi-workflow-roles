@@ -8,9 +8,28 @@ const commit = "a".repeat(40); const path = ".ak/dockets/issues/12/judgment/revi
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 function raw(data: unknown, overrides: Record<string, unknown> = {}) { const body = bytes(data); return { version: 1, repository: "ak/repo", targetCommit: commit, catalog: [{ key: "gate", kind: "gate", active: true }], populations: [{ id: "p", targetKey: "gate", eligibleEvidenceIds: ["bite"] }], evidence: [{ id: "bite", kind: "receipt", sha256: sha256Hex(body), byteLength: body.byteLength, source: { commit, path }, data }], ...overrides }; }
 
- test("committed claim-chain evidence is frozen from exact target bytes", async () => { const payload = { blocked: true }; const admitted = await resolveDoctorEvidenceIndex(raw(payload), { async read(target, requested) { assert.equal(target, commit); assert.equal(requested, path); return bytes(payload); } }); const entry = admitted.evidence[0]!; assert.deepEqual(entry.data, payload); assert.equal(entry.sha256, sha256Hex(bytes(payload))); assert.ok(Object.isFrozen(admitted)); });
+test("committed claim-chain evidence preserves exact raw identity across noncanonical JSON renderings", async () => {
+  const payload = { zebra: 1, alpha: { second: true, first: false } };
+  const renderings = [
+    '{"zebra":1,"alpha":{"second":true,"first":false}}',
+    '{\n  "zebra": 1,\n  "alpha": {\n    "second": true,\n    "first": false\n  }\n}\n',
+    '{"alpha":{"first":false,"second":true},"zebra":1}\n',
+  ];
+  for (const rendering of renderings) {
+    const targetBytes = new TextEncoder().encode(rendering);
+    const asserted = raw(payload);
+    asserted.evidence[0]!.sha256 = sha256Hex(targetBytes);
+    asserted.evidence[0]!.byteLength = targetBytes.byteLength;
+    const admitted = await resolveDoctorEvidenceIndex(asserted, { async read(target, requested) { assert.equal(target, commit); assert.equal(requested, path); return targetBytes; } });
+    const entry = admitted.evidence[0]!;
+    assert.deepEqual(entry.data, payload);
+    assert.equal(entry.sha256, sha256Hex(targetBytes));
+    assert.equal(entry.byteLength, targetBytes.byteLength);
+    assert.ok(Object.isFrozen(admitted));
+  }
+});
 
-test("fabricated inline receipts and target-byte mismatches cannot become admitted bites", async () => { const fabricated = { blocked: true }; const actual = { blocked: false }; await assert.rejects(resolveDoctorEvidenceIndex(raw(fabricated), { async read() { return bytes(actual); } }), /target-byte mismatch/); await assert.rejects(resolveDoctorEvidenceIndex(raw(fabricated, { evidence: [{ ...(raw(fabricated).evidence[0] as object), byteLength: 1 }] }), { async read() { return bytes(fabricated); } }), /target-byte mismatch/); });
+test("fabricated inline receipts and target-byte mismatches cannot become admitted bites", async () => { const fabricated = { blocked: true }; const actual = { blocked: false }; await assert.rejects(resolveDoctorEvidenceIndex(raw(fabricated), { async read() { return bytes(actual); } }), /target-byte mismatch/); await assert.rejects(resolveDoctorEvidenceIndex(raw(fabricated, { evidence: [{ ...(raw(fabricated).evidence[0] as object), byteLength: 1 }] }), { async read() { return bytes(fabricated); } }), /digest mismatch/); await assert.rejects(resolveDoctorEvidenceIndex(raw(fabricated, { evidence: [{ ...(raw(fabricated).evidence[0] as object), sha256: "0".repeat(64) }] }), { async read() { return bytes(fabricated); } }), /digest mismatch/); });
 
 test("committed sources reject escapes, aliases, duplicates, wrong targets, malformed and inaccessible bytes", async () => { const payload = { blocked: true }; const base: any = raw(payload); for (const escaped of ["../receipt.json", "/.ak/dockets/issues/12/x.json", ".ak\\dockets\\issues\\12\\x.json", ".ak/dockets/issues/0/x.json", ".ak/dockets/issues/12/../x.json"]) await assert.rejects(resolveDoctorEvidenceIndex({ ...base, evidence: [{ ...base.evidence[0], source: { commit, path: escaped } }] }, { async read() { return bytes(payload); } }), /canonical/); await assert.rejects(resolveDoctorEvidenceIndex({ ...base, evidence: [{ ...base.evidence[0], source: { commit: "b".repeat(40), path } }] }, { async read() { return bytes(payload); } }), /canonical/); await assert.rejects(resolveDoctorEvidenceIndex({ ...base, evidence: [base.evidence[0], { ...base.evidence[0], id: "other" }] }, { async read() { return bytes(payload); } }), /Duplicate committed/); await assert.rejects(resolveDoctorEvidenceIndex(base, { async read() { return new TextEncoder().encode("{not json"); } }), /malformed/); await assert.rejects(resolveDoctorEvidenceIndex(base, { async read() { throw new Error("missing"); } }), /inaccessible/); });
 
