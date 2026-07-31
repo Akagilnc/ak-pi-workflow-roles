@@ -105,6 +105,10 @@ export type ReviewerDispatchResult =
   | Readonly<{ status: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[] }>
   | Readonly<{ status: "accepted"; dispatch: AcceptedReviewerDispatch; results: unknown }>
   | Readonly<{ status: "closed"; identity: string; reason: "acceptance-closed"; started: false }>;
+export type ReviewerDecisionEvidence =
+  | Readonly<{ disposition: "rejected"; identity: string; violations: readonly ReviewerPreflightViolation[]; started: false }>
+  | Readonly<{ disposition: "accepted"; identity: string; dispatch: AcceptedReviewerDispatch }>
+  | Readonly<{ disposition: "closed"; identity: string; reason: "acceptance-closed"; started: false }>;
 
 type DispatcherDependencies = Readonly<{
   task: Uint8Array;
@@ -113,6 +117,8 @@ type DispatcherDependencies = Readonly<{
   reader: ReviewerPinnedGitReader;
   hostTools: readonly string[];
   run(dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<unknown>;
+  /** Synchronous append-only projection at the lifecycle decision boundary. */
+  decisionEvidence?: (decision: ReviewerDecisionEvidence) => void;
   /** Testable compiler boundary; production uses reviewerPromptIdentity. */
   compilePrompt?: (prompt: string, axis: "standards" | "spec", pass: 1 | 2) => ReviewerPromptIdentity;
 }>;
@@ -272,6 +278,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
 
   function close(identity: string): ReviewerDispatchResult {
     const evidence = Object.freeze({ identity, reason: "acceptance-closed" as const, started: false as const });
+    dependencies.decisionEvidence?.(Object.freeze({ disposition: "closed", ...evidence }));
     closedAttempts.push(evidence);
     return Object.freeze({ status: "closed" as const, ...evidence });
   }
@@ -281,7 +288,9 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       ? error.code
       : "preflight-infrastructure";
     const violations = Object.freeze<ReviewerPreflightViolation[]>([code]);
-    rejections.push(Object.freeze({ identity, violations, started: false as const }));
+    const evidence = Object.freeze({ identity, violations, started: false as const });
+    dependencies.decisionEvidence?.(Object.freeze({ disposition: "rejected", ...evidence }));
+    rejections.push(evidence);
     return Object.freeze({ status: "rejected" as const, identity, violations });
   }
 
@@ -497,6 +506,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         return reject(identity, error instanceof ReviewerPreflightError ? error : new ReviewerPreflightError("preflight-infrastructure"));
       }
       if (accepted || accepting) return close(identity);
+      dependencies.decisionEvidence?.(Object.freeze({ disposition: "accepted", identity, dispatch }));
       accepting = true;
       accepted = Object.freeze({
         identity,

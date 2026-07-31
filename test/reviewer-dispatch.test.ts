@@ -67,6 +67,7 @@ function harness(options: {
   hostTools?: readonly string[];
   run?: (dispatch: AcceptedReviewerDispatch) => Promise<unknown>;
   compilePrompt?: Parameters<typeof createReviewerDispatcher>[0]["compilePrompt"];
+  decisionEvidence?: Parameters<typeof createReviewerDispatcher>[0]["decisionEvidence"];
 } = {}) {
   const calls: AcceptedReviewerDispatch[] = [];
   const dispatcher = createReviewerDispatcher({
@@ -77,6 +78,7 @@ function harness(options: {
     hostTools: options.hostTools ?? REVIEWER_CHILD_TOOLS,
     run: options.run ?? (async (dispatch) => { calls.push(dispatch); return { ok: true }; }),
     ...(options.compilePrompt === undefined ? {} : { compilePrompt: options.compilePrompt }),
+    ...(options.decisionEvidence === undefined ? {} : { decisionEvidence: options.decisionEvidence }),
   });
   return { dispatcher, calls };
 }
@@ -588,6 +590,64 @@ test("slow invalid proposal cannot append rejection after another proposal accep
   assert.equal(dispatcher.closedAttempts.length, 1);
   assert.equal(dispatcher.closedAttempts[0]?.started, false);
   assert.equal(calls.length, 1);
+});
+
+test("decision evidence is synchronous, exactly ordered, and acceptance precedes runner start", async () => {
+  let releaseSlow!: () => void;
+  const slowBarrier = new Promise<void>((resolve) => { releaseSlow = resolve; });
+  let slowEntered = false;
+  const evidence: Array<{ disposition: string; identity: string }> = [];
+  const starts: string[] = [];
+  const reader = fakeReader({
+    async material(path, revision) {
+      if (path === "SLOW.md") { slowEntered = true; await slowBarrier; throw new Error("invalid"); }
+      return Buffer.from(`${revision}:${path}\n`);
+    },
+  });
+  const { dispatcher } = harness({
+    reader,
+    decisionEvidence(decision) { evidence.push({ disposition: decision.disposition, identity: decision.identity }); },
+    async run(dispatch) { starts.push(dispatch.identity); },
+  });
+  const fastBad = { ...proposal, base: { revision: "" } } as ReviewerProposalV1;
+  const rejected = await dispatcher.propose(fastBad);
+  const slow = dispatcher.propose({ ...proposal, standardsMaterials: [{ id: "slow", repositoryPath: "SLOW.md" }] });
+  while (!slowEntered) await new Promise((resolve) => setImmediate(resolve));
+  const validA = { ...proposal, base: { revision: "A" } };
+  const validB = { ...proposal, standardsMaterials: [{ id: "style-two", repositoryPath: "STYLE.md" }] };
+  const [firstValid, secondValid] = await Promise.all([dispatcher.propose(validA), dispatcher.propose(validB)]);
+  releaseSlow();
+  const delayed = await slow;
+  const after = await dispatcher.propose({ ...proposal, standardsMaterials: [{ id: "after", repositoryPath: "STYLE.md" }] });
+  assert.equal(rejected.status, "rejected");
+  assert.deepEqual([firstValid.status, secondValid.status].sort(), ["accepted", "closed"]);
+  assert.equal(delayed.status, "closed");
+  assert.equal(after.status, "closed");
+  const acceptedResult = firstValid.status === "accepted" ? firstValid : secondValid;
+  const competingResult = firstValid.status === "closed" ? firstValid : secondValid;
+  if (acceptedResult.status !== "accepted" || competingResult.status !== "closed") throw new Error("unexpected concurrent disposition");
+  assert.deepEqual(evidence, [
+    { disposition: "rejected", identity: rejected.identity },
+    { disposition: "accepted", identity: acceptedResult.dispatch.identity },
+    { disposition: "closed", identity: competingResult.identity },
+    { disposition: "closed", identity: delayed.identity },
+    { disposition: "closed", identity: after.identity },
+  ]);
+  assert.equal(new Set(evidence.map(({ identity }) => identity)).size, evidence.length);
+  assert.deepEqual(starts, [evidence.find(({ disposition }) => disposition === "accepted")!.identity]);
+  assert.equal(evidence.filter(({ disposition }) => disposition === "accepted").length, 1);
+  assert.equal(evidence.slice(evidence.findIndex(({ disposition }) => disposition === "accepted") + 1).some(({ disposition }) => disposition === "rejected"), false);
+});
+
+test("decision evidence sink failure cannot expose acceptance or start children", async () => {
+  let starts = 0;
+  const { dispatcher } = harness({
+    decisionEvidence(decision) { if (decision.disposition === "accepted") throw new Error("ledger unavailable"); },
+    async run() { starts += 1; },
+  });
+  await assert.rejects(dispatcher.propose(proposal), /ledger unavailable/);
+  assert.equal(dispatcher.acceptance, undefined);
+  assert.equal(starts, 0);
 });
 
 test("late proposals preserve immutable closed-attempt identity and outcome", async () => {
