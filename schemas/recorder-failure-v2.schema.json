@@ -67,6 +67,8 @@
                   "repositoryRoot",
                   "root",
                   "docketId",
+                  "session",
+                  "directory",
                   "execution",
                   "cwd",
                   "environment",
@@ -122,11 +124,11 @@
                     "destination",
                     "stage-allocation",
                     "admission",
+                    "session",
                     "spawn",
                     "extraction",
                     "generated-artifacts",
                     "manifest",
-                    "cleanup",
                     "promotion",
                     "launcher"
                   ]

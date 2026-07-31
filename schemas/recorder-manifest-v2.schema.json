@@ -170,41 +170,34 @@
       }
     },
     "receipt": {
-      "oneOf": [
-        {
-          "type": "null"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "toolName",
+        "toolCallId",
+        "artifactId",
+        "artifactKind"
+      ],
+      "properties": {
+        "toolName": {
+          "type": "string",
+          "minLength": 1
         },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "toolName",
-            "toolCallId",
-            "artifactId",
-            "artifactKind"
-          ],
-          "properties": {
-            "toolName": {
-              "type": "string",
-              "minLength": 1
-            },
-            "toolCallId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "artifactId": {
-              "const": "receipt"
-            },
-            "artifactKind": {
-              "type": "string",
-              "enum": [
-                "acceptedReceipt",
-                "sanitizedDerivativeOfAcceptedReceipt"
-              ]
-            }
-          }
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifactId": {
+          "const": "receipt"
+        },
+        "artifactKind": {
+          "type": "string",
+          "enum": [
+            "acceptedReceipt",
+            "sanitizedDerivativeOfAcceptedReceipt"
+          ]
         }
-      ]
+      }
     },
     "auditObservation": {
       "oneOf": [
@@ -419,74 +412,39 @@
   },
   "allOf": [
     {
-      "if": {
-        "properties": {
-          "receipt": {
-            "type": "null"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "auditObservation": {
-            "type": "null"
-          },
-          "artifacts": {
-            "type": "array",
-            "not": {
-              "contains": {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "enum": [
-                      "receipt",
-                      "audit-observation"
-                    ]
-                  }
-                },
-                "required": [
-                  "kind"
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "contains": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "redactionStatus",
+              "stored",
+              "receiptArtifactKind"
+            ],
+            "properties": {
+              "id": {
+                "const": "receipt"
+              },
+              "kind": {
+                "const": "receipt"
+              },
+              "stored": {
+                "$ref": "#/$defs/storedIdentity"
+              },
+              "receiptArtifactKind": {
+                "type": "string",
+                "enum": [
+                  "acceptedReceipt",
+                  "sanitizedDerivativeOfAcceptedReceipt"
                 ]
               }
             }
-          }
-        }
-      },
-      "else": {
-        "properties": {
-          "artifacts": {
-            "type": "array",
-            "contains": {
-              "type": "object",
-              "required": [
-                "id",
-                "kind",
-                "redactionStatus",
-                "stored",
-                "receiptArtifactKind"
-              ],
-              "properties": {
-                "id": {
-                  "const": "receipt"
-                },
-                "kind": {
-                  "const": "receipt"
-                },
-                "stored": {
-                  "$ref": "#/$defs/storedIdentity"
-                },
-                "receiptArtifactKind": {
-                  "type": "string",
-                  "enum": [
-                    "acceptedReceipt",
-                    "sanitizedDerivativeOfAcceptedReceipt"
-                  ]
-                }
-              }
-            },
-            "minContains": 1,
-            "maxContains": 1
-          }
+          },
+          "minContains": 1,
+          "maxContains": 1
         }
       }
     },
