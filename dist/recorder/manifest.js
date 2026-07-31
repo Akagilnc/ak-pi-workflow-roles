@@ -1,22 +1,21 @@
+import { readFileSync } from "node:fs";
+import { Check, Errors } from "typebox/value";
 import { internalRecorderError } from "./errors.js";
 import { combineReports, publicRedactionReport, scanJsonValue, } from "./scanner.js";
+const publicManifestSchema = JSON.parse(readFileSync(new URL("../../schemas/recorder-manifest-v2.schema.json", import.meta.url), "utf8"));
 export function loadPublicManifestSchema() {
-    return {
-        $schema: "https://json-schema.org/draft/2020-12/schema",
-        title: "Recorder manifest v2",
-    };
+    return publicManifestSchema;
 }
 export function validatePublicManifest(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw internalRecorderError("manifest", new Error("manifest shape"));
+    if (!Check(publicManifestSchema, value)) {
+        const first = Errors(publicManifestSchema, value)[0];
+        throw internalRecorderError("manifest", new Error(`manifest schema${first ? ` at ${first.instancePath || "/"}: ${first.message}` : ""}`));
     }
     const manifest = value;
-    if (manifest.version !== 2 ||
-        manifest.invocation.id !== manifest.session.id ||
-        !manifest.receipt ||
-        manifest.execution.stdio.stdout !== "pass-through" ||
-        manifest.execution.stdio.diagnosticTailBytes !== 4096) {
-        throw internalRecorderError("manifest", new Error("manifest invariant"));
+    const receipt = manifest.artifacts.find((artifact) => artifact.id === "receipt");
+    if (manifest.invocation.id !== manifest.session.id ||
+        receipt?.receiptArtifactKind !== manifest.receipt.artifactKind) {
+        throw internalRecorderError("manifest", new Error("manifest semantic join"));
     }
 }
 export function buildManifest(options) {
@@ -39,7 +38,9 @@ export function buildManifest(options) {
             },
         },
         provenance: { ...options.config.provenance, verification: "unverified" },
-        artifacts: options.artifacts,
+        artifacts: options.artifacts.map((artifact) => artifact.kind === "receipt"
+            ? { ...artifact, receiptArtifactKind: options.extraction.artifactKind }
+            : artifact),
         receipt: {
             toolName: options.extraction.receipt.toolName,
             toolCallId: options.extraction.receipt.toolCallId,

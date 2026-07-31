@@ -1,0 +1,7 @@
+# Issue #12 Fixer Apply — close canonical container domain
+
+Sole authority: `.ak/dockets/issues/12/judgment/pr39-final/receipt.json`.
+
+Complete `closed-canonical-json-domain`: audit all own keys, rejecting symbol-keyed members and non-index extra array properties (and any other non-JSON own members) with typed stable structural location. Preserve ordinary arrays/plain string records, canonical ordering, and propagation of unexpected reflection/getter failures. Add the exact object-symbol and array-extra alias regressions once and regenerate shipped artifact.
+
+Do not alter other PR39 classes. Run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this class.

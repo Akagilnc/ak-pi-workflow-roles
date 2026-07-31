@@ -1,0 +1,11 @@
+# Issue #12 Fixer Apply — anchored tests and schema-owned structure
+
+Sole authority: `.ak/dockets/issues/12/judgment/review-001/receipt.json`.
+
+Repair exactly:
+
+- `F1-soul-semantic-regressions`: remove all prose/regex/snapshot acceptance of Soul wording; preserve semantic kernel through behavior, typed contracts, and isolated whole-Soul compliance audit only.
+- `F2-structured-cli-registration-regressions`: remove Doctor help-text regexes; assert the actual structured role/flag registration source that drives runtime, without test-only duplicate metadata; retain packed/cold activation.
+- `F3-schema-owned-doctor-output-structure`: use TypeBox schema as the sole structural validation path, remove parallel exact-key/type/state traversal, and leave only contextual joins/laws afterward.
+
+Add seam-owned logic regressions, preserving Soul scope, CLI presentation freedom, Doctor evidence/runtime laws and previous F4/F5. Do not parse presentation or add topology. Regenerate artifacts; run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly these three keys.

@@ -1,0 +1,10 @@
+# Issue #12 Fixer Apply — canonical domain and resolver-sealed identity
+
+Sole authority: `.ak/dockets/issues/12/judgment/pr39-review/receipt.json`.
+
+Repair exactly:
+
+- `closed-canonical-json-domain`: recursively reject all non-JSON values, sparse slots, cycles and non-plain/custom objects with a dedicated stable typed validation error/path, while preserving valid canonical semantics and unexpected proxy/property failure honesty.
+- `resolver-sealed-committed-evidence`: every committed claim-chain entry requires resolver-established raw identity; remove canonical fallback/bypass; normalized kinds retain canonical identity.
+
+Add the exact counterexamples and replace duplicated test-only serialization with production helper. Preserve raw committed sealing, actual-bite joins, constrained tools, StatsLine/Doctor behavior and package parity. Do not repair other PR39 classes. Regenerate artifacts; run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly both keys.

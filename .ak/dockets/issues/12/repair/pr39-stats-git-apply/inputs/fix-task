@@ -1,0 +1,10 @@
+# Issue #12 Fixer Apply — typed StatsLine and full Git commit identity
+
+Sole authority: `.ak/dockets/issues/12/judgment/pr39-review/receipt.json`.
+
+Repair exactly:
+
+- `typed-statsline-contract`: dedicated typed StatsLine validation error with stable code/metric, all ordinary rejection through it, unexpected failures rethrown by Doctor guard; enforce manifest-count/total and Judge-continue/Judge-role cross laws; tests assert typed identities and unexpected propagation.
+- `full-git-commit-identity`: shared lowercase 40/64 full-ID rule; Git snapshot factory validates synchronously, discovers object format, matches width, and proves exact object is commit before reads. Preserve SHA-1/SHA-256 and argument-array execution.
+
+Add exact counterexamples/regressions. Preserve producer derivation, metric contracts, Doctor intake and package behavior. Do not repair other PR39 classes. Regenerate artifacts; run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly both keys.

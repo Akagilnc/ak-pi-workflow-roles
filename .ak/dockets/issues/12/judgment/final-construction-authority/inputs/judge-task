@@ -1,0 +1,5 @@
+# Issue #12 bounded final authority archive retry
+
+The owner ratified R1+L1 in admitted comment 014. The immediately preceding fresh Judge invocation independently read the complete issue authority and produced `.ak/work/issues/12/unarchived-candidate-verdict.json`; its package tool accepted that verdict, but Recorder again failed after child exit 0 because of the separately diagnosed >2 GiB JSON transport defect. The candidate is analysis evidence, not a Receipt or prior authority.
+
+Independently validate the candidate against the merged Doctor materials/ADRs and owner comment 014. Decide only whether it faithfully expresses the resolved R1+L1 law and bounded Doctor/StatsLine v1 construction authority without reopening owner-settled policy or importing #13/#22/#26/first-examination repairs. If correct, submit the construction verdict through `ak_judge_output`. Correct any intrinsic authority error before submission. Do not condition authority convergence on implementation evidence, do not add a Plan requirement, and do not repeat the broad historical investigation already represented in the admitted complete authority bundle. Submit exactly once.

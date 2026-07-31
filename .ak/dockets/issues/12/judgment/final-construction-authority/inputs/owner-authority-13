@@ -1,0 +1,14 @@
+# Owner comment 13
+
+URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5141126897
+Created: 2026-07-31T08:55:18Z
+Author: Akagilnc
+
+## 素材:方案设计前无「先查官方能力」环节(2026-07-31,owner 第 N 次喝止后立档)
+
+**问题**:车间(与外审)为宿主平台设计外挂方案时,流程中没有任何一环强制先穷读该平台的官方能力面(help/docs/changelog)。
+
+**当日实证**:腿级记录方案由主刀现场手搓(捕获 `--mode json` 裸流,实测单腿 227MB,token 增量占绝对大头),外审陪同设计落盘格式;而 `pi --help` 中现成存在 `--session-dir`(消息级 session 记录,估计小 50-100 倍、带逐消息时间戳)与 `--export`(session 一键导出 HTML)。发现路径=owner 追问「官方有没有支持」,非任何流程环节。
+
+**历史同族**:#217 epic 编排器从零设计 5 轮 cmr 后才发现 mattpocock/sandcastle 精确同物(外审侧旧案)。同一缺陷跨两台机器、跨立项与运维两类场景复发——属过程病,归医生。
+

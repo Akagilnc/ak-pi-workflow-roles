@@ -1,0 +1,44 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_23C0WKlHY1UuQNoK19Q6nBfc|fc_0260660c471da5b0016a6d1485e3d881918c55234c1293daaf",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "All five Review-001 findings are supported by final construction authority and current HEAD `66e3feeea6ca71ac30c8558214769c6169134c8d`. No authority or major interface choice remains open, so no Plan is authorized. Dispatch the five direct Fixer classes below; each must add seam-owned red/green coverage and then rerun the current typecheck, full tests, and packed/cold-install checks."
+    },
+    "classes": [
+      {
+        "name": "F1-soul-semantic-regressions",
+        "owner": "Bundled Doctor Soul plus the generalized isolated Soul-compliance audit seam",
+        "boundary": "Owns the irreducible Doctor judgment kernel and semantic compliance assessment. It does not own schema fields, runtime mechanics, CLI wording, host rejection law, or presentation text as a machine contract.",
+        "disposition": "Accept finding 1. Delete the free-form wording regex assertions in `test/doctor-soul.test.ts`. Preserve the authority-required semantic kernel and exclusions through behavior/contract regressions at their owning lower seams and through the isolated whole-Soul compliance seam; tests may verify transport and typed audit decisions, but must not accept or reject Soul prose by words, regexes, headings, or snapshots. Keep the Soul short and unchanged in scope: factory patient, evidence-only authority, actual-bite versus complete no-bite judgment, and deletion/simplification preference."
+      },
+      {
+        "name": "F2-structured-cli-registration-regressions",
+        "owner": "Shared package extension flag/role registration seam and its package-entrypoint integration harness",
+        "boundary": "Owns the structured registration and cold-installed availability of `doctor` and `ak-doctor-evidence`; rendered `--help` remains human presentation and README remains usage documentation.",
+        "disposition": "Accept finding 2. Remove Doctor-dependent regex assertions over rendered help from `test/package-entrypoint.integration.test.ts`. Assert the actual registered role/flag contract through an in-process registration observer or one package-owned typed registration source that also drives runtime registration; do not create duplicate metadata solely for tests. Retain packed-artifact existence/loading and cold-install activation coverage, including the required Doctor evidence input."
+      },
+      {
+        "name": "F3-schema-owned-doctor-output-structure",
+        "owner": "`doctorOutputSchema` and the package-owned Doctor output validator in `src/doctor-contracts.ts`",
+        "boundary": "The TypeBox schema owns closed branch shape, field types, discriminants, optionality, and nonblank structural constraints. Contextual validation owns only joins to the frozen catalog, admitted/read evidence, StatsLines, populations, sealed identities, full-read coverage, and cross-field disposition/proof laws.",
+        "disposition": "Accept finding 3. Make schema validation the single structural entry point used before contextual joins, and remove the parallel exact-key/type/state traversal from `validateDoctorOutput`. Keep contextual laws explicit after schema success, including exact catalog coverage, distinct validated StatsLine joins, citation/read checks, R1 actual/noRealBite completeness, keep restrictions, and patch/addMechanism necessity. Add drift regressions showing malformed structure is rejected by the schema-owned path while valid structure reaches contextual joins."
+      },
+      {
+        "name": "F4-committed-doctor-evidence-resolution",
+        "owner": "Package-owned Doctor evidence-intake contract, committed-snapshot resolver, and Doctor activation controller",
+        "boundary": "Owns pre-activation conversion of a caller index into a frozen, trustworthy admitted evidence store. Claim-chain facts come from bytes at the exact target commit; normalized Git/tracker facts and validated StatsLines come through their closed typed contracts. The model still sees only bounded evidence IDs through `ak_doctor_evidence`, never Git/filesystem/native tools.",
+        "disposition": "Accept finding 4. Stop treating caller-inline claim-chain `data` plus its caller digest as proof. Before activation, resolve every `manifest | receipt | verdict | disposition` source from the exact full target commit, require a canonical committed path confined to `.ak/dockets/issues/<positive-issue>/...` with traversal/absolute/backslash aliases rejected, read the committed bytes, and derive/verify byte length, digest, parsed payload, and sealed identity from those bytes. Reject missing, mismatched, malformed, duplicate, out-of-docket, wrong-target, or inaccessible artifacts as infrastructure/contract failure. Define and enforce closed structural normalization for admitted Git metadata (only commit identities, timestamps, paths) and tracker issue/PR identities/timestamps; validate StatsLine entries with the strengthened StatsLine validator. Actual-bite output joins must use resolver-derived sealed identities, not caller assertions. Add a red counterexample where a fabricated receipt/verdict and matching caller digest currently supports an actual bite, plus target-byte mismatch, path escape, metadata-shape, and valid frozen-target greens. Do not expose a live worktree or broaden Doctor tools."
+      },
+      {
+        "name": "F5-closed-statsline-metric-validation",
+        "owner": "The public `StatsLineV1` contract and `validateStatsLineV1` in `src/stats-line.ts`",
+        "boundary": "Owns closed serialized StatsLine structure and metric-specific measured/unavailable truth. The producer owns deterministic derivation from committed Recorder artifacts and normalized tracker input; Doctor only consumes lines that pass this public validator.",
+        "disposition": "Accept finding 5. Validate every measured payload and each metric's lawful unavailable reasons, not merely the outer union and `recordedInvocations`: nonnegative safe integer counts/bytes/durations; exact by-role totals; exact closed nested keys; valid ordered timestamps; exact merge milliseconds; valid paper/apply ratio state, numerator/denominator consistency and positive measured denominator; and metric-specific unavailable states/reasons. Reject strings, negative/fractional/overflow values, malformed tracker windows, extra keys, inconsistent ratios, and reasons belonging to another metric. Keep producer facts unchanged: R1/L1 are unrelated; current audit/window/wall-clock limitations remain unavailable honestly; no apply denominator and unclassifiable receipts remain typed ratio unavailability. Add table-driven red/green validation tests and ensure Doctor intake no longer labels malformed lines validated."
+      }
+    ],
+    "note": "Review evidence is current: HEAD adds only the archived review docket after target `6648de5`; the cited production/tests remain unchanged. Findings 1-2 directly violate `CLAUDE.md`'s anchoring rule. Finding 3 follows the authority split that schema owns structure while runtime owns contextual joins. Findings 4-5 contradict the explicit `doctor-evidence-intake` and `stats-line-v1` construction classes and have concrete accepted counterexamples in current code. Preserve constrained Doctor tools, frozen target semantics, package/cold-install behavior, R1/L1, tests-follow-logic, manual caller-owned composition, and the prohibition on topology, scheduling, retries, thresholds, or a second ledger. These are repairs within ratified owners, not new workflow stations or owner-policy choices."
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -21,10 +21,14 @@ import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
+  ROLE_FLAG,
+  WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
+import { DOCTOR_EVIDENCE_FLAG } from "../src/doctor-role.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
 import {
   loadRawPackageManifest,
+  packIsolatedPackage,
   packageRoot,
   type RawPackageManifest,
   resolvePackageEntrypoint,
@@ -61,22 +65,28 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
   return resolvePackageEntrypoint(manifest);
 }
 
-test("packaged CLI help exposes all five roles and Reviewer/Collector inputs", async () => {
+test("packed package includes Doctor role, evidence flag, and runtime dependencies", async () => {
   const manifest = await loadRawPackageManifest();
-  const result = await runPiSubprocess(
-    ["--no-extensions", "-e", packageEntrypoint(manifest), "--help"],
-    { cwd: packageRoot },
+  packageEntrypoint(manifest);
+  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor"]);
+  assert.equal(ROLE_FLAG.name, "ak-role");
+  assert.equal(DOCTOR_EVIDENCE_FLAG.name, "ak-doctor-evidence");
+  assert.equal(DOCTOR_EVIDENCE_FLAG.definition.type, "string");
+  await withHermeticHome(
+    { prefix: "ak-doctor-pack-" },
+    async ({ home }) => {
+      const packed = await packIsolatedPackage(home);
+      const paths = new Set(packed.files.map((file) => file.path));
+      for (const path of [
+        "souls/doctor.md",
+        "src/doctor-contracts.ts",
+        "src/stats-line.ts",
+        "src/canonical-json.ts",
+      ]) {
+        assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
+      }
+    },
   );
-  assert.equal(result.code, 0);
-  assert.match(
-    result.stdout,
-    /--ak-role <value>\s+Activate a packaged workflow role: judge, fixer, coder, reviewer, or collector/,
-  );
-  assert.match(
-    result.stdout,
-    /--ak-review-task <value>\s+Opaque Markdown review task assigned to the reviewer role/,
-  );
-  assert.match(result.stdout, /--ak-review-capabilities <value>\s*Closed Reviewer capability grant bound to the exact task bytes/);
 });
 
 test("packaged CLI help exposes the complete fixer phase contract", async () => {

@@ -1,0 +1,32 @@
+# Issue #12: Process-health doctor role: per-case process-cost accounting and standing-gate annual review
+
+URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12
+
+## 案由
+
+owner 体感(2026-07-29):车间速度仍快,但比最早期(07-27 首日)慢了。外审对账后拆出三笔成分:
+
+1. **对象换了(合理)**——首日造角色(代码/测试/oracle 脆),今天立法(设计文本 oracle 糊),后者天然慢;
+2. **档案自缠(已被 amendment 006 顺手治了大半)**——照料档案本身的程序循环。典型:repair-002 用一整套 fixer plan→apply→review→judge 循环,产出一份说明「当时漏了一个 checklist 环节」的 markdown 便条,修复本体比它的程序便宜一个量级;
+3. **程序固定成本单向上涨(真正的持续风险)**——每个正式动作的站数只加不减:包票→判官→图纸→判官→施工→评审→判官,每站带 audit、带封卷。每站单看有判例撑腰,但**没有一站有退场条款**。这是旧编排器病(流程单向增生)的早期形态;authority 层的删法反射弧健康(005 一分钟推翻 004、006 整删冷库),程序层尚无同类年检。
+
+## Owner 方向(2026-07-29 拍)
+
+立**独立角色**:重构/反思/医生/保健师(process-health doctor)——车间的程序健康归它。角色出生走 ADR 0001(roles grow by demand)常规程序:本票即拉力实证,soul/命名/边界由 authority 阶段裁。
+
+## 机制输入(外审侧三件套,作 authority 设计输入,非处方)
+
+1. **结案计数(机械)**:issue closure 时从 `.ak/dockets/issues/<n>/` 机械数出——各角色正式调用次数、audit 拒回次数、judge `continue` 轮次、首末 manifest 时间戳,写进 closure report。数据源即 #10 小核 manifest 法,`find`+`jq` 可数,零模型。
+2. **趋势即扳机(人看)**:closure report 中本案与上一案的计数行并排;不建自动报警——坏状态靠挡路发现,closure 是必经之路。
+3. **删法庭(年检)**:对全部常设程序站,逐站附「最近一次真咬人」记录(audit 拒回原文 / judge 打回原文),裁 keep / thin / delete;留任站必须有近期真咬人证据,拿不出的按过度防御处置。即把护栏三问从「新闸准入」扩到「老闸年检」。
+
+## 待 authority 裁的边界(不预答)
+
+- 医生角色与机制三件套的归属:计数是 closure checklist 的机械义务还是医生的职权?删法庭由医生开庭还是医生举证、判官裁决?
+- 医生自身的权力边界:只出 finding 与处置建议,还是可直接裁撤程序站?(外审倾向:医生举证、裁决走既有判官闸——但此为倾向,非拍定。)
+- 召唤节奏:按案结自动、按 N 案定期、还是 owner 起疑手召?
+
+## 首案数据免费
+
+#10 结案时计数行自然产出;#1–#3 可从既有卷宗回数。四案并排,07-29 的体感立即变为实数,也即医生角色的第一份体检报告素材。
+

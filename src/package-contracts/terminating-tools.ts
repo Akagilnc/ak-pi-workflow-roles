@@ -24,6 +24,7 @@ import {
   type ReviewerIntent,
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME, validateRecordedDoctorOutput, type DoctorOutput } from "../doctor-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -50,6 +51,7 @@ export {
   validateReviewerIntent,
   validateRuntimeReviewerReceipt,
   validateAcceptedWorkerDetails,
+  validateRecordedDoctorOutput,
 };
 export type {
   CollectorReceipt,
@@ -57,6 +59,7 @@ export type {
   ReviewerIntent,
   RuntimeReviewerReceiptV2,
   WorkerOutput,
+  DoctorOutput,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -65,6 +68,7 @@ export const TERMINATING_TOOL_NAMES = [
   REVIEWER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
   COLLECTOR_OUTPUT_TOOL,
+  DOCTOR_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -73,7 +77,8 @@ export type AcceptedDetails =
   | WorkerOutput
   | RuntimeReviewerReceiptV2
   | JudgeVerdict
-  | CollectorReceipt;
+  | CollectorReceipt
+  | DoctorOutput;
 
 export function isTerminatingToolName(
   name: string,
@@ -93,6 +98,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return JUDGE_ACCEPTED_TEXT;
     case COLLECTOR_OUTPUT_TOOL:
       return COLLECTOR_ACCEPTED_TEXT;
+    case DOCTOR_OUTPUT_TOOL_NAME:
+      return "Doctor output accepted";
   }
 }
 
@@ -111,6 +118,8 @@ export function validateAcceptedDetails(
       return validateAcceptedJudgeDetails(details);
     case COLLECTOR_OUTPUT_TOOL:
       return validateAcceptedCollectorReceipt(details);
+    case DOCTOR_OUTPUT_TOOL_NAME:
+      return validateRecordedDoctorOutput(details);
   }
 }
 
@@ -119,7 +128,8 @@ export function carriesPackageAuditObservation(
 ): boolean {
   return (
     toolName === JUDGE_OUTPUT_TOOL_NAME ||
-    toolName === REVIEWER_OUTPUT_TOOL_NAME
+    toolName === REVIEWER_OUTPUT_TOOL_NAME ||
+    toolName === DOCTOR_OUTPUT_TOOL_NAME
   );
 }
 

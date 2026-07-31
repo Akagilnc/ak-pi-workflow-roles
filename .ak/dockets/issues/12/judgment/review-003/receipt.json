@@ -1,0 +1,26 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_O2a1Er59vKpB1xNnqTy3bpTD|fc_06fa51e3a3524562016a6d19ef31848191a699b9b0ec1e1517",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Both Review-003 findings are supported by current HEAD and are directly repairable under the accepted authority; no Plan or owner escalation is required."
+    },
+    "classes": [
+      {
+        "name": "canonical-json-owner",
+        "owner": "A package-internal deterministic canonical-JSON utility module",
+        "boundary": "Own the single recursive, key-sorted JSON text/UTF-8 serialization primitive shared by Doctor's raw committed-evidence comparison and normalized evidence identity/read/join operations. Doctor contracts retain semantic wrappers such as StatsLine evidence bytes; neither peer Doctor module owns a second serializer, and raw committed byte digests remain computed from the exact committed bytes rather than canonicalized bytes.",
+        "disposition": "Extract the duplicated recursive serializer from `src/doctor-contracts.ts` and `src/doctor-evidence.ts` into one internal package utility and reuse it at both seams. Preserve exact canonical output, committed-evidence digest/length identity, normalized evidence identity, deterministic ordering, public exports, and packed/cold-installed behavior. Add or retain seam tests proving both consumers use identical canonical semantics without introducing another serializer or changing raw-byte sealing."
+      },
+      {
+        "name": "stats-line-receipt-byte-classification",
+        "owner": "`src/stats-line.ts` committed-snapshot StatsLine producer and its focused regression suite",
+        "boundary": "Classify each digest-verified, package-contract-valid accepted Receipt exactly once for byte accounting from unambiguous CLI role identity. This changes neither invocation-count semantics nor the closed `StatsLineV1` metric/reason contract.",
+        "disposition": "Implement the authority's complement rule exactly: an exact single recognized non-worker role (`judge`, `reviewer`, `collector`, or `doctor`) is paper regardless of phase-like flags; an exact single `coder` or `fixer` role is apply only when its corresponding phase flag occurs exactly once with value `apply`; every other phase state for that recognized worker role—including exact `plan`, missing, duplicate (even duplicate `apply`), empty, or unknown value—is paper. A missing, duplicate, empty, or unknown role flag is genuinely unclassifiable: keep it in invocation `unclassified`, do not pretend its bytes belong to either total, and make the ratio unavailable with `unclassifiable-receipt`. Ensure no verified Receipt with a recognized role falls through either byte bucket. Add a table-driven production-seam regression covering all non-worker roles, both workers, exact apply/plan, missing/duplicate/unknown phase, irrelevant opposite-worker phase flags, and missing/duplicate/unknown role; assert byte conservation for classified receipts, ratio availability rules, deterministic manifest ordering, and unchanged closed metric/package behavior."
+      }
+    ],
+    "note": "Evidence: `src/doctor-contracts.ts` and `src/doctor-evidence.ts` contain equivalent recursive `canonical` implementations. In `src/stats-line.ts:165-168`, recognized Coder/Fixer Receipts with a phase other than exact `apply` or exact `plan` match no branch, yet `unclassifiable` remains false. The accepted authority states that paper is all verified accepted role Receipt bytes except Coder/Fixer invocations carrying an unambiguous apply phase, and that unknown/ambiguous role flags are unclassified; therefore worker phase ambiguity belongs to paper by the explicit complement, while role ambiguity is the genuine unclassifiable case. These are local Apply obligations, not unresolved policy choices."
+  },
+  "artifactKind": "acceptedReceipt"
+}
