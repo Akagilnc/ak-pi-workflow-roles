@@ -1,0 +1,22 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_puA62YCT6KE3URRrCH3IoyBW|fc_04f80d5137f1e006016a6d21cb3ce88191bf76f012593e9592",
+  "details": {
+    "status": "completed",
+    "report": "Repaired exactly both authorized classes. Canonical JSON now accepts only the recursive closed JSON domain, reports stable typed code/path failures for expected invalid values (including undefined, non-finite numbers, Date/custom objects, sparse arrays, and cycles), and preserves unexpected proxy/getter failures. Committed claim-chain entries can no longer use canonical fallback: validator admission requires matching resolver-established raw identity, while normalized entries retain production canonical identity. Replaced the duplicated test serializer with canonicalJsonBytes and regenerated dist artifacts. No other PR39 classes were repaired and no findings were declined. Verification passed: 13 focused tests; TypeScript typecheck; isolated-HOME full suite (352 pass, 5 skip, 0 fail); package/cold-install paths within full suite; npm pack --dry-run artifact assertions (109 files); git diff --check.",
+    "commitSha": "3d529d6df5fc73c5d28b133537a2f94dae617601",
+    "classesRepaired": [
+      {
+        "name": "closed-canonical-json-domain",
+        "searchScope": "Canonical serialization production callers, generated artifact, and canonical/Doctor evidence tests.",
+        "exceptions": []
+      },
+      {
+        "name": "resolver-sealed-committed-evidence",
+        "searchScope": "Doctor evidence resolver/validator activation seam, all direct validator fixtures, generated artifact, and normalized identity tests.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
