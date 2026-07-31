@@ -107,7 +107,7 @@ function hasExactEventShape(event: object, keys: readonly string[]): boolean {
 function fatal(error: unknown): FatalEvidence {
   const record = typeof error === "object" && error !== null ? error as Record<string, unknown> : undefined;
   return cloneFreeze({
-    diagnostics: error instanceof Error ? error.message : String(error),
+    diagnostics: "infrastructure-failure",
     ...(record?.targetSnapshot === undefined ? {} : { targetSnapshot: record.targetSnapshot as ReviewerTargetSnapshot }),
     ...(record?.workspaceDisposition === undefined ? {} : { workspaceDisposition: record.workspaceDisposition as ReviewerWorkspaceDisposition }),
   });

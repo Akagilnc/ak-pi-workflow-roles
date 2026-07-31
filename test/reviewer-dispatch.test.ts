@@ -57,7 +57,7 @@ const proposal: ReviewerProposalV1 = {
 
 function fakeReader(overrides: Partial<ReviewerPinnedGitReader> = {}): ReviewerPinnedGitReader {
   return {
-    pin: { repositoryRoot: "/repo", targetHead: "B", refs: { "refs/heads/main": { objectId: "B", peeledCommitId: "B" } } },
+    pin: { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "B", refs: { "refs/heads/main": { objectId: "B", peeledCommitId: "B" } } },
     async snapshot() { return this.pin; },
     async resolve(base) { return base; },
     async range(base) { return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: "1".repeat(64), commits: ["C", "B"] }; },
@@ -256,24 +256,33 @@ test("typed repository failures have closed correctable codes and no diagnostics
     ["base-invalid", fakeReader({ async resolve() { throw new ReviewerCorrectablePreflightError("base-invalid"); } })],
     ["range-invalid", fakeReader({ async range() { throw new ReviewerCorrectablePreflightError("range-invalid"); } })],
     ["material-invalid", fakeReader({ async material() { throw new ReviewerCorrectablePreflightError("material-invalid"); } })],
-    ["preflight-infrastructure", fakeReader({ async resolve() { throw new Error("secret spawn diagnostic"); } })],
   ] as const) {
     const { dispatcher } = harness({ reader });
     const result = await dispatcher.propose(proposal);
     assert.equal(result.status, "rejected");
     if (result.status === "rejected") assert.deepEqual(result.violations, [code]);
-    assert.equal(JSON.stringify([result, dispatcher.rejections]).includes("secret"), false);
   }
+  const infrastructure = harness({ reader: fakeReader({ async resolve() { throw new Error("secret spawn diagnostic"); } }) });
+  await assert.rejects(infrastructure.dispatcher.propose(proposal), /secret spawn diagnostic/);
+  assert.deepEqual(infrastructure.dispatcher.rejections, []);
+});
+
+test("malformed canonical Skill extraction is fatal and permits no retry or child", async () => {
+  const broken = harness({ canonicalSkill: "# malformed Skill" });
+  await assert.rejects(broken.dispatcher.propose(proposal), /Canonical Skill section extraction failed/);
+  await assert.rejects(broken.dispatcher.propose(proposal), /Canonical Skill section extraction failed/);
+  assert.deepEqual(broken.calls, []);
+  assert.deepEqual(broken.dispatcher.rejections, []);
 });
 
 test("all pin-bound material and range failures reject atomically before runner", async () => {
   const failures: ReviewerPinnedGitReader[] = [
-    fakeReader({ async resolve() { throw new Error("base unreachable"); } }),
+    fakeReader({ async resolve() { throw new ReviewerCorrectablePreflightError("base-invalid"); } }),
     fakeReader({ async resolve() { return "SUBMITTED"; }, async range() { return { base: "MERGE_BASE", target: "B", diffCommand: "git diff MERGE_BASE...B", diffSha256: "1".repeat(64), commits: ["B"] }; } }),
     fakeReader({ async range(base) { return { base, target: "DRIFT", diffCommand: `git diff ${base}...DRIFT`, diffSha256: "1".repeat(64), commits: [] }; } }),
     fakeReader({ async range(base) { return { base, target: "B", diffCommand: `git diff ${base} B`, diffSha256: "1".repeat(64), commits: ["B"] }; } }),
     fakeReader({ async range(base) { return { base, target: "B", diffCommand: `git diff ${base}...B`, diffSha256: createHash("sha256").update("").digest("hex"), commits: ["B"] }; } }),
-    fakeReader({ async material() { throw new Error("material unavailable"); } }),
+    fakeReader({ async material() { throw new ReviewerCorrectablePreflightError("material-invalid"); } }),
     fakeReader({ async material() { return Buffer.from([0xff]); } }),
   ];
   for (const reader of failures) {
@@ -295,8 +304,8 @@ test("HEAD/ref drift immediately before acceptance rejects without runner and pe
   const reader = fakeReader({
     async snapshot() {
       return drift
-        ? { repositoryRoot: "/repo", targetHead: "DRIFT", refs: { "refs/heads/main": { objectId: "DRIFT", peeledCommitId: "DRIFT" } } }
-        : { repositoryRoot: "/repo", targetHead: "B", refs: { "refs/heads/main": { objectId: "B", peeledCommitId: "B" } } };
+        ? { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "DRIFT", refs: { "refs/heads/main": { objectId: "DRIFT", peeledCommitId: "DRIFT" } } }
+        : { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "B", refs: { "refs/heads/main": { objectId: "B", peeledCommitId: "B" } } };
     },
   });
   const { dispatcher, calls } = harness({ reader });
@@ -726,7 +735,7 @@ test("preserves BOM and multibyte task/material bytes and rejects invalid UTF-8 
   assert.equal(effects, 0);
 });
 
-test("rejection evidence is closed and never retains injected diagnostics", async () => {
+test("infrastructure diagnostics propagate but never enter durable rejection evidence", async () => {
   const secret = "TOKEN=super-secret /private/repo stderr: fatal";
   for (const reader of [
     fakeReader({ async resolve() { throw new Error(secret); } }),
@@ -735,10 +744,8 @@ test("rejection evidence is closed and never retains injected diagnostics", asyn
     fakeReader({ async snapshot() { throw new Error(secret); } }),
   ]) {
     const { dispatcher } = harness({ reader });
-    const result = await dispatcher.propose(proposal);
-    assert.equal(result.status, "rejected");
-    assert.equal(JSON.stringify(result).includes(secret), false);
-    assert.equal(JSON.stringify(dispatcher.rejections).includes(secret), false);
+    await assert.rejects(dispatcher.propose(proposal), new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.deepEqual(dispatcher.rejections, []);
   }
 });
 

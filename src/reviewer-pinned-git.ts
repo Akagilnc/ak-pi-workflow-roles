@@ -6,8 +6,10 @@ import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArg
 import { sha256Hex } from "./sha256.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 
+export type ReviewerObjectFormat = "sha1" | "sha256";
 export type ReviewerPinnedTarget = Readonly<{
   repositoryRoot: string;
+  objectFormat: ReviewerObjectFormat;
   targetHead: string;
   refs: ReviewerRefMap;
 }>;
@@ -28,7 +30,7 @@ export type ReviewerPinnedGitReader = {
 
 const execFileAsync = promisify(execFile);
 export const immutableReviewerPin = (pin: ReviewerPinnedTarget): ReviewerPinnedTarget => Object.freeze({
-  repositoryRoot: pin.repositoryRoot, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
+  repositoryRoot: pin.repositoryRoot, objectFormat: pin.objectFormat, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
 async function gitText(root: string, args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", ["-C", root, ...args], { encoding: "utf8" });
@@ -39,10 +41,13 @@ async function gitText(root: string, args: readonly string[]): Promise<string> {
 export async function createReviewerPinnedGitReader(root = process.cwd()): Promise<ReviewerPinnedGitReader> {
   const discoveredRoot = await gitText(root, ["rev-parse", "--show-toplevel"]);
   const repositoryRoot = await realpath(discoveredRoot);
+  const objectFormat = await gitText(repositoryRoot, ["rev-parse", "--show-object-format"]);
+  if (objectFormat !== "sha1" && objectFormat !== "sha256") throw new Error("Unsupported Git object format");
+  const oidWidth = objectFormat === "sha1" ? 40 : 64;
   const targetHead = await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]);
   const reachableCommitIds = Object.freeze((await gitText(repositoryRoot, ["rev-list", targetHead])).split("\n").filter(Boolean));
   const refs = parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs()));
-  const pin = immutableReviewerPin({ repositoryRoot, targetHead, refs });
+  const pin = immutableReviewerPin({ repositoryRoot, objectFormat, targetHead, refs });
   const invalid = (code: "base-invalid" | "range-invalid" | "material-invalid"): never => {
     throw new ReviewerCorrectablePreflightError(code);
   };
@@ -60,22 +65,25 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   return Object.freeze({
     pin,
     async snapshot() {
-      return immutableReviewerPin({ repositoryRoot, targetHead: await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]), refs: parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs())) });
+      const liveObjectFormat = await gitText(repositoryRoot, ["rev-parse", "--show-object-format"]);
+      if (liveObjectFormat !== "sha1" && liveObjectFormat !== "sha256") throw new Error("Unsupported Git object format");
+      return immutableReviewerPin({ repositoryRoot, objectFormat: liveObjectFormat, targetHead: await gitText(repositoryRoot, ["rev-parse", "HEAD^{commit}"]), refs: parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs())) });
     },
     async resolve(base: string) {
       if (!/^[A-Za-z0-9._/~^+-]+$/.test(base) || base.startsWith("-") || base.includes("..") || base.includes("@{")) invalid("base-invalid");
       let commit: string | undefined;
       const headExpression = /^HEAD((?:~[0-9]+|\^[0-9]+)*)$/.exec(base);
       if (headExpression) commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${targetHead}${headExpression[1]}^{commit}`]);
-      else if (/^[0-9a-f]{40}$/.test(base)) commit = base;
-      else if (/^[0-9a-f]{4,39}$/.test(base)) {
+      else if (new RegExp(`^[0-9a-f]{${oidWidth}}$`).test(base)) commit = base;
+      else if (new RegExp(`^[0-9a-f]{4,${oidWidth - 1}}$`).test(base) && !(objectFormat === "sha256" && base.length === 40)) {
         const matches = reachableCommitIds.filter((candidate) => candidate.startsWith(base));
         if (matches.length !== 1) invalid("base-invalid");
         commit = matches[0];
       } else commit = symbolic(base);
       if (commit === undefined) invalid("base-invalid");
       try { commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${commit}^{commit}`]); } catch (error) {
-        if (typeof (error as { code?: unknown }).code === "number") invalid("base-invalid");
+        const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+        if (typeof (error as { code?: unknown }).code === "number" && /Needed a single revision|unknown revision|bad object|not a valid object name/i.test(stderr)) invalid("base-invalid");
         throw error;
       }
       try { await gitText(repositoryRoot, ["merge-base", "--is-ancestor", commit, targetHead]); } catch (error) {
@@ -101,7 +109,8 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
         const { stdout } = await execFileAsync("git", ["-C", repositoryRoot, "show", `${revision}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
         return Uint8Array.from(stdout);
       } catch (error) {
-        if (typeof (error as { code?: unknown }).code === "number") invalid("material-invalid");
+        const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+        if (typeof (error as { code?: unknown }).code === "number" && /does not exist in|exists on disk, but not in|path .* not in/i.test(stderr)) invalid("material-invalid");
         throw error;
       }
     },

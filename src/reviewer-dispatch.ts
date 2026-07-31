@@ -90,7 +90,6 @@ export const REVIEWER_PREFLIGHT_VIOLATIONS = [
   "proposal-invalid", "base-invalid", "material-invalid", "spec-invalid",
   "capability-invalid", "prerequisite-missing", "range-invalid",
   "prompt-identity-invalid", "prompt-identity-mismatch", "target-drift",
-  "preflight-infrastructure",
 ] as const;
 export type ReviewerPreflightViolation = (typeof REVIEWER_PREFLIGHT_VIOLATIONS)[number];
 export type ReviewerRejectionEvidence = Readonly<{
@@ -138,7 +137,7 @@ export class ReviewerPreflightError extends Error {
 const violation = (code: ReviewerPreflightViolation): never => { throw new ReviewerPreflightError(code); };
 const classifyReadFailure = (error: unknown): never => {
   if (error instanceof ReviewerCorrectablePreflightError) violation(error.code);
-  throw new ReviewerPreflightError("preflight-infrastructure");
+  throw error;
 };
 
 function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
@@ -273,9 +272,9 @@ function validateMaterialSelection(value: unknown): asserts value is MaterialSel
 
 function skillSection(skill: string, heading: string, nextHeading: string): string {
   const start = skill.indexOf(heading);
-  if (start < 0) violation("preflight-infrastructure");
+  if (start < 0) throw new Error("Canonical Skill section extraction failed");
   const end = skill.indexOf(nextHeading, start + heading.length);
-  if (end < 0 || end <= start) violation("preflight-infrastructure");
+  if (end < 0 || end <= start) throw new Error("Canonical Skill section extraction failed");
   return skill.slice(start, end).trim();
 }
 
@@ -296,6 +295,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   const hostTools = freezeStrings(dependencies.hostTools);
   const targetSnapshot = immutableReviewerPin(dependencies.reader.pin);
   let accepted: ReviewerAcceptanceEvidence | undefined;
+  let fatalInfrastructure: unknown;
   let accepting = false;
   const rejections: ReviewerRejectionEvidence[] = [];
   const closedAttempts: ReviewerClosedAttemptEvidence[] = [];
@@ -307,11 +307,8 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     return Object.freeze({ status: "closed" as const, ...evidence });
   }
 
-  function reject(identity: string, error: unknown): ReviewerDispatchResult {
-    const code: ReviewerPreflightViolation = error instanceof ReviewerPreflightError
-      ? error.code
-      : "preflight-infrastructure";
-    const violations = Object.freeze<ReviewerPreflightViolation[]>([code]);
+  function reject(identity: string, error: ReviewerPreflightError): ReviewerDispatchResult {
+    const violations = Object.freeze<ReviewerPreflightViolation[]>([error.code]);
     const evidence = Object.freeze({ identity, violations, started: false as const });
     dependencies.decisionEvidence?.(Object.freeze({ disposition: "rejected", ...evidence }));
     rejections.push(evidence);
@@ -508,6 +505,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     },
     async propose(proposal: ReviewerProposalV1, invocation?: unknown): Promise<ReviewerDispatchResult> {
       const identity = proposalIdentity(proposal);
+      if (fatalInfrastructure !== undefined) throw fatalInfrastructure;
       if (accepted || accepting) return close(identity);
       let dispatch: AcceptedReviewerDispatch;
       try {
@@ -515,7 +513,9 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       } catch (error) {
         // Compilation awaits repository I/O; another proposal may accept meanwhile.
         if (accepted || accepting) return close(identity);
-        return reject(identity, error);
+        if (error instanceof ReviewerPreflightError) return reject(identity, error);
+        fatalInfrastructure = error;
+        throw error;
       }
 
       // Another async proposal may have completed preflight while this one awaited pin reads.
@@ -527,7 +527,9 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         }
       } catch (error) {
         if (accepted || accepting) return close(identity);
-        return reject(identity, error instanceof ReviewerPreflightError ? error : new ReviewerPreflightError("preflight-infrastructure"));
+        if (error instanceof ReviewerPreflightError) return reject(identity, error);
+        fatalInfrastructure = error;
+        throw error;
       }
       if (accepted || accepting) return close(identity);
       dependencies.decisionEvidence?.(Object.freeze({ disposition: "accepted", identity, dispatch }));

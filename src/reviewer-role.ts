@@ -159,7 +159,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           admittedToolCalls.add(_id);
           let result;
           try { result = await dispatcher!.propose(proposal as ReviewerProposalV1, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
-          catch (error) { hostActions.failInfrastructure(error, toolCtx); }
+          catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
           const text = result.status === "rejected"
             ? `Reviewer proposal rejected: ${result.violations.join("; ")}`
             : result.status === "closed"
