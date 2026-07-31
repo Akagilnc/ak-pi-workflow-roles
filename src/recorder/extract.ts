@@ -22,6 +22,24 @@ function usageOf(value: unknown): AuditObservation["usage"] | undefined {
 }
 function kind(name: TerminatingToolName): AcceptedReceipt["kind"] { return name === "ak_collector_output" ? "collector" : name === "ak_judge_output" ? "judge" : name === "ak_reviewer_output" ? "reviewer" : "worker"; }
 
+/** Compact streaming owner for package lifecycle candidates. Non-package rows are never retained. */
+export class AcceptanceCollector {
+  readonly #rows: unknown[] = [];
+  accept(row: unknown, index: number): void {
+    if (!record(row) || row.type !== "message" || !record(row.message)) return;
+    const message = row.message;
+    const hasIssuance = message.role === "assistant" && Array.isArray(message.content) && message.content.some(part => record(part) && typeof part.name === "string" && isTerminatingToolName(part.name));
+    const hasResult = message.role === "toolResult" && typeof message.toolName === "string" && isTerminatingToolName(message.toolName);
+    if (hasIssuance || hasResult) this.#rows[index] = row;
+  }
+  finish(rowCount: number): ExtractionResult {
+    this.#rows.length = rowCount;
+    return extractAcceptedReceipt(this.#rows);
+  }
+  /** Number of retained lifecycle rows; exposed as an operational compactness oracle. */
+  get retainedRowCount(): number { return Object.keys(this.#rows).length; }
+}
+
 /** Bind the closed direct Pi-v3 package lifecycle from already validated session rows. */
 export function extractAcceptedReceipt(rows: unknown[]): ExtractionResult {
   const packageOccurrences: Array<{ i:number; role:"issue"|"result"; id:string; name:TerminatingToolName; args?:unknown; result?:Record<string,unknown> }> = [];

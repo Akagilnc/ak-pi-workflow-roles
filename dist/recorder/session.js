@@ -44,7 +44,7 @@ catch (e) {
     throw new RecorderError("session-collision", undefined, { cause: e });
 } const s = lstatSync(path); if (!s.isDirectory() || s.isSymbolicLink() || (s.mode & 0o777) !== 0o700 || readdirSync(path).length)
     throw new RecorderError("session-collision"); return { path, dev: s.dev, ino: s.ino }; }
-export function readSession(config, owner) {
+export function readSession(config, owner, onRow = () => { }) {
     const ds = modified(() => lstatSync(owner.path));
     if (inode(ds) !== `${owner.dev}:${owner.ino}` || !ds.isDirectory() || ds.isSymbolicLink())
         throw new RecorderError("session-modified");
@@ -87,8 +87,9 @@ export function readSession(config, owner) {
         const ps = modified(() => lstatSync(path));
         if (inode(ps) !== inode(before) || ps.isSymbolicLink())
             throw new RecorderError("session-modified");
-        const hash = createHash("sha256"), rows = [];
-        let total = 0, carry = Buffer.alloc(0), entries = 0;
+        const hash = createHash("sha256");
+        let total = 0, carry = Buffer.alloc(0), entries = 0, previousId = null;
+        const ids = new Set();
         const buffer = Buffer.allocUnsafe(64 * 1024);
         while (total < before.size) {
             const n = readSync(fd, buffer, 0, Math.min(buffer.length, before.size - total), null);
@@ -105,35 +106,41 @@ export function readSession(config, owner) {
                 if (line.length + 1 > 16 * 1024 * 1024 || ++entries > 100000 || !line.length)
                     throw new RecorderError("session-corrupt");
                 try {
-                    const r = JSON.parse(line.toString("utf8"));
-                    if (!r || typeof r !== "object" || Array.isArray(r))
+                    const row = JSON.parse(line.toString("utf8"));
+                    if (!row || typeof row !== "object" || Array.isArray(row))
                         throw 0;
-                    rows.push(r);
+                    const record = row;
+                    const index = entries - 1;
+                    if (index === 0) {
+                        if (Object.keys(record).sort().join(",") !== "cwd,id,timestamp,type,version" || record.type !== "session" || record.version !== 3 || record.id !== config.session.id || record.cwd !== config.execution.cwd || typeof record.timestamp !== "string" || Number.isNaN(Date.parse(record.timestamp)) || new Date(record.timestamp).toISOString() !== record.timestamp)
+                            throw 0;
+                    }
+                    else {
+                        if (record.type === "session" || typeof record.id !== "string" || !record.id || ids.has(record.id) || record.parentId !== previousId)
+                            throw 0;
+                        ids.add(record.id);
+                        previousId = record.id;
+                    }
+                    onRow(row, index);
                 }
-                catch {
+                catch (error) {
+                    if (error instanceof RecorderError)
+                        throw error;
                     throw new RecorderError("session-corrupt");
                 }
             }
             if (carry.length >= 16 * 1024 * 1024)
                 throw new RecorderError("session-corrupt");
         }
-        if (total !== before.size || carry.length || rows.length === 0)
+        if (total !== before.size || carry.length || entries === 0)
             throw new RecorderError("session-corrupt");
         const after = fstatSync(fd);
         if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs || after.mode !== before.mode || inode(after) !== inode(before))
             throw new RecorderError("session-modified");
-        let prev = null;
-        const ids = new Set();
-        rows.forEach((r, i) => { const x = r; if (i === 0) {
-            if (Object.keys(x).sort().join(",") !== "cwd,id,timestamp,type,version" || x.type !== "session" || x.version !== 3 || x.id !== config.session.id || x.cwd !== config.execution.cwd || typeof x.timestamp !== "string" || Number.isNaN(Date.parse(x.timestamp)) || new Date(x.timestamp).toISOString() !== x.timestamp)
-                throw new RecorderError("session-corrupt");
-            return;
-        } if (x.type === "session" || typeof x.id !== "string" || !x.id || ids.has(x.id) || x.parentId !== prev)
-            throw new RecorderError("session-corrupt"); ids.add(x.id); prev = x.id; });
         const verify = () => { const now = modified(() => lstatSync(path)), d = modified(() => lstatSync(owner.path)); if (inode(now) !== inode(before) || now.size !== before.size || now.mtimeMs !== before.mtimeMs || now.ctimeMs !== before.ctimeMs || now.mode !== before.mode || inode(d) !== `${owner.dev}:${owner.ino}` || inventory(owner.path) !== beforeInventory)
             throw new RecorderError("session-modified"); };
         verify();
-        return { rows, basename: basename(path), sha256: hash.digest("hex"), byteLength: total, verify };
+        return { rowCount: entries, basename: basename(path), sha256: hash.digest("hex"), byteLength: total, verify };
     }
     finally {
         closeSync(fd);
