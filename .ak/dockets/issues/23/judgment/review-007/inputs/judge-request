@@ -1,0 +1,12 @@
+# Issue #23 Review-007 class adjudication
+
+Target: `37ec52f23ffd0091d3a79c1cef26fd15a44fb63a`; current Recorder product head includes `f979c3e`. Adjudicate every Review-007 Must before any repair.
+
+Treat cited lines as counterexamples to defect classes, not a point checklist. Decide bounded whole-owner classes for:
+
+- specific failure labels only after proven predicates, with safe retained causes across launcher, destination probing/collision, containment, and Git admission owners;
+- catch-and-continue only for explicit expected negative outcomes;
+- all pure environment lexical defects, including NUL, rejected in config structure before scanner/state/spawn with typed locations;
+- shipped failure schema closed to finite runtime messages/location vocabulary/path bounds/signal vocabulary and coherent combinations.
+
+Preserve fixed safe public output, scanner boundaries, structural-before-stateful order, atomic publication, exact child truth, retained-snapshot/manual-cleanup owner policy, historical-root non-claim, and issue #13 exclusion. If sustained, authorize one class-oriented forward repair suitable for direct Fixer Apply without a Fixer Plan. Submit only through `ak_judge_output`.

@@ -1,0 +1,14 @@
+{
+  "hits": [
+    {
+      "ruleId": "authorization-header",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "token-assignment",
+      "location": "child.stdout",
+      "count": 13
+    }
+  ]
+}
