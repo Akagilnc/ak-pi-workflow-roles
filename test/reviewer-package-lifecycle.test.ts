@@ -105,8 +105,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     assert.equal(missingRecipe.status, "rejected");
     if (missingRecipe.status === "rejected") assert.deepEqual(missingRecipe.violations, ["prerequisite-missing"]);
     assert.equal(missingRecipeRuns, 0);
-    const candidate = { status: "completed", report: "## Standards\nReadable.\n\n## Spec\nSatisfied." };
-    const corrected = { status: "completed", report: "## Standards\nReadable; no findings.\n\n## Spec\nRequirement satisfied; no findings.\n\nStandards: 0; Spec: 0." };
+    const candidate = { status: "completed" };
+    const corrected = { status: "completed" };
     const faux = fauxProvider({ api: "package-reviewer", provider: "package-reviewer", tokenSize: { min: 1000, max: 1000 } });
     let parent: Context | undefined;
     const children: Context[] = []; const audits: Context[] = [];
@@ -174,7 +174,12 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       const finalOutput = results.find((e: any) => e.message.toolCallId === "corrected") as any;
       assert.equal(firstOutput.message.isError, true);
       assert.equal(finalOutput.message.isError, false);
-      assert.deepEqual(finalOutput.message.details, corrected);
+      assert.equal(finalOutput.message.details.version, 2);
+      assert.equal(finalOutput.message.details.status, "completed");
+      assert.deepEqual(
+        [finalOutput.message.details.reports.standards.text, finalOutput.message.details.reports.spec.text].sort(),
+        ["Standards report: no findings.", "Spec report: requirement satisfied."].sort(),
+      );
       assert.equal(await readFile(resolve(fixture, "consumer.txt"), "utf8"), before);
       assert.equal(faux.getPendingResponseCount(), 0);
     });
@@ -185,7 +190,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     noSpecFaux.setResponses([
       fauxAssistantMessage(fauxToolCall(Agent, noSpecProposal, { id: "no-spec-accepted" }), { stopReason: "toolUse" }),
       (ctx) => { noSpecChildren.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
-      fauxAssistantMessage(fauxToolCall(Output, { status: "completed", report: "## Standards\nReadable; no findings.\n\nStandards: 0." }, { id: "no-spec-output" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall(Output, { status: "completed" }, { id: "no-spec-output" }), { stopReason: "toolUse" }),
       (ctx) => { noSpecAudits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }); },
     ]);
     await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-no-spec"), faux: noSpecFaux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {

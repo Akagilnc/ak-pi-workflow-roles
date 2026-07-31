@@ -220,6 +220,10 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       const expected = accepted.legs.map((leg) => leg.axis);
       if (expected.some((axis) => results[axis]?.status !== "successful") || Object.keys(results).length !== expected.length)
         throw new Error(expected.length === 2 ? "Reviewer completed requires both axes settled successfully" : "Reviewer completed requires Standards settled successfully and no Spec evidence");
+    } else if (accepted !== undefined) {
+      const expected = accepted.legs.map((leg) => leg.axis);
+      if (started === undefined || expected.some((axis) => results[axis] === undefined) || Object.keys(results).length !== expected.length)
+        throw new Error("Reviewer refused after acceptance requires every expected leg terminal outcome");
     }
     return cloneFreeze({ transportRejections, rejections, closedAttempts, ...(accepted === undefined ? {} : { accepted }), ...(started === undefined ? {} : { started }), results });
   }

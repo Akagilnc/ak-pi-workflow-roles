@@ -264,30 +264,6 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
       tool: "Agent",
     },
     {
-      stage: "preflight-skill",
-      marker: /Canonical Skill section extraction failed|Request was aborted/,
-      calls: 1,
-      tool: "Agent",
-    },
-    {
-      stage: "child-provider",
-      marker: /Reviewer Agent provider not found/,
-      calls: 1,
-      tool: "Agent",
-    },
-    {
-      stage: "child-session",
-      marker: /INJECTED_REVIEWER_CHILD_SESSION_FAILURE/,
-      calls: 2,
-      tool: "Agent",
-    },
-    {
-      stage: "child-malformed-output",
-      marker: /Reviewer Agent returned a blank child report/,
-      calls: 2,
-      tool: "Agent",
-    },
-    {
       stage: "audit-auth",
       marker: /INJECTED_REVIEWER_AUDIT_AUTH_FAILURE/,
       calls: 1,

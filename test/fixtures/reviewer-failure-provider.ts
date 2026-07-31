@@ -45,8 +45,8 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
     fauxToolCall(AGENT_TOOL_NAME, {
       version: 1,
       base: { revision: base },
-      standardsMaterials: [{ id: "readme", repositoryPath: "README.md" }],
-      spec: { state: "not-established", evidence: [{ id: "task", repositoryPath: "test/fixtures/reviewer-task.md" }] },
+      materials: [{ id: "readme", repositoryPath: "README.md" }, { id: "task", repositoryPath: "test/fixtures/reviewer-task.md" }],
+      spec: { state: "not-established" },
       required: { standards: request },
     }, { id: "fatal-agent" }),
     { stopReason: "toolUse" },
@@ -54,7 +54,7 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   const outputCall = fauxAssistantMessage(
     fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, {
       status: "refused",
-      report: "The requested review cannot proceed because its runtime stage failed.",
+      diagnostic: "The requested review cannot proceed because its runtime stage failed.",
     }, { id: "fatal-reviewer-output" }),
     { stopReason: "toolUse" },
   );

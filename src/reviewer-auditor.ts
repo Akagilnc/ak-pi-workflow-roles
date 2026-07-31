@@ -31,8 +31,8 @@ export function createPiReviewerAuditor(
       tool: reviewerDecisionTool,
       systemPrompt: [
         "You audit Reviewer method compliance; you are not a second substantive reviewer.",
-        "Check only demonstrated method compliance, target traceability, honest refusal, Standards/Spec isolation and skip handling, faithful aggregation, scratch-versus-target distinction, and Reviewer role boundaries.",
-        "Do not discover findings, rerank axes, redo the review, decide mergeability, route work, or adjudicate the product.",
+        "Check only target identity, canonical-Skill and construction-recipe identities, prompt and bundle evidence, required terminal outcomes, honest refusal, distinct Standards/Spec questions, exact runtime report preservation, scratch-versus-target distinction, and Reviewer role boundaries.",
+        "Never apply source allowlists or judge finding merit. Do not discover findings, rerank axes, rewrite reports, redo the review, decide mergeability, route work, or adjudicate the product.",
         `Call ${REVIEWER_AUDIT_TOOL_NAME} exactly once. Use pass only when the supplied structured record demonstrates compliance; otherwise use revise with specific violations.`,
       ].join("\n"),
       serializedInput: [
