@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_Cx8u5QXGDC7qY7Hpe6XxxZTZ|fc_07ccabff70bdddbd016a6bab83dc848191a77e523a6dc0f6d5",
+  "details": {
+    "status": "completed",
+    "report": "R1=live HEAD/ref pin revalidated immediately pre-acceptance with typed correctable drift and zero runner effects; R2=immutable closed-attempt identity/reason/started:false evidence projected append-only to audit; R3=no-bash and empty-bash grants accepted while undeclared/excess commands remain rejected; R4=shared exact UTF-8 validator and ReviewerPromptIdentity-based declarations added without splitting reviewer-dispatch; R5=deterministic drift/retry, race/late closure, capability, UTF-8, and identity coverage passes focused lifecycle, full 355-test suite, typecheck, pack, and diff check in forward commit 7b51f0e.",
+    "commitSha": "7b51f0e"
+  },
+  "artifactKind": "acceptedReceipt"
+}

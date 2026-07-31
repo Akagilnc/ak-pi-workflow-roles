@@ -1,0 +1,15 @@
+# Issue #17 real dispatch preflight repair
+
+Authority: accepted Reviewer refusal `.ak/dockets/issues/17/review/review-002/receipt.json`.
+
+R1 — Make the pin-bound range reader implement the canonical Skill exactly: derive merge-base three-dot identity, compile `git diff <base>...<target>`, and reject unresolved base or empty three-dot diff before acceptance. Retain ordered commit list for `<base>..<target>`.
+
+R2 — Fail preflight when a leg requests `bash` in `tools` but requests zero exact `bashCommands`. The current law exposes a useless bash tool and consumed the unique batch. A leg may omit bash entirely; a granted bash tool must have at least one exact permitted command. Preserve subset/no-widening and byte-exact enforcement.
+
+R3 — Preserve opaque task exact bytes/digest in accepted construction evidence and auditor input, but do not inject undifferentiated task prose into both child prompts. Common child prompt carries task identity/digest plus target/range/commit evidence; axis-specific requirements come only from resolved Standards or Spec material compartments and the corresponding canonical Skill brief/baseline. Add a red case where task contains Spec behavior language and prove it is absent from Standards prompt while digest/evidence remains bound.
+
+R4 — Add production-shaped tests proving preflight rejection consumes no runner for two-dot/empty diff, empty bash grant, and cross-axis task prose; correction then accepts one dispatch. Re-run the real canonical package lifecycle and final review path. Preserve post-run semantic audit for child-report isolation/aggregation.
+
+R5 — Run focused dispatch/role/package tests, full suite, typecheck, and diff check. Commit forward; do not rewrite refusals.
+
+Return exactly one nonblank keyed line for R1–R5.

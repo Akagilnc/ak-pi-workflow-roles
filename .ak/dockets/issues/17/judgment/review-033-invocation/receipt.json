@@ -1,0 +1,32 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_dnydLBCOnIgbcjqjEED8Xjtg|fc_04be42ff73769365016a6cf79404d48191a27046bd7856c2b7",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Two sustained product defects remain on current HEAD: the runtime receipt substitutes a mutable Skill path for the accepted canonical content identity, and Recorder/package contracts still treat Reviewer intent and runtime-enriched receipt as the same value. Repair those two owned seams and prove completed/refused native-session recording. The Standards child’s extra Spec section is invocation-only semantic noncompliance already caught by audit; do not add allowlists or replacement legs."
+    },
+    "classes": [
+      {
+        "name": "Canonical Skill content identity projection",
+        "owner": "`src/canonical-skill-binding.ts` owns capture of the exact external Skill snapshot and its immutable byte identity; the accepted dispatch/ledger preserves that identity. `src/reviewer-settlement.ts` may only project the same identity into the runtime receipt.",
+        "boundary": "`RuntimeReviewerReceiptV2.identities.canonicalSkill.snapshotIdentity` must be the captured `ReviewerPromptIdentity` `{text, utf8Length, sha256}`, exactly equal to the accepted record’s `input.canonicalSkill.snapshotIdentity` whenever a batch was accepted. For pre-acceptance refusal, use the same binding-owned content identity. `path`, `baseDir`, and expansion `location` are mutable lookup/provenance locators and must never replace content identity. Make the receipt type reflect `ReviewerPromptIdentity`; do not independently reconstruct competing identities at settlement.",
+        "disposition": "Direct Fixer repair. Current `src/reviewer-role.ts:215` passes `binding.snapshot.path`, contradicting `src/reviewer-construction.ts:37` and the accepted record. Add regressions proving accepted and pre-acceptance-refused receipts preserve exact bytes/length/SHA and remain unchanged by locator differences."
+      },
+      {
+        "name": "Typed Reviewer intent-to-runtime-receipt contract",
+        "owner": "`src/package-contracts/reviewer-output.ts` owns two distinct public leaves: the thin `ReviewerIntent` accepted as tool arguments and the validated `RuntimeReviewerReceiptV2` returned as successful result details. The terminating-tool registry owns dispatch to their validator/projection; Recorder consumes that package contract rather than inventing Reviewer semantics.",
+        "boundary": "Separate intent validation from receipt validation. Validate the complete V2 receipt shape and internal invariants, including report byte length/SHA, canonical content identity, outcome/report consistency, completed/refused requirements, and refusal diagnostic. Add a Reviewer-specific projection that requires receipt status to equal intent status, requires no diagnostic for completed, and requires the refused receipt diagnostic to equal the submitted nonblank diagnostic exactly; runtime-owned batch, reports, outcomes, and identities are permitted enrichment and must not be compared to the thin intent. `validateAcceptedDetails` and accepted receipt types must return the runtime receipt for Reviewer. In `finalizeAcceptedPair`, use this typed projection instead of generic `deepEqual` only for Reviewer; preserve existing equality/projection behavior for every other terminating tool and revalidate after scanning.",
+        "disposition": "Direct Fixer repair. The real session proves the defect: final arguments were a truthful `{status:\"refused\", diagnostic}`, result details were the assembled V2 receipt, child exit was 0, and `src/recorder/extract.ts:164-167` rejected their intentional shape difference before `src/package-contracts/reviewer-output.ts` could validate the receipt. Add native-session extraction regressions for completed and refused enriched receipts plus malformed receipt, mismatched status/diagnostic, and tampered identity/report rejection."
+      },
+      {
+        "name": "Standards child crossed the axis question",
+        "owner": "The Standards child owns its answer to the fixed Standards question; post-settlement semantic audit owns detecting question-boundary violations, and the caller may start a later independent Reviewer invocation if desired.",
+        "boundary": "The accepted dispatch already supplied separate fixed questions while lawfully giving both clones the common pinned material population. A model adding `## Spec` and a Spec count is not evidence of a compiler, capability, or materialization defect. Audit revised the completed intent; the same irreversible batch was not reopened or rerun; the subsequent refused intent truthfully retained both settled reports and outcomes. Caller repetition is a new invocation, not a replacement leg in the accepted batch.",
+        "disposition": "Dismiss as invocation-specific behavior correctly handled by the existing audit/refusal lifecycle. Do not restore source allowlists, parse report prose mechanically, suppress cross-source findings, or authorize replacement legs. Reopen only on reproducible evidence that the compiled axis question itself is wrong or that audit/caller handling fails."
+      }
+    ],
+    "note": "Current-head evidence is direct: `src/reviewer-construction.ts` records canonical `snapshotIdentity` as `ReviewerPromptIdentity`, while `src/reviewer-role.ts:215` substitutes `binding.snapshot.path`; `src/recorder/extract.ts` applies generic deep equality before validation; and `src/package-contracts/reviewer-output.ts` validates only thin intents. The gitignored `review-033-amended` session shows one accepted atomic two-leg batch, both successful settlements, audit revision, truthful refused acceptance, and Recorder `acceptance-invalid`. Absence of a Review-033 docket is therefore truthful containment, not convergence. Preserve accepted-batch irreversibility and the refused receipt through both repairs."
+  },
+  "artifactKind": "acceptedReceipt"
+}

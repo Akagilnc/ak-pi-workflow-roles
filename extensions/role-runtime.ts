@@ -11,6 +11,7 @@ import {
 
 import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
+import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiReviewerAuditor } from "../src/reviewer-auditor.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createRoleRuntimeExtension } from "../src/role-runtime.ts";
@@ -40,12 +41,15 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadCoderSoul: () => readFile(coderSoulPath, "utf8"),
     loadCoderTask: (path) => readFile(path, "utf8"),
     loadReviewerSoul: () => readFile(reviewerSoulPath, "utf8"),
-    loadReviewerTask: (path) => readFile(path, "utf8"),
+    loadReviewerTask: (path) => readFile(path),
+    loadReviewerCapabilities: (path) => readFile(path),
+    createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     loadCollectorSoul: () => readFile(collectorSoulPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
     collectorPackageExtensionPath: extensionPath,
     loadCanonicalSkillBinding,
-    runReviewerAgent: reviewerAgent.runReviewerAgent,
+    runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
+    shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext,
     auditSoulCompliance: createPiSoulAuditor(),
     auditReviewerCompliance: createPiReviewerAuditor(),

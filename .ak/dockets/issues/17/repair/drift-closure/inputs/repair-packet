@@ -1,0 +1,15 @@
+# Issue #17 drift and closure evidence repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-011/receipt.json`; fixed capability contract permits `bash` with zero exact commands; reviewer-dispatch remains the mandated deep owner.
+
+R1 — Revalidate the live repository HEAD/ref snapshot against the immutable activation pin during preflight, immediately before acceptance and before any child/runner effect. Treat drift as a typed correctable rejection, leaving acceptance open. Reuse the package-owned `preflight.git.pin-target` authority rather than inventing a new prerequisite enum. Keep runner snapshot verification as defense in depth.
+
+R2 — Preserve durable append-only identity/outcome evidence for every proposal attempt that loses an acceptance race or arrives after closure. Model it as a distinct immutable `closed-attempt` outcome (identity/reason/started:false), not a correctable rejection and not a second acceptance. Project it to the execution ledger/auditor without reopening lifecycle or permitting post-acceptance corrections.
+
+R3 — Remove the invented rule that every leg must request `bash` plus the diff command. The approved capability contract allows no bash, or bash with zero/more exact commands. Continue to reject every undeclared command and every grant exceeding the task-bound ceiling. Current final-review callers may still grant the exact diff command.
+
+R4 — Extract one exact UTF-8 bytes-to-text round-trip validator used by task and material admission, preserving BOM/fatal behavior. Ensure agent/dispatch/ledger declarations directly reuse the exported `ReviewerPromptIdentity` domain type rather than redeclaring its field triple. Do not split reviewer-dispatch: Authority assigns compilation, capability, preflight, and lifecycle to that deep owner.
+
+R5 — Add deterministic tests for HEAD/ref drift before acceptance with zero runner effects and successful corrected retry; late/racing closed-attempt evidence; no-bash and empty-bash valid grants; undeclared commands rejected; shared UTF-8 and prompt identity seams. Run package lifecycle, focused tests, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R5.

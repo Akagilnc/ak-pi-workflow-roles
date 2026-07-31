@@ -1,0 +1,13 @@
+# Issue #17 canonical Skill section repair
+
+Authority: accepted Reviewer refusal `.ak/dockets/issues/17/review/review-001/receipt.json` against the real canonical `~/.agents/skills/code-review/SKILL.md`.
+
+R1 — Fix `reviewer-dispatch` to extract the complete Standards smell baseline and exact Standards/Spec child briefs from the real canonical Skill structure. The real headings are `### 3. Identify the standards sources`, `### 4. Spawn both sub-agents in parallel`, `**Standards sub-agent prompt**`, `**Spec sub-agent prompt**`, and `### 5. Aggregate`; it has no literal `## Standards baseline` heading. Do not copy Fowler text into source constants.
+
+R2 — Replace synthetic section-marker tests/fixtures with the exact canonical Skill snapshot or a byte-identical checked-in activation fixture owned by canonical-skill binding. Add red/green coverage proving all twelve smell entries and both complete axis briefs are compiled and isolated.
+
+R3 — Re-run the real packaged Reviewer path with canonical Skill expansion or its package lifecycle equivalent so the atomic proposal reaches child dispatch rather than refusing section extraction. Preserve deterministic bytes/hashes and all issue #17 behavior.
+
+R4 — Run focused dispatch/Reviewer/package tests, typecheck, and diff check. Commit forward; do not modify the historical refusal.
+
+Return exactly one nonblank keyed line for R1–R4.

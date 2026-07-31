@@ -1,493 +1,212 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { type Context, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
+import { packageRoot, packIsolatedPackage, withHermeticHome, withInProcessPi, writeTestSkill } from "./helpers/pi-test-harness.ts";
 
-import {
-  type Context,
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from "@earendil-works/pi-ai";
-import {
-  SessionManager,
-  stripFrontmatter,
-} from "@earendil-works/pi-coding-agent";
-
-import {
-  packageRoot,
-  packIsolatedPackage,
-  withHermeticHome,
-  withInProcessPi,
-  writeTestSkill,
-} from "./helpers/pi-test-harness.ts";
-
-const AGENT_TOOL_NAME = "Agent";
-const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
-const REVIEWER_AUDIT_TOOL_NAME = "ak_reviewer_audit_decision";
 const exec = promisify(execFile);
-
-function textOfUser(context: Context): string {
-  const message = context.messages.find((candidate) =>
-    candidate.role === "user"
-  );
-  if (message?.role !== "user") return "";
-  return typeof message.content === "string" ? message.content : message.content
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("\n");
+const Agent = "Agent";
+const Output = "ak_reviewer_output";
+const Audit = "ak_reviewer_audit_decision";
+const prerequisites = [
+  "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
+  "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror",
+  "runner.git.materialize-workspace", "runner.git.verify-snapshot",
+];
+function userText(context: Context): string {
+  const message = context.messages.find((item) => item.role === "user");
+  if (!message || message.role !== "user") return "";
+  return typeof message.content === "string" ? message.content : message.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
 }
+async function git(cwd: string, ...args: string[]) { return (await exec("git", ["-C", cwd, ...args])).stdout.trim(); }
 
-async function git(cwd: string, ...args: string[]): Promise<string> {
-  return (await exec("git", ["-C", cwd, ...args])).stdout.trim();
-}
+test("installed npm tarball runs the complete established-Spec Reviewer lifecycle", async () => {
+  await withHermeticHome({ prefix: "ak-reviewer-package-" }, async ({ home }) => {
+    const fixture = resolve(home, "consumer");
+    const agentDir = resolve(fixture, ".pi-agent");
+    const { path: skillPath } = await writeTestSkill(home, "code-review");
+    const skillRaw = await readFile(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
+    await writeFile(skillPath, skillRaw);
+    await mkdir(fixture, { recursive: true });
+    await git(fixture, "init");
+    await git(fixture, "config", "user.email", "consumer@example.com");
+    await git(fixture, "config", "user.name", "Consumer");
+    await writeFile(resolve(fixture, "consumer.txt"), "base\n");
+    await writeFile(resolve(fixture, "STANDARDS.md"), "Require a tested readable change.\n");
+    await writeFile(resolve(fixture, "SPEC.md"), "The consumer text must become reviewed.\n");
+    await git(fixture, "add", "."); await git(fixture, "commit", "-m", "base");
+    await git(fixture, "branch", "review-base");
+    await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
+    await git(fixture, "commit", "-am", "reviewed change");
+    const target = await git(fixture, "rev-parse", "HEAD");
+    const base = await git(fixture, "rev-parse", "review-base");
+    const diffCommand = `git diff ${base}...${target}`;
+    const standardsRequest = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: [] };
+    const specRequest = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: ["preflight.git.read-material"] };
+    const root = await realpath(fixture);
+    const nestedCwd = resolve(fixture, "nested", "invocation");
+    await mkdir(nestedCwd, { recursive: true });
 
-function structuredRecord(context: Context): any {
-  const match = textOfUser(context).match(
-    /<structured_execution_record>([\s\S]*?)<\/structured_execution_record>/,
-  );
-  assert.ok(match, "auditor request contains a structured execution record");
-  return JSON.parse(match[1]!);
-}
+    const pack = await packIsolatedPackage(home);
+    assert.ok(pack.files.some((file) => file.path === "src/reviewer-dispatch.ts"));
+    assert.ok(pack.files.some((file) => file.path === "src/reviewer-pinned-git.ts"));
+    assert.equal(pack.files.some((file) => /(^|\/)SKILL\.md$/.test(file.path)), false);
+    assert.ok(pack.files.some((file) => file.path === "README.md"));
+    const packagedReadme = (await exec("tar", ["-xOf", pack.tarball, "package/README.md"])).stdout;
+    assert.match(packagedReadme, /reviewerProposalSchema/);
+    assert.doesNotMatch(packagedReadme, /standardsMaterials.*may be empty|preflight\.git\.pin-target\|/);
+    await writeFile(resolve(fixture, "package.json"), JSON.stringify({ private: true, dependencies: {
+      "@ak/pi-workflow-roles": `file:${pack.tarball}`,
+      "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
+      "@earendil-works/pi-coding-agent": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")}`,
+      typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
+    }}));
+    await exec("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: fixture });
 
-test("installed npm tarball runs native Reviewer expansion in an independent consumer repository", async () => {
-  await withHermeticHome(
-    { prefix: "ak-reviewer-package-" },
-    async ({ home: temp }) => {
-      const fixture = resolve(temp, "fixture");
-      const agentDir = resolve(fixture, ".pi-agent");
-      const { path: canonicalSkillPath, raw: canonicalRaw } =
-        await writeTestSkill(
-          temp,
-          "code-review",
-        );
-      await mkdir(fixture, { recursive: true });
-      const consumerRoot = await realpath(fixture);
-      await git(fixture, "init");
-      await git(fixture, "config", "user.email", "consumer@example.com");
-      await git(fixture, "config", "user.name", "Consumer");
-      await writeFile(resolve(fixture, "consumer.txt"), "base\n");
-      await git(fixture, "add", "consumer.txt");
-      await git(fixture, "commit", "-m", "consumer base");
-      const base = await git(fixture, "rev-parse", "HEAD");
-      await git(fixture, "branch", "review-base", base);
-      await git(fixture, "tag", "review-base", base);
-      await writeFile(resolve(fixture, "consumer.txt"), "reviewed\n");
-      await git(fixture, "commit", "-am", "consumer reviewed change");
-      const reviewedHead = await git(fixture, "rev-parse", "HEAD");
+    const taskBytes = Buffer.from("# Fixed review task\n\nReview current HEAD against review-base using STANDARDS.md and SPEC.md.\n");
+    const taskPath = resolve(fixture, "review-task.md");
+    const capsPath = resolve(fixture, "review-capabilities.json");
+    await writeFile(taskPath, taskBytes);
+    const capabilityText = JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash", "edit"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }, null, 2) + "\n";
+    await writeFile(capsPath, capabilityText);
 
-      const pack = await packIsolatedPackage(temp);
-      const tarball = pack.tarball;
-      const paths = pack.files.map((file) => file.path);
-      assert.deepEqual(paths, [
-        "README.md",
-        "bin/ak-docket-record.js",
-        "dist/package-contracts/collector-output.js",
-        "dist/package-contracts/judge-output.js",
-        "dist/package-contracts/reviewer-output.js",
-        "dist/package-contracts/terminating-tools.js",
-        "dist/package-contracts/worker-output.js",
-        "dist/recorder/admit.js",
-        "dist/recorder/cli.js",
-        "dist/recorder/config.js",
-        "dist/recorder/errors.js",
-        "dist/recorder/extract.js",
-        "dist/recorder/manifest.js",
-        "dist/recorder/paths.js",
-        "dist/recorder/rename_no_replace.node",
-        "dist/recorder/rename-no-replace.js",
-        "dist/recorder/run.js",
-        "dist/recorder/scanner.js",
-        "dist/recorder/session.js",
-        "dist/recorder/spawn.js",
-        "extensions/role-runtime.ts",
-        "package.json",
-        "schemas/collector-legs-v1.schema.json",
-        "schemas/recorder-config-v2.schema.json",
-        "schemas/recorder-failure-v2.schema.json",
-        "schemas/recorder-manifest-v2.schema.json",
-        "scripts/build-rename-no-replace.mjs",
-        "scripts/rename_no_replace.c",
-        "souls/coder.md",
-        "souls/collector.md",
-        "souls/fixer.md",
-        "souls/judge.md",
-        "souls/reviewer.md",
-        "src/canonical-skill-binding.ts",
-        "src/collector-config.ts",
-        "src/collector-evidence.ts",
-        "src/collector-github.ts",
-        "src/collector-ledger.ts",
-        "src/collector-receipt.ts",
-        "src/collector-role.ts",
-        "src/collector-tool-schemas.ts",
-        "src/compliance-transport.ts",
-        "src/judge-role.ts",
-        "src/package-contracts/collector-output.ts",
-        "src/package-contracts/judge-output.ts",
-        "src/package-contracts/reviewer-output.ts",
-        "src/package-contracts/terminating-tools.ts",
-        "src/package-contracts/worker-output.ts",
-        "src/recorder/admit.ts",
-        "src/recorder/cli.ts",
-        "src/recorder/config.ts",
-        "src/recorder/errors.ts",
-        "src/recorder/extract.ts",
-        "src/recorder/manifest.ts",
-        "src/recorder/paths.ts",
-        "src/recorder/rename-no-replace.ts",
-        "src/recorder/run.ts",
-        "src/recorder/scanner.ts",
-        "src/recorder/session.ts",
-        "src/recorder/spawn.ts",
-        "src/reviewer-agent.ts",
-        "src/reviewer-auditor.ts",
-        "src/reviewer-execution-ledger.ts",
-        "src/reviewer-role.ts",
-        "src/reviewer-scope-prompt.ts",
-        "src/reviewer-verification-policy.ts",
-        "src/role-runtime.ts",
-        "src/soul-auditor.ts",
-        "src/worker-role.ts",
-      ]);
-      assert.equal(paths.includes("src/reviewer-skill.ts"), false);
-      assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
-      const archiveText = (await exec("tar", ["-xOf", tarball], {
-        maxBuffer: 5 * 1024 * 1024,
-      })).stdout;
-      assert.doesNotMatch(
-        archiveText,
-        /Mysterious Name|Under 400 words|Feature Envy/,
+    const installedDispatch = await import(new URL(`file://${resolve(fixture, "node_modules/@ak/pi-workflow-roles/src/reviewer-dispatch.ts")}`).href);
+    const installedContracts = await import(new URL(`file://${resolve(fixture, "node_modules/@ak/pi-workflow-roles/src/package-contracts/reviewer-output.ts")}`).href);
+    assert.equal("validateAcceptedReviewerDetails" in installedContracts, false);
+    assert.equal(typeof installedContracts.validateReviewerIntent, "function");
+    assert.equal(typeof installedContracts.validateRuntimeReviewerReceipt, "function");
+    assert.equal(typeof installedContracts.projectReviewerIntentToReceipt, "function");
+    const missingRecipeText = JSON.stringify({
+      version: 1,
+      taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
+      tools: ["read", "bash"],
+      bashCommands: [diffCommand],
+      prerequisiteOperations: prerequisites.filter((operation) => operation !== "runner.git.verify-snapshot"),
+    });
+    let missingRecipeRuns = 0;
+    const missingRecipeDispatcher = installedDispatch.createReviewerDispatcher({
+      task: taskBytes,
+      canonicalSkill: skillRaw,
+      capabilities: installedDispatch.parseReviewerCapabilities(Buffer.from(missingRecipeText), taskBytes),
+      reader: {
+        pin: { repositoryRoot: root, objectFormat: "sha1" as const, targetHead: target, refs: {} },
+        async snapshot() { return this.pin; },
+        async resolve() { return base; },
+        async range() { return { base, target, diffCommand, diffSha256: "1".repeat(64), commits: [target] }; },
+        async material(repositoryPath: string) { return readFile(resolve(fixture, repositoryPath)); },
+      },
+      hostTools: ["read", "bash"],
+      async run() { missingRecipeRuns += 1; throw new Error("must not run"); },
+    });
+
+    const proposal =  { version: 1, base: { revision: "review-base" }, materials: [{ id: "spec", repositoryPath: "SPEC.md" }], spec: { state: "established" }, required: { standards: standardsRequest, spec: specRequest } };
+    const bad = { ...proposal, required: { standards: standardsRequest, spec: { ...specRequest, bashCommands: ["git status"] } } };
+    const missingRecipe = await missingRecipeDispatcher.propose(proposal);
+    assert.equal(missingRecipe.status, "rejected");
+    if (missingRecipe.status === "rejected") assert.deepEqual(missingRecipe.violations, ["prerequisite-missing"]);
+    assert.equal(missingRecipeRuns, 0);
+    const candidate = { status: "completed" };
+    const corrected = { status: "completed" };
+    const faux = fauxProvider({ api: "package-reviewer", provider: "package-reviewer", tokenSize: { min: 1000, max: 1000 } });
+    let parent: Context | undefined;
+    const children: Context[] = []; const audits: Context[] = [];
+    faux.setResponses([
+      (ctx) => { parent = ctx; return fauxAssistantMessage(fauxToolCall(Agent, bad, { id: "rejected" }), { stopReason: "toolUse" }); },
+      fauxAssistantMessage(fauxToolCall(Agent, proposal, { id: "accepted" }), { stopReason: "toolUse" }),
+      (ctx) => { children.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
+      (ctx) => { children.push(ctx); return fauxAssistantMessage("Spec report: requirement satisfied."); },
+      fauxAssistantMessage(fauxToolCall(Output, candidate, { id: "candidate" }), { stopReason: "toolUse" }),
+      (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "revise", violations: ["add axis counts"] }), { stopReason: "toolUse" }); },
+      fauxAssistantMessage(fauxToolCall(Output, corrected, { id: "corrected" }), { stopReason: "toolUse" }),
+      (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }); },
+    ]);
+
+    const originalCwd = process.cwd();
+    process.chdir(nestedCwd);
+    try {
+    await withInProcessPi({ cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
+      assert.deepEqual(loader.getExtensions().errors, []);
+      const before = await readFile(resolve(fixture, "consumer.txt"), "utf8");
+      await session.prompt("Review this fixed point.");
+      assert.ok(parent);
+      assert.match(userText(parent), new RegExp(`<skill name="code-review" location="${skillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}">`));
+      assert.ok(userText(parent).includes(stripFrontmatter(skillRaw).trim()));
+      assert.ok(children.length >= 1);
+      const results = sessionManager.getEntries().filter((e) => e.type === "message" && e.message.role === "toolResult");
+      const rejected = results.find((e: any) => e.message.toolCallId === "rejected") as any;
+      const accepted = results.find((e: any) => e.message.toolCallId === "accepted") as any;
+      assert.equal(rejected.message.details.status, "rejected");
+      assert.deepEqual(accepted.message.details, { status: "accepted", identity: accepted.message.details.identity });
+      assert.deepEqual(accepted.message.content, [{ type: "text", text: "Reviewer dispatch accepted" }]);
+      assert.equal(children.some((child) => userText(child).includes(capabilityText)), false);
+      assert.equal(audits.length, 2);
+      assert.match(userText(audits[0]!), /structured_execution_record/);
+      assert.ok(userText(audits[0]!).includes(createHash("sha256").update(capabilityText).digest("hex")));
+      const firstOutput = results.find((e: any) => e.message.toolCallId === "candidate") as any;
+      const finalOutput = results.find((e: any) => e.message.toolCallId === "corrected") as any;
+      assert.equal(firstOutput.message.isError, true);
+      assert.equal(finalOutput.message.isError, false);
+      assert.equal(finalOutput.message.details.version, 2);
+      assert.equal(finalOutput.message.details.status, "completed");
+      assert.equal(finalOutput.message.details.acceptedBatch.identity, accepted.message.details.identity);
+      assert.deepEqual(finalOutput.message.details.acceptedBatch.legs.map((leg: any) => leg.axis), ["standards", "spec"]);
+      assert.match(finalOutput.message.details.acceptedBatch.legs[0].prompt.text, /canonical-skill\.md.*sha256/);
+      assert.deepEqual(
+        [finalOutput.message.details.reports.standards.text, finalOutput.message.details.reports.spec.text].sort(),
+        ["Standards report: no findings.", "Spec report: requirement satisfied."].sort(),
       );
+      assert.equal(await readFile(resolve(fixture, "consumer.txt"), "utf8"), before);
+      assert.equal(faux.getPendingResponseCount(), 0);
+    });
 
-      await writeFile(
-        resolve(fixture, "package.json"),
-        JSON.stringify({
-          private: true,
-          dependencies: {
-            "@ak/pi-workflow-roles": `file:${tarball}`,
-            "@earendil-works/pi-ai": `file:${
-              resolve(packageRoot, "node_modules/@earendil-works/pi-ai")
-            }`,
-            "@earendil-works/pi-coding-agent": `file:${
-              resolve(
-                packageRoot,
-                "node_modules/@earendil-works/pi-coding-agent",
-              )
-            }`,
-            typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
-          },
-        }),
-      );
-      await exec("npm", [
-        "install",
-        "--ignore-scripts",
-        "--no-audit",
-        "--no-fund",
-      ], {
-        cwd: fixture,
-        maxBuffer: 5 * 1024 * 1024,
-      });
-      const installedRoot = resolve(
-        fixture,
-        "node_modules/@ak/pi-workflow-roles",
-      );
-      const installedEntrypoint = resolve(
-        installedRoot,
-        "extensions/role-runtime.ts",
-      );
-      await writeFile(
-        resolve(fixture, "review-task.md"),
-        [
-          "# Fixed review task",
-          "",
-          "Review the consumer repository's current HEAD against HEAD~1.",
-          "There is no separate spec.",
-        ].join("\n"),
-      );
+    const noSpecFaux = fauxProvider({ api: "package-reviewer-no-spec", provider: "package-reviewer-no-spec", tokenSize: { min: 1000, max: 1000 } });
+    const noSpecProposal = { version: 1, base: { revision: "review-base" }, materials: [{ id: "no-spec", repositoryPath: "SPEC.md" }], spec: { state: "not-established" }, required: { standards: standardsRequest } };
+    const noSpecChildren: Context[] = []; const noSpecAudits: Context[] = [];
+    noSpecFaux.setResponses([
+      fauxAssistantMessage(fauxToolCall(Agent, noSpecProposal, { id: "no-spec-accepted" }), { stopReason: "toolUse" }),
+      (ctx) => { noSpecChildren.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
+      fauxAssistantMessage(fauxToolCall(Output, { status: "completed" }, { id: "no-spec-output" }), { stopReason: "toolUse" }),
+      (ctx) => { noSpecAudits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }); },
+    ]);
+    await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-no-spec"), faux: noSpecFaux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
+      assert.deepEqual(loader.getExtensions().errors, []);
+      await session.prompt("Review with no established Spec.");
+      const results = sessionManager.getEntries().filter((e) => e.type === "message" && e.message.role === "toolResult") as any[];
+      const accepted = results.find((e: any) => e.message.toolCallId === "no-spec-accepted");
+      const output = results.find((e: any) => e.message.toolCallId === "no-spec-output");
+      assert.deepEqual(accepted.message.details, { status: "accepted", identity: accepted.message.details.identity });
+      assert.deepEqual(output.message.details.acceptedBatch.legs.map((leg: any) => leg.axis), ["standards"]);
+      assert.equal(output.message.details.identities.target.objectFormat, "sha1");
+      assert.equal(noSpecChildren.length, 1); assert.equal(noSpecAudits.length, 1);
+      assert.doesNotMatch(userText(noSpecChildren[0]!), /Quote the spec line for each finding/);
+      assert.doesNotMatch(userText(noSpecAudits[0]!), /\"axis\":\"spec\"/);
+      assert.equal(output.message.isError, false); assert.equal(output.message.details.status, "completed");
+      assert.equal(noSpecFaux.getPendingResponseCount(), 0);
+    });
 
-      const faux = fauxProvider({
-        api: "ak-reviewer-package",
-        provider: "ak-reviewer-package",
-        tokenSize: { min: 1000, max: 1000 },
-      });
-      let parentContext: Context | undefined;
-      const childContexts: Context[] = [];
-      const auditContexts: Context[] = [];
-      let activeChildren = 0;
-      let peakChildren = 0;
-      let axisStarts = 0;
-      let releaseAxes!: () => void;
-      const axisBarrier = new Promise<void>((resolveBarrier) => {
-        releaseAxes = resolveBarrier;
-      });
-      const axisResponse = (report: string) => async (context: Context) => {
-        childContexts.push(context);
-        activeChildren += 1;
-        peakChildren = Math.max(peakChildren, activeChildren);
-        axisStarts += 1;
-        if (axisStarts === 2) releaseAxes();
-        let timeout: NodeJS.Timeout | undefined;
-        try {
-          await Promise.race([
-            axisBarrier,
-            new Promise<never>((_resolve, reject) => {
-              timeout = setTimeout(() => {
-                releaseAxes();
-                reject(
-                  new Error(
-                    "REVIEWER_PARALLELISM_TIMEOUT: sibling Agent did not overlap",
-                  ),
-                );
-              }, 2_000);
-            }),
-          ]);
-          return fauxAssistantMessage(report);
-        } finally {
-          if (timeout !== undefined) clearTimeout(timeout);
-          activeChildren -= 1;
-        }
-      };
-      const candidate = {
-        status: "completed" as const,
-        report: "## Standards\nAxis report.\n\n## Spec\nNo spec available.",
-      };
-      const corrected = {
-        status: "completed" as const,
-        report:
-          "## Standards\nStandards child report preserved.\n\n## Spec\nNo spec available.\n\nStandards: 0; Spec: skipped.",
-      };
-      let auditCalls = 0;
-      let sessionManager: SessionManager;
-      const assertBatchEvidence = (context: Context) => {
-        const record = structuredRecord(context);
-        const entries = sessionManager.getEntries();
-        const assistantEntryFor = (toolCallId: string) =>
-          entries.find((entry) =>
-            entry.type === "message" &&
-            entry.message.role === "assistant" &&
-            entry.message.content.some((part) =>
-              part.type === "toolCall" && part.id === toolCallId
-            )
-          );
-        const axisEntry = assistantEntryFor("standards-leg");
-        const specEntry = assistantEntryFor("spec-leg");
-        const laterEntry = assistantEntryFor("followup-leg");
-        assert.ok(axisEntry && specEntry && laterEntry);
-        assert.equal(axisEntry.id, specEntry.id);
-        assert.notEqual(axisEntry.id, laterEntry.id);
-        assert.deepEqual(record.agentInvocationBatches, [
-          {
-            assistantSessionEntryId: axisEntry.id,
-            executionMode: "parallel",
-            agentToolCallIds: ["standards-leg", "spec-leg"],
-          },
-          {
-            assistantSessionEntryId: laterEntry.id,
-            executionMode: "parallel",
-            agentToolCallIds: ["followup-leg"],
-          },
-        ]);
-        assert.deepEqual(
-          record.agentInvocationBatches.map((batch: any) =>
-            batch.assistantSessionEntryId
-          ),
-          [axisEntry.id, laterEntry.id],
-        );
-        for (const attempt of record.agentAttempts) {
-          assert.equal(attempt.targetSnapshot.repositoryRoot, consumerRoot);
-          assert.equal(attempt.targetSnapshot.targetHead, reviewedHead);
-          assert.notEqual(attempt.targetSnapshot.repositoryRoot, packageRoot);
-        }
-      };
-
-      faux.setResponses([
-        (context) => {
-          parentContext = context;
-          return fauxAssistantMessage([
-            fauxToolCall(AGENT_TOOL_NAME, {
-              subagent_type: "general-purpose",
-              description: "Standards axis",
-              prompt: "Review Standards for git diff HEAD~1...HEAD.",
-            }, { id: "standards-leg" }),
-            fauxToolCall(AGENT_TOOL_NAME, {
-              subagent_type: "general-purpose",
-              description: "Spec axis",
-              prompt: "Report no spec available for git diff HEAD~1...HEAD.",
-            }, { id: "spec-leg" }),
-          ], { stopReason: "toolUse" });
-        },
-        axisResponse("Standards child report."),
-        axisResponse("No spec available."),
-        fauxAssistantMessage(
-          fauxToolCall(AGENT_TOOL_NAME, {
-            subagent_type: "general-purpose",
-            description: "Traceability follow-up",
-            prompt: "Confirm the pinned consumer HEAD.",
-          }, { id: "followup-leg" }),
-          { stopReason: "toolUse" },
-        ),
-        (context) => {
-          childContexts.push(context);
-          return fauxAssistantMessage("Pinned consumer HEAD confirmed.");
-        },
-        fauxAssistantMessage(
-          fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, candidate, {
-            id: "candidate",
-          }),
-          { stopReason: "toolUse" },
-        ),
-        (context) => {
-          auditContexts.push(context);
-          assertBatchEvidence(context);
-          auditCalls += 1;
-          return fauxAssistantMessage(
-            fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, {
-              status: "revise",
-              violations: ["Add the required per-axis summary"],
-            }),
-            { stopReason: "toolUse" },
-          );
-        },
-        fauxAssistantMessage(
-          fauxToolCall(REVIEWER_OUTPUT_TOOL_NAME, corrected, {
-            id: "corrected",
-          }),
-          { stopReason: "toolUse" },
-        ),
-        (context) => {
-          auditContexts.push(context);
-          assertBatchEvidence(context);
-          auditCalls += 1;
-          return fauxAssistantMessage(
-            fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, {
-              status: "pass",
-              violations: [],
-            }),
-            { stopReason: "toolUse" },
-          );
-        },
-      ]);
-      await withInProcessPi({
-        cwd: fixture,
-        agentDir,
-        faux,
-        modelsPath: null,
-        additionalExtensionPaths: [installedEntrypoint],
-        additionalSkillPaths: [canonicalSkillPath],
-        noExtensions: true,
-        systemPrompt: "PACKAGED REVIEWER BASE",
-        mode: "print",
-        flags: {
-          "ak-role": "reviewer",
-          "ak-review-task": resolve(fixture, "review-task.md"),
-        },
-        reviewerShutdown: true,
-      }, async ({ loader, session, sessionManager: activeSessionManager }) => {
-        assert.deepEqual(loader.getExtensions().errors, []);
-        sessionManager = activeSessionManager;
-        assert.deepEqual(
-          session.agent.state.tools.map((tool) => tool.name),
-          [
-            "read",
-            "grep",
-            "find",
-            "ls",
-            "bash",
-            AGENT_TOOL_NAME,
-            REVIEWER_OUTPUT_TOOL_NAME,
-          ],
-        );
-        const before = {
-          bytes: await readFile(resolve(fixture, "consumer.txt"), "utf8"),
-          head: await git(fixture, "rev-parse", "HEAD"),
-          refs: await git(fixture, "show-ref"),
-        };
-
-        await session.prompt("Review this fixed point.");
-
-        assert.ok(parentContext);
-        const expanded = textOfUser(parentContext);
-        assert.ok(
-          expanded.includes(
-            `<skill name="code-review" location="${canonicalSkillPath}">`,
-          ),
-        );
-        assert.ok(expanded.includes(stripFrontmatter(canonicalRaw).trim()));
-        assert.equal(childContexts.length, 3);
-        assert.equal(peakChildren, 2);
-        assert.equal(axisStarts, 2);
-        assert.equal(activeChildren, 0);
-        for (const child of childContexts) {
-          assert.deepEqual(child.tools?.map((tool) => tool.name), [
-            "read",
-            "grep",
-            "find",
-            "ls",
-            "bash",
-            "write",
-            "edit",
-          ]);
-        }
-        const agentResults = sessionManager.getEntries().filter((entry) =>
-          entry.type === "message" &&
-          entry.message.role === "toolResult" &&
-          entry.message.toolName === AGENT_TOOL_NAME
-        );
-        assert.equal(agentResults.length, 3);
-        for (const entry of agentResults) {
-          assert.ok(
-            entry.type === "message" && entry.message.role === "toolResult",
-          );
-          assert.ok((entry.message.usage?.totalTokens ?? 0) > 0);
-          assert.equal(
-            (entry.message.details as any).targetSnapshot.repositoryRoot,
-            consumerRoot,
-          );
-          assert.equal(
-            (entry.message.details as any).targetSnapshot.targetHead,
-            reviewedHead,
-          );
-        }
-        assert.equal(auditCalls, 2);
-        assert.equal(auditContexts.length, 2);
-        assert.deepEqual(auditContexts[0]?.tools?.map((tool) => tool.name), [
-          REVIEWER_AUDIT_TOOL_NAME,
-        ]);
-        assert.match(
-          textOfUser(auditContexts[0]!),
-          /canonical_code_review_skill/,
-        );
-        const first = sessionManager.getEntries().find((entry) =>
-          entry.type === "message" &&
-          entry.message.role === "toolResult" &&
-          entry.message.toolCallId === "candidate"
-        );
-        assert.ok(
-          first?.type === "message" && first.message.role === "toolResult",
-        );
-        assert.equal(first.message.isError, true);
-        const accepted = sessionManager.getEntries().find((entry) =>
-          entry.type === "message" &&
-          entry.message.role === "toolResult" &&
-          entry.message.toolCallId === "corrected"
-        );
-        assert.ok(
-          accepted?.type === "message" &&
-            accepted.message.role === "toolResult",
-        );
-        assert.equal(accepted.message.isError, false);
-        assert.deepEqual(accepted.message.details, corrected);
-        assert.deepEqual({
-          bytes: await readFile(resolve(fixture, "consumer.txt"), "utf8"),
-          head: await git(fixture, "rev-parse", "HEAD"),
-          refs: await git(fixture, "show-ref"),
-        }, before);
-        assert.equal(reviewedHead, await git(fixture, "rev-parse", "HEAD"));
-        assert.equal(faux.getPendingResponseCount(), 0);
-      });
-    },
-  );
+    const refusedFaux = fauxProvider({ api: "package-reviewer-refused", provider: "package-reviewer-refused", tokenSize: { min: 1000, max: 1000 } });
+    refusedFaux.setResponses([
+      fauxAssistantMessage(fauxToolCall(Output, { status: "refused", diagnostic: "No review can be started." }, { id: "refused-output" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }),
+    ]);
+    await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-refused"), faux: refusedFaux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ session, sessionManager }) => {
+      await session.prompt("Refuse before dispatch.");
+      const output = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "refused-output") as any;
+      assert.equal(output.message.isError, false);
+      assert.equal(output.message.details.version, 2);
+      assert.equal(output.message.details.status, "refused");
+      assert.equal(output.message.details.diagnostic, "No review can be started.");
+      assert.deepEqual(output.message.details.reports, {});
+      assert.deepEqual(output.message.details.outcomes, {});
+      installedContracts.projectReviewerIntentToReceipt({ status: "refused", diagnostic: "No review can be started." }, output.message.details);
+    });
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
 });

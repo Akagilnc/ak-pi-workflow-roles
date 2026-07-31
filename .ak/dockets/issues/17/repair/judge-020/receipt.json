@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_sT03UksT3mDudcO7ckYkyBTP|fc_0a383b5e3c689430016a6bd73512608191864498861c49904e",
+  "details": {
+    "status": "completed",
+    "report": "R1=Generic V1 shapes remain representable; concrete legs and ceiling now require the exact canonical diff command with red/green regressions and README correction; R2=abbreviations resolve only against activation-captured target-reachable commits, with unreachable and reachable-collision regressions; R3=focused 47 tests, full 368 tests, typecheck, package lifecycle/pack, and diff check passed; committed forward as e8e82f1.",
+    "commitSha": "e8e82f1c2a0f141aad23325a77df5d2a6a38880d"
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_1nG5je3TludkWfZTMdjvS22L|fc_0b99aead9e7228e9016a6bf12c77648191a852a6a0022b8354",
+  "details": {
+    "status": "completed",
+    "report": "R1: Reviewer-dispatch now synchronously projects immutable rejected/accepted/closed decisions before lifecycle mutation or child start, preserving monotonic concurrent ordering.\nR2: Reviewer role supplies the ledger-backed decision sink, removed post-await decision appends, and latches sink failures as fatal infrastructure before acceptance/start visibility.\nR3: Added deterministic barrier coverage for fast rejection, slow invalid completion, simultaneous valid proposals, post-acceptance closure, exact once-only ordered identities/dispositions, one accepted batch, and fatal sink failure.\nR4: Exported projectReviewerDispatchOutcome from the execution ledger and replaced role-side outcome traversal while preserving exact identity, target, axis, and settlement checks.\nR5: Passed focused concurrency/fatal tests, package lifecycle within the 378-test full suite, full suite, typecheck, standalone npm pack, and git diff check; committed forward as 547580d.",
+    "commitSha": "547580d"
+  },
+  "artifactKind": "acceptedReceipt"
+}

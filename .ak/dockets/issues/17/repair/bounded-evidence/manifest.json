@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/repair/bounded-evidence"
+  },
+  "invocation": {
+    "id": "07c18e4e-52d4-406c-9d97-d84d72e75886"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/17/bounded-evidence-repair.md",
+      "-p",
+      "Apply the exact bounded-evidence repair test-first, run package gates, commit, and submit through ak_fixer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "4adc8af9e8021919a16feabbf640ede20880e286",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review-findings",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "4adc8af9e8021919a16feabbf640ede20880e286",
+        "path": ".ak/dockets/issues/17/review/review-017/receipt.json",
+        "blobOid": "3766b03384d9f2c4ac7229b49c188e14d139cfe2",
+        "sha256": "9f986ec1edb926a854c6361bc67f7b9288bcf8a88f396e743946b783044e9119",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/repair-packet",
+        "sha256": "55e55c089433be0ebb8e045bd148378b13e11f4543b1c27a537ad747f8715beb",
+        "byteLength": 2031
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "ba1821176d603483812bc1f986aea2ad0530afe8fe7603d9c1fd7acade6e973e",
+        "byteLength": 819
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_DfUyxMm8gRnUQZMq5tqEtRaj|fc_0ea3b7e6bdba950c016a6bc67c45ac819187a38db003fa0f16",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 7
+      },
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 2746
+      }
+    ]
+  }
+}

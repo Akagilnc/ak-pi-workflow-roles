@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_eDzntch8eOMT0GYrGF2lCtv3|fc_072082c06167dbed016a6bfc00f22881918e79f432e5a1fcbb",
+  "details": {
+    "status": "completed",
+    "report": "R1=Canonical Skill SHA-256 bound in both prompt provenance blocks with unextracted-byte mutation coverage; R2=each axis independently reconstructs and validates two complete frozen-input recipe passes; R3=stateful material-render seam rejects preflight with zero child effects while deterministic replay remains byte-identical; R4=README defers to exported runtime/TypeScript authorities and repeated expansion setup is extracted; R5=focused Reviewer tests, installed package lifecycle, full suite (379 passed), typecheck, prepack/npm pack dry-run, and diff check passed; committed forward as c899ce7.",
+    "commitSha": "c899ce7"
+  },
+  "artifactKind": "acceptedReceipt"
+}

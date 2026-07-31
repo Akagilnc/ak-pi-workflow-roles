@@ -1,0 +1,19 @@
+# Issue #17 final Plan readiness judgment
+
+Judge combined construction Plan:
+
+- replacement Plan `.ak/dockets/issues/17/plan/coder-002/receipt.json`
+- binding addendum `.ak/dockets/issues/17/plan/coder-003/receipt.json`
+
+Against Authority `.ak/dockets/issues/17/authority/judge-001/receipt.json` and prior blockers `.ak/dockets/issues/17/plan/judge-002/receipt.json`.
+
+Verify:
+
+- mandatory task-digest-bound `--ak-review-capabilities` has no widening fallback;
+- exact seven child tool names, byte-exact complete bash strings, and closed prerequisite-operation enum are fully decided and Reviewer-local;
+- immutable activation pin and dispatch-owned preflight Git reads occur before acceptance without mirror/workspace/provider/child/batch effects;
+- acceptance freezes evidence and is irreversible;
+- runner-only post-acceptance materialization/execution has no resolution/compiler/grant/lifecycle authority;
+- all settled no-spec, baseline extraction, sole-owner, evidence, audit, migration, and five-fact obligations remain construction-ready.
+
+Return `converged` only if no interface/default/owner chronology choice remains. Return only through `ak_judge_output`; do not edit or commit.

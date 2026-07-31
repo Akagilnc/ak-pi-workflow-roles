@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
@@ -46,7 +48,8 @@ async function runCli(mode: "print" | "json") {
 }
 
 type ReviewerFailureStage =
-  | "child-preparation"
+  | "preflight-git"
+  | "preflight-skill"
   | "child-provider"
   | "child-session"
   | "child-malformed-output"
@@ -65,7 +68,31 @@ async function runReviewerCli(
         home,
         "code-review",
       );
-      const cwd = stage === "child-preparation" ? home : packageRoot;
+      await writeFile(
+        canonicalSkillPath,
+        stage === "preflight-skill"
+          ? "---\nname: code-review\ndescription: malformed\n---\n\n# Missing canonical sections\n"
+          : await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
+      );
+      const cwd = resolve(home, "review-target");
+      execFileSync("git", ["clone", "--quiet", "--no-hardlinks", packageRoot, cwd]);
+      const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
+      const taskBytes = await readFile(taskPath);
+      const capabilityPath = resolve(home, "reviewer-capabilities.json");
+      const base = execFileSync("git", ["rev-parse", "HEAD~1"], { cwd, encoding: "utf8" }).trim();
+      const target = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+      const diffCommand = `git diff ${base}...${target}`;
+      await writeFile(capabilityPath, JSON.stringify({
+        version: 1,
+        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
+        tools: ["read", "bash"],
+        bashCommands: [diffCommand],
+        prerequisiteOperations: [
+          "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
+          "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror",
+          "runner.git.materialize-workspace", "runner.git.verify-snapshot",
+        ],
+      }));
       const args = [
         "--no-extensions",
         "--no-skills",
@@ -82,7 +109,9 @@ async function runReviewerCli(
         "--ak-role",
         "reviewer",
         "--ak-review-task",
-        resolve(packageRoot, "test/fixtures/reviewer-task.md"),
+        taskPath,
+        "--ak-review-capabilities",
+        capabilityPath,
         "--provider",
         "ak-reviewer-failure",
         "--model",
@@ -221,7 +250,7 @@ test("unavailable canonical tdd is infrastructure failure in print and JSON", as
   }
 });
 
-test("every mandated Reviewer fatal stage aborts print and JSON at its intended seam", async () => {
+test("installed Reviewer fatal stages abort without a receipt", async () => {
   const rows: Array<{
     stage: ReviewerFailureStage;
     marker: RegExp;
@@ -229,29 +258,9 @@ test("every mandated Reviewer fatal stage aborts print and JSON at its intended 
     tool: "Agent" | "ak_reviewer_output";
   }> = [
     {
-      // Bare-mirror retention no longer rethrows preparation failures on session
-      // shutdown; the print/json abort seam is the mandated fatal surface.
-      stage: "child-preparation",
-      marker: /Request was aborted|"stopReason":"aborted"/,
+      stage: "preflight-git",
+      marker: /INJECTED_REVIEWER_GIT_IO_FAILURE|not a git repository/,
       calls: 1,
-      tool: "Agent",
-    },
-    {
-      stage: "child-provider",
-      marker: /Reviewer Agent provider not found/,
-      calls: 1,
-      tool: "Agent",
-    },
-    {
-      stage: "child-session",
-      marker: /INJECTED_REVIEWER_CHILD_SESSION_FAILURE/,
-      calls: 2,
-      tool: "Agent",
-    },
-    {
-      stage: "child-malformed-output",
-      marker: /Reviewer Agent returned a blank child report/,
-      calls: 2,
       tool: "Agent",
     },
     {
@@ -274,10 +283,10 @@ test("every mandated Reviewer fatal stage aborts print and JSON at its intended 
     },
   ];
   for (const row of rows) {
-    for (const mode of ["print", "json"] as const) {
+    for (const mode of ["json", "print"] as const) {
       const result = await runReviewerCli(mode, row.stage);
       const combined = `${result.stdout}\n${result.stderr}`;
-      assert.equal(result.code, 1, `${row.stage}/${mode} exits nonzero`);
+      assert.equal(result.code, 1, `${row.stage}/${mode} exits nonzero\n${combined}`);
       assert.match(
         combined,
         row.marker,

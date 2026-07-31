@@ -1,0 +1,15 @@
+# Issue #17 preflight classification and child scratch repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-018/receipt.json` and typed correctable-preflight law.
+
+R1 — Introduce a closed typed preflight error owner shared by pinned Git and dispatch. Unsafe/unknown/unreachable/non-commit base identities map to `base-invalid`; merge-base mismatch, ancestry/range inconsistency, or empty range map to `range-invalid`; missing/unreadable selected repository material maps to `material-invalid`. Genuine process spawn, Git executable, filesystem, or unexpected I/O failures map only to bounded `preflight-infrastructure`. Durable evidence retains only the code, never raw diagnostics.
+
+R2 — Move child config creation, resource-loader reload, and agent-session creation inside one cleanup boundary. The child config directory is credential-bearing ephemeral scratch and must be removed on every initialization, execution, cancellation, and disposal path, including reload/session-construction throws. The leg workspace remains retained on failure and is recorded exactly; do not confuse config scratch cleanup with workspace retention.
+
+R3 — Keep prompt identity as one domain value throughout accepted dispatch, runner, ledger, and auditor: `prompt: ReviewerPromptIdentity`, not split fields. Rename the string field from `bytes` to `text` (with `utf8Length` and `sha256` proving encoded identity), and pass exactly `prompt.text` at the child call seam. Raw selected task/material byte evidence remains separately preserved.
+
+R4 — Add red/green tests for every correctable base/range/material code, genuine Git/spawn infrastructure, no leaked diagnostics, loader reload/session-construction failure cleanup, cancellation cleanup, retained workspace evidence, and intact prompt identity/text delivery.
+
+R5 — Run package lifecycle, focused tests, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R5.

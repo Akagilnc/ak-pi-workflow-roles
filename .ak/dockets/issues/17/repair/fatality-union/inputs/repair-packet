@@ -1,0 +1,17 @@
+# Issue #17 fatality and prerequisite-union repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-016/receipt.json`, fatal audit/integrity law, and accepted Plan union semantics.
+
+R1 — Canonical Skill expansion mismatch/missing capture is fatal infrastructure at `before_agent_start`, through `hostActions.failInfrastructure(error, ctx)`, not an ordinary throw. It must abort the session and make both completed and refused receipts impossible. Preserve valid native expansion behavior.
+
+R2 — Validate package runner prerequisites as the union of the recipe-required operations and the accepted legs’ declared operations, bounded by the task capability ceiling. Do not require every leg to repeat every package setup operation. The child-visible tools/bash commands remain exactly each leg’s declaration with no union widening. Runner must consume the accepted union consistently.
+
+R3 — Classify every initial snapshot pin/HEAD/ref/object verification failure as `snapshot`, including failures before mirror creation. Preserve `not-created` before allocation and exact retained mirror disposition after allocation. No path may fall through to `unknown` merely because it occurred before the current try block.
+
+R4 — Export and use one `sameReviewerPinnedTarget` helper across dispatch, runner, and ledger. Rename `compile` to `preflightAndCompileDispatch`. Remove the no-op `infrastructureError` wrapper and call the typed classification owner directly.
+
+R5 — Add red/green tests for invalid Skill expansion followed by attempted refused output (must remain fatal/no receipt), distributed two-leg prerequisite union accepted, incomplete union rejected before child effects, exact per-leg grants unchanged, and pre/post-allocation snapshot classification/disposition.
+
+R6 — Run fatal subprocess tests, package lifecycle, focused tests, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R6.
