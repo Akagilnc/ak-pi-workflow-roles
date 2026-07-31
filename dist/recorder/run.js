@@ -1,10 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { admitDeclarations, storeGeneratedJson, } from "./admit.js";
-import { buildChildEnv, loadRecorderConfig, parseRecorderArgv, } from "./config.js";
-import { RECORDER_FAILURE_EXIT, RecorderError, serializePublicFailure, } from "./errors.js";
+import { buildChildEnv, parseRecorderConfigStructure, readRecorderConfig, scanRecorderConfigMetadata, validateRecorderConfigState, parseRecorderArgv, } from "./config.js";
+import { RECORDER_FAILURE_EXIT, RecorderError, internalRecorderError, safeDiagnostic, serializePublicFailure, } from "./errors.js";
 import { extractAcceptedReceipt } from "./extract.js";
 import { buildManifest, validatePublicManifest } from "./manifest.js";
 import { allocateIgnoredStageRoot, assertPathNotSymlinkEscape, assertSameFilesystem, assertScratchOutsideOrIgnored, resolveInsideRoot, } from "./paths.js";
@@ -80,22 +79,10 @@ function bestEffortRm(path) {
 function destinationPath(config) {
     return resolveInsideRoot(config.archive.repositoryRoot, `${config.archive.root}/${config.archive.docketId}`, "archive destination");
 }
-function captureGitState(repo) {
-    try {
-        const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
-            encoding: "utf8",
-        }).trim();
-        const status = execFileSync("git", ["-C", repo, "status", "--porcelain"], { encoding: "utf8" });
-        return `${head}\n${status}`;
-    }
-    catch {
-        return "";
-    }
-}
-function destinationOccupied(dest) {
+function probeDestination(dest) {
     try {
         lstatSync(dest);
-        return true;
+        return { kind: "occupied" };
     }
     catch (error) {
         const code = typeof error === "object" &&
@@ -105,9 +92,8 @@ function destinationOccupied(dest) {
             ? error.code
             : null;
         if (code === "ENOENT")
-            return false;
-        // Unreadable destination name is treated as occupied/unsafe.
-        return true;
+            return { kind: "absent" };
+        return { kind: "error", cause: error };
     }
 }
 /**
@@ -134,12 +120,18 @@ function promoteStageAtomically(stageRoot, dest, repositoryRoot) {
     catch (error) {
         if (error instanceof RecorderError)
             throw error;
-        // Occupied final name (file/dir/symlink/empty dir) — never mutate it.
-        if (isOccupiedRenameError(error) || destinationOccupied(dest)) {
-            throw new RecorderError("destination-exists", "archive destination already exists");
+        // Occupancy is proved only by the finite native no-replace collision predicate
+        // (or a successful occupancy observation). Always retain the rename cause.
+        if (isOccupiedRenameError(error)) {
+            throw new RecorderError("destination-exists", "archive destination already exists", { cause: error, diagnostic: safeDiagnostic("promotion", error) });
+        }
+        const probe = probeDestination(dest);
+        if (probe.kind === "occupied") {
+            throw new RecorderError("destination-exists", "archive destination already exists", { cause: error, diagnostic: safeDiagnostic("promotion", error) });
         }
         throw new RecorderError("promotion-failed", "atomic promotion failed", {
             cause: error,
+            diagnostic: safeDiagnostic("promotion", error),
         });
     }
 }
@@ -156,7 +148,17 @@ export async function runRecorder(options) {
     let scratchRoot = null;
     let stageRoot = null;
     let requiredCleanupDone = false;
+    let currentStage = "argv";
     const fail = (error) => {
+        // Cause observability is deliberately allow-listed: no message, stack, argv,
+        // config, or environment data crosses this boundary.
+        const publicError = error.diagnostic !== null || error.cause === undefined
+            ? error
+            : new RecorderError(error.code, error.message, {
+                cause: error.cause,
+                ...(error.location === null ? {} : { location: error.location }),
+                diagnostic: safeDiagnostic(currentStage, error.cause),
+            });
         // Best-effort cleanup only after the required raw-cleanup decision point.
         // Before that decision, still attempt best-effort so we leave no complete docket.
         if (!requiredCleanupDone) {
@@ -168,11 +170,10 @@ export async function runRecorder(options) {
         const diagnostic = child.diagnostic === null
             ? null
             : scanString(child.diagnostic, "child.diagnostic").value;
-        const publicChild = {
-            ...child,
-            diagnostic,
-        };
-        const line = serializePublicFailure(error, publicChild);
+        const publicChild = child.status === "not-spawned"
+            ? child
+            : { ...child, diagnostic };
+        const line = serializePublicFailure(publicError, publicChild);
         // Ensure the failure object itself is scanned (fixed literals + scanned diagnostic).
         const scannedLine = scanString(line.trim(), "failure").value;
         const out = `${scannedLine}\n`;
@@ -185,15 +186,30 @@ export async function runRecorder(options) {
     };
     try {
         const parsed = parseRecorderArgv(options.argv);
-        const config = loadRecorderConfig(parsed.configPath);
+        currentStage = "config-read";
+        const configText = readRecorderConfig(parsed.configPath);
+        currentStage = "config-structure";
+        const structuralConfig = parseRecorderConfigStructure(configText);
+        currentStage = "config-metadata-scan";
+        const scannedConfig = scanRecorderConfigMetadata(structuralConfig);
+        currentStage = "config-state";
+        const config = validateRecorderConfigState(scannedConfig);
+        currentStage = "destination";
         const dest = destinationPath(config);
         assertPathNotSymlinkEscape(dest, config.archive.repositoryRoot, "archive destination");
-        if (destinationOccupied(dest)) {
+        const destProbe = probeDestination(dest);
+        if (destProbe.kind === "occupied") {
             return fail(new RecorderError("destination-exists", "archive destination already exists"));
         }
-        void captureGitState(config.archive.repositoryRoot);
+        if (destProbe.kind === "error") {
+            return fail(new RecorderError("internal-error", undefined, {
+                cause: destProbe.cause,
+                diagnostic: safeDiagnostic("destination", destProbe.cause),
+            }));
+        }
         // Raw tee scratch stays outside the worktree (or ignored). Publication stage
         // lives under the archive's ignored `.ak/work` so promotion stays same-FS.
+        currentStage = "stage-allocation";
         const scratch = mkdtempSync(join(tmpdir(), "ak-docket-record-scratch-"));
         scratchRoot = scratch;
         assertScratchOutsideOrIgnored(scratch, config.archive.repositoryRoot);
@@ -204,9 +220,7 @@ export async function runRecorder(options) {
         catch (error) {
             if (error instanceof RecorderError)
                 return fail(error);
-            return fail(new RecorderError("invalid-path", "failed to allocate publication stage", {
-                cause: error,
-            }));
+            return fail(internalRecorderError(currentStage, error));
         }
         stageRoot = stage;
         const destParent = dirname(dest);
@@ -216,6 +230,7 @@ export async function runRecorder(options) {
         const stdoutPath = join(scratch, "stdout.bin");
         const stderrPath = join(scratch, "stderr.bin");
         // Declaration admission is fail-closed before any child spawn.
+        currentStage = "admission";
         let admitted;
         try {
             admitted = admitDeclarations(config, stage);
@@ -224,10 +239,9 @@ export async function runRecorder(options) {
             if (error instanceof RecorderError) {
                 return fail(error);
             }
-            return fail(new RecorderError("admission-failed", "admission failed", {
-                cause: error,
-            }));
+            return fail(internalRecorderError(currentStage, error));
         }
+        currentStage = "spawn";
         const childEnv = buildChildEnv(env, config.execution.environment);
         let spawnResult;
         try {
@@ -245,10 +259,19 @@ export async function runRecorder(options) {
         catch (error) {
             if (error instanceof RecorderError)
                 return fail(error);
-            return fail(new RecorderError("spawn-failed", "failed to spawn child process", {
-                cause: error,
-            }));
+            return fail(internalRecorderError(currentStage, error));
         }
+        // Child settlement and tee completion are independent facts. Install exact
+        // child truth before allowing a sink failure to become Recorder failure.
+        const settlement = await spawnResult.settlement;
+        child = childOutcomeFromSpawn(settlement, null);
+        try {
+            await spawnResult.teeCompletion;
+        }
+        catch (error) {
+            return fail(internalRecorderError(currentStage, error));
+        }
+        currentStage = "extraction";
         const stdoutText = readFileSync(stdoutPath);
         const stderrText = readFileSync(stderrPath);
         // Child tee is byte-exact and caller-owned; scanning of tee content is for
@@ -257,7 +280,8 @@ export async function runRecorder(options) {
         const stderrScan = scanString(stderrText.toString("utf8"), "child.stderr");
         // Public failure path may expose one bounded, already-scanned diagnostic
         // derived from the same captured bytes — never from live stream mutation.
-        child = childOutcomeFromSpawn(spawnResult, deriveChildDiagnostic(stdoutText, stderrText));
+        child = { ...child, diagnostic: deriveChildDiagnostic(stdoutText, stderrText) };
+        currentStage = "extraction";
         let extraction;
         try {
             extraction = extractAcceptedReceipt([
@@ -268,9 +292,7 @@ export async function runRecorder(options) {
         catch (error) {
             if (error instanceof RecorderError)
                 return fail(error);
-            return fail(new RecorderError("extraction-failed", "receipt extraction failed", {
-                cause: error,
-            }));
+            return fail(internalRecorderError(currentStage, error));
         }
         const artifacts = [...admitted.artifacts];
         const reports = [
@@ -279,6 +301,7 @@ export async function runRecorder(options) {
             stdoutScan.report,
             stderrScan.report,
         ];
+        currentStage = "generated-artifacts";
         if (extraction.receipt !== null) {
             const stored = storeGeneratedJson(stage, "receipt.json", {
                 toolName: extraction.receipt.toolName,
@@ -309,6 +332,7 @@ export async function runRecorder(options) {
             reports.push(stored.report);
         }
         const combined = combineReports(...reports);
+        currentStage = "manifest";
         let manifestBuild;
         try {
             manifestBuild = buildManifest({
@@ -323,9 +347,7 @@ export async function runRecorder(options) {
         catch (error) {
             if (error instanceof RecorderError)
                 return fail(error);
-            return fail(new RecorderError("admission-failed", "manifest build failed", {
-                cause: error,
-            }));
+            return fail(internalRecorderError(currentStage, error));
         }
         // Persist the already-closed final scan result. Do not recombine or rescan
         // in a way that can diverge manifest hits from redaction-report hits.
@@ -337,23 +359,22 @@ export async function runRecorder(options) {
         catch (error) {
             if (error instanceof RecorderError)
                 return fail(error);
-            return fail(new RecorderError("admission-failed", "manifest schema validation failed", {
-                cause: error,
-            }));
+            return fail(internalRecorderError(currentStage, error));
         }
         const manifestStored = storeGeneratedJson(stage, "manifest.json", manifestBuild.manifest, "manifest");
         // Writing must not discover additional redactions; the pre-persist closure
         // is the sole hit source for both manifest and optional report.
         if (manifestStored.report.redacted) {
-            return fail(new RecorderError("admission-failed", "manifest write-time scan diverged from final closure"));
+            return fail(internalRecorderError(currentStage, new Error("manifest closure divergence")));
         }
         if (finalHits.length > 0) {
             const reportStored = storeGeneratedJson(stage, "redaction-report.json", { hits: finalHits }, "redaction-report");
             if (reportStored.report.redacted) {
-                return fail(new RecorderError("admission-failed", "redaction report write-time scan diverged from final closure"));
+                return fail(internalRecorderError(currentStage, new Error("redaction report closure divergence")));
             }
         }
         // Required raw scratch cleanup BEFORE promotion.
+        currentStage = "cleanup";
         try {
             requiredRm(scratch);
             scratchRoot = null;
@@ -362,11 +383,10 @@ export async function runRecorder(options) {
         catch (error) {
             if (error instanceof RecorderError)
                 return fail(error);
-            return fail(new RecorderError("cleanup-failed", "raw scratch cleanup failed", {
-                cause: error,
-            }));
+            return fail(internalRecorderError(currentStage, error));
         }
         // One-tree atomic no-replace publication (stage ownership transfers on success).
+        currentStage = "promotion";
         try {
             promoteStageAtomically(stage, dest, config.archive.repositoryRoot);
             stageRoot = null;
@@ -374,9 +394,7 @@ export async function runRecorder(options) {
         catch (error) {
             if (error instanceof RecorderError)
                 return fail(error);
-            return fail(new RecorderError("promotion-failed", "atomic promotion failed", {
-                cause: error,
-            }));
+            return fail(internalRecorderError(currentStage, error));
         }
         // Success: preserve exact child exit/signal. No Recorder diagnostic.
         if (child.status === "signaled" && child.signal) {
@@ -395,7 +413,7 @@ export async function runRecorder(options) {
     catch (error) {
         if (error instanceof RecorderError)
             return fail(error);
-        return fail(new RecorderError("invalid-config", "recorder failed", { cause: error }));
+        return fail(internalRecorderError(currentStage, error));
     }
 }
 function reRaiseSignal(signal) {

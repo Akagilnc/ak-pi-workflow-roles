@@ -84,7 +84,6 @@ export type RoleRuntimeDependencies = {
     input: { description: string; prompt: string },
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ReviewerAgentResult>;
-  shutdownReviewerAgent?(): Promise<void>;
   transcriptFromContext(ctx: ExtensionContext): string;
   auditSoulCompliance(
     input: SoulAuditInput,
@@ -195,9 +194,6 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.runReviewerAgent(input, options);
         },
-        ...(dependencies.shutdownReviewerAgent === undefined
-          ? {}
-          : { shutdownAgent: dependencies.shutdownReviewerAgent }),
         async auditCompliance(input, options) {
           if (dependencies.auditReviewerCompliance === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");

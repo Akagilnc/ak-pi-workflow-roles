@@ -77,7 +77,10 @@ function assertRejects(label: string, value: unknown): void {
   assert.throws(
     () => validatePublicManifest(value),
     (error: unknown) =>
-      error instanceof RecorderError && error.code === "admission-failed",
+      error instanceof RecorderError &&
+      error.code === "internal-error" &&
+      error.diagnostic?.stage === "manifest" &&
+      error.diagnostic.category === "error",
     label,
   );
 }

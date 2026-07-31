@@ -1,0 +1,11 @@
+# Owner-authorized Reviewer snapshot retention repair
+
+Owner decision: automatic deletion is not required. Prefer retained scratch over deleting a snapshot while Reviewer infrastructure may still use it. Manual cleanup after workflow completion is acceptable.
+
+R1 — Remove automatic `createReviewerAgentRunner().shutdown()` snapshot deletion from the Reviewer runtime path. Remove the shutdown dependency/wiring/calls or make the runner have no automatic deletion capability; do not replace it with timers, reference counting, process hooks, background cleanup, merge detection, or another automatic cleanup mechanism.
+
+R2 — Preserve successful Reviewer behavior, exactly one sibling-parallel Standards/Spec batch, failed-leg workspace retention, and all existing evidence/lifecycle contracts except automatic snapshot cleanup. Update tests so they assert the owner decision rather than expecting automatic mirror deletion. Temporary Reviewer snapshot/leg/child directories may remain for manual cleanup.
+
+R3 — Run focused Reviewer tests, full tests, typecheck, build/package checks, pack dry-run, and diff check. Commit forward and report current-head evidence only. Do not modify Recorder issue #23 behavior, infer the historical Recorder root cause, or add issue #13 behavior.
+
+Repair the lifecycle policy as one class, not only the observed ENOENT line. Return exactly one nonblank disposition for R1–R3.

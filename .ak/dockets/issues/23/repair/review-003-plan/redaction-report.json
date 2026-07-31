@@ -1,0 +1,24 @@
+{
+  "hits": [
+    {
+      "ruleId": "authorization-header",
+      "location": "externalInput.repair-packet",
+      "count": 1
+    },
+    {
+      "ruleId": "authorization-header",
+      "location": "child.stdout",
+      "count": 10
+    },
+    {
+      "ruleId": "provider-package-token",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "session-credential",
+      "location": "child.stdout",
+      "count": 7
+    }
+  ]
+}

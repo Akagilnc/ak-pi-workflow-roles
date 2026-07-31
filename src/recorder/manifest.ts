@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 
 import type { RecorderConfig } from "./config.ts";
 import type { AdmittedArtifact } from "./admit.ts";
-import { RecorderError, type ChildOutcome } from "./errors.ts";
+import {
+  internalRecorderError,
+  type ChildOutcome,
+  type RecorderError,
+} from "./errors.ts";
 import type {
   AuditObservation,
   ExtractionResult,
@@ -84,6 +88,10 @@ type JsonSchema = Record<string, unknown> | boolean;
 
 let cachedSchema: JsonSchema | null = null;
 
+function manifestInvariant(cause: unknown = new Error("manifest invariant")): RecorderError {
+  return internalRecorderError("manifest", cause);
+}
+
 function publicManifestSchemaPath(): string {
   return join(
     dirname(fileURLToPath(import.meta.url)),
@@ -101,11 +109,7 @@ export function loadPublicManifestSchema(): JsonSchema {
       readFileSync(publicManifestSchemaPath(), "utf8"),
     ) as JsonSchema;
   } catch (error) {
-    throw new RecorderError(
-      "admission-failed",
-      "public manifest schema is unreadable",
-      { cause: error },
-    );
+    throw manifestInvariant(error);
   }
   return cachedSchema;
 }
@@ -144,33 +148,21 @@ function resolveRef(
   ref: string,
 ): JsonSchema {
   if (typeof root === "boolean") {
-    throw new RecorderError(
-      "admission-failed",
-      "public manifest schema $ref is unresolvable",
-    );
+    throw manifestInvariant();
   }
   if (!ref.startsWith("#/")) {
-    throw new RecorderError(
-      "admission-failed",
-      "public manifest schema $ref must be local",
-    );
+    throw manifestInvariant();
   }
   let current: unknown = root;
   for (const part of ref.slice(2).split("/")) {
     if (!isObject(current) || !Object.hasOwn(current, part)) {
-      throw new RecorderError(
-        "admission-failed",
-        "public manifest schema $ref is unresolvable",
-      );
+      throw manifestInvariant();
     }
     current = current[part];
   }
   if (typeof current !== "object" || current === null) {
     if (typeof current === "boolean") return current;
-    throw new RecorderError(
-      "admission-failed",
-      "public manifest schema $ref is unresolvable",
-    );
+    throw manifestInvariant();
   }
   return current as JsonSchema;
 }
@@ -368,10 +360,7 @@ function schemaValid(
 export function validatePublicManifest(value: unknown): void {
   const schema = loadPublicManifestSchema();
   if (!schemaValid(schema, schema, value)) {
-    throw new RecorderError(
-      "admission-failed",
-      "manifest failed public schema validation",
-    );
+    throw manifestInvariant();
   }
 }
 
@@ -381,25 +370,16 @@ function assertCoherentChild(child: ChildOutcome): {
   signal: string | null;
 } {
   if (child.status === "not-spawned") {
-    throw new RecorderError(
-      "admission-failed",
-      "cannot build success manifest without spawn",
-    );
+    throw manifestInvariant();
   }
   if (child.status === "exited") {
     if (child.exitCode === null || child.signal !== null) {
-      throw new RecorderError(
-        "admission-failed",
-        "incoherent exited child outcome",
-      );
+      throw manifestInvariant();
     }
     return { status: "exited", exitCode: child.exitCode, signal: null };
   }
   if (child.signal === null || child.exitCode !== null) {
-    throw new RecorderError(
-      "admission-failed",
-      "incoherent signaled child outcome",
-    );
+    throw manifestInvariant();
   }
   return { status: "signaled", exitCode: null, signal: child.signal };
 }
@@ -408,16 +388,10 @@ function assertRuntimeJoins(manifest: RecorderManifestV1): void {
   // Equal-value joins ordinary JSON Schema cannot express.
   if (manifest.receipt !== null && manifest.auditObservation !== null) {
     if (manifest.receipt.toolCallId !== manifest.auditObservation.toolCallId) {
-      throw new RecorderError(
-        "admission-failed",
-        "audit observation toolCallId does not match receipt",
-      );
+      throw manifestInvariant();
     }
     if (manifest.receipt.toolName !== manifest.auditObservation.toolName) {
-      throw new RecorderError(
-        "admission-failed",
-        "audit observation toolName does not match receipt",
-      );
+      throw manifestInvariant();
     }
   }
   if (manifest.receipt !== null) {
@@ -426,10 +400,7 @@ function assertRuntimeJoins(manifest: RecorderManifestV1): void {
       !receiptArtifact ||
       receiptArtifact.receiptArtifactKind !== manifest.receipt.artifactKind
     ) {
-      throw new RecorderError(
-        "admission-failed",
-        "receipt artifact kind does not match receipt metadata",
-      );
+      throw manifestInvariant();
     }
   }
 }
@@ -476,45 +447,30 @@ export function buildManifest(options: {
   // Receipt/audit link coherence.
   if (options.extraction.receipt === null) {
     if (options.extraction.auditObservation !== null) {
-      throw new RecorderError(
-        "admission-failed",
-        "audit observation without receipt is incoherent",
-      );
+      throw manifestInvariant();
     }
     if (
       options.artifacts.some((a) => a.kind === "receipt" || a.id === "receipt")
     ) {
-      throw new RecorderError(
-        "admission-failed",
-        "receipt artifact without extraction is incoherent",
-      );
+      throw manifestInvariant();
     }
   } else {
     const receiptArtifact = options.artifacts.find((a) => a.id === "receipt");
     if (!receiptArtifact || receiptArtifact.kind !== "receipt") {
-      throw new RecorderError(
-        "admission-failed",
-        "receipt extraction missing stored artifact",
-      );
+      throw manifestInvariant();
     }
     if (options.extraction.auditObservation !== null) {
       const auditArtifact = options.artifacts.find((a) =>
         a.id === "audit-observation"
       );
       if (!auditArtifact || auditArtifact.kind !== "audit-observation") {
-        throw new RecorderError(
-          "admission-failed",
-          "audit observation missing stored artifact",
-        );
+        throw manifestInvariant();
       }
       if (
         options.extraction.auditObservation.toolCallId !==
           options.extraction.receipt.toolCallId
       ) {
-        throw new RecorderError(
-          "admission-failed",
-          "audit observation toolCallId does not match receipt",
-        );
+        throw manifestInvariant();
       }
     }
   }
@@ -525,19 +481,13 @@ export function buildManifest(options: {
   const storedPaths = new Set<string>();
   for (const artifact of options.artifacts) {
     if (ids.has(artifact.id)) {
-      throw new RecorderError(
-        "admission-failed",
-        `duplicate artifact id ${artifact.id}`,
-      );
+      throw manifestInvariant();
     }
     ids.add(artifact.id);
     const hasRef = artifact.reference !== undefined;
     const hasStored = artifact.stored !== undefined;
     if (hasRef === hasStored) {
-      throw new RecorderError(
-        "admission-failed",
-        `artifact ${artifact.id} must have exactly one identity`,
-      );
+      throw manifestInvariant();
     }
     if (artifact.reference) {
       const key = [
@@ -547,19 +497,13 @@ export function buildManifest(options: {
         artifact.reference.blobOid,
       ].join("|");
       if (refKeys.has(key)) {
-        throw new RecorderError(
-          "admission-failed",
-          `duplicate reference identity for ${artifact.id}`,
-        );
+        throw manifestInvariant();
       }
       refKeys.add(key);
     }
     if (artifact.stored) {
       if (storedPaths.has(artifact.stored.path)) {
-        throw new RecorderError(
-          "admission-failed",
-          `duplicate stored path for ${artifact.id}`,
-        );
+        throw manifestInvariant();
       }
       storedPaths.add(artifact.stored.path);
     }

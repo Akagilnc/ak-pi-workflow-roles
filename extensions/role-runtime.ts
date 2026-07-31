@@ -46,7 +46,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     collectorPackageExtensionPath: extensionPath,
     loadCanonicalSkillBinding,
     runReviewerAgent: reviewerAgent.runReviewerAgent,
-    shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext,
     auditSoulCompliance: createPiSoulAuditor(),
     auditReviewerCompliance: createPiReviewerAuditor(),

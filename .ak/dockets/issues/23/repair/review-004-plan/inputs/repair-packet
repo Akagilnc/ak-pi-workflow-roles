@@ -1,0 +1,17 @@
+# Issue #23 Judge-authorized Review-004 repair
+
+Sole[REDACTED]
+
+R1 — Centralize manifest invariant construction. Preserve the real caught schema read/JSON cause; authored invariants may use private bounded reasons but public output stays fixed and allow-listed. Retain caught causes in external input reads and cited realpath/stat/Git worktree operations without exposing raw detail.
+
+R2 — Add production-boundary cause regressions for manifest schema read/parse, unreadable external input, missing/inaccessible paths, and invalid Git worktree: truthful code/stage, non-null safe category from real cause, fixed message, correct location/child truth, and no leakage.
+
+R3 — Unconditionally remove every `recorder-tee-test-*` root on success or assertion failure; preserve one owning exit/signal regression only.
+
+R4 — Validate complete JSON emitted by the actual Recorder bin against shipped failure schema for not-spawned/exited/signaled and launcher fallback. Make launcher fallback schema-conforming with required null location/diagnostic and no attacker interpolation. Retain enum synchronization separately; clean all temp roots.
+
+R5 — Replace remaining cited opaque one-letter config parser/helper/callback/environment names without behavior change.
+
+R6 — Regenerate dist and run focused/full tests, typecheck, Recorder build, package/schema checks, pack, diff check, manifest-constructor/cause/schema/temp-tree searches, and clean-worktree check. Current-head evidence only; preserve historical-root non-claim and issue #13 exclusion.
+
+Return exactly one nonblank keyed disposition for R1–R6; commit forward.
