@@ -75,6 +75,15 @@ export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
 
+export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor"] as const;
+export const ROLE_FLAG = {
+  name: "ak-role",
+  definition: {
+    description: `Activate a packaged workflow role: ${WORKFLOW_ROLES.slice(0, -1).join(", ")}, or ${WORKFLOW_ROLES.at(-1)}`,
+    type: "string" as const,
+  },
+} as const;
+
 export type RoleRuntimeDependencies = {
   loadJudgeSoul(): Promise<string>;
   loadFixerSoul?(): Promise<string>;
@@ -123,11 +132,7 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
-    pi.registerFlag("ak-role", {
-      description:
-        "Activate a packaged workflow role: judge, fixer, coder, reviewer, collector, or doctor",
-      type: "string",
-    });
+    pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
 
     const hostActions = { failInfrastructure };
     const judge = createJudgeRoleRuntime(
@@ -258,12 +263,9 @@ export function createRoleRuntimeExtension(
     );
 
     pi.on("session_start", async (event, ctx) => {
-      const role = pi.getFlag("ak-role");
+      const role = pi.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
-      if (
-        role !== "judge" && role !== "fixer" && role !== "coder" &&
-        role !== "reviewer" && role !== "collector" && role !== "doctor"
-      ) {
+      if (!(WORKFLOW_ROLES as readonly unknown[]).includes(role)) {
         throw new Error(`Unsupported workflow role: ${String(role)}`);
       }
       switch (role) {
