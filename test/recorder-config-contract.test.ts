@@ -80,8 +80,38 @@ test("production config boundary emits exact safe location matrix", () => {
       ["execution", "environment", "overrides"],
     ],
     [
+      "override name empty",
+      (x) => (x.execution.environment.overrides = { "": "v" }),
+      ["execution", "environment", "overrides"],
+    ],
+    [
+      "override name NUL",
+      (x) => (x.execution.environment.overrides = { ["A\0B"]: "v" }),
+      ["execution", "environment", "overrides"],
+    ],
+    [
+      "override name equals",
+      (x) => (x.execution.environment.overrides = { "A=B": "v" }),
+      ["execution", "environment", "overrides"],
+    ],
+    [
+      "override value NUL",
+      (x) => (x.execution.environment.overrides = { SAFE: "v\0x" }),
+      ["execution", "environment", "overrides"],
+    ],
+    [
       "unset entry",
       (x) => (x.execution.environment.unset = [1]),
+      ["execution", "environment", "unset", 0],
+    ],
+    [
+      "unset name NUL",
+      (x) => (x.execution.environment.unset = ["A\0B"]),
+      ["execution", "environment", "unset", 0],
+    ],
+    [
+      "unset name equals",
+      (x) => (x.execution.environment.unset = ["A=B"]),
       ["execution", "environment", "unset", 0],
     ],
     [

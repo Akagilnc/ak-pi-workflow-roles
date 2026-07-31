@@ -119,20 +119,47 @@ export function verifyGitReference(ref) {
         report,
     };
 }
-function isCommittedInContainingRepo(sourcePath) {
-    try {
-        const toplevel = execFileSync("git", ["-C", dirname(sourcePath), "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-        const rel = execFileSync("git", ["-C", toplevel, "ls-files", "--error-unmatch", "--", sourcePath], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-        return rel.length > 0;
+function gitStatus(error) {
+    if (typeof error === "object" &&
+        error !== null &&
+        "status" in error &&
+        typeof error.status === "number") {
+        return error.status;
     }
-    catch {
-        return false;
+    return null;
+}
+function isCommittedInContainingRepo(sourcePath) {
+    let toplevel;
+    try {
+        toplevel = execFileSync("git", ["-C", dirname(sourcePath), "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    }
+    catch (error) {
+        const status = gitStatus(error);
+        // Documented: not a git repository → exit 128 from rev-parse.
+        if (status === 128)
+            return { kind: "not-committed" };
+        return { kind: "failed", cause: error };
+    }
+    try {
+        const rel = execFileSync("git", ["-C", toplevel, "ls-files", "--error-unmatch", "--", sourcePath], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+        return rel.length > 0 ? { kind: "committed" } : { kind: "not-committed" };
+    }
+    catch (error) {
+        const status = gitStatus(error);
+        // Documented: path not tracked → exit 1 from ls-files --error-unmatch.
+        if (status === 1)
+            return { kind: "not-committed" };
+        return { kind: "failed", cause: error };
     }
 }
 function storeOnce(sourcePath, expectedSha256, destRelative, stageRoot, location, id) {
     // External/exhibit bytes already committed in their containing repository are rejected.
-    if (isCommittedInContainingRepo(sourcePath)) {
+    const committedProbe = isCommittedInContainingRepo(sourcePath);
+    if (committedProbe.kind === "committed") {
         throw new RecorderError("admission-failed", `external/exhibit ${id} is already committed in its containing repository`);
+    }
+    if (committedProbe.kind === "failed") {
+        throw new RecorderError("admission-failed", `external/exhibit ${id} git admission probe failed`, { cause: committedProbe.cause });
     }
     let bytes;
     try {

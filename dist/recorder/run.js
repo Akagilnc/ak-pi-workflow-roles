@@ -79,10 +79,10 @@ function bestEffortRm(path) {
 function destinationPath(config) {
     return resolveInsideRoot(config.archive.repositoryRoot, `${config.archive.root}/${config.archive.docketId}`, "archive destination");
 }
-function destinationOccupied(dest) {
+function probeDestination(dest) {
     try {
         lstatSync(dest);
-        return true;
+        return { kind: "occupied" };
     }
     catch (error) {
         const code = typeof error === "object" &&
@@ -92,9 +92,8 @@ function destinationOccupied(dest) {
             ? error.code
             : null;
         if (code === "ENOENT")
-            return false;
-        // Unreadable destination name is treated as occupied/unsafe.
-        return true;
+            return { kind: "absent" };
+        return { kind: "error", cause: error };
     }
 }
 /**
@@ -121,12 +120,18 @@ function promoteStageAtomically(stageRoot, dest, repositoryRoot) {
     catch (error) {
         if (error instanceof RecorderError)
             throw error;
-        // Occupied final name (file/dir/symlink/empty dir) — never mutate it.
-        if (isOccupiedRenameError(error) || destinationOccupied(dest)) {
-            throw new RecorderError("destination-exists", "archive destination already exists");
+        // Occupancy is proved only by the finite native no-replace collision predicate
+        // (or a successful occupancy observation). Always retain the rename cause.
+        if (isOccupiedRenameError(error)) {
+            throw new RecorderError("destination-exists", "archive destination already exists", { cause: error, diagnostic: safeDiagnostic("promotion", error) });
+        }
+        const probe = probeDestination(dest);
+        if (probe.kind === "occupied") {
+            throw new RecorderError("destination-exists", "archive destination already exists", { cause: error, diagnostic: safeDiagnostic("promotion", error) });
         }
         throw new RecorderError("promotion-failed", "atomic promotion failed", {
             cause: error,
+            diagnostic: safeDiagnostic("promotion", error),
         });
     }
 }
@@ -192,8 +197,15 @@ export async function runRecorder(options) {
         currentStage = "destination";
         const dest = destinationPath(config);
         assertPathNotSymlinkEscape(dest, config.archive.repositoryRoot, "archive destination");
-        if (destinationOccupied(dest)) {
+        const destProbe = probeDestination(dest);
+        if (destProbe.kind === "occupied") {
             return fail(new RecorderError("destination-exists", "archive destination already exists"));
+        }
+        if (destProbe.kind === "error") {
+            return fail(new RecorderError("internal-error", undefined, {
+                cause: destProbe.cause,
+                diagnostic: safeDiagnostic("destination", destProbe.cause),
+            }));
         }
         // Raw tee scratch stays outside the worktree (or ignored). Publication stage
         // lives under the archive's ignored `.ak/work` so promotion stays same-FS.

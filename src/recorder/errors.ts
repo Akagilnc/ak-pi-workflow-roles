@@ -9,7 +9,7 @@ export type RecorderFailureCode = typeof RECORDER_FAILURE_CODES[number];
 export const RECORDER_STAGES = [
   "argv", "config-read", "config-structure", "config-metadata-scan", "config-state",
   "destination", "stage-allocation", "admission", "spawn", "extraction",
-  "generated-artifacts", "manifest", "cleanup", "promotion",
+  "generated-artifacts", "manifest", "cleanup", "promotion", "launcher",
 ] as const;
 export type RecorderStage = typeof RECORDER_STAGES[number];
 
@@ -19,15 +19,45 @@ export const RECORDER_DIAGNOSTIC_CATEGORIES = [
 ] as const;
 export type RecorderDiagnosticCategory = typeof RECORDER_DIAGNOSTIC_CATEGORIES[number];
 
-const PUBLIC_MESSAGES: Record<RecorderFailureCode, string> = {
-  "invalid-argv": "invalid Recorder argv", "invalid-config": "invalid Recorder config",
-  "invalid-archive": "invalid archive worktree", "invalid-path": "invalid path",
-  "destination-exists": "archive destination already exists", "spawn-failed": "failed to spawn child process",
-  "scan-failed": "credential scan failed", "admission-failed": "declaration admission failed",
-  "reference-failed": "git reference verification failed", "extraction-failed": "receipt extraction failed",
-  "cleanup-failed": "required raw scratch cleanup failed", "promotion-failed": "atomic promotion failed",
-  "opaque-content": "unsupported opaque content cannot be promoted", "internal-error": "internal Recorder failure",
-};
+/** Fixed public messages — one per code; schema must enumerate the same pairs. */
+export const RECORDER_PUBLIC_MESSAGES = {
+  "invalid-argv": "invalid Recorder argv",
+  "invalid-config": "invalid Recorder config",
+  "invalid-archive": "invalid archive worktree",
+  "invalid-path": "invalid path",
+  "destination-exists": "archive destination already exists",
+  "spawn-failed": "failed to spawn child process",
+  "scan-failed": "credential scan failed",
+  "admission-failed": "declaration admission failed",
+  "reference-failed": "git reference verification failed",
+  "extraction-failed": "receipt extraction failed",
+  "cleanup-failed": "required raw scratch cleanup failed",
+  "promotion-failed": "atomic promotion failed",
+  "opaque-content": "unsupported opaque content cannot be promoted",
+  "internal-error": "internal Recorder failure",
+} as const satisfies Record<RecorderFailureCode, string>;
+
+/** Finite supported darwin/linux signal names for the failure wire. */
+export const RECORDER_SUPPORTED_SIGNALS = [
+  "SIGABRT", "SIGALRM", "SIGBUS", "SIGCHLD", "SIGCONT", "SIGFPE", "SIGHUP",
+  "SIGILL", "SIGINT", "SIGIO", "SIGIOT", "SIGKILL", "SIGPIPE", "SIGPOLL",
+  "SIGPROF", "SIGPWR", "SIGQUIT", "SIGSEGV", "SIGSTKFLT", "SIGSTOP", "SIGSYS",
+  "SIGTERM", "SIGTRAP", "SIGTSTP", "SIGTTIN", "SIGTTOU", "SIGUNUSED", "SIGURG",
+  "SIGUSR1", "SIGUSR2", "SIGVTALRM", "SIGWINCH", "SIGXCPU", "SIGXFSZ",
+] as const;
+export type RecorderSupportedSignal = typeof RECORDER_SUPPORTED_SIGNALS[number];
+
+/** Finite v1 location path segment vocabulary (string keys only). */
+export const RECORDER_LOCATION_SEGMENTS = [
+  "version", "archive", "repositoryRoot", "root", "docketId",
+  "execution", "cwd", "environment", "inherit", "overrides", "unset", "stdin",
+  "declarations", "gitReferences", "externalInputs", "exhibits",
+  "id", "commit", "path", "blobOid", "sha256", "kind", "sourcePath",
+  "provenance", "package", "model", "target",
+] as const;
+export type RecorderLocationSegment = typeof RECORDER_LOCATION_SEGMENTS[number];
+
+const PUBLIC_MESSAGES = RECORDER_PUBLIC_MESSAGES;
 
 export type SchemaLocation = Array<string | number>;
 export type SafeDiagnostic = { stage: RecorderStage; category: RecorderDiagnosticCategory };
@@ -67,6 +97,31 @@ export type ChildOutcome =
   | { status: "signaled"; exitCode: null; signal: string; diagnostic: string | null };
 export type PublicFailure = { recorder: { status: "failed"; code: RecorderFailureCode; message: string; location: SchemaLocation | null; diagnostic: SafeDiagnostic | null }; child: ChildOutcome };
 export const RECORDER_FAILURE_EXIT = 125;
-export function internalRecorderError(stage: RecorderStage, cause: unknown): RecorderError { return new RecorderError("internal-error", undefined, { cause, diagnostic: safeDiagnostic(stage, cause) }); }
-export function toPublicFailure(error: RecorderError, child: ChildOutcome): PublicFailure { return { recorder: { status: "failed", code: error.code, message: error.publicMessage, location: error.location, diagnostic: error.diagnostic }, child }; }
-export function serializePublicFailure(error: RecorderError, child: ChildOutcome): string { return `${JSON.stringify(toPublicFailure(error, child))}\n`; }
+export function internalRecorderError(stage: RecorderStage, cause: unknown): RecorderError {
+  return new RecorderError("internal-error", undefined, { cause, diagnostic: safeDiagnostic(stage, cause) });
+}
+export function toPublicFailure(error: RecorderError, child: ChildOutcome): PublicFailure {
+  const diagnostic =
+    error.diagnostic ??
+    (error.code === "internal-error" && error.cause !== undefined
+      ? safeDiagnostic("launcher", error.cause)
+      : error.diagnostic);
+  // internal-error always carries a diagnostic on the public wire.
+  const publicDiagnostic =
+    error.code === "internal-error"
+      ? (diagnostic ?? { stage: "launcher" as const, category: "error" as const })
+      : diagnostic;
+  return {
+    recorder: {
+      status: "failed",
+      code: error.code,
+      message: error.publicMessage,
+      location: error.location,
+      diagnostic: publicDiagnostic,
+    },
+    child,
+  };
+}
+export function serializePublicFailure(error: RecorderError, child: ChildOutcome): string {
+  return `${JSON.stringify(toPublicFailure(error, child))}\n`;
+}

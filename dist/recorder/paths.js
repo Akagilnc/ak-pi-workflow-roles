@@ -1,8 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync, } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync, } from "node:fs";
 import { isAbsolute, join, resolve, sep } from "node:path";
-import { RecorderError } from "./errors.js";
+import { RecorderError, safeDiagnostic } from "./errors.js";
 const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+function isEnoent(error) {
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
+}
 export function requireAbsoluteExistingDirectory(value, label) {
     if (typeof value !== "string" || value.length === 0 || !isAbsolute(value)) {
         throw new RecorderError("invalid-path", `${label} must be an absolute path`);
@@ -107,53 +113,95 @@ export function resolveInsideRoot(rootReal, relativePath, label) {
     }
     return candidate;
 }
+function assertRealInsideRoot(real, rootReal, label) {
+    const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
+    if (real !== rootReal && !real.startsWith(rootWithSep)) {
+        throw new RecorderError("invalid-path", `${label} escapes the selected worktree via symlink`);
+    }
+}
 export function assertPathNotSymlinkEscape(absolutePath, rootReal, label) {
+    // Prove leaf existence or absence; unexpected failures fail closed.
+    let leafExists = false;
     try {
-        if (existsSync(absolutePath)) {
-            const st = lstatSync(absolutePath);
-            if (st.isSymbolicLink()) {
-                const real = realpathSync(absolutePath);
-                const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
-                if (real !== rootReal && !real.startsWith(rootWithSep)) {
-                    throw new RecorderError("invalid-path", `${label} escapes the selected worktree via symlink`);
+        const st = lstatSync(absolutePath);
+        leafExists = true;
+        if (st.isSymbolicLink()) {
+            let real;
+            try {
+                real = realpathSync(absolutePath);
+            }
+            catch (error) {
+                if (isEnoent(error)) {
+                    // Dangling symlink race → treat as absence and walk parents.
+                    leafExists = false;
+                }
+                else {
+                    throw new RecorderError("invalid-path", `${label} is unreadable`, {
+                        cause: error,
+                        diagnostic: safeDiagnostic("destination", error),
+                    });
                 }
             }
-        }
-        const real = existsSync(absolutePath)
-            ? realpathSync(absolutePath)
-            : null;
-        if (real) {
-            const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
-            if (real !== rootReal && !real.startsWith(rootWithSep)) {
-                throw new RecorderError("invalid-path", `${label} escapes the selected worktree via symlink`);
+            if (leafExists) {
+                assertRealInsideRoot(real, rootReal, label);
+                return;
             }
-            return;
+        }
+        else {
+            let real;
+            try {
+                real = realpathSync(absolutePath);
+            }
+            catch (error) {
+                if (isEnoent(error)) {
+                    leafExists = false;
+                }
+                else {
+                    throw new RecorderError("invalid-path", `${label} is unreadable`, {
+                        cause: error,
+                        diagnostic: safeDiagnostic("destination", error),
+                    });
+                }
+            }
+            if (leafExists) {
+                assertRealInsideRoot(real, rootReal, label);
+                return;
+            }
         }
     }
     catch (error) {
         if (error instanceof RecorderError)
             throw error;
+        if (!isEnoent(error)) {
+            throw new RecorderError("invalid-path", `${label} is unreadable`, {
+                cause: error,
+                diagnostic: safeDiagnostic("destination", error),
+            });
+        }
     }
-    // path may not exist yet; validate existing parents
+    // Path absent: validate the nearest existing parent via realpath only.
     let parent = resolve(absolutePath, "..");
     while (true) {
         try {
-            if (existsSync(parent)) {
-                const realParent = realpathSync(parent);
-                const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
-                if (realParent !== rootReal && !realParent.startsWith(rootWithSep)) {
-                    throw new RecorderError("invalid-path", `${label} escapes the selected worktree via symlink`);
-                }
-                return;
+            const realParent = realpathSync(parent);
+            assertRealInsideRoot(realParent, rootReal, label);
+            return;
+        }
+        catch (error) {
+            if (error instanceof RecorderError)
+                throw error;
+            if (!isEnoent(error)) {
+                throw new RecorderError("invalid-path", `${label} is unreadable`, {
+                    cause: error,
+                    diagnostic: safeDiagnostic("destination", error),
+                });
             }
         }
-        catch (inner) {
-            if (inner instanceof RecorderError)
-                throw inner;
-        }
         const next = resolve(parent, "..");
-        if (next === parent)
-            return;
+        if (next === parent) {
+            // No existing parent could be proved — fail closed rather than continue.
+            throw new RecorderError("invalid-path", `${label} has no resolvable parent`);
+        }
         parent = next;
     }
 }
@@ -169,19 +217,40 @@ export function assertScratchOutsideOrIgnored(scratchPath, worktreeRoot) {
     try {
         scratchReal = realpathSync(scratchPath);
     }
-    catch {
-        scratchReal = resolve(scratchPath);
+    catch (error) {
+        if (isEnoent(error)) {
+            // Absence only: resolve lexically for the outside-worktree check.
+            scratchReal = resolve(scratchPath);
+        }
+        else {
+            throw new RecorderError("invalid-path", "scratch path is unreadable", {
+                cause: error,
+                diagnostic: safeDiagnostic("stage-allocation", error),
+            });
+        }
     }
     if (scratchReal !== worktreeRoot && !scratchReal.startsWith(rootWithSep)) {
         return; // outside — fine
     }
-    // Inside worktree: must be ignored
+    // Inside worktree: must be ignored. Only exit 1 is the documented not-ignored negative.
     try {
-        const check = execFileSync("git", ["-C", worktreeRoot, "check-ignore", "-q", scratchReal], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-        void check;
+        execFileSync("git", ["-C", worktreeRoot, "check-ignore", "-q", scratchReal], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     }
-    catch {
-        throw new RecorderError("invalid-path", "scratch/stage inside worktree must be gitignored");
+    catch (error) {
+        const status = typeof error === "object" &&
+            error !== null &&
+            "status" in error &&
+            typeof error.status === "number"
+            ? error.status
+            : null;
+        // git check-ignore -q: exit 0 = ignored, exit 1 = not ignored.
+        if (status === 1) {
+            throw new RecorderError("invalid-path", "scratch/stage inside worktree must be gitignored");
+        }
+        throw new RecorderError("invalid-path", "scratch/stage gitignore check failed", {
+            cause: error,
+            diagnostic: safeDiagnostic("stage-allocation", error),
+        });
     }
 }
 /** Require two existing paths share one device (same filesystem). */
