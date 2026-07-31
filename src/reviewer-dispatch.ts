@@ -335,15 +335,14 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       ? validateRequest(proposal.required.spec, capabilities, hostTools)
       : undefined;
     const runnerOperations = REVIEWER_PREREQUISITES.filter((operation) => operation.startsWith("runner."));
+    for (const operation of runnerOperations) {
+      if (!capabilities.prerequisiteOperations.includes(operation)) violation("prerequisite-missing");
+    }
     const acceptedPrerequisites = freezeStrings([...new Set([
       ...standardsGrant.prerequisiteOperations,
       ...(specGrant?.prerequisiteOperations ?? []),
+      ...runnerOperations,
     ])]);
-    for (const operation of runnerOperations) {
-      if (!capabilities.prerequisiteOperations.includes(operation) || !acceptedPrerequisites.includes(operation)) {
-        violation("prerequisite-missing");
-      }
-    }
 
     let base!: string;
     let readRange!: ReviewerRange;

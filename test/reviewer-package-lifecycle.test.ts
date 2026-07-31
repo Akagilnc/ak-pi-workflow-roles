@@ -46,7 +46,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const target = await git(fixture, "rev-parse", "HEAD");
     const base = await git(fixture, "rev-parse", "review-base");
     const diffCommand = `git diff ${base}...${target}`;
-    const request = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites };
+    const standardsRequest = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: [] };
+    const specRequest = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: ["preflight.git.read-material"] };
     const root = await realpath(fixture);
     const nestedCwd = resolve(fixture, "nested", "invocation");
     await mkdir(nestedCwd, { recursive: true });
@@ -72,8 +73,36 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const capabilityText = JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash", "edit"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }, null, 2) + "\n";
     await writeFile(capsPath, capabilityText);
 
-    const proposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: request, spec: request } };
-    const bad = { ...proposal, required: { standards: request, spec: { ...request, bashCommands: ["git status"] } } };
+    const installedDispatch = await import(new URL(`file://${resolve(fixture, "node_modules/@ak/pi-workflow-roles/src/reviewer-dispatch.ts")}`).href);
+    const missingRecipeText = JSON.stringify({
+      version: 1,
+      taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
+      tools: ["read", "bash"],
+      bashCommands: [diffCommand],
+      prerequisiteOperations: prerequisites.filter((operation) => operation !== "runner.git.verify-snapshot"),
+    });
+    let missingRecipeRuns = 0;
+    const missingRecipeDispatcher = installedDispatch.createReviewerDispatcher({
+      task: taskBytes,
+      canonicalSkill: skillRaw,
+      capabilities: installedDispatch.parseReviewerCapabilities(Buffer.from(missingRecipeText), taskBytes),
+      reader: {
+        pin: { repositoryRoot: root, targetHead: target, refs: {} },
+        async snapshot() { return this.pin; },
+        async resolve() { return base; },
+        async range() { return { base, target, diffCommand, diffSha256: "1".repeat(64), commits: [target] }; },
+        async material(repositoryPath: string) { return readFile(resolve(fixture, repositoryPath)); },
+      },
+      hostTools: ["read", "bash"],
+      async run() { missingRecipeRuns += 1; throw new Error("must not run"); },
+    });
+
+    const proposal =  { version: 1, base: { revision: "review-base" }, standardsMaterials: [], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: standardsRequest, spec: specRequest } };
+    const bad = { ...proposal, required: { standards: standardsRequest, spec: { ...specRequest, bashCommands: ["git status"] } } };
+    const missingRecipe = await missingRecipeDispatcher.propose(proposal);
+    assert.equal(missingRecipe.status, "rejected");
+    if (missingRecipe.status === "rejected") assert.deepEqual(missingRecipe.violations, ["prerequisite-missing"]);
+    assert.equal(missingRecipeRuns, 0);
     const candidate = { status: "completed", report: "## Standards\nReadable.\n\n## Spec\nSatisfied." };
     const corrected = { status: "completed", report: "## Standards\nReadable; no findings.\n\n## Spec\nRequirement satisfied; no findings.\n\nStandards: 0; Spec: 0." };
     const faux = fauxProvider({ api: "package-reviewer", provider: "package-reviewer", tokenSize: { min: 1000, max: 1000 } });
@@ -121,6 +150,13 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.match(accepted.message.details.dispatch.range.diffSha256, /^[0-9a-f]{64}$/);
       assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.axis), ["standards", "spec"]);
       assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.grant.tools), [["read", "bash"], ["read", "bash"]]);
+      assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.grant.prerequisiteOperations), [[], ["preflight.git.read-material"]]);
+      assert.deepEqual(accepted.message.details.dispatch.prerequisiteOperations, [
+        "preflight.git.read-material",
+        "runner.git.materialize-mirror",
+        "runner.git.materialize-workspace",
+        "runner.git.verify-snapshot",
+      ]);
       assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Identify the standards sources/);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.repositoryRoot, root);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.targetHead, target);

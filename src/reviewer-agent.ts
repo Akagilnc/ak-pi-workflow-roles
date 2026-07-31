@@ -505,18 +505,26 @@ async function runChild(
   }
 }
 
-function failureEvidence(error: unknown, fallbackTarget: ReviewerTargetSnapshot): {
-  target: ReviewerTargetSnapshot;
-  workspaceDisposition: ReviewerWorkspaceDisposition;
-} {
+function failedLegEvidence(
+  error: unknown,
+  fallbackTarget: ReviewerTargetSnapshot,
+  prompt: ReviewerPromptIdentity,
+  signal: AbortSignal | undefined,
+  retainedWorkspace?: string,
+): ReviewerFailedLegRunResult {
   const attached = typeof error === "object" && error !== null ? error as {
     targetSnapshot?: ReviewerTargetSnapshot;
     workspaceDisposition?: ReviewerWorkspaceDisposition;
   } : undefined;
-  return {
+  return Object.freeze({
+    status: "failed",
+    failure: classifyFailure(error, signal),
     target: attached?.targetSnapshot ?? fallbackTarget,
-    workspaceDisposition: attached?.workspaceDisposition ?? "not-created",
-  };
+    prompt,
+    workspaceDisposition: retainedWorkspace === undefined
+      ? attached?.workspaceDisposition ?? "not-created"
+      : Object.freeze({ retained: retainedWorkspace }),
+  });
 }
 
 export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencies = {}): ReviewerAgentRunner {
@@ -542,9 +550,8 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
       let snapshot: GitSnapshot;
       try { snapshot = await snapshotPromise; }
       catch (error) {
-        const evidence = failureEvidence(error, dispatch.targetSnapshot);
-        const target = evidence.target;
-        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error, options.signal), target, prompt: leg.prompt, workspaceDisposition: evidence.workspaceDisposition })]));
+        const legs = Object.fromEntries(dispatch.legs.map((leg) => [leg.axis, failedLegEvidence(error, dispatch.targetSnapshot, leg.prompt, options.signal)]));
+        const target = Object.values(legs)[0]!.target;
         throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
       }
       const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
@@ -556,11 +563,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
           await rm(workspace, { recursive: true, force: false });
           return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target, prompt: child.prompt, workspaceDisposition: "deleted" as const })] as const;
         } catch (error) {
-          const evidence = failureEvidence(error, target);
-          const workspaceDisposition = workspace === undefined
-            ? evidence.workspaceDisposition
-            : Object.freeze({ retained: workspace });
-          return [leg.axis, Object.freeze({ status: "failed" as const, failure: classifyFailure(error, options.signal), target: evidence.target, prompt: leg.prompt, workspaceDisposition })] as const;
+          return [leg.axis, failedLegEvidence(error, target, leg.prompt, options.signal, workspace)] as const;
         }
       }));
       const pairs = settled.map((item) => item.status === "fulfilled" ? item.value : (() => { throw item.reason; })());
