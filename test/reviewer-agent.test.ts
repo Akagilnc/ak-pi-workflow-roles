@@ -157,22 +157,18 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
       childReached = true;
     }, 1);
     const runner = createReviewerAgentRunner();
-    try {
-      const result = await runner.runReviewerAgent(
-        { description: "Standards", prompt: "Shallow snapshot review" },
-        { context },
-      );
-      assert.equal(childReached, true);
-      assert.match(result.report, /\S/);
-      assert.equal(result.targetSnapshot?.targetHead, tip);
-      assert.equal(result.targetSnapshot?.refs["refs/heads/fixed-branch"], tip);
-      assert.equal(result.targetSnapshot?.refs["refs/tags/fixed-tag"], tip);
-      assert.equal(result.targetSnapshot?.refs["refs/remotes/upstream/fixed"], tip);
-      for (const [name, sha] of Object.entries(sourceRefs)) {
-        assert.equal(result.targetSnapshot?.refs[name], sha);
-      }
-    } finally {
-      await runner.shutdown();
+    const result = await runner.runReviewerAgent(
+      { description: "Standards", prompt: "Shallow snapshot review" },
+      { context },
+    );
+    assert.equal(childReached, true);
+    assert.match(result.report, /\S/);
+    assert.equal(result.targetSnapshot?.targetHead, tip);
+    assert.equal(result.targetSnapshot?.refs["refs/heads/fixed-branch"], tip);
+    assert.equal(result.targetSnapshot?.refs["refs/tags/fixed-tag"], tip);
+    assert.equal(result.targetSnapshot?.refs["refs/remotes/upstream/fixed"], tip);
+    for (const [name, sha] of Object.entries(sourceRefs)) {
+      assert.equal(result.targetSnapshot?.refs[name], sha);
     }
   } finally {
     await rm(shallowRoot, { recursive: true, force: true });
@@ -255,7 +251,6 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
       status: await git(source.root, "status", "--porcelain"),
     }, before);
   } finally {
-    await runner.shutdown();
     await rm(source.root, { recursive: true, force: true });
   }
 });
@@ -346,7 +341,6 @@ test("Reviewer child provider delegates class-private streams to the original re
       env: { PRIVATE_TENANT: "test" },
     }]);
   } finally {
-    await runner.shutdown();
     await rm(source.root, { recursive: true, force: true });
   }
 });
@@ -384,7 +378,6 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     assert.ok(retained);
     await access(retained);
   } finally {
-    await runner.shutdown().catch(() => {});
     if (retained !== undefined) {
       await rm(retained, { recursive: true, force: true });
     }
