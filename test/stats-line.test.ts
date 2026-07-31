@@ -30,6 +30,38 @@ test("StatsLine deterministically classifies exact roles/phases and preserves ty
   if (first.paperApplyBytes.status === "measured") assert.deepEqual(first.paperApplyBytes.value.ratio, { status: "measured", value: { numerator: judge.receipt.byteLength + doctor.receipt.byteLength, denominator: coder.receipt.byteLength } });
 });
 
+test("StatsLine applies the exact receipt-byte complement law", async () => {
+  const cases: Array<{ name: string; argv: string[]; bucket: "paper" | "apply" | "unclassified" }> = [
+    ...["judge", "reviewer", "collector", "doctor"].map((role) => ({ name: role, argv: ["pi", "--ak-role", role, "--ak-coder-phase", "apply"], bucket: "paper" as const })),
+    { name: "coder apply", argv: ["pi", "--ak-role", "coder", "--ak-coder-phase", "apply", "--ak-fixer-phase", "plan"], bucket: "apply" },
+    { name: "fixer apply", argv: ["pi", "--ak-role", "fixer", "--ak-fixer-phase", "apply", "--ak-coder-phase", "plan"], bucket: "apply" },
+    ...["plan", "", "future"].map((phase) => ({ name: `coder ${phase || "empty"}`, argv: ["pi", "--ak-role", "coder", "--ak-coder-phase", phase], bucket: "paper" as const })),
+    { name: "coder missing phase", argv: ["pi", "--ak-role", "coder"], bucket: "paper" },
+    { name: "coder duplicate apply", argv: ["pi", "--ak-role", "coder", "--ak-coder-phase", "apply", "--ak-coder-phase", "apply"], bucket: "paper" },
+    { name: "fixer duplicate phase", argv: ["pi", "--ak-role", "fixer", "--ak-fixer-phase", "plan", "--ak-fixer-phase", "apply"], bucket: "paper" },
+    { name: "missing role", argv: ["pi"], bucket: "unclassified" },
+    { name: "empty role", argv: ["pi", "--ak-role", ""], bucket: "unclassified" },
+    { name: "unknown role", argv: ["pi", "--ak-role", "future"], bucket: "unclassified" },
+    { name: "duplicate role", argv: ["pi", "--ak-role", "judge", "--ak-role", "doctor"], bucket: "unclassified" },
+  ];
+  for (const item of cases) {
+    const archived = fixture("judge", undefined, item.name, { judgeStatus: "converged" });
+    const manifest = JSON.parse(new TextDecoder().decode(archived.manifest));
+    manifest.execution.argv = item.argv;
+    const files = { ".ak/dockets/issues/7/a/manifest.json": enc(manifest), ".ak/dockets/issues/7/a/receipt.json": archived.receipt };
+    const result = await produceStatsLineV1({ snapshot: snapshot(files), issueNumber: 7 });
+    assert.equal(result.paperApplyBytes.status, "measured", item.name);
+    if (result.paperApplyBytes.status !== "measured") continue;
+    const { paperBytes, applyBytes, ratio } = result.paperApplyBytes.value;
+    assert.equal(paperBytes + applyBytes, item.bucket === "unclassified" ? 0 : archived.receipt.byteLength, `${item.name} byte conservation`);
+    assert.equal(paperBytes, item.bucket === "paper" ? archived.receipt.byteLength : 0, item.name);
+    assert.equal(applyBytes, item.bucket === "apply" ? archived.receipt.byteLength : 0, item.name);
+    if (item.bucket === "unclassified") assert.deepEqual(ratio, { status: "unavailable", reason: "unclassifiable-receipt" }, item.name);
+    else if (item.bucket === "paper") assert.deepEqual(ratio, { status: "unavailable", reason: "no-apply-receipts" }, item.name);
+    else assert.deepEqual(ratio, { status: "measured", value: { numerator: 0, denominator: archived.receipt.byteLength } }, item.name);
+  }
+});
+
 test("StatsLine closes every measured payload, unavailable reason, and cross-metric invariant", async () => {
   const valid = await produceStatsLineV1({ snapshot: snapshot({}), issueNumber: 7, tracker: { repository: "ak/repo", issueNumber: 7, issueOpenedAt: "2026-01-01T00:00:00.000Z", pullRequest: { repository: "ak/repo", number: 19, issueNumber: 7, mergedAt: "2026-01-02T00:00:00.000Z", base: { name: "main", isDefault: true } } } });
   const clone = () => structuredClone(valid) as any;

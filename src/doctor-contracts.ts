@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
+import { canonicalJson, canonicalJsonBytes } from "./canonical-json.ts";
 import { sha256Hex } from "./sha256.ts";
 import { validateStatsLineV1, type Metric, type StatsLineV1 } from "./stats-line.ts";
 
@@ -70,12 +71,7 @@ function exact(value: Record<string, unknown>, keys: readonly string[], label: s
 function text(value: unknown, label: string): asserts value is string { if (typeof value !== "string" || value.trim() === "") throw new Error(`${label} must be nonblank`); }
 function strings(value: unknown, label: string, allowEmpty = false): asserts value is string[] { if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || !value.every((item) => typeof item === "string" && item.trim() !== "")) throw new Error(`${label} must be ${allowEmpty ? "an" : "a nonempty"} string array`); }
 function deepFreeze<T>(value: T): T { if (value && typeof value === "object" && !Object.isFrozen(value)) { for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child); Object.freeze(value); } return value; }
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  return `{${Object.keys(value as object).sort().map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`;
-}
-export function statsLineEvidenceBytes(value: unknown): Uint8Array { return new TextEncoder().encode(canonical(value)); }
+export function statsLineEvidenceBytes(value: unknown): Uint8Array { return canonicalJsonBytes(value); }
 function isStatsLine(value: unknown): value is StatsLineV1 { try { validateStatsLineV1(value); return true; } catch { return false; } }
 function timestamp(value: unknown, label: string) { text(value, label); if (!Number.isFinite(Date.parse(value))) throw new Error(`${label} must be an ISO timestamp`); }
 function validateGitMetadata(value: unknown) {
@@ -124,9 +120,9 @@ export function validateDoctorEvidenceIndex(value: unknown, committedIdentities:
 export class DoctorEvidenceStore {
   readonly entries: Map<string, DoctorEvidenceEntry>; private readonly ranges = new Map<string, Array<[number, number]>>();
   constructor(readonly index: DoctorEvidenceIndexV1) { this.entries = new Map(index.evidence.map((entry) => [entry.id, entry])); }
-  read(evidenceId: string, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry) throw new Error(`Evidence ID is not admitted: ${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096) throw new Error("Invalid evidence pagination"); const serialized = canonical(entry.data); const end = Math.min(serialized.length, offset + limit); if (offset > serialized.length) throw new Error("Evidence offset exceeds content"); const ranges = this.ranges.get(evidenceId) ?? []; ranges.push([offset, end]); this.ranges.set(evidenceId, ranges); return { evidenceId, kind: entry.kind, source: entry.source, offset, content: serialized.slice(offset, end), nextOffset: end < serialized.length ? end : null, byteLength: entry.byteLength, sha256: entry.sha256 }; }
+  read(evidenceId: string, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry) throw new Error(`Evidence ID is not admitted: ${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096) throw new Error("Invalid evidence pagination"); const serialized = canonicalJson(entry.data); const end = Math.min(serialized.length, offset + limit); if (offset > serialized.length) throw new Error("Evidence offset exceeds content"); const ranges = this.ranges.get(evidenceId) ?? []; ranges.push([offset, end]); this.ranges.set(evidenceId, ranges); return { evidenceId, kind: entry.kind, source: entry.source, offset, content: serialized.slice(offset, end), nextOffset: end < serialized.length ? end : null, byteLength: entry.byteLength, sha256: entry.sha256 }; }
   hasRead(evidenceId: string) { return (this.ranges.get(evidenceId)?.length ?? 0) > 0; }
-  hasFullyRead(evidenceId: string) { const entry = this.entries.get(evidenceId); if (!entry) return false; const length = canonical(entry.data).length; const sorted = [...(this.ranges.get(evidenceId) ?? [])].sort((a, b) => a[0] - b[0]); let end = 0; for (const range of sorted) { if (range[0] > end) return false; end = Math.max(end, range[1]); } return end >= length; }
+  hasFullyRead(evidenceId: string) { const entry = this.entries.get(evidenceId); if (!entry) return false; const length = canonicalJson(entry.data).length; const sorted = [...(this.ranges.get(evidenceId) ?? [])].sort((a, b) => a[0] - b[0]); let end = 0; for (const range of sorted) { if (range[0] > end) return false; end = Math.max(end, range[1]); } return end >= length; }
   readRecord() { return [...this.entries.keys()].filter((id) => this.hasRead(id)).sort().map((id) => ({ evidenceId: id, fullyRead: this.hasFullyRead(id) })); }
 }
 
@@ -152,7 +148,7 @@ export function validateDoctorOutput(value: unknown, index: DoctorEvidenceIndexV
       const entry = store.entries.get(point.evidenceId);
       if (!entry || entry.kind !== "statsLine" || !store.hasRead(point.evidenceId)) throw new Error("trend must cite read StatsLines");
       const line = entry.data as StatsLineV1; const expected = line[trend.metric];
-      if (canonical(point.value) !== canonical(expected)) throw new Error("trend point does not exactly join its StatsLine");
+      if (canonicalJson(point.value) !== canonicalJson(expected)) throw new Error("trend point does not exactly join its StatsLine");
       cases.add(`${line.caseKey.repository}#${line.caseKey.issueNumber}`);
     }
     if (cases.size < 2) throw new Error("trend requires distinct StatsLines");
@@ -168,7 +164,7 @@ export function validateDoctorOutput(value: unknown, index: DoctorEvidenceIndexV
     if (bite.targetKey !== finding.targetKey) throw new Error("lastRealBite target mismatch");
     if (bite.kind === "actual") {
       const entry = store.entries.get(bite.evidenceId);
-      if (!entry || (entry.kind !== "receipt" && entry.kind !== "verdict") || !store.hasRead(bite.evidenceId) || canonical(bite.sealedIdentity) !== canonical({ ...entry.source, sha256: entry.sha256 })) throw new Error("actual bite must cite admitted/read sealed Receipt or verdict");
+      if (!entry || (entry.kind !== "receipt" && entry.kind !== "verdict") || !store.hasRead(bite.evidenceId) || canonicalJson(bite.sealedIdentity) !== canonicalJson({ ...entry.source, sha256: entry.sha256 })) throw new Error("actual bite must cite admitted/read sealed Receipt or verdict");
     } else {
       if (finding.disposition === "keep") throw new Error("noRealBite permits only thin or delete");
       const population = index.populations.find((item) => item.id === bite.populationId && item.targetKey === finding.targetKey);

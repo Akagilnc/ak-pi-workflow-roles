@@ -1,10 +1,10 @@
+import { canonicalJson } from "./canonical-json.ts";
 import { sha256Hex } from "./sha256.ts";
 import { statsLineEvidenceBytes, validateDoctorEvidenceIndex, type DoctorEvidenceIndexV1 } from "./doctor-contracts.ts";
 
 export type DoctorCommittedEvidenceReader = { read(targetCommit: string, path: string): Promise<Uint8Array> };
 
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-function canonical(value: unknown): string { if (value === null || typeof value !== "object") return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; return `{${Object.keys(value as object).sort().map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`; }
 function canonicalDocketPath(path: unknown): path is string {
   if (typeof path !== "string" || path.includes("\\") || path.includes("//") || path.startsWith("/") || path.split("/").some((part) => part === "." || part === "..")) return false;
   return /^\.ak\/dockets\/issues\/[1-9]\d*\/(?:[^/]+\/)*[^/]+$/.test(path);
@@ -22,7 +22,7 @@ export async function resolveDoctorEvidenceIndex(value: unknown, reader: DoctorC
     let bytes: Uint8Array; try { bytes = await reader.read(sourceCommit, sourcePath); } catch (error) { throw new Error(`Committed evidence is inaccessible: ${sourcePath}`, { cause: error }); }
     let data: unknown; try { data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch (error) { throw new Error(`Committed evidence is malformed: ${sourcePath}`, { cause: error }); }
     const sha256 = sha256Hex(bytes); const byteLength = bytes.byteLength;
-    if (canonical(item.data) !== canonical(data)) throw new Error(`Committed evidence target-byte mismatch: ${String(item.id)}`);
+    if (canonicalJson(item.data) !== canonicalJson(data)) throw new Error(`Committed evidence target-byte mismatch: ${String(item.id)}`);
     if (typeof item.id === "string") committedIdentities.set(item.id, { sha256, byteLength });
     return { id: item.id, kind: item.kind, sha256: item.sha256, byteLength: item.byteLength, source: { commit: sourceCommit, path: sourcePath }, data };
   }));
