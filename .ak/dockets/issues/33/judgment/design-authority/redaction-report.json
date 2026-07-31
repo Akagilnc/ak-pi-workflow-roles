@@ -1,0 +1,29 @@
+{
+  "hits": [
+    {
+      "ruleId": "session-credential",
+      "location": "externalInput.pi-print-mode",
+      "count": 2
+    },
+    {
+      "ruleId": "token-assignment",
+      "location": "externalInput.pi-agent-session",
+      "count": 2
+    },
+    {
+      "ruleId": "bearer-credential",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "session-credential",
+      "location": "child.stdout",
+      "count": 10
+    },
+    {
+      "ruleId": "token-assignment",
+      "location": "child.stdout",
+      "count": 25
+    }
+  ]
+}
