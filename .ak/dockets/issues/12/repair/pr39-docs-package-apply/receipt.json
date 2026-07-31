@@ -1,0 +1,22 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_IsTTndp0pMUjHxCxNoAt3AVe|fc_004233d349d2a778016a6d24aa4c848191a51abd22848d0a5a",
+  "details": {
+    "status": "completed",
+    "report": "Committed the two authorized PR39 classes in a forward commit. Thinned CONTEXT StatsLine to role meaning and ADR 0012 to durable R1 bite policy, without editing archived docket inputs or ADR 0013. Replaced Doctor checkout-path package checks with the existing isolated real npm-pack file list, asserting the Doctor Soul, Doctor contracts, StatsLine, and canonical JSON module ship while retaining role/flag assertions. Audited the seam suites: authorized canonical, typed StatsLine, and Doctor unexpected-failure counterexamples already exist once in their owning suites, and doctor-evidence-resolution uses the production canonicalJsonBytes helper, so no duplicate tests or serializer were added. Other receipt classes were not repaired because they are outside this packet. Verification passed: 21 focused seam tests; focused real-pack test; TypeScript typecheck; isolated-HOME full suite (358 pass, 5 skip, 0 fail); collector/reviewer tarball cold-install suites (4 pass); npm pack dry-run artifact assertions; git diff --check. Worktree is clean.",
+    "commitSha": "31960c26e1dd91fac839e11ce5dbe44a86e1a1fc",
+    "classesRepaired": [
+      {
+        "name": "forward-documentation-thinning",
+        "searchScope": "Current forward documentation only: CONTEXT.md and docs/adr/0012-doctor-is-an-evidence-only-seat.md; checked the receipt boundary against archived docket inputs and ADR 0013.",
+        "exceptions": []
+      },
+      {
+        "name": "packed-artifact-and-seam-regressions",
+        "searchScope": "Package lifecycle tests plus canonical JSON, StatsLine, Doctor contracts, and Doctor evidence-resolution owning suites; searched for checkout access assertions, packIsolatedPackage use, counterexamples, and duplicate canonical serializers.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
