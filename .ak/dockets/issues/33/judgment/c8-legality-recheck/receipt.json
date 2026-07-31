@@ -1,0 +1,92 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_BRdmy9cocsMtstD5kQruEEVf|fc_005a9d1b86312043016a6cc17bff248191b9b96bc0f5519069",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "C8 is not lawful unchanged. Its invariant coverage is largely legitimate but it improperly turns an exhaustive technique and cross-product list into authority. It also duplicates package-owned validation and demands deterministic active-read interleaving while forbidding the artificial observation hook. Amend C8 so completion follows distinct production logic under ADR 0016 rather than legacy suite mass or enumerated test quantity."
+    },
+    "classes": [
+      {
+        "name": "Single-core deletion",
+        "owner": "Recorder module boundary",
+        "boundary": "Absence of the machine-envelope stdout lifecycle core compatibility fallback scratch capture and dual terminal representations",
+        "disposition": "keep — The deletion is the owner-directed behavior rather than a test-count requirement. Minimal oracle: source and package inventory plus one native-session vertical tracer establishes that only the v2 native-session path is reachable. Delete fixtures sabotage helpers exports and tests whose only subject was v1 transport. No replacement-by-line-count or preservation of eight former suite shapes is required."
+      },
+      {
+        "name": "Invocation admission",
+        "owner": "Recorder invocation boundary in config.ts run.ts and spawn.ts",
+        "boundary": "Invalid input cannot spawn and one valid invocation receives the bound session identity and effective environment",
+        "disposition": "thin — Keep leaf or table tests for v1 and forbidden flags and one real counter-child integration proving a representative invalid admission causes zero spawns. One valid run must prove exactly one spawn with exact injected id and absolute directory placement plus remaining argv and inherited PI_SESSION_DIR removal and configured environment precedence. Repeating every parser rejection through the counter child is unnecessary."
+      },
+      {
+        "name": "Session identity",
+        "owner": "Native session owner and path primitives",
+        "boundary": "Fresh private leaf with bound directory and file identity plus exactly one main session plus lawful flat Reviewer legs and no symlink escape or ambiguous inventory",
+        "disposition": "keep — These are independent durable-trust branches. Minimal oracle: real-filesystem table tests for collision and ancestor escape plus missing multiple extra and symlink inventory plus one lawful Reviewer-leg inventory plus fd and path identity rebinding. One representative Recorder integration may carry the lawful case. No Cartesian product across inventory shapes and lifecycle roles is required."
+      },
+      {
+        "name": "Active-read timing",
+        "owner": "Native session owner",
+        "boundary": "The snapshot accepted for publication must still bind the opened fd pathname metadata size directory inventory and pre-publication state",
+        "disposition": "thin — Keep the publication invariant but delete the requirement for deterministic mutation specifically while synchronous fd streaming is active. That phrase prescribes an unobservable timing point and is incoherent with the simultaneous ban on a test-only hook. Minimal oracle: deterministic real-filesystem replacement plus growth or shrinkage or metadata mutation plus inventory rebinding at the available snapshot and verify boundary together with tests of fd metadata comparison and pathname or inventory rebinding and the pre-publication verify call. These jointly cover races whose evidence persists to publication. C8 must not force a production callback async redesign timing race or artificial owner interface solely for test synchronization."
+      },
+      {
+        "name": "Pi v3 framing",
+        "owner": "Native JSONL session parser",
+        "boundary": "Closed header and linear chain and final newline plus bounded line entry and carry memory",
+        "disposition": "thin — Keep representative corruption tests and exact hard-limit off-by-one oracles because the limits are production logic. For 16 MiB an ordinary legal row plus exactly-at-limit accepted and first-byte-over rejected is sufficient. A separate just-below case is redundant. For 100000 entries an ordinary legal stream plus exactly 100000 accepted and 100001 rejected is sufficient. The 99999 case adds no branch. Keep malformed JSON plus second or bad header plus broken or duplicate chain plus missing final newline as distinct parser laws. Do not require every corruption cross-product."
+      },
+      {
+        "name": "Acceptance lifecycle",
+        "owner": "Native lifecycle extractor",
+        "boundary": "Exactly one final package-accepted pair with complete prior rejections inert and malformed or multiple-success evidence failing closed under the missing versus invalid distinction",
+        "disposition": "keep — This is unique receipt-trust logic. Minimal table: nested lookalike inert plus no package lifecycle missing plus complete rejection-only missing plus rejection then valid success accepted plus one malformed orphan or mismatched pair invalid plus wrong accepted text or details invalid plus duplicate or two successes invalid plus post-success content invalid. Additional partial reversed replayed and conflicting syntactic permutations may share table representatives and are not mandatory as an exhaustive matrix."
+      },
+      {
+        "name": "Role lifecycle matrix",
+        "owner": "Package-contract leaf validators plus Recorder extractor dispatch",
+        "boundary": "Tool-specific accepted text and validator selection plus worker audited and Collector derivative differences",
+        "disposition": "thin — All five roles need cheap package-contract or dispatch leaf coverage rather than five separate end-to-end Recorder runs. Retain one valid leaf case per terminating tool where needed to prove dispatch with unique assertions for Collector projection and audited-role observation or usage. A smaller representative Recorder integration matrix consisting of an ordinary worker plus one audited role plus Collector or an equivalently strong set proves the common sealing path. Do not duplicate the package runtime native shape validation or existing validator suites in Recorder."
+      },
+      {
+        "name": "Derivative redaction",
+        "owner": "Extractor scanner and generated-artifact admission",
+        "boundary": "Only promoted typed derivatives and bounded public diagnostics are scanned revalidated and truthfully labelled while raw sources are not claimed as scanned",
+        "disposition": "keep — Unique trust logic remains. Minimal oracle: a credential-bearing accepted derivative is sanitized revalidated labelled as derivative and reported. An unredacted valid derivative remains accepted. A scan-induced invalid derivative aborts. A raw-session or stdout secret is neither promoted nor falsely represented as scanned. Bounded failure diagnostic scanning is covered once."
+      },
+      {
+        "name": "Child outcome truth",
+        "owner": "Recorder transaction and failure boundary",
+        "boundary": "Exact child exit or signal survives successful sealing and independent sealer failure without relabelling or catch-and-continue",
+        "disposition": "keep — Exit and signal are distinct production branches. Minimal vertical oracles: nonzero child plus valid session publishes and returns that code. Signaled child plus valid session publishes and preserves or re-raises that signal. One settled-child plus sealer failure publishes nothing and exits 125 while recording the known child outcome and honest cause. Additional role and lifecycle cross-products are unnecessary."
+      },
+      {
+        "name": "Atomic publication",
+        "owner": "Publication seam and manifest tree builder",
+        "boundary": "One complete tree wins without overwrite or partial docket and raw main or leg sessions and raw streams never enter the docket",
+        "disposition": "keep — Atomic no-replace and raw exclusion are unique owner goals. Minimal oracle: deterministic competing publication attempts yield one intact winner and preserve the no-overwrite contract. A successful docket tree and manifest check proves raw session Reviewer legs stdout and stderr are absent while promoted derivatives are present. Do not repeat this for every role."
+      },
+      {
+        "name": "Bounded forwarding",
+        "owner": "Stream-forwarding seam",
+        "boundary": "Byte-exact separated pass-through with backpressure fixed tail capacity and no cumulative-size materialization or 2 GiB threshold failure",
+        "disposition": "keep — The greater-than-2-GiB logical stream is uniquely tied to Issue #33's reproduced failure and is proportionate when it reuses a buffer and counting discard sink rather than allocating or writing 2 GiB. One direct forwarding oracle may combine exact logical byte count backpressure completion stream separation and ring capacity. One modest spawned-child integration proves irrelevant stdout does not alter sealing inputs or result. No size role and failure cross-product is required."
+      },
+      {
+        "name": "Packaged contract",
+        "owner": "Recorder public-contract and package boundary",
+        "boundary": "Runtime-emitted v2 objects and shipped schemas dist native helper package inventory and installed CLI remain synchronized",
+        "disposition": "thin — Keep one synchronization tracer per shipped Recorder schema against representative runtime success or failure objects and prohibited v1 null or stale branches. Do not recreate exhaustive format validation already enforced by schema or runtime. Keep build typecheck and full-suite gates as general mechanical evidence plus package inventory checks for removal and addition plus a cold-installed-bin smoke covering the packaged Recorder seam. Success and failure may be represented minimally. All roles need not be cold-installed end to end."
+      },
+      {
+        "name": "Quantity criterion",
+        "owner": "C8 proof policy under ADR 0016",
+        "boundary": "Definition of sufficient Apply evidence",
+        "disposition": "delete — Test count restored suite count replaced line mass every listed syntactic permutation and every cross-product are not completion criteria. Tests follow distinct custom production logic and required seams. The former deletion of 11685 lines neither proves nor disproves completion. Only missing behavior-level oracles do. C8 becomes invariant families with the minimal oracles above rather than a mandatory quantity matrix."
+      }
+    ],
+    "note": "This amendment supersedes only C8's excessive proof-technique and matrix language. C1 through C7 and C9 plus the design-authority correction for rejected package attempts remain controlling. No owner-policy escalation is needed because ADR 0016 and the Issue #33 deletion and simplification direction resolve proportionality. The prior Coder-005 judgment changes as follows: its public-v2-schema finding remains an independent C7 Apply issue. Its counter-child finding narrows to the representative production-seam oracle above. Its deterministic during-active-read finding is withdrawn as a completion requirement. Its whole-ticket finding may no longer rely on deleted suite mass or an exhaustive five-role cross-product matrix although any retained minimal behavior oracle absent at a future fixed head remains a legitimate Apply gap. This authority recheck does not decide Code5 acceptance."
+  },
+  "artifactKind": "acceptedReceipt"
+}
