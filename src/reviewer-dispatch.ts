@@ -2,11 +2,11 @@ import { exactUtf8 } from "./exact-utf8.ts";
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
-import { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 import { sha256Hex } from "./sha256.ts";
 export { sha256Hex } from "./sha256.ts";
-export { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+export { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
 export const REVIEWER_CHILD_TOOLS = [
   "read",
@@ -41,7 +41,7 @@ export type ReviewerCapabilityRequest = Readonly<{
   prerequisiteOperations: readonly ReviewerPrerequisiteOperation[];
 }>;
 export type ReviewerCapabilitiesV1 = ReviewerCapabilityRequest &
-  Readonly<{ version: 1; taskSha256: string }>;
+  Readonly<{ version: 1; taskSha256: string; document: ReviewerPromptIdentity }>;
 export type MaterialSelection = Readonly<{ id: string; repositoryPath: string }>;
 export type ReviewerProposalV1 = Readonly<{
   version: 1;
@@ -66,6 +66,7 @@ export type AcceptedReviewerDispatch = Readonly<{
   input: Readonly<{
     task: ReviewerPromptIdentity;
     canonicalSkillSha256: string;
+    capabilityDocument: ReviewerPromptIdentity;
   }>;
   targetSnapshot: ReviewerPinnedTarget;
   prerequisiteOperations: readonly ReviewerPrerequisiteOperation[];
@@ -116,7 +117,6 @@ type DispatcherDependencies = Readonly<{
   compilePrompt?: (prompt: string, axis: "standards" | "spec", pass: 1 | 2) => ReviewerPromptIdentity;
 }>;
 
-const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 export class ReviewerPreflightError extends Error {
   constructor(readonly code: ReviewerPreflightViolation) { super(code); }
 }
@@ -168,8 +168,10 @@ export function parseReviewerCapabilities(
   task: Uint8Array,
 ): ReviewerCapabilitiesV1 {
   let value: unknown;
+  let documentText: string;
   try {
-    value = JSON.parse(utf8Decoder.decode(raw));
+    documentText = exactUtf8(raw, "Reviewer capabilities");
+    value = JSON.parse(documentText);
   } catch {
     throw new Error("Invalid Reviewer capabilities UTF-8 JSON");
   }
@@ -201,7 +203,12 @@ export function parseReviewerCapabilities(
   let request: ReviewerCapabilityRequest;
   try { request = validateCapabilityRequestShape({ tools, bashCommands, prerequisiteOperations }); }
   catch { throw new Error("Reviewer capabilities contain unknown or duplicate values"); }
-  return Object.freeze({ version: 1, taskSha256, ...immutableRequest(request) });
+  return Object.freeze({
+    version: 1,
+    taskSha256,
+    document: reviewerPromptIdentity(documentText),
+    ...immutableRequest(request),
+  });
 }
 
 function validateRequest(
@@ -425,7 +432,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       if (!isReviewerPromptIdentity(first) || !isReviewerPromptIdentity(second)) {
         violation("prompt-identity-invalid");
       }
-      if (first.text !== second.text || first.utf8Length !== second.utf8Length || first.sha256 !== second.sha256) {
+      if (!sameReviewerPromptIdentity(first, second)) {
         violation("prompt-identity-mismatch");
       }
     }
@@ -443,7 +450,11 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     return Object.freeze({
       identity,
       recipe: "reviewer-dispatch-v1",
-      input: Object.freeze({ task: taskEvidence, canonicalSkillSha256: sha256Hex(canonicalSkill) }),
+      input: Object.freeze({
+        task: taskEvidence,
+        canonicalSkillSha256: sha256Hex(canonicalSkill),
+        capabilityDocument: capabilities.document,
+      }),
       targetSnapshot,
       prerequisiteOperations: acceptedPrerequisites,
       range,

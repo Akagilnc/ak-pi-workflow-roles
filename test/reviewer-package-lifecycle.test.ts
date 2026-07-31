@@ -69,7 +69,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const taskPath = resolve(fixture, "review-task.md");
     const capsPath = resolve(fixture, "review-capabilities.json");
     await writeFile(taskPath, taskBytes);
-    await writeFile(capsPath, JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash", "edit"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }));
+    const capabilityText = JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash", "edit"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }, null, 2) + "\n";
+    await writeFile(capsPath, capabilityText);
 
     const proposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: request, spec: request } };
     const bad = { ...proposal, required: { standards: request, spec: { ...request, bashCommands: ["git status"] } } };
@@ -111,6 +112,11 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.doesNotMatch(accepted.message.details.dispatch.legs[0].prompt.text, /consumer text must become reviewed|Review current HEAD against/);
       assert.equal(accepted.message.details.dispatch.input.task.text, taskBytes.toString("utf8"));
       assert.equal(accepted.message.details.dispatch.input.task.sha256, createHash("sha256").update(taskBytes).digest("hex"));
+      assert.deepEqual(accepted.message.details.dispatch.input.capabilityDocument, {
+        text: capabilityText,
+        utf8Length: Buffer.byteLength(capabilityText),
+        sha256: createHash("sha256").update(capabilityText).digest("hex"),
+      });
       assert.match(accepted.message.details.dispatch.range.diffCommand, /^git diff [0-9a-f]{40}\.\.\.[0-9a-f]{40}$/);
       assert.match(accepted.message.details.dispatch.range.diffSha256, /^[0-9a-f]{64}$/);
       assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.axis), ["standards", "spec"]);
@@ -122,8 +128,10 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
         assert.equal(createHash("sha256").update(leg.prompt.text).digest("hex"), leg.prompt.sha256);
         assert.match(leg.prompt.text, /Task-SHA256: [0-9a-f]{64}/);
       }
+      assert.equal(children.some((child) => userText(child).includes(capabilityText)), false);
       assert.equal(audits.length, 2);
       assert.match(userText(audits[0]!), /structured_execution_record/);
+      assert.ok(userText(audits[0]!).includes(createHash("sha256").update(capabilityText).digest("hex")));
       const firstOutput = results.find((e: any) => e.message.toolCallId === "candidate") as any;
       const finalOutput = results.find((e: any) => e.message.toolCallId === "corrected") as any;
       assert.equal(firstOutput.message.isError, true);

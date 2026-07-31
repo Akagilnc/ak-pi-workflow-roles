@@ -7,6 +7,7 @@ import {
   REVIEWER_PREREQUISITES,
   createReviewerDispatcher,
   parseReviewerCapabilities,
+  sameReviewerPromptIdentity,
   type AcceptedReviewerDispatch,
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
@@ -100,6 +101,29 @@ test("capability document is closed, exact-byte task-bound, and deeply immutable
   }
   assert.throws(() => parseReviewerCapabilities(Buffer.from([0xff]), task));
   assert.throws(() => parseReviewerCapabilities(capabilityBytes(), Buffer.from(task.toString().trim())));
+});
+
+test("byte-distinct capability documents with identical grants retain distinct accepted identities", async () => {
+  const compact = capabilityBytes();
+  const spaced = Buffer.from(JSON.stringify(capabilityValue, null, 2) + "\n");
+  const compactCeiling = parseReviewerCapabilities(compact, task);
+  const spacedCeiling = parseReviewerCapabilities(spaced, task);
+  assert.deepEqual(compactCeiling.tools, spacedCeiling.tools);
+  assert.equal(sameReviewerPromptIdentity(compactCeiling.document, spacedCeiling.document), false);
+
+  const first = harness({ ceiling: compactCeiling });
+  const second = harness({ ceiling: spacedCeiling });
+  const [firstResult, secondResult] = await Promise.all([
+    first.dispatcher.propose(proposal), second.dispatcher.propose(proposal),
+  ]);
+  assert.equal(firstResult.status, "accepted");
+  assert.equal(secondResult.status, "accepted");
+  if (firstResult.status !== "accepted" || secondResult.status !== "accepted") return;
+  assert.deepEqual(firstResult.dispatch.legs.map(({ grant }) => grant), secondResult.dispatch.legs.map(({ grant }) => grant));
+  assert.equal(sameReviewerPromptIdentity(firstResult.dispatch.input.capabilityDocument, secondResult.dispatch.input.capabilityDocument), false);
+  assert.deepEqual(firstResult.dispatch.input.capabilityDocument, {
+    text: compact.toString("utf8"), utf8Length: compact.byteLength, sha256: createHash("sha256").update(compact).digest("hex"),
+  });
 });
 
 test("generic capability shapes remain representable but the recipe requires each leg's exact diff command", async () => {

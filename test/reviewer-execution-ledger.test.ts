@@ -18,7 +18,7 @@ function accepted(spec = true): ReviewerEvidenceEvent {
   const prompts = spec ? [["standards", "standards π"], ["spec", "spec prompt"]] as const : [["standards", "standards π"]] as const;
   return {
     source: "reviewer-dispatch", type: "accepted", identity: "proposal-1", recipe: "reviewer-dispatch-v1",
-    input: { task: { text: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha" }, target, prerequisiteOperations: [], range,
+    input: { task: { text: "task", utf8Length: 4, sha256: sha("task") }, canonicalSkillSha256: "skill-sha", capabilityDocument: { text: "{\"ceiling\":1}", utf8Length: 13, sha256: sha("{\"ceiling\":1}") } }, target, prerequisiteOperations: [], range,
     materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", text: "rules", utf8Length: 5, sha256: sha("rules") }], ...(spec ? { spec: [{ id: "requirements", repositoryPath: "SPEC.md", text: "spec", utf8Length: 4, sha256: sha("spec") }] } : { noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", text: "absence", utf8Length: 7, sha256: sha("absence") }] }) },
     legs: prompts.map(([axis, prompt]) => ({ axis, prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: sha(prompt) }, grant })),
   } as ReviewerEvidenceEvent;
@@ -52,6 +52,24 @@ test("established Spec completion projects one accepted sibling dispatch and exa
   assert.ok(Object.isFrozen(record));
   assert.ok(Object.isFrozen(record.accepted?.target.refs));
   assert.throws(() => { (record.results.standards!.usage!.cost as any).total = 99; }, TypeError);
+});
+
+test("audit evidence retains capability document identity and rejects mutation fatally", () => {
+  const ledger = createReviewerExecutionLedger();
+  const event = accepted() as any;
+  ledger.append(event);
+  assert.deepEqual(ledger.recordForAudit("refused").accepted?.input.capabilityDocument, event.input.capabilityDocument);
+
+  for (const mutation of [
+    { text: "{\"ceiling\":2}" },
+    { utf8Length: event.input.capabilityDocument.utf8Length + 1 },
+    { sha256: "0".repeat(64) },
+  ]) {
+    const rejectingLedger = createReviewerExecutionLedger();
+    const changed = accepted() as any;
+    changed.input.capabilityDocument = { ...changed.input.capabilityDocument, ...mutation };
+    assert.throws(() => rejectingLedger.append(changed), /capability document bytes, length, or SHA disagree/);
+  }
 });
 
 test("both sibling failures preserve exact settlement order and bounded evidence", () => {
