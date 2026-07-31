@@ -19,3 +19,12 @@ export function isReviewerPromptIdentity(value: ReviewerPromptIdentity): boolean
   const actual = reviewerPromptIdentity(value.text);
   return value.utf8Length === actual.utf8Length && value.sha256 === actual.sha256;
 }
+
+export function sameReviewerPromptIdentity(
+  first: ReviewerPromptIdentity,
+  second: ReviewerPromptIdentity,
+): boolean {
+  return first.text === second.text &&
+    first.utf8Length === second.utf8Length &&
+    first.sha256 === second.sha256;
+}

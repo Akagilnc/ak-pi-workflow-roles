@@ -22,7 +22,7 @@ const input = {
     rejections: [],
     accepted: {
       identity: "dispatch-1", recipe: "reviewer-dispatch-v1" as const,
-      input: { task: { text: "opaque task", utf8Length: 11, sha256: "task" }, canonicalSkillSha256: "skill" },
+      input: { task: { text: "opaque task", utf8Length: 11, sha256: "task" }, canonicalSkillSha256: "skill", capabilityDocument: { text: "{}", utf8Length: 2, sha256: "capabilities" } },
       target: { repositoryRoot: "/repo", targetHead: "head", refs: {} },
       prerequisiteOperations: [],
       range: { base: "base", target: "head", diffCommand: "git diff base...head", diffSha256: "diff", commits: ["head"] },

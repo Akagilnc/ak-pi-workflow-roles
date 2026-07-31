@@ -1,5 +1,5 @@
 import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
-import { isReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import { isReviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import {
   REVIEWER_PREFLIGHT_VIOLATIONS,
   type ReviewerPreflightViolation,
@@ -140,6 +140,8 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
         throw new Error("Accepted dispatch Spec state, materials, and sibling axes disagree");
       if (!isReviewerPromptIdentity(event.input.task))
         throw new Error("Accepted task bytes, length, or SHA disagree");
+      if (!isReviewerPromptIdentity(event.input.capabilityDocument))
+        throw new Error("Accepted capability document bytes, length, or SHA disagree");
       for (const material of [
         ...event.materials.standards,
         ...(event.materials.spec ?? []),
@@ -175,8 +177,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     if (results[event.axis] !== undefined) throw new Error(`Reviewer ${event.axis} result can settle exactly once`);
     const compiled = accepted.legs.find((leg) => leg.axis === event.axis);
     if (compiled === undefined) throw new Error(`Reviewer ${event.axis} was not an accepted leg`);
-    if (event.prompt.text !== compiled.prompt.text || event.prompt.utf8Length !== compiled.prompt.utf8Length ||
-        event.prompt.sha256 !== compiled.prompt.sha256 || !isReviewerPromptIdentity(event.prompt))
+    if (!sameReviewerPromptIdentity(event.prompt, compiled.prompt) || !isReviewerPromptIdentity(event.prompt))
       throw new Error("Actual runner prompt does not exactly match compiled prompt bytes, length, and SHA");
     if (!sameReviewerPinnedTarget(event.target, accepted.target)) throw new Error("Runner target does not match shared pinned target");
     if (event.status === "successful") {
