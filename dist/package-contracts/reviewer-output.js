@@ -74,13 +74,26 @@ export function validateRuntimeReviewerReceipt(output) {
                 throw new Error("Reviewer report lacks outcome");
             continue;
         }
-        if (!isRecord(outcome) || !exactKeys(outcome, ["status", "prompt", "workspaceDisposition"], ["failure"]) ||
+        if (!isRecord(outcome) || !exactKeys(outcome, ["status", "prompt", "workspaceDisposition"], ["failure", "runtimeConstructionEvidence"]) ||
             (outcome.status !== "successful" && outcome.status !== "failed") || !isRecord(outcome.prompt) || !exactKeys(outcome.prompt, ["text", "utf8Length", "sha256"]) ||
             !isReviewerPromptIdentity(outcome.prompt) || !validWorkspace(outcome.workspaceDisposition))
             throw new Error("Invalid Reviewer outcome");
+        const materialized = outcome.runtimeConstructionEvidence;
+        if (materialized !== undefined) {
+            const bundle = output.identities.construction.bundle;
+            const entries = bundle.entries;
+            if (!isRecord(materialized) || !exactKeys(materialized, ["leg", "workspaceIdentity", "manifestSha256", "entries"]) || materialized.leg !== axis ||
+                typeof materialized.workspaceIdentity !== "string" || materialized.workspaceIdentity.length === 0 || materialized.manifestSha256 !== bundle.manifestSha256 ||
+                !Array.isArray(materialized.entries) || materialized.entries.length !== entries.length || materialized.entries.some((entry, index) => {
+                const expected = entries[index];
+                return !isRecord(entry) || !exactKeys(entry, ["id", "relativeClonePath", "utf8Length", "sha256", "verified"]) || entry.verified !== true ||
+                    entry.id !== expected.id || entry.relativeClonePath !== expected.relativeClonePath || entry.utf8Length !== expected.utf8Length || entry.sha256 !== expected.sha256;
+            }))
+                throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
+        }
         if (outcome.status === "successful") {
-            if (Object.hasOwn(outcome, "failure") || report === undefined)
-                throw new Error("Successful Reviewer outcome requires exactly one report");
+            if (Object.hasOwn(outcome, "failure") || report === undefined || materialized === undefined)
+                throw new Error("Successful Reviewer outcome requires exactly one report and materialization evidence");
         }
         else if (!failures.has(outcome.failure) || report !== undefined)
             throw new Error("Failed Reviewer outcome requires a classification and no report");
