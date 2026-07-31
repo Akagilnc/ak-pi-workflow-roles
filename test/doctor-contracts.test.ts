@@ -39,9 +39,12 @@ test("Doctor completed/refused states are exclusive and trends exactly join dist
   assert.throws(() => validateDoctorOutput(output, admitted, store), /exactly join/);
 });
 
-test("Doctor intake rejects forbidden evidence kinds, digest drift, and duplicate identities", () => {
+test("Doctor intake rejects forbidden evidence kinds, digest drift, duplicate identities, and malformed StatsLines", () => {
   const base: any = index();
   assert.throws(() => validateDoctorEvidenceIndex({ ...base, evidence: [...base.evidence, entry("session", "session", {}, false)] }), /Forbidden or unknown/);
   assert.throws(() => validateDoctorEvidenceIndex({ ...base, evidence: [{ ...base.evidence[0], data: { changed: true } }, ...base.evidence.slice(1)] }), /digest mismatch/);
   assert.throws(() => validateDoctorEvidenceIndex({ ...base, evidence: [...base.evidence, base.evidence[0]] }), /Duplicate evidence/);
+  const malformed = structuredClone(line(3)) as any;
+  malformed.paperApplyBytes.value.ratio = { status: "measured", value: { numerator: 1, denominator: 0 } };
+  assert.throws(() => validateDoctorEvidenceIndex({ ...base, evidence: [...base.evidence.slice(0, 1), entry("stats-bad", "statsLine", malformed)] }), /invalid StatsLine evidence/);
 });
