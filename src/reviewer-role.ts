@@ -22,6 +22,7 @@ import {
   validateAcceptedReviewerDetails,
   type ReviewerOutput,
 } from "./package-contracts/reviewer-output.ts";
+import { reviewerScopePrompt } from "./reviewer-scope-prompt.ts";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -61,7 +62,7 @@ export type ReviewerRoleDependencies = {
     name: "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
   runAgent(
-    input: { description: string; prompt: string },
+    input: { description: string; prompt: string; reviewScopeKeys?: readonly string[] },
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ReviewerAgentResult>;
   auditCompliance(
@@ -157,10 +158,15 @@ export function createReviewerRoleRuntime(
   let originalRequest: string | undefined;
   let expansionPending = false;
   let lifecycleRegistered = false;
+  let reviewScopeKeys: readonly string[] | undefined;
   const ledger = createReviewerExecutionLedger();
 
   pi.registerFlag("ak-review-task", {
     description: "Opaque Markdown review task assigned to the reviewer role",
+    type: "string",
+  });
+  pi.registerFlag("ak-review-scope-keys", {
+    description: "Optional comma-separated exact class keys limiting Reviewer scope",
     type: "string",
   });
 
@@ -168,6 +174,19 @@ export function createReviewerRoleRuntime(
     async activate(ctx) {
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Reviewer soul is empty");
+      const rawScopeKeys = pi.getFlag("ak-review-scope-keys");
+      reviewScopeKeys = undefined;
+      if (rawScopeKeys !== undefined) {
+        if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
+          throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
+        }
+        const parsed = rawScopeKeys.split(",");
+        if (parsed.length === 0 || parsed.some((key) => key.trim().length === 0) ||
+          new Set(parsed).size !== parsed.length) {
+          throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
+        }
+        reviewScopeKeys = parsed;
+      }
       const taskPath = pi.getFlag("ak-review-task");
       if (typeof taskPath !== "string" || taskPath.trim().length === 0) {
         throw new Error("Reviewer role requires --ak-review-task");
@@ -223,6 +242,7 @@ export function createReviewerRoleRuntime(
                 {
                   description: parameters.description,
                   prompt: parameters.prompt,
+                  ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
                 },
                 signal === undefined
                   ? { context: ctx }
@@ -386,9 +406,10 @@ export function createReviewerRoleRuntime(
               );
             }
           }
+          const scopePrompt = reviewerScopePrompt(reviewScopeKeys);
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<reviewer_verification_policy>\n${REVIEWER_VERIFICATION_POLICY}\n</reviewer_verification_policy>\n\n<review_task>\n${task ?? ""}\n</review_task>`,
+              `${event.systemPrompt}\n\n${scopePrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<reviewer_verification_policy>\n${REVIEWER_VERIFICATION_POLICY}\n</reviewer_verification_policy>\n\n<review_task>\n${task ?? ""}\n</review_task>`,
           };
         });
       }

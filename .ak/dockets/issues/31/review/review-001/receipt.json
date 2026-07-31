@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_reviewer_output",
+  "toolCallId": "call_jYL3QlpJBEhK0EOOBofUR8BA|fc_0ecb74f43ec8de31016a6c99300b848191afd628f1f757cbba",
+  "details": {
+    "status": "refused",
+    "report": "Unable to complete the required review method faithfully. The single mandated Standards/Spec sibling-parallel batch has already run, but the isolated Spec sibling could not access the host-only native-session artifact, so that axis did not perform the explicitly required mechanical evidence inspection. Parent inspection cannot substitute for or adjudicate the sibling-axis result, and rerunning a corrected sibling batch would violate the task’s exactly-one-batch constraint. In addition, the pre-batch standards-source inventory was not established comprehensively enough to prove the Standards axis received every applicable repository standard. These are method/evidence failures rather than target defects; no completed review receipt is supportable."
+  },
+  "artifactKind": "acceptedReceipt"
+}

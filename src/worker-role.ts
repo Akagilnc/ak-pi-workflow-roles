@@ -13,6 +13,8 @@ import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   validateAcceptedWorkerDetails,
+  type CoderOutput,
+  type FixerOutput,
   type WorkerOutput,
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
@@ -40,18 +42,26 @@ function matchFixerBashForbiddenLiteral(
   );
 }
 
-const workerOutputSchema = Type.Object(
-  {
-    status: StringEnum(["planned", "completed", "refused"] as const),
-    report: Type.String({ minLength: 1 }),
-    commitSha: Type.Optional(Type.String({ minLength: 1 })),
-  },
-  { additionalProperties: false },
-);
+const workerOutputFields = {
+  status: StringEnum(["planned", "completed", "refused"] as const),
+  report: Type.String({ minLength: 1 }),
+  commitSha: Type.Optional(Type.String({ minLength: 1 })),
+};
+const coderOutputSchema = Type.Object(workerOutputFields, { additionalProperties: false });
+const fixerOutputSchema = Type.Object({
+  ...workerOutputFields,
+  classesRepaired: Type.Optional(Type.Array(Type.Object({
+    name: Type.String({ minLength: 1 }),
+    searchScope: Type.String({ minLength: 1 }),
+    exceptions: Type.Array(Type.Object({
+      where: Type.String({ minLength: 1 }),
+      reason: Type.String({ minLength: 1 }),
+    }, { additionalProperties: false })),
+  }, { additionalProperties: false }), { minItems: 1 })),
+}, { additionalProperties: false });
 
-type WorkerOutputParameters = Static<typeof workerOutputSchema>;
-export type FixerOutput = WorkerOutput;
-export type CoderOutput = WorkerOutput;
+type WorkerOutputParameters = Static<typeof fixerOutputSchema>;
+export type { FixerOutput, CoderOutput };
 type WorkerPhase = "plan" | "apply";
 
 export type WorkerRoleHostActions = {
@@ -89,25 +99,7 @@ export function validateWorkerOutput(
   phase: WorkerPhase,
   roleLabel: WorkerRoleLabel,
 ): WorkerOutput {
-  if (!isRecord(output)) {
-    throw new Error(`${roleLabel} output must be an object`);
-  }
-  const expectedKeys = output.commitSha === undefined
-    ? ["status", "report"]
-    : ["status", "report", "commitSha"];
-  if (
-    !hasExactKeys(output, expectedKeys) ||
-    (output.status !== "planned" && output.status !== "completed" &&
-      output.status !== "refused") ||
-    typeof output.report !== "string" || output.report.trim().length === 0 ||
-    (output.commitSha !== undefined &&
-      (typeof output.commitSha !== "string" ||
-        output.commitSha.trim().length === 0))
-  ) {
-    throw new Error(
-      `${roleLabel} output requires planned|completed|refused, a non-blank report, and an optional non-blank commitSha`,
-    );
-  }
+  const accepted = validateAcceptedWorkerDetails(output, roleLabel);
   if (phase === "plan" && output.status === "completed") {
     throw new Error(`${roleLabel} plan phase permits only planned or refused`);
   }
@@ -117,11 +109,7 @@ export function validateWorkerOutput(
   if (output.status === "planned" && output.commitSha !== undefined) {
     throw new Error(`${roleLabel} planned output forbids commitSha`);
   }
-  return {
-    status: output.status,
-    report: output.report,
-    ...(output.commitSha === undefined ? {} : { commitSha: output.commitSha }),
-  };
+  return accepted;
 }
 
 function requireSingletonSubmissionCall(
@@ -194,7 +182,7 @@ export function createFixerRoleRuntime(
             `${FIXER_OUTPUT_TOOL_NAME} never escalates; explain any requested owner decision in report for the caller to dispose.`,
             "plan permits planned|refused; apply permits completed|refused.",
           ],
-          parameters: workerOutputSchema,
+          parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
             if (packet === undefined || phase === undefined) {
               throw new Error("Fixer repair packet and phase were not loaded");
@@ -312,7 +300,7 @@ export function createCoderRoleRuntime(
             "plan permits planned|refused; apply permits completed|refused.",
             "A completed apply report must preserve evidence for TDD, the same-pattern check, introduced-regression check, and behavior-fact check.",
           ],
-          parameters: workerOutputSchema,
+          parameters: coderOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
             if (task === undefined || phase === undefined) {
               throw new Error("Coder task and phase were not loaded");
