@@ -49,7 +49,7 @@ export async function runRecorder(options) {
             return fail(new RecorderError("destination-exists"));
         current = "stage-allocation";
         stage = allocateIgnoredStageRoot(config.archive.repositoryRoot);
-        assertSameFilesystem(stage, dirname(dest), "publication");
+        assertSameFilesystem(stage, config.archive.repositoryRoot, "publication");
         current = "admission";
         const admitted = admitDeclarations(config, stage);
         current = "session";
