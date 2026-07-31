@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+    "root": ".ak/dockets",
+    "docketId": "issues/23/authority/judge-001"
+  },
+  "invocation": {
+    "id": "f6b6d299-1195-48ef-9aab-042c4cd15dce"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #23: Recorder failure honesty: stop mislabeling unknown exceptions as invalid-config, preserve causes, locate the 15-min pre-spawn burn\n\nhttps://github.com/Akagilnc/ak-pi-workflow-roles/issues/23\n\n## Issue body\n\n## 案由:900+s 判官腿被出口 config 校验烧掉(2026-07-31 12:00 JST 实案)\n\n主刀 session 日志实录时序:\n\n- 11:43–11:44 集体判卷卷宗汇编完成(116 条 heuristic findings,~73,776 字符 ≈ 18k tokens,docket `issues/17/judgment/full-finding-adjudication`)\n- 11:44:43 判官腿经 Recorder 点火\n- 12:00:01(约 920 秒后)返回失败:\n\n```json\n{\"recorder\":{\"status\":\"failed\",\"code\":\"invalid-config\",\"message\":\"invalid Recorder config\"},\"child\":{\"status\":\"...\"}}\n```\n\n失败包里同时含 child status——child 实际起跑运行了,而 config 的静态缺陷在约 920 秒后才被执行拒绝。排查中的嫌疑(duplicate artifact id / reserved ID 前缀 / gitReferences 条数)全部是 config JSON 的静态属性,t=0 一毫秒可机械判定。根因定位归修理方,本票不预设具体是哪一条。\n\n## 不变式(owner 2026-07-31 拍:扩展到所有调用,不只 judge)\n\n**Recorder config 的一切静态可判定缺陷,必须在 spawn child 之前拒绝;child 一旦起跑,不允许再出现 invalid-config 类死因。**\n\n适用于 Recorder 包裹的全部调用(judge / reviewer / fixer / coder / collector 及未来一切腿),不是 per-role 特例。\n\n## 验收\n\n- [ ] 本案同款坏 config(复现或等价构造)在 child spawn 前被拒:毫秒级、退出响亮、错误指明具体缺陷项\n- [ ] 穷举现有校验点:凡不依赖 child 运行结果的判定(shape、字段白名单、id 唯一性、reserved 前缀、ref 上限等)全部前移到入口一次跑完\n- [ ] child 起跑后的 recorder 失败只剩运行期不可预判类(I/O、child 崩溃等);测试证明 invalid-config 类在运行后路径不可达\n- [ ] 全角色入口覆盖:任一 Recorder 调用路径共用同一入口校验,无旁路\n\n## 护栏三问\n\n- 出事概率:已发生(本案),且集体判卷类大卷宗长腿会越来越多\n- 后果:单次 900+s 墙钟 + 整腿额度报废,腿越长损失越大\n- 下游兜底:无——#13(recurrence/failureClass)只能拦第 2..N 次重试,拦不住第 1 次;入口校验是唯一能救第一刀的位置\n\n## 与 #13 的分工\n\n#13 是验尸官(失败后判死症/天气,防重试浪费);本票是门卫(死症不许进门)。互补,零重叠,各修各的模块。\n\n\n## Owner comment 1\n\n## 第二具尸体(2026-07-31 12:17 JST,立票后 ~15 分钟)\n\n时序(主刀 session 日志):\n\n- 12:02:29 主刀诊断第一死为「oversized argv」,改用 stdin 管道递 prompt,**在根因未经本地复现证实的情况下重新点火**\n- 12:02:29 → 12:17:56,约 925 秒\n- 12:17:56 返回**逐字同款**失败:`{\"recorder\":{\"status\":\"failed\",\"code\":\"invalid-config\",...}`\n- 12:18:07 主刀转向排查 manifest reference limit(gitReferences 两次实测 66 → 67 条)\n\n## 加重情节\n\n1. 死因是 deterministic 类:换 transport(argv→stdin)不触及 config 静态属性,重跑必死——这正是 #13 要冻进 failureClass 的判断,也是本票入口拒绝要免掉的账。两票均未落地,同一缺陷 30 分钟内烧掉两条 ~920s 判官腿(合计 ~31 分钟墙钟 + 双份长腿额度)。\n2. 复现成本与烧腿成本的比价:`invalid-config` 判定可在本地毫秒级复现(config 校验器可直接调用,主刀 12:01 已在 eval `parseRecorderConfig`)。**相同的裁决,入口问一次一毫秒,出口问一次九百秒。**\n\n## 对验收的含义(不加新条,补一实证)\n\n验收第 1 条「同款坏 config 在 spawn 前被拒」的等价日常纪律:长腿点火前,config 必须先过一次本地校验并通过——#23 落地后由入口自动执行;落地前每一次跳过它的点火,都是对本票案由的追加实证。修法与根因定位仍归修理方。\n\n\n## Owner comment 2\n\n## 案由更正(外审自纠,2026-07-31 12:40 JST)\n\n原案由与首条评论含两处事实错误,以下为开卷全文后的更正:\n\n1. **「child 实际起跑运行了」——错。** 失败 JSON 全文为 `\"child\":{\"status\":\"not-spawned\",\"exitCode\":null,\"signal\":null,\"diagnostic\":null}`,三次皆然(07-31 07:38 / 12:00 / 12:18 JST,前一次属另一调用语境、同款签名)。没有任何 child 工作被烧。\n2. **「静态缺陷在 child 跑完后才被执行拒绝」——错。** `run.ts` 中 `loadRecorderConfig` 与 `admitDeclarations` 均在 spawn 之前,代码注释明文「Declaration admission is fail-closed before any child spawn」。入口闸存在且工作正常。\n\n## 更正后的真 findings\n\n**F1 — 成本排在拒绝之前**:每次 ~15.5 分钟花在 config 校验之前的昂贵准备(卷宗汇编/哈希/git 操作),而校验本身毫秒级。三次合计 ~46 分钟墙钟买了三张同款拒绝单。不变式改写为:**静态可判定缺陷的发现成本必须与其判定成本同数量级——凡在昂贵准备之前即可判定的结构性缺陷(shape / id 唯一性 / reserved 前缀 / kind),必须先于昂贵准备被判**。实现形态归修理方。\n\n**F2 — 哑谜失败**:`errors.ts:19` 的 `PUBLIC_MESSAGES` 把一切 invalid-config 压成固定文案「invalid Recorder config」(秘密卫生动机正当,内部精确消息如 `declarations.gitReferences[N].id is unlawful` 从不示人);且 `run.ts:557-560` 的 catch-all 把**非 RecorderError 异常**也标成 invalid-config 并吞掉 cause。直接后果:调用方三轮猜谜诊断(argv 超长→stdin 管道→ref 上限),~35 分钟排查全部打偏。需要一个不泄密但可定位的失败指针(schema 路径本身非秘密);catch-all 不得冒用 invalid-config 标签。取舍设计归修理方。\n\n**F3 — recurrence 实证(联 #13)**:同款失败签名 5 小时内三击、跨至少两个调用语境、每次重试均未先本地复现根因。deterministic 类误当天气重试的实案 +1。\n\n## 验收改写\n\n- [ ] 结构性静态缺陷在昂贵准备之前被拒(毫秒级),错误指明缺陷的 schema 路径\n- [ ] 非 RecorderError 异常不得标为 invalid-config;cause 以不泄密形式可追\n- [ ] 原验收「全角色入口覆盖、无旁路」保留\n- [ ] 原案由中基于「child 被烧」的表述以本评论为准\n\n\n## Owner comment 3\n\n## 决定性证据:run 1 的 config 清白,invalid-config 是冒牌标签(2026-07-31 午)\n\n可复跑证据链:\n\n1. `.ak/work/issues/17/full-finding-admission-recorder-config.json` mtime = `11:44:45`,点火后 2 秒写下、至今未改 → run 1(12:00:01 失败)所用即此文件;\n2. 本地真校验器复跑:`loadRecorderConfig(该文件)` **PASS**,66 条 gitReferences 全部合法(node --experimental-strip-types,毫秒级);\n3. `invalid-config` 全仓仅两个产地:config.ts 各校验(已被第 2 步排除)与 `run.ts:557-560` catch-all(把任意非 RecorderError 异常贴上 invalid-config、吞 cause)。排除法唯余后者。\n\n结论:**run 1 的失败是 Recorder 内部未包裹异常被 catch-all 冒标为 invalid-config,真因被吞;且异常发生在 pre-spawn 阶段内部耗时 ~15 分钟之后。** 「manifest reference limit / config 不合法」方向对 run 1 不成立。run 2 所用 config 无法从盘上确认版本,不下断言,但同签名同嫌疑。\n\n## 对「固定文案」秘密卫生设计的裁定(owner 2026-07-31 问「是不是有点过了」)\n\n威胁真实(八洞史收据;错误文本经 caller 转贴可入永久证据),**但「一律压成固定文案」过度防御——三问死在第三问:兜底存在,即同一失败路径已在用的扫描器**。三条证据:\n\n1. 同路径的 `child.diagnostic`(child 任意 stderr)即为「过扫描后公开」,代码注释原话 \"fixed literals + scanned diagnostic\"——扫描器被信任放行 child 文本,却不放行 Recorder 自己的错误细节,同程序内双标;\n2. 结构指针(code + schema 路径 + 下标)由固定字面量拼成,天然无密,信息免费而被弃;\n3. 本案账单:假路标(文案说 config,config 清白)误导三轮诊断;内部 error.message 被弃且无本地落盘 = 真因在任何地方都不存在,是销毁诊断证据而非脱敏。\n\n分级方向(设计归修理方):结构指针直接公开;任意文本过既有扫描器后公开(与 child.diagnostic 同权);或真因过扫描后落本地 gitignored 0600 诊断文件、公开文案不变;独立一条:catch-all 禁止冒用 `invalid-config`,意外异常应为诚实的 `internal-error` 类标签(零秘密成本)。\n\n\n## Owner comment 4\n\n## 现行有效验收单(收敛版,取代正文与前评论中的各版;2026-07-31)\n\n**Authority 链**:仓内 CLAUDE.md《失败诚实宪法》(已并默认线 `58da62e`:接住可以,洗白不行——未识别异常不得冒用具体标签;真因必须落痕)+ 本票证据链(config 清白已证、catch-all 冒标已证)。\n\n- [ ] **不冒标**:`run.ts:557-560` 类 catch-all 不得把非 RecorderError 异常公开为 `invalid-config`;意外异常用诚实的「internal/unknown」类稳定代码\n- [ ] **真因落痕**:内部错误以不泄密形式可追——过既有扫描器公开(与 `child.diagnostic` 同权),或落本地 gitignored 0600 诊断文件;丢弃 cause 视同销毁诊断证据。形态归修理方\n- [ ] **结构指针公开**:config 校验类失败公开 schema 路径+下标(固定字面量构成,天然无密)\n- [ ] **拔雷**:定位并修复实际杀死 2×~920s 腿的异常(标签诚实后本地复现一次即现形)。诊断证据(非处方):pre-spawn 段未包裹 throw 点候选=`captureGitState`(execFileSync,无 try 包裹)、`mkdtempSync`、`assertScratchOutsideOrIgnored`、`buildChildEnv`;`admitDeclarations` 已有包裹(会标 `admission-failed`,可排除)\n- [ ] **15 分钟黑箱归属**:config 写盘(11:44:45)至失败输出(12:00:01)的耗时,多少在 Recorder 内部、多少在调用脚本后续步骤——需主刀现场(脚本原文)判定;若在 Recorder 内部,该阶段需可观测\n- [ ] **F1 一般式保留**:静态可判定缺陷的发现成本与判定成本同数量级(先于昂贵准备)\n- [ ] **全角色入口覆盖、无旁路**(原验收保留)\n\n**标题已更正**(原「Reject statically-decidable config defects before spawning」案由已被证无靶:入口校验存在且放行了合法 config)。\n\n\n## Authority question\n\nEstablish construction authority for issue #23 using the latest owner corrections as controlling where earlier statements conflict. Separate the verified facts from unresolved root cause. Define failure-honest public classification, safe diagnostic observability, ordering of cheap structural checks before expensive pre-spawn work, all-role Recorder coverage, and explicit exclusions from issue #13. Do not authorize implementation yet. Submit only through ak_judge_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "58da62e0e35fef2f75e617d5bdc5c707a4b03f87",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-23",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-23",
+        "sha256": "9bed23cee8b9f94ed473560dd535fa29deb663957ff9e584688ff9f233ec7441",
+        "byteLength": 11740
+      }
+    },
+    {
+      "id": "authority-request",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/authority-request",
+        "sha256": "8b4eb7fe6dbe5072fb6474f781a321de5aaf587b93e70b9dbbc4de72b26177f7",
+        "byteLength": 10789
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "72c231a8e59009f991f64d8b4a3a6ae6c675d02e4984004daacd3be4306271fb",
+        "byteLength": 6603
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "7efc8f59f4cb7b77077379d6b2221a9606a6155c480df7fbb5b89735113ef726",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_9VGaHEEFhA8LfvO75Aeu7gHj|fc_06e13a05439f81c7016a6c214536548191b6cc4ec7a7091b80",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_9VGaHEEFhA8LfvO75Aeu7gHj|fc_06e13a05439f81c7016a6c214536548191b6cc4ec7a7091b80",
+    "auditPassed": true,
+    "usage": {
+      "input": 21208,
+      "output": 247,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 21455
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "authorization-header",
+        "location": "child.stdout",
+        "count": 5
+      },
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}
