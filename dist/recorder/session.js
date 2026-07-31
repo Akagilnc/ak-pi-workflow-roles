@@ -3,7 +3,8 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSy
 import { basename, join } from "node:path";
 import { RecorderError } from "./errors.js";
 const inode = (s) => `${s.dev}:${s.ino}`;
-function inventory(dir) { return readdirSync(dir).sort().map(n => { const s = lstatSync(join(dir, n)); return `${n}:${s.mode}:${s.dev}:${s.ino}:${s.size}`; }).join("\n"); }
+function inventory(dir) { return readdirSync(dir).sort().flatMap(n => { const p = join(dir, n), s = lstatSync(p), head = `${n}:${s.mode}:${s.dev}:${s.ino}:${s.size}`; if (n !== "reviewer-legs" || !s.isDirectory() || s.isSymbolicLink())
+    return [head]; return [head, ...readdirSync(p).sort().map(leg => { const x = lstatSync(join(p, leg)); return `${n}/${leg}:${x.mode}:${x.dev}:${x.ino}:${x.size}`; })]; }).join("\n"); }
 export function createSessionLeaf(config) {
     const path = join(config.archive.repositoryRoot, config.session.directory);
     try {
@@ -91,7 +92,8 @@ export function readSession(config, owner) {
         let prev = null;
         const ids = new Set();
         rows.forEach((r, i) => { const x = r; if (i === 0) {
-            if (x.type !== "session" || x.version !== 3 || x.id !== config.session.id || x.cwd !== config.execution.cwd || Object.hasOwn(x, "parentSession") || typeof x.timestamp !== "string" || Number.isNaN(Date.parse(x.timestamp)))
+            const keys = Object.keys(x).sort().join(",");
+            if (keys !== "cwd,id,timestamp,type,version" || x.type !== "session" || x.version !== 3 || x.id !== config.session.id || x.cwd !== config.execution.cwd || typeof x.timestamp !== "string" || Number.isNaN(Date.parse(x.timestamp)) || new Date(x.timestamp).toISOString() !== x.timestamp)
                 throw new RecorderError("session-corrupt");
             return;
         } if (typeof x.id !== "string" || !x.id || ids.has(x.id) || x.parentId !== prev)
