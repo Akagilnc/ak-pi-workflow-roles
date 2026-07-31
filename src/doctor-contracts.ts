@@ -8,9 +8,14 @@ export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"] as const;
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];
-export type DoctorEvidenceKind = "manifest" | "receipt" | "verdict" | "disposition" | "statsLine" | "gitMetadata" | "trackerMetadata";
+export type DoctorCommittedEvidenceKind = "manifest" | "receipt" | "verdict" | "disposition";
+export type DoctorNormalizedEvidenceKind = "statsLine" | "gitMetadata" | "trackerMetadata";
+export type DoctorEvidenceKind = DoctorCommittedEvidenceKind | DoctorNormalizedEvidenceKind;
 type SourceIdentity = { commit: string; path: string };
-export type DoctorEvidenceEntry = { id: string; kind: DoctorEvidenceKind; sha256: string; byteLength: number; source?: SourceIdentity; data: unknown };
+type SealedEvidence = { id: string; sha256: string; byteLength: number; data: unknown };
+export type DoctorCommittedEvidenceEntry = SealedEvidence & { kind: DoctorCommittedEvidenceKind; source: SourceIdentity };
+export type DoctorNormalizedEvidenceEntry = SealedEvidence & { kind: DoctorNormalizedEvidenceKind; source?: never };
+export type DoctorEvidenceEntry = DoctorCommittedEvidenceEntry | DoctorNormalizedEvidenceEntry;
 export type DoctorEvidenceIndexV1 = {
   version: 1; repository: string; targetCommit: string;
   catalog: Array<{ key: string; kind: DoctorTargetKind; active: true }>;
@@ -83,7 +88,7 @@ function validateTrackerMetadata(value: unknown) {
   validate(value.issues, "issue"); validate(value.pullRequests, "pull request");
 }
 
-export function validateDoctorEvidenceIndex(value: unknown): DoctorEvidenceIndexV1 {
+export function validateDoctorEvidenceIndex(value: unknown, committedIdentities: ReadonlyMap<string, { sha256: string; byteLength: number }> = new Map()): DoctorEvidenceIndexV1 {
   if (!record(value)) throw new Error("Doctor evidence index must be an object");
   exact(value, ["version", "repository", "targetCommit", "catalog", "populations", "evidence"], "Doctor evidence index");
   if (value.version !== 1) throw new Error("Doctor evidence index version must be 1"); text(value.repository, "repository");
@@ -103,7 +108,12 @@ export function validateDoctorEvidenceIndex(value: unknown): DoctorEvidenceIndex
     if (raw.kind === "statsLine" && !isStatsLine(raw.data)) throw new Error("invalid StatsLine evidence");
     if (raw.kind === "gitMetadata") validateGitMetadata(raw.data);
     if (raw.kind === "trackerMetadata") validateTrackerMetadata(raw.data);
-    const bytes = statsLineEvidenceBytes(raw.data); if (bytes.byteLength !== raw.byteLength || sha256Hex(bytes) !== raw.sha256) throw new Error(`Evidence digest mismatch: ${raw.id}`);
+    // Resolver-derived committed identities seal exact target bytes; direct
+    // normalized validation uses the package canonical serialization.
+    const resolvedIdentity = committed.has(String(raw.kind)) ? committedIdentities.get(raw.id) : undefined;
+    const canonicalBytes = resolvedIdentity === undefined ? statsLineEvidenceBytes(raw.data) : undefined;
+    const expected = resolvedIdentity ?? { sha256: sha256Hex(canonicalBytes!), byteLength: canonicalBytes!.byteLength };
+    if (expected.byteLength !== raw.byteLength || expected.sha256 !== raw.sha256) throw new Error(`Evidence digest mismatch: ${raw.id}`);
     entries.set(raw.id, raw as DoctorEvidenceEntry);
   }
   if (!Array.isArray(value.populations)) throw new Error("populations must be an array"); const populationIds = new Set<string>();

@@ -14,7 +14,10 @@ function completed(lastRealBite: unknown, disposition = "thin") { const unavaila
 function readRequired(store: DoctorEvidenceStore) { for (const id of ["bite", "stats-1", "stats-2"]) store.read(id, 0, 4096); }
 
 test("Doctor validates actual citations and preserves catalog target bytes exactly", () => {
-  const admitted = index(); const store = new DoctorEvidenceStore(admitted); readRequired(store); const bite = admitted.evidence[0]!;
+  const base: any = structuredClone(index());
+  const rawBite = new TextEncoder().encode('{\n  "blocked": true,\n  "reason": "exact target bytes"\n}\n');
+  base.evidence[0] = { ...base.evidence[0], data: { blocked: true, reason: "exact target bytes" }, sha256: sha256Hex(rawBite), byteLength: rawBite.byteLength };
+  const admitted = validateDoctorEvidenceIndex(base, new Map([["bite", { sha256: sha256Hex(rawBite), byteLength: rawBite.byteLength }]])); const store = new DoctorEvidenceStore(admitted); readRequired(store); const bite = admitted.evidence[0]!;
   const output = completed({ kind: "actual", targetKey: target, evidenceId: "bite", sealedIdentity: { ...bite.source!, sha256: bite.sha256 } }, "keep");
   assert.deepEqual(validateDoctorOutput(output, admitted, store), output);
   assert.throws(() => validateDoctorOutput({ ...output, coverage: [{ targetKey: target.trim(), evidenceIds: ["bite"] }] }, admitted, store), /coverage target mismatch/);
@@ -48,7 +51,7 @@ test("Doctor output structure is schema-owned before contextual joins", () => {
 test("Doctor intake rejects forbidden evidence kinds, digest drift, duplicate identities, and malformed StatsLines", () => {
   const base: any = index();
   assert.throws(() => validateDoctorEvidenceIndex({ ...base, evidence: [...base.evidence, entry("session", "session", {}, false)] }), /Forbidden or unknown/);
-  assert.throws(() => validateDoctorEvidenceIndex({ ...base, evidence: [{ ...base.evidence[0], data: { changed: true } }, ...base.evidence.slice(1)] }), /digest mismatch/);
+  assert.throws(() => validateDoctorEvidenceIndex({ ...base, evidence: [base.evidence[0], { ...base.evidence[1], data: line(9) }, ...base.evidence.slice(2)] }), /digest mismatch/);
   assert.throws(() => validateDoctorEvidenceIndex({ ...base, evidence: [...base.evidence, base.evidence[0]] }), /Duplicate evidence/);
   const malformed = structuredClone(line(3)) as any;
   malformed.paperApplyBytes.value.ratio = { status: "measured", value: { numerator: 1, denominator: 0 } };

@@ -100,7 +100,7 @@ function validateTrackerMetadata(value) {
     validate(value.issues, "issue");
     validate(value.pullRequests, "pull request");
 }
-export function validateDoctorEvidenceIndex(value) {
+export function validateDoctorEvidenceIndex(value, committedIdentities = new Map()) {
     if (!record(value))
         throw new Error("Doctor evidence index must be an object");
     exact(value, ["version", "repository", "targetCommit", "catalog", "populations", "evidence"], "Doctor evidence index");
@@ -152,8 +152,12 @@ export function validateDoctorEvidenceIndex(value) {
             validateGitMetadata(raw.data);
         if (raw.kind === "trackerMetadata")
             validateTrackerMetadata(raw.data);
-        const bytes = statsLineEvidenceBytes(raw.data);
-        if (bytes.byteLength !== raw.byteLength || sha256Hex(bytes) !== raw.sha256)
+        // Resolver-derived committed identities seal exact target bytes; direct
+        // normalized validation uses the package canonical serialization.
+        const resolvedIdentity = committed.has(String(raw.kind)) ? committedIdentities.get(raw.id) : undefined;
+        const canonicalBytes = resolvedIdentity === undefined ? statsLineEvidenceBytes(raw.data) : undefined;
+        const expected = resolvedIdentity ?? { sha256: sha256Hex(canonicalBytes), byteLength: canonicalBytes.byteLength };
+        if (expected.byteLength !== raw.byteLength || expected.sha256 !== raw.sha256)
             throw new Error(`Evidence digest mismatch: ${raw.id}`);
         entries.set(raw.id, raw);
     }
