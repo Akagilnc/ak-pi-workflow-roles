@@ -104,6 +104,7 @@ test("installed npm tarball runs native Reviewer expansion in an independent con
         "extensions/role-runtime.ts",
         "package.json",
         "schemas/collector-legs-v1.schema.json",
+        "schemas/recorder-failure-v1.schema.json",
         "schemas/recorder-manifest-v1.schema.json",
         "scripts/build-rename-no-replace.mjs",
         "scripts/rename_no_replace.c",
