@@ -52,6 +52,8 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 **机器只咬契约，不咬呈现**：对自由文本的正则/措辞/表头机械依赖、对图像的像素机械依赖，视同缺陷；机器要消费的信息必须以键、typed 字段或 schema 提供。呈现为人服务，随时可重排。
 
+裁类修理循环使用 [`docs/class-repair-playbook.md`](docs/class-repair-playbook.md)。
+
 ## 修订通道
 
 Soul 与本文件（CLAUDE.md）的修订走 owner 直改通道（全文过目直落主线），不走工厂流程，且负持续精进义务；工厂只供修订素材，不拥有动笔权。
