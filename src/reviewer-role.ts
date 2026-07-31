@@ -9,7 +9,6 @@ import {
   createReviewerDispatcher,
   sha256Hex,
   parseReviewerCapabilities,
-  validateReviewerHostCeiling,
   REVIEWER_CHILD_TOOLS,
   REVIEWER_PREREQUISITES,
   type AcceptedReviewerDispatch,
@@ -110,7 +109,6 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
     if (!capabilities.prerequisiteOperations.includes("preflight.git.pin-target")) {
       throw new Error("Missing preflight prerequisite: preflight.git.pin-target");
     }
-    validateReviewerHostCeiling(capabilities, dependencies.hostTools());
     const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
     if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
     binding = loaded;

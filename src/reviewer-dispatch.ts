@@ -219,19 +219,9 @@ function validateRequest(
   return immutableRequest({ tools, bashCommands, prerequisiteOperations });
 }
 
-export function validateReviewerHostCeiling(ceiling: ReviewerCapabilitiesV1, hostTools: readonly string[]): void {
-  if (ceiling.tools.some((tool) => !hostTools.includes(tool))) {
-    throw new ReviewerPreflightError("capability-invalid");
-  }
-}
-
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-function validateMaterialSelection(
-  value: unknown,
-  _axis: "standards" | "spec" | "no-spec evidence",
-  _index: number,
-): asserts value is MaterialSelection {
+function validateMaterialSelection(value: unknown): asserts value is MaterialSelection {
   if (!isExactObject(value, ["id", "repositoryPath"]) ||
       typeof value.id !== "string" || !SAFE_ID.test(value.id)) {
     throw new ReviewerPreflightError("material-invalid");
@@ -267,7 +257,6 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   const canonicalSkill = dependencies.canonicalSkill;
   const capabilities = dependencies.capabilities;
   const hostTools = freezeStrings(dependencies.hostTools);
-  validateReviewerHostCeiling(capabilities, hostTools);
   const targetSnapshot = immutableReviewerPin(dependencies.reader.pin);
   let accepted: ReviewerAcceptanceEvidence | undefined;
   let accepting = false;
@@ -299,12 +288,11 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     if (!Array.isArray(proposal.standardsMaterials)) {
       violation("material-invalid");
     }
-    proposal.standardsMaterials.forEach((selection, index) =>
-      validateMaterialSelection(selection, "standards", index));
+    proposal.standardsMaterials.forEach(validateMaterialSelection);
     const axisPlan = proposal.spec?.state === "established"
-      ? Object.freeze({ kind: "two-leg" as const, selections: proposal.spec.materials, selectionLabel: "spec", requiredKeys: ["standards", "spec"] as const })
+      ? Object.freeze({ kind: "two-leg" as const, selections: proposal.spec.materials, requiredKeys: ["standards", "spec"] as const })
       : proposal.spec?.state === "not-established"
-        ? Object.freeze({ kind: "standards-only" as const, selections: proposal.spec.evidence, selectionLabel: "no-spec evidence", requiredKeys: ["standards"] as const })
+        ? Object.freeze({ kind: "standards-only" as const, selections: proposal.spec.evidence, requiredKeys: ["standards"] as const })
         : undefined;
     if (axisPlan === undefined || !isExactObject(proposal.spec, ["state", axisPlan.kind === "two-leg" ? "materials" : "evidence"])) {
       throw new ReviewerPreflightError("spec-invalid");
@@ -314,7 +302,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
     }
     const specSelections = axisPlan.selections;
     if (!Array.isArray(specSelections) || specSelections.length === 0) violation("spec-invalid");
-    specSelections.forEach((selection, index) => validateMaterialSelection(selection, axisPlan.selectionLabel, index));
+    specSelections.forEach(validateMaterialSelection);
 
     const allSelections = [...proposal.standardsMaterials, ...specSelections];
     if (!hasUniqueValues(allSelections.map(({ id }) => id)) ||

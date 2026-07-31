@@ -77,6 +77,11 @@ function cloneFreeze<T>(value: T): T {
   }
   return value;
 }
+function hasExactEventShape(event: object, keys: readonly string[]): boolean {
+  const actual = Object.keys(event);
+  return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
 function fatal(error: unknown): FatalEvidence {
   const record = typeof error === "object" && error !== null ? error as Record<string, unknown> : undefined;
   return cloneFreeze({
@@ -98,24 +103,21 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
   function append(raw: ReviewerEvidenceEvent): void {
     const event = cloneFreeze(raw);
     if (event.source === "reviewer-transport" && event.type === "transport-rejected") {
-      const allowed = ["source", "type", "identity", "violation", "started"];
-      if (Object.keys(event).some((key) => !allowed.includes(key)) || event.violation !== "schema" || event.started !== false)
+      if (!hasExactEventShape(event, ["source", "type", "identity", "violation", "started"]) || event.violation !== "schema" || event.started !== false)
         throw new Error("Transport rejection must contain only immutable bounded non-start evidence");
       if (accepted !== undefined || started !== undefined) throw new Error("Transport rejection cannot follow an accepted dispatch");
       transportRejections.push(cloneFreeze({ identity: event.identity, violation: event.violation, started: false }));
       return;
     }
     if (event.source === "reviewer-transport" && event.type === "closed-attempt") {
-      const allowed = ["source", "type", "identity", "reason", "started"];
-      if (Object.keys(event).some((key) => !allowed.includes(key)) || event.reason !== "transport-after-acceptance" || event.started !== false)
+      if (!hasExactEventShape(event, ["source", "type", "identity", "reason", "started"]) || event.reason !== "transport-after-acceptance" || event.started !== false)
         throw new Error("Closed transport attempt must contain only immutable bounded non-start evidence");
       if (accepted === undefined) throw new Error("Closed transport attempt requires acceptance");
       closedAttempts.push(cloneFreeze({ identity: event.identity, reason: event.reason, started: false }));
       return;
     }
     if (event.source === "reviewer-dispatch" && event.type === "rejected") {
-      const allowed = ["source", "type", "identity", "violations", "started"];
-      if (Object.keys(event).some((key) => !allowed.includes(key)) || event.started !== false ||
+      if (!hasExactEventShape(event, ["source", "type", "identity", "violations", "started"]) || event.started !== false ||
           event.violations.length === 0 || event.violations.some((code) => !REVIEWER_PREFLIGHT_VIOLATIONS.includes(code)))
         throw new Error("Rejected proposal must contain only closed bounded non-start evidence");
       if (accepted !== undefined || started !== undefined) throw new Error("Rejection cannot follow an accepted dispatch");
@@ -123,8 +125,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
       return;
     }
     if (event.source === "reviewer-dispatch" && event.type === "closed-attempt") {
-      const allowed = ["source", "type", "identity", "reason", "started"];
-      if (Object.keys(event).some((key) => !allowed.includes(key)) || event.reason !== "acceptance-closed" || event.started !== false)
+      if (!hasExactEventShape(event, ["source", "type", "identity", "reason", "started"]) || event.reason !== "acceptance-closed" || event.started !== false)
         throw new Error("Closed attempt must contain only immutable non-start outcome evidence");
       if (accepted === undefined) throw new Error("Closed attempt requires a closed acceptance lifecycle");
       closedAttempts.push(cloneFreeze({ identity: event.identity, reason: event.reason, started: false }));

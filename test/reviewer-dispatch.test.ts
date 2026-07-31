@@ -174,16 +174,29 @@ test("generic capability shapes remain representable but the recipe requires eac
     assert.equal((await dispatcher.propose(bad as ReviewerProposalV1)).status, "rejected");
     assert.equal(calls.length, 0);
   }
-  assert.throws(() => harness({ hostTools: ["read"] }), /capability-invalid/);
+  const unavailableRequested = harness({ hostTools: ["read", "bash"] });
+  const unavailableEdit = { ...required, tools: ["read", "bash", "edit"] as const };
+  const unavailableResult = await unavailableRequested.dispatcher.propose({
+    ...proposal,
+    required: { standards: unavailableEdit, spec: required },
+  });
+  assert.deepEqual(unavailableResult.status === "rejected" ? unavailableResult.violations : [], ["capability-invalid"]);
+  assert.equal(unavailableRequested.calls.length, 0);
 
-  let unavailableCeilingReads = 0;
-  const ceilingWithOmittedUnavailableTool = capabilities();
-  assert.throws(() => harness({
-    ceiling: ceilingWithOmittedUnavailableTool,
+  let subsetReads = 0;
+  const hostSubset = harness({
     hostTools: ["read", "bash"],
-    reader: fakeReader({ async resolve(base) { unavailableCeilingReads++; return base; } }),
-  }), /capability-invalid/);
-  assert.equal(unavailableCeilingReads, 0);
+    reader: fakeReader({ async resolve(base) { subsetReads++; return base; } }),
+  });
+  const subsetResult = await hostSubset.dispatcher.propose({
+    ...proposal,
+    standardsMaterials: [],
+    spec: { state: "not-established", evidence: [{ id: "absence", repositoryPath: "NO-SPEC.md" }] },
+    required: { standards: required },
+  });
+  assert.equal(subsetResult.status, "accepted");
+  assert.equal(subsetReads, 1);
+  assert.deepEqual(subsetResult.status === "accepted" ? subsetResult.dispatch.legs[0]?.grant : undefined, required);
 
   const unknown = { ...proposal, required: { ...proposal.required, standards: { ...required, tools: ["read", "curl"] } } };
   assert.equal((await harness().dispatcher.propose(unknown as ReviewerProposalV1)).status, "rejected");
