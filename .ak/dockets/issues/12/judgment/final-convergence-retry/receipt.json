@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_y4E1m8EWJR7xrK7euoeLDIkM|fc_01cd87f36c4696fd016a6d1cc754e4819191ad6739913d4d9b",
+  "details": {
+    "judgeStatus": "converged",
+    "note": "The sole sustained class, F5-closed-statsline-metric-validation, is closed on current HEAD 87e8545711d2df720aa8295625410812443e5ff8 (repair bc8eafd7eef1b6fef9366a64962dcd62df29527f). The public validator and freshly compiled `dist/stats-line.js` both require `unclassifiable-receipt` exactly when unclassified > 0, reject measured and `no-apply-receipts` states when unclassified > 0, and reject `unclassifiable-receipt` when unclassified = 0. All three focused contradiction cases reject through source tests and direct dist execution; lawful zero/nonzero states pass. The exact producer receipt-byte complement test remains unchanged and passes. Independent verification passed: typecheck, 6 focused StatsLine tests, full isolated-HOME suite (354 tests: 349 pass, 5 skip), fresh source-to-dist compilation equality, npm-pack inclusion of source and generated artifact, clean diff check, and no non-docket changes after the repair. The prior Review-001–003 seams therefore show no regression."
+  },
+  "artifactKind": "acceptedReceipt"
+}
