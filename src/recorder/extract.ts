@@ -50,6 +50,24 @@ function receiptKind(toolName: TerminatingToolName): AcceptedReceipt["kind"] {
   return "worker";
 }
 
+function validUsage(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, ["input", "output", "cacheRead", "cacheWrite", "totalTokens", "cost"], ["cacheWrite1h", "reasoning"])) return false;
+  const counts = [value.input, value.output, value.cacheRead, value.cacheWrite, value.totalTokens];
+  if (Object.hasOwn(value, "cacheWrite1h")) counts.push(value.cacheWrite1h);
+  if (Object.hasOwn(value, "reasoning")) counts.push(value.reasoning);
+  if (!counts.every((count) => typeof count === "number" && Number.isFinite(count) && count >= 0) || !isRecord(value.cost) ||
+      !hasExactKeys(value.cost, ["input", "output", "cacheRead", "cacheWrite", "total"])) return false;
+  return Object.values(value.cost).every((count) => typeof count === "number" && Number.isFinite(count) && count >= 0);
+}
+
+function validDiagnostics(value: unknown): boolean {
+  return Array.isArray(value) && value.every((diagnostic) => isRecord(diagnostic) &&
+    hasExactKeys(diagnostic, ["type", "timestamp"], ["error", "details"]) && typeof diagnostic.type === "string" &&
+    typeof diagnostic.timestamp === "number" &&
+    (!Object.hasOwn(diagnostic, "details") || isRecord(diagnostic.details)) &&
+    (!Object.hasOwn(diagnostic, "error") || isRecord(diagnostic.error)));
+}
+
 function directIssuance(row: Record<string, unknown>, index: number): DirectIssuance | null {
   if (row.type !== "message" || !isRecord(row.message)) return null;
   const message = row.message;
@@ -57,11 +75,29 @@ function directIssuance(row: Record<string, unknown>, index: number): DirectIssu
   const packageCalls = message.content.filter((part) => isRecord(part) && typeof part.name === "string" && isTerminatingToolName(part.name));
   if (!packageCalls.length) return null;
   if (!hasExactKeys(row, ["type", "id", "parentId", "timestamp", "message"]) ||
-      !hasExactKeys(message, ["role", "content", "stopReason", "timestamp"]) ||
-      message.stopReason !== "toolUse" || typeof message.timestamp !== "number" || message.content.length !== 1) invalid();
-  const call = packageCalls[0]!;
-  if (!hasExactKeys(call, ["type", "id", "name", "arguments"]) || call.type !== "toolCall" || typeof call.id !== "string" || !call.id || typeof call.name !== "string" || !isTerminatingToolName(call.name)) invalid();
-  return { index, rowId: row.id, toolCallId: call.id, toolName: call.name, arguments: call.arguments };
+      !hasExactKeys(message, ["role", "content", "api", "provider", "model", "usage", "stopReason", "timestamp"], ["responseModel", "responseId", "diagnostics", "errorMessage", "rawStopReason"]) ||
+      message.stopReason !== "toolUse" || typeof message.timestamp !== "number" ||
+      typeof message.api !== "string" || !message.api || typeof message.provider !== "string" || !message.provider ||
+      typeof message.model !== "string" || !message.model || !validUsage(message.usage) ||
+      (["responseModel", "responseId", "errorMessage", "rawStopReason"].some((key) => Object.hasOwn(message, key) && typeof message[key] !== "string")) ||
+      (Object.hasOwn(message, "diagnostics") && !validDiagnostics(message.diagnostics))) invalid();
+  let call: Record<string, unknown> | null = null;
+  for (const part of message.content) {
+    if (!isRecord(part)) invalid();
+    if (part.type === "thinking") {
+      if (!hasExactKeys(part, ["type", "thinking"], ["thinkingSignature", "redacted"]) || typeof part.thinking !== "string" ||
+          (Object.hasOwn(part, "thinkingSignature") && typeof part.thinkingSignature !== "string") ||
+          (Object.hasOwn(part, "redacted") && typeof part.redacted !== "boolean")) invalid();
+      continue;
+    }
+    if (part.type !== "toolCall" || call) invalid();
+    call = part;
+  }
+  if (!call || packageCalls.length !== 1 || !hasExactKeys(call, ["type", "id", "name", "arguments"], ["thoughtSignature"]) ||
+      typeof call.id !== "string" || !call.id || typeof call.name !== "string" || !isTerminatingToolName(call.name) || !isRecord(call.arguments) ||
+      (Object.hasOwn(call, "thoughtSignature") && typeof call.thoughtSignature !== "string")) invalid();
+  const admittedCall = call as Record<string, unknown> & { id: string; name: TerminatingToolName; arguments: Record<string, unknown> };
+  return { index, rowId: row.id, toolCallId: admittedCall.id, toolName: admittedCall.name, arguments: admittedCall.arguments };
 }
 
 function directResult(row: Record<string, unknown>): Record<string, unknown> | null {

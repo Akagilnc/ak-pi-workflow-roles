@@ -54,6 +54,8 @@ test("Recorder rejects invalid argv before spawn and invokes one real child with
   const manifest = JSON.parse(readFileSync(join(valid.destination, "manifest.json"), "utf8"));
   assert.deepEqual(manifest.execution.argv, [valid.child, "--session-dir", join(realpathSync(valid.root), ".ak/work/018f22e2-7d5a-7abc-8abc-123456789abc/session"), "--session-id", "018f22e2-7d5a-7abc-8abc-123456789abc", "-p", "native-session", "tail"]);
   assert.equal(JSON.parse(readFileSync(join(valid.destination, "receipt.json"), "utf8")).details.report, "configured");
+  assert.equal(readFileSync(join(valid.destination, "receipt.json"), "utf8").includes("sanitized reasoning"), false);
+  assert.equal(readFileSync(join(valid.destination, "manifest.json"), "utf8").includes("sanitized reasoning"), false);
   assert.deepEqual(readdirSync(valid.destination).sort(), ["manifest.json", "receipt.json"]);
 });
 
