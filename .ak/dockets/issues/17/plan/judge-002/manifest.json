@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/plan/judge-002"
+  },
+  "invocation": {
+    "id": "834fe8f6-9332-4773-8b02-3fd6a76d186b"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #17 revised Plan readiness judgment\n\nJudge the replacement Plan `.ak/dockets/issues/17/plan/coder-002/receipt.json` against:\n\n- Authority `.ak/dockets/issues/17/authority/judge-001/receipt.json`\n- Prior Plan correction `.ak/dockets/issues/17/plan/judge-001/receipt.json`\n\nVerify exact correction of all four blockers:\n\n1. no broad caller review-input or caller-selected target/material bytes;\n2. Reviewer-local capability ceiling only, with exact tool names/bash strings/package prerequisites and no sandbox framework;\n3. no-spec runs exactly one complete Standards child through the same owner, no Spec construction, no fake sibling batch;\n4. reviewer-dispatch solely owns compilation/capabilities/transitions; runner is opaque executor; ledger is append-only evidence projection; Standards baseline comes only from canonical Skill snapshot.\n\nAlso verify every change has Behavior / Owner / Red / Green / Scope, the interface is bounded and deep, obsolete paths/tests are replaced rather than layered, and construction can begin without unresolved owner decisions. Return only through `ak_judge_output`; do not edit or commit."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "issue-17-plan-readiness-002",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "c4d21205ae498657ca91c9bc4d36184a8c54ce72",
+        "path": ".ak/dockets/issues/17/authority/judge-001/receipt.json",
+        "blobOid": "2c5b838b504efa89d1aca255ab8cc3beaeb06694",
+        "sha256": "d20d37fc5766f59f113e96ce40f30a669d0bffbbbe770465f7f0aec61ab40fd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "prior-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "c4d21205ae498657ca91c9bc4d36184a8c54ce72",
+        "path": ".ak/dockets/issues/17/plan/judge-001/receipt.json",
+        "blobOid": "c5d0f8db0754dbfda1a545b8c26ff6c1e617d840",
+        "sha256": "ba678c724422aa1334254624308239c55e28ea1523d1416d24dcfb8c230d74e1",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "revised-plan",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "c4d21205ae498657ca91c9bc4d36184a8c54ce72",
+        "path": ".ak/dockets/issues/17/plan/coder-002/receipt.json",
+        "blobOid": "5e2cddcb81699c2bf5fc694ff39eeb5c394b1471",
+        "sha256": "151d41b7d687b7f6dd9b2b5a62e9483efd5cd43c8ea2e74a72b5502d2fbe6171",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-request",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-request",
+        "sha256": "457adf2e3694c513f229d6b5c46f04754ea2eabc10ff5fccfd5c98c0f1f70e2a",
+        "byteLength": 1136
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "2a2eac6ab9b01aa78fb3b9713659f0e696d856eaf507a838794cb9a4344a7713",
+        "byteLength": 2245
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "ed69b6d80c3602006ebbe390a25310ff99dbefc342a3f1ae4fae1f50932ffc73",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_CoeIQePSgt8z8plmp7wULD2e|fc_076ad458c56afe75016a6b629795a88195bc87c45585483542",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_CoeIQePSgt8z8plmp7wULD2e|fc_076ad458c56afe75016a6b629795a88195bc87c45585483542",
+    "auditPassed": true,
+    "usage": {
+      "input": 10923,
+      "output": 414,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 11337
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 15
+      }
+    ]
+  }
+}

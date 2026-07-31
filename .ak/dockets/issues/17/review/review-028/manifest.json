@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/review/review-028"
+  },
+  "invocation": {
+    "id": "f9a5632c-cc09-474a-b5b4-b69b03b5178b"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/17/final-review-task.md",
+      "--ak-review-capabilities",
+      ".ak/work/issues/17/final-review-capabilities.json",
+      "-p",
+      "Review the fixed target. Submit one structured atomic proposal exactly as specified in the task; after accepted dispatch, call ak_reviewer_output with the complete two-axis report. Do not terminate without that final tool."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "c607579ea0a0d1fc1a9e3d46b197abeb9fc6269e",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "c607579ea0a0d1fc1a9e3d46b197abeb9fc6269e",
+        "path": ".ak/dockets/issues/17/authority/judge-001/receipt.json",
+        "blobOid": "2c5b838b504efa89d1aca255ab8cc3beaeb06694",
+        "sha256": "d20d37fc5766f59f113e96ce40f30a669d0bffbbbe770465f7f0aec61ab40fd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "c607579ea0a0d1fc1a9e3d46b197abeb9fc6269e",
+        "path": ".ak/dockets/issues/17/plan/coder-002/receipt.json",
+        "blobOid": "5e2cddcb81699c2bf5fc694ff39eeb5c394b1471",
+        "sha256": "151d41b7d687b7f6dd9b2b5a62e9483efd5cd43c8ea2e74a72b5502d2fbe6171",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-addendum",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "c607579ea0a0d1fc1a9e3d46b197abeb9fc6269e",
+        "path": ".ak/dockets/issues/17/plan/coder-003/receipt.json",
+        "blobOid": "dae4f08ebb4ea80de1614ef0b9a2f3eacf47ca79",
+        "sha256": "30cfd3bbc7c2cd945bdf4b2a9ba3eb4c691e6a971c68eb0dd18b5327378a3bad",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "c607579ea0a0d1fc1a9e3d46b197abeb9fc6269e",
+        "path": ".ak/dockets/issues/17/plan/judge-003/receipt.json",
+        "blobOid": "c86cbee3b97435af2ddee225f2557171507f32f6",
+        "sha256": "67bb854c9564d0f06603cc994208e0a7a4c0579ba81ede39632fefe3efdd3daa",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-020",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "c607579ea0a0d1fc1a9e3d46b197abeb9fc6269e",
+        "path": ".ak/dockets/issues/17/judgment/review-020/receipt.json",
+        "blobOid": "9da0d9fc96a9a683b1be7579c6240d4a334ebf0e",
+        "sha256": "a2085fbb3a84204944c7337c97819e13b4bf58a73d09b9e8dc34320d22ca4b81",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "4d858f2a9fa95d05bd7586ccec8e70db75412f3425c3f284624c740ee3c7bfca",
+        "byteLength": 1725
+      }
+    },
+    {
+      "id": "review-capabilities",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-capabilities",
+        "sha256": "856f5538db4b88a2a09af3de7308a876c0e542b5cd801633243ee1ace6138647",
+        "byteLength": 624
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "0c9d09cabf3327e0a5a14124630bb00e65db27ab7f561fe4b6a309a9d7bd7198",
+        "byteLength": 2800
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "9f29d9275628c3567a2324b612832862decc77a48ffd07c52f6616da10c6cd6f",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_TfuzKFAL8ZMQnJYCDmHkcdlp|fc_0f6351c460850084016a6bf2f14d688191ab3794bd8d6c4073",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_TfuzKFAL8ZMQnJYCDmHkcdlp|fc_0f6351c460850084016a6bf2f14d688191ab3794bd8d6c4073",
+    "auditPassed": true,
+    "usage": {
+      "input": 64994,
+      "output": 192,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 65186
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

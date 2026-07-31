@@ -1,0 +1,52 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_aueRMJij48qbMmCGTsD3m9FB|fc_025688e17c371444016a6cf3567ba08191b59f23caff29239e",
+  "details": {
+    "status": "completed",
+    "report": "Implemented and committed the Issue #17 construction/bundle vertical in four forward commits (df5c59a..79e5956). Replaced axis-compartment proposals with one common material population and nonbinding overlapping relevance hints; introduced distinct canonical-Skill and package recipe identities; compiled a deterministic immutable path+digest bundle; carried that bundle across the sole accepted execution seam; atomically materialized and read-back verified every clone before any provider starts; retained materialization evidence; and preserved exact task/target/capability/scope-key and existing settlement/output behavior. Superseded transcription/compartment tests were migrated once and focused confinement, symlink, collision, digest, common-access, dual-identity, cardinality, determinism, no-start, package and settlement regressions pass. Validation: typecheck passed; focused 25-test construction/agent/ledger battery passed; cold-installed package lifecycle passed; npm pack --dry-run and git diff --check passed. Isolated-HOME full run reached 309 pass, 5 skip; its two remaining failures are the pre-existing, separately classified Issue #31 Judge contract compatibility tests (tests 160/163), outside this four-class authority. Three transient package failures in that run were caused by the then-untracked new files and were subsequently closed by committing them and rerunning the cold-install lifecycle. Working tree is clean.",
+    "commitSha": "79e5956",
+    "classesRepaired": [
+      {
+        "name": "I17 canonical semantic source and recipe",
+        "searchScope": "Reviewer construction, dispatch, accepted evidence, package lifecycle, and superseded prompt-transcription tests.",
+        "exceptions": [
+          {
+            "where": "Reviewer settlement/output path",
+            "reason": "Deliberately unchanged under this independent vertical; later settlement authority owns it."
+          }
+        ]
+      },
+      {
+        "name": "I17 pinned mechanical bundle",
+        "searchScope": "Bundle compiler, accepted execution projection, per-clone materializer, agent pre-provider chronology, ledger evidence, confinement/readback tests, and cold install.",
+        "exceptions": [
+          {
+            "where": "I17 cohesion and regression ownership",
+            "reason": "Not claimed; the packet reserves whole-module census and that class for the later settlement vertical."
+          }
+        ]
+      },
+      {
+        "name": "I17 common readable materials",
+        "searchScope": "Proposal schema, preflight validation, common bundle population, one/two-leg delivery, cross-hint tests, role tests, and package lifecycle.",
+        "exceptions": [
+          {
+            "where": "Cross-axis finding adjudication",
+            "reason": "No gate was added; finding survival remains later Judge authority."
+          }
+        ]
+      },
+      {
+        "name": "I17 mechanical preflight and capability law",
+        "searchScope": "Task-bound capability parser, exact command/host/prerequisite checks, target chronology, bundle mechanical checks, no-start rejection tests, and scope prompt preservation.",
+        "exceptions": [
+          {
+            "where": "Arbitrary command eventual success",
+            "reason": "Intentionally not predicted or taste-gated, as required by amended authority."
+          }
+        ]
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

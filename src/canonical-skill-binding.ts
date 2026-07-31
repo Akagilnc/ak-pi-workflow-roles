@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
 import { parseSkillBlock, stripFrontmatter } from "@earendil-works/pi-coding-agent";
+import { reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
 export type CanonicalSkillName = "tdd" | "code-review";
 
@@ -11,6 +12,7 @@ export type CanonicalSkillSnapshot = Readonly<{
   path: string;
   baseDir: string;
   body: string;
+  snapshotIdentity: ReviewerPromptIdentity;
 }>;
 
 export type CanonicalSkillEvidence<Name extends CanonicalSkillName = CanonicalSkillName> = Readonly<{
@@ -62,6 +64,7 @@ export async function loadCanonicalSkillBinding(
     path,
     baseDir: dirname(path),
     body,
+    snapshotIdentity: reviewerPromptIdentity(raw),
   });
   const binding: CanonicalSkillBinding<typeof name> = {
     name,

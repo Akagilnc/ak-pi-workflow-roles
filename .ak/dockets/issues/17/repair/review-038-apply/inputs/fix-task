@@ -1,0 +1,7 @@
+# Issue #17 Fixer Apply — discriminated materialization outcomes
+
+Sole authority: `.ak/dockets/issues/17/judgment/review-038/receipt.json`.
+
+Repair exactly `Discriminated successful materialization outcomes` under its full boundary. Make public receipt, runner, and ledger outcomes status-discriminated: success requires materialization evidence and excludes failure; failed requires classification and optionally carries evidence only if completed. Preserve evidence through settlement and all existing cross-field/runtime laws. Add compile-time contract assertions plus minimal validator/assembly/production tests specified by Judge, following ADR 0016.
+
+Do not modify historical dockets or add compatibility/parallel validators. Regenerate tracked artifacts. Run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this class.

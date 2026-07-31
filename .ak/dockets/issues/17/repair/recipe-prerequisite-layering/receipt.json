@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_crHb4w1uJ4MqfEAgpWaZJGT3|fc_0b69a73031bcf581016a6bf625c55c8197a3d9accdeb41dfdd",
+  "details": {
+    "status": "completed",
+    "report": "R1=Recipe runner operations now union with leg-declared extras only after ceiling authorization, preserving exact child grants; R2=README Reviewer section is reduced to caller-facing invocation and closed input shapes; R3=Unit and installed-tarball lifecycle coverage proves empty-leg/complete-ceiling acceptance, missing-recipe-ceiling rejection, leg-extra union, and no per-leg injection; R4=Failed-leg evidence construction is shared and singleton is renamed requireSoleReviewerOutputCall; R5=Focused tests, installed package lifecycle, typecheck, npm pack dry-run, and diff check passed, while the full 379-test run had one concurrent-load child.reload scratch-cleanup failure that passed immediately in focused rerun; committed forward as d223a20.",
+    "commitSha": "d223a20"
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -1,4 +1,4 @@
-import { carriesPackageAuditObservation, COLLECTOR_OUTPUT_TOOL, deepEqual, isTerminatingToolName, validateAcceptedDetails, } from "../package-contracts/terminating-tools.js";
+import { carriesPackageAuditObservation, COLLECTOR_OUTPUT_TOOL, deepEqual, isTerminatingToolName, projectReviewerIntentToReceipt, validateAcceptedDetails, } from "../package-contracts/terminating-tools.js";
 import { RecorderError } from "./errors.js";
 import { combineReports, scanJsonValue } from "./scanner.js";
 const emptyReport = { hits: [], redacted: false };
@@ -162,12 +162,16 @@ function finalizeAcceptedPair(pair) {
         invalid();
     const detailsMatch = issuance.toolName === COLLECTOR_OUTPUT_TOOL
         ? collectorProjection(issuance.arguments, resultMessage.details)
-        : deepEqual(issuance.arguments, resultMessage.details);
+        : issuance.toolName === "ak_reviewer_output"
+            ? true
+            : deepEqual(issuance.arguments, resultMessage.details);
     if (!detailsMatch)
         invalid();
     let details;
     try {
-        details = validateAcceptedDetails(issuance.toolName, resultMessage.details);
+        details = issuance.toolName === "ak_reviewer_output"
+            ? projectReviewerIntentToReceipt(issuance.arguments, resultMessage.details)
+            : validateAcceptedDetails(issuance.toolName, resultMessage.details);
     }
     catch {
         throw new RecorderError("acceptance-invalid");
@@ -175,7 +179,10 @@ function finalizeAcceptedPair(pair) {
     const accepted = { toolName: issuance.toolName, toolCallId: issuance.toolCallId, details };
     const scanned = scanJsonValue(accepted, "receipt");
     try {
-        validateAcceptedDetails(issuance.toolName, scanned.value.details);
+        if (issuance.toolName === "ak_reviewer_output")
+            projectReviewerIntentToReceipt(issuance.arguments, scanned.value.details);
+        else
+            validateAcceptedDetails(issuance.toolName, scanned.value.details);
     }
     catch {
         throw new RecorderError("scan-failed");

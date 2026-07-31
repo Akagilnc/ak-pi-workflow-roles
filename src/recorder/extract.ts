@@ -3,15 +3,16 @@ import {
   COLLECTOR_OUTPUT_TOOL,
   deepEqual,
   isTerminatingToolName,
+  projectReviewerIntentToReceipt,
   validateAcceptedDetails,
   type AcceptedDetails,
   type TerminatingToolName,
 } from "../package-contracts/terminating-tools.ts";
-import type { CollectorReceipt, JudgeVerdict, ReviewerOutput, WorkerOutput } from "../package-contracts/terminating-tools.ts";
+import type { CollectorReceipt, JudgeVerdict, RuntimeReviewerReceiptV2, WorkerOutput } from "../package-contracts/terminating-tools.ts";
 import { RecorderError } from "./errors.ts";
 import { combineReports, scanJsonValue, type ScanReport } from "./scanner.ts";
 
-export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | ReviewerOutput | JudgeVerdict | CollectorReceipt; kind: "worker" | "reviewer" | "judge" | "collector" };
+export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt; kind: "worker" | "reviewer" | "judge" | "collector" };
 export type AuditObservation = { toolName: "ak_judge_output" | "ak_reviewer_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
 export type ExtractionResult = { receipt: AcceptedReceipt; auditObservation: AuditObservation | null; artifactKind: "acceptedReceipt" | "sanitizedDerivativeOfAcceptedReceipt"; report: ScanReport };
 
@@ -163,12 +164,16 @@ function finalizeAcceptedPair(pair: AcceptedPair): ExtractionResult {
 
   const detailsMatch = issuance.toolName === COLLECTOR_OUTPUT_TOOL
     ? collectorProjection(issuance.arguments, resultMessage.details)
-    : deepEqual(issuance.arguments, resultMessage.details);
+    : issuance.toolName === "ak_reviewer_output"
+      ? true
+      : deepEqual(issuance.arguments, resultMessage.details);
   if (!detailsMatch) invalid();
 
   let details: AcceptedDetails;
   try {
-    details = validateAcceptedDetails(issuance.toolName, resultMessage.details);
+    details = issuance.toolName === "ak_reviewer_output"
+      ? projectReviewerIntentToReceipt(issuance.arguments, resultMessage.details)
+      : validateAcceptedDetails(issuance.toolName, resultMessage.details);
   } catch {
     throw new RecorderError("acceptance-invalid");
   }
@@ -176,7 +181,8 @@ function finalizeAcceptedPair(pair: AcceptedPair): ExtractionResult {
   const accepted = { toolName: issuance.toolName, toolCallId: issuance.toolCallId, details };
   const scanned = scanJsonValue(accepted, "receipt") as { value: typeof accepted; report: ScanReport };
   try {
-    validateAcceptedDetails(issuance.toolName, scanned.value.details);
+    if (issuance.toolName === "ak_reviewer_output") projectReviewerIntentToReceipt(issuance.arguments, scanned.value.details);
+    else validateAcceptedDetails(issuance.toolName, scanned.value.details);
   } catch {
     throw new RecorderError("scan-failed");
   }

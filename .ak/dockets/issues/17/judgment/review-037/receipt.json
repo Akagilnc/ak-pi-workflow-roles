@@ -1,0 +1,26 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_fxuFJJ3t1JKmPVKzWzhWAipM|fc_032e4af2e7200b9a016a6d08cd6eb08191a8cdc345e1dc3aeb",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Review-037 is lawfully refused. Both preserved reports are supported by current HEAD `eb5087bf821e57b6f6ba486b9d94f772f3deb129`: the Git-ID test contains a primitive format matrix, and `assembleRuntimeReviewerReceipt` drops `ReviewerLegResultEvidence.runtimeConstructionEvidence` even though successful execution produced and ledgered it. No interface choice or Plan remains; apply the two owner-seam repairs below without changing the thin driver intent, verbatim reports, accepted-leg/outcome laws, or using prose parsing."
+    },
+    "classes": [
+      {
+        "name": "ADR 0016 cross-field tracer",
+        "owner": "`test/reviewer-runtime-receipt.test.ts` tests the authored cross-field laws in `validateRuntimeReviewerReceipt`; delivery/schema format permutations remain owned by the runtime validator rather than the regression suite.",
+        "boundary": "Delete the 39/41-character, uppercase, non-hex, undefined/empty/number matrices and do not relocate them. Retain at most one tracer for the actual authored relation: changing `identities.target.objectFormat` from `sha1` to `sha256` while leaving the accepted target/ref IDs at SHA-1 width is rejected, and changing the bound target/ref IDs to SHA-256 width is accepted. Nullable peeled-commit and primitive-format permutations need no dedicated assertions; ordinary valid fixtures may incidentally contain `null`.",
+        "disposition": "Direct Apply. Keep one readable red/green cross-field tracer, not a format table or one assertion per primitive permutation."
+      },
+      {
+        "name": "Per-leg runtime materialization evidence in V2 receipts",
+        "owner": "`reviewer-settlement.ts` projects ledgered leg evidence into the runtime-owned V2 receipt; `package-contracts/reviewer-output.ts` owns its exact typed shape and cross-field validation; runner/ledger retain evidence from the workspace materializer.",
+        "boundary": "Add exact typed `runtimeConstructionEvidence: MaterializedBundleEvidenceV1` to each outcome whose leg completed materialization, required for every successful outcome and preserved on failed outcomes whenever materialization had already completed before provider/child/cleanup failure. Bind it mechanically: its `leg` equals the outcome key and corresponding accepted leg axis; its `manifestSha256` equals `identities.construction.bundle.manifestSha256`; and its entries exactly, completely, and in canonical order project that accepted bundle’s `{id, relativeClonePath, utf8Length, sha256}` with `verified: true`. Preserve exact outcome coverage/order and prompt binding. A pre-materialization failure may omit this evidence; a pre-acceptance refusal still has no accepted batch or outcomes.",
+        "disposition": "Keep this evidence under the explicitly runtime-owned per-outcome field `runtimeConstructionEvidence`, with opaque `workspaceIdentity` and `relativeClonePath`; never copy it into `identities.target`, call it a repository path, or infer that it existed at target HEAD. Ensure failed runner results do not discard already-created workspace evidence. Add focused settlement/validator and production-lifecycle proof that both accepted successful legs carry their own exact read-back evidence and that one cross-field bundle/leg mismatch is rejected; avoid primitive or field-by-field format matrices. Preserve thin submitted intent, verbatim report bytes, and no prose parsing."
+      }
+    ],
+    "note": "The preserved Spec report’s pass does not defeat the later semantic refusal: pre-acceptance `identities.construction` proves the intended pinned bundle only, while the omitted per-clone evidence is the authority-required proof of actual installation and read-back before execution."
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/plan/coder-002"
+  },
+  "invocation": {
+    "id": "ce887b82-363a-421a-a56c-9f58c0c4039a"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "plan",
+      "--ak-coder-task",
+      ".ak/work/issues/17/coder-plan-task-002.md",
+      "-p",
+      "Produce the corrected complete replacement Plan with Behavior/Owner/Red/Green/Scope and submit through ak_coder_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "issue-17-plan-revision",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "ed4fffde77aa5c57f1acd084d7b1aa153635b823",
+        "path": ".ak/dockets/issues/17/authority/judge-001/receipt.json",
+        "blobOid": "2c5b838b504efa89d1aca255ab8cc3beaeb06694",
+        "sha256": "d20d37fc5766f59f113e96ce40f30a669d0bffbbbe770465f7f0aec61ab40fd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "prior-plan",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "ed4fffde77aa5c57f1acd084d7b1aa153635b823",
+        "path": ".ak/dockets/issues/17/plan/coder-001/receipt.json",
+        "blobOid": "1f74868445885e25b9a45b2493a568e3009baf8a",
+        "sha256": "6c9ee78edc3e65b40145dda50765e3d2a1f23edea44cbfe18aac0d7acffb28a3",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "ed4fffde77aa5c57f1acd084d7b1aa153635b823",
+        "path": ".ak/dockets/issues/17/plan/judge-001/receipt.json",
+        "blobOid": "c5d0f8db0754dbfda1a545b8c26ff6c1e617d840",
+        "sha256": "ba678c724422aa1334254624308239c55e28ea1523d1416d24dcfb8c230d74e1",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/coder-task",
+        "sha256": "517a6fcf256da9a2089b88eb460468a3f7c0c2c36bc1ac5a5ad98adfe280c404",
+        "byteLength": 1763
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "151d41b7d687b7f6dd9b2b5a62e9483efd5cd43c8ea2e74a72b5502d2fbe6171",
+        "byteLength": 15750
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_XiQAr2Gk1DSe1merbUdRIOXG|fc_050578fab63ec557016a6b617f0ebc8191b9f81b6986e9ecc4",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 15
+      }
+    ]
+  }
+}

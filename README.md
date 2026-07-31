@@ -117,19 +117,18 @@ The completed report must preserve TDD evidence plus the same-pattern, introduce
 
 ## Reviewer
 
-Reviewer performs a fixed-target, two-axis code review through the canonical external Skill at `~/.agents/skills/code-review/SKILL.md`. The package does not bundle or reproduce that method. Bind it explicitly and provide one non-empty opaque Markdown task:
+Reviewer performs a fixed-target, two-axis code review through the canonical external Skill at `~/.agents/skills/code-review/SKILL.md`. The package does not bundle or reproduce that method. Bind it explicitly and provide both the existing non-empty opaque Markdown task and a mandatory narrow V1 capability file bound to the task's exact bytes:
 
 ```bash
 pi --no-skills \
   --skill ~/.agents/skills/code-review/SKILL.md \
   --ak-role reviewer \
   --ak-review-task /path/to/review-task.md \
+  --ak-review-capabilities /path/to/review-capabilities.json \
   -p "Review the requested fixed point."
 ```
 
-The runtime transforms the first input through native `/skill:code-review` and verifies the complete expanded content against the canonical activation snapshot. Reviewer uses the active model/provider/auth and does not promise cross-model diversity.
-
-The parent tool surface is narrowed to registered `read`, `grep`, `find`, `ls`, `bash`, `Agent`, and `ak_reviewer_output`. Each `Agent` call runs in-process with an independent history and writable temporary clone detached at one session-pinned target. Source heads, tags, and remote-tracking refs are preserved in every clone, while usable remotes are removed. Children may create probes and fixtures but must distinguish them from reviewed-target facts; successful workspaces are deleted and useful failure state is retained diagnostically. This is operational isolation, not hostile-code security. Supply a sandbox or container when security isolation is required.
+The authoritative capability contract and validation live in the exported TypeScript API in [`src/reviewer-dispatch.ts`](src/reviewer-dispatch.ts). The authoritative `Agent` input contract is the exported runtime `reviewerProposalSchema` in [`src/reviewer-role.ts`](src/reviewer-role.ts), with its corresponding TypeScript proposal type in `reviewer-dispatch.ts`. Callers should derive validation and proposal construction from those exports rather than this invocation guide.
 
 Reviewer terminates with this exact receipt:
 

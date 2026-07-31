@@ -1,0 +1,17 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_K4S72Z2jBJRvDcUrh8hPrWZ5|fc_0aad1c9f219b58e7016a6d0217778481919f90f6f97adb1b25",
+  "details": {
+    "status": "completed",
+    "report": "Committed forward fix 344d757. Root repair: extracted repository-free typed proposal/grant/hint admission into src/reviewer-admission.ts; moved pinned range/material acquisition and normalization into src/reviewer-pinned-git.ts with correctable errors distinguished from unchanged infrastructure failures; expanded src/reviewer-construction.ts into the deterministic compiler of bundle, prompts, identities, and accepted dispatch from admitted immutable inputs plus frozen evidence. reviewer-dispatch now coordinates chronology only: admission/evidence/construction calls, correction/closure races, final drift check, acceptance evidence, and exactly-once runner invocation. Preserved dual identity, common bundle, hint law, capability ceilings/full diff-command binding, typed scope, race closure, and failure semantics. Added interface-level seam regressions and retained lifecycle behavior tests. Regenerated tracked dist artifacts. Validation: focused Reviewer suite 44/44; final focused admission/dispatch/role suite 27/27; typecheck passed; build and npm pack dry-run passed; cold install/import passed; package/concurrency/Recorder/Reviewer pack suite 9/9 passed; diff checks passed. The first isolated-HOME full run had 319 passes, 5 skips, and 5 pack failures because the new admission file was not yet staged and package-isolation tests intentionally materialize tracked/index state; after staging, all five affected pack paths were rerun in the 9-test package suite and passed. No workspace-ownership or Thin Agent result changes were made.",
+    "commitSha": "344d757",
+    "classesRepaired": [
+      {
+        "name": "Reviewer construction ownership",
+        "searchScope": "Reviewer proposal admission, pinned Git evidence acquisition/normalization, deterministic construction, dispatch lifecycle coordinator, generated dist artifacts, and Reviewer seam/lifecycle/package tests.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

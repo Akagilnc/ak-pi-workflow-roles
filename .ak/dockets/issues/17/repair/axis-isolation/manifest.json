@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/repair/axis-isolation"
+  },
+  "invocation": {
+    "id": "da9159d8-4ad8-43be-9384-9dc705f635c6"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/17/axis-isolation-repair.md",
+      "-p",
+      "Apply the exact axis-isolation repair test-first, run package gates, commit, and submit through ak_fixer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "dc571a7ed0dc2e1fea9973a82e90003942d8bb63",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review-refusal",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "dc571a7ed0dc2e1fea9973a82e90003942d8bb63",
+        "path": ".ak/dockets/issues/17/review/review-010/receipt.json",
+        "blobOid": "5bec1e0f771a90e905c86168045a94586178db68",
+        "sha256": "65aacaef62d40b06e50d44cc06d9a0462d5ad085c25355c5236244d924aef9c3",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/repair-packet",
+        "sha256": "fd316e3794b3b7bef6621c7630cd0a802742a1f87e1f626da25494cecfe3059c",
+        "byteLength": 1451
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "0d1fa8e46243207b7dcf4963215ed642ae1012a4465d4871a0f274e2a1ba66b1",
+        "byteLength": 1167
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_AYZqwExinPk6Qb9uiY1FZnNJ|fc_012c079567eafe16016a6ba6636f18819184d9911f3d152f59",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

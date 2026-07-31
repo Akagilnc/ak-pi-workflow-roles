@@ -1,0 +1,11 @@
+# Issue #17 hidden repository material repair
+
+R1 — Permit ordinary hidden repository path segments such as `.ak` in `MaterialSelection.repositoryPath` while still rejecting empty, `.`, `..`, absolute, backslash, control/newline, and delimiter/instruction-shaped segments. The current conservative grammar incorrectly rejects the repository’s durable authority path.
+
+R2 — Make typed preflight rejection identify the failing axis and selection index (and safe validated ID when available) without echoing unsafe path bytes. A corrected proposal must be possible without generic session inspection.
+
+R3 — Add production-shaped red/green coverage using `.ak/dockets/issues/17/authority/judge-001/receipt.json`, plus traversal/control/injection negatives. Re-run the actual final-review proposal through package lifecycle or focused role integration.
+
+R4 — Run focused tests, full suite, typecheck, pack, and diff check; commit forward and preserve the historical refusal.
+
+Return exactly one nonblank keyed line for R1–R4.

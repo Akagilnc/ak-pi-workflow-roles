@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/repair/runtime-identity-command"
+  },
+  "invocation": {
+    "id": "5a829141-5023-4ef0-b094-0bd302a3039d"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/17/runtime-identity-command-repair.md",
+      "-p",
+      "Apply the exact declared-command/runtime-identity repair test-first, run package gates, commit, and submit through ak_fixer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "87e1c914be6f5255404fd2d0277aa66f74b28a68",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review-findings",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "87e1c914be6f5255404fd2d0277aa66f74b28a68",
+        "path": ".ak/dockets/issues/17/review/review-022/receipt.json",
+        "blobOid": "7e6bb0b7318aed69bb8a2cbd0e94a541f0dda817",
+        "sha256": "c23c7462e59f897c82387f8fb88b0ae5c8d036747ef63e20cb771af1c49b618d",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/repair-packet",
+        "sha256": "c6a68220fdc66573383d06883c33bd4a0d174ce3ab98e193be4378be9448fdc8",
+        "byteLength": 1558
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "1175d9168e987fb6517aedeeab7632fcf06257f2f149e4cf7bf38595746917bd",
+        "byteLength": 1004
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_uGr5I7glMhcbJxIQQuVtDcr4|fc_067cba53ccd880b7016a6bdc55c2008191ac89a18605ea9567",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 7
+      },
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}

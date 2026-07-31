@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/authority/judge-001"
+  },
+  "invocation": {
+    "id": "50a6cd4c-8dba-4cf1-bfb4-db978d5d5ce5"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #17 Authority evidence packet\n\n## Identity\n\nPrimary authority input: GitHub issue #17 snapshot supplied separately and sealed by Recorder.\n\n## Clauses\n\nA1 — A malformed Reviewer-generated Standards/Spec child prompt must be detected before either child starts and before the exactly-once sibling batch is consumed.\n\nA2 — Both child prompts must remain traceable to the canonical external code-review Skill, opaque caller task, fixed review range, and axis-specific evidence burden. Standards and Spec remain isolated.\n\nA3 — Preflight rejection/correction is not a started Reviewer Agent sibling batch. Once either child starts, the existing exactly-one sibling-batch law remains unchanged.\n\nA4 — Existing post-run compliance audit remains responsible for proving actual dispatched prompt identity, fixed-target traceability, axis isolation, successful child evidence, and faithful aggregation. Preflight must not become a second semantic reviewer.\n\nA5 — Durable evidence binds either each exact compiled prompt or a deterministic recipe/version plus exact inputs and SHA-256. It does not retain generic session/tool-event payloads.\n\nA6 — No Fowler baseline text, prompt templates, schema/CLI mechanics, or task-specific policy enters Reviewer Soul. No role topology, caller-owned ordering/repetition, or cross-model-panel behavior is introduced.\n\n## Counterexamples\n\nC1 — Standards prompt abbreviates the canonical baseline-smell definitions/remedies; children run; post-run auditor refuses; the unique batch is irrecoverably consumed.\n\nC2 — Opaque task accidentally imposes an impossible executable allowlist; useful children run but the invocation can only refuse afterward.\n\nC3 — Preflight starts one child before validating the sibling, so a rejected second prompt has already consumed part of the atomic batch.\n\nC4 — Preflight accepts semantically blended prompts because it checks only nonblank strings/digests.\n\nC5 — A model-based preflight becomes another post-hoc reviewer, adds nondeterminism, and still consumes budget without ensuring exact prompt construction.\n\n## Boundaries requiring Authority disposition\n\nU1 — Interface seam: narrow the current Reviewer `Agent` interface or replace it with one atomic two-leg batch-dispatch interface.\n\nU2 — Compilation ownership: which prompt portions can be deterministically compiled from canonical Skill/task/range, and which irreducible semantic checks remain in post-run audit.\n\nU3 — Executable policy: structured capabilities versus caller free-text constraints, including how impossible allowlists fail before child start without granting over-broad access.\n\nU4 — Correction law: whether the parent may correct a rejected preflight proposal within the same invocation, what the bounded limit is, and what evidence proves no child started.\n\nU5 — Evidence identity: store exact prompts versus recipe/version plus canonical inputs, while retaining sufficient bytes to prove actual prompt equality.\n\n## Requested judgment\n\nEstablish construction authority and resolve—or explicitly escalate—the five boundary choices. Do not prescribe shallow helper names or implementation details. Apply-level code/probes are not required at Authority posture."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "issue-17-authority",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-17",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-17",
+        "sha256": "f3345c797fe0bd335005492917e5bef5076d761627ed35fe48476b157f1e3f47",
+        "byteLength": 2934
+      }
+    },
+    {
+      "id": "authority-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/authority-packet",
+        "sha256": "38ee709f75a2e8af660cb7160db3ce71307e7bdc55f0451912ed3654683ca493",
+        "byteLength": 3245
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "d20d37fc5766f59f113e96ce40f30a669d0bffbbbe770465f7f0aec61ab40fd8",
+        "byteLength": 8285
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "54fc877aee9927cacb298a3f56a850a2b5db956aa176adca7588584d71911c79",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_jL4q5wg1xeiIEaNI4vxNo5Ix|fc_02d87883d08fef28016a6b5e3bc588819b81db679c2960b806",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_jL4q5wg1xeiIEaNI4vxNo5Ix|fc_02d87883d08fef28016a6b5e3bc588819b81db679c2960b806",
+    "auditPassed": true,
+    "usage": {
+      "input": 18215,
+      "output": 465,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 18680
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 15
+      }
+    ]
+  }
+}

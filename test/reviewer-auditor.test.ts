@@ -13,27 +13,30 @@ import {
   createPiReviewerAuditor,
 } from "../src/reviewer-auditor.ts";
 
-const input = {
+const input: any = {
   soul: "Reviewer law",
   canonicalSkill: "complete raw canonical Skill",
   task: "opaque task",
   record: {
-    bashEvidence: [],
-    agentAttempts: [{
-      id: "standards-leg",
-      description: "Standards",
-      prompt: "Inspect the pinned diff",
-      status: "successful" as const,
-      report: "No findings",
-      workspaceDisposition: "deleted" as const,
-    }],
-    agentInvocationBatches: [{
-      assistantSessionEntryId: "019fa2b3-session-entry",
-      executionMode: "parallel" as const,
-      agentToolCallIds: ["standards-leg", "spec-leg"],
-    }],
+    transportRejections: [],
+    rejections: [],
+    accepted: {
+      identity: "dispatch-1", recipe: "reviewer-dispatch-v1" as const,
+      input: { task: { text: "opaque task", utf8Length: 11, sha256: "task" }, canonicalSkillSha256: "skill", capabilityDocument: { text: "{}", utf8Length: 2, sha256: "capabilities" } },
+      target: { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "head", refs: {} },
+      prerequisiteOperations: [],
+      range: { base: "base", target: "head", diffCommand: "git diff base...head", diffSha256: "diff", commits: ["head"] },
+      materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", text: "rules", utf8Length: 5, sha256: "rules" }], noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", text: "absence", utf8Length: 7, sha256: "absence" }] },
+      legs: [{ axis: "standards" as const, prompt: { text: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt" }, grant: { tools: ["read"] as const, bashCommands: [], prerequisiteOperations: [] } }],
+    },
+    started: { dispatchIdentity: "dispatch-1", cardinality: 1 as const },
+    results: { standards: { dispatchIdentity: "dispatch-1", axis: "standards" as const, status: "successful" as const, prompt: { text: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt" }, target: { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "head", refs: {} }, report: "No findings", workspaceDisposition: "deleted" as const } },
   },
-  candidate: { status: "completed" as const, report: "No findings." },
+  candidate: {
+    version: 2 as const, status: "completed" as const, acceptedBatch: { identity: "dispatch-1", legs: [] },
+    reports: { standards: { text: "No findings", utf8Length: 11, sha256: "report" } },
+    outcomes: {}, identities: { canonicalSkill: { sha256: "skill", utf8Length: 5, snapshotIdentity: "/skill" } },
+  },
 };
 
 const context = {
@@ -62,17 +65,16 @@ test("Reviewer auditor receives complete method inputs and has only its decision
     "complete raw canonical Skill",
     "opaque task",
     "No findings",
-    "019fa2b3-session-entry",
-    "parallel",
-    "standards-leg",
-    "spec-leg",
+    "dispatch-1",
+    "Inspect the pinned diff",
   ]) assert.match(serialized, new RegExp(expected));
-  assert.match(
-    textOfAuditContext(seen),
-    /"agentInvocationBatches":\[\{"assistantSessionEntryId":"019fa2b3-session-entry","executionMode":"parallel","agentToolCallIds":\["standards-leg","spec-leg"\]\}\]/,
-  );
+  assert.match(textOfAuditContext(seen), /"dispatchIdentity":"dispatch-1"/);
   assert.match(seen?.systemPrompt ?? "", /not a second substantive reviewer/i);
   assert.match(seen?.systemPrompt ?? "", /Do not discover findings, rerank axes/i);
+  assert.match(seen?.systemPrompt ?? "", /package adapter controls.*output mechanics/i);
+  assert.match(seen?.systemPrompt ?? "", /Cross-axis material access or citation is lawful/i);
+  assert.match(seen?.systemPrompt ?? "", /revise for a second-axis assessment, finding count, conclusion, or section/i);
+  assert.match(seen?.systemPrompt ?? "", /Never apply source allowlists, parse prose mechanically/i);
 });
 
 function textOfAuditContext(seen: Context | undefined): string {

@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/plan/coder-001"
+  },
+  "invocation": {
+    "id": "8ab6242d-b1e6-46c7-9d47-4d538d112b14"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "plan",
+      "--ak-coder-task",
+      ".ak/work/issues/17/coder-plan-task.md",
+      "-p",
+      "Inspect the authorized Reviewer seam, prepare the construction-ready Behavior/Owner/Red/Green/Scope plan, and submit through ak_coder_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "issue-17-plan",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority-judgment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "275f3ab0bf94bed9aa2037a062577366b271d10b",
+        "path": ".ak/dockets/issues/17/authority/judge-001/receipt.json",
+        "blobOid": "2c5b838b504efa89d1aca255ab8cc3beaeb06694",
+        "sha256": "d20d37fc5766f59f113e96ce40f30a669d0bffbbbe770465f7f0aec61ab40fd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/coder-task",
+        "sha256": "9c2fe241619bfe04986b9bfbc157e633808992ee31d220d92fa020bf90a9cd2a",
+        "byteLength": 1660
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "6c9ee78edc3e65b40145dda50765e3d2a1f23edea44cbfe18aac0d7acffb28a3",
+        "byteLength": 11987
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_9AnoXVWykoe4GQ74n3aiaEZl|fc_03c1e49f5b8f4bf1016a6b5ee7589c81918f802a7e4c5a3d0e",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 50
+      }
+    ]
+  }
+}
