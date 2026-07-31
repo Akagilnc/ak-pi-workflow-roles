@@ -84,6 +84,15 @@ function validateTrackerMetadata(value: unknown) {
   validate(value.issues, "issue"); validate(value.pullRequests, "pull request");
 }
 
+export const DOCTOR_COMMITTED_IDENTITY_ERROR_CODE = "doctor-committed-identity-missing" as const;
+export class DoctorCommittedIdentityError extends Error {
+  readonly code = DOCTOR_COMMITTED_IDENTITY_ERROR_CODE;
+  constructor(readonly evidenceId: string) {
+    super(`Resolver-established committed identity is missing: ${evidenceId}`);
+    this.name = "DoctorCommittedIdentityError";
+  }
+}
+
 export function validateDoctorEvidenceIndex(value: unknown, committedIdentities: ReadonlyMap<string, { sha256: string; byteLength: number }> = new Map()): DoctorEvidenceIndexV1 {
   if (!record(value)) throw new Error("Doctor evidence index must be an object");
   exact(value, ["version", "repository", "targetCommit", "catalog", "populations", "evidence"], "Doctor evidence index");
@@ -104,10 +113,12 @@ export function validateDoctorEvidenceIndex(value: unknown, committedIdentities:
     if (raw.kind === "statsLine" && !isStatsLine(raw.data)) throw new Error("invalid StatsLine evidence");
     if (raw.kind === "gitMetadata") validateGitMetadata(raw.data);
     if (raw.kind === "trackerMetadata") validateTrackerMetadata(raw.data);
-    // Resolver-derived committed identities seal exact target bytes; direct
-    // normalized validation uses the package canonical serialization.
-    const resolvedIdentity = committed.has(String(raw.kind)) ? committedIdentities.get(raw.id) : undefined;
-    const canonicalBytes = resolvedIdentity === undefined ? statsLineEvidenceBytes(raw.data) : undefined;
+    // Committed claims are admitted only with resolver-sealed target bytes;
+    // normalized facts retain the package canonical serialization identity.
+    const isCommitted = committed.has(String(raw.kind));
+    const resolvedIdentity = isCommitted ? committedIdentities.get(raw.id) : undefined;
+    if (isCommitted && resolvedIdentity === undefined) throw new DoctorCommittedIdentityError(raw.id);
+    const canonicalBytes = isCommitted ? undefined : statsLineEvidenceBytes(raw.data);
     const expected = resolvedIdentity ?? { sha256: sha256Hex(canonicalBytes!), byteLength: canonicalBytes!.byteLength };
     if (expected.byteLength !== raw.byteLength || expected.sha256 !== raw.sha256) throw new Error(`Evidence digest mismatch: ${raw.id}`);
     entries.set(raw.id, raw as DoctorEvidenceEntry);
