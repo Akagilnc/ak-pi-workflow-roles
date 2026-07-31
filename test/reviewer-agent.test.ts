@@ -425,6 +425,37 @@ test("Reviewer child provider delegates class-private streams to the original re
   }
 });
 
+test("workspace shutdown does not replay pre-creation or post-creation preparation rejection", async () => {
+  for (const fault of ["mirror.before-create", "mirror.create"] as const) {
+    const source = await repository();
+    const accepted = await dispatch(source.root, [fault]);
+    const cause = new Error(`classified ${fault}`);
+    const owner = createReviewerWorkspaceOwner({ fault(operation) { if (operation === fault) throw cause; } });
+    let retained: string | undefined;
+    try {
+      await assert.rejects(owner.prepare(accepted.targetSnapshot, ["standards"], accepted.bundle), (error) => {
+        assert.equal(error, cause);
+        const classified = error as typeof cause & { reviewerFailure: string; targetSnapshot: unknown; workspaceDisposition: "not-created" | { retained: string } };
+        assert.equal(classified.reviewerFailure, "snapshot");
+        assert.deepEqual(classified.targetSnapshot, accepted.targetSnapshot);
+        if (fault === "mirror.before-create") assert.equal(classified.workspaceDisposition, "not-created");
+        else {
+          assert.notEqual(classified.workspaceDisposition, "not-created");
+          retained = (classified.workspaceDisposition as { retained: string }).retained;
+          assert.ok(retained);
+        }
+        return true;
+      });
+      await owner.shutdown();
+      await owner.shutdown();
+      if (retained !== undefined) await access(retained);
+    } finally {
+      if (retained !== undefined) await rm(retained, { recursive: true, force: true });
+      await rm(source.root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("Reviewer Agent reports deterministic setup failures with bounded retention evidence", async () => {
   const cases = [
     ["snapshot.head", "not-created", "snapshot"],

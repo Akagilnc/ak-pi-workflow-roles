@@ -90,12 +90,12 @@ async function prepareClone(snapshot, signal, dependencies) {
     }
 }
 export function createReviewerWorkspaceOwner(dependencies = {}) {
-    let snapshotPromise;
-    let deleted = false;
+    let ownedSnapshot;
+    let cleanupPromise;
     return {
         async prepare(target, axes, bundle, signal) {
-            snapshotPromise = prepareSnapshot(target, signal, dependencies);
-            const snapshot = await snapshotPromise;
+            const snapshot = await prepareSnapshot(target, signal, dependencies);
+            ownedSnapshot = snapshot;
             const frozenTarget = Object.freeze({ repositoryRoot: snapshot.repositoryRoot, objectFormat: snapshot.objectFormat, targetHead: snapshot.targetHead, refs: Object.freeze({ ...snapshot.refs }) });
             const workspaces = [];
             try {
@@ -117,7 +117,11 @@ export function createReviewerWorkspaceOwner(dependencies = {}) {
             return Object.freeze({ target: frozenTarget, workspaces: Object.freeze(workspaces) });
         },
         async dispose(workspace) { await rm(workspace.path, { recursive: true, force: false }); return "deleted"; },
-        async shutdown() { if (snapshotPromise === undefined || deleted)
-            return; const snapshot = await snapshotPromise; await rm(snapshot.mirrorRoot, { recursive: true, force: false }); deleted = true; },
+        async shutdown() {
+            if (ownedSnapshot === undefined)
+                return;
+            cleanupPromise ??= rm(ownedSnapshot.mirrorRoot, { recursive: true, force: false });
+            await cleanupPromise;
+        },
     };
 }
