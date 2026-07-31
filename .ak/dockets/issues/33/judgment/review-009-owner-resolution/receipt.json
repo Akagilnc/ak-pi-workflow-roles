@@ -1,0 +1,44 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_LHLkezCbY2KrswvDf3vxAQ46|fc_0b434882c947405d016a6cd04e0738819198170a725aac4c17",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Apply Review-009 directly at fixed HEAD c81ef25f38df2984fd708c0057cc8e1ab5a05801. Enforce Pi’s admitted native row-ID domain before exact retention; preserve full package call IDs as the owner-approved compactness exception; perform only the bounded readability, session-owner type, and ADR-0016 thinning repairs below. Do not reopen Review-005 classes, add a Plan, alter the owner choice, or change the rejected fixture finding."
+    },
+    "classes": [
+      {
+        "name": "ISS33-COMPACT-SESSION-STATE",
+        "owner": "Native JSONL session parser/extractor seam (`src/recorder/session.ts`, `src/recorder/extract.ts`, generated Recorder counterparts, and focused seam tests)",
+        "boundary": "Exact identity enforcement and replay state: native Pi-v3 row IDs versus package `ToolCall.id`/`toolCallId` strings",
+        "disposition": "Sustained with verified owner option 4 controlling package call IDs. In `readSession`, validate every non-header row ID against the Pi 0.82.1 admitted canonical domain—8-hex entry IDs or the canonical UUID fallback—before adding it to the uniqueness set or assigning it as chain state; reject noncanonical, including oversized, row IDs as session corruption while retaining canonical row IDs exactly for duplicate and parent-chain checks. In `AcceptanceCollector`, retain complete package call-ID strings exactly for replay detection within the existing 100000-row and 16-MiB-line limits. This is an explicit exception to compact-state policy: do not hash/digest IDs, invent a package call-ID lexical or byte bound, or add external storage/sort/index machinery. Add focused red/green coverage that crosses these production seams and rebuild generated Recorder artifacts."
+      },
+      {
+        "name": "ISS33-SECURITY-SOURCE-READABILITY",
+        "owner": "Security-sensitive Recorder implementation (`src/recorder/session.ts`, `src/recorder/run.ts`, `src/recorder/manifest.ts`, `src/recorder/spawn.ts`)",
+        "boundary": "Human auditability of existing identity, inventory, mutation, child-outcome, manifest, stream-forwarding, cleanup, and promotion decisions",
+        "disposition": "Sustained only as the bounded source-readability repair already authorized. Reformat dense one-line trust logic into normal statement boundaries and replace opaque locals with domain-revealing names in the named files; keep generated counterparts synchronized. Do not change contracts or behavior, add guards or mechanisms, or conduct a repository-wide style pass."
+      },
+      {
+        "name": "ISS33-SESSION-OWNER-IDENTITY",
+        "owner": "Recorder session ownership seam (`src/recorder/session.ts` and its callers/generated counterpart)",
+        "boundary": "The `{path, dev, ino}` value returned by `createSessionLeaf` and consumed by `readSession`",
+        "disposition": "Sustained only on the current factual clump. Reuse or extend the existing `Identity = {dev, ino}` concept to give the complete `{path, dev, ino}` session-owner value one named domain type, and use that type at both producer and consumer boundaries. Do not introduce a framework, parallel identity mechanism, unrelated validation, or broader primitive-obsession cleanup."
+      },
+      {
+        "name": "ISS33-ADR0016-TEST-THINNING",
+        "owner": "Recorder config/session integrity regression suite (`test/recorder-config-session-integrity.test.ts`)",
+        "boundary": "Redundant same-branch examples only; behaviorally distinct C8 and framing/session integrity oracles remain authoritative",
+        "disposition": "Narrowly sustained. Delete the 16-MiB just-below case while retaining exact-limit acceptance and first-over rejection; delete the 99999-row case while retaining 100000 acceptance and 100001 rejection; reduce the seven closed-object-extra permutations to at most one true production-seam tracer. Preserve distinct malformed/header/chain/newline/inventory/mutation/config branches and all other behaviorally distinct C8 coverage. This authorizes no target test quantity and no general suite thinning."
+      },
+      {
+        "name": "ISS33-LIFECYCLE-FIXTURE-DUPLICATION",
+        "owner": "Recorder lifecycle test support (`test/native-session-sealer.test.ts`, `test/helpers/recorder-test-harness.ts`)",
+        "boundary": "The in-process `pair` fixture versus the executable counter-child used by real-spawn and cold-package verticals",
+        "disposition": "Rejected; no repair is authorized. The fixtures exercise different leaf and real-spawn/cold-package seams, no material drift failure is demonstrated, and a shared builder would add unjustified coupling. Keep both fixture shapes unless an independently evidenced defect arises."
+      }
+    ],
+    "note": "Owner authority was independently verified from GitHub issue comment 5145249654: author `Akagilnc`, URL `https://github.com/Akagilnc/ak-pi-workflow-roles/issues/33#issuecomment-5145249654`, body expressly selects option 4, limits the exception to exact package call-ID replay detection, forbids digests/invented bounds/external index infrastructure, and keeps native row-ID canonical-domain validation separate. The resolution is internally consistent. This is direct Fixer Apply authority, not Plan or proof that implementation has passed."
+  },
+  "artifactKind": "acceptedReceipt"
+}
