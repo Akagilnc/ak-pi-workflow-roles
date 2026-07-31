@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+    "root": ".ak/dockets",
+    "docketId": "issues/31/judgment/owner-resolution"
+  },
+  "invocation": {
+    "id": "4fefd5e7-7180-4ab3-b82a-8c6795ce9c87"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/31/runs/owner-resolution-judge/session",
+      "--name",
+      "issue-31-owner-resolution",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #31 owner-resolution judgment\n\nThe prior design recheck escalated only the shared key grammar. Owner selected option 1 and persisted it on Issue #31:\n\n- nonblank, comma-free keys;\n- exact case-sensitive comparison with no normalization;\n- unique keys within Judge `classes`, Fixer `classesRepaired`, and Reviewer `scopeKeys`, duplicates rejected at each owning schema/argv seam;\n- order immaterial;\n- exact set equality, no missing or extra key.\n\nConfirm whether this resolves the sole gate and makes Issue #31 construction-ready without reopening O1 or any settled design. Submit only through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "6a9589d30521b1305c409c68b2f58e7d97d486d1",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "prior-recheck",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+        "commit": "6a9589d30521b1305c409c68b2f58e7d97d486d1",
+        "path": ".ak/dockets/issues/31/judgment/design-recheck/receipt.json",
+        "blobOid": "02aa54cfb03c22bc5d8280d00752dca418f74ea4",
+        "sha256": "ceb31107c2c0fd270ea2b4d8e7960bdc51815dd53714c4d98fb64d42d184bf70",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "issue-31-resolved-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-31-resolved-authority",
+        "sha256": "ecf80cee48ea2ead295cc4e4f5978e0cac338e5fc7439208201f8a7fa9296179",
+        "byteLength": 8273
+      }
+    },
+    {
+      "id": "judge-request",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-request",
+        "sha256": "ffaa2a4162e2e2e4eadf72ef0d3bed8e393ab47c7153248b46a080f170c803ce",
+        "byteLength": 621
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "74a1e4677a45120dd9adec1b7faacf4b65bebe98dfabc2d2315ae4544957c7f9",
+        "byteLength": 706
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "141d00d6d9d2918699c0d1f7e8fe37546da64185be76435e5a516824c6dbe652",
+        "byteLength": 283
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_dJW2tjCOwQPTdYCkJ4y6mwdR|fc_02c6d1ed0170482c016a6c91e447a881919ae024d2dfa14598",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_dJW2tjCOwQPTdYCkJ4y6mwdR|fc_02c6d1ed0170482c016a6c91e447a881919ae024d2dfa14598",
+    "auditPassed": true,
+    "usage": {
+      "input": 5364,
+      "output": 429,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 5793
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
