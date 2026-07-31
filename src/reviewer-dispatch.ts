@@ -6,6 +6,7 @@ import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIde
 import { reviewerScopePrompt } from "./reviewer-scope-prompt.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 import { sha256Hex } from "./sha256.ts";
+import { bundlePromptReferences, compileMechanicalBundle, type CanonicalSkillIdentity, type PinnedMechanicalBundleV1, type ReviewerConstructionIdentity } from "./reviewer-construction.ts";
 export { sha256Hex } from "./sha256.ts";
 export { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
@@ -47,14 +48,10 @@ export type MaterialSelection = Readonly<{ id: string; repositoryPath: string }>
 export type ReviewerProposalV1 = Readonly<{
   version: 1;
   base: Readonly<{ revision: string }>;
-  standardsMaterials: readonly MaterialSelection[];
-  spec:
-    | Readonly<{ state: "established"; materials: readonly MaterialSelection[] }>
-    | Readonly<{ state: "not-established"; evidence: readonly MaterialSelection[] }>;
-  required: Readonly<{
-    standards: ReviewerCapabilityRequest;
-    spec?: ReviewerCapabilityRequest;
-  }>;
+  materials: readonly MaterialSelection[];
+  relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>;
+  spec: Readonly<{ state: "established" | "not-established" }>;
+  required: Readonly<{ standards: ReviewerCapabilityRequest; spec?: ReviewerCapabilityRequest }>;
 }>;
 export type AcceptedReviewerLeg = Readonly<{
   axis: "standards" | "spec";
@@ -63,27 +60,27 @@ export type AcceptedReviewerLeg = Readonly<{
 }>;
 export type AcceptedReviewerExecution = Readonly<{
   identity: string;
-  recipe: "reviewer-dispatch-v1";
+  recipe: "reviewer-common-bundle-v1";
   targetSnapshot: ReviewerPinnedTarget;
+  bundle: PinnedMechanicalBundleV1;
   prerequisiteOperations: readonly ReviewerPrerequisiteOperation[];
   legs: readonly AcceptedReviewerLeg[];
 }>;
 export type AcceptedReviewerDispatch = Readonly<{
   identity: string;
-  recipe: "reviewer-dispatch-v1";
+  recipe: "reviewer-common-bundle-v1";
   input: Readonly<{
     task: ReviewerPromptIdentity;
-    canonicalSkillSha256: string;
+    canonicalSkill: CanonicalSkillIdentity;
+    construction: ReviewerConstructionIdentity;
     capabilityDocument: ReviewerPromptIdentity;
   }>;
   targetSnapshot: ReviewerPinnedTarget;
   prerequisiteOperations: readonly ReviewerPrerequisiteOperation[];
   range: ReviewerRange;
-  materials: Readonly<{
-    standards: readonly ReviewerMaterialEvidence[];
-    spec?: readonly ReviewerMaterialEvidence[];
-    noSpecEvidence?: readonly ReviewerMaterialEvidence[];
-  }>;
+  materials: readonly ReviewerMaterialEvidence[];
+  relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>;
+  bundle: PinnedMechanicalBundleV1;
   legs: readonly AcceptedReviewerLeg[];
 }>;
 export type ReviewerMaterialEvidence = Readonly<MaterialSelection & ReviewerPromptIdentity>;
@@ -185,6 +182,7 @@ export function toReviewerExecution(dispatch: AcceptedReviewerDispatch): Accepte
     identity: dispatch.identity,
     recipe: dispatch.recipe,
     targetSnapshot: immutableReviewerPin(dispatch.targetSnapshot),
+    bundle: dispatch.bundle,
     prerequisiteOperations: freezeStrings(dispatch.prerequisiteOperations),
     legs: Object.freeze(dispatch.legs.map((leg) => Object.freeze({
       axis: leg.axis,
@@ -318,182 +316,57 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
   }
 
   async function preflightAndCompileDispatch(proposal: ReviewerProposalV1, identity: string): Promise<AcceptedReviewerDispatch> {
-    if (!isExactObject(proposal, ["version", "base", "standardsMaterials", "spec", "required"]) || proposal.version !== 1) {
-      violation("proposal-invalid");
-    }
-    if (!isExactObject(proposal.base, ["revision"]) || typeof proposal.base.revision !== "string" || proposal.base.revision.length === 0) {
-      violation("base-invalid");
-    }
-    if (!Array.isArray(proposal.standardsMaterials)) {
-      violation("material-invalid");
-    }
-    proposal.standardsMaterials.forEach(validateMaterialSelection);
-    const axisPlan = proposal.spec?.state === "established"
-      ? Object.freeze({ kind: "two-leg" as const, selections: proposal.spec.materials, requiredKeys: ["standards", "spec"] as const })
-      : proposal.spec?.state === "not-established"
-        ? Object.freeze({ kind: "standards-only" as const, selections: proposal.spec.evidence, requiredKeys: ["standards"] as const })
-        : undefined;
-    if (axisPlan === undefined || !isExactObject(proposal.spec, ["state", axisPlan.kind === "two-leg" ? "materials" : "evidence"])) {
-      throw new ReviewerPreflightError("spec-invalid");
-    }
-    if (!isExactObject(proposal.required, axisPlan.requiredKeys)) {
-      violation("capability-invalid");
-    }
-    const specSelections = axisPlan.selections;
-    if (!Array.isArray(specSelections) || specSelections.length === 0) violation("spec-invalid");
-    specSelections.forEach(validateMaterialSelection);
-
-    const allSelections = [...proposal.standardsMaterials, ...specSelections];
-    if (!hasUniqueValues(allSelections.map(({ id }) => id)) ||
-        !hasUniqueValues(allSelections.map(({ repositoryPath }) => repositoryPath.normalize("NFC"))))
-      violation("material-invalid");
-    for (const operation of DISPATCH_PREREQUISITES) {
-      if (!capabilities.prerequisiteOperations.includes(operation)) {
-        violation("prerequisite-missing");
+    const allowedKeys = proposal.relevanceHints === undefined
+      ? ["version", "base", "materials", "spec", "required"]
+      : ["version", "base", "materials", "relevanceHints", "spec", "required"];
+    if (!isExactObject(proposal, allowedKeys) || proposal.version !== 1) violation("proposal-invalid");
+    if (!isExactObject(proposal.base, ["revision"]) || typeof proposal.base.revision !== "string" || proposal.base.revision.length === 0) violation("base-invalid");
+    if (!Array.isArray(proposal.materials)) violation("material-invalid");
+    proposal.materials.forEach(validateMaterialSelection);
+    if (!hasUniqueValues(proposal.materials.map(x => x.id)) || !hasUniqueValues(proposal.materials.map(x => x.repositoryPath.normalize("NFC")))) violation("material-invalid");
+    if (!isExactObject(proposal.spec, ["state"]) || (proposal.spec.state !== "established" && proposal.spec.state !== "not-established")) violation("spec-invalid");
+    const requiredKeys = proposal.spec.state === "established" ? ["standards", "spec"] : ["standards"];
+    if (!isExactObject(proposal.required, requiredKeys)) violation("capability-invalid");
+    if (proposal.relevanceHints !== undefined) {
+      if (typeof proposal.relevanceHints !== "object" || proposal.relevanceHints === null || Array.isArray(proposal.relevanceHints) || Object.keys(proposal.relevanceHints).some(k => k !== "standards" && k !== "spec")) violation("material-invalid");
+      const ids = new Set(proposal.materials.map(x => x.id));
+      for (const hints of [proposal.relevanceHints.standards, proposal.relevanceHints.spec]) {
+        if (hints !== undefined && (!Array.isArray(hints) || !hints.every(x => typeof x === "string" && ids.has(x)) || !hasUniqueValues(hints))) violation("material-invalid");
       }
     }
-
+    for (const operation of DISPATCH_PREREQUISITES) if (!capabilities.prerequisiteOperations.includes(operation)) violation("prerequisite-missing");
     const standardsGrant = validateRequest(proposal.required.standards, capabilities, hostTools);
-    const specGrant = axisPlan.kind === "two-leg"
-      ? validateRequest(proposal.required.spec, capabilities, hostTools)
-      : undefined;
-    const runnerOperations = REVIEWER_PREREQUISITES.filter((operation) => operation.startsWith("runner."));
-    for (const operation of runnerOperations) {
-      if (!capabilities.prerequisiteOperations.includes(operation)) violation("prerequisite-missing");
+    const specGrant = proposal.spec.state === "established" ? validateRequest(proposal.required.spec, capabilities, hostTools) : undefined;
+    const runnerOperations = REVIEWER_PREREQUISITES.filter(x => x.startsWith("runner."));
+    for (const operation of runnerOperations) if (!capabilities.prerequisiteOperations.includes(operation)) violation("prerequisite-missing");
+    const acceptedPrerequisites = freezeStrings([...new Set([...standardsGrant.prerequisiteOperations, ...(specGrant?.prerequisiteOperations ?? []), ...runnerOperations])]);
+    let base!: string; let readRange!: ReviewerRange;
+    try { base = await dependencies.reader.resolve(proposal.base.revision); readRange = await dependencies.reader.range(base); } catch (error) { classifyReadFailure(error); }
+    if (readRange.base !== base || readRange.target !== targetSnapshot.targetHead || readRange.diffCommand !== `git diff ${base}...${targetSnapshot.targetHead}` || !/^[0-9a-f]{64}$/.test(readRange.diffSha256) || readRange.diffSha256 === sha256Hex("") || !Array.isArray(readRange.commits) || !readRange.commits.every(x => typeof x === "string") || !hasUniqueValues(readRange.commits)) violation("range-invalid");
+    const range: ReviewerRange = Object.freeze({ ...readRange, commits: freezeStrings(readRange.commits) });
+    if (!capabilities.tools.includes("bash") || !capabilities.bashCommands.includes(range.diffCommand)) violation("capability-invalid");
+    for (const grant of [standardsGrant, ...(specGrant ? [specGrant] : [])]) if (!grant.tools.includes("bash") || !grant.bashCommands.includes(range.diffCommand) || grant.bashCommands.some(c => !capabilities.bashCommands.includes(c))) violation("capability-invalid");
+    const materialEvidence: ReviewerMaterialEvidence[] = [];
+    for (const item of proposal.materials) {
+      let bytes!: Uint8Array; try { bytes = await dependencies.reader.material(item.repositoryPath, targetSnapshot.targetHead); } catch (error) { classifyReadFailure(error); }
+      let text!: string; try { text = exactUtf8(bytes, "Reviewer material"); } catch { violation("material-invalid"); }
+      materialEvidence.push(Object.freeze({ ...item, text, utf8Length: bytes.byteLength, sha256: sha256Hex(bytes) }));
     }
-    const acceptedPrerequisites = freezeStrings([...new Set([
-      ...standardsGrant.prerequisiteOperations,
-      ...(specGrant?.prerequisiteOperations ?? []),
-      ...runnerOperations,
-    ])]);
-
-    let base!: string;
-    let readRange!: ReviewerRange;
-    try {
-      base = await dependencies.reader.resolve(proposal.base.revision);
-      readRange = await dependencies.reader.range(base);
-    } catch (error) { classifyReadFailure(error); }
-    if (readRange.base !== base || readRange.target !== targetSnapshot.targetHead) {
-      violation("range-invalid");
-    }
-    if (
-      readRange.diffCommand !== `git diff ${base}...${targetSnapshot.targetHead}` ||
-      typeof readRange.diffSha256 !== "string" ||
-      !/^[0-9a-f]{64}$/.test(readRange.diffSha256) ||
-      readRange.diffSha256 === sha256Hex("") ||
-      !Array.isArray(readRange.commits) ||
-      !readRange.commits.every((commit) => typeof commit === "string") ||
-      !hasUniqueValues(readRange.commits)
-    ) {
-      violation("range-invalid");
-    }
-    const range: ReviewerRange = Object.freeze({
-      base,
-      target: readRange.target,
-      diffCommand: readRange.diffCommand,
-      diffSha256: readRange.diffSha256,
-      commits: freezeStrings(readRange.commits),
-    });
-    if (!capabilities.tools.includes("bash") || !capabilities.bashCommands.includes(range.diffCommand)) {
-      violation("capability-invalid");
-    }
-    for (const grant of [standardsGrant, ...(specGrant === undefined ? [] : [specGrant])]) {
-      if (
-        !grant.tools.includes("bash") ||
-        !grant.bashCommands.includes(range.diffCommand) ||
-        grant.bashCommands.some((command) => !capabilities.bashCommands.includes(command))
-      ) {
-        violation("capability-invalid");
-      }
-    }
-    const materialEvidence = new Map<string, ReviewerMaterialEvidence>();
-    for (const item of allSelections) {
-      let bytes!: Uint8Array;
-      try { bytes = await dependencies.reader.material(item.repositoryPath, targetSnapshot.targetHead); }
-      catch (error) { classifyReadFailure(error); }
-      let text!: string;
-      try { text = exactUtf8(bytes, "Reviewer material"); }
-      catch { violation("material-invalid"); }
-      materialEvidence.set(item.id, Object.freeze({
-        ...item,
-        text,
-        utf8Length: bytes.byteLength,
-        sha256: sha256Hex(bytes),
-      }));
-    }
-
-    let taskText!: string;
-    try { taskText = exactUtf8(task, "Reviewer task"); }
-    catch { violation("prompt-identity-invalid"); }
-    const taskEvidence: ReviewerPromptIdentity = reviewerPromptIdentity(taskText);
-    const canonicalSkillSha256 = sha256Hex(canonicalSkill);
-    const renderCommonProvenance = () => [
-      `Task-SHA256: ${taskEvidence.sha256}`,
-      `Task-UTF8-Length: ${taskEvidence.utf8Length}`,
-      `Canonical-Skill-SHA256: ${canonicalSkillSha256}`,
-      `Target: ${range.target}`,
-      `Base: ${range.base}`,
-      `Diff: ${range.diffCommand}`,
-      `Diff-SHA256: ${range.diffSha256}`,
-      reviewerScopePrompt(dependencies.reviewScopeKeys),
-      "Commits:",
-      range.commits.join("\n"),
+    let taskText!: string; try { taskText = exactUtf8(task, "Reviewer task"); } catch { violation("prompt-identity-invalid"); }
+    const taskEvidence = reviewerPromptIdentity(taskText);
+    const compiled = compileMechanicalBundle({ canonicalSkill, task: taskText, range, materials: materialEvidence });
+    const common = [
+      `Task-SHA256: ${taskEvidence.sha256}`, `Target: ${range.target}`, `Base: ${range.base}`, `Diff: ${range.diffCommand}`,
+      reviewerScopePrompt(dependencies.reviewScopeKeys), `Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`,
+      `Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`, bundlePromptReferences(compiled.bundle),
     ].join("\n");
-    const promptInputs: Array<Readonly<{ axis: "standards" | "spec"; selections: readonly MaterialSelection[]; grant: ReviewerCapabilityRequest }>> = [
-      { axis: "standards", selections: proposal.standardsMaterials, grant: standardsGrant },
-      ...(axisPlan.kind === "two-leg" ? [{ axis: "spec" as const, selections: axisPlan.selections, grant: specGrant! }] : []),
-    ];
-    const defaultRenderMaterial = (evidence: ReviewerMaterialEvidence) =>
-      `Material-Identity: ${JSON.stringify({ id: evidence.id, repositoryPath: evidence.repositoryPath })}\nMaterial-Bytes:\n${evidence.text}`;
-    const renderMaterial = dependencies.renderMaterial ?? defaultRenderMaterial;
-    const constructPrompt = ({ axis, selections, grant }: typeof promptInputs[number], pass: 1 | 2): string => {
-      const rendered = selections.map((item) => renderMaterial(materialEvidence.get(item.id)!, axis, pass)).join("\n\n");
-      const burden = axis === "standards"
-        ? `${skillSection(canonicalSkill, "### 3. Identify the standards sources", "### 4. Spawn both sub-agents in parallel")}\n\n${skillSection(canonicalSkill, "**Standards sub-agent prompt**", "**Spec sub-agent prompt**")}`
-        : skillSection(canonicalSkill, "**Spec sub-agent prompt**", "### 5. Aggregate");
-      const label = axis === "standards" ? "Standards" : "Spec";
-      return `${renderCommonProvenance()}\nGrant: ${JSON.stringify(grant)}\n\n${label} materials:\n${rendered}\n\n${burden}\n`;
-    };
+    const axes: Array<{axis:"standards"|"spec"; grant:ReviewerCapabilityRequest}> = [{ axis:"standards", grant:standardsGrant }, ...(specGrant ? [{axis:"spec" as const, grant:specGrant}] : [])];
     const compilePrompt = dependencies.compilePrompt ?? ((prompt: string) => reviewerPromptIdentity(prompt));
-    const compileRecipe = (input: typeof promptInputs[number], pass: 1 | 2) =>
-      compilePrompt(constructPrompt(input, pass), input.axis, pass);
-    const firstCompilations = promptInputs.map((input) => compileRecipe(input, 1));
-    const secondCompilations = promptInputs.map((input) => compileRecipe(input, 2));
-    for (let index = 0; index < firstCompilations.length; index++) {
-      const first = firstCompilations[index]!;
-      const second = secondCompilations[index]!;
-      if (!isReviewerPromptIdentity(first) || !isReviewerPromptIdentity(second)) {
-        violation("prompt-identity-invalid");
-      }
-      if (!sameReviewerPromptIdentity(first, second)) {
-        violation("prompt-identity-mismatch");
-      }
-    }
-    const legs = Object.freeze(promptInputs.map(({ axis, grant }, index) => {
-      const identity = firstCompilations[index]!;
-      return Object.freeze({ axis, prompt: identity, grant });
-    }));
-    const evidenceFor = (items: readonly MaterialSelection[]) => Object.freeze(items.map((item) => materialEvidence.get(item.id)!));
-    const materials = Object.freeze({
-      standards: evidenceFor(proposal.standardsMaterials),
-      ...(axisPlan.kind === "two-leg"
-        ? { spec: evidenceFor(axisPlan.selections) }
-        : { noSpecEvidence: evidenceFor(axisPlan.selections) }),
-    });
-    return Object.freeze({
-      identity,
-      recipe: "reviewer-dispatch-v1",
-      input: Object.freeze({
-        task: taskEvidence,
-        canonicalSkillSha256,
-        capabilityDocument: capabilities.document,
-      }),
-      targetSnapshot,
-      prerequisiteOperations: acceptedPrerequisites,
-      range,
-      materials,
-      legs,
-    });
+    const build = (axis:"standards"|"spec", grant:ReviewerCapabilityRequest, pass:1|2) => compilePrompt(`${common}\nGrant: ${JSON.stringify(grant)}\nQuestion: ${axis === "standards" ? "Apply the complete canonical Standards brief and baseline from the bundle." : "Apply the canonical Spec brief from the bundle."}\n`, axis, pass);
+    const first = axes.map(x => build(x.axis,x.grant,1)); const second = axes.map(x => build(x.axis,x.grant,2));
+    for (let i=0;i<first.length;i++) if (!isReviewerPromptIdentity(first[i]!) || !isReviewerPromptIdentity(second[i]!) || !sameReviewerPromptIdentity(first[i]!,second[i]!)) violation(!isReviewerPromptIdentity(first[i]!) || !isReviewerPromptIdentity(second[i]!) ? "prompt-identity-invalid" : "prompt-identity-mismatch");
+    const legs = Object.freeze(axes.map((x,i) => Object.freeze({ axis:x.axis, prompt:first[i]!, grant:x.grant })));
+    return Object.freeze({ identity, recipe:"reviewer-common-bundle-v1", input:Object.freeze({ task:taskEvidence, canonicalSkill:compiled.canonicalSkill, construction:compiled.construction, capabilityDocument:capabilities.document }), targetSnapshot, prerequisiteOperations:acceptedPrerequisites, range, materials:Object.freeze(materialEvidence), ...(proposal.relevanceHints === undefined ? {} : { relevanceHints:Object.freeze(proposal.relevanceHints) }), bundle:compiled.bundle, legs });
   }
 
   return Object.freeze({

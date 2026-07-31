@@ -13,7 +13,7 @@ import {
   createPiReviewerAuditor,
 } from "../src/reviewer-auditor.ts";
 
-const input = {
+const input: any = {
   soul: "Reviewer law",
   canonicalSkill: "complete raw canonical Skill",
   task: "opaque task",

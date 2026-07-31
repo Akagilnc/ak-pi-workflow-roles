@@ -26,6 +26,7 @@ import {
 
 import { createHash } from "node:crypto";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
+import { compileMechanicalBundle } from "../src/reviewer-construction.ts";
 import type { AcceptedReviewerExecution } from "../src/reviewer-dispatch.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch } from "../src/reviewer-execution-ledger.ts";
 
@@ -34,7 +35,8 @@ async function dispatch(root: string, prompts: readonly string[], tools: readonl
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
   const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => { const [name, objectId, peeled, objectType, peeledType] = line.split("\0"); return [name!, { objectId: objectId!, peeledCommitId: objectType === "commit" ? objectId! : peeledType === "commit" ? peeled! : null }]; }));
   const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
-  return { identity: "accepted", recipe: "reviewer-dispatch-v1", prerequisiteOperations: prerequisites, targetSnapshot: { repositoryRoot: root, objectFormat, targetHead, refs }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex") }, grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerExecution;
+  const bundle = compileMechanicalBundle({ canonicalSkill: "canonical\n", task: "task\n", range: { base: targetHead, target: targetHead, diffCommand: `git diff ${targetHead}...${targetHead}`, diffSha256: "1".repeat(64), commits: [targetHead] }, materials: [] }).bundle;
+  return { identity: "accepted", recipe: "reviewer-common-bundle-v1", bundle, prerequisiteOperations: prerequisites, targetSnapshot: { repositoryRoot: root, objectFormat, targetHead, refs }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex") }, grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) };
 }
 
 const exec = promisify(execFile);
@@ -417,11 +419,12 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
           assert.equal(accepted.legs.standards.failure, classification);
           const ledger = createReviewerExecutionLedger();
           // Project the exact failed settlement through the durable ledger seam.
+          const construction = compileMechanicalBundle({ canonicalSkill: "skill", task: acceptedDispatch.legs[0]!.prompt.text, range: { base: acceptedDispatch.targetSnapshot.targetHead, target: acceptedDispatch.targetSnapshot.targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, materials: [] });
           ledger.append(projectAcceptedDispatch({
             ...acceptedDispatch,
-            input: { task: acceptedDispatch.legs[0]!.prompt, canonicalSkillSha256: "skill", capabilityDocument: acceptedDispatch.legs[0]!.prompt },
+            input: { task: acceptedDispatch.legs[0]!.prompt, canonicalSkill: construction.canonicalSkill, construction: construction.construction, capabilityDocument: acceptedDispatch.legs[0]!.prompt },
             range: { base: acceptedDispatch.targetSnapshot.targetHead, target: acceptedDispatch.targetSnapshot.targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] },
-            materials: { standards: [], noSpecEvidence: [] },
+            materials: [],
           }));
           ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: accepted.identity, cardinality: 1 });
           ledger.append({ source: "reviewer-agent", type: "leg-settled", dispatchIdentity: accepted.identity, axis: "standards", ...accepted.legs.standards });

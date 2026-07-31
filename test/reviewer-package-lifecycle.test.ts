@@ -99,7 +99,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       async run() { missingRecipeRuns += 1; throw new Error("must not run"); },
     });
 
-    const proposal =  { version: 1, base: { revision: "review-base" }, standardsMaterials: [], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: standardsRequest, spec: specRequest } };
+    const proposal =  { version: 1, base: { revision: "review-base" }, materials: [{ id: "spec", repositoryPath: "SPEC.md" }], spec: { state: "established" }, required: { standards: standardsRequest, spec: specRequest } };
     const bad = { ...proposal, required: { standards: standardsRequest, spec: { ...specRequest, bashCommands: ["git status"] } } };
     const missingRecipe = await missingRecipeDispatcher.propose(proposal);
     assert.equal(missingRecipe.status, "rejected");
@@ -180,7 +180,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     });
 
     const noSpecFaux = fauxProvider({ api: "package-reviewer-no-spec", provider: "package-reviewer-no-spec", tokenSize: { min: 1000, max: 1000 } });
-    const noSpecProposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [], spec: { state: "not-established", evidence: [{ id: "no-spec", repositoryPath: "SPEC.md" }] }, required: { standards: standardsRequest } };
+    const noSpecProposal = { version: 1, base: { revision: "review-base" }, materials: [{ id: "no-spec", repositoryPath: "SPEC.md" }], spec: { state: "not-established" }, required: { standards: standardsRequest } };
     const noSpecChildren: Context[] = []; const noSpecAudits: Context[] = [];
     noSpecFaux.setResponses([
       fauxAssistantMessage(fauxToolCall(Agent, noSpecProposal, { id: "no-spec-accepted" }), { stopReason: "toolUse" }),

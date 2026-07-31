@@ -28,7 +28,7 @@ export function projectAcceptedDispatch(dispatch: AcceptedReviewerDispatch): Rev
     source: "reviewer-dispatch", type: "accepted", identity: dispatch.identity,
     recipe: dispatch.recipe, input: dispatch.input, target: dispatch.targetSnapshot,
     prerequisiteOperations: dispatch.prerequisiteOperations,
-    range: dispatch.range, materials: dispatch.materials, legs: dispatch.legs,
+    range: dispatch.range, materials: dispatch.materials, bundle: dispatch.bundle, legs: dispatch.legs,
   };
 }
 
@@ -156,19 +156,13 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     if (event.source === "reviewer-dispatch" && event.type === "accepted") {
       if (accepted !== undefined) throw new Error("Projection permits exactly one accepted dispatch");
       const axes = event.legs.map((leg) => leg.axis);
-      const established = event.materials.spec !== undefined;
-      if (event.materials.noSpecEvidence !== undefined === established || axes[0] !== "standards" ||
-          (established ? axes.length !== 2 || axes[1] !== "spec" : axes.length !== 1))
-        throw new Error("Accepted dispatch Spec state, materials, and sibling axes disagree");
+      if (axes[0] !== "standards" || (axes.length !== 1 && (axes.length !== 2 || axes[1] !== "spec")))
+        throw new Error("Accepted dispatch sibling axes disagree");
       if (!isReviewerPromptIdentity(event.input.task))
         throw new Error("Accepted task bytes, length, or SHA disagree");
       if (!isReviewerPromptIdentity(event.input.capabilityDocument))
         throw new Error("Accepted capability document bytes, length, or SHA disagree");
-      for (const material of [
-        ...event.materials.standards,
-        ...(event.materials.spec ?? []),
-        ...(event.materials.noSpecEvidence ?? []),
-      ]) {
+      for (const material of event.materials) {
         if (!isReviewerPromptIdentity(material))
           throw new Error("Accepted material bytes, length, or SHA disagree");
       }
