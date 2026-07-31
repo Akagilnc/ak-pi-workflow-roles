@@ -28,6 +28,12 @@ const canonicalRowId =
   /^(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 const inode = (identity: Identity) => `${identity.dev}:${identity.ino}`;
 
+function hasCanonicalTimestamp(record: Record<string, unknown>): boolean {
+  if (typeof record.timestamp !== "string") return false;
+  const parsed = Date.parse(record.timestamp);
+  return !Number.isNaN(parsed) && new Date(parsed).toISOString() === record.timestamp;
+}
+
 function modified<T>(action: () => T): T {
   try {
     return action();
@@ -224,15 +230,14 @@ export function readSession(
               record.version !== 3 ||
               record.id !== config.session.id ||
               record.cwd !== config.execution.cwd ||
-              typeof record.timestamp !== "string" ||
-              Number.isNaN(Date.parse(record.timestamp)) ||
-              new Date(record.timestamp).toISOString() !== record.timestamp
+              !hasCanonicalTimestamp(record)
             ) {
               throw new Error("invalid session header");
             }
           } else {
             if (
               record.type === "session" ||
+              !hasCanonicalTimestamp(record) ||
               typeof record.id !== "string" ||
               !canonicalRowId.test(record.id) ||
               rowIds.has(record.id) ||
