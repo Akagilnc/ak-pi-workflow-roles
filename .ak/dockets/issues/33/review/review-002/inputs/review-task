@@ -1,0 +1,26 @@
+# Issue #33 fixed-target post-amendment review
+
+Review immutable range:
+
+- base: `60927670d11b7f3e58800f98b98c518575e8acf7`
+- target: `eda132e073e8e6390290511bfd1ebe5b5d2afdc2`
+
+Use one sibling-parallel Standards/Spec batch. Authority:
+
+- current GitHub Issue #33 including its C8 amendment;
+- `.ak/dockets/issues/33/judgment/design-authority/receipt.json` plus adopted candidate;
+- `.ak/dockets/issues/33/judgment/c8-legality-recheck/receipt.json`;
+- `.ak/dockets/issues/33/judgment/coder-005-completion/receipt.json` only as a finding history;
+- CLAUDE.md and ADR 0010/0016.
+
+Review the actual production code/tests/package, not receipt prose. Apply amended C8 exactly:
+
+- do not demand old suite/line counts, every syntactic permutation, five duplicated E2Es, deterministic mutation during synchronous fd streaming, or exhaustive cross-products;
+- do require the minimal distinct production-logic oracles in each keep/thin family, including representative counter-child invalid/valid invocation, observable snapshot/verify race protection, representative worker+audited+Collector sealing, v2 schema/runtime synchronization, derivative scan truth, child exit/signal truth, atomic publication/raw exclusion, bounded forwarding, and cold package seam.
+
+Search complete owner seams for implementation defects as well as proof gaps. Specifically verify the prior public-schema counterexamples (`receipt:null`, stale/missing stages and location segments) against current schemas/runtime, but treat cited points as samples. Verify there is one v2 native-session core with no legacy fallback.
+
+Do not rerun Coder's full test/typecheck/build/package battery. Mechanically inspect admitted receipt evidence and use bounded non-battery probes/code reading. Classify substantive findings Must/Should and style-only Nit. Do not edit product or preserve probes. Submit only through `ak_reviewer_output`.
+
+
+Method correction for this fresh invocation: run exactly one sibling-parallel Standards/Spec batch. Faithfully preserve both sibling reports side by side without reranking, cross-axis import, adjudication, replacement legs, or corrective reruns. If a sibling applies superseded authority, report what it said; Judge will adjudicate. Do not run any additional sub-agent after the pair.
