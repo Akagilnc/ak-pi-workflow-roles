@@ -1,0 +1,14 @@
+{
+  "hits": [
+    {
+      "ruleId": "provider-package-token",
+      "location": "child.stdout",
+      "count": 6
+    },
+    {
+      "ruleId": "session-credential",
+      "location": "child.stdout",
+      "count": 5
+    }
+  ]
+}
