@@ -109,5 +109,3 @@ export function projectReviewerIntentToReceipt(intentValue, receiptValue) {
     }
     return receipt;
 }
-/** Legacy entry point validates only terminating-tool arguments. */
-export const validateAcceptedReviewerDetails = validateReviewerIntent;

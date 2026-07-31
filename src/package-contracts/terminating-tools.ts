@@ -19,9 +19,9 @@ import {
   REVIEWER_ACCEPTED_TEXT,
   REVIEWER_OUTPUT_TOOL_NAME,
   projectReviewerIntentToReceipt,
-  validateAcceptedReviewerDetails,
+  validateReviewerIntent,
   validateRuntimeReviewerReceipt,
-  type ReviewerOutput,
+  type ReviewerIntent,
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import {
@@ -47,14 +47,14 @@ export {
   validateAcceptedCollectorReceipt,
   validateAcceptedJudgeDetails,
   projectReviewerIntentToReceipt,
-  validateAcceptedReviewerDetails,
+  validateReviewerIntent,
   validateRuntimeReviewerReceipt,
   validateAcceptedWorkerDetails,
 };
 export type {
   CollectorReceipt,
   JudgeVerdict,
-  ReviewerOutput,
+  ReviewerIntent,
   RuntimeReviewerReceiptV2,
   WorkerOutput,
 };
