@@ -58,7 +58,7 @@ test("activation fails closed for absent, malformed, and task-mismatched capabil
 test("preflight rejection can be corrected, starts no rejected runner, and accepts only one dispatch", async()=>{
   const reviewerHarness=setup(); await reviewerHarness.runtime.activate(); const tool=reviewerHarness.tools.get(AGENT_TOOL_NAME); const extensionContext={} as ExtensionContext;
   const bad:any={...proposal(),materials:[{id:"bad id",repositoryPath:"RULES.md"}]}; const rejected=await tool.execute("bad",bad,undefined,undefined,extensionContext); assert.equal(rejected.details.status,"rejected"); assert.equal(reviewerHarness.starts,0);
-  const accepted=await tool.execute("ok",{...proposal(),materials:[]},undefined,undefined,extensionContext); assert.equal(accepted.details.status,"accepted"); assert.equal(accepted.details.dispatch.legs.length,1); assert.equal(reviewerHarness.starts,1);
+  const accepted=await tool.execute("ok",{...proposal(),materials:[]},undefined,undefined,extensionContext); assert.deepEqual(accepted.details,{status:"accepted",identity:accepted.details.identity}); assert.equal(reviewerHarness.starts,1);
   const closed=await tool.execute("later",proposal(true),undefined,undefined,extensionContext); assert.equal(closed.details.status,"closed"); assert.equal(reviewerHarness.starts,1);
 });
 
@@ -71,8 +71,7 @@ test("final-review proposal accepts durable hidden authority material after type
   assert.deepEqual(rejected.details.violations,["material-invalid"]);
   const corrected={...proposal(true),materials:[{id:"authority",repositoryPath:authorityPath}],spec:{state:"established" as const}};
   const accepted=await tool.execute("corrected",corrected,undefined,undefined,extensionContext);
-  assert.equal(accepted.details.status,"accepted");
-  assert.equal(accepted.details.dispatch.materials[0].repositoryPath,authorityPath);
+  assert.deepEqual(accepted.details,{status:"accepted",identity:accepted.details.identity});
   assert.equal(reviewerHarness.starts,1);
 });
 
@@ -85,12 +84,17 @@ test("concurrent proposals keep each accepted invocation context and signal boun
   assert.deepEqual(seen,[{context:secondContext,signal:secondSignal}]);
 });
 
-test("successful dispatch hides child prose and preserves axis settlement identities", async()=>{
-  const reviewerHarness=setup(); await reviewerHarness.runtime.activate(); const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(true),undefined,undefined,{} as ExtensionContext);
-  assert.equal(result.details.dispatch.legs.length,2);
-  assert.deepEqual(Object.keys(result.details.outcomes),["standards","spec"]);
+test("successful Agent result is exactly thin while settled evidence remains internal", async()=>{
+  const reviewerHarness=setup(); await reviewerHarness.runtime.activate(); captureReviewExpansion(reviewerHarness);
+  const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(true),undefined,undefined,{} as ExtensionContext);
+  assert.deepEqual(result.details,{status:"accepted",identity:result.details.identity});
+  assert.deepEqual(result.content,[{type:"text",text:"Reviewer dispatch accepted"}]);
   assert.equal(JSON.stringify(result).includes("standards report"),false);
   assert.equal(JSON.stringify(result).includes("spec report"),false);
+  assert.equal(JSON.stringify(result).includes("prompt"),false);
+  const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed"},undefined,undefined,outputContext("out"));
+  assert.deepEqual(receipt.details.acceptedBatch.legs.map((leg:any)=>leg.axis),["standards","spec"]);
+  assert.deepEqual(Object.keys(receipt.details.outcomes),["standards","spec"]);
   assert.deepEqual(reviewerHarness.activeTools,[REVIEWER_OUTPUT_TOOL_NAME]);
   assert.equal(reviewerHarness.starts,1);
 });
@@ -147,7 +151,7 @@ test("runner identity and pinned target must exactly match accepted dispatch bef
   captureReviewExpansion(exact);
   const accepted=await exact.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
   await exact.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed"},undefined,undefined,outputContext("out"));
-  assert.equal(exact.audits[0]!.record.results.standards!.dispatchIdentity,accepted.details.dispatch.identity);
+  assert.equal(exact.audits[0]!.record.results.standards!.dispatchIdentity,accepted.details.identity);
   assert.deepEqual(exact.audits[0]!.record.results.standards!.target,pin);
 });
 

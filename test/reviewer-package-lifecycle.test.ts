@@ -136,39 +136,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       const rejected = results.find((e: any) => e.message.toolCallId === "rejected") as any;
       const accepted = results.find((e: any) => e.message.toolCallId === "accepted") as any;
       assert.equal(rejected.message.details.status, "rejected");
-      assert.equal(accepted.message.details.status, "accepted", JSON.stringify(accepted.message.details));
-      assert.equal(accepted.message.details.dispatch.legs.length, 2);
-      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /canonical-skill\.md.*sha256/);
-      assert.match(accepted.message.details.dispatch.legs[1].prompt.text, /canonical-skill\.md.*sha256/);
-      assert.doesNotMatch(accepted.message.details.dispatch.legs[0].prompt.text, /consumer text must become reviewed|Review current HEAD against/);
-      assert.equal(accepted.message.details.dispatch.input.task.text, taskBytes.toString("utf8"));
-      assert.equal(accepted.message.details.dispatch.input.task.sha256, createHash("sha256").update(taskBytes).digest("hex"));
-      assert.deepEqual(accepted.message.details.dispatch.input.capabilityDocument, {
-        text: capabilityText,
-        utf8Length: Buffer.byteLength(capabilityText),
-        sha256: createHash("sha256").update(capabilityText).digest("hex"),
-      });
-      assert.match(accepted.message.details.dispatch.range.diffCommand, /^git diff [0-9a-f]{40}\.\.\.[0-9a-f]{40}$/);
-      assert.match(accepted.message.details.dispatch.range.diffSha256, /^[0-9a-f]{64}$/);
-      assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.axis), ["standards", "spec"]);
-      assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.grant.tools), [["read", "bash"], ["read", "bash"]]);
-      assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.grant.prerequisiteOperations), [[], ["preflight.git.read-material"]]);
-      assert.deepEqual(accepted.message.details.dispatch.prerequisiteOperations, [
-        "preflight.git.read-material",
-        "runner.git.materialize-mirror",
-        "runner.git.materialize-workspace",
-        "runner.git.verify-snapshot",
-      ]);
-      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Answer only the canonical Standards question/);
-      assert.match(accepted.message.details.dispatch.legs[1].prompt.text, /Answer only the canonical Spec question/);
-      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Do not emit a Spec assessment/);
-      assert.match(accepted.message.details.dispatch.legs[1].prompt.text, /Do not emit a Standards assessment/);
-      assert.equal(accepted.message.details.dispatch.targetSnapshot.repositoryRoot, root);
-      assert.equal(accepted.message.details.dispatch.targetSnapshot.targetHead, target);
-      for (const leg of accepted.message.details.dispatch.legs) {
-        assert.equal(createHash("sha256").update(leg.prompt.text).digest("hex"), leg.prompt.sha256);
-        assert.match(leg.prompt.text, /Task-SHA256: [0-9a-f]{64}/);
-      }
+      assert.deepEqual(accepted.message.details, { status: "accepted", identity: accepted.message.details.identity });
+      assert.deepEqual(accepted.message.content, [{ type: "text", text: "Reviewer dispatch accepted" }]);
       assert.equal(children.some((child) => userText(child).includes(capabilityText)), false);
       assert.equal(audits.length, 2);
       assert.match(userText(audits[0]!), /structured_execution_record/);
@@ -179,6 +148,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.equal(finalOutput.message.isError, false);
       assert.equal(finalOutput.message.details.version, 2);
       assert.equal(finalOutput.message.details.status, "completed");
+      assert.equal(finalOutput.message.details.acceptedBatch.identity, accepted.message.details.identity);
+      assert.deepEqual(finalOutput.message.details.acceptedBatch.legs.map((leg: any) => leg.axis), ["standards", "spec"]);
+      assert.match(finalOutput.message.details.acceptedBatch.legs[0].prompt.text, /canonical-skill\.md.*sha256/);
       assert.deepEqual(
         [finalOutput.message.details.reports.standards.text, finalOutput.message.details.reports.spec.text].sort(),
         ["Standards report: no findings.", "Spec report: requirement satisfied."].sort(),
@@ -202,11 +174,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       const results = sessionManager.getEntries().filter((e) => e.type === "message" && e.message.role === "toolResult") as any[];
       const accepted = results.find((e: any) => e.message.toolCallId === "no-spec-accepted");
       const output = results.find((e: any) => e.message.toolCallId === "no-spec-output");
-      assert.equal(accepted.message.details.status, "accepted");
-      assert.equal(accepted.message.details.dispatch.targetSnapshot.objectFormat, "sha1");
-      assert.deepEqual(accepted.message.details.dispatch.legs.map((leg: any) => leg.axis), ["standards"]);
-      assert.equal(accepted.message.details.materials?.spec, undefined);
-      assert.deepEqual(accepted.message.details.dispatch.materials.map((item: any) => item.id), ["no-spec"]);
+      assert.deepEqual(accepted.message.details, { status: "accepted", identity: accepted.message.details.identity });
+      assert.deepEqual(output.message.details.acceptedBatch.legs.map((leg: any) => leg.axis), ["standards"]);
+      assert.equal(output.message.details.identities.target.objectFormat, "sha1");
       assert.equal(noSpecChildren.length, 1); assert.equal(noSpecAudits.length, 1);
       assert.doesNotMatch(userText(noSpecChildren[0]!), /Quote the spec line for each finding/);
       assert.doesNotMatch(userText(noSpecAudits[0]!), /\"axis\":\"spec\"/);
