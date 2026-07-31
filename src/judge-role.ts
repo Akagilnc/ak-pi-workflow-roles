@@ -23,6 +23,12 @@ const judgeVerdictSchema = Type.Object(
         { additionalProperties: false },
       ),
     ),
+    classes: Type.Optional(Type.Array(Type.Object({
+      name: Type.String({ minLength: 1 }),
+      owner: Type.String({ minLength: 1 }),
+      boundary: Type.String({ minLength: 1 }),
+      disposition: Type.String({ minLength: 1 }),
+    }, { additionalProperties: false }), { minItems: 1 })),
     note: Type.Optional(Type.String({ minLength: 1 })),
     decisionGate: Type.Optional(
       Type.Object(

@@ -1,0 +1,7 @@
+# Issue #31 Review-003 finding adjudication
+
+Adjudicate the sole Spec Must before repair. It asserts that class-bearing Fixer completion must be package-required to include exact `classesRepaired`, despite current output optionality.
+
+Apply the already-admitted design-recheck ruling precisely: O1 was dismissed because caller retains the typed Judge receipt, knows whether it made class-bearing or direct classless dispatch, and mechanically enforces contextual presence/absence and exact set equality; package validation owns intrinsic output shape/state only and must not parse opaque packet prose. Fixer audit/closure automation remains #12.
+
+Decide whether Review-003 identifies a real unimplemented Issue #31 requirement or attempts to reopen the settled caller/package boundary. If dismissed/superseded, authorize no repair. If sustained, identify evidence that the owner-resolution changed O1. Do not reopen the two repaired classes, which Review-003 reports clean. Submit only through `ak_judge_output`.
