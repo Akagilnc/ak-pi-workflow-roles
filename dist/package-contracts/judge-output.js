@@ -18,6 +18,27 @@ export function validateAcceptedJudgeDetails(verdict) {
     }
     const withOptionalNote = (keys) => verdict.note === undefined ? keys : [...keys, "note"];
     const note = verdict.note === undefined ? {} : { note: verdict.note };
+    const validClasses = (value) => {
+        if (!Array.isArray(value) || value.length === 0)
+            return false;
+        const names = new Set();
+        return value.every((entry) => {
+            if (!isRecord(entry) ||
+                !hasExactKeys(entry, ["name", "owner", "boundary", "disposition"])) {
+                return false;
+            }
+            for (const key of ["name", "owner", "boundary", "disposition"]) {
+                if (typeof entry[key] !== "string" || entry[key].trim().length === 0) {
+                    return false;
+                }
+            }
+            if (entry.name.includes(",") || names.has(entry.name)) {
+                return false;
+            }
+            names.add(entry.name);
+            return true;
+        });
+    };
     if (verdict.judgeStatus === "converged") {
         if (!hasExactKeys(verdict, withOptionalNote(["judgeStatus"]))) {
             throw new Error("Judge converged forbids fix and decisionGate");
@@ -25,16 +46,18 @@ export function validateAcceptedJudgeDetails(verdict) {
         return { judgeStatus: "converged", ...note };
     }
     if (verdict.judgeStatus === "continue") {
-        if (!hasExactKeys(verdict, withOptionalNote(["judgeStatus", "fix"])) ||
+        if (!hasExactKeys(verdict, withOptionalNote(["judgeStatus", "fix", "classes"])) ||
             !isRecord(verdict.fix) ||
             !hasExactKeys(verdict.fix, ["summary"]) ||
             typeof verdict.fix.summary !== "string" ||
-            verdict.fix.summary.trim().length === 0) {
-            throw new Error("Judge continue requires only a non-blank fix.summary");
+            verdict.fix.summary.trim().length === 0 ||
+            !validClasses(verdict.classes)) {
+            throw new Error("Judge continue requires fix.summary and nonempty unique comma-free classes");
         }
         return {
             judgeStatus: "continue",
             fix: { summary: verdict.fix.summary },
+            classes: verdict.classes.map((entry) => ({ ...entry })),
             ...note,
         };
     }

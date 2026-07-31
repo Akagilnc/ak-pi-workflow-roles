@@ -186,6 +186,10 @@ test("stable factory registers all six flags in exact help order and stays inert
       description: "Opaque Markdown review task assigned to the reviewer role",
       type: "string",
     }],
+    ["ak-review-scope-keys", {
+      description: "Optional comma-separated exact class keys limiting Reviewer scope",
+      type: "string",
+    }],
     ["ak-collector-repo", {
       description:
         "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",
@@ -425,7 +429,9 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
     assert.deepEqual(
       Object.keys(tool.parameters.properties),
       fixture.role === "judge"
-        ? ["judgeStatus", "fix", "note", "decisionGate"]
+        ? ["judgeStatus", "fix", "classes", "note", "decisionGate"]
+        : fixture.role === "fixer"
+        ? ["status", "report", "commitSha", "classesRepaired"]
         : ["status", "report", "commitSha"],
     );
     const result = await tool.execute(
@@ -487,7 +493,16 @@ test("judge role accepts valid examples of all three verdict shapes", async () =
   });
   const verdicts: JudgeVerdict[] = [
     { judgeStatus: "converged" },
-    { judgeStatus: "continue", fix: { summary: "Repair the parser" } },
+    {
+      judgeStatus: "continue",
+      fix: { summary: "Repair the parser" },
+      classes: [{
+        name: "parser-boundary",
+        owner: "src/parser.ts",
+        boundary: "all parser entry points",
+        disposition: "repair every occurrence",
+      }],
+    },
     {
       judgeStatus: "escalate",
       decisionGate: { question: "Which API?", options: ["A", "B"] },
@@ -515,6 +530,12 @@ test("judge preserves an optional advisory note on every verdict", async () => {
     {
       judgeStatus: "continue",
       fix: { summary: "Repair the live defect." },
+      classes: [{
+        name: "live-defect",
+        owner: "repair owner",
+        boundary: "all live occurrences",
+        disposition: "repair",
+      }],
       note: "Keep the fresh test output with the repair record.",
     },
     {
