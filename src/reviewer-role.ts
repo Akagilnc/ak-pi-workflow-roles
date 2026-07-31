@@ -193,10 +193,9 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
             ? `Reviewer proposal rejected: ${result.violations.join("; ")}`
             : result.status === "closed"
               ? "Reviewer dispatch is already closed"
-              : `Reviewer dispatch ${result.dispatch.identity} settled (${result.dispatch.legs.map((leg) => `${leg.axis}:successful`).join(", ")})`;
+              : "Reviewer dispatch accepted";
           const details = result.status !== "accepted" ? result : {
-            status: result.status, identity: result.dispatch.identity, dispatch: result.dispatch,
-            outcomes: Object.fromEntries(result.dispatch.legs.map((leg) => [leg.axis, { status: "successful", prompt: leg.prompt }])),
+            status: result.status, identity: result.dispatch.identity,
           };
           return { content: [{ type: "text" as const, text }], details };
         } });
