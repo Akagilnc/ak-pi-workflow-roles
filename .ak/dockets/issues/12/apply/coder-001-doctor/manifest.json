@@ -1,0 +1,120 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+    "root": ".ak/dockets",
+    "docketId": "issues/12/apply/coder-001-doctor"
+  },
+  "invocation": {
+    "id": "0198f1a0-1200-7000-8000-000000000001"
+  },
+  "session": {
+    "id": "0198f1a0-1200-7000-8000-000000000001",
+    "directory": ".ak/work/issues/12/runs/coder-001-doctor-construction/session",
+    "basename": "2026-07-31T21-13-28-860Z_0198f1a0-1200-7000-8000-000000000001.jsonl",
+    "sha256": "d85b7a0f90a525cd3919fc3dbf9b157a81724c873ca78f88574daf12385176e5",
+    "byteLength": 947810,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12/.ak/work/issues/12/runs/coder-001-doctor-construction/session",
+      "--session-id",
+      "0198f1a0-1200-7000-8000-000000000001",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--name",
+      "issue-12-doctor-coder-001",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "apply",
+      "--ak-coder-task",
+      ".ak/work/issues/12/coder-001-doctor-construction.md",
+      "-p",
+      "Implement the complete authorized Issue #12 Doctor v1 and StatsLine v1 delivery, commit forward, then submit through ak_coder_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": [
+        "PI_SESSION_DIR"
+      ]
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "cd7eb3a43b33a0de775dcd6645e2f4ac8cfab256",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "construction-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+        "commit": "cd7eb3a43b33a0de775dcd6645e2f4ac8cfab256",
+        "path": ".ak/dockets/issues/12/judgment/final-construction-authority/receipt.json",
+        "blobOid": "082d2656469bef302790de02d8bdf7000a929e5e",
+        "sha256": "255e6ce6d6bf985d8fb54869ec17f853b420216c3a9e766afca3fd9210222abe",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/coder-task",
+        "sha256": "cbe9df1363dc5cbfd0ee034169b21fc6cc25be422701f5b2998394f843cb0ae9",
+        "byteLength": 2213
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "59c8b9635bea25aa385a68df7507acd5a215fb20d562b30864c1e121377c0d07",
+        "byteLength": 2538
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_rlBWLKK27JZ9GfHDIIS31p8g|fc_05aff70d0b00b67c016a6d13466aa88191a00e2dbad18631ae",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
