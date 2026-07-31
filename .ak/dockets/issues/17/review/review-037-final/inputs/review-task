@@ -1,0 +1,15 @@
+# Issue #17 final fixed-target closure review
+
+Review base `8ee916e36604a9193bec8b6c571c090ecb3d7e8c` through target `72843f5ebf7b26d0c4a22669799cfca7732533db`.
+
+Use the atomic Reviewer proposal once. Common materials:
+
+- `claude` → `CLAUDE.md`
+- `adr0016` → `docs/adr/0016-tests-follow-logic-not-format.md`
+- `amended-authority` → `.ak/dockets/issues/17/judgment/owner-amendment-design-recheck-003/receipt.json`
+- `full-admission` → `.ak/dockets/issues/17/judgment/full-finding-admission-current/receipt.json`
+- `review036-judgment` → `.ak/dockets/issues/17/judgment/review-036/receipt.json`
+- `cleanup-repair` → `.ak/dockets/issues/17/repair/review-036-workspace-failure-apply/receipt.json`
+- `compat-repair` → `.ak/dockets/issues/17/repair/review-036-compat-apply/receipt.json`
+
+Spec established. Both legs request `read,grep,find,ls,bash`, exact `git diff 8ee916e36604a9193bec8b6c571c090ecb3d7e8c...72843f5ebf7b26d0c4a22669799cfca7732533db`, and all eight prerequisite operations. Apply the fixed single-axis adapters; all clone material remains readable. Check all current authority and repairs, failure/refusal/shutdown truth, distinct typed leaves, generated/package parity, ownership seams, thin driver result and rich internal receipt. Do not rerun batteries or replace legs. Submit completed intent only after settlement.
