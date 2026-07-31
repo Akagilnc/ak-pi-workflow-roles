@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ak.local/schemas/recorder-manifest-v2.schema.json",
-  "title": "RecorderManifestV1",
+  "title": "Recorder manifest v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "version",
     "archive",
     "invocation",
+    "session",
     "execution",
     "provenance",
     "artifacts",
@@ -18,60 +19,113 @@
     "redaction"
   ],
   "properties": {
-    "version": { "const": 2 },
+    "version": {
+      "const": 2
+    },
     "archive": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repositoryRoot", "root", "docketId"],
+      "required": [
+        "repositoryRoot",
+        "root",
+        "docketId"
+      ],
       "properties": {
-        "repositoryRoot": { "type": "string", "minLength": 1 },
-        "root": { "$ref": "#/$defs/canonicalRelativePath" },
-        "docketId": { "$ref": "#/$defs/canonicalRelativePath" }
+        "repositoryRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root": {
+          "$ref": "#/$defs/canonicalRelativePath"
+        },
+        "docketId": {
+          "$ref": "#/$defs/canonicalRelativePath"
+        }
       }
     },
     "invocation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "execution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["argv", "cwd", "environment", "stdin", "stdio"],
+      "required": [
+        "argv",
+        "cwd",
+        "environment",
+        "stdin",
+        "stdio"
+      ],
       "properties": {
         "argv": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "cwd": { "type": "string", "minLength": 1 },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
         "environment": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["inherit", "overrides", "unset"],
+          "required": [
+            "inherit",
+            "overrides",
+            "unset"
+          ],
           "properties": {
-            "inherit": { "type": "boolean" },
+            "inherit": {
+              "type": "boolean"
+            },
             "overrides": {
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "additionalProperties": {
+                "type": "string"
+              }
             },
             "unset": {
               "type": "array",
-              "items": { "type": "string", "minLength": 1 }
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         },
-        "stdin": { "const": "inherit" },
+        "stdin": {
+          "const": "inherit"
+        },
         "stdio": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["stdout", "stderr"],
+          "required": [
+            "stdout",
+            "stderr",
+            "diagnosticTailBytes"
+          ],
           "properties": {
-            "stdout": { "const": "tee" },
-            "stderr": { "const": "tee" }
+            "stdout": {
+              "const": "pass-through"
+            },
+            "stderr": {
+              "const": "pass-through"
+            },
+            "diagnosticTailBytes": {
+              "const": 4096
+            }
           }
         }
       }
@@ -79,29 +133,68 @@
     "provenance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["package", "model", "target", "verification"],
+      "required": [
+        "package",
+        "model",
+        "target",
+        "verification"
+      ],
       "properties": {
-        "package": { "type": ["string", "null"] },
-        "model": { "type": ["string", "null"] },
-        "target": { "type": ["string", "null"] },
-        "verification": { "const": "unverified" }
+        "package": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verification": {
+          "const": "unverified"
+        }
       }
     },
     "artifacts": {
       "type": "array",
-      "items": { "$ref": "#/$defs/artifact" }
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
     },
     "receipt": {
       "oneOf": [
-        { "type": "null" },
+        {
+          "type": "null"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["toolName", "toolCallId", "artifactId", "artifactKind"],
+          "required": [
+            "toolName",
+            "toolCallId",
+            "artifactId",
+            "artifactKind"
+          ],
           "properties": {
-            "toolName": { "type": "string", "minLength": 1 },
-            "toolCallId": { "type": "string", "minLength": 1 },
-            "artifactId": { "const": "receipt" },
+            "toolName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "toolCallId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "artifactId": {
+              "const": "receipt"
+            },
             "artifactKind": {
               "type": "string",
               "enum": [
@@ -115,24 +208,48 @@
     },
     "auditObservation": {
       "oneOf": [
-        { "type": "null" },
+        {
+          "type": "null"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["toolName", "toolCallId", "auditPassed"],
+          "required": [
+            "toolName",
+            "toolCallId",
+            "auditPassed"
+          ],
           "properties": {
-            "toolName": { "type": "string", "minLength": 1 },
-            "toolCallId": { "type": "string", "minLength": 1 },
-            "auditPassed": { "const": true },
+            "toolName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "toolCallId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "auditPassed": {
+              "const": true
+            },
             "usage": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "input": { "type": "number" },
-                "output": { "type": "number" },
-                "cacheRead": { "type": "number" },
-                "cacheWrite": { "type": "number" },
-                "totalTokens": { "type": "number" }
+                "input": {
+                  "type": "number"
+                },
+                "output": {
+                  "type": "number"
+                },
+                "cacheRead": {
+                  "type": "number"
+                },
+                "cacheWrite": {
+                  "type": "number"
+                },
+                "totalTokens": {
+                  "type": "number"
+                }
               }
             }
           }
@@ -142,34 +259,75 @@
     "child": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "exitCode", "signal"],
+      "required": [
+        "status",
+        "exitCode",
+        "signal"
+      ],
       "properties": {
-        "status": { "type": "string", "enum": ["exited", "signaled"] },
-        "exitCode": { "type": ["integer", "null"] },
-        "signal": { "type": ["string", "null"] }
+        "status": {
+          "type": "string",
+          "enum": [
+            "exited",
+            "signaled"
+          ]
+        },
+        "exitCode": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "allOf": [
         {
           "if": {
-            "properties": { "status": { "const": "exited" } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "const": "exited"
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
             "properties": {
-              "exitCode": { "type": "integer" },
-              "signal": { "type": "null" }
+              "exitCode": {
+                "type": "integer"
+              },
+              "signal": {
+                "type": "null"
+              }
             }
           }
         },
         {
           "if": {
-            "properties": { "status": { "const": "signaled" } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "const": "signaled"
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
             "properties": {
-              "exitCode": { "type": "null" },
-              "signal": { "type": "string", "minLength": 1 }
+              "exitCode": {
+                "type": "null"
+              },
+              "signal": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         }
@@ -178,28 +336,83 @@
     "recorder": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status"],
+      "required": [
+        "status"
+      ],
       "properties": {
-        "status": { "const": "completed" }
+        "status": {
+          "const": "completed"
+        }
       }
     },
     "redaction": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hits"],
+      "required": [
+        "hits"
+      ],
       "properties": {
         "hits": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["ruleId", "location", "count"],
+            "required": [
+              "ruleId",
+              "location",
+              "count"
+            ],
             "properties": {
-              "ruleId": { "type": "string", "minLength": 1 },
-              "location": { "type": "string", "minLength": 1 },
-              "count": { "type": "integer", "minimum": 1 }
+              "ruleId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "location": {
+                "type": "string",
+                "minLength": 1
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              }
             }
           }
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "directory",
+        "basename",
+        "sha256",
+        "byteLength",
+        "retention"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "directory": {
+          "$ref": "#/$defs/canonicalRelativePath"
+        },
+        "basename": {
+          "type": "string",
+          "pattern": "^[^/]+\\.jsonl$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retention": {
+          "const": "caller-owned-raw-not-promoted"
         }
       }
     }
@@ -207,20 +420,33 @@
   "allOf": [
     {
       "if": {
-        "properties": { "receipt": { "type": "null" } }
+        "properties": {
+          "receipt": {
+            "type": "null"
+          }
+        }
       },
       "then": {
         "properties": {
-          "auditObservation": { "type": "null" },
+          "auditObservation": {
+            "type": "null"
+          },
           "artifacts": {
             "type": "array",
             "not": {
               "contains": {
                 "type": "object",
                 "properties": {
-                  "kind": { "enum": ["receipt", "audit-observation"] }
+                  "kind": {
+                    "enum": [
+                      "receipt",
+                      "audit-observation"
+                    ]
+                  }
                 },
-                "required": ["kind"]
+                "required": [
+                  "kind"
+                ]
               }
             }
           }
@@ -240,9 +466,15 @@
                 "receiptArtifactKind"
               ],
               "properties": {
-                "id": { "const": "receipt" },
-                "kind": { "const": "receipt" },
-                "stored": { "$ref": "#/$defs/storedIdentity" },
+                "id": {
+                  "const": "receipt"
+                },
+                "kind": {
+                  "const": "receipt"
+                },
+                "stored": {
+                  "$ref": "#/$defs/storedIdentity"
+                },
                 "receiptArtifactKind": {
                   "type": "string",
                   "enum": [
@@ -260,7 +492,11 @@
     },
     {
       "if": {
-        "properties": { "auditObservation": { "type": "null" } }
+        "properties": {
+          "auditObservation": {
+            "type": "null"
+          }
+        }
       },
       "then": {
         "properties": {
@@ -269,8 +505,14 @@
             "not": {
               "contains": {
                 "type": "object",
-                "properties": { "kind": { "const": "audit-observation" } },
-                "required": ["kind"]
+                "properties": {
+                  "kind": {
+                    "const": "audit-observation"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
               }
             }
           }
@@ -278,16 +520,29 @@
       },
       "else": {
         "properties": {
-          "receipt": { "type": "object" },
+          "receipt": {
+            "type": "object"
+          },
           "artifacts": {
             "type": "array",
             "contains": {
               "type": "object",
-              "required": ["id", "kind", "redactionStatus", "stored"],
+              "required": [
+                "id",
+                "kind",
+                "redactionStatus",
+                "stored"
+              ],
               "properties": {
-                "id": { "const": "audit-observation" },
-                "kind": { "const": "audit-observation" },
-                "stored": { "$ref": "#/$defs/storedIdentity" }
+                "id": {
+                  "const": "audit-observation"
+                },
+                "kind": {
+                  "const": "audit-observation"
+                },
+                "stored": {
+                  "$ref": "#/$defs/storedIdentity"
+                }
               }
             },
             "minContains": 1,
@@ -328,32 +583,71 @@
         "mode"
       ],
       "properties": {
-        "identity": { "const": "reference" },
-        "repositoryRoot": { "type": "string", "minLength": 1 },
-        "commit": { "$ref": "#/$defs/fullSha1" },
-        "path": { "$ref": "#/$defs/canonicalRelativePath" },
-        "blobOid": { "$ref": "#/$defs/fullSha1" },
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "mode": { "type": "string", "enum": ["100644", "100755"] }
+        "identity": {
+          "const": "reference"
+        },
+        "repositoryRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "$ref": "#/$defs/fullSha1"
+        },
+        "path": {
+          "$ref": "#/$defs/canonicalRelativePath"
+        },
+        "blobOid": {
+          "$ref": "#/$defs/fullSha1"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "100644",
+            "100755"
+          ]
+        }
       }
     },
     "storedIdentity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["identity", "path", "sha256", "byteLength"],
+      "required": [
+        "identity",
+        "path",
+        "sha256",
+        "byteLength"
+      ],
       "properties": {
-        "identity": { "const": "stored" },
-        "path": { "$ref": "#/$defs/canonicalRelativePath" },
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "byteLength": { "type": "integer", "minimum": 0 }
+        "identity": {
+          "const": "stored"
+        },
+        "path": {
+          "$ref": "#/$defs/canonicalRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "artifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "redactionStatus"],
+      "required": [
+        "id",
+        "kind",
+        "redactionStatus"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/artifactId" },
+        "id": {
+          "$ref": "#/$defs/artifactId"
+        },
         "kind": {
           "type": "string",
           "enum": [
@@ -367,10 +661,18 @@
         },
         "redactionStatus": {
           "type": "string",
-          "enum": ["clean", "redacted", "sanitized-derivative"]
+          "enum": [
+            "clean",
+            "redacted",
+            "sanitized-derivative"
+          ]
         },
-        "reference": { "$ref": "#/$defs/referenceIdentity" },
-        "stored": { "$ref": "#/$defs/storedIdentity" },
+        "reference": {
+          "$ref": "#/$defs/referenceIdentity"
+        },
+        "stored": {
+          "$ref": "#/$defs/storedIdentity"
+        },
         "receiptArtifactKind": {
           "type": "string",
           "enum": [
@@ -383,36 +685,77 @@
         {
           "oneOf": [
             {
-              "required": ["reference"],
-              "not": { "required": ["stored"] }
+              "required": [
+                "reference"
+              ],
+              "not": {
+                "required": [
+                  "stored"
+                ]
+              }
             },
             {
-              "required": ["stored"],
-              "not": { "required": ["reference"] }
+              "required": [
+                "stored"
+              ],
+              "not": {
+                "required": [
+                  "reference"
+                ]
+              }
             }
           ]
         },
         {
           "if": {
-            "properties": { "kind": { "const": "receipt" } },
-            "required": ["kind"]
+            "properties": {
+              "kind": {
+                "const": "receipt"
+              }
+            },
+            "required": [
+              "kind"
+            ]
           },
           "then": {
-            "required": ["stored", "receiptArtifactKind"],
-            "not": { "required": ["reference"] }
+            "required": [
+              "stored",
+              "receiptArtifactKind"
+            ],
+            "not": {
+              "required": [
+                "reference"
+              ]
+            }
           },
           "else": {
-            "not": { "required": ["receiptArtifactKind"] }
+            "not": {
+              "required": [
+                "receiptArtifactKind"
+              ]
+            }
           }
         },
         {
           "if": {
-            "properties": { "kind": { "const": "audit-observation" } },
-            "required": ["kind"]
+            "properties": {
+              "kind": {
+                "const": "audit-observation"
+              }
+            },
+            "required": [
+              "kind"
+            ]
           },
           "then": {
-            "required": ["stored"],
-            "not": { "required": ["reference"] }
+            "required": [
+              "stored"
+            ],
+            "not": {
+              "required": [
+                "reference"
+              ]
+            }
           }
         }
       ]
