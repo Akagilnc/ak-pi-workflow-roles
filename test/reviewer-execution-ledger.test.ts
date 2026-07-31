@@ -9,7 +9,7 @@ import {
 } from "../src/reviewer-execution-ledger.ts";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-const target = { repositoryRoot: "/repo", targetHead: "abc", refs: { "refs/heads/main": { objectId: "abc", peeledCommitId: "abc" } } };
+const target = { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "abc", refs: { "refs/heads/main": { objectId: "abc", peeledCommitId: "abc" } } };
 const range = { base: "base", target: "abc", diffCommand: "git diff base...abc", diffSha256: sha("diff"), commits: ["abc"] };
 const grant = { tools: ["read"] as const, bashCommands: [] as const, prerequisiteOperations: ["preflight.git.pin-target"] as const };
 const usage: ReviewerUsage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, total: 3 } };
@@ -129,6 +129,6 @@ test("fatal infrastructure evidence is preserved for the auditor", () => {
   const ledger = createReviewerExecutionLedger();
   const error = Object.assign(new Error("provider unavailable"), { targetSnapshot: target, workspaceDisposition: { retained: "/tmp/ws" } });
   assert.equal(ledger.recordInfrastructureFailure(error), error);
-  assert.throws(() => ledger.recordForAudit("completed"), /infrastructure previously failed: provider unavailable/);
-  assert.throws(() => ledger.recordForAudit("refused"), /infrastructure previously failed: provider unavailable/);
+  assert.throws(() => ledger.recordForAudit("completed"), /infrastructure previously failed: infrastructure-failure/);
+  assert.throws(() => ledger.recordForAudit("refused"), /infrastructure previously failed: infrastructure-failure/);
 });

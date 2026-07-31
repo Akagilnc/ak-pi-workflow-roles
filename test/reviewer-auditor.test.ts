@@ -23,14 +23,14 @@ const input = {
     accepted: {
       identity: "dispatch-1", recipe: "reviewer-dispatch-v1" as const,
       input: { task: { text: "opaque task", utf8Length: 11, sha256: "task" }, canonicalSkillSha256: "skill", capabilityDocument: { text: "{}", utf8Length: 2, sha256: "capabilities" } },
-      target: { repositoryRoot: "/repo", targetHead: "head", refs: {} },
+      target: { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "head", refs: {} },
       prerequisiteOperations: [],
       range: { base: "base", target: "head", diffCommand: "git diff base...head", diffSha256: "diff", commits: ["head"] },
       materials: { standards: [{ id: "rules", repositoryPath: "RULES.md", text: "rules", utf8Length: 5, sha256: "rules" }], noSpecEvidence: [{ id: "absence", repositoryPath: "README.md", text: "absence", utf8Length: 7, sha256: "absence" }] },
       legs: [{ axis: "standards" as const, prompt: { text: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt" }, grant: { tools: ["read"] as const, bashCommands: [], prerequisiteOperations: [] } }],
     },
     started: { dispatchIdentity: "dispatch-1", cardinality: 1 as const },
-    results: { standards: { dispatchIdentity: "dispatch-1", axis: "standards" as const, status: "successful" as const, prompt: { text: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt" }, target: { repositoryRoot: "/repo", targetHead: "head", refs: {} }, report: "No findings", workspaceDisposition: "deleted" as const } },
+    results: { standards: { dispatchIdentity: "dispatch-1", axis: "standards" as const, status: "successful" as const, prompt: { text: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt" }, target: { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "head", refs: {} }, report: "No findings", workspaceDisposition: "deleted" as const } },
   },
   candidate: { status: "completed" as const, report: "No findings." },
 };

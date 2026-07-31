@@ -52,6 +52,30 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("SHA-256 pins full and abbreviated commits, range, material, and ref snapshots", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "reviewer-sha256-"));
+  try {
+    try { await git(root, "init", "--object-format=sha256"); }
+    catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
+    await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
+    await writeFile(join(root, "file"), "base\n"); await git(root, "add", "."); await git(root, "commit", "-m", "base");
+    const base = await git(root, "rev-parse", "HEAD"); await git(root, "branch", "review-base");
+    await writeFile(join(root, "file"), "target\n"); await git(root, "commit", "-am", "target");
+    const reader = await createReviewerPinnedGitReader(root);
+    assert.equal(reader.pin.objectFormat, "sha256");
+    assert.match(reader.pin.targetHead, /^[0-9a-f]{64}$/);
+    assert.equal(await reader.resolve(base), base);
+    assert.equal(await reader.resolve(base.slice(0, 8)), base);
+    await assert.rejects(reader.resolve(base.slice(0, 40) + "g"), /base-invalid/);
+    await assert.rejects(reader.resolve(base.slice(0, 40)), /base-invalid/);
+    const range = await reader.range(base);
+    assert.equal(range.base, base); assert.match(range.target, /^[0-9a-f]{64}$/); assert.deepEqual(range.commits, [reader.pin.targetHead]);
+    assert.equal(Buffer.from(await reader.material("file", reader.pin.targetHead)).toString(), "target\n");
+    assert.deepEqual(await reader.snapshot(), reader.pin);
+    assert.equal(reader.pin.refs["refs/heads/review-base"]?.peeledCommitId, base);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("abbreviated bases are resolved only among commits reachable from the activation target", async () => {
   const root = await mkdtemp(join(tmpdir(), "reviewer-prefix-"));
   try {

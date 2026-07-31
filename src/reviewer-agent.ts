@@ -168,6 +168,8 @@ async function verifySnapshot(
   snapshot: ReviewerTargetSnapshot,
   signal?: AbortSignal,
 ): Promise<void> {
+  const objectFormat = (await git(cwd, ["rev-parse", "--show-object-format"], signal)).stdout.trim();
+  if (objectFormat !== snapshot.objectFormat) throw new Error("Review clone object format does not match the pinned session snapshot");
   const head = (await git(cwd, ["rev-parse", "HEAD^{commit}"], signal)).stdout.trim();
   if (head !== snapshot.targetHead) {
     throw new Error(
@@ -195,12 +197,14 @@ async function prepareSnapshot(
   let mirrorRoot: string | undefined;
   try {
     dependencies.fault?.("snapshot.head");
+    const objectFormat = (await git(repositoryRoot, ["rev-parse", "--show-object-format"], signal)).stdout.trim();
+    if (objectFormat !== accepted.objectFormat) throw new Error("Accepted Reviewer object format no longer matches the repository");
     const targetHead = (
       await git(repositoryRoot, ["rev-parse", "HEAD^{commit}"], signal)
     ).stdout.trim();
     dependencies.fault?.("snapshot.refs");
     const refs = await readRefs(repositoryRoot, signal);
-    if (!sameReviewerPinnedTarget({ repositoryRoot, targetHead, refs }, accepted)) {
+    if (!sameReviewerPinnedTarget({ repositoryRoot, objectFormat: accepted.objectFormat, targetHead, refs }, accepted)) {
       throw new Error("Accepted Reviewer target/ref identity no longer matches the repository");
     }
     dependencies.fault?.("mirror.before-create");
@@ -245,7 +249,7 @@ async function prepareSnapshot(
       signal,
       [0, 5, 128],
     );
-    return { repositoryRoot, targetHead, refs, mirrorRoot, mirrorPath };
+    return { repositoryRoot, objectFormat: accepted.objectFormat, targetHead, refs, mirrorRoot, mirrorPath };
   } catch (error) {
     throw classifiedError(error, "snapshot", {
       workspaceDisposition: mirrorRoot === undefined ? "not-created" : { retained: mirrorRoot },
@@ -264,7 +268,7 @@ async function prepareWorkspace(
     dependencies.fault?.("workspace.before-create");
     workspace = await mkdtemp(join(tmpdir(), "ak-reviewer-leg-"));
     dependencies.fault?.("workspace.init");
-    await git(workspace, ["init", "--initial-branch=ak-reviewer-unborn"], signal);
+    await git(workspace, ["init", `--object-format=${snapshot.objectFormat}`, "--initial-branch=ak-reviewer-unborn"], signal);
     dependencies.fault?.("workspace.fetch");
     await git(
       workspace,
@@ -296,6 +300,7 @@ async function prepareWorkspace(
       workspaceDisposition: workspace === undefined ? "not-created" : { retained: workspace },
       targetSnapshot: {
         repositoryRoot: snapshot.repositoryRoot,
+        objectFormat: snapshot.objectFormat,
         targetHead: snapshot.targetHead,
         refs: { ...snapshot.refs },
       },
@@ -554,7 +559,7 @@ export function createReviewerAgentRunner(dependencies: ReviewerAgentDependencie
         const target = Object.values(legs)[0]!.target;
         throw new ReviewerDispatchExecutionError(Object.freeze({ identity: dispatch.identity, target, legs: Object.freeze(legs) }) as ReviewerDispatchRunResult);
       }
-      const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
+      const target: ReviewerTargetSnapshot = { repositoryRoot: snapshot.repositoryRoot, objectFormat: snapshot.objectFormat, targetHead: snapshot.targetHead, refs: { ...snapshot.refs } };
       const settled = await Promise.allSettled(dispatch.legs.map(async (leg) => {
         let workspace: string | undefined;
         try {

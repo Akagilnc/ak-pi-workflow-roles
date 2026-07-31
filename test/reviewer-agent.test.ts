@@ -30,10 +30,11 @@ import type { AcceptedReviewerExecution } from "../src/reviewer-dispatch.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch } from "../src/reviewer-execution-ledger.ts";
 
 async function dispatch(root: string, prompts: readonly string[], tools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "write" | "edit")[] = ["read", "grep", "find", "ls", "bash", "write", "edit"], bashCommands: readonly string[] = []): Promise<AcceptedReviewerExecution> {
+  const objectFormat = await git(root, "rev-parse", "--show-object-format") as "sha1" | "sha256";
   const targetHead = await git(root, "rev-parse", "HEAD^{commit}");
   const refs = Object.fromEntries((await git(root, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)", "refs/heads", "refs/tags", "refs/remotes")).split("\n").filter(Boolean).map((line) => { const [name, objectId, peeled, objectType, peeledType] = line.split("\0"); return [name!, { objectId: objectId!, peeledCommitId: objectType === "commit" ? objectId! : peeledType === "commit" ? peeled! : null }]; }));
   const prerequisites = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const;
-  return { identity: "accepted", recipe: "reviewer-dispatch-v1", prerequisiteOperations: prerequisites, targetSnapshot: { repositoryRoot: root, targetHead, refs }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex") }, grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerExecution;
+  return { identity: "accepted", recipe: "reviewer-dispatch-v1", prerequisiteOperations: prerequisites, targetSnapshot: { repositoryRoot: root, objectFormat, targetHead, refs }, legs: prompts.map((prompt, index) => ({ axis: index === 0 ? "standards" : "spec", prompt: { text: prompt, utf8Length: Buffer.byteLength(prompt), sha256: createHash("sha256").update(prompt).digest("hex") }, grant: { tools, bashCommands, prerequisiteOperations: prerequisites } })) } as AcceptedReviewerExecution;
 }
 
 const exec = promisify(execFile);
@@ -42,9 +43,9 @@ async function git(cwd: string, ...args: string[]) {
   return (await exec("git", ["-C", cwd, ...args])).stdout.trim();
 }
 
-async function repository() {
+async function repository(objectFormat: "sha1" | "sha256" = "sha1") {
   const root = await mkdtemp(join(tmpdir(), "ak-reviewer-source-"));
-  await git(root, "init");
+  await git(root, "init", `--object-format=${objectFormat}`);
   await git(root, "config", "user.email", "test@example.com");
   await git(root, "config", "user.name", "Test");
   await writeFile(join(root, "fixture.txt"), "original\n");
@@ -189,6 +190,22 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
     await rm(shallowRoot, { recursive: true, force: true });
     await rm(seed.root, { recursive: true, force: true });
   }
+});
+
+test("Reviewer materializes and verifies a real SHA-256 repository", async (t) => {
+  let source: Awaited<ReturnType<typeof repository>>;
+  try { source = await repository("sha256"); }
+  catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
+  try {
+    const { context } = await parentContext(source.root, async () => {}, 1);
+    const runner = createReviewerAgentRunner();
+    try {
+      const result = await runner.run(await dispatch(source.root, ["SHA-256 snapshot review"]), { context });
+      assert.equal(result.target.objectFormat, "sha256");
+      assert.match(result.target.targetHead, /^[0-9a-f]{64}$/);
+      assert.equal(result.legs.standards.status, "successful");
+    } finally { await runner.shutdown(); }
+  } finally { await rm(source.root, { recursive: true, force: true }); }
 });
 
 test("two Reviewer Agent legs overlap in isolated clones with one pinned ref snapshot", async () => {

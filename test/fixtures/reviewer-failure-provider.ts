@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { renameSync } from "node:fs";
 
 import {
   fauxAssistantMessage,
@@ -11,6 +12,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 
 type FailureStage =
+  | "preflight-git"
+  | "preflight-skill"
   | "child-preparation"
   | "child-provider"
   | "child-session"
@@ -58,7 +61,7 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   let providerCalls = 0;
   const first = () => {
     providerCalls += 1;
-    return stage.startsWith("child-") ? agentCall : outputCall;
+    return stage.startsWith("child-") || stage.startsWith("preflight-") ? agentCall : outputCall;
   };
   const second = () => {
     if (stage === "child-session") {
@@ -106,6 +109,10 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   };
   pi.registerProvider(provider);
   pi.on("tool_call", (event, ctx) => {
+    if (stage === "preflight-git" && event.toolName === AGENT_TOOL_NAME) {
+      console.error("INJECTED_REVIEWER_GIT_IO_FAILURE");
+      renameSync(".git", ".git-injected-failure");
+    }
     if (stage === "child-provider" && event.toolName === AGENT_TOOL_NAME) {
       (ctx.modelRegistry as any).getProvider = () => {
         console.error("Reviewer Agent provider not found");

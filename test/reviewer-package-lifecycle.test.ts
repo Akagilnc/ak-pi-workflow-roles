@@ -89,7 +89,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       canonicalSkill: skillRaw,
       capabilities: installedDispatch.parseReviewerCapabilities(Buffer.from(missingRecipeText), taskBytes),
       reader: {
-        pin: { repositoryRoot: root, targetHead: target, refs: {} },
+        pin: { repositoryRoot: root, objectFormat: "sha1" as const, targetHead: target, refs: {} },
         async snapshot() { return this.pin; },
         async resolve() { return base; },
         async range() { return { base, target, diffCommand, diffSha256: "1".repeat(64), commits: [target] }; },
@@ -177,6 +177,34 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.deepEqual(finalOutput.message.details, corrected);
       assert.equal(await readFile(resolve(fixture, "consumer.txt"), "utf8"), before);
       assert.equal(faux.getPendingResponseCount(), 0);
+    });
+
+    const noSpecFaux = fauxProvider({ api: "package-reviewer-no-spec", provider: "package-reviewer-no-spec", tokenSize: { min: 1000, max: 1000 } });
+    const noSpecProposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [], spec: { state: "not-established", evidence: [{ id: "no-spec", repositoryPath: "SPEC.md" }] }, required: { standards: standardsRequest } };
+    const noSpecChildren: Context[] = []; const noSpecAudits: Context[] = [];
+    noSpecFaux.setResponses([
+      fauxAssistantMessage(fauxToolCall(Agent, noSpecProposal, { id: "no-spec-accepted" }), { stopReason: "toolUse" }),
+      (ctx) => { noSpecChildren.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
+      fauxAssistantMessage(fauxToolCall(Output, { status: "completed", report: "## Standards\nReadable; no findings.\n\nStandards: 0." }, { id: "no-spec-output" }), { stopReason: "toolUse" }),
+      (ctx) => { noSpecAudits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }); },
+    ]);
+    await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-no-spec"), faux: noSpecFaux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
+      assert.deepEqual(loader.getExtensions().errors, []);
+      await session.prompt("Review with no established Spec.");
+      const results = sessionManager.getEntries().filter((e) => e.type === "message" && e.message.role === "toolResult") as any[];
+      const accepted = results.find((e: any) => e.message.toolCallId === "no-spec-accepted");
+      const output = results.find((e: any) => e.message.toolCallId === "no-spec-output");
+      assert.equal(accepted.message.details.status, "accepted");
+      assert.equal(accepted.message.details.dispatch.targetSnapshot.objectFormat, "sha1");
+      assert.deepEqual(accepted.message.details.dispatch.legs.map((leg: any) => leg.axis), ["standards"]);
+      assert.equal(accepted.message.details.materials?.spec, undefined);
+      assert.equal(accepted.message.details.dispatch.materials.spec, undefined);
+      assert.equal(accepted.message.details.dispatch.materials.noSpecEvidence.length, 1);
+      assert.equal(noSpecChildren.length, 1); assert.equal(noSpecAudits.length, 1);
+      assert.doesNotMatch(userText(noSpecChildren[0]!), /Quote the spec line for each finding/);
+      assert.doesNotMatch(userText(noSpecAudits[0]!), /\"axis\":\"spec\"/);
+      assert.equal(output.message.isError, false); assert.equal(output.message.details.status, "completed");
+      assert.equal(noSpecFaux.getPendingResponseCount(), 0);
     });
     } finally {
       process.chdir(originalCwd);

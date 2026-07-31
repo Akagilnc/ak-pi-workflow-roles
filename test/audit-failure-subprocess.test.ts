@@ -48,6 +48,8 @@ async function runCli(mode: "print" | "json") {
 }
 
 type ReviewerFailureStage =
+  | "preflight-git"
+  | "preflight-skill"
   | "child-provider"
   | "child-session"
   | "child-malformed-output"
@@ -68,10 +70,13 @@ async function runReviewerCli(
       );
       await writeFile(
         canonicalSkillPath,
-        await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
+        stage === "preflight-skill"
+          ? "---\nname: code-review\ndescription: malformed\n---\n\n# Missing canonical sections\n"
+          : await readFile(resolve(packageRoot, "test/fixtures/canonical-code-review-SKILL.md")),
       );
-      const cwd = packageRoot;
-      const taskPath = resolve(packageRoot, "test/fixtures/reviewer-task.md");
+      const cwd = resolve(home, "review-target");
+      execFileSync("git", ["clone", "--quiet", "--no-hardlinks", packageRoot, cwd]);
+      const taskPath = resolve(cwd, "test/fixtures/reviewer-task.md");
       const taskBytes = await readFile(taskPath);
       const capabilityPath = resolve(home, "reviewer-capabilities.json");
       const base = execFileSync("git", ["rev-parse", "HEAD~1"], { cwd, encoding: "utf8" }).trim();
@@ -252,6 +257,18 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
     calls: number;
     tool: "Agent" | "ak_reviewer_output";
   }> = [
+    {
+      stage: "preflight-git",
+      marker: /INJECTED_REVIEWER_GIT_IO_FAILURE|not a git repository/,
+      calls: 1,
+      tool: "Agent",
+    },
+    {
+      stage: "preflight-skill",
+      marker: /Canonical Skill section extraction failed|Request was aborted/,
+      calls: 1,
+      tool: "Agent",
+    },
     {
       stage: "child-provider",
       marker: /Reviewer Agent provider not found/,
