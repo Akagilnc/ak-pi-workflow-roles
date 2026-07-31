@@ -1,0 +1,12 @@
+# Issue #33 fixed-point closure review
+
+Use loaded owner-amended canonical skill SHA-256 `0553da86a305f433a3ef14a7b3ad3b346729294afaf21bc073b9720a363c44d6`.
+
+Before Agent calls verify base `60927670d11b7f3e58800f98b98c518575e8acf7`, target `89841b59890c2bef280dca672f21ce03a3ee2b3f`, their nonempty three-dot diff, and clone-local material `.ak/dockets/issues/33/review-materials/review-013/materials.md` at SHA-256 `acb9bf4a20263d0523bc2d925d029d8cd1ea6213f434c10fd0b0f89a76511b15`.
+
+Run one sibling-parallel Agent batch. Both prompts reference and verify that material path/digest, without transcribing mechanical contents. Both may read/cite any clone material.
+
+- Standards: review documented standards and full smell baseline; usage is not law.
+- Spec: test complete Issue #33 delivery and every surviving Judge class through Review-012 repair under amended C8 and owner option 4.
+
+Do not rerun full batteries or run a replacement Agent. Aggregate faithfully under separate headings without adjudication or reranking. Submit only via `ak_reviewer_output`.
