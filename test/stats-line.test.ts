@@ -8,7 +8,8 @@ const enc = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 function fixture(role: string, phase: string | undefined, id: string, details: unknown) {
   const receipt = enc({ toolName: `ak_${role}_output`, toolCallId: id, details, artifactKind: "acceptedReceipt" });
   const args = ["pi", "--ak-role", role, ...(phase ? [`--ak-${role}-phase`, phase] : [])];
-  const manifest = enc({ version: 2, archive: { repositoryRoot: "/repo", root: ".ak/dockets", docketId: `issues/7/${id}` }, invocation: { id }, session: { id, directory: `.ak/work/${id}`, basename: "session.jsonl", sha256: "a".repeat(64), byteLength: 1, retention: "caller-owned-raw-not-promoted" }, execution: { argv: args, cwd: "/repo", environment: { inherit: true, overrides: {}, unset: [] }, stdin: "inherit", stdio: { stdout: "pass-through", stderr: "pass-through", diagnosticTailBytes: 4096 } }, provenance: { package: null, model: null, target: null, verification: "unverified" }, artifacts: [{ id: "receipt", kind: "receipt", redactionStatus: "clean", stored: { identity: "stored", path: "receipt.json", sha256: sha256Hex(receipt), byteLength: receipt.byteLength }, receiptArtifactKind: "acceptedReceipt" }], receipt: { toolName: `ak_${role}_output`, toolCallId: id, artifactId: "receipt", artifactKind: "acceptedReceipt" }, auditObservation: null, child: { status: "exited", exitCode: 0, signal: null }, recorder: { status: "completed" }, redaction: { hits: [] } });
+  const sessionId = `018f22e2-7d5a-7abc-8abc-${sha256Hex(new TextEncoder().encode(id)).slice(0, 12)}`;
+  const manifest = enc({ version: 2, archive: { repositoryRoot: "/repo", root: ".ak/dockets", docketId: `issues/7/${sessionId}` }, invocation: { id: sessionId }, session: { id: sessionId, directory: `.ak/work/${sessionId}`, basename: "session.jsonl", sha256: "a".repeat(64), byteLength: 1, retention: "caller-owned-raw-not-promoted" }, execution: { argv: args, cwd: "/repo", environment: { inherit: true, overrides: {}, unset: [] }, stdin: "inherit", stdio: { stdout: "pass-through", stderr: "pass-through", diagnosticTailBytes: 4096 } }, provenance: { package: null, model: null, target: null, verification: "unverified" }, artifacts: [{ id: "receipt", kind: "receipt", redactionStatus: "clean", stored: { identity: "stored", path: "receipt.json", sha256: sha256Hex(receipt), byteLength: receipt.byteLength }, receiptArtifactKind: "acceptedReceipt" }], receipt: { toolName: `ak_${role}_output`, toolCallId: id, artifactId: "receipt", artifactKind: "acceptedReceipt" }, auditObservation: null, child: { status: "exited", exitCode: 0, signal: null }, recorder: { status: "completed" }, redaction: { hits: [] } });
   return { manifest, receipt };
 }
 function snapshot(files: Record<string, Uint8Array>, order = Object.keys(files)): CommittedSnapshot { return { repository: "ak/repo", targetCommit: "1".repeat(40), async list() { return order; }, async read(path) { const bytes = files[path]; if (!bytes) throw new Error(`missing ${path}`); return bytes; } }; }
@@ -124,6 +125,14 @@ test("StatsLine rejects duplicate/corrupt committed manifests and ignores files 
   await assert.rejects(produceStatsLineV1({ snapshot: snapshot(duplicate), issueNumber: 7 }), /Duplicate invocation/);
   const corrupt = { ".ak/dockets/issues/7/a/manifest.json": one.manifest, ".ak/dockets/issues/7/a/receipt.json": enc({ changed: true }) };
   await assert.rejects(produceStatsLineV1({ snapshot: snapshot(corrupt), issueNumber: 7 }), /Receipt identity mismatch/);
+});
+
+test("StatsLine rejects a malformed nested Recorder literal through the public manifest contract", async () => {
+  const archived = fixture("judge", undefined, "malformed", { judgeStatus: "converged" });
+  const manifest = JSON.parse(new TextDecoder().decode(archived.manifest));
+  manifest.execution.stdio.stderr = "captured";
+  const files = { ".ak/dockets/issues/7/a/manifest.json": enc(manifest), ".ak/dockets/issues/7/a/receipt.json": archived.receipt };
+  await assert.rejects(produceStatsLineV1({ snapshot: snapshot(files), issueNumber: 7 }), /internal Recorder failure/);
 });
 
 test("StatsLine puts ambiguous roles in unclassified and makes byte ratio honestly unavailable", async () => {
