@@ -60,6 +60,13 @@ export type AcceptedReviewerLeg = Readonly<{
   prompt: ReviewerPromptIdentity;
   grant: ReviewerCapabilityRequest;
 }>;
+export type AcceptedReviewerExecution = Readonly<{
+  identity: string;
+  recipe: "reviewer-dispatch-v1";
+  targetSnapshot: ReviewerPinnedTarget;
+  prerequisiteOperations: readonly ReviewerPrerequisiteOperation[];
+  legs: readonly AcceptedReviewerLeg[];
+}>;
 export type AcceptedReviewerDispatch = Readonly<{
   identity: string;
   recipe: "reviewer-dispatch-v1";
@@ -116,7 +123,7 @@ type DispatcherDependencies = Readonly<{
   capabilities: ReviewerCapabilitiesV1;
   reader: ReviewerPinnedGitReader;
   hostTools: readonly string[];
-  run(dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<unknown>;
+  run(execution: AcceptedReviewerExecution, invocation: unknown): Promise<unknown>;
   /** Synchronous append-only projection at the lifecycle decision boundary. */
   decisionEvidence?: (decision: ReviewerDecisionEvidence) => void;
   /** Testable identity boundary; production uses reviewerPromptIdentity. */
@@ -168,6 +175,21 @@ function immutableRequest(request: ReviewerCapabilityRequest): ReviewerCapabilit
     tools: freezeStrings(request.tools),
     bashCommands: freezeStrings(request.bashCommands),
     prerequisiteOperations: freezeStrings(request.prerequisiteOperations),
+  });
+}
+
+/** The sole dispatch-owned projection across the opaque runner boundary. */
+export function toReviewerExecution(dispatch: AcceptedReviewerDispatch): AcceptedReviewerExecution {
+  return Object.freeze({
+    identity: dispatch.identity,
+    recipe: dispatch.recipe,
+    targetSnapshot: immutableReviewerPin(dispatch.targetSnapshot),
+    prerequisiteOperations: freezeStrings(dispatch.prerequisiteOperations),
+    legs: Object.freeze(dispatch.legs.map((leg) => Object.freeze({
+      axis: leg.axis,
+      prompt: Object.freeze({ text: leg.prompt.text, utf8Length: leg.prompt.utf8Length, sha256: leg.prompt.sha256 }),
+      grant: immutableRequest(leg.grant),
+    }))),
   });
 }
 
@@ -515,7 +537,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
         recipe: "reviewer-dispatch-v1",
         cardinality: dispatch.legs.length as 1 | 2,
       });
-      const results = await dependencies.run(dispatch, invocation);
+      const results = await dependencies.run(toReviewerExecution(dispatch), invocation);
       return Object.freeze({ status: "accepted", dispatch, results });
     },
   });

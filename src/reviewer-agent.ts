@@ -25,7 +25,7 @@ import { prepareComplianceDispatch } from "./compliance-transport.ts";
 import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerPinnedTarget, sameReviewerRefs, type ReviewerRefEntry } from "./reviewer-git-snapshot.ts";
 import { isReviewerPromptIdentity, reviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import type {
-  AcceptedReviewerDispatch,
+  AcceptedReviewerExecution,
   AcceptedReviewerLeg,
   ReviewerPrerequisiteOperation,
 } from "./reviewer-dispatch.ts";
@@ -64,7 +64,7 @@ export class ReviewerDispatchExecutionError extends Error {
   constructor(readonly outcome: ReviewerDispatchRunResult) { super("Reviewer dispatch execution failed"); this.name = "ReviewerDispatchExecutionError"; }
 }
 export type ReviewerAgentRunner = {
-  run(dispatch: AcceptedReviewerDispatch, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>;
+  run(dispatch: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>;
   shutdown(): Promise<void>;
 };
 export type ReviewerAgentFaultPoint =
