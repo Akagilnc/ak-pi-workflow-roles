@@ -58,7 +58,7 @@ export type ReviewerRoleDependencies = {
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext): never };
 
 export function validateReviewerOutput(output: ReviewerOutputParameters): ReviewerOutput { return validateAcceptedReviewerDetails(output); }
-function singleton(id: string, ctx: ExtensionContext): void {
+function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Reviewer output must be the sole final tool call");
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
@@ -171,7 +171,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`], parameters: reviewerOutputSchema,
         async execute(id, parameters, signal, _update, toolCtx) {
           if (!soul || task === undefined || !binding) throw new Error("Reviewer inputs were not loaded");
-          singleton(id, toolCtx);
+          requireSoleReviewerOutputCall(id, toolCtx);
           const output = validateReviewerOutput(parameters);
           if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
           let record: ReviewerExecutionRecord;
