@@ -35,6 +35,7 @@ export {
 } from "./doctor-role.ts";
 export type { DoctorEvidenceIndexV1, DoctorOutput, DoctorFinding, DoctorLastRealBite } from "./doctor-contracts.ts";
 export { validateDoctorEvidenceIndex, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
+export { resolveDoctorEvidenceIndex, type DoctorCommittedEvidenceReader } from "./doctor-evidence.ts";
 export type { StatsLineV1, TrackerMergeMetadata, Metric, UnavailableReason, CommittedSnapshot } from "./stats-line.ts";
 export { produceStatsLineV1, createGitCommittedSnapshot, validateStatsLineV1 } from "./stats-line.ts";
 export {
@@ -89,6 +90,7 @@ export type RoleRuntimeDependencies = {
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
   loadDoctorEvidenceIndex?(path: string): Promise<unknown>;
+  readDoctorCommittedEvidence?(targetCommit: string, path: string): Promise<Uint8Array>;
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
@@ -225,6 +227,7 @@ export function createRoleRuntimeExtension(
     const doctor = createDoctorRoleRuntime(pi, {
       async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
       async loadEvidenceIndex(path) { if (!dependencies.loadDoctorEvidenceIndex) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorEvidenceIndex(path); },
+      committedEvidenceReader: { async read(targetCommit, path) { if (!dependencies.readDoctorCommittedEvidence) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.readDoctorCommittedEvidence(targetCommit, path); } },
       async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
     }, hostActions);
     const collector = createCollectorRoleRuntime(

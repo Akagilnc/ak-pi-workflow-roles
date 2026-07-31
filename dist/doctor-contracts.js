@@ -66,6 +66,46 @@ function isStatsLine(value) { try {
 catch {
     return false;
 } }
+function timestamp(value, label) { text(value, label); if (!Number.isFinite(Date.parse(value)))
+    throw new Error(`${label} must be an ISO timestamp`); }
+function validateGitMetadata(value) {
+    if (!record(value))
+        throw new Error("invalid Git metadata");
+    exact(value, ["commits"], "Git metadata");
+    if (!Array.isArray(value.commits))
+        throw new Error("Git metadata commits must be an array");
+    for (const commit of value.commits) {
+        if (!record(commit))
+            throw new Error("invalid Git commit metadata");
+        exact(commit, ["commit", "timestamp", "paths"], "Git commit metadata");
+        if (typeof commit.commit !== "string" || !/^[0-9a-f]{40}$/.test(commit.commit))
+            throw new Error("Git commit identity is invalid");
+        timestamp(commit.timestamp, "Git timestamp");
+        strings(commit.paths, "Git paths", true);
+    }
+}
+function validateTrackerMetadata(value) {
+    if (!record(value))
+        throw new Error("invalid tracker metadata");
+    exact(value, ["issues", "pullRequests"], "tracker metadata");
+    const validate = (items, kind) => { if (!Array.isArray(items))
+        throw new Error(`tracker ${kind} must be an array`); for (const item of items) {
+        if (!record(item))
+            throw new Error(`invalid tracker ${kind} metadata`);
+        const optional = kind === "issue" ? ["closedAt"] : ["mergedAt", "closedAt"];
+        const keys = ["repository", "number", "createdAt", ...optional.filter((key) => Object.hasOwn(item, key))];
+        exact(item, keys, `tracker ${kind} metadata`);
+        text(item.repository, "tracker repository");
+        if (!Number.isSafeInteger(item.number) || Number(item.number) < 1)
+            throw new Error("tracker number is invalid");
+        timestamp(item.createdAt, "tracker createdAt");
+        for (const key of optional)
+            if (Object.hasOwn(item, key) && item[key] !== null)
+                timestamp(item[key], `tracker ${key}`);
+    } };
+    validate(value.issues, "issue");
+    validate(value.pullRequests, "pull request");
+}
 export function validateDoctorEvidenceIndex(value) {
     if (!record(value))
         throw new Error("Doctor evidence index must be an object");
@@ -114,6 +154,10 @@ export function validateDoctorEvidenceIndex(value) {
         }
         if (raw.kind === "statsLine" && !isStatsLine(raw.data))
             throw new Error("invalid StatsLine evidence");
+        if (raw.kind === "gitMetadata")
+            validateGitMetadata(raw.data);
+        if (raw.kind === "trackerMetadata")
+            validateTrackerMetadata(raw.data);
         const bytes = statsLineEvidenceBytes(raw.data);
         if (bytes.byteLength !== raw.byteLength || sha256Hex(bytes) !== raw.sha256)
             throw new Error(`Evidence digest mismatch: ${raw.id}`);
