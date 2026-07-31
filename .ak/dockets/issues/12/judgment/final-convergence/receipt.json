@@ -1,0 +1,20 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_y9fPcHzlYVfqdLtKKyOiVc3g|fc_009e42bfa2009278016a6d1ba238388191bf80e31090fbfd29",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "One sustained Review-001 class remains on current HEAD. The other Review-001 classes and all Review-002/003 classes are repaired at their production seams; typecheck, 18 focused tests, the full 354-test suite (349 pass, 5 skip), packed-file parity, and source/dist parity passed. `validateStatsLineV1` still accepts ratio states that contradict the recorded unclassified population."
+    },
+    "classes": [
+      {
+        "name": "F5-closed-statsline-metric-validation",
+        "owner": "The public `StatsLineV1` contract and `validateStatsLineV1` in `src/stats-line.ts`",
+        "boundary": "Owns closed serialized StatsLine metric state, including the cross-field truth between `recordedInvocations.value.unclassified` and `paperApplyBytes.value.ratio`; receipt production/classification remains owned by `produceStatsLineV1`.",
+        "disposition": "Close the remaining ratio-state invariant. When `recordedInvocations.value.unclassified > 0`, the ratio must be unavailable with `unclassifiable-receipt`; when it is zero, that reason is invalid. A measured ratio or `no-apply-receipts` must not be accepted while unclassified receipts exist. Current HEAD mechanically accepted all three counterexamples: false `unclassifiable-receipt` with zero unclassified, `no-apply-receipts` with one unclassified, and a measured ratio with one unclassified. Add table-driven validator regressions for these contradictions, preserve the exact producer complement law, regenerate `dist/stats-line.js`, and rerun typecheck, full tests, and package parity."
+      }
+    ],
+    "note": "Census disposition: F1 wording anchoring, F2 typed registration, F3 schema/context ownership, F4 committed resolution, raw-versus-normalized identity, canonical serializer ownership, and exact receipt-byte classification are closed on HEAD. R1 actual/noRealBite/keep, L1 exclusion, constrained tools, audit failure honesty, and shipped Doctor/StatsLine/canonical modules were independently verified. This verdict does not introduce a new review axis; it retains Review-001 F5's required lawful unavailable-state and cross-metric validation."
+  },
+  "artifactKind": "acceptedReceipt"
+}
