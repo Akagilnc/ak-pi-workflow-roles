@@ -227,10 +227,10 @@ Mandatory keys: `version`, `archive`, `execution`, `declarations`, `provenance`.
 - **Recorder failure** emits exactly one sanitized single-line JSON object on Recorder stderr after any already-teed child output, then exits **125**. Recorder failure has precedence over child nonzero/signal. Config/grammar failure reports `child.status: "not-spawned"`.
 
 ```json
-{"recorder":{"status":"failed","code":"stable-nonsecret-code","message":"sanitized message","location":["declarations","gitReferences",1,"kind"],"diagnostic":{"stage":"admission","category":"Error"}},"child":{"status":"not-spawned|exited|signaled","exitCode":null,"signal":null,"diagnostic":"sanitized-or-null"}}
-
-`recorder.location` is a typed string/index schema path for config defects (otherwise `null`). `recorder.diagnostic` is a bounded, allow-listed stage and error-class category when an underlying cause exists (otherwise `null`); it never includes the exception message, stack, config, argv, or environment. Unknown exceptions use `internal-error`, never `invalid-config`. Consumers must use these fields rather than parse prose.
+{"recorder":{"status":"failed","code":"invalid-config","message":"invalid Recorder config","location":["declarations","gitReferences",1,"kind"],"diagnostic":null},"child":{"status":"not-spawned","exitCode":null,"signal":null,"diagnostic":null}}
 ```
+
+The exact closed wire contract is [`schemas/recorder-failure-v1.schema.json`](schemas/recorder-failure-v1.schema.json). `recorder.location` is a typed string/index schema path for config defects (otherwise `null`). `recorder.diagnostic` is a bounded, allow-listed stage and category when an underlying cause exists (otherwise `null`); it never includes the exception message, stack, config, argv, or environment. Unknown exceptions use `internal-error`, never `invalid-config`. Consumers must use these fields rather than parse prose.
 
 Final truth on success is the promoted manifest; on failure it is the stderr object plus 125. No final or partial manifest is written on Recorder failure. Ordinary failures attempt scratch/stage cleanup. Abrupt OS/process crash may leave ignored private scratch or a non-final staging directory — that is host cleanup/credential risk, never an apparently complete docket.
 

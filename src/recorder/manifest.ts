@@ -102,7 +102,7 @@ export function loadPublicManifestSchema(): JsonSchema {
     ) as JsonSchema;
   } catch (error) {
     throw new RecorderError(
-      "admission-failed",
+      "internal-error",
       "public manifest schema is unreadable",
       { cause: error },
     );
@@ -145,13 +145,13 @@ function resolveRef(
 ): JsonSchema {
   if (typeof root === "boolean") {
     throw new RecorderError(
-      "admission-failed",
+      "internal-error",
       "public manifest schema $ref is unresolvable",
     );
   }
   if (!ref.startsWith("#/")) {
     throw new RecorderError(
-      "admission-failed",
+      "internal-error",
       "public manifest schema $ref must be local",
     );
   }
@@ -159,7 +159,7 @@ function resolveRef(
   for (const part of ref.slice(2).split("/")) {
     if (!isObject(current) || !Object.hasOwn(current, part)) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         "public manifest schema $ref is unresolvable",
       );
     }
@@ -168,7 +168,7 @@ function resolveRef(
   if (typeof current !== "object" || current === null) {
     if (typeof current === "boolean") return current;
     throw new RecorderError(
-      "admission-failed",
+      "internal-error",
       "public manifest schema $ref is unresolvable",
     );
   }
@@ -369,7 +369,7 @@ export function validatePublicManifest(value: unknown): void {
   const schema = loadPublicManifestSchema();
   if (!schemaValid(schema, schema, value)) {
     throw new RecorderError(
-      "admission-failed",
+      "internal-error",
       "manifest failed public schema validation",
     );
   }
@@ -382,14 +382,14 @@ function assertCoherentChild(child: ChildOutcome): {
 } {
   if (child.status === "not-spawned") {
     throw new RecorderError(
-      "admission-failed",
+      "internal-error",
       "cannot build success manifest without spawn",
     );
   }
   if (child.status === "exited") {
     if (child.exitCode === null || child.signal !== null) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         "incoherent exited child outcome",
       );
     }
@@ -397,7 +397,7 @@ function assertCoherentChild(child: ChildOutcome): {
   }
   if (child.signal === null || child.exitCode !== null) {
     throw new RecorderError(
-      "admission-failed",
+      "internal-error",
       "incoherent signaled child outcome",
     );
   }
@@ -409,13 +409,13 @@ function assertRuntimeJoins(manifest: RecorderManifestV1): void {
   if (manifest.receipt !== null && manifest.auditObservation !== null) {
     if (manifest.receipt.toolCallId !== manifest.auditObservation.toolCallId) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         "audit observation toolCallId does not match receipt",
       );
     }
     if (manifest.receipt.toolName !== manifest.auditObservation.toolName) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         "audit observation toolName does not match receipt",
       );
     }
@@ -427,7 +427,7 @@ function assertRuntimeJoins(manifest: RecorderManifestV1): void {
       receiptArtifact.receiptArtifactKind !== manifest.receipt.artifactKind
     ) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         "receipt artifact kind does not match receipt metadata",
       );
     }
@@ -477,7 +477,7 @@ export function buildManifest(options: {
   if (options.extraction.receipt === null) {
     if (options.extraction.auditObservation !== null) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         "audit observation without receipt is incoherent",
       );
     }
@@ -485,7 +485,7 @@ export function buildManifest(options: {
       options.artifacts.some((a) => a.kind === "receipt" || a.id === "receipt")
     ) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         "receipt artifact without extraction is incoherent",
       );
     }
@@ -493,7 +493,7 @@ export function buildManifest(options: {
     const receiptArtifact = options.artifacts.find((a) => a.id === "receipt");
     if (!receiptArtifact || receiptArtifact.kind !== "receipt") {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         "receipt extraction missing stored artifact",
       );
     }
@@ -503,7 +503,7 @@ export function buildManifest(options: {
       );
       if (!auditArtifact || auditArtifact.kind !== "audit-observation") {
         throw new RecorderError(
-          "admission-failed",
+          "internal-error",
           "audit observation missing stored artifact",
         );
       }
@@ -512,7 +512,7 @@ export function buildManifest(options: {
           options.extraction.receipt.toolCallId
       ) {
         throw new RecorderError(
-          "admission-failed",
+          "internal-error",
           "audit observation toolCallId does not match receipt",
         );
       }
@@ -526,7 +526,7 @@ export function buildManifest(options: {
   for (const artifact of options.artifacts) {
     if (ids.has(artifact.id)) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         `duplicate artifact id ${artifact.id}`,
       );
     }
@@ -535,7 +535,7 @@ export function buildManifest(options: {
     const hasStored = artifact.stored !== undefined;
     if (hasRef === hasStored) {
       throw new RecorderError(
-        "admission-failed",
+        "internal-error",
         `artifact ${artifact.id} must have exactly one identity`,
       );
     }
@@ -548,7 +548,7 @@ export function buildManifest(options: {
       ].join("|");
       if (refKeys.has(key)) {
         throw new RecorderError(
-          "admission-failed",
+          "internal-error",
           `duplicate reference identity for ${artifact.id}`,
         );
       }
@@ -557,7 +557,7 @@ export function buildManifest(options: {
     if (artifact.stored) {
       if (storedPaths.has(artifact.stored.path)) {
         throw new RecorderError(
-          "admission-failed",
+          "internal-error",
           `duplicate stored path for ${artifact.id}`,
         );
       }
