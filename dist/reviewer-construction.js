@@ -1,6 +1,7 @@
 import { exactUtf8 } from "./exact-utf8.js";
-import { reviewerPromptIdentity } from "./reviewer-prompt-identity.js";
+import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity } from "./reviewer-prompt-identity.js";
 import { sha256Hex } from "./sha256.js";
+import { reviewerScopePrompt } from "./reviewer-scope-prompt.js";
 export const REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
     recipeId: "reviewer-common-bundle",
     version: 1,
@@ -48,6 +49,30 @@ export function compileMechanicalBundle(input) {
         throw new Error("Mechanical bundle path collision");
     const bundle = Object.freeze({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, manifestSha256: sha256Hex(manifestBytes(entries)), entries });
     return { canonicalSkill, construction: REVIEWER_CONSTRUCTION_RECIPE, bundle };
+}
+/** Deterministic compiler: admitted immutable policy plus frozen evidence in, dispatch bytes out. */
+export function constructReviewerDispatch(input) {
+    const task = reviewerPromptIdentity(input.taskText);
+    const compiled = compileMechanicalBundle({ canonicalSkill: input.canonicalSkill, task: input.taskText, range: input.evidence.range, materials: input.evidence.materials });
+    const common = [`Task-SHA256: ${task.sha256}`, `Target: ${input.evidence.range.target}`, `Base: ${input.evidence.range.base}`, `Diff: ${input.evidence.range.diffCommand}`, reviewerScopePrompt(input.reviewScopeKeys), `Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`, `Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`, bundlePromptReferences(compiled.bundle)].join("\n");
+    const axes = [{ axis: "standards", grant: input.admitted.standardsGrant }, ...(input.admitted.specGrant ? [{ axis: "spec", grant: input.admitted.specGrant }] : [])];
+    const compile = input.compilePrompt ?? ((text) => reviewerPromptIdentity(text));
+    const build = (x, pass) => compile(`${common}\nGrant: ${JSON.stringify(x.grant)}\n${reviewerAxisMethodAdapter(x.axis)}\n`, x.axis, pass);
+    const first = axes.map(x => build(x, 1)), second = axes.map(x => build(x, 2));
+    for (let i = 0; i < first.length; i++) {
+        if (!isReviewerPromptIdentity(first[i]) || !isReviewerPromptIdentity(second[i]))
+            throw new ReviewerConstructionError("prompt-identity-invalid");
+        if (!sameReviewerPromptIdentity(first[i], second[i]))
+            throw new ReviewerConstructionError("prompt-identity-mismatch");
+    }
+    return Object.freeze({ identity: input.identity, recipe: "reviewer-common-bundle-v1", input: Object.freeze({ task, canonicalSkill: compiled.canonicalSkill, construction: compiled.construction, capabilityDocument: input.capabilityDocument }), targetSnapshot: input.target, prerequisiteOperations: input.admitted.prerequisiteOperations, range: input.evidence.range, materials: input.evidence.materials, ...(input.admitted.relevanceHints === undefined ? {} : { relevanceHints: input.admitted.relevanceHints }), bundle: compiled.bundle, legs: Object.freeze(axes.map((x, i) => Object.freeze({ ...x, prompt: first[i] }))) });
+}
+export class ReviewerConstructionError extends Error {
+    code;
+    constructor(code) {
+        super(code);
+        this.code = code;
+    }
 }
 export function bundlePromptReferences(bundle) {
     return bundle.entries.map(({ id, relativeClonePath, sha256 }) => `Bundle-Material: ${JSON.stringify({ id, relativeClonePath, sha256 })}`).join("\n");
