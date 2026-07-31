@@ -1,0 +1,13 @@
+# Issue #33 Review-009 finding adjudication
+
+Adjudicate every Standards/Spec finding in `.ak/dockets/issues/33/review/review-009/receipt.json` at fixed HEAD `f4cc70a2c0689280153265eaaae5df961d803365`, under the C8 amendment and prior Review-005 authority.
+
+Inspect current code/tests. Decide:
+
+1. Whether full row IDs in `readSession`'s uniqueness set and full package call IDs in replay state violate compact bounded memory. Address the information constraint explicitly: exact duplicate detection over up to 100000 arbitrarily long IDs cannot use fixed memory without an additional lexical bound, probabilistic digest identity, or external storage. Determine whether current Pi-v3 native IDs already have an admitted canonical bound; do not invent one from examples. Escalate only if owner policy must choose between exactness, a new bound, probabilistic hashing, or storage.
+2. Security-source readability/Mysterious Name residuals versus the already authorized readability class; identify the bounded owner seam.
+3. Whether `{path,dev,ino}` lacks a domain type in current code or the Reviewer missed an existing type; sustain Data Clump only on fact.
+4. Whether current framing/config/session tests violate ADR 0016 after the C8 recheck explicitly retained exact hard-limit and distinct custom branch oracles. Remove only genuinely format-only/redundant tests, not authorized behavior branches.
+5. Whether lifecycle fixture duplication is a material drift risk worth bounded repair or merely harmless test setup.
+
+Do not reopen classes Review-009 found closed, reintroduce test quantity, or route #12/#13/#22/#26. Return class-oriented direct Fixer authority for sustained findings, `converged` if none, or the smallest owner decision gate if compact exactness is genuinely underdetermined. No Plan and no code edits. Submit only through `ak_judge_output`.
