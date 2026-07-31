@@ -26,6 +26,8 @@ import {
 
 import { createHash } from "node:crypto";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
+import { executeReviewerChild } from "../src/reviewer-child-executor.ts";
+import { createReviewerWorkspaceOwner } from "../src/reviewer-workspace.ts";
 import { compileMechanicalBundle } from "../src/reviewer-construction.ts";
 import type { AcceptedReviewerExecution } from "../src/reviewer-dispatch.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch } from "../src/reviewer-execution-ledger.ts";
@@ -143,6 +145,45 @@ async function parentContext(
     faux,
   };
 }
+
+test("workspace owner prepares and installs every leg without constructing a provider", async () => {
+  const source = await repository();
+  const accepted = await dispatch(source.root, ["Standards", "Spec"]);
+  let workspaceOperations = 0;
+  const owner = createReviewerWorkspaceOwner({ fault() { workspaceOperations += 1; } });
+  try {
+    const batch = await owner.prepare(accepted.targetSnapshot, ["standards", "spec"], accepted.bundle);
+    assert.equal(batch.workspaces.length, 2);
+    assert.ok(workspaceOperations > 0);
+    for (const workspace of batch.workspaces) {
+      assert.equal(workspace.evidence.entries.every(entry => entry.verified), true);
+      await access(join(workspace.path, workspace.evidence.entries[0]!.relativeClonePath));
+      await owner.dispose(workspace);
+    }
+  } finally {
+    await owner.shutdown().catch(() => {});
+    await rm(source.root, { recursive: true, force: true });
+  }
+});
+
+test("child executor runs in an already-prepared workspace without Git materialization", async () => {
+  const source = await repository();
+  const accepted = await dispatch(source.root, ["Prepared child prompt"]);
+  const owner = createReviewerWorkspaceOwner();
+  try {
+    const batch = await owner.prepare(accepted.targetSnapshot, ["standards"], accepted.bundle);
+    const workspace = batch.workspaces[0]!;
+    const { context } = await parentContext(source.root, async () => {}, 1);
+    const operations: string[] = [];
+    const result = await executeReviewerChild(workspace.path, accepted.legs[0]!, context, undefined, operation => { operations.push(operation); });
+    assert.equal(result.report, "axis 1 report");
+    assert.deepEqual(operations, ["child.reload", "child.session"]);
+    await owner.dispose(workspace);
+  } finally {
+    await owner.shutdown().catch(() => {});
+    await rm(source.root, { recursive: true, force: true });
+  }
+});
 
 test("Reviewer materializes shallow session snapshot refs into the workspace", async () => {
   const seed = await repository();
