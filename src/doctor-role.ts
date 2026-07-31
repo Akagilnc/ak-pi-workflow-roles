@@ -4,6 +4,10 @@ import { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME, DoctorEvidenceStore
 import { resolveDoctorEvidenceIndex, type DoctorCommittedEvidenceReader } from "./doctor-evidence.ts";
 
 export { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME };
+export const DOCTOR_EVIDENCE_FLAG = {
+  name: "ak-doctor-evidence",
+  definition: { description: "Path to a frozen Doctor v1 evidence index JSON file", type: "string" as const },
+} as const;
 export type DoctorRoleDependencies = {
   loadSoul(): Promise<string>; loadEvidenceIndex(path: string): Promise<unknown>; committedEvidenceReader: DoctorCommittedEvidenceReader;
   auditCompliance(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
@@ -12,9 +16,9 @@ export type DoctorAuditInput = import("./doctor-auditor.ts").DoctorAuditInput;
 function singleton(toolCallId: string, ctx: ExtensionContext) { const leaf = ctx.sessionManager.getLeafEntry(); if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Doctor output must be the sole final tool call"); const calls = leaf.message.content.filter((part) => part.type === "toolCall"); if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== DOCTOR_OUTPUT_TOOL_NAME) throw new Error("Doctor output must be the sole final tool call"); }
 export function createDoctorRoleRuntime(pi: ExtensionAPI, dependencies: DoctorRoleDependencies, host: { failInfrastructure(error: unknown, ctx: ExtensionContext): never }) {
   let activation: { soul: string; index: DoctorEvidenceIndexV1; store: DoctorEvidenceStore } | undefined; let registered = false;
-  pi.registerFlag("ak-doctor-evidence", { description: "Path to a frozen Doctor v1 evidence index JSON file", type: "string" });
+  pi.registerFlag(DOCTOR_EVIDENCE_FLAG.name, DOCTOR_EVIDENCE_FLAG.definition);
   return { async activate() {
-    const path = pi.getFlag("ak-doctor-evidence"); if (typeof path !== "string" || path.trim() === "") throw new Error("Doctor requires --ak-doctor-evidence");
+    const path = pi.getFlag(DOCTOR_EVIDENCE_FLAG.name); if (typeof path !== "string" || path.trim() === "") throw new Error("Doctor requires --ak-doctor-evidence");
     const soul = (await dependencies.loadSoul()).trim(); if (!soul) throw new Error("Doctor soul is empty");
     const index = await resolveDoctorEvidenceIndex(await dependencies.loadEvidenceIndex(path), dependencies.committedEvidenceReader); activation = { soul, index, store: new DoctorEvidenceStore(index) };
     if (!registered) { registered = true;

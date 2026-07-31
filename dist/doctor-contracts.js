@@ -5,7 +5,7 @@ import { validateStatsLineV1 } from "./stats-line.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
-const nonblank = Type.String({ minLength: 1 });
+const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const evidenceIds = Type.Array(nonblank, { minItems: 1 });
 const completeEvidenceIds = Type.Array(nonblank);
 const metric = Type.Union([
@@ -30,12 +30,6 @@ export const doctorOutputSchema = Type.Union([
 export function validateRecordedDoctorOutput(value) {
     if (!Value.Check(doctorOutputSchema, value))
         throw new Error("Doctor output does not match its closed contract");
-    const visit = (item) => { if (typeof item === "string" && item.trim() === "")
-        throw new Error("Doctor output strings must be nonblank"); if (Array.isArray(item))
-        item.forEach(visit);
-    else if (record(item))
-        Object.values(item).forEach(visit); };
-    visit(value);
     return value;
 }
 export const doctorEvidenceReadSchema = Type.Object({ evidenceId: nonblank, offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
@@ -215,59 +209,29 @@ function readCitations(ids, store, label) { strings(ids, label); for (const id o
     if (!store.entries.has(id) || !store.hasRead(id))
         throw new Error(`${label} must cite admitted/read evidence: ${id}`); }
 export function validateDoctorOutput(value, index, store) {
-    if (!record(value))
-        throw new Error("Doctor output must be an object");
+    const output = validateRecordedDoctorOutput(value);
     const targets = new Set(index.catalog.map((target) => target.key));
-    if (value.status === "refused") {
-        exact(value, ["status", "reason", "missingEvidence"], "Doctor refused output");
-        text(value.reason, "refusal reason");
-        if (!Array.isArray(value.missingEvidence) || value.missingEvidence.length === 0)
-            throw new Error("refused requires missing evidence");
-        for (const missing of value.missingEvidence) {
-            if (!record(missing))
-                throw new Error("missing evidence must be an object");
-            exact(missing, ["need", "targetKeys"], "missing evidence");
-            text(missing.need, "missing evidence need");
-            strings(missing.targetKeys, "missing evidence target keys");
+    if (output.status === "refused") {
+        for (const missing of output.missingEvidence)
             for (const key of missing.targetKeys)
                 if (!targets.has(key))
                     throw new Error("missing evidence target mismatch");
-        }
-        return value;
+        return output;
     }
-    if (value.status !== "completed")
-        throw new Error("Doctor output status is invalid");
-    exact(value, ["status", "coverage", "trends", "findings"], "Doctor completed output");
-    if (!Array.isArray(value.coverage) || value.coverage.length !== targets.size)
+    if (output.coverage.length !== targets.size)
         throw new Error("coverage must contain every catalog target exactly once");
     const covered = new Set();
-    for (const item of value.coverage) {
-        if (!record(item))
-            throw new Error("coverage entry must be an object");
-        exact(item, ["targetKey", "evidenceIds"], "coverage entry");
-        text(item.targetKey, "coverage target");
+    for (const item of output.coverage) {
         if (!targets.has(item.targetKey) || covered.has(item.targetKey))
             throw new Error("coverage target mismatch or duplicate");
         covered.add(item.targetKey);
         readCitations(item.evidenceIds, store, "coverage evidence");
     }
-    if (!Array.isArray(value.trends) || value.trends.length === 0)
-        throw new Error("completed requires nonempty trends");
-    for (const trend of value.trends) {
-        if (!record(trend))
-            throw new Error("trend must be an object");
-        exact(trend, ["metric", "points"], "trend");
-        text(trend.metric, "trend metric");
+    for (const trend of output.trends) {
         if (trend.metric === "version" || trend.metric === "caseKey" || trend.metric === "source")
             throw new Error("trend metric must name a StatsLine metric");
-        if (!Array.isArray(trend.points) || trend.points.length < 2)
-            throw new Error("trend requires two StatsLines");
         const cases = new Set();
         for (const point of trend.points) {
-            if (!record(point))
-                throw new Error("trend point must be an object");
-            exact(point, ["evidenceId", "value"], "trend point");
-            text(point.evidenceId, "trend evidence ID");
             const entry = store.entries.get(point.evidenceId);
             if (!entry || entry.kind !== "statsLine" || !store.hasRead(point.evidenceId))
                 throw new Error("trend must cite read StatsLines");
@@ -280,70 +244,37 @@ export function validateDoctorOutput(value, index, store) {
         if (cases.size < 2)
             throw new Error("trend requires distinct StatsLines");
     }
-    if (!Array.isArray(value.findings))
-        throw new Error("findings must be an array");
     const findings = new Set();
-    for (const finding of value.findings) {
-        if (!record(finding))
-            throw new Error("finding must be an object");
-        exact(finding, ["targetKey", "evidenceIds", "disposition", "guardrails", "prescription", "lastRealBite"], "finding");
-        text(finding.targetKey, "finding target");
+    for (const finding of output.findings) {
         if (!targets.has(finding.targetKey) || findings.has(finding.targetKey))
             throw new Error("finding target mismatch or duplicate");
         findings.add(finding.targetKey);
         readCitations(finding.evidenceIds, store, "finding evidence");
-        if (!["keep", "thin", "delete"].includes(String(finding.disposition)))
-            throw new Error("finding disposition is invalid");
-        if (!record(finding.guardrails))
-            throw new Error("guardrails must be an object");
-        exact(finding.guardrails, ["reproducibleFailure", "owningSeamOrInvariant", "deletionOrSimplificationSuffices"], "guardrails");
-        for (const [name, answer] of Object.entries(finding.guardrails)) {
-            if (!record(answer))
-                throw new Error("guardrail answer must be an object");
-            exact(answer, ["answer", "evidenceIds", "explanation"], `guardrail ${name}`);
-            if (typeof answer.answer !== "boolean")
-                throw new Error("guardrail answer must be boolean");
-            text(answer.explanation, "guardrail explanation");
+        for (const answer of Object.values(finding.guardrails))
             readCitations(answer.evidenceIds, store, "guardrail evidence");
-        }
-        if (!record(finding.prescription))
-            throw new Error("prescription must be an object");
-        const kind = finding.prescription.kind;
-        const needs = kind === "patch" || kind === "addMechanism";
-        exact(finding.prescription, needs ? ["kind", "recommendation", "necessityExplanation"] : ["kind", "recommendation"], "prescription");
-        if (!["retain", "delete", "simplify", "patch", "addMechanism"].includes(String(kind)))
-            throw new Error("prescription kind is invalid");
-        text(finding.prescription.recommendation, "recommendation");
-        if (needs)
-            text(finding.prescription.necessityExplanation, "necessity explanation");
-        if (!record(finding.lastRealBite))
-            throw new Error("lastRealBite must be an object");
+        const needsNecessity = finding.prescription.kind === "patch" || finding.prescription.kind === "addMechanism";
+        if (needsNecessity !== (finding.prescription.necessityExplanation !== undefined))
+            throw new Error("patch/addMechanism alone require a necessity explanation");
         const bite = finding.lastRealBite;
+        if (bite.targetKey !== finding.targetKey)
+            throw new Error("lastRealBite target mismatch");
         if (bite.kind === "actual") {
-            exact(bite, ["kind", "targetKey", "evidenceId", "sealedIdentity"], "actual lastRealBite");
-            if (bite.targetKey !== finding.targetKey)
-                throw new Error("actual bite target mismatch");
-            text(bite.evidenceId, "actual bite evidence");
             const entry = store.entries.get(bite.evidenceId);
-            if (!entry || (entry.kind !== "receipt" && entry.kind !== "verdict") || !store.hasRead(bite.evidenceId) || !record(bite.sealedIdentity) || canonical(bite.sealedIdentity) !== canonical({ ...entry.source, sha256: entry.sha256 }))
+            if (!entry || (entry.kind !== "receipt" && entry.kind !== "verdict") || !store.hasRead(bite.evidenceId) || canonical(bite.sealedIdentity) !== canonical({ ...entry.source, sha256: entry.sha256 }))
                 throw new Error("actual bite must cite admitted/read sealed Receipt or verdict");
         }
-        else if (bite.kind === "noRealBite") {
-            exact(bite, ["kind", "targetKey", "populationId", "eligibleEvidenceIds"], "noRealBite");
-            if (bite.targetKey !== finding.targetKey || finding.disposition === "keep")
+        else {
+            if (finding.disposition === "keep")
                 throw new Error("noRealBite permits only thin or delete");
             const population = index.populations.find((item) => item.id === bite.populationId && item.targetKey === finding.targetKey);
             if (!population)
                 throw new Error("noRealBite population mismatch");
-            strings(bite.eligibleEvidenceIds, "noRealBite evidence IDs", true);
             if (!setEqual(bite.eligibleEvidenceIds, population.eligibleEvidenceIds))
                 throw new Error("noRealBite must prove the complete eligible population");
             for (const id of population.eligibleEvidenceIds)
                 if (!store.hasFullyRead(id))
                     throw new Error(`noRealBite requires fully read evidence: ${id}`);
         }
-        else
-            throw new Error("lastRealBite branch is invalid");
     }
-    return value;
+    return output;
 }

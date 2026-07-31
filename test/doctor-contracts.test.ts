@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { DoctorEvidenceStore, statsLineEvidenceBytes, validateDoctorEvidenceIndex, validateDoctorOutput } from "../src/doctor-contracts.ts";
+import { DoctorEvidenceStore, statsLineEvidenceBytes, validateDoctorEvidenceIndex, validateDoctorOutput, validateRecordedDoctorOutput } from "../src/doctor-contracts.ts";
 import { sha256Hex } from "../src/sha256.ts";
 import type { StatsLineV1 } from "../src/stats-line.ts";
 
@@ -33,10 +33,16 @@ test("Doctor noRealBite is complete, fully read, and permits only thin/delete", 
 test("Doctor completed/refused states are exclusive and trends exactly join distinct StatsLines", () => {
   const admitted = index(); const store = new DoctorEvidenceStore(admitted); readRequired(store);
   assert.deepEqual(validateDoctorOutput({ status: "refused", reason: "No cross-case population was admitted.", missingEvidence: [{ need: "another closed case", targetKeys: [target] }] }, admitted, store).status, "refused");
-  assert.throws(() => validateDoctorOutput({ status: "refused", reason: "x", missingEvidence: [{ need: "x", targetKeys: [target] }], findings: [] }, admitted, store), /exact keys/);
+  assert.throws(() => validateDoctorOutput({ status: "refused", reason: "x", missingEvidence: [{ need: "x", targetKeys: [target] }], findings: [] }, admitted, store), /closed contract/);
   const output = completed({ kind: "noRealBite", targetKey: target, populationId: "bounded", eligibleEvidenceIds: ["bite"] }) as any;
   output.trends[0].points[0].value = { status: "measured", value: 0 };
   assert.throws(() => validateDoctorOutput(output, admitted, store), /exactly join/);
+});
+
+test("Doctor output structure is schema-owned before contextual joins", () => {
+  assert.throws(() => validateRecordedDoctorOutput({ status: "refused", reason: "   ", missingEvidence: [] }), /closed contract/);
+  const admitted = index(); const store = new DoctorEvidenceStore(admitted);
+  assert.throws(() => validateDoctorOutput({ status: "refused", reason: "Evidence is incomplete.", missingEvidence: [{ need: "another case", targetKeys: ["unknown-target"] }] }, admitted, store), /target mismatch/);
 });
 
 test("Doctor intake rejects forbidden evidence kinds, digest drift, duplicate identities, and malformed StatsLines", () => {
