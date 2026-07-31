@@ -1,0 +1,15 @@
+# Issue #17 infrastructure fatality, Git SHA-256, and packaged no-spec repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-031/receipt.json`, infrastructure-fatality law, and Plan package lifecycle matrix.
+
+R1 — `preflight-infrastructure` is not a correctable proposal disposition. Unexpected Git process/I/O, filesystem, canonical Skill extraction, or internal preflight failures must propagate from dispatcher, be latched/recorded through role fatal infrastructure, start no child, accept no proposal, permit no corrected retry, and exit nonzero. Durable evidence may retain only bounded classification, never raw diagnostics. Typed proposal/base/range/material/capability violations remain ordinary correctable rejections.
+
+R2 — Pin the repository object format (`sha1` or `sha256`) as immutable target evidence and use its OID width for full/abbreviated commit handling. Support valid 64-hex SHA-256 full IDs and unambiguous reachable abbreviations without live-object ambiguity. Include object format in pin equality, runner snapshot verification, ledger/auditor evidence, and drift checks. Reject cross-format lengths/nonhex safely.
+
+R3 — Add real Git SHA-256 repository tests (feature-detect only if platform Git truly lacks support) for full ID, abbreviated ID, ancestry/range, pin/ref snapshot, and runner materialization; retain SHA-1 coverage.
+
+R4 — Add installed-tarball Standards-only `spec.state:not-established` lifecycle through atomic dispatch, one child, no Spec prompt/artifact, semantic audit, and completed/refused receipt as appropriate. Preserve existing two-leg packaged case and rejection-correction coverage so both cardinalities are proven at package boundary.
+
+R5 — Add fatal subprocess cases for Git spawn/I/O and malformed Skill extraction proving nonzero/no receipt/no retry. Run focused tests, package lifecycle, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R5.
