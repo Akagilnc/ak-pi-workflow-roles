@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/judgment/review-013-retry"
+  },
+  "invocation": {
+    "id": "9bc0c5e7-8f18-48f0-ad56-45f67ba4cda9"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/review-013-judge-retry/session",
+      "--name",
+      "issue-33-review-013-judge-retry",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #33 Review-013 final disposition retry\n\nAdjudicate `.ak/dockets/issues/33/review/review-013/receipt.json` on its fixed reviewed target `89841b59890c2bef280dca672f21ce03a3ee2b3f`, with current archival HEAD `1be8a0c614d9311bce5631bb41b808a93a2f1796`.\n\nThe prior invocation attempted `judgeStatus:\"converged\"` while also supplying top-level `classes`, which the typed tool correctly rejected. Independently confirm whether the three judgment-call findings (`h40`/`h64`, local `s`, and private `inode(Identity)` scalar projection) authorize any real repair under the repair principle and four-reason law.\n\nIf all are rejected, submit a schema-valid `converged` result containing only the allowed convergence note—no `classes`, `fix`, or `decisionGate`. If any real defect survives, use a schema-valid `continue` result with classes under `fix`. Do not edit code or reopen zero Spec/hard-Standards findings. Submit exactly once via `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "1be8a0c614d9311bce5631bb41b808a93a2f1796",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review013",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "1be8a0c614d9311bce5631bb41b808a93a2f1796",
+        "path": ".ak/dockets/issues/33/review/review-013/receipt.json",
+        "blobOid": "15f899088ff7dfd729beab652ce92727b358a6be",
+        "sha256": "7f75c6a28bd5e3ae6069cdf73479a5e93ff732edb172648cbc071b50ada81642",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "failed-judgment-manifest",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "1be8a0c614d9311bce5631bb41b808a93a2f1796",
+        "path": ".ak/dockets/issues/33/judgment/review-013/manifest.json",
+        "blobOid": "c133d4d0e2e7a59226b87ef863ab1cd1df81accf",
+        "sha256": "bd19ab88a7c0cd0451461d08a5f061f2355bb6399da236c676c6bfb1d0d4b715",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review012-judgment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "1be8a0c614d9311bce5631bb41b808a93a2f1796",
+        "path": ".ak/dockets/issues/33/judgment/review-012/receipt.json",
+        "blobOid": "3c400eb55c2f3d859a78b197e2c958e98103d9d8",
+        "sha256": "8b1a5630c19753e3ce692b15b7d1860ef1c0dfa38507c8f1eb5514321b25035a",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "claude",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "1be8a0c614d9311bce5631bb41b808a93a2f1796",
+        "path": "CLAUDE.md",
+        "blobOid": "d82386f3c0d2c55b5ce3fa62584956642c3cb0f2",
+        "sha256": "e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "c999c2b6f4935205a94836ea83284ead1be29981d9eb2e5b083e505810ddd6b0",
+        "byteLength": 957
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "4f94bd6bc692542d62a1b2c5c11a44fe34747557c40be4ccd2c3f15c40c1a1aa",
+        "byteLength": 1208
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "dabef655773ff7ab4e95693d1f948b20fe3dea0bd3ce4535dc7a3300e04d613f",
+        "byteLength": 283
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_xHqf3K9x2Q1WQ6AiuUNeMZ5t|fc_0c1a14848f04021a016a6cdab730348191b188e3ff089eb9af",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_xHqf3K9x2Q1WQ6AiuUNeMZ5t|fc_0c1a14848f04021a016a6cdab730348191b188e3ff089eb9af",
+    "auditPassed": true,
+    "usage": {
+      "input": 8864,
+      "output": 178,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 9042
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

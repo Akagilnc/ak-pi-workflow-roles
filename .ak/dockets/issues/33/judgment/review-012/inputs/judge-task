@@ -1,0 +1,8 @@
+# Issue #33 Review-012 closure adjudication
+
+Adjudicate every finding in `.ak/dockets/issues/33/review/review-012/receipt.json` at fixed HEAD `7e72eb9df1c6a3e8fecba69234df5cd02989310e`.
+
+1. Timestamp trust boundary: establish from admitted Pi-v3/session authority what type/lexical semantics apply to non-header row `timestamp`. Decide whether exact-key presence alone accepts malformed native lifecycle evidence contrary to C3/fail-closed law. If sustained, authorize one domain validator at the owning session/lifecycle seam and minimal representative tests; do not add format permutations or validate presentation text.
+2. Test names: decide whether `raw`, `put`, `x`, `c`, `f`, `g`, and `pair` materially obscure security-domain fixture intent under the smell baseline, versus harmless compact test locals. Authorize only names with concrete reviewability impact; no abstraction or test churn.
+
+Preserve all zero findings and closed classes, owner option 4, amended C8, and ADR 0016. Return direct class-oriented Fixer authority if sustained, `converged` if rejected, or escalate only for a genuine major owner decision. No Plan or code edits. Submit only through `ak_judge_output`.

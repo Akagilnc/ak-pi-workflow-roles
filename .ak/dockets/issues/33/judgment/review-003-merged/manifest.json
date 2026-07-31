@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/judgment/review-003-merged"
+  },
+  "invocation": {
+    "id": "bd35ace8-0708-4374-9df9-76ae6354b38e"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/review-003-merged-judge/session",
+      "--name",
+      "issue-33-review-003-merged-judge",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #33 merged finding adjudication after C8 amendment\n\nAdjudicate one merged population at fixed HEAD `8eaaa0c27696bd78d0d83cb5b2eddc514211b76c`:\n\n1. the still-valid portions of `.ak/dockets/issues/33/judgment/coder-005-completion/receipt.json` after amendment by `.ak/dockets/issues/33/judgment/c8-legality-recheck/receipt.json`; and\n2. every Standards/Spec finding in `.ak/dockets/issues/33/review/review-003/receipt.json`.\n\nDo not lose prior findings merely because Reviewer ran later. Apply the C8 amendment exactly:\n\n- prior active-read-during-stream timing finding is withdrawn;\n- counter-child remains only the representative invalid/valid production oracle;\n- whole-ticket proof remains only the minimal retained invariant families, never old suite/line mass or exhaustive role/corruption cross-products;\n- prior public-v2-schema finding remains independently valid unless current files disprove its concrete claims.\n\nMechanically inspect current code/schemas/tests and resolve sibling contradictions: Reviewer Standards says schema counterexamples are closed, while Reviewer Spec and prior Judge say manifest still permits `receipt:null` and failure vocabulary remains stale. Decide from files, not report authority.\n\nAdjudicate and deduplicate the complete classes:\n\n- representative counter-child and retained minimal vertical oracles;\n- public v2 schema/runtime synchronization;\n- compact-memory streaming versus retention of up to 100000 parsed rows;\n- ADR 0016 format-only persisted-row tests;\n- security-sensitive source readability/Mysterious Name;\n- duplicated accepted/rejected lifecycle shape validation;\n- any other Review-003 finding.\n\nDistinguish implementation defects from proof gaps and style-only concerns. If repair is authorized, return one complete class-oriented direct Fixer Apply disposition with stable unique class keys and exact owner/boundary; no Fixer Plan. Do not reintroduce superseded C8 quantity requirements, authorize #12/#13/#22/#26 work, or decide merge/closure. Submit only through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "8eaaa0c27696bd78d0d83cb5b2eddc514211b76c",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "design-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "8eaaa0c27696bd78d0d83cb5b2eddc514211b76c",
+        "path": ".ak/dockets/issues/33/judgment/design-authority/receipt.json",
+        "blobOid": "07f23b2a3595130c4dcd64570b3e6c6981c71a12",
+        "sha256": "6c485d2b6ed2326b904b1a33b4558a751a15072b50207e034a13e5a7ad45a994",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder005-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "8eaaa0c27696bd78d0d83cb5b2eddc514211b76c",
+        "path": ".ak/dockets/issues/33/judgment/coder-005-completion/receipt.json",
+        "blobOid": "b5772d44aabd90d7a20feb9ed00505abf5d748af",
+        "sha256": "35cc944c56bccfd247ec98a3736de7151b42eec94b4fbe6e3ffe7652c14bb250",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "c8-amendment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "8eaaa0c27696bd78d0d83cb5b2eddc514211b76c",
+        "path": ".ak/dockets/issues/33/judgment/c8-legality-recheck/receipt.json",
+        "blobOid": "9197e1171d5d8f8109f701473dc515e8a3ee4604",
+        "sha256": "26f3993f4cf829b355a38538a9b796a792741991907f10737a36fab5012861fe",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-003",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "8eaaa0c27696bd78d0d83cb5b2eddc514211b76c",
+        "path": ".ak/dockets/issues/33/review/review-003/receipt.json",
+        "blobOid": "5916bafcf7a3916d10633b4e79e3bf2eebf9b5d0",
+        "sha256": "f25f36db803ab5928bae839c89971ee420da876933c73e4d010dd37c2d20e49c",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "2e5d445d24013065c3c5c190d18b59374e99198fdd4e321f3a08a881b2e01e84",
+        "byteLength": 2052
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "4b829a60fffac30843684f7eb47257753369bffcfdf56cd5ff6da8f636b1af3b",
+        "byteLength": 10411
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "51737a575a47fee304cca243657fc2117784866fb12a577c9897138cc8a35e7a",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_H2xs3wjl9UR7T1jYbnDRmnFR|fc_0e64632dcd118a9c016a6cc5e87f188191a982bc010fdd9fb7",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_H2xs3wjl9UR7T1jYbnDRmnFR|fc_0e64632dcd118a9c016a6cc5e87f188191a982bc010fdd9fb7",
+    "auditPassed": true,
+    "usage": {
+      "input": 21299,
+      "output": 328,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 21627
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}

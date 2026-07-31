@@ -1,0 +1,14 @@
+# Issue #33 direct Fixer Apply — Review-012 classes
+
+Sole authority: `.ak/dockets/issues/33/judgment/review-012/receipt.json`. Apply directly; no Plan.
+
+Repair exactly:
+
+- `ISS33-NATIVE-ENTRY-TIMESTAMP-TRUST`
+- `ISS33-SECURITY-FIXTURE-NAMES`
+
+At the session structural seam, centralize canonical ISO timestamp validation and apply it to header and every non-header native entry before lifecycle extraction. Malformed outer entry timestamps must fail `session-corrupt`. Add only one representative malformed-entry production-seam tracer; preserve inner numeric message timestamps and all valid behavior.
+
+Perform only the Judge-listed identifier renames in the two focused test files. No helper extraction, assertions, fixture redesign, formatting pass, or unrelated cleanup.
+
+Preserve all closed/rejected classes, owner option 4, amended C8, and ADR 0016. Rebuild generated artifacts. Run focused red/green tests, typecheck, isolated-HOME full tests, package/cold-install checks, `npm pack --dry-run`, and `git diff --check`. Commit forward and report typed `classesRepaired` for exactly these two keys if completed.

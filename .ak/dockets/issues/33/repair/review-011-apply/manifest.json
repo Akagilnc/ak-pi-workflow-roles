@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/repair/review-011-apply"
+  },
+  "invocation": {
+    "id": "6ae842cb-58b3-41e6-a664-949c8bd72138"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/review-011-fix/session",
+      "--name",
+      "issue-33-review-011-fix",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/33/review-011-fix.md",
+      "-p",
+      "Apply the three Judge-authorized Issue #33 closure classes directly and submit through ak_fixer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "e8068c71432cd6341684cf9730849cbe8460f1d1",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review011-judgment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "e8068c71432cd6341684cf9730849cbe8460f1d1",
+        "path": ".ak/dockets/issues/33/judgment/review-011/receipt.json",
+        "blobOid": "c2f97a0711cba842e7a523996913458149dc3930",
+        "sha256": "d1ac8a5d5deed65246571af4e3ea74a08cfa7561c184d660ca942449e60a8f73",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review011",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "e8068c71432cd6341684cf9730849cbe8460f1d1",
+        "path": ".ak/dockets/issues/33/review/review-011/receipt.json",
+        "blobOid": "8e56c0cbeba0f0c303dd6bd889a41ba26d70ef90",
+        "sha256": "f9cc0b8f2af09814eb9d459a1f9cb484b6dcdd85405688b0263974b838f9d942",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "owner-judgment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "e8068c71432cd6341684cf9730849cbe8460f1d1",
+        "path": ".ak/dockets/issues/33/judgment/review-009-owner-resolution/receipt.json",
+        "blobOid": "8f01d88ed619b3da1da06b484be7b61a110802e2",
+        "sha256": "176da2d28ef4c268926385d93487d66eca958d7f5c7e7f49c9f27486657f62e4",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "fix-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/fix-task",
+        "sha256": "071ab270deeec2f492c459ad59a6867b3adf88a2cb0f424097dc108a6bdd3142",
+        "byteLength": 1326
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "4771f50f8e31f6f672f01621408ab0807d6b438993b9f9283f3866c38075bde7",
+        "byteLength": 2261
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_aJYZAQXfytvFCI8f8H7jbiTC|fc_0c6a309678c8d9ec016a6cd7428f50819196f189dcd0ca8b8f",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "provider-package-token",
+        "location": "child.stdout",
+        "count": 6
+      },
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}

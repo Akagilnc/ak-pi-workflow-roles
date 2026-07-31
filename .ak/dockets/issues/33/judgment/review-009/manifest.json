@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/judgment/review-009"
+  },
+  "invocation": {
+    "id": "9cf83d30-4e4f-402f-9126-91df1d88a4b0"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/review-009-judge/session",
+      "--name",
+      "issue-33-review-009-judge",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #33 Review-009 finding adjudication\n\nAdjudicate every Standards/Spec finding in `.ak/dockets/issues/33/review/review-009/receipt.json` at fixed HEAD `f4cc70a2c0689280153265eaaae5df961d803365`, under the C8 amendment and prior Review-005 authority.\n\nInspect current code/tests. Decide:\n\n1. Whether full row IDs in `readSession`'s uniqueness set and full package call IDs in replay state violate compact bounded memory. Address the information constraint explicitly: exact duplicate detection over up to 100000 arbitrarily long IDs cannot use fixed memory without an additional lexical bound, probabilistic digest identity, or external storage. Determine whether current Pi-v3 native IDs already have an admitted canonical bound; do not invent one from examples. Escalate only if owner policy must choose between exactness, a new bound, probabilistic hashing, or storage.\n2. Security-source readability/Mysterious Name residuals versus the already authorized readability class; identify the bounded owner seam.\n3. Whether `{path,dev,ino}` lacks a domain type in current code or the Reviewer missed an existing type; sustain Data Clump only on fact.\n4. Whether current framing/config/session tests violate ADR 0016 after the C8 recheck explicitly retained exact hard-limit and distinct custom branch oracles. Remove only genuinely format-only/redundant tests, not authorized behavior branches.\n5. Whether lifecycle fixture duplication is a material drift risk worth bounded repair or merely harmless test setup.\n\nDo not reopen classes Review-009 found closed, reintroduce test quantity, or route #12/#13/#22/#26. Return class-oriented direct Fixer authority for sustained findings, `converged` if none, or the smallest owner decision gate if compact exactness is genuinely underdetermined. No Plan and no code edits. Submit only through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "f4cc70a2c0689280153265eaaae5df961d803365",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "c8-amendment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "f4cc70a2c0689280153265eaaae5df961d803365",
+        "path": ".ak/dockets/issues/33/judgment/c8-legality-recheck/receipt.json",
+        "blobOid": "9197e1171d5d8f8109f701473dc515e8a3ee4604",
+        "sha256": "26f3993f4cf829b355a38538a9b796a792741991907f10737a36fab5012861fe",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review005-judgment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "f4cc70a2c0689280153265eaaae5df961d803365",
+        "path": ".ak/dockets/issues/33/judgment/review-005/receipt.json",
+        "blobOid": "1cea94332349deb9810697b3f74463d099289ec5",
+        "sha256": "db9ed53e178a3542eaf87703f6241cb33bfe04d3927c235b5701cab3b685eb80",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review005-fix",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "f4cc70a2c0689280153265eaaae5df961d803365",
+        "path": ".ak/dockets/issues/33/repair/review-005-apply/receipt.json",
+        "blobOid": "fc8826144497249934afb937fab4e27f4d3021fe",
+        "sha256": "29993ee18a942415f4cad56de5d57f7c1be62013c3014dfd74a7633db22d8eb6",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review009",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "f4cc70a2c0689280153265eaaae5df961d803365",
+        "path": ".ak/dockets/issues/33/review/review-009/receipt.json",
+        "blobOid": "b8e2014b032ce378acf2ef5174e0f38fcb91ccac",
+        "sha256": "456f1176af91fab4af53ab2d379bca9b49544a2a92c878f361acdd9df8505a23",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "claude",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "f4cc70a2c0689280153265eaaae5df961d803365",
+        "path": "CLAUDE.md",
+        "blobOid": "d82386f3c0d2c55b5ce3fa62584956642c3cb0f2",
+        "sha256": "e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr0016",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "f4cc70a2c0689280153265eaaae5df961d803365",
+        "path": "docs/adr/0016-tests-follow-logic-not-format.md",
+        "blobOid": "bff4f57d18150648ca14c4a506c6a64afe09c81a",
+        "sha256": "23a645c01510d751c387346abd844735d50d39af87995524251d5b4c6babe957",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "74914cdfe6a699a441e1777edf13c2ce2b70a6647c130757281275d40272e2ee",
+        "byteLength": 1861
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "6365964bc2ec61ef3c1dce916958bd823d859e0f5ba4b599587ce3b33c88aeda",
+        "byteLength": 2832
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "18ae1f86c613a8041f4f40d7a22d44a41e069f3557f8630bce672294ce2eec47",
+        "byteLength": 286
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_wciGNQL0wtJDIWUdkRTmDvQj|fc_05fb2de0dd490fb8016a6cceec9ef4819188fcab61c4096b3d",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_wciGNQL0wtJDIWUdkRTmDvQj|fc_05fb2de0dd490fb8016a6cceec9ef4819188fcab61c4096b3d",
+    "auditPassed": true,
+    "usage": {
+      "input": 24666,
+      "output": 1336,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 26002
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 5
+      },
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 45
+      }
+    ]
+  }
+}
