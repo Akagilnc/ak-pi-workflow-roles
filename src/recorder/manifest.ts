@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 
 import type { RecorderConfig } from "./config.ts";
 import type { AdmittedArtifact } from "./admit.ts";
-import { internalRecorderError, type ChildOutcome } from "./errors.ts";
+import {
+  internalRecorderError,
+  type ChildOutcome,
+  type RecorderError,
+} from "./errors.ts";
 import type {
   AuditObservation,
   ExtractionResult,
@@ -84,6 +88,10 @@ type JsonSchema = Record<string, unknown> | boolean;
 
 let cachedSchema: JsonSchema | null = null;
 
+function manifestInvariant(cause: unknown = new Error("manifest invariant")): RecorderError {
+  return internalRecorderError("manifest", cause);
+}
+
 function publicManifestSchemaPath(): string {
   return join(
     dirname(fileURLToPath(import.meta.url)),
@@ -101,7 +109,7 @@ export function loadPublicManifestSchema(): JsonSchema {
       readFileSync(publicManifestSchemaPath(), "utf8"),
     ) as JsonSchema;
   } catch (error) {
-    throw internalRecorderError("manifest", new Error("manifest invariant"));
+    throw manifestInvariant(error);
   }
   return cachedSchema;
 }
@@ -140,21 +148,21 @@ function resolveRef(
   ref: string,
 ): JsonSchema {
   if (typeof root === "boolean") {
-    throw internalRecorderError("manifest", new Error("manifest invariant"));
+    throw manifestInvariant();
   }
   if (!ref.startsWith("#/")) {
-    throw internalRecorderError("manifest", new Error("manifest invariant"));
+    throw manifestInvariant();
   }
   let current: unknown = root;
   for (const part of ref.slice(2).split("/")) {
     if (!isObject(current) || !Object.hasOwn(current, part)) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
     current = current[part];
   }
   if (typeof current !== "object" || current === null) {
     if (typeof current === "boolean") return current;
-    throw internalRecorderError("manifest", new Error("manifest invariant"));
+    throw manifestInvariant();
   }
   return current as JsonSchema;
 }
@@ -352,7 +360,7 @@ function schemaValid(
 export function validatePublicManifest(value: unknown): void {
   const schema = loadPublicManifestSchema();
   if (!schemaValid(schema, schema, value)) {
-    throw internalRecorderError("manifest", new Error("manifest invariant"));
+    throw manifestInvariant();
   }
 }
 
@@ -362,16 +370,16 @@ function assertCoherentChild(child: ChildOutcome): {
   signal: string | null;
 } {
   if (child.status === "not-spawned") {
-    throw internalRecorderError("manifest", new Error("manifest invariant"));
+    throw manifestInvariant();
   }
   if (child.status === "exited") {
     if (child.exitCode === null || child.signal !== null) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
     return { status: "exited", exitCode: child.exitCode, signal: null };
   }
   if (child.signal === null || child.exitCode !== null) {
-    throw internalRecorderError("manifest", new Error("manifest invariant"));
+    throw manifestInvariant();
   }
   return { status: "signaled", exitCode: null, signal: child.signal };
 }
@@ -380,10 +388,10 @@ function assertRuntimeJoins(manifest: RecorderManifestV1): void {
   // Equal-value joins ordinary JSON Schema cannot express.
   if (manifest.receipt !== null && manifest.auditObservation !== null) {
     if (manifest.receipt.toolCallId !== manifest.auditObservation.toolCallId) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
     if (manifest.receipt.toolName !== manifest.auditObservation.toolName) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
   }
   if (manifest.receipt !== null) {
@@ -392,7 +400,7 @@ function assertRuntimeJoins(manifest: RecorderManifestV1): void {
       !receiptArtifact ||
       receiptArtifact.receiptArtifactKind !== manifest.receipt.artifactKind
     ) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
   }
 }
@@ -439,30 +447,30 @@ export function buildManifest(options: {
   // Receipt/audit link coherence.
   if (options.extraction.receipt === null) {
     if (options.extraction.auditObservation !== null) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
     if (
       options.artifacts.some((a) => a.kind === "receipt" || a.id === "receipt")
     ) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
   } else {
     const receiptArtifact = options.artifacts.find((a) => a.id === "receipt");
     if (!receiptArtifact || receiptArtifact.kind !== "receipt") {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
     if (options.extraction.auditObservation !== null) {
       const auditArtifact = options.artifacts.find((a) =>
         a.id === "audit-observation"
       );
       if (!auditArtifact || auditArtifact.kind !== "audit-observation") {
-        throw internalRecorderError("manifest", new Error("manifest invariant"));
+        throw manifestInvariant();
       }
       if (
         options.extraction.auditObservation.toolCallId !==
           options.extraction.receipt.toolCallId
       ) {
-        throw internalRecorderError("manifest", new Error("manifest invariant"));
+        throw manifestInvariant();
       }
     }
   }
@@ -473,13 +481,13 @@ export function buildManifest(options: {
   const storedPaths = new Set<string>();
   for (const artifact of options.artifacts) {
     if (ids.has(artifact.id)) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
     ids.add(artifact.id);
     const hasRef = artifact.reference !== undefined;
     const hasStored = artifact.stored !== undefined;
     if (hasRef === hasStored) {
-      throw internalRecorderError("manifest", new Error("manifest invariant"));
+      throw manifestInvariant();
     }
     if (artifact.reference) {
       const key = [
@@ -489,13 +497,13 @@ export function buildManifest(options: {
         artifact.reference.blobOid,
       ].join("|");
       if (refKeys.has(key)) {
-        throw internalRecorderError("manifest", new Error("manifest invariant"));
+        throw manifestInvariant();
       }
       refKeys.add(key);
     }
     if (artifact.stored) {
       if (storedPaths.has(artifact.stored.path)) {
-        throw internalRecorderError("manifest", new Error("manifest invariant"));
+        throw manifestInvariant();
       }
       storedPaths.add(artifact.stored.path);
     }

@@ -138,8 +138,8 @@ function storeOnce(sourcePath, expectedSha256, destRelative, stageRoot, location
     try {
         bytes = readFileSync(sourcePath);
     }
-    catch {
-        throw new RecorderError("admission-failed", `external source unreadable at ${location}`);
+    catch (error) {
+        throw new RecorderError("admission-failed", `external source unreadable at ${location}`, { cause: error });
     }
     const digest = sha256Hex(bytes);
     if (digest !== expectedSha256.toLowerCase()) {

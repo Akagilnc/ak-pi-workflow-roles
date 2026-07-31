@@ -256,10 +256,11 @@ function storeOnce(
   let bytes: Buffer;
   try {
     bytes = readFileSync(sourcePath);
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "admission-failed",
       `external source unreadable at ${location}`,
+      { cause: error },
     );
   }
   const digest = sha256Hex(bytes);

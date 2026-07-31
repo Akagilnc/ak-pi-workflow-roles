@@ -23,6 +23,8 @@ function writeLauncherFailure() {
         status: "failed",
         code: "spawn-failed",
         message: "failed to spawn child process",
+        location: null,
+        diagnostic: null,
       },
       child: {
         status: "not-spawned",
