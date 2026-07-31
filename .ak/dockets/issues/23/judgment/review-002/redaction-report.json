@@ -1,0 +1,19 @@
+{
+  "hits": [
+    {
+      "ruleId": "authorization-header",
+      "location": "child.stdout",
+      "count": 5
+    },
+    {
+      "ruleId": "provider-package-token",
+      "location": "child.stdout",
+      "count": 761
+    },
+    {
+      "ruleId": "token-assignment",
+      "location": "child.stdout",
+      "count": 5
+    }
+  ]
+}

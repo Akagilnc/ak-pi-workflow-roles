@@ -1,0 +1,16 @@
+# Issue #33 direct Fixer Apply — owner-resolved Review-009 classes
+
+Sole authority: `.ak/dockets/issues/33/judgment/review-009-owner-resolution/receipt.json`. Apply directly; no Plan.
+
+Repair exactly these sustained classes at their full bounded seams:
+
+- `ISS33-COMPACT-SESSION-STATE`
+- `ISS33-SECURITY-SOURCE-READABILITY`
+- `ISS33-SESSION-OWNER-IDENTITY`
+- `ISS33-ADR0016-TEST-THINNING`
+
+Preserve exact full package call-ID strings under the owner-approved compactness exception. Validate native Pi-v3 row IDs against the admitted 8-hex/canonical-UUID domain before exact retention. Perform only the named source-readability and session-owner-type repairs. Thin only the exact redundant test cases identified by Judge.
+
+Do not repair the rejected fixture-duplication class; do not add digests, package call-ID bounds, external indexes, new behavior, broad style cleanup, general test thinning, or reopen closed Review-005 work.
+
+Use focused red/green tests for row-ID production seams, rebuild generated artifacts, and run typecheck, isolated-HOME full tests, package/cold-install checks, `npm pack --dry-run`, and `git diff --check`. Commit forward and report typed `classesRepaired` for exactly the four sustained keys if completed.

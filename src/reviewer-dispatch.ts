@@ -3,6 +3,7 @@ import { sameReviewerPinnedTarget } from "./reviewer-git-snapshot.ts";
 import { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 export { createReviewerPinnedGitReader, immutableReviewerPin, type ReviewerPinnedGitReader, type ReviewerPinnedTarget, type ReviewerRange } from "./reviewer-pinned-git.ts";
 import { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
+import { reviewerScopePrompt } from "./reviewer-scope-prompt.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 import { sha256Hex } from "./sha256.ts";
 export { sha256Hex } from "./sha256.ts";
@@ -122,6 +123,7 @@ type DispatcherDependencies = Readonly<{
   capabilities: ReviewerCapabilitiesV1;
   reader: ReviewerPinnedGitReader;
   hostTools: readonly string[];
+  reviewScopeKeys?: readonly string[];
   run(execution: AcceptedReviewerExecution, invocation: unknown): Promise<unknown>;
   /** Synchronous append-only projection at the lifecycle decision boundary. */
   decisionEvidence?: (decision: ReviewerDecisionEvidence) => void;
@@ -433,6 +435,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       `Base: ${range.base}`,
       `Diff: ${range.diffCommand}`,
       `Diff-SHA256: ${range.diffSha256}`,
+      reviewerScopePrompt(dependencies.reviewScopeKeys),
       "Commits:",
       range.commits.join("\n"),
     ].join("\n");

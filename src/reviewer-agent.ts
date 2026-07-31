@@ -29,6 +29,7 @@ import type {
   AcceptedReviewerLeg,
   ReviewerPrerequisiteOperation,
 } from "./reviewer-dispatch.ts";
+import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
 import type {
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
@@ -420,6 +421,7 @@ async function runChild(
     noContextFiles: true,
     systemPrompt: [
       "Work only in the supplied writable review clone.",
+      REVIEWER_VERIFICATION_POLICY,
       "Inspect and probe; do not repair the reviewed product, commit, push, or mutate remotes.",
       "Clearly distinguish scratch artifacts and probe changes from facts about the pinned reviewed target.",
       "Return one substantive non-blank review-leg report.",
@@ -456,7 +458,12 @@ async function runChild(
     resourceLoader: loader,
     tools: [...leg.grant.tools],
     customTools,
-    sessionManager: SessionManager.inMemory(workspace),
+    sessionManager: context.sessionManager?.getSessionFile?.() === undefined
+      ? SessionManager.inMemory(workspace)
+      : SessionManager.create(
+          workspace,
+          join(context.sessionManager.getSessionDir(), "reviewer-legs"),
+        ),
     settingsManager: settings,
   });
   const usage = emptyUsage();

@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/repair/review-009-owner-apply"
+  },
+  "invocation": {
+    "id": "1b2f5048-f984-45d4-89a4-87cf8040b75d"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/review-009-owner-fix/session",
+      "--name",
+      "issue-33-review-009-owner-fix",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/33/review-009-owner-fix.md",
+      "-p",
+      "Apply the four owner-resolved Judge-authorized Issue #33 classes directly and submit through ak_fixer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "942eb0cffa03766f63ed318651c695542af1d5e2",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "owner-judgment",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "942eb0cffa03766f63ed318651c695542af1d5e2",
+        "path": ".ak/dockets/issues/33/judgment/review-009-owner-resolution/receipt.json",
+        "blobOid": "8f01d88ed619b3da1da06b484be7b61a110802e2",
+        "sha256": "176da2d28ef4c268926385d93487d66eca958d7f5c7e7f49c9f27486657f62e4",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review009",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "942eb0cffa03766f63ed318651c695542af1d5e2",
+        "path": ".ak/dockets/issues/33/review/review-009/receipt.json",
+        "blobOid": "b8e2014b032ce378acf2ef5174e0f38fcb91ccac",
+        "sha256": "456f1176af91fab4af53ab2d379bca9b49544a2a92c878f361acdd9df8505a23",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review009-first-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "942eb0cffa03766f63ed318651c695542af1d5e2",
+        "path": ".ak/dockets/issues/33/judgment/review-009/receipt.json",
+        "blobOid": "16906d30364b57d0de966b2d089ef7c3f7e24cd5",
+        "sha256": "6365964bc2ec61ef3c1dce916958bd823d859e0f5ba4b599587ce3b33c88aeda",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "fix-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/fix-task",
+        "sha256": "8ef294669a58381f3946f30cd1cf2b629d60a7c82719e43dd7847da5a50d5e6c",
+        "byteLength": 1239
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "c1de015764fb4b0e547d4e604ba8cb53c5af4db91eee2fa61e41d0f312a39da3",
+        "byteLength": 1972
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_Qe0jYjfyDmOPGAskIbjxWvlv|fc_02c223972da6d782016a6cd1cc36b88191b3cb9dc62cfa34e2",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 16
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+# Issue #33 direct Coder Apply continuation — complete C8
+
+Continue the initial implementation at commit `339e440647c8f2903d524fc6de7b4692f04ac09a`. There is no Plan phase. The prior Coder honestly refused completion because it replaced eight Recorder suites with only four focused tests and left the complete C8 construction burden unproved. Its unarchived result is supplied as evidence, not a Receipt.
+
+Implement the full converged authority in `.ak/dockets/issues/33/judgment/design-authority/receipt.json` and its adopted candidate. Preserve the v2 one-core implementation, but do not accept broad test deletion as evidence.
+
+Primary burden:
+
+- restore or rewrite seam-owned behavioral coverage for the complete C8 matrix: config v2/pre-spawn rejection; exclusive session identity and containment; zero/multiple/extra/symlink/replacement/mutation cases; Pi v3 header/chain/line/entry/final-newline corruption; all five role accepted receipts and Collector projection; complete rejected attempts before final success; missing-vs-invalid lifecycle cases; audit usage; derivative credential scan; child exit/signal and sealer precedence; admission-before-spawn; no-replace races; package/cold-install behavior; raw session exclusion; bounded pass-through/backpressure and >2 GiB logical-stream proof without large allocation.
+- Tests must exercise production seams. Reuse/adapt valuable deleted tests from parent history where their invariant remains; delete only tests specific to the removed v1 transport.
+- Diagnose the remaining historical migration verifier failure rather than waiving it. Do not update a frozen baseline merely to make it green unless the authority and verifier's own contract prove that update is required.
+- Search for incomplete v2 implementation exposed by the restored matrix and repair the owning seams, not individual assertions.
+
+Run focused red/green checks, typecheck, build, full isolated-HOME tests, package lifecycle/cold install, `npm pack --dry-run`, and `git diff --check`. Commit forward. Submit `completed` only with complete current-head evidence; otherwise refuse precisely. Do not implement #12/#13/#22/#26, modify Souls, add compatibility v1, or add workflow topology.

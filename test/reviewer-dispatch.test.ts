@@ -481,7 +481,7 @@ test("established Spec produces exact deterministic isolated two-leg prompts", a
     assert.match(leg.prompt.text, new RegExp(`Task-SHA256: ${digest}`));
     assert.match(leg.prompt.text, new RegExp(`Task-UTF8-Length: ${task.byteLength}`));
     assert.doesNotMatch(leg.prompt.text, /review exactly|frobnicator|Task-Bytes:/);
-    assert.match(leg.prompt.text, /Target: B\nBase: A\nDiff: git diff A\.\.\.B\nDiff-SHA256: 1111111111111111111111111111111111111111111111111111111111111111\nCommits:\nC\nB/);
+    assert.match(leg.prompt.text, /Target: B\nBase: A\nDiff: git diff A\.\.\.B\nDiff-SHA256: 1111111111111111111111111111111111111111111111111111111111111111\n<review_scope>full<\/review_scope>\nCommits:\nC\nB/);
   }
   assert.deepEqual(dispatch.input.task, { text: task.toString("utf8"), utf8Length: task.byteLength, sha256: digest });
   const second = harness();

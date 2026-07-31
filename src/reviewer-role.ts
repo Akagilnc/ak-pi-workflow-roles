@@ -77,6 +77,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
   let originalRequest: string | undefined;
   let expansionCaptured = false;
   let registered = false;
+  let reviewScopeKeys: readonly string[] | undefined;
   const ledger = createReviewerExecutionLedger();
   const pendingTransport = new Map<string, string>();
   const admittedToolCalls = new Set<string>();
@@ -94,10 +95,23 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
 
   pi.registerFlag("ak-review-task", { description: "Opaque Markdown review task assigned to the reviewer role", type: "string" });
   pi.registerFlag("ak-review-capabilities", { description: "Closed Reviewer capability grant bound to the exact task bytes", type: "string" });
+  pi.registerFlag("ak-review-scope-keys", { description: "Optional comma-separated exact class keys limiting Reviewer scope", type: "string" });
 
   return { async activate(ctx) {
     soul = (await dependencies.loadSoul()).trim();
     if (!soul) throw new Error("Reviewer soul is empty");
+    const rawScopeKeys = pi.getFlag("ak-review-scope-keys");
+    reviewScopeKeys = undefined;
+    if (rawScopeKeys !== undefined) {
+      if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
+        throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
+      }
+      const parsed = rawScopeKeys.split(",");
+      if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
+        throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
+      }
+      reviewScopeKeys = parsed;
+    }
     const taskPath = pi.getFlag("ak-review-task");
     const capabilityPath = pi.getFlag("ak-review-capabilities");
     if (typeof taskPath !== "string" || !taskPath.trim()) throw new Error("Reviewer role requires --ak-review-task");
@@ -138,6 +152,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       capabilities,
       reader,
       hostTools: dependencies.hostTools(),
+      ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
       decisionEvidence(decision) {
         try {
           if (decision.disposition === "accepted") {

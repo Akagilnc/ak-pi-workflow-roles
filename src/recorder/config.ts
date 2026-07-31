@@ -1,9 +1,8 @@
 import { accessSync, constants, readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, normalize } from "node:path";
 
-import { RecorderError } from "./errors.ts";
+import { RecorderError, safeDiagnostic } from "./errors.ts";
 import {
-  assertNotReservedArtifactId,
   assertPathNotSymlinkEscape,
   normalizeRepoRelativePath,
   requireAbsoluteExistingDirectory,
@@ -14,7 +13,6 @@ import { scanString } from "./scanner.ts";
 
 export type GitReferenceKind = "authority" | "task" | "input" | "exhibit";
 export type ExternalInputKind = "authority" | "task" | "input";
-
 export type GitReferenceDeclaration = {
   id: string;
   repositoryRoot: string;
@@ -24,27 +22,21 @@ export type GitReferenceDeclaration = {
   sha256: string;
   kind: GitReferenceKind;
 };
-
 export type ExternalInputDeclaration = {
   id: string;
   sourcePath: string;
   sha256: string;
   kind: ExternalInputKind;
 };
-
 export type ExhibitDeclaration = {
   id: string;
   sourcePath: string;
   sha256: string;
 };
-
 export type RecorderConfig = {
-  version: 1;
-  archive: {
-    repositoryRoot: string;
-    root: string;
-    docketId: string;
-  };
+  version: 2;
+  archive: { repositoryRoot: string; root: string; docketId: string };
+  session: { directory: string; id: string };
   execution: {
     cwd: string;
     environment: {
@@ -65,506 +57,470 @@ export type RecorderConfig = {
     target: string | null;
   };
 };
+export type ParsedCli = { configPath: string; childArgv: string[] };
+type Location = Array<string | number>;
 
-export type ParsedCli = {
-  configPath: string;
-  childArgv: string[];
-};
-
-const FULL_SHA_RE = /^[0-9a-f]{40}$/i;
-const SHA256_RE = /^[0-9a-f]{64}$/i;
-const BLOB_OID_RE = /^[0-9a-f]{40}$/i;
-const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
+const FULL_SHA_RE = /^[0-9a-f]{40}$/i,
+  SHA256_RE = /^[0-9a-f]{64}$/i,
+  ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const RESERVED_IDS = new Set([
+  "receipt",
+  "audit-observation",
+  "manifest",
+  "redaction-report",
+]);
+const RESERVED_PATHS = new Set([
+  "receipt.json",
+  "audit-observation.json",
+  "manifest.json",
+  "redaction-report.json",
+]);
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-function hasExactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const keys = Object.keys(value);
+function exact(record: Record<string, unknown>, keys: readonly string[]) {
+  const actual = Object.keys(record);
   return (
-    keys.length === expected.length &&
-    expected.every((key) => Object.hasOwn(value, key))
+    actual.length === keys.length &&
+    keys.every((key) => Object.hasOwn(record, key))
   );
 }
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new RecorderError("invalid-config", `${label} must be a non-empty string`);
-  }
+function invalid(message: string, location: Location): never {
+  throw new RecorderError("invalid-config", message, { location });
+}
+function stringAt(value: unknown, location: Location): string {
+  if (typeof value !== "string" || value.length === 0)
+    invalid("value must be a non-empty string", location);
   return value;
 }
-
-function requireStringOrNull(value: unknown, label: string): string | null {
+function nullableStringAt(value: unknown, location: Location): string | null {
   if (value === null) return null;
-  if (typeof value !== "string") {
-    throw new RecorderError(
-      "invalid-config",
-      `${label} must be a string or null`,
-    );
-  }
+  if (typeof value !== "string")
+    invalid("value must be a string or null", location);
   return value;
 }
-
-/**
- * Structural metadata (archive identity, declaration ids) becomes path segments
- * and report locations. Redaction would damage identity, so a scanner hit fails
- * closed before path construction or later diagnostics can observe the raw value.
- */
-function requireCredentialFreeMetadata(value: string, label: string): string {
-  const scanned = scanString(value, label);
-  if (scanned.report.redacted || scanned.value !== value) {
-    throw new RecorderError(
-      "invalid-config",
-      `${label} must not be credential-shaped`,
-    );
+function relativeAt(value: unknown, location: Location): string {
+  const text = stringAt(value, location);
+  try {
+    return normalizeRepoRelativePath(text, "config path");
+  } catch (error) {
+    if (error instanceof RecorderError && error.code === "invalid-path")
+      throw new RecorderError("invalid-config", "config path is invalid", {
+        cause: error,
+        location,
+      });
+    throw error;
   }
+}
+function closed(
+  value: unknown,
+  keys: readonly string[],
+  location: Location,
+  label: string,
+): Record<string, unknown> {
+  if (!isRecord(value) || !exact(value, keys))
+    invalid(`${label} shape is invalid`, location);
   return value;
 }
+function idAt(value: unknown, location: Location): string {
+  const id = stringAt(value, location);
+  if (!ID_RE.test(id)) invalid("declaration id is unlawful", location);
+  return id;
+}
+function shaAt(
+  value: unknown,
+  pattern: RegExp,
+  location: Location,
+  label: string,
+): string {
+  const s = stringAt(value, location);
+  if (!pattern.test(s)) invalid(`${label} is invalid`, location);
+  return s.toLowerCase();
+}
+function absoluteAt(value: unknown, location: Location): string {
+  const s = stringAt(value, location);
+  if (!isAbsolute(s)) invalid("path must be absolute", location);
+  return s;
+}
 
-function parseGitReference(raw: unknown, index: number): GitReferenceDeclaration {
-  if (!isRecord(raw) || !hasExactKeys(raw, [
-    "id",
-    "repositoryRoot",
-    "commit",
-    "path",
-    "blobOid",
-    "sha256",
-    "kind",
-  ])) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.gitReferences[${index}] has invalid shape`,
-    );
-  }
-  const id = requireCredentialFreeMetadata(
-    requireString(raw.id, `declarations.gitReferences[${index}].id`),
-    `declarations.gitReferences[${index}].id`,
+function parseGit(value: unknown, index: number): GitReferenceDeclaration {
+  const location: [string, string, number] = ["declarations", "gitReferences", index];
+  const record = closed(
+    value,
+    ["id", "repositoryRoot", "commit", "path", "blobOid", "sha256", "kind"],
+    location,
+    "git reference",
   );
-  if (!ID_RE.test(id)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.gitReferences[${index}].id is unlawful`,
-    );
-  }
-  const kind = raw.kind;
-  if (
-    kind !== "authority" && kind !== "task" && kind !== "input" &&
-    kind !== "exhibit"
-  ) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.gitReferences[${index}].kind is invalid`,
-    );
-  }
-  const commit = requireString(
-    raw.commit,
-    `declarations.gitReferences[${index}].commit`,
-  );
-  if (!FULL_SHA_RE.test(commit)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.gitReferences[${index}].commit must be a full SHA`,
-    );
-  }
-  const blobOid = requireString(
-    raw.blobOid,
-    `declarations.gitReferences[${index}].blobOid`,
-  );
-  if (!BLOB_OID_RE.test(blobOid)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.gitReferences[${index}].blobOid must be a full Git object id`,
-    );
-  }
-  const sha256 = requireString(
-    raw.sha256,
-    `declarations.gitReferences[${index}].sha256`,
-  );
-  if (!SHA256_RE.test(sha256)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.gitReferences[${index}].sha256 must be sha256 hex`,
-    );
-  }
+  const kind = record.kind;
+  if (kind !== "authority" && kind !== "task" && kind !== "input" && kind !== "exhibit")
+    invalid("git reference kind is invalid", [...location, "kind"]);
   return {
-    id,
-    repositoryRoot: requireString(
-      raw.repositoryRoot,
-      `declarations.gitReferences[${index}].repositoryRoot`,
-    ),
-    commit: commit.toLowerCase(),
-    path: normalizeRepoRelativePath(
-      requireString(raw.path, `declarations.gitReferences[${index}].path`),
-      `declarations.gitReferences[${index}].path`,
-    ),
-    blobOid: blobOid.toLowerCase(),
-    sha256: sha256.toLowerCase(),
-    kind,
+    id: idAt(record.id, [...location, "id"]),
+    repositoryRoot: absoluteAt(record.repositoryRoot, [...location, "repositoryRoot"]),
+    commit: shaAt(record.commit, FULL_SHA_RE, [...location, "commit"], "commit"),
+    path: relativeAt(record.path, [...location, "path"]),
+    blobOid: shaAt(record.blobOid, FULL_SHA_RE, [...location, "blobOid"], "blob oid"),
+    sha256: shaAt(record.sha256, SHA256_RE, [...location, "sha256"], "sha256"),
+    kind: kind,
+  };
+}
+function parseExternal(value: unknown, index: number): ExternalInputDeclaration {
+  const location: [string, string, number] = ["declarations", "externalInputs", index];
+  const record = closed(
+    value,
+    ["id", "sourcePath", "sha256", "kind"],
+    location,
+    "external input",
+  );
+  const kind = record.kind;
+  if (kind !== "authority" && kind !== "task" && kind !== "input")
+    invalid("external input kind is invalid", [...location, "kind"]);
+  return {
+    id: idAt(record.id, [...location, "id"]),
+    sourcePath: absoluteAt(record.sourcePath, [...location, "sourcePath"]),
+    sha256: shaAt(record.sha256, SHA256_RE, [...location, "sha256"], "sha256"),
+    kind: kind,
+  };
+}
+function parseExhibit(value: unknown, index: number): ExhibitDeclaration {
+  const location: [string, string, number] = ["declarations", "exhibits", index];
+  const record = closed(value, ["id", "sourcePath", "sha256"], location, "exhibit");
+  return {
+    id: idAt(record.id, [...location, "id"]),
+    sourcePath: absoluteAt(record.sourcePath, [...location, "sourcePath"]),
+    sha256: shaAt(record.sha256, SHA256_RE, [...location, "sha256"], "sha256"),
   };
 }
 
-function parseExternalInput(
-  raw: unknown,
-  index: number,
-): ExternalInputDeclaration {
-  if (!isRecord(raw) || !hasExactKeys(raw, ["id", "sourcePath", "sha256", "kind"])) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.externalInputs[${index}] has invalid shape`,
-    );
-  }
-  const id = requireCredentialFreeMetadata(
-    requireString(raw.id, `declarations.externalInputs[${index}].id`),
-    `declarations.externalInputs[${index}].id`,
-  );
-  if (!ID_RE.test(id)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.externalInputs[${index}].id is unlawful`,
-    );
-  }
-  const kind = raw.kind;
-  if (kind !== "authority" && kind !== "task" && kind !== "input") {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.externalInputs[${index}].kind is invalid`,
-    );
-  }
-  const sourcePath = requireString(
-    raw.sourcePath,
-    `declarations.externalInputs[${index}].sourcePath`,
-  );
-  if (!isAbsolute(sourcePath)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.externalInputs[${index}].sourcePath must be absolute`,
-    );
-  }
-  const sha256 = requireString(
-    raw.sha256,
-    `declarations.externalInputs[${index}].sha256`,
-  );
-  if (!SHA256_RE.test(sha256)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.externalInputs[${index}].sha256 must be sha256 hex`,
-    );
-  }
-  return { id, sourcePath, sha256: sha256.toLowerCase(), kind };
-}
-
-function parseExhibit(raw: unknown, index: number): ExhibitDeclaration {
-  if (!isRecord(raw) || !hasExactKeys(raw, ["id", "sourcePath", "sha256"])) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.exhibits[${index}] has invalid shape`,
-    );
-  }
-  const id = requireCredentialFreeMetadata(
-    requireString(raw.id, `declarations.exhibits[${index}].id`),
-    `declarations.exhibits[${index}].id`,
-  );
-  if (!ID_RE.test(id)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.exhibits[${index}].id is unlawful`,
-    );
-  }
-  const sourcePath = requireString(
-    raw.sourcePath,
-    `declarations.exhibits[${index}].sourcePath`,
-  );
-  if (!isAbsolute(sourcePath)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.exhibits[${index}].sourcePath must be absolute`,
-    );
-  }
-  const sha256 = requireString(
-    raw.sha256,
-    `declarations.exhibits[${index}].sha256`,
-  );
-  if (!SHA256_RE.test(sha256)) {
-    throw new RecorderError(
-      "invalid-config",
-      `declarations.exhibits[${index}].sha256 must be sha256 hex`,
-    );
-  }
-  return { id, sourcePath, sha256: sha256.toLowerCase() };
-}
-
 export function parseRecorderArgv(argv: string[]): ParsedCli {
-  // argv is process.argv.slice(2)
-  if (argv.length < 3) {
-    throw new RecorderError(
-      "invalid-argv",
-      "usage: ak-docket-record --config <json-path> -- <command> [args...]",
-    );
-  }
-  if (argv[0] !== "--config") {
-    throw new RecorderError(
-      "invalid-argv",
-      "Recorder accepts only --config before --",
-    );
-  }
+  if (argv.length < 3) throw new RecorderError("invalid-argv");
+  if (argv[0] !== "--config") throw new RecorderError("invalid-argv");
   const configPath = argv[1];
-  if (typeof configPath !== "string" || configPath.length === 0) {
-    throw new RecorderError("invalid-argv", "--config requires a path");
-  }
-  if (argv[2] !== "--") {
-    throw new RecorderError(
-      "invalid-argv",
-      "Recorder requires -- before the child command",
-    );
-  }
+  if (typeof configPath !== "string" || !configPath)
+    throw new RecorderError("invalid-argv");
+  if (argv[2] !== "--") throw new RecorderError("invalid-argv");
   const childArgv = argv.slice(3);
-  if (childArgv.length === 0) {
-    throw new RecorderError(
-      "invalid-argv",
-      "child argv must not be empty",
-    );
-  }
-  // Reject any additional Recorder options before --
-  for (let i = 0; i < 2; i++) {
-    const token = argv[i]!;
-    if (i === 0) continue;
-    if (token.startsWith("-") && token !== "--config") {
-      throw new RecorderError("invalid-argv", `unknown Recorder option: ${token}`);
-    }
-  }
+  if (!childArgv.length) throw new RecorderError("invalid-argv");
+  const forbidden = new Set(["--mode","--json","--rpc","--session-dir","--session-id","--session","--fork","--continue","-c","--resume","-r","--no-session"]);
+  let prints = 0;
+  for (let i=1;i<childArgv.length;i++) { const arg=childArgv[i]!; const key=arg.split("=",1)[0]!; if (forbidden.has(key)) throw new RecorderError("invalid-argv"); if(arg==="-p"||arg==="--print"||arg.startsWith("--print=")) prints++; }
+  if (prints!==1) throw new RecorderError("invalid-argv");
   return { configPath, childArgv };
 }
 
-export function loadRecorderConfig(configPath: string): RecorderConfig {
-  let text: string;
+export function readRecorderConfig(configPath: string): string {
   try {
     accessSync(configPath, constants.R_OK);
-    text = readFileSync(configPath, "utf8");
-  } catch {
-    throw new RecorderError("invalid-config", "config JSON is unreadable");
+    return readFileSync(configPath, "utf8");
+  } catch (error) {
+    const code = isRecord(error) ? error.code : null;
+    if (
+      code === "ENOENT" ||
+      code === "EACCES" ||
+      code === "EPERM" ||
+      code === "EISDIR"
+    )
+      throw new RecorderError("invalid-path", "config path is unreadable", {
+        cause: error,
+        location: null,
+        diagnostic: safeDiagnostic("config-read", error),
+      });
+    throw error;
   }
+}
+
+export function parseRecorderConfigStructure(text: string): RecorderConfig {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new RecorderError("invalid-config", "config JSON is malformed");
+    invalid("config JSON is malformed", []);
   }
-  if (!isRecord(raw) || !hasExactKeys(raw, [
-    "version",
+  const root = closed(
+    raw,
+    ["version", "archive", "session", "execution", "declarations", "provenance"],
+    [],
+    "config",
+  );
+  if (root.version !== 2) invalid("config.version must be 2", ["version"]);
+  const archive = closed(
+    root.archive,
+    ["repositoryRoot", "root", "docketId"],
+    ["archive"],
     "archive",
+  );
+  const session = closed(root.session, ["directory", "id"], ["session"], "session");
+  const execution = closed(
+    root.execution,
+    ["cwd", "environment", "stdin"],
+    ["execution"],
     "execution",
-    "declarations",
-    "provenance",
-  ])) {
-    throw new RecorderError(
-      "invalid-config",
-      "config must be a closed version-1 object",
-    );
-  }
-  if (raw.version !== 1) {
-    throw new RecorderError("invalid-config", "config.version must be 1");
-  }
-  if (!isRecord(raw.archive) || !hasExactKeys(raw.archive, [
-    "repositoryRoot",
-    "root",
-    "docketId",
-  ])) {
-    throw new RecorderError("invalid-config", "archive shape is invalid");
-  }
-  if (!isRecord(raw.execution) || !hasExactKeys(raw.execution, [
-    "cwd",
-    "environment",
-    "stdin",
-  ])) {
-    throw new RecorderError("invalid-config", "execution shape is invalid");
-  }
-  if (!isRecord(raw.execution.environment) || !hasExactKeys(
-    raw.execution.environment,
+  );
+  const environment = closed(
+    execution.environment,
     ["inherit", "overrides", "unset"],
-  )) {
-    throw new RecorderError("invalid-config", "execution.environment shape is invalid");
-  }
-  if (!isRecord(raw.declarations) || !hasExactKeys(raw.declarations, [
-    "gitReferences",
-    "externalInputs",
-    "exhibits",
-  ])) {
-    throw new RecorderError("invalid-config", "declarations shape is invalid");
-  }
-  if (!isRecord(raw.provenance) || !hasExactKeys(raw.provenance, [
-    "package",
-    "model",
-    "target",
-  ])) {
-    throw new RecorderError("invalid-config", "provenance shape is invalid");
-  }
-  if (raw.execution.stdin !== "inherit") {
-    throw new RecorderError("invalid-config", "execution.stdin must be inherit");
-  }
-  if (typeof raw.execution.environment.inherit !== "boolean") {
-    throw new RecorderError(
-      "invalid-config",
-      "execution.environment.inherit must be boolean",
-    );
-  }
-  if (!isRecord(raw.execution.environment.overrides)) {
-    throw new RecorderError(
-      "invalid-config",
-      "execution.environment.overrides must be an object",
-    );
-  }
+    ["execution", "environment"],
+    "environment",
+  );
+  const declarations = closed(
+    root.declarations,
+    ["gitReferences", "externalInputs", "exhibits"],
+    ["declarations"],
+    "declarations",
+  );
+  const provenance = closed(
+    root.provenance,
+    ["package", "model", "target"],
+    ["provenance"],
+    "provenance",
+  );
+  if (execution.stdin !== "inherit")
+    invalid("execution.stdin must be inherit", ["execution", "stdin"]);
+  if (typeof environment.inherit !== "boolean")
+    invalid("environment.inherit must be boolean", [
+      "execution",
+      "environment",
+      "inherit",
+    ]);
+  if (!isRecord(environment.overrides))
+    invalid("environment.overrides must be an object", [
+      "execution",
+      "environment",
+      "overrides",
+    ]);
   const overrides: Record<string, string> = {};
-  for (const [key, value] of Object.entries(raw.execution.environment.overrides)) {
-    if (typeof value !== "string") {
-      throw new RecorderError(
-        "invalid-config",
-        "execution.environment.overrides values must be strings",
-      );
-    }
+  for (const [key, value] of Object.entries(environment.overrides)) {
+    if (key === "PI_SESSION_DIR") invalid("PI_SESSION_DIR override is forbidden", ["execution","environment","overrides"]);
+    // v1 environment name: nonempty, no NUL, no '=' (name/value boundary).
+    // Reject at the container path — never expose the attacker-controlled key.
+    if (key.length === 0 || key.includes("\0") || key.includes("="))
+      invalid("environment override name is unlawful", [
+        "execution",
+        "environment",
+        "overrides",
+      ]);
+    if (typeof value !== "string")
+      invalid("override values must be strings", [
+        "execution",
+        "environment",
+        "overrides",
+      ]);
+    // Values must not contain NUL (Node rejects NUL at spawn).
+    if (value.includes("\0"))
+      invalid("environment override value contains NUL", [
+        "execution",
+        "environment",
+        "overrides",
+      ]);
     overrides[key] = value;
   }
-  if (!Array.isArray(raw.execution.environment.unset)) {
-    throw new RecorderError(
-      "invalid-config",
-      "execution.environment.unset must be an array",
-    );
-  }
+  if (!Array.isArray(environment.unset))
+    invalid("environment.unset must be an array", [
+      "execution",
+      "environment",
+      "unset",
+    ]);
   const unset: string[] = [];
-  const unsetSeen = new Set<string>();
-  for (const name of raw.execution.environment.unset) {
-    if (typeof name !== "string" || name.length === 0) {
-      throw new RecorderError(
-        "invalid-config",
-        "execution.environment.unset entries must be non-empty strings",
-      );
-    }
-    if (unsetSeen.has(name)) {
-      throw new RecorderError(
-        "invalid-config",
-        "execution.environment.unset must not contain duplicates",
-      );
-    }
-    unsetSeen.add(name);
-    unset.push(name);
+  const seenUnset = new Set<string>();
+  for (const [index, value] of environment.unset.entries()) {
+    if (typeof value !== "string" || !value)
+      invalid("unset entry must be a non-empty string", [
+        "execution",
+        "environment",
+        "unset",
+        index,
+      ]);
+    // Same name lexical rules as overrides.
+    if (value.includes("\0") || value.includes("="))
+      invalid("environment unset name is unlawful", [
+        "execution",
+        "environment",
+        "unset",
+        index,
+      ]);
+    if (seenUnset.has(value))
+      invalid("unset entry is duplicated", [
+        "execution",
+        "environment",
+        "unset",
+        index,
+      ]);
+    if (Object.hasOwn(overrides, value))
+      invalid("unset conflicts with overrides", [
+        "execution",
+        "environment",
+        "unset",
+        index,
+      ]);
+    seenUnset.add(value);
+    unset.push(value);
   }
-  for (const name of unset) {
-    if (Object.hasOwn(overrides, name)) {
-      throw new RecorderError(
-        "invalid-config",
-        "execution.environment unset/overrides must not overlap",
-      );
-    }
-  }
-  if (!Array.isArray(raw.declarations.gitReferences) ||
-    !Array.isArray(raw.declarations.externalInputs) ||
-    !Array.isArray(raw.declarations.exhibits)) {
-    throw new RecorderError(
-      "invalid-config",
-      "declaration collections must be arrays",
-    );
-  }
-
-  const repositoryRoot = requireCredentialFreeMetadata(
-    requireCanonicalGitWorktree(
-      requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"),
-      "archive.repositoryRoot",
+  for (const key of ["gitReferences", "externalInputs", "exhibits"] as const)
+    if (!Array.isArray(declarations[key]))
+      invalid("declaration collection must be an array", ["declarations", key]);
+  const gitReferences = (declarations.gitReferences as unknown[]).map(parseGit),
+    externalInputs = (declarations.externalInputs as unknown[]).map(
+      parseExternal,
     ),
-    "archive.repositoryRoot",
-  );
-
-  const root = requireCredentialFreeMetadata(
-    normalizeRepoRelativePath(
-      requireString(raw.archive.root, "archive.root"),
-      "archive.root",
-    ),
-    "archive.root",
-  );
-  const docketId = requireCredentialFreeMetadata(
-    normalizeRepoRelativePath(
-      requireString(raw.archive.docketId, "archive.docketId"),
-      "archive.docketId",
-    ),
-    "archive.docketId",
-  );
-  const destination = resolveInsideRoot(
-    repositoryRoot,
-    `${root}/${docketId}`,
-    "archive destination",
-  );
-  assertPathNotSymlinkEscape(destination, repositoryRoot, "archive destination");
-
-  const cwd = requireAbsoluteExistingDirectory(
-    requireString(raw.execution.cwd, "execution.cwd"),
-    "execution.cwd",
-  );
-
-  const gitReferences = raw.declarations.gitReferences.map(parseGitReference);
-  const externalInputs = raw.declarations.externalInputs.map(parseExternalInput);
-  const exhibits = raw.declarations.exhibits.map(parseExhibit);
-
+    exhibits = (declarations.exhibits as unknown[]).map(parseExhibit);
+  const repositoryRoot = absoluteAt(archive.repositoryRoot, [
+      "archive",
+      "repositoryRoot",
+    ]),
+    archiveRoot = relativeAt(archive.root, ["archive", "root"]),
+    docketId = relativeAt(archive.docketId, ["archive", "docketId"]),
+    cwd = absoluteAt(execution.cwd, ["execution", "cwd"]);
+  const sessionDirectory = relativeAt(session.directory, ["session","directory"]);
+  const sessionId = stringAt(session.id,["session","id"]);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId)) invalid("session.id must be canonical UUIDv7",["session","id"]);
+  const indexed = [
+    ...gitReferences.map((item, index) => ({
+      item,
+      loc: ["declarations", "gitReferences", index, "id"] as Location,
+    })),
+    ...externalInputs.map((item, index) => ({
+      item,
+      loc: ["declarations", "externalInputs", index, "id"] as Location,
+    })),
+    ...exhibits.map((item, index) => ({
+      item,
+      loc: ["declarations", "exhibits", index, "id"] as Location,
+    })),
+  ];
   const ids = new Set<string>();
-  for (const item of [...gitReferences, ...externalInputs, ...exhibits]) {
-    assertNotReservedArtifactId(item.id, `declaration ${item.id}`);
-    if (ids.has(item.id)) {
-      throw new RecorderError(
-        "invalid-config",
-        `declaration id is duplicated: ${item.id}`,
-      );
-    }
+  for (const { item, loc } of indexed) {
+    if (RESERVED_IDS.has(item.id))
+      invalid("declaration uses a reserved generated id", loc);
+    if (ids.has(item.id)) invalid("declaration id is duplicated", loc);
     ids.add(item.id);
   }
-
-  // Reject generated-as-future reference claims: git references must not use reserved generated ids
-  // (already checked). Also reject commit-shaped placeholders that are all zeros as unresolvable later.
-
-  const hasAuthority =
-    gitReferences.some((item) => item.kind === "authority") ||
-    externalInputs.some((item) => item.kind === "authority");
-  const hasTask =
-    gitReferences.some((item) => item.kind === "task") ||
-    externalInputs.some((item) => item.kind === "task");
-  if (!hasAuthority || !hasTask) {
-    throw new RecorderError(
-      "admission-failed",
-      "declarations must include at least one authority and one task",
-    );
+  const identities = new Set<string>();
+  for (const [index, ref] of gitReferences.entries()) {
+    if (
+      [...RESERVED_PATHS].some(
+        (reservedPath) =>
+          ref.path === reservedPath || ref.path.startsWith(`${reservedPath}/`),
+      )
+    )
+      invalid("git reference uses a reserved generated path", [
+        "declarations",
+        "gitReferences",
+        index,
+        "path",
+      ]);
+    const key = [
+      normalize(ref.repositoryRoot),
+      ref.commit,
+      ref.path,
+      ref.blobOid,
+    ].join("\0");
+    if (identities.has(key))
+      invalid("git reference identity is duplicated", [
+        "declarations",
+        "gitReferences",
+        index,
+      ]);
+    identities.add(key);
   }
-
+  if (
+    ![...gitReferences, ...externalInputs].some((item) => item.kind === "authority")
+  )
+    invalid("authority declaration is required", ["declarations"]);
+  if (![...gitReferences, ...externalInputs].some((item) => item.kind === "task"))
+    invalid("task declaration is required", ["declarations"]);
   return {
-    version: 1,
-    archive: { repositoryRoot, root, docketId },
+    version: 2,
+    archive: { repositoryRoot, root: archiveRoot, docketId },
+    session: { directory: sessionDirectory, id: sessionId },
     execution: {
       cwd,
-      environment: {
-        inherit: raw.execution.environment.inherit,
-        overrides,
-        unset,
-      },
+      environment: { inherit: environment.inherit, overrides, unset },
       stdin: "inherit",
     },
     declarations: { gitReferences, externalInputs, exhibits },
     provenance: {
-      package: requireStringOrNull(raw.provenance.package, "provenance.package"),
-      model: requireStringOrNull(raw.provenance.model, "provenance.model"),
-      target: requireStringOrNull(raw.provenance.target, "provenance.target"),
+      package: nullableStringAt(provenance.package, ["provenance", "package"]),
+      model: nullableStringAt(provenance.model, ["provenance", "model"]),
+      target: nullableStringAt(provenance.target, ["provenance", "target"]),
     },
   };
 }
-
+export function scanRecorderConfigMetadata(
+  config: RecorderConfig,
+): RecorderConfig {
+  const values: [[string, Location], ...[string, Location][]] = [
+    [config.archive.repositoryRoot, ["archive", "repositoryRoot"]],
+    [config.archive.root, ["archive", "root"]],
+    [config.archive.docketId, ["archive", "docketId"]],
+    ...config.declarations.gitReferences.map(
+      (item, index) =>
+        [item.id, ["declarations", "gitReferences", index, "id"]] as [
+          string,
+          Location,
+        ],
+    ),
+    ...config.declarations.externalInputs.map(
+      (item, index) =>
+        [item.id, ["declarations", "externalInputs", index, "id"]] as [
+          string,
+          Location,
+        ],
+    ),
+    ...config.declarations.exhibits.map(
+      (item, index) =>
+        [item.id, ["declarations", "exhibits", index, "id"]] as [string, Location],
+    ),
+  ];
+  for (const [value, location] of values) {
+    const scan = scanString(value, "config metadata");
+    if (scan.report.redacted || scan.value !== value)
+      invalid("metadata must not be credential-shaped", location);
+  }
+  return config;
+}
+export function loadRecorderConfigStructure(path: string): RecorderConfig {
+  return scanRecorderConfigMetadata(
+    parseRecorderConfigStructure(readRecorderConfig(path)),
+  );
+}
+export function validateRecorderConfigState(
+  config: RecorderConfig,
+): RecorderConfig {
+  const repositoryRoot = requireCanonicalGitWorktree(
+    config.archive.repositoryRoot,
+    "archive.repositoryRoot",
+  );
+  const destination = resolveInsideRoot(
+    repositoryRoot,
+    `${config.archive.root}/${config.archive.docketId}`,
+    "archive destination",
+  );
+  assertPathNotSymlinkEscape(
+    destination,
+    repositoryRoot,
+    "archive destination",
+  );
+  const cwd = requireAbsoluteExistingDirectory(config.execution.cwd, "execution.cwd");
+  const workRoot = resolveInsideRoot(repositoryRoot, ".ak/work", "session work root");
+  const sessionDirectory = resolveInsideRoot(repositoryRoot, config.session.directory, "session.directory");
+  if (!sessionDirectory.startsWith(`${workRoot}/`)) invalid("session.directory must be strictly below .ak/work",["session","directory"]);
+  return {
+    ...config,
+    archive: { ...config.archive, repositoryRoot },
+    session: { ...config.session, directory: config.session.directory },
+    execution: { ...config.execution, cwd },
+  };
+}
+export function loadRecorderConfig(path: string): RecorderConfig {
+  return validateRecorderConfigState(loadRecorderConfigStructure(path));
+}
 export function buildChildEnv(
-  parentEnv: NodeJS.ProcessEnv,
+  parentEnvironment: NodeJS.ProcessEnv,
   environment: RecorderConfig["execution"]["environment"],
 ): NodeJS.ProcessEnv {
-  const base: NodeJS.ProcessEnv = environment.inherit ? { ...parentEnv } : {};
-  for (const name of environment.unset) {
-    delete base[name];
-  }
-  for (const [name, value] of Object.entries(environment.overrides)) {
-    base[name] = value;
-  }
-  return base;
+  const result: NodeJS.ProcessEnv = environment.inherit ? { ...parentEnvironment } : {};
+  delete result.PI_SESSION_DIR;
+  for (const name of environment.unset) delete result[name];
+  for (const [name, value] of Object.entries(environment.overrides)) result[name] = value;
+  return result;
 }

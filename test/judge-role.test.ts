@@ -190,6 +190,10 @@ test("stable factory registers all role flags in exact help order and stays iner
       description: "Closed Reviewer capability grant bound to the exact task bytes",
       type: "string",
     }],
+    ["ak-review-scope-keys", {
+      description: "Optional comma-separated exact class keys limiting Reviewer scope",
+      type: "string",
+    }],
     ["ak-collector-repo", {
       description:
         "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",
@@ -491,7 +495,16 @@ test("judge role accepts valid examples of all three verdict shapes", async () =
   });
   const verdicts: JudgeVerdict[] = [
     { judgeStatus: "converged" },
-    { judgeStatus: "continue", fix: { summary: "Repair the parser" } },
+    {
+      judgeStatus: "continue",
+      fix: { summary: "Repair the parser" },
+      classes: [{
+        name: "parser-contract",
+        owner: "parser",
+        boundary: "input parsing",
+        disposition: "repair malformed input handling",
+      }],
+    },
     {
       judgeStatus: "escalate",
       decisionGate: { question: "Which API?", options: ["A", "B"] },

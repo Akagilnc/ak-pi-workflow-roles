@@ -1,0 +1,46 @@
+# Issue #31 direct Coder Apply — class doctrine as role I/O contracts
+
+Implement the current GitHub Issue #31 authority, its owner key-grammar resolution, and the converged Judge receipts. There is no Plan phase. Work test-first where Issue #31 authorizes logic tests; commit forward and submit through `ak_coder_output`.
+
+## Behavior
+
+### Judge contract
+
+Add optional `classes[]` entries `{name, owner, boundary, disposition}` to Judge output. Each string is nonblank. Class `name` follows the owner-ratified shared grammar: comma-free, exact/case-sensitive/no normalization, and unique within the array. Ordering has no semantic force. `continue` requires nonempty `classes`; `converged` and `escalate` forbid it. Preserve required `fix.summary` for `continue`, existing note/decisionGate behavior, exact-object contracts, package-contract validation, audit, dist/package surfaces, and backward behavior outside the intentionally changed `continue` shape.
+
+### Fixer contract
+
+Add optional `classesRepaired[]` entries `{name, searchScope, exceptions:[{where, reason}]}` to Fixer completion output. Names use the same grammar and are unique; strings are nonblank; `classesRepaired` itself is nonempty when present; `exceptions` may be empty. `planned` and `refused` forbid `classesRepaired`; `completed` may carry it. Coder output remains exactly unchanged and cannot carry it. The package does not inspect opaque Markdown to decide contextual presence or cross-input equality: caller mechanically enforces presence/absence and exact order-insensitive set equality against its typed Judge receipt, as Judge recheck O1 ruled. Preserve commitSha/report/status behavior.
+
+### Reviewer scope input
+
+Add optional CLI `--ak-review-scope-keys <comma-separated keys>`. Absence means full review. Presence with empty input, zero parsed keys, a blank/whitespace-only token, a comma-bearing/unrepresentable token, or exact duplicate keys fails during activation before any Reviewer child starts. Preserve exact case and token bytes; do not normalize. Inject the accepted key list deterministically into the parent Reviewer system prompt and into every Standards/Spec child system prompt through the existing construction seam. Keep task opaque, capabilities/tool grants unchanged, model/provider inheritance unchanged, and one sibling-parallel batch unchanged.
+
+### Documentation transition
+
+Remove `docs/class-repair-playbook.md` and its single `CLAUDE.md` pointer in the same change. Add a README usage section explaining how callers compose the three typed contracts without prescribing mandatory ordering or routing. Preserve ADR 0010. ADR 0015, ADR 0016, and the CONTEXT term are already merged into this branch; retain them.
+
+## Owner
+
+- Judge types/schema/validator: `src/judge-role.ts`, `src/package-contracts/judge-output.ts`, generated/package surfaces.
+- Fixer-only output: split/own the worker contract without changing Coder.
+- Reviewer scope argument and prompt construction: Reviewer runtime/agent seams.
+- README owns caller usage explanation only.
+
+## Red
+
+Add only behavior tests authorized by Issue #31/ADR 0016:
+
+1. Judge cross-field state rules and duplicate/illegal class names at the real validator/tool seam.
+2. Fixer-only state rules, uniqueness/grammar, and Coder rejection at the real validator/tool seam.
+3. One deterministic Reviewer scope tracer proving absent=full, present keys reach parent and both real child prompts, and malformed/duplicate input rejects before child start.
+
+Do not add tests that merely snapshot TypeBox formatting. Existing package-contract and lifecycle tests must be updated only where public output shape or package inventory intentionally changes.
+
+## Green
+
+Run focused affected tests, typecheck, full tests, package build/content/lifecycle checks, `npm pack --dry-run`, and `git diff --check`. Regenerate committed dist/package-contract artifacts where this repository requires them. Receipt must state current-head results and exact commit.
+
+## Scope
+
+Do not add Fixer audit or mechanical class-closure truth verification (#12), change Coder/Collector contracts, add enumerators, implement #26, parse opaque packet/task prose, prescribe workflow topology, or retain the transitional playbook. Do not modify Souls. Preserve forward history.

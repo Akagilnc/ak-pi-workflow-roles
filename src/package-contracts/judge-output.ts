@@ -3,9 +3,21 @@
 export const JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
 export const JUDGE_ACCEPTED_TEXT = "Judge verdict accepted";
 
+export type JudgeClass = {
+  name: string;
+  owner: string;
+  boundary: string;
+  disposition: string;
+};
+
 export type JudgeVerdict =
   | { judgeStatus: "converged"; note?: string }
-  | { judgeStatus: "continue"; fix: { summary: string }; note?: string }
+  | {
+    judgeStatus: "continue";
+    fix: { summary: string };
+    classes: JudgeClass[];
+    note?: string;
+  }
   | {
     judgeStatus: "escalate";
     decisionGate: { question: string; options: string[] };
@@ -38,6 +50,26 @@ export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
   const withOptionalNote = (keys: string[]): string[] =>
     verdict.note === undefined ? keys : [...keys, "note"];
   const note = verdict.note === undefined ? {} : { note: verdict.note };
+  const validClasses = (value: unknown): value is JudgeClass[] => {
+    if (!Array.isArray(value) || value.length === 0) return false;
+    const names = new Set<string>();
+    return value.every((entry) => {
+      if (!isRecord(entry) ||
+        !hasExactKeys(entry, ["name", "owner", "boundary", "disposition"])) {
+        return false;
+      }
+      for (const key of ["name", "owner", "boundary", "disposition"] as const) {
+        if (typeof entry[key] !== "string" || entry[key].trim().length === 0) {
+          return false;
+        }
+      }
+      if ((entry.name as string).includes(",") || names.has(entry.name as string)) {
+        return false;
+      }
+      names.add(entry.name as string);
+      return true;
+    });
+  };
 
   if (verdict.judgeStatus === "converged") {
     if (!hasExactKeys(verdict, withOptionalNote(["judgeStatus"]))) {
@@ -47,17 +79,19 @@ export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
   }
   if (verdict.judgeStatus === "continue") {
     if (
-      !hasExactKeys(verdict, withOptionalNote(["judgeStatus", "fix"])) ||
+      !hasExactKeys(verdict, withOptionalNote(["judgeStatus", "fix", "classes"])) ||
       !isRecord(verdict.fix) ||
       !hasExactKeys(verdict.fix, ["summary"]) ||
       typeof verdict.fix.summary !== "string" ||
-      verdict.fix.summary.trim().length === 0
+      verdict.fix.summary.trim().length === 0 ||
+      !validClasses(verdict.classes)
     ) {
-      throw new Error("Judge continue requires only a non-blank fix.summary");
+      throw new Error("Judge continue requires fix.summary and nonempty unique comma-free classes");
     }
     return {
       judgeStatus: "continue",
       fix: { summary: verdict.fix.summary },
+      classes: verdict.classes.map((entry) => ({ ...entry })),
       ...note,
     };
   }
