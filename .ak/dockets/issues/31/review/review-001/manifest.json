@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+    "root": ".ak/dockets",
+    "docketId": "issues/31/review/review-001"
+  },
+  "invocation": {
+    "id": "ff2e532e-4a10-4644-a9ae-1bcf2f061559"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/31/runs/review-001/session",
+      "--name",
+      "issue-31-review-001",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/31/review-001-task.md",
+      "-p",
+      "Review the fixed Issue #31 target in one Standards/Spec sibling batch and submit through ak_reviewer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "1802e7d91d1b7f6235cbbc4a792366b6f91cccff",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "design-recheck",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+        "commit": "1802e7d91d1b7f6235cbbc4a792366b6f91cccff",
+        "path": ".ak/dockets/issues/31/judgment/design-recheck/receipt.json",
+        "blobOid": "02aa54cfb03c22bc5d8280d00752dca418f74ea4",
+        "sha256": "ceb31107c2c0fd270ea2b4d8e7960bdc51815dd53714c4d98fb64d42d184bf70",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "owner-resolution",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+        "commit": "1802e7d91d1b7f6235cbbc4a792366b6f91cccff",
+        "path": ".ak/dockets/issues/31/judgment/owner-resolution/receipt.json",
+        "blobOid": "ec007375a59a68c88382a182e5f4f030f48cbbe8",
+        "sha256": "74a1e4677a45120dd9adec1b7faacf4b65bebe98dfabc2d2315ae4544957c7f9",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-apply",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+        "commit": "1802e7d91d1b7f6235cbbc4a792366b6f91cccff",
+        "path": ".ak/dockets/issues/31/apply/coder-001/receipt.json",
+        "blobOid": "902e652a7ed1b5435993bfad4b628f866b86c0a7",
+        "sha256": "f2918fd88d71eef652b5c563af647a1b6d784c2add338ca716143edf693b09bf",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "issue-31-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-31-authority",
+        "sha256": "ecf80cee48ea2ead295cc4e4f5978e0cac338e5fc7439208201f8a7fa9296179",
+        "byteLength": 8273
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "ad26d76d5c6baf73866bdd6074c6dde2cb599c67a83e2880d3a53086f456283c",
+        "byteLength": 2151
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "7738ba227f694140dc3e9eea7236caf63ac45dd8ba34976be92c0812fb97d8fd",
+        "byteLength": 999
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "a8d3fcde69aa5cc3a036651b4d167bd0fa64de7ec1785c7026f80bb2bfb4812e",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_jYL3QlpJBEhK0EOOBofUR8BA|fc_0ecb74f43ec8de31016a6c99300b848191afd628f1f757cbba",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_jYL3QlpJBEhK0EOOBofUR8BA|fc_0ecb74f43ec8de31016a6c99300b848191afd628f1f757cbba",
+    "auditPassed": true,
+    "usage": {
+      "input": 14960,
+      "output": 309,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 15269
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 15
+      }
+    ]
+  }
+}
