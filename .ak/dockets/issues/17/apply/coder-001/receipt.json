@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_coder_output",
+  "toolCallId": "call_WAvcVGcXNwbo1Gr9exIXCkiG|fc_0dc0bb19fc58defc016a6b657dfc788191a3845a3dafcb743a",
+  "details": {
+    "status": "refused",
+    "report": "Unable to truthfully report the approved construction complete. Commit 021e827 adds a red-before-green atomic dispatch/compiler seam and focused tests (initial RED: missing module; GREEN: 4/4), with exact task-digest capability parsing, closed values, all-leg preflight, correction-before-acceptance, deterministic prompt hashes/lengths, and Standards-only no-spec cardinality. `npm run typecheck` and `npm pack --dry-run` passed; the full suite progressed through 184 passing tests before the 180s harness timeout.\n\nHowever, required replacement is not complete: same-pattern evidence still finds the arbitrary `{description,prompt}` Agent path and lifecycle owners in `src/reviewer-role.ts`, `src/reviewer-agent.ts`, and `src/reviewer-execution-ledger.ts`. Therefore opaque-runner enforcement, append-only projection integration, actual-dispatch equality, mandatory CLI transport, fixture removal, and end-to-end package behavior are not established. Reporting `completed` would contradict the authority and current repository facts.",
+    "commitSha": "021e827f58b63242fbeb54f912158471cf0973ad"
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -1,0 +1,17 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_5XQx9bkFgej8DSzGKSX5KiGP|fc_0ba4b8c28d951b31016a6d0448737c8191862044ecdc12dde2",
+  "details": {
+    "status": "completed",
+    "report": "Committed forward repair 5a5da80. The driver-visible successful Agent result is now exactly `{status:\"accepted\", identity}` with the non-leaking text `Reviewer dispatch accepted`; dispatch construction, grants, prompts, bundle/target evidence, outcomes, and reports remain internal. Replaced rich public-shape assertions in direct and installed-package lifecycle coverage with exact thin-shape checks, while runtime V2 receipt assertions prove accepted legs, prompt identities, outcomes, reports, target identity, and dispatch identity still project from the ledger. Rejection, closure, validation, settlement, failure/refusal, audit, shutdown, and prior construction/workspace ownership seams were unchanged.\n\nVerification passed: 29 focused tests; typecheck; isolated-HOME full suite (326 passed, 5 skipped, 0 failed); installed-tarball package lifecycle and cold-installed Recorder seam; npm pack dry-run/prepack (99 files); git diff check. No tracked generated artifact changed.",
+    "commitSha": "5a5da8061524ecbc9f09de2af99b91463471988a",
+    "classesRepaired": [
+      {
+        "name": "Thin Agent result",
+        "searchScope": "Driver-facing Agent presentation in src/reviewer-role.ts; direct role regression; established-Spec and Standards-only installed-package lifecycle; internal ledger/audit/runtime V2 receipt projections; same-pattern search for public details.dispatch/details.outcomes consumers.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

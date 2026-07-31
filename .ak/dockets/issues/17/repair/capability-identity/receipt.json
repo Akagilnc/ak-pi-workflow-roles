@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_ab3cRPniuZ6uDN6sGcb0gFha|fc_074f8842ea5fcfe4016a6bec0616248191907622b6ad14ce82",
+  "details": {
+    "status": "completed",
+    "report": "R1 — Preserved exact validated capability-document UTF-8 text, byte length, and SHA-256 beside task and canonical Skill identity; leg grants remain projections.\nR2 — Projected and validated that identity through the append-only ledger into auditor input, with fatal mismatch rejection and no child-prompt prose exposure.\nR3 — Added byte-distinct/equal-grant counterexamples, text/length/hash mutation rejection, and installed-tarball acceptance/audit/child-isolation evidence.\nR4 — Exported and used one sameReviewerPromptIdentity helper for compilation and ledger equality while retaining separate validation and existing policy ownership.\nR5 — Passed focused tests, installed package lifecycle, full suite (376 tests), typecheck, prepack, pack dry-run, and diff check; committed forward as ad49f9d.",
+    "commitSha": "ad49f9d"
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -1,0 +1,216 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/judgment/owner-amendment-design-recheck-003"
+  },
+  "invocation": {
+    "id": "0198f1a0-1700-7000-8000-000000000003"
+  },
+  "session": {
+    "id": "0198f1a0-1700-7000-8000-000000000003",
+    "directory": ".ak/work/issues/17/runs/owner-amendment-design-recheck-003/session",
+    "basename": "2026-07-31T18-45-11-629Z_0198f1a0-1700-7000-8000-000000000003.jsonl",
+    "sha256": "3cfb3c51b0a3e4f04a500da385c3a79d0bdcad6246c456850ca10d3c16dc0115",
+    "byteLength": 306993,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles/.ak/work/issues/17/runs/owner-amendment-design-recheck-003/session",
+      "--session-id",
+      "0198f1a0-1700-7000-8000-000000000003",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--name",
+      "issue-17-owner-amendment-design-003",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #17 owner-amendment design recheck\n\nRecheck the converged Issue #17 authority and its settled replacement Plan/addendum against all later owner authority, especially:\n\n- #34 folded into #17: atomic batch lifecycle also revokes leg-spawning after the pair and runtime-attaches the two child reports verbatim, leaving no driver-owned aggregation transport/editorialization.\n- Mechanical review material is runtime-produced/pinned at declared clone-local paths and referenced by path + digest from child prompts; commit lists, smell baseline, and similar deterministic material are not transcribed into prompts.\n- No material/source allowlist exists. Either leg may freely read and cite any clone material. Standards/Spec remain separate questions and separately preserved reports, not separate readable populations. Neither preflight nor compliance audit may reject merely for cross-axis placement/read/citation. Finding authority and survival belong to later Judge four-reason adjudication.\n- Opaque task content receives no taste gate; only mechanically decidable activation/preflight defects may block dispatch.\n\nThe package must remain independent of and must not modify or fork the host's global Matt `code-review` skill. The exact external canonical skill snapshot remains the semantic source for Standards/Spec briefs and baseline extraction. A package-owned typed construction recipe/version owns transport mechanics and may supersede the old skill's prompt-transcription mechanics. Audit must receive both identities and treat recipe/runtime as controlling mechanical assembly while leaving substantive source/finding adjudication to Judge.\n\nAt current construction HEAD, answer:\n\n1. Which clauses of original U2/C4, replacement Plan, and addendum are superseded, retained, or need amendment?\n2. What exact typed seam materializes the common pinned mechanical bundle into each isolated clone before child execution, verifies path/digest, and records it without confusing runtime scratch with reviewed-target facts?\n3. May axis-specific material declarations remain positive relevance hints, or must they become a common material population? In either case prohibit allowlist semantics and cross-axis rejection.\n4. How does the #34 fold-in change the output/aggregation lifecycle while preserving truthful `completed | refused`, exactly-once dispatch, and post-run semantic audit?\n5. Which Review-032 findings are superseded by owner law versus still valid implementation defects? Do not infer implementation completion from tests or later silence.\n6. Does any genuine owner decision remain, or can Judge issue complete amended construction authority directly without another Plan?\n\nPreserve original U1/U3/U4/U5 except where a later owner ruling necessarily changes them; preserve caller-owned composition, no Soul mechanics, exact pinned target identity, structured executable capability, no model preflight, and no global skill dependency. This is design/authority recheck, not code repair or historical finding laundering.\n\nReturn `converged` only if no construction changes remain; otherwise `continue` with stable class-oriented amended construction/repair authority. Escalate only for a genuine owner policy choice. Do not edit code. Submit exactly once through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": [
+        "PI_SESSION_DIR"
+      ]
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "8b56287c4419a28be089646c7e014f729fc23064",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "original-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "8b56287c4419a28be089646c7e014f729fc23064",
+        "path": ".ak/dockets/issues/17/authority/judge-001/receipt.json",
+        "blobOid": "2c5b838b504efa89d1aca255ab8cc3beaeb06694",
+        "sha256": "d20d37fc5766f59f113e96ce40f30a669d0bffbbbe770465f7f0aec61ab40fd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "replacement-plan",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "8b56287c4419a28be089646c7e014f729fc23064",
+        "path": ".ak/dockets/issues/17/plan/coder-002/receipt.json",
+        "blobOid": "5e2cddcb81699c2bf5fc694ff39eeb5c394b1471",
+        "sha256": "151d41b7d687b7f6dd9b2b5a62e9483efd5cd43c8ea2e74a72b5502d2fbe6171",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-addendum",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "8b56287c4419a28be089646c7e014f729fc23064",
+        "path": ".ak/dockets/issues/17/plan/coder-003/receipt.json",
+        "blobOid": "dae4f08ebb4ea80de1614ef0b9a2f3eacf47ca79",
+        "sha256": "30cfd3bbc7c2cd945bdf4b2a9ba3eb4c691e6a971c68eb0dd18b5327378a3bad",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review032",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "8b56287c4419a28be089646c7e014f729fc23064",
+        "path": ".ak/dockets/issues/17/review/review-032/receipt.json",
+        "blobOid": "59d0586bd98fb673582e96ceb21216c65311bf90",
+        "sha256": "313f89942e09fcf363da5847398d9e2c94b59ef35b21a4cf94f6e97cc0f6d863",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review020-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "8b56287c4419a28be089646c7e014f729fc23064",
+        "path": ".ak/dockets/issues/17/judgment/review-020/receipt.json",
+        "blobOid": "9da0d9fc96a9a683b1be7579c6240d4a334ebf0e",
+        "sha256": "a2085fbb3a84204944c7337c97819e13b4bf58a73d09b9e8dc34320d22ca4b81",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "issue-17-current",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-17-current",
+        "sha256": "1397d3ade0a359f5def2f1469736690cc0c79b183136752d1697a18be7b00f09",
+        "byteLength": 14657
+      }
+    },
+    {
+      "id": "folded-issue-34",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/folded-issue-34",
+        "sha256": "22675524f63a88f179a753aeb834a3038c8c155f4a7333e50a19ffb7b3016940",
+        "byteLength": 3595
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "55262f50c52c88e88d2025391f75c225e0549b7b8dd3bcda338e880ca0d511b2",
+        "byteLength": 3302
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "9da5f1fe18639e9cd1df3d42b632efdeae8ab6f086a01558724653ed8ee1c22c",
+        "byteLength": 13161
+      }
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "866ddf1574c8b4091653e93da2f54ef83239e32a73878a4d1c14a0321a656a1e",
+        "byteLength": 286
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_YsXtPuVzPxA3nalz1qkb8K53|fc_0eb345cb94a7b914016a6ceda857f88191955b2b5940775ab6",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_YsXtPuVzPxA3nalz1qkb8K53|fc_0eb345cb94a7b914016a6ceda857f88191955b2b5940775ab6",
+    "auditPassed": true,
+    "usage": {
+      "input": 19588,
+      "output": 1213,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 20801
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

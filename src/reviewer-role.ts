@@ -1,431 +1,242 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
-import type {
-  AnyCanonicalSkillBinding,
-  CanonicalSkillBinding,
-} from "./canonical-skill-binding.ts";
+import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import { exactUtf8 } from "./exact-utf8.ts";
 import {
-  createReviewerExecutionLedger,
-  type ReviewerAgentAttempt,
-  type ReviewerAgentPersistedEvidence,
-  type ReviewerAgentResult,
-  type ReviewerExecutionRecord,
-} from "./reviewer-execution-ledger.ts";
-import {
-  REVIEWER_OUTPUT_TOOL_NAME,
-  validateAcceptedReviewerDetails,
-  type ReviewerOutput,
-} from "./package-contracts/reviewer-output.ts";
-import { reviewerScopePrompt } from "./reviewer-scope-prompt.ts";
-import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
+  createReviewerDispatcher,
+  sha256Hex,
+  parseReviewerCapabilities,
+  REVIEWER_CHILD_TOOLS,
+  REVIEWER_PREREQUISITES,
+  type AcceptedReviewerDispatch,
+  type AcceptedReviewerExecution,
+  type ReviewerCapabilitiesV1,
+  type ReviewerPinnedGitReader,
+  type ReviewerProposalV1,
+} from "./reviewer-dispatch.ts";
+import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
+import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
+import { assembleRuntimeReviewerReceipt, type RuntimeReviewerReceiptV2 } from "./reviewer-settlement.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
-export type { ReviewerOutput };
+export type { ReviewerIntent };
 export const AGENT_TOOL_NAME = "Agent";
 
-const reviewerOutputSchema = Type.Object(
-  {
-    status: StringEnum(["completed", "refused"] as const),
-    report: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
-
-const reviewerAgentSchema = Type.Object(
-  {
-    subagent_type: StringEnum(["general-purpose"] as const),
-    description: Type.String({ minLength: 1 }),
-    prompt: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
-
-type ReviewerOutputParameters = Static<typeof reviewerOutputSchema>;
-export type ReviewerAuditInput = {
-  soul: string;
-  canonicalSkill: string;
-  task: string;
-  record: ReviewerExecutionRecord;
-  candidate: ReviewerOutput;
-};
-
+const requestSchema = Type.Object({
+  tools: Type.Array(StringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
+  bashCommands: Type.Array(Type.String(), { uniqueItems: true }),
+  prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
+}, { additionalProperties: false });
+const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }) }, { additionalProperties: false });
+export const reviewerProposalSchema = Type.Object({
+  version: Type.Literal(1),
+  base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+  materials: Type.Array(materialSchema),
+  relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: false })),
+  spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: false }),
+  required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: false }),
+}, { additionalProperties: false });
+const reviewerOutputSchema = Type.Union([
+  Type.Object({ status: Type.Literal("completed") }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal("refused"), diagnostic: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+]);
+export type ReviewerAuditInput = { soul: string; canonicalSkill: string; task: string; record: ReviewerExecutionRecord; candidate: RuntimeReviewerReceiptV2 };
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
-  loadTask(path: string): Promise<string>;
-  loadCanonicalSkillBinding(
-    name: "code-review",
-  ): Promise<AnyCanonicalSkillBinding>;
-  runAgent(
-    input: { description: string; prompt: string; reviewScopeKeys?: readonly string[] },
-    options: { context: ExtensionContext; signal?: AbortSignal },
-  ): Promise<ReviewerAgentResult>;
-  auditCompliance(
-    input: ReviewerAuditInput,
-    options: { context: ExtensionContext; signal?: AbortSignal },
-  ): Promise<ComplianceDecision>;
+  loadTask(path: string): Promise<Uint8Array>;
+  loadCapabilities(path: string): Promise<Uint8Array>;
+  loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
+  createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
+  hostTools(): readonly string[];
+  runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
+  shutdownAgent?(): Promise<void>;
+  auditCompliance(input: ReviewerAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
+export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext): never };
 
-export type ReviewerRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext): never;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(
-  value: Record<string, unknown>,
-  expected: readonly string[],
-): boolean {
-  const keys = Object.keys(value);
-  return keys.length === expected.length &&
-    expected.every((key) => Object.hasOwn(value, key));
-}
-
-export function validateReviewerOutput(
-  output: ReviewerOutputParameters,
-): ReviewerOutput {
-  return validateAcceptedReviewerDetails(output);
-}
-
-function requireSingletonSubmissionCall(
-  toolCallId: string,
-  ctx: ExtensionContext,
-): void {
+function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void {
   const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
-    throw new Error("Reviewer output must be the sole final tool call");
-  }
+  if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Reviewer output must be the sole final tool call");
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
-  const call = calls[0];
-  if (
-    calls.length !== 1 || call === undefined || call.id !== toolCallId ||
-    call.name !== REVIEWER_OUTPUT_TOOL_NAME
-  ) {
-    throw new Error("Reviewer output must be the sole final tool call");
-  }
+  if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== REVIEWER_OUTPUT_TOOL_NAME) throw new Error("Reviewer output must be the sole final tool call");
 }
 
-function reviewerAgentPersistedEvidence(
-  ctx: ExtensionContext,
-): ReviewerAgentPersistedEvidence {
-  const leaf = ctx.sessionManager.getLeafEntry();
-  if (leaf === undefined) return { kind: "unavailable" };
-  if (leaf.type !== "message" || leaf.message.role !== "assistant") {
-    return { kind: "non-assistant" };
-  }
-  return {
-    kind: "assistant",
-    entryId: leaf.id,
-    calls: leaf.message.content.flatMap((part) =>
-      part.type === "toolCall" && part.name === AGENT_TOOL_NAME
-        ? [{ id: part.id, arguments: part.arguments }]
-        : []
-    ),
-  };
-}
-
-function toolExecutionDiagnostic(result: unknown): string {
-  if (isRecord(result) && Array.isArray(result["content"])) {
-    const text = result["content"]
-      .filter(
-        (part): part is { type: "text"; text: string } =>
-          isRecord(part) && part["type"] === "text" &&
-          typeof part["text"] === "string",
-      )
-      .map((part) => part.text)
-      .join("\n")
-      .trim();
-    if (text.length > 0) return text;
-  }
-  return typeof result === "string" ? result : String(result);
-}
-
-export function createReviewerRoleRuntime(
-  pi: ExtensionAPI,
-  dependencies: ReviewerRoleDependencies,
-  hostActions: ReviewerRoleHostActions,
-): { activate(ctx?: ExtensionContext): Promise<void> } {
+export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: ReviewerRoleDependencies, hostActions: ReviewerRoleHostActions): { activate(ctx?: ExtensionContext): Promise<void> } {
   let soul: string | undefined;
+  let taskBytes: Uint8Array | undefined;
   let task: string | undefined;
+  let capabilities: ReviewerCapabilitiesV1 | undefined;
   let binding: CanonicalSkillBinding<"code-review"> | undefined;
+  let reader: ReviewerPinnedGitReader | undefined;
+  let dispatcher: ReturnType<typeof createReviewerDispatcher> | undefined;
   let originalRequest: string | undefined;
-  let expansionPending = false;
-  let lifecycleRegistered = false;
+  let expansionCaptured = false;
+  let registered = false;
   let reviewScopeKeys: readonly string[] | undefined;
   const ledger = createReviewerExecutionLedger();
+  const pendingTransport = new Map<string, string>();
+  const admittedToolCalls = new Set<string>();
 
-  pi.registerFlag("ak-review-task", {
-    description: "Opaque Markdown review task assigned to the reviewer role",
-    type: "string",
-  });
-  pi.registerFlag("ak-review-scope-keys", {
-    description: "Optional comma-separated exact class keys limiting Reviewer scope",
-    type: "string",
-  });
-
-  return {
-    async activate(ctx) {
-      soul = (await dependencies.loadSoul()).trim();
-      if (soul.length === 0) throw new Error("Reviewer soul is empty");
-      const rawScopeKeys = pi.getFlag("ak-review-scope-keys");
-      reviewScopeKeys = undefined;
-      if (rawScopeKeys !== undefined) {
-        if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
-          throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
-        }
-        const parsed = rawScopeKeys.split(",");
-        if (parsed.length === 0 || parsed.some((key) => key.trim().length === 0) ||
-          new Set(parsed).size !== parsed.length) {
-          throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
-        }
-        reviewScopeKeys = parsed;
-      }
-      const taskPath = pi.getFlag("ak-review-task");
-      if (typeof taskPath !== "string" || taskPath.trim().length === 0) {
-        throw new Error("Reviewer role requires --ak-review-task");
-      }
-      const loadedTask = await dependencies.loadTask(taskPath);
-      if (loadedTask.trim().length === 0) throw new Error("Reviewer task is empty");
-      task = loadedTask;
-      try {
-        const loadedBinding = await dependencies.loadCanonicalSkillBinding(
-          "code-review",
-        );
-        if (loadedBinding.name !== "code-review") {
-          throw new Error(
-            "Canonical Skill binding loader returned tdd for code-review",
-          );
-        }
-        binding = loadedBinding;
-      } catch (error) {
-        if (ctx === undefined) throw error;
-        hostActions.failInfrastructure(error, ctx);
-      }
-
-      if (!lifecycleRegistered) {
-        lifecycleRegistered = true;
-        pi.registerTool({
-          name: AGENT_TOOL_NAME,
-          label: "Agent",
-          description:
-            "Run one general-purpose review leg in an isolated writable clone at the pinned reviewed target.",
-          promptSnippet: "Run an isolated review leg",
-          promptGuidelines: [
-            "Use Agent for the independent review legs required by the expanded canonical code-review Skill.",
-          ],
-          parameters: reviewerAgentSchema,
-          executionMode: "parallel" as const,
-          async execute(toolCallId, parameters, signal, _onUpdate, ctx) {
-            if (task === undefined || binding === undefined) {
-              throw new Error("Reviewer task and canonical Skill were not loaded");
-            }
-            try {
-              ledger.beginAgentCall(
-                toolCallId,
-                parameters,
-                reviewerAgentPersistedEvidence(ctx),
-              );
-            } catch (error) {
-              hostActions.failInfrastructure(error, ctx);
-            }
-            let result: ReviewerAgentResult;
-            let details: ReviewerAgentAttempt;
-            try {
-              result = await dependencies.runAgent(
-                {
-                  description: parameters.description,
-                  prompt: parameters.prompt,
-                  ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
-                },
-                signal === undefined
-                  ? { context: ctx }
-                  : { context: ctx, signal },
-              );
-              details = ledger.completeAgentCall(toolCallId, result);
-            } catch (error) {
-              hostActions.failInfrastructure(
-                ledger.failAgentCall(toolCallId, error),
-                ctx,
-              );
-            }
-            return {
-              content: [{ type: "text" as const, text: result.report }],
-              details,
-              ...(result.usage === undefined ? {} : { usage: result.usage }),
-            };
-          },
-        });
-
-        pi.registerTool({
-          name: REVIEWER_OUTPUT_TOOL_NAME,
-          label: "Reviewer Output",
-          description:
-            "Submit the completed review or an evidence-bearing refusal. Method compliance is audited before acceptance.",
-          promptSnippet: "Submit the final Reviewer receipt",
-          promptGuidelines: [
-            `Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action for the reviewer role.`,
-          ],
-          parameters: reviewerOutputSchema,
-          async execute(toolCallId, parameters, signal, _onUpdate, ctx) {
-            if (soul === undefined || task === undefined || binding === undefined) {
-              throw new Error("Reviewer inputs were not loaded");
-            }
-            requireSingletonSubmissionCall(toolCallId, ctx);
-            const output = validateReviewerOutput(parameters);
-            let record: ReviewerExecutionRecord;
-            try {
-              record = ledger.recordForAudit(output.status);
-            } catch (error) {
-              if (
-                isRecord(error) && error["fatalReviewerInfrastructure"] === true
-              ) {
-                hostActions.failInfrastructure(error, ctx);
-              }
-              throw error;
-            }
-            let audit: ComplianceDecision;
-            try {
-              audit = await dependencies.auditCompliance(
-                {
-                  soul,
-                  canonicalSkill: binding.snapshot.raw,
-                  task,
-                  record,
-                  candidate: output,
-                },
-                signal === undefined
-                  ? { context: ctx }
-                  : { context: ctx, signal },
-              );
-            } catch (error) {
-              hostActions.failInfrastructure(
-                ledger.recordInfrastructureFailure(error),
-                ctx,
-              );
-            }
-            if (audit.status === "revise") {
-              throw new Error(
-                `Reviewer receipt violates its method: ${audit.violations.join("; ")}`,
-              );
-            }
-            return {
-              content: [{ type: "text" as const, text: "Reviewer report accepted" }],
-              details: output,
-              terminate: true as const,
-              ...(audit.usage === undefined ? {} : { usage: audit.usage }),
-            };
-          },
-        });
-
-        pi.on("input", (event) => {
-          if (originalRequest !== undefined) {
-            return { action: "continue" as const };
-          }
-          originalRequest = event.text;
-          expansionPending = true;
-          return {
-            action: "transform" as const,
-            text: binding?.invocation(event.text) ??
-              `/skill:code-review ${event.text}`,
-            ...(event.images === undefined ? {} : { images: event.images }),
-          };
-        });
-
-        pi.on("tool_execution_start", (event, ctx) => {
-          if (event.toolName !== AGENT_TOOL_NAME) return;
-          try {
-            ledger.beginAgentCall(
-              event.toolCallId,
-              event.args,
-              reviewerAgentPersistedEvidence(ctx),
-            );
-          } catch (error) {
-            hostActions.failInfrastructure(error, ctx);
-          }
-        });
-
-        pi.on("tool_execution_end", (event) => {
-          if (event.toolName !== AGENT_TOOL_NAME || !event.isError) return;
-          ledger.rejectAgentCall(
-            event.toolCallId,
-            toolExecutionDiagnostic(event.result),
-          );
-        });
-
-        pi.on("tool_call", (event) => {
-          if (
-            event.toolName === "bash" &&
-            typeof event.input["command"] === "string"
-          ) {
-            ledger.recordBashCall(event.toolCallId, event.input["command"]);
-          }
-        });
-
-        pi.on("tool_result", (event) => {
-          if (event.toolName !== "bash") return;
-          ledger.recordBashResult(
-            event.toolCallId,
-            event.content.filter((part) => part.type === "text")
-              .map((part) => part.text)
-              .join("\n"),
-            event.isError,
-          );
-        });
-
-        pi.on("before_agent_start", (event, ctx) => {
-          if (soul === undefined) throw new Error("Reviewer soul was not loaded");
-          if (expansionPending) {
-            expansionPending = false;
-            try {
-              if (binding === undefined || originalRequest === undefined) {
-                throw new Error(
-                  "Reviewer canonical Skill binding was not initialized",
-                );
-              }
-              const evidence = binding.captureExpansion(
-                event.prompt,
-                originalRequest,
-              );
-              if (evidence === undefined) {
-                throw new Error(
-                  "Reviewer first prompt did not contain the canonical native code-review Skill expansion",
-                );
-              }
-              ledger.recordSkillExpansion(evidence);
-            } catch (error) {
-              hostActions.failInfrastructure(
-                ledger.recordInfrastructureFailure(error),
-                ctx,
-              );
-            }
-          }
-          const scopePrompt = reviewerScopePrompt(reviewScopeKeys);
-          return {
-            systemPrompt:
-              `${event.systemPrompt}\n\n${scopePrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<reviewer_verification_policy>\n${REVIEWER_VERIFICATION_POLICY}\n</reviewer_verification_policy>\n\n<review_task>\n${task ?? ""}\n</review_task>`,
-          };
-        });
-      }
-
-      const registeredTools = new Set(pi.getAllTools().map((tool) => tool.name));
-      pi.setActiveTools(
-        [
-          "read",
-          "grep",
-          "find",
-          "ls",
-          "bash",
-          AGENT_TOOL_NAME,
-          REVIEWER_OUTPUT_TOOL_NAME,
-        ].filter((name) => registeredTools.has(name)),
-      );
-    },
+  const handleTransportTerminal = (event: { toolCallId: string; isError: boolean }) => {
+    const identity = pendingTransport.get(event.toolCallId);
+    pendingTransport.delete(event.toolCallId);
+    const admitted = admittedToolCalls.delete(event.toolCallId);
+    if (identity !== undefined && event.isError && !admitted) {
+      ledger.append(dispatcher?.acceptance === undefined
+        ? { source: "reviewer-transport", type: "transport-rejected", identity, violation: "schema", started: false }
+        : { source: "reviewer-transport", type: "closed-attempt", identity, reason: "transport-after-acceptance", started: false });
+    }
   };
+
+  pi.registerFlag("ak-review-task", { description: "Opaque Markdown review task assigned to the reviewer role", type: "string" });
+  pi.registerFlag("ak-review-capabilities", { description: "Closed Reviewer capability grant bound to the exact task bytes", type: "string" });
+  pi.registerFlag("ak-review-scope-keys", { description: "Optional comma-separated exact class keys limiting Reviewer scope", type: "string" });
+
+  return { async activate(ctx) {
+    soul = (await dependencies.loadSoul()).trim();
+    if (!soul) throw new Error("Reviewer soul is empty");
+    const rawScopeKeys = pi.getFlag("ak-review-scope-keys");
+    reviewScopeKeys = undefined;
+    if (rawScopeKeys !== undefined) {
+      if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
+        throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
+      }
+      const parsed = rawScopeKeys.split(",");
+      if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
+        throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
+      }
+      reviewScopeKeys = parsed;
+    }
+    const taskPath = pi.getFlag("ak-review-task");
+    const capabilityPath = pi.getFlag("ak-review-capabilities");
+    if (typeof taskPath !== "string" || !taskPath.trim()) throw new Error("Reviewer role requires --ak-review-task");
+    if (typeof capabilityPath !== "string" || !capabilityPath.trim()) throw new Error("Reviewer role requires --ak-review-capabilities");
+    taskBytes = Uint8Array.from(await dependencies.loadTask(taskPath));
+    task = exactUtf8(taskBytes, "Reviewer task");
+    if (!task.trim()) throw new Error("Reviewer task is empty");
+    capabilities = parseReviewerCapabilities(await dependencies.loadCapabilities(capabilityPath), taskBytes);
+    if (!capabilities.prerequisiteOperations.includes("preflight.git.pin-target")) {
+      throw new Error("Missing preflight prerequisite: preflight.git.pin-target");
+    }
+    const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
+    if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
+    binding = loaded;
+    reader = await dependencies.createPinnedGitReader();
+
+    let acceptedDispatch: AcceptedReviewerDispatch | undefined;
+    const executeAndProjectDispatch = async (execution: AcceptedReviewerExecution, invocation: unknown): Promise<ReviewerDispatchRunResult> => {
+      const dispatch = acceptedDispatch;
+      if (dispatch === undefined || dispatch.identity !== execution.identity) throw new Error("Reviewer execution lacks accepted construction evidence");
+      const { context, signal } = invocation as { context: ExtensionContext; signal?: AbortSignal };
+      ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: execution.identity, cardinality: execution.legs.length as 1 | 2 });
+      try {
+        const result = await dependencies.runDispatch(execution, { context, ...(signal === undefined ? {} : { signal }) });
+        projectReviewerDispatchOutcome(ledger, dispatch, result);
+        return result;
+      } catch (error) {
+        if (error instanceof ReviewerDispatchExecutionError) {
+          try { projectReviewerDispatchOutcome(ledger, dispatch, error.outcome); }
+          catch (mismatch) { throw ledger.recordInfrastructureFailure(mismatch); }
+          throw error;
+        }
+        throw ledger.recordInfrastructureFailure(error);
+      }
+    };
+    dispatcher = createReviewerDispatcher({
+      task: taskBytes,
+      canonicalSkill: binding.snapshot.raw,
+      capabilities,
+      reader,
+      hostTools: dependencies.hostTools(),
+      ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
+      decisionEvidence(decision) {
+        try {
+          if (decision.disposition === "accepted") {
+            ledger.append(projectAcceptedDispatch(decision.dispatch));
+            acceptedDispatch = decision.dispatch;
+          } else if (decision.disposition === "rejected") ledger.append({ source: "reviewer-dispatch", type: "rejected", identity: decision.identity, violations: decision.violations, started: false });
+          else ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: decision.identity, reason: decision.reason, started: false });
+        } catch (error) {
+          throw ledger.recordInfrastructureFailure(error);
+        }
+      },
+      run: executeAndProjectDispatch,
+    });
+
+    if (!registered) {
+      registered = true;
+      pi.registerTool({ name: AGENT_TOOL_NAME, label: "Reviewer Dispatch", description: "Validate and irreversibly run one atomic Reviewer proposal.", promptSnippet: "Propose the atomic Reviewer dispatch", promptGuidelines: ["Correct rejected proposals; an accepted proposal is irreversible."], parameters: reviewerProposalSchema,
+        async execute(_id, proposal, signal, _update, toolCtx) {
+          admittedToolCalls.add(_id);
+          let result;
+          try { result = await dispatcher!.propose(proposal as ReviewerProposalV1, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
+          catch (error) {
+            if (acceptedDispatch !== undefined) {
+              const available = new Set(pi.getAllTools().map((tool) => tool.name));
+              pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
+              if (error instanceof ReviewerDispatchExecutionError) throw error;
+            }
+            hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx);
+          }
+          if (result.status === "accepted") {
+            const available = new Set(pi.getAllTools().map((tool) => tool.name));
+            pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
+          }
+          const text = result.status === "rejected"
+            ? `Reviewer proposal rejected: ${result.violations.join("; ")}`
+            : result.status === "closed"
+              ? "Reviewer dispatch is already closed"
+              : "Reviewer dispatch accepted";
+          const details = result.status !== "accepted" ? result : {
+            status: result.status, identity: result.dispatch.identity,
+          };
+          return { content: [{ type: "text" as const, text }], details };
+        } });
+      pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`], parameters: reviewerOutputSchema,
+        async execute(id, parameters, signal, _update, toolCtx) {
+          if (!soul || task === undefined || !binding) throw new Error("Reviewer inputs were not loaded");
+          requireSoleReviewerOutputCall(id, toolCtx);
+          const output = validateReviewerIntent(parameters);
+          if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
+          let record: ReviewerExecutionRecord;
+          try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx); throw error; }
+          const candidate = assembleRuntimeReviewerReceipt({
+            intent: output,
+            record,
+            canonicalSkillSnapshotIdentity: binding.snapshot.snapshotIdentity,
+          });
+          let audit: ComplianceDecision;
+          try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
+          catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
+          if (audit.status === "revise") throw new Error(`Reviewer receipt violates its method: ${audit.violations.join("; ")}`);
+          try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
+          return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(audit.usage === undefined ? {} : { usage: audit.usage }) };
+        } });
+      pi.on("tool_execution_start", (event) => {
+        if (event.toolName !== AGENT_TOOL_NAME) return;
+        const encoded = JSON.stringify(event.args) ?? "undefined";
+        pendingTransport.set(event.toolCallId, `transport-${sha256Hex(encoded)}`);
+      });
+      pi.on("tool_execution_end", handleTransportTerminal);
+      pi.on("tool_result", handleTransportTerminal);
+      pi.on("input", (event) => { if (originalRequest !== undefined) return { action: "continue" as const }; originalRequest = event.text; return { action: "transform" as const, text: binding!.invocation(event.text), ...(event.images === undefined ? {} : { images: event.images }) }; });
+      pi.on("before_agent_start", (event, toolCtx) => {
+        if (!expansionCaptured) {
+          if (originalRequest === undefined || binding!.captureExpansion(event.prompt, originalRequest) === undefined) {
+            const error = ledger.recordInfrastructureFailure(new Error("Canonical code-review Skill expansion did not match the captured request"));
+            hostActions.failInfrastructure(error, toolCtx);
+          }
+          expansionCaptured = true;
+        }
+        return { systemPrompt: `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<review_task>\n${task}\n</review_task>` };
+      });
+      pi.on("session_shutdown", async () => { try { await dependencies.shutdownAgent?.(); } catch (error) { throw ledger.recordInfrastructureFailure(error); } });
+    }
+    const available = new Set(pi.getAllTools().map((tool) => tool.name));
+    pi.setActiveTools([AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME].filter((name) => available.has(name)));
+  } };
 }

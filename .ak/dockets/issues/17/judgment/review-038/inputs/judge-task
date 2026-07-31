@@ -1,0 +1,8 @@
+# Issue #17 Review-038 final adjudication
+
+Adjudicate accepted receipt `.ak/dockets/issues/17/review/review-038-final/receipt.json`.
+
+1. Standards flags 76 historical Issue #17 manifests containing `--no-session`. Current Review-038 and all recent invocations use Recorder-owned `--session-dir`/`--session-id`. Determine chronology and evidence law: committed dockets are immutable historical receipts; do not rewrite or launder them. Sustain only if current construction introduced a repairable standards breach rather than faithfully preserving older invocation truth.
+2. Spec finds successful runtime outcomes require `runtimeConstructionEvidence` only dynamically, while TypeScript types in `package-contracts/reviewer-output.ts` and `reviewer-agent.ts` make it optional. Authority says evidence is required for every successful outcome and optional only for failures after/before materialization. Decide discriminated-union type boundaries and affected assembly/validator tests.
+
+No Plan unless a real owner choice remains. Return a direct Fixer class for sustained current defect; dismiss immutable historical evidence as appropriate; or converge. No code edits; submit via `ak_judge_output`.

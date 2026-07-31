@@ -1,0 +1,7 @@
+# Issue #17 Fixer Apply — remove Reviewer compatibility core
+
+Sole authority: `.ak/dockets/issues/17/judgment/review-036/receipt.json`.
+
+Repair exactly `Remove the Reviewer compatibility core` under its full boundary. Delete `ReviewerOutput` and `validateAcceptedReviewerDetails`; migrate source/runtime/registry/re-export consumers to the authoritative intent, runtime receipt, and projection APIs. Remove aliases rather than replacing them. Preserve V2 projection and other terminating tools. Update tracked dist artifacts and prove installed thin completed/refused intents still yield validated enriched receipts while legacy exports are absent.
+
+Do not alter workspace lifecycle. Run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this class.

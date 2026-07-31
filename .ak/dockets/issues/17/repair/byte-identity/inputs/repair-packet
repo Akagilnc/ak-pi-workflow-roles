@@ -1,0 +1,17 @@
+# Issue #17 byte and pin identity repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-009/receipt.json` and converged Plan addendum.
+
+R1 — Preserve exact valid UTF-8 task/material bytes through prompt construction. BOM-bearing bytes must not be silently normalized: decode with fatal UTF-8 and BOM preservation, re-encode and require byte equality, then compile from that exact representation. Reject invalid or non-round-tripping input before acceptance. Add BOM and multibyte counterexamples for task and selected materials.
+
+R2 — Preserve annotated-tag object identity and peeled commit identity in the immutable activation pin. Resolution/range may use the peeled commit, but target snapshot/equality/audit evidence must retain the original tag object OID as well. Ref movement or tag retargeting after pin must not alter either identity. Use a closed explicit ref-entry shape rather than collapsing object to commit.
+
+R3 — Bind execution evidence to the prompt argument actually delivered at the child session call seam. Compute/freeze the identity immediately before `session.prompt(delivered.bytes)`, pass those exact bytes/string, and return the same frozen identity object; do not reconstruct it after execution from `leg.prompt`. Tests must capture the argument and prove receipt identity equality.
+
+R4 — Independently compile each canonical axis prompt twice from the same immutable accepted inputs before acceptance and require byte-for-byte equality (length and SHA as diagnostics, bytes as authority). A mismatch is typed preflight rejection with zero child effect. Keep the second compilation structurally separate enough to catch stateful/nondeterministic compiler behavior.
+
+R5 — Keep `reviewer-dispatch` as the intentional deep owner. If safe, clarify opaque Reviewer test helper names and share the repeated zero-usage fixture; do not split production ownership just for line count.
+
+R6 — Add red/green tests for BOM preservation, invalid UTF-8, annotated-tag object plus peeled commit identity, tag movement, actual delivered prompt evidence, and independent recompilation mismatch. Run package lifecycle, focused tests, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R6.

@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_uGr5I7glMhcbJxIQQuVtDcr4|fc_067cba53ccd880b7016a6bdc55c2008191ac89a18605ea9567",
+  "details": {
+    "status": "completed",
+    "report": "R1=Implemented exact canonical diff inclusion plus optional byte-exact task-ceiling verification commands, with green diff/check/typecheck and red missing/extra/mismatch coverage; R2=Runner identity and complete pinned target now fail fatally before settlement projection while verified runtime evidence is retained; R3=Added wrong-identity, wrong-ref-map, and exact-identity/target counterexamples proving accepted-input substitution cannot conceal mismatch; R4=Kept dispatch/runner ownership, committed forward as 00360dc; focused 36 tests, typecheck, pack dry-run, and diff check pass; full suite reached 368/369 with one unrelated large-binary recorder tee length flake, whose isolated rerun passed.",
+    "commitSha": "00360dc6dd78350abe0e823bc06b8cef89d90b44"
+  },
+  "artifactKind": "acceptedReceipt"
+}

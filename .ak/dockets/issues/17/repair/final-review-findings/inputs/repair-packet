@@ -1,0 +1,17 @@
+# Issue #17 final review findings repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-005/receipt.json` and converged Authority/Plan.
+
+R1 — Restore mandatory native canonical Skill expansion proof in Reviewer. Capture the first transformed prompt with `binding.captureExpansion(event.prompt, originalRequest)` at `before_agent_start`, fail closed when it does not match, and require successful capture before any completed Reviewer receipt. Tests must fail with a no-op/undefined capture and pass only with exact canonical expansion.
+
+R2 — Preflight every package-required runner operation before irreversible acceptance. The dispatch recipe requires `runner.git.materialize-mirror`, `runner.git.materialize-workspace`, and `runner.git.verify-snapshot`; each required accepted leg/dispatch grant and ceiling must authorize them before `run` is invoked. Missing operations produce typed rejection with zero runner effect, not post-acceptance infrastructure failure.
+
+R3 — Close prompt-injection identity fields. Define a conservative closed grammar for `MaterialSelection.id` and repository-relative `repositoryPath` (no controls/newlines, absolute paths, empty/dot/dot-dot segments, backslashes, or delimiter injection). Validate before any interpolation/read. Add newline/Markdown/instruction-shaped ID and path counterexamples.
+
+R4 — Bind base resolution to the activation pin. Symbolic revisions may resolve only through the captured ref map; full 40-hex commits must be verified as commit objects reachable from the pinned target without consulting mutable live ref names. Reject unknown/moved symbolic names. Preserve ancestor/merge-base equality and non-empty three-dot checks.
+
+R5 — Consolidate the repeated prompt byte identity into one dispatch-owned exported immutable type/helper for exact bytes, UTF-8 length, and SHA-256 validation, then use it in dispatch, runner, and ledger without weakening evidence. Do not add a speculative generic identity framework.
+
+R6 — Add red/green tests for no-op expansion capture, pre-acceptance runner prerequisite rejection, injection-shaped material identities/paths, ref movement after pin, full reachable commit resolution, and shared prompt identity. Run focused tests, installed package lifecycle, full suite, typecheck, pack, and diff check. Do not rewrite historical evidence.
+
+Return exactly one nonblank keyed line for R1–R6.

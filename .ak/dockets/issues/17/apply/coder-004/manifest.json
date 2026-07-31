@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/apply/coder-004"
+  },
+  "invocation": {
+    "id": "81b9f195-5ca3-4585-952f-5cef981c1ad1"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/tdd/SKILL.md",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "apply",
+      "--ak-coder-task",
+      ".ak/work/issues/17/coder-apply-task-004.md",
+      "-p",
+      "Implement only the bounded opaque Reviewer runner slice test-first, commit it, and submit through ak_coder_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "3ce8bbb996ffb5a98e316f0d73d7e129183e720c",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "3ce8bbb996ffb5a98e316f0d73d7e129183e720c",
+        "path": ".ak/dockets/issues/17/authority/judge-001/receipt.json",
+        "blobOid": "2c5b838b504efa89d1aca255ab8cc3beaeb06694",
+        "sha256": "d20d37fc5766f59f113e96ce40f30a669d0bffbbbe770465f7f0aec61ab40fd8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "3ce8bbb996ffb5a98e316f0d73d7e129183e720c",
+        "path": ".ak/dockets/issues/17/plan/judge-003/receipt.json",
+        "blobOid": "c86cbee3b97435af2ddee225f2557171507f32f6",
+        "sha256": "67bb854c9564d0f06603cc994208e0a7a4c0579ba81ede39632fefe3efdd3daa",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "prior-apply",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "3ce8bbb996ffb5a98e316f0d73d7e129183e720c",
+        "path": ".ak/dockets/issues/17/apply/coder-003/receipt.json",
+        "blobOid": "bb6bacee111ee067f4dc533f236d786c7923e052",
+        "sha256": "7fed5d1d394c346390c01b865b71c2162f1d5fa789d2ce4ae7dabce496b4e1b7",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/coder-task",
+        "sha256": "31c599e7e7a7c18bdf703dd48c83ef3867c2d48fc00d74934259b22ff2de75bd",
+        "byteLength": 1938
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "c4efd63f1bc8bd693ff481cbc624b1df2a0782d7299e3729f260e51951f52f6e",
+        "byteLength": 2262
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_5VJ9lXbIIJ6TY7u5JxXf7evq|fc_037135642b8059f4016a6b6ba21fdc8191b2b6092c5050cbb3",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 837
+      }
+    ]
+  }
+}

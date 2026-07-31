@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/repair/infrastructure-sha256-nospec"
+  },
+  "invocation": {
+    "id": "c0d59f7e-fec0-46ef-b34e-367dfaed4bc5"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/17/infrastructure-sha256-nospec-repair.md",
+      "-p",
+      "Apply the exact infrastructure/SHA-256/no-spec repair test-first, run package gates, commit, and submit through ak_fixer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "1d52106c0b1f2ff9f2bed89dbba7b72fb4591e76",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review-findings",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "1d52106c0b1f2ff9f2bed89dbba7b72fb4591e76",
+        "path": ".ak/dockets/issues/17/review/review-031/receipt.json",
+        "blobOid": "e650d88274526ae5dee90cd1a3f3e575152dbf35",
+        "sha256": "b24806d2b39cb30c3ba89c2b60739a135c45cf6f68ba4201220549de76fa0f43",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/repair-packet",
+        "sha256": "b3b7f1e4ebf34a871cc2edcfd2312b771cb30ffa562744a9f797691806266b2c",
+        "byteLength": 1999
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "31676403957793d6e540d0eda0ed07308bd14f2b074a7395762c904164776c00",
+        "byteLength": 1420
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_n4hcwo9jjAE1cW3HF8GHnY6g|fc_0b40e38df97f2024016a6c07e035708191b7d99782eb44e30a",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 57
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_VrhshJDSEkmI73XAoBKWHSTL|fc_0d7a881f6b6acc67016a6cfd963e0481919b39c0958a615502",
+  "details": {
+    "status": "completed",
+    "report": "Committed forward repair 0a9cff2. Runtime receipts now project the accepted dispatch identity plus canonical ordered accepted legs and exact prompt identities from record.accepted.legs. Validation enforces exact terminal outcome axes/order, accepted prompt equality, successful-report equality, completed/refused laws, and empty pre-acceptance refusal. Git IDs are closed by object format (40-char sha1/64-char sha256 lowercase hex), with nullable peeledCommitId retained lawfully. The separately authorized axis adapter class was not touched.\n\nVerification passed: focused receipt/native Recorder/auditor tests; typecheck; isolated-HOME full suite (320 pass, 5 skipped); package and cold-install tests within the full suite; Recorder/package build closure; npm pack --dry-run (93 files); git diff --check. Tracked dist/package-contracts/reviewer-output.js was regenerated. Working tree is clean.",
+    "commitSha": "0a9cff2",
+    "classesRepaired": [
+      {
+        "name": "Nullable pinned-ref and Git object-ID contract",
+        "searchScope": "Runtime Reviewer receipt target validation, direct package-contract regressions, native-session Recorder projection, and tracked Recorder build output.",
+        "exceptions": []
+      },
+      {
+        "name": "Authenticated accepted-leg coverage in Runtime Reviewer receipts",
+        "searchScope": "Accepted ledger-to-settlement projection, standalone receipt validation, one/two-leg completed/refused matrices, native-session rejection, and tracked Recorder build output.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

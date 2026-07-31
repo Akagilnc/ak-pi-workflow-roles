@@ -18,8 +18,11 @@ import {
 import {
   REVIEWER_ACCEPTED_TEXT,
   REVIEWER_OUTPUT_TOOL_NAME,
-  validateAcceptedReviewerDetails,
-  type ReviewerOutput,
+  projectReviewerIntentToReceipt,
+  validateReviewerIntent,
+  validateRuntimeReviewerReceipt,
+  type ReviewerIntent,
+  type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import {
   CODER_ACCEPTED_TEXT,
@@ -43,13 +46,16 @@ export {
   REVIEWER_OUTPUT_TOOL_NAME,
   validateAcceptedCollectorReceipt,
   validateAcceptedJudgeDetails,
-  validateAcceptedReviewerDetails,
+  projectReviewerIntentToReceipt,
+  validateReviewerIntent,
+  validateRuntimeReviewerReceipt,
   validateAcceptedWorkerDetails,
 };
 export type {
   CollectorReceipt,
   JudgeVerdict,
-  ReviewerOutput,
+  ReviewerIntent,
+  RuntimeReviewerReceiptV2,
   WorkerOutput,
 };
 
@@ -65,7 +71,7 @@ export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
 
 export type AcceptedDetails =
   | WorkerOutput
-  | ReviewerOutput
+  | RuntimeReviewerReceiptV2
   | JudgeVerdict
   | CollectorReceipt;
 
@@ -100,7 +106,7 @@ export function validateAcceptedDetails(
     case FIXER_OUTPUT_TOOL_NAME:
       return validateAcceptedWorkerDetails(details, "Fixer");
     case REVIEWER_OUTPUT_TOOL_NAME:
-      return validateAcceptedReviewerDetails(details);
+      return validateRuntimeReviewerReceipt(details);
     case JUDGE_OUTPUT_TOOL_NAME:
       return validateAcceptedJudgeDetails(details);
     case COLLECTOR_OUTPUT_TOOL:

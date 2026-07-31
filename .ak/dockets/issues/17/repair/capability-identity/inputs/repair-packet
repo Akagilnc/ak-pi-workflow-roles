@@ -1,0 +1,15 @@
+# Issue #17 capability-ceiling identity repair
+
+Authority: accepted Reviewer receipt `.ak/dockets/issues/17/review/review-026/receipt.json` and durable method evidence identity law.
+
+R1 — Preserve the exact validated capability document identity in accepted construction evidence: canonical exact UTF-8 text/bytes representation, UTF-8 length, and SHA-256 (or exact bytes plus those identities), bound alongside task and canonical Skill identity. Do not reconstruct from parsed arrays. Per-leg grants remain exact projections proven against that document.
+
+R2 — Project the same capability-document identity through append-only execution ledger and semantic auditor input. Validate text/length/hash consistency and fail fatal on mismatch; do not expose capability document prose to child prompts.
+
+R3 — Add counterexamples where two byte-distinct valid capability documents produce identical effective leg grants and prove accepted/audit evidence distinguishes them; mutate capability identity before ledger/audit and prove fatal rejection; verify installed package evidence.
+
+R4 — Export/use one `sameReviewerPromptIdentity` helper for independent compilation and ledger comparisons, keeping validation separate. Do not move role-owned runtime execution into the ledger or split dispatcher policy in this repair.
+
+R5 — Run focused tests, package lifecycle, full suite, typecheck, pack, and diff check; commit forward.
+
+Return exactly one nonblank keyed line for R1–R5.

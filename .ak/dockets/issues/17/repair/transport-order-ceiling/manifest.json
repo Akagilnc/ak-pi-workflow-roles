@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "root": ".ak/dockets",
+    "docketId": "issues/17/repair/transport-order-ceiling"
+  },
+  "invocation": {
+    "id": "090cc485-d617-4e2c-b010-64247259c97e"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/17/transport-order-ceiling-repair.md",
+      "-p",
+      "Apply the exact transport-order/ceiling repair test-first, run package gates, commit, and submit through ak_fixer_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "fbff660d1a47beca4e5d06ed11e0fe8d5eebb5e7",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "review-findings",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles",
+        "commit": "fbff660d1a47beca4e5d06ed11e0fe8d5eebb5e7",
+        "path": ".ak/dockets/issues/17/review/review-023/receipt.json",
+        "blobOid": "1053f79d0f4f14e3f8e94aa783952a9bdd198833",
+        "sha256": "f44bc152efe3b3de39ad79d2cd9d8d520a747ced9c9251dce2b0b19aa0e47b86",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/repair-packet",
+        "sha256": "cc4ccfdbe88370eec8ff9d7b9c3a5c2af5d0e939194983c0fbec6ab104ca8414",
+        "byteLength": 2218
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "89c123248576bc19b25e251c5c5c630c019a6ab1bfcf70106d677ea1ed2918b5",
+        "byteLength": 1532
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_hCJ0f2qKHosb22UVmdMt5dDd|fc_0eb385bc9ef186fa016a6bdffb5f3c819181768126613bfdfe",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 1374
+      }
+    ]
+  }
+}

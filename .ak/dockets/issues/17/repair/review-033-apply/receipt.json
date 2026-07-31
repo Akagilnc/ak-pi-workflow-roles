@@ -1,0 +1,22 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_bJo5g1iqXQi16H68bf0xPfiu|fc_01a31751347a3e7f016a6cf987b62c8191b3e0c45a764ee208",
+  "details": {
+    "status": "completed",
+    "report": "Committed forward fix baf8686. Canonical bindings now capture immutable ReviewerPromptIdentity content evidence; settlement reuses accepted dispatch identity or the binding-owned pre-acceptance identity and never projects locators. Reviewer package contracts now distinguish thin intent from fully validated RuntimeReviewerReceiptV2, enforce report/content hashes, construction/target, outcome/report/status/refusal invariants, and project intent to runtime enrichment. Recorder uses this projection only for Reviewer and revalidates after scanning; all other equality/projection laws remain unchanged. Added completed/refused native-session and mismatch/tamper regressions plus accepted/pre-acceptance identity coverage. Verification: focused tests pass (31/31), typecheck passes, isolated-HOME full suite was run and exposed one expected snapshot fixture update; after that update its focused test passes (3/3). The same full run passed package/cold-install and isolated-pack verticals. npm pack --dry-run succeeds (93 files), build/package succeeds, and git diff --check passes. Dismissed Standards-child behavior was not changed; no report parsing, allowlists, or reruns were added.",
+    "commitSha": "baf8686a6c0a9abe20bc2f00261522f2b58269a1",
+    "classesRepaired": [
+      {
+        "name": "Canonical Skill content identity projection",
+        "searchScope": "Canonical binding capture, accepted/pre-acceptance settlement projection, Reviewer role tests, and all CanonicalSkillSnapshot fixtures.",
+        "exceptions": []
+      },
+      {
+        "name": "Typed Reviewer intent-to-runtime-receipt contract",
+        "searchScope": "Package-owned Reviewer intent/receipt leaves, terminating-tool registry, Recorder projection/revalidation, completed/refused native lifecycle tests, and receipt tamper cases.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

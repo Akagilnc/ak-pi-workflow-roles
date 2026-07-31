@@ -1,0 +1,11 @@
+# Issue #17 Review-035 adjudication
+
+Adjudicate the accepted Review-035 receipt at `.ak/dockets/issues/17/review/review-035-closure/receipt.json` against current HEAD and amended authority. It is the first fully published real runtime review after the amended construction.
+
+Findings:
+
+1. Standards: `src/reviewer-dispatch.ts::preflightAndCompileDispatch` still combines proposal/schema admission, capability checks, Git range/material I/O, task decoding, bundle and prompt compilation, target-drift validation, and acceptance evidence. Review says amended authority retained a split among admission, bundle/compiler, and lifecycle owners; possible Divergent Change.
+2. Standards: `src/reviewer-agent.ts` still owns Git/snapshot/mirror/workspace lifecycle, child provider/session execution, authorization, usage/failure classification, settlement, and cleanup. Review says amended authority retained separation of workspace materialization from child execution; possible Divergent Change.
+3. Spec: accepted Agent tool result returns `dispatch: result.dispatch` and per-axis prompt identities/outcomes. This exposes grants, prompts, pinned material bytes, bundle entries, and target evidence to the driver, while amended authority requires the Agent result presented to the driver to contain settlement status/identity only, not construction evidence or reports. Runtime ledger/receipt assembly may retain the rich evidence.
+
+For architecture findings, distinguish an authorized class that is still incomplete from a merely large coordinator with deep delegated seams; define concrete owner/boundary, not line-count cleanup. For the Agent result, preserve runtime receipt assembly, accepted-leg validation, semantic audit, and failure honesty while narrowing only the driver-facing return. No Plan unless a genuine unresolved interface choice exists. Return direct Fixer classes or converge. Submit via `ak_judge_output`; no code edits.

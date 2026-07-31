@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_hCJ0f2qKHosb22UVmdMt5dDd|fc_0eb385bc9ef186fa016a6bdffb5f3c819181768126613bfdfe",
+  "details": {
+    "status": "completed",
+    "report": "R1: README now requires the byte-exact canonical diff command while permitting only explicitly declared, ceiling-member verification commands.\nR2: The complete host tool ceiling is validated before Git reader creation/pinning; zero-pin, zero-read, and zero-run regressions pass while proposal subsets remain no-widening.\nR3: Exported typed ReviewerPreflightError codes now classify proposal, base/range/material, capability, prerequisite, drift, and prompt boundaries; unexpected errors close as preflight-infrastructure without diagnostics.\nR4: Malformed Agent transport settling after acceptance records one immutable transport-after-acceptance closed attempt with bounded identity and started:false; pre-acceptance rejection/correction and dual-terminal deduplication remain intact.\nR5: Deterministic acceptance/late-malformed, malformed/corrected-acceptance, and racing proposal coverage passes with one dispatch, bounded evidence, no duplicate batch, and no crash; host-ceiling and typed-classification coverage added.\nR6: Focused dispatch/role/ledger, package lifecycle and audit subprocess tests, full 372-test suite, typecheck, prepack/native build, npm pack, and git diff --check passed; committed forward as 542179b.",
+    "commitSha": "542179b2c9a7a3e41e7924f8f6e566bbcbc05d4b"
+  },
+  "artifactKind": "acceptedReceipt"
+}
