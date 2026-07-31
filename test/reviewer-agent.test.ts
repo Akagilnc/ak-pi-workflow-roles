@@ -182,6 +182,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
   const source = await repository();
   const requests: Array<{
     prompt: string;
+    systemPrompt: string;
     tools: string[];
     dispatch: Record<string, unknown>;
     sessionId: string | undefined;
@@ -192,6 +193,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
       prompt: user?.role === "user"
         ? (typeof user.content === "string" ? user.content : user.content.map((part) => part.type === "text" ? part.text : "").join(""))
         : "",
+      systemPrompt: childContext.systemPrompt ?? "",
       tools: childContext.tools?.map((tool) => tool.name) ?? [],
       sessionId: options?.sessionId,
       dispatch: {
@@ -238,6 +240,9 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     );
     assert.equal(new Set(requests.map((request) => request.sessionId)).size, 2);
     for (const request of requests) {
+      assert.match(request.systemPrompt, /Do not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery\./);
+      assert.match(request.systemPrompt, /Mechanically inspect supplied Fixer\/Coder receipts and native invocation-session evidence/);
+      assert.match(request.systemPrompt, /Reserve execution for judgment-oriented code inspection and bounded non-battery probes\./);
       assert.deepEqual(request.tools, ["read", "grep", "find", "ls", "bash", "write", "edit"]);
       assert.deepEqual(request.dispatch, {
         baseUrl: "https://resolved.invalid",

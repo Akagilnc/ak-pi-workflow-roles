@@ -22,6 +22,7 @@ import {
   validateAcceptedReviewerDetails,
   type ReviewerOutput,
 } from "./package-contracts/reviewer-output.ts";
+import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerOutput };
@@ -387,7 +388,7 @@ export function createReviewerRoleRuntime(
           }
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<review_task>\n${task ?? ""}\n</review_task>`,
+              `${event.systemPrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<reviewer_verification_policy>\n${REVIEWER_VERIFICATION_POLICY}\n</reviewer_verification_policy>\n\n<review_task>\n${task ?? ""}\n</review_task>`,
           };
         });
       }

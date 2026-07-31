@@ -192,9 +192,12 @@ test("focused Reviewer controller owns its flag, tools, hooks, narrowing, and pr
     { systemPrompt: "BASE", prompt: "idle" },
     {},
   );
+  assert.match(prompt.systemPrompt, /Do not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery\./);
+  assert.match(prompt.systemPrompt, /Mechanically inspect supplied Fixer\/Coder receipts and native invocation-session evidence/);
+  assert.match(prompt.systemPrompt, /Reserve execution for judgment-oriented code inspection and bounded non-battery probes\./);
   assert.equal(
     prompt.systemPrompt,
-    "BASE\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<review_task>\nRAW TASK\n\n</review_task>",
+    "BASE\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<reviewer_verification_policy>\nDo not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery. Mechanically inspect supplied Fixer/Coder receipts and native invocation-session evidence for the already-run battery. Reserve execution for judgment-oriented code inspection and bounded non-battery probes.\n</reviewer_verification_policy>\n\n<review_task>\nRAW TASK\n\n</review_task>",
   );
 });
 
@@ -260,7 +263,7 @@ test("reviewer preserves leading indentation and terminal newline in prompts and
   );
   assert.equal(
     prompt.systemPrompt,
-    `BASE\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<review_task>\n${rawTask}\n</review_task>`,
+    `BASE\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<reviewer_verification_policy>\nDo not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery. Mechanically inspect supplied Fixer/Coder receipts and native invocation-session evidence for the already-run battery. Reserve execution for judgment-oriented code inspection and bounded non-battery probes.\n</reviewer_verification_policy>\n\n<review_task>\n${rawTask}\n</review_task>`,
   );
 
   await tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(
