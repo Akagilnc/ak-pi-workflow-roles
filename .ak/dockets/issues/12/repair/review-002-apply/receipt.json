@@ -1,0 +1,17 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_lAy31LOYLokyegOjsHU7e7vv|fc_0bf7b6d6561c4bb8016a6d19305b248191a960ddb4946e204a",
+  "details": {
+    "status": "completed",
+    "report": "Committed the authorized class as 6031ea7. Doctor evidence now has explicit committed-versus-normalized entry/kind types. The resolver supplies exact target-byte digest/length to the single final index identity validator; committed entries retain that identity through freezing, store reads, and actual-bite joins, while validated StatsLine/Git/tracker entries continue to use canonical serialization. Canonical store content no longer redefines committed identity.\n\nAdded multi-key compact, indented, trailing-newline, and noncanonical-order committed JSON greens, raw sealed actual-bite coverage, and explicit digest/length mismatch reds. Existing malformed/inaccessible, duplicate-source, wrong-target, escape, normalized metadata/StatsLine, bounded-tool, audit, and package laws remain green. No finding was declined.\n\nVerification passed: focused Doctor tests; typecheck; regenerated Recorder/package artifacts; isolated-HOME full suite (347 pass, 5 skipped); package lifecycle/cold-install tests within the full suite; npm pack dry-run; explicit tarball cold install/import; and git diff checks. One supplemental cold-import command initially used a nonexistent packaged src/*.js locator; rerunning against the shipped dist/doctor-contracts.js entry passed. Worktree is clean.",
+    "commitSha": "6031ea717d6f05a6852e0ac9907a04249bd3087e",
+    "classesRepaired": [
+      {
+        "name": "raw-versus-normalized-evidence-identity",
+        "searchScope": "Doctor evidence entry types, committed snapshot resolver, final evidence-index identity validation, canonical evidence-store rendering, actual-bite joins, focused regressions, generated package artifact, and packed/cold lifecycle",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
