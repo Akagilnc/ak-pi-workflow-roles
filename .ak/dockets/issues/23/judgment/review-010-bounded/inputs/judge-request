@@ -1,0 +1,14 @@
+# Issue #23 bounded Review-010 adjudication
+
+Adjudicate the sole Review-010 Scope-B finding before any repair. Review reported Standards 0, no K1–K7 finding, and one Spec evidence-access finding because the Spec child did not corroborate the local native Coder session from its clone. The same accepted report states that the parent mechanically found the exact supplied absolute path, verified SHA-256 `fdd7cde713f6287da9120e98c94279b53c3b654088aea3857c006de29f118fc8`, read adjacent exit `0`/duration `114`, and corroborated focused tests/typecheck/diff/no-full-station evidence.
+
+Decide whether Scope B requires every isolated child to possess a clone-relative copy of local gitignored session evidence, or whether one mechanically verified parent evidence fact plus the committed receipt satisfies the owner policy. Raw generic session payloads must remain gitignored and must not be committed merely to enter a review clone.
+
+Jurisdiction remains bounded:
+
+- K1–K7 issue #23 acceptance only;
+- owner-added Reviewer verification policy only;
+- Review-009 and unknown constitutional residuals belong to issue #26;
+- do not reopen full Recorder debt.
+
+If the finding is sustained, authorize only the smallest class repair; if dismissed/superseded, state that no Fixer is authorized. Submit only through `ak_judge_output`.
