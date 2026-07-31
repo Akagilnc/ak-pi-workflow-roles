@@ -187,6 +187,25 @@ test("one failed and one successful sibling are both audited before infrastructu
   assert.equal(receipt.details.reports.spec.text,"spec report");
 });
 
+test("classified snapshot preparation failure settles into a refused production receipt without shutdown infrastructure failure", async()=>{
+  let shutdowns=0;
+  const reviewerHarness=setup({
+    runDispatch:async(dispatch)=>{const leg=dispatch.legs[0]!;throw new ReviewerDispatchExecutionError({identity:dispatch.identity,target:pin,legs:{standards:{status:"failed",failure:"snapshot",target:pin,prompt:leg.prompt,workspaceDisposition:{retained:"/tmp/retained-snapshot-evidence"}}}});},
+    shutdownAgent:async()=>{shutdowns++;},
+  });
+  await reviewerHarness.runtime.activate();
+  const dispatchResult=reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
+  await assert.rejects(dispatchResult,/execution failed/);
+  assert.deepEqual(reviewerHarness.activeTools,[REVIEWER_OUTPUT_TOOL_NAME]);
+  captureReviewExpansion(reviewerHarness);
+  const result=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"snapshot preparation failed"},undefined,undefined,outputContext("out"));
+  assert.equal(result.details.version,2);
+  assert.equal(result.details.status,"refused");
+  assert.equal(result.details.outcomes.standards.failure,"snapshot");
+  assert.deepEqual(result.details.outcomes.standards.workspaceDisposition,{retained:"/tmp/retained-snapshot-evidence"});
+  assert.equal(shutdowns,1);
+});
+
 test("transport schema error records once, clears raw args, then permits corrected acceptance", async()=>{
   const reviewerHarness=setup(); await reviewerHarness.runtime.activate();
   const secretArgs={version:1,secret:"DO_NOT_RETAIN"};
