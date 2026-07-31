@@ -4,7 +4,50 @@ import { promisify } from "node:util";
 import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs } from "./reviewer-git-snapshot.js";
 import { sha256Hex } from "./sha256.js";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.js";
+import { exactUtf8 } from "./exact-utf8.js";
+import { ReviewerAdmissionError } from "./reviewer-admission.js";
 const execFileAsync = promisify(execFile);
+const evidenceViolation = (code) => { if (code === "capability-invalid")
+    throw new ReviewerAdmissionError(code); throw new ReviewerCorrectablePreflightError(code); };
+const classifyEvidenceRead = (error) => { if (error instanceof ReviewerCorrectablePreflightError)
+    throw error; throw error; };
+/** Acquires and normalizes all proposal-dependent bytes against the immutable pin. */
+export async function acquireReviewerPinnedEvidence(reader, target, admitted, ceiling) {
+    let base;
+    let readRange;
+    try {
+        base = await reader.resolve(admitted.baseRevision);
+        readRange = await reader.range(base);
+    }
+    catch (error) {
+        classifyEvidenceRead(error);
+    }
+    if (readRange.base !== base || readRange.target !== target.targetHead || readRange.diffCommand !== `git diff ${base}...${target.targetHead}` || !/^[0-9a-f]{64}$/.test(readRange.diffSha256) || readRange.diffSha256 === sha256Hex("") || !Array.isArray(readRange.commits) || !readRange.commits.every(x => typeof x === "string") || new Set(readRange.commits).size !== readRange.commits.length)
+        evidenceViolation("range-invalid");
+    const range = Object.freeze({ ...readRange, commits: Object.freeze([...readRange.commits]) });
+    const grants = [admitted.standardsGrant, ...(admitted.specGrant ? [admitted.specGrant] : [])];
+    if (!ceiling.tools.includes("bash") || !ceiling.bashCommands.includes(range.diffCommand) || grants.some(g => !g.tools.includes("bash") || !g.bashCommands.includes(range.diffCommand) || g.bashCommands.some(c => !ceiling.bashCommands.includes(c))))
+        evidenceViolation("capability-invalid");
+    const materials = [];
+    for (const item of admitted.materials) {
+        let bytes;
+        try {
+            bytes = await reader.material(item.repositoryPath, target.targetHead);
+        }
+        catch (error) {
+            classifyEvidenceRead(error);
+        }
+        let text;
+        try {
+            text = exactUtf8(bytes, "Reviewer material");
+        }
+        catch {
+            evidenceViolation("material-invalid");
+        }
+        materials.push(Object.freeze({ ...item, text: text, utf8Length: bytes.byteLength, sha256: sha256Hex(bytes) }));
+    }
+    return Object.freeze({ range, materials: Object.freeze(materials) });
+}
 export const immutableReviewerPin = (pin) => Object.freeze({
     repositoryRoot: pin.repositoryRoot, objectFormat: pin.objectFormat, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
