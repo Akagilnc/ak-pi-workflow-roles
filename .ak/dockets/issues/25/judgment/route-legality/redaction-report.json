@@ -1,0 +1,9 @@
+{
+  "hits": [
+    {
+      "ruleId": "basic-credential",
+      "location": "child.stdout",
+      "count": 8
+    }
+  ]
+}

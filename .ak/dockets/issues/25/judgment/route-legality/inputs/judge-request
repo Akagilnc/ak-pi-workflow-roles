@@ -1,0 +1,20 @@
+# Issue #25 route-legality judgment
+
+Judge whether the following deliberately small route is legal and sufficient against the current Issue #25 authority and repository layering law. Do not implement it.
+
+Proposed route:
+
+1. The driver directly writes one durable caller-owned file, `docs/class-repair-playbook.md`, containing without loss the session-resident doctrine: Reviewer supplies instances/counterexamples; Judge adjudicates defect class, owner, and authority boundary; Fixer Apply repairs the whole class; Reviewer checks residuals; no routine Fixer Plan; keyed dispositions prove finding coverage rather than define the class. It also contains the six Fixer duties and copyable bounded-Reviewer, class-Judge, and class-Fixer dispatch/request templates.
+2. The driver adds exactly one cold-start pointer to `CLAUDE.md`: `裁类修理循环使用 docs/class-repair-playbook.md。`
+3. No Soul change: owner-ratified `souls/fixer.md` already contains class-over-point, invariant/owner/search, issue+authority fence, and refusal principles.
+4. No runtime/schema/audit change: Issue #25 explicitly leaves mechanical class-closure verification and Fixer audit to #12.
+5. Verification is Issue #25's stated cold-start observation: on the next fresh-window ticket, provide no oral doctrine and check whether the driver follows the persisted playbook; regression means Issue #25 remains open.
+
+Adjudicate:
+
+- whether one playbook plus one automatic cold-start pointer is the correct durable layer;
+- whether bundling the three copyable caller templates in that playbook satisfies “入模板” without changing package role composition;
+- whether omitting Soul/runtime/schema changes respects the current boundary;
+- any minimum correction required before direct writing.
+
+Return `converged` only if this route can be directly written as the complete bounded implementation of Issue #25; otherwise return `continue` with only the missing bounded requirement. Submit only through `ak_judge_output`.

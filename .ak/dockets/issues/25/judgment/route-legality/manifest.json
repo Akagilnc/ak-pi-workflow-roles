@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue25",
+    "root": ".ak/dockets",
+    "docketId": "issues/25/judgment/route-legality"
+  },
+  "invocation": {
+    "id": "242d870c-fea5-4816-9781-3057412e26c0"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/25/runs/route-judge-002/session",
+      "--name",
+      "issue-25-route-judge-002",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #25 route-legality judgment\n\nJudge whether the following deliberately small route is legal and sufficient against the current Issue #25 authority and repository layering law. Do not implement it.\n\nProposed route:\n\n1. The driver directly writes one durable caller-owned file, `docs/class-repair-playbook.md`, containing without loss the session-resident doctrine: Reviewer supplies instances/counterexamples; Judge adjudicates defect class, owner, and authority boundary; Fixer Apply repairs the whole class; Reviewer checks residuals; no routine Fixer Plan; keyed dispositions prove finding coverage rather than define the class. It also contains the six Fixer duties and copyable bounded-Reviewer, class-Judge, and class-Fixer dispatch/request templates.\n2. The driver adds exactly one cold-start pointer to `CLAUDE.md`: `裁类修理循环使用 docs/class-repair-playbook.md。`\n3. No Soul change: owner-ratified `souls/fixer.md` already contains class-over-point, invariant/owner/search, issue+authority fence, and refusal principles.\n4. No runtime/schema/audit change: Issue #25 explicitly leaves mechanical class-closure verification and Fixer audit to #12.\n5. Verification is Issue #25's stated cold-start observation: on the next fresh-window ticket, provide no oral doctrine and check whether the driver follows the persisted playbook; regression means Issue #25 remains open.\n\nAdjudicate:\n\n- whether one playbook plus one automatic cold-start pointer is the correct durable layer;\n- whether bundling the three copyable caller templates in that playbook satisfies “入模板” without changing package role composition;\n- whether omitting Soul/runtime/schema changes respects the current boundary;\n- any minimum correction required before direct writing.\n\nReturn `converged` only if this route can be directly written as the complete bounded implementation of Issue #25; otherwise return `continue` with only the missing bounded requirement. Submit only through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue25",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "703f2a46380a2f9a7fd373a9c4722efa9a5cd29a",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-25-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-25-authority",
+        "sha256": "c80df1d64e41312e8480bef0f0cd02dd7792fce7509c6dc653dff4b163cfe5c7",
+        "byteLength": 1931
+      }
+    },
+    {
+      "id": "judge-request",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-request",
+        "sha256": "013e03f3bc48a8263aac40bd7f9cd9c9370691bfc7d14ed3cc08df2ddd3f6b5f",
+        "byteLength": 2001
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "ff8fb2191cb4368ba9815c77c97822c03de9ac175150285e8523929705efee74",
+        "byteLength": 1179
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "bc07070f3a088d6937030db0f961e9d551e856f105d4cf830bcd5e6bf94c72bc",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_HxW8NqgE7WlVsEu5iefnXBWf|fc_0d4b6d7919bccc8a016a6c7c194aa481919ac654cf86c5182d",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_HxW8NqgE7WlVsEu5iefnXBWf|fc_0d4b6d7919bccc8a016a6c7c194aa481919ac654cf86c5182d",
+    "auditPassed": true,
+    "usage": {
+      "input": 13674,
+      "output": 230,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 13904
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "basic-credential",
+        "location": "child.stdout",
+        "count": 8
+      }
+    ]
+  }
+}
