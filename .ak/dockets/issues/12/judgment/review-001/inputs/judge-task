@@ -1,0 +1,16 @@
+# Issue #12 Review-001 adjudication
+
+Adjudicate accepted receipt `.ak/dockets/issues/12/review/review-001/receipt.json` against final construction authority and current HEAD.
+
+Standards findings:
+
+1. `test/doctor-soul.test.ts` mechanically accepts/rejects free-form Soul wording with regexes, conflicting with CLAUDE anchoring despite authority requiring Soul-content regressions.
+2. `test/package-entrypoint.integration.test.ts` regex-matches rendered CLI help wording for Doctor flags rather than a structured registration contract.
+3. `doctor-contracts.ts` duplicates structural schema and hand validation, risking drift; decide schema-owned structure versus contextual evidence joins.
+
+Spec findings:
+
+4. Doctor intake trusts caller-inline evidence data plus caller digest. It does not read target-commit bytes, confine claim-chain paths to committed `.ak/dockets/issues/...`, or normalize Git/tracker metadata structurally. A fabricated receipt/verdict with matching digest can support an actual bite.
+5. `validateStatsLineV1` validates little beyond recordedInvocations and accepts malformed measured payloads, negative counts, invalid ratio/tracker shapes, etc.; Doctor intake then calls them validated.
+
+Define exact class boundaries and owners. Preserve constrained tools, frozen target, package/cold-install behavior, R1/L1, tests-follow-logic, and no topology. No Plan unless a genuine unresolved major interface choice exists; otherwise authorize direct Fixer classes. No code edits; submit via `ak_judge_output`.
