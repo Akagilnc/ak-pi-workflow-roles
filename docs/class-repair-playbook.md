@@ -36,15 +36,6 @@ Reviewer instances + counterexamples
 
 When the adjudicated set contains only Nits, apply the authorized repair and proceed to gates/final judgment without an automatic extra review. Callers may stop or choose another topology; this playbook records this repository's normal repair road, not package routing law.
 
-## Plan stations
-
-The normal road has no Coder Plan or Fixer Plan station:
-
-- a ticket carrying authority plus `Behavior / Owner / Red / Green / Scope` is the Coder plan and goes directly to Coder Apply;
-- a Judge class disposition carrying invariant, owner, boundary, counterexamples, and verification burden is the Fixer plan and goes directly to Fixer Apply.
-
-A caller adds a plan invocation only when it must produce a checkable artifact that does not already exist: a mechanical whole-work inventory or an unresolved boundary/interface decision. A plan that merely paraphrases the ticket or Judge ruling is skipped.
-
 ## Copyable bounded Reviewer task
 
 ```markdown
