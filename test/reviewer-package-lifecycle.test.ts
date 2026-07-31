@@ -55,6 +55,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     assert.ok(pack.files.some((file) => file.path === "src/reviewer-dispatch.ts"));
     assert.ok(pack.files.some((file) => file.path === "src/reviewer-pinned-git.ts"));
     assert.equal(pack.files.some((file) => /(^|\/)SKILL\.md$/.test(file.path)), false);
+    assert.ok(pack.files.some((file) => file.path === "README.md"));
+    assert.match((await exec("tar", ["-xOf", pack.tarball, "package/README.md"])).stdout, /standardsMaterials.*may be empty/);
     await writeFile(resolve(fixture, "package.json"), JSON.stringify({ private: true, dependencies: {
       "@ak/pi-workflow-roles": `file:${pack.tarball}`,
       "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
@@ -67,9 +69,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const taskPath = resolve(fixture, "review-task.md");
     const capsPath = resolve(fixture, "review-capabilities.json");
     await writeFile(taskPath, taskBytes);
-    await writeFile(capsPath, JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }));
+    await writeFile(capsPath, JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash", "edit"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }));
 
-    const proposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [{ id: "standards", repositoryPath: "STANDARDS.md" }], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: request, spec: request } };
+    const proposal = { version: 1, base: { revision: "review-base" }, standardsMaterials: [], spec: { state: "established", materials: [{ id: "spec", repositoryPath: "SPEC.md" }] }, required: { standards: request, spec: request } };
     const bad = { ...proposal, required: { standards: request, spec: { ...request, bashCommands: ["git status"] } } };
     const candidate = { status: "completed", report: "## Standards\nReadable.\n\n## Spec\nSatisfied." };
     const corrected = { status: "completed", report: "## Standards\nReadable; no findings.\n\n## Spec\nRequirement satisfied; no findings.\n\nStandards: 0; Spec: 0." };
@@ -112,6 +114,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.match(accepted.message.details.dispatch.range.diffCommand, /^git diff [0-9a-f]{40}\.\.\.[0-9a-f]{40}$/);
       assert.match(accepted.message.details.dispatch.range.diffSha256, /^[0-9a-f]{64}$/);
       assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.axis), ["standards", "spec"]);
+      assert.deepEqual(accepted.message.details.dispatch.legs.map((l: any) => l.grant.tools), [["read", "bash"], ["read", "bash"]]);
+      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Identify the standards sources/);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.repositoryRoot, root);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.targetHead, target);
       for (const leg of accepted.message.details.dispatch.legs) {

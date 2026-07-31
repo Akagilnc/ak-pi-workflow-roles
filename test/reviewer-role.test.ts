@@ -38,12 +38,12 @@ test("activation authorizes pin-target before creating the pinned Git reader", a
   assert.equal(pins,0);
 });
 
-test("activation validates the entire host capability ceiling before pinning", async()=>{
-  let pins=0; let runs=0;
+test("activation permits unused ceiling authority absent from the host", async()=>{
+  let runs=0;
   const unavailable=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash","write"],bashCommands:[diffCommand],prerequisiteOperations:operations}));
-  const reviewerHarness=setup({loadCapabilities:async()=>unavailable,hostTools:()=>["read","bash"],createPinnedGitReader:async()=>{pins++;throw new Error("must not pin");},runDispatch:async()=>{runs++;throw new Error("must not run");}});
-  await assert.rejects(reviewerHarness.runtime.activate(),/capability-invalid/);
-  assert.equal(pins,0); assert.equal(runs,0);
+  const reviewerHarness=setup({loadCapabilities:async()=>unavailable,hostTools:()=>["read","bash"],runDispatch:async()=>{runs++;throw new Error("must not run");}});
+  await reviewerHarness.runtime.activate();
+  assert.equal(runs,0);
 });
 
 test("activation fails closed for absent, malformed, and task-mismatched capabilities", async()=>{
