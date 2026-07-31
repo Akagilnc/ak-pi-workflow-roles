@@ -1,0 +1,17 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_wciGNQL0wtJDIWUdkRTmDvQj|fc_05fb2de0dd490fb8016a6cceec9ef4819188fcab61c4096b3d",
+  "details": {
+    "judgeStatus": "escalate",
+    "decisionGate": {
+      "question": "Fixed HEAD f4cc70a2c0689280153265eaaae5df961d803365. Review-009 adjudication: (1) Compact identity is sustained. Pi 0.82.1 admits a bounded native row-ID domain: session-format.md documents 8-hex entry IDs and SessionManager generates those with a still-bounded canonical UUID fallback; Recorder currently fails to enforce that domain, so `readSession` accepts and retains arbitrarily long row IDs and must enforce the admitted native domain before exact retention. Pi admits no lexical bound for package `ToolCall.id`/`toolCallId` beyond `string`; examples do not establish one. Full call-ID retention is not compact, while fixed digests are probabilistic rather than C3-exact, so owner policy is required below. (2) `ISS33-SECURITY-SOURCE-READABILITY` remains sustained at the bounded owner seam `src/recorder/{session,run,manifest,spawn}.ts`: dense one-line trust logic and opaque locals remain; direct repair is formatting/domain-revealing renaming only, with generated counterparts and no new guards or broad style pass. (3) Data Clump is narrowly sustained: Reviewer missed existing `Identity={dev,ino}` and `inode`, but no named type owns the repeated `{path,dev,ino}` value between `createSessionLeaf` and `readSession`; reuse/extend that identity concept without a new framework. (4) The broad ADR-0016 test claim is rejected. Keep amended-C8 distinct malformed/header/chain/newline/inventory/mutation/config branches and exact 16-MiB/100000 acceptance plus first-over rejection. Direct thinning is limited to the expressly redundant 16-MiB just-below and 99999 cases and reducing the seven same-branch closed-object-extra permutations to at most one true-seam tracer; no test quantity. (5) Lifecycle fixture duplication is rejected: the flexible in-process `pair` fixture and embedded executable counter-child serve different leaf versus real-spawn/cold-package seams, with no demonstrated drift failure and no justified shared mechanism. What identity policy governs exact package call-ID replay detection under compact state?",
+      "options": [
+        "Add an owner-chosen canonical byte-length/lexical bound for package call IDs; preserve exactness and reject IDs outside it.",
+        "Store fixed-size cryptographic digests and explicitly accept probabilistic collision semantics.",
+        "Preserve exactness for unbounded IDs using bounded external storage or an external sort/index owned by the session parser.",
+        "Relax compact-state policy for package call IDs and retain full strings within existing row/line limits."
+      ]
+    }
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -1,13 +1,13 @@
 export const RECORDER_FAILURE_CODES = [
     "invalid-argv", "invalid-config", "invalid-archive", "invalid-path",
     "destination-exists", "spawn-failed", "scan-failed", "admission-failed",
-    "reference-failed", "extraction-failed", "cleanup-failed", "promotion-failed",
+    "reference-failed", "session-collision", "session-missing", "session-ambiguous", "session-corrupt", "session-modified", "acceptance-missing", "acceptance-invalid", "extraction-failed", "promotion-failed",
     "opaque-content", "internal-error",
 ];
 export const RECORDER_STAGES = [
     "argv", "config-read", "config-structure", "config-metadata-scan", "config-state",
-    "destination", "stage-allocation", "admission", "spawn", "extraction",
-    "generated-artifacts", "manifest", "cleanup", "promotion", "launcher",
+    "destination", "stage-allocation", "admission", "session", "spawn", "extraction",
+    "generated-artifacts", "manifest", "promotion", "launcher",
 ];
 export const RECORDER_DIAGNOSTIC_CATEGORIES = [
     "filesystem-missing", "filesystem-inaccessible", "filesystem-not-file",
@@ -24,8 +24,14 @@ export const RECORDER_PUBLIC_MESSAGES = {
     "scan-failed": "credential scan failed",
     "admission-failed": "declaration admission failed",
     "reference-failed": "git reference verification failed",
+    "session-collision": "session directory already exists",
+    "session-missing": "native session is missing",
+    "session-ambiguous": "native session inventory is ambiguous",
+    "session-corrupt": "native session is corrupt",
+    "session-modified": "native session changed while sealing",
+    "acceptance-missing": "accepted package result is missing",
+    "acceptance-invalid": "package acceptance lifecycle is invalid",
     "extraction-failed": "receipt extraction failed",
-    "cleanup-failed": "required raw scratch cleanup failed",
     "promotion-failed": "atomic promotion failed",
     "opaque-content": "unsupported opaque content cannot be promoted",
     "internal-error": "internal Recorder failure",
@@ -40,7 +46,7 @@ export const RECORDER_SUPPORTED_SIGNALS = [
 ];
 /** Finite v1 location path segment vocabulary (string keys only). */
 export const RECORDER_LOCATION_SEGMENTS = [
-    "version", "archive", "repositoryRoot", "root", "docketId",
+    "version", "archive", "repositoryRoot", "root", "docketId", "session", "directory",
     "execution", "cwd", "environment", "inherit", "overrides", "unset", "stdin",
     "declarations", "gitReferences", "externalInputs", "exhibits",
     "id", "commit", "path", "blobOid", "sha256", "kind", "sourcePath",
@@ -86,7 +92,7 @@ export const RECORDER_FAILURE_EXIT = 125;
 export function internalRecorderError(stage, cause) {
     return new RecorderError("internal-error", undefined, { cause, diagnostic: safeDiagnostic(stage, cause) });
 }
-export function toPublicFailure(error, child) {
+export function toPublicFailure(error, child, cleanup = null) {
     const diagnostic = error.diagnostic ??
         (error.code === "internal-error" && error.cause !== undefined
             ? safeDiagnostic("launcher", error.cause)
@@ -102,10 +108,11 @@ export function toPublicFailure(error, child) {
             message: error.publicMessage,
             location: error.location,
             diagnostic: publicDiagnostic,
+            cleanup,
         },
         child,
     };
 }
-export function serializePublicFailure(error, child) {
-    return `${JSON.stringify(toPublicFailure(error, child))}\n`;
+export function serializePublicFailure(error, child, cleanup = null) {
+    return `${JSON.stringify(toPublicFailure(error, child, cleanup))}\n`;
 }

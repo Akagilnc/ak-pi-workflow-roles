@@ -1,0 +1,9 @@
+{
+  "hits": [
+    {
+      "ruleId": "session-credential",
+      "location": "child.stdout",
+      "count": 46
+    }
+  ]
+}

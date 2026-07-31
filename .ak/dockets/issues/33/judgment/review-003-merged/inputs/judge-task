@@ -1,0 +1,27 @@
+# Issue #33 merged finding adjudication after C8 amendment
+
+Adjudicate one merged population at fixed HEAD `8eaaa0c27696bd78d0d83cb5b2eddc514211b76c`:
+
+1. the still-valid portions of `.ak/dockets/issues/33/judgment/coder-005-completion/receipt.json` after amendment by `.ak/dockets/issues/33/judgment/c8-legality-recheck/receipt.json`; and
+2. every Standards/Spec finding in `.ak/dockets/issues/33/review/review-003/receipt.json`.
+
+Do not lose prior findings merely because Reviewer ran later. Apply the C8 amendment exactly:
+
+- prior active-read-during-stream timing finding is withdrawn;
+- counter-child remains only the representative invalid/valid production oracle;
+- whole-ticket proof remains only the minimal retained invariant families, never old suite/line mass or exhaustive role/corruption cross-products;
+- prior public-v2-schema finding remains independently valid unless current files disprove its concrete claims.
+
+Mechanically inspect current code/schemas/tests and resolve sibling contradictions: Reviewer Standards says schema counterexamples are closed, while Reviewer Spec and prior Judge say manifest still permits `receipt:null` and failure vocabulary remains stale. Decide from files, not report authority.
+
+Adjudicate and deduplicate the complete classes:
+
+- representative counter-child and retained minimal vertical oracles;
+- public v2 schema/runtime synchronization;
+- compact-memory streaming versus retention of up to 100000 parsed rows;
+- ADR 0016 format-only persisted-row tests;
+- security-sensitive source readability/Mysterious Name;
+- duplicated accepted/rejected lifecycle shape validation;
+- any other Review-003 finding.
+
+Distinguish implementation defects from proof gaps and style-only concerns. If repair is authorized, return one complete class-oriented direct Fixer Apply disposition with stable unique class keys and exact owner/boundary; no Fixer Plan. Do not reintroduce superseded C8 quantity requirements, authorize #12/#13/#22/#26 work, or decide merge/closure. Submit only through `ak_judge_output`.

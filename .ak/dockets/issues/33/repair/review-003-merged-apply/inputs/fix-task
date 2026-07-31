@@ -1,0 +1,22 @@
+# Issue #33 direct Fixer Apply — merged authorized classes
+
+Sole repair authority: `.ak/dockets/issues/33/judgment/review-003-merged/receipt.json`, interpreted under `.ak/dockets/issues/33/judgment/c8-legality-recheck/receipt.json`. Apply directly; no Fixer Plan.
+
+Repair the complete bounded classes at their owners, treating cited files/tests as samples:
+
+- `ISS33-COMPACT-SESSION-STATE`
+- `ISS33-PUBLIC-V2-SYNCHRONIZATION`
+- `ISS33-COUNTER-CHILD-INVOCATION`
+- `ISS33-LIFECYCLE-CUSTOM-ORACLES`
+- `ISS33-ADR0016-FORMAT-ONLY-TESTS`
+- `ISS33-LIFECYCLE-SHAPE-DEDUPLICATION`
+- `ISS33-RECORDER-EXTRACTION-VERTICALS`
+- `ISS33-TRANSACTION-PUBLICATION-VERTICALS`
+- `ISS33-PACKAGED-RECORDER-SEAM`
+- `ISS33-SECURITY-SOURCE-READABILITY`
+
+Honor every class disposition and the amended C8 minimal-oracle law. In particular, do not restore v1 suite mass, exhaustive role/corruption cross-products, or active-stream timing hooks. Preserve accepted existing real-filesystem session identity/framing/boundary and >2-GiB forwarding evidence.
+
+Derive each shared invariant/owner, census the whole bounded seam, repair production construction before assertions, and use representative verticals exactly as authorized. Keep package/runtime/schema as machine truth and README as usage. Do not implement #12/#13/#22/#26, modify Souls, add Plan/topology/retries, or restore legacy transport.
+
+Run focused red/green evidence, typecheck/build, full isolated-HOME tests, package/cold-install checks, `npm pack --dry-run`, and `git diff --check`; commit forward. On completed submission, return `classesRepaired` with exactly the ten keys above, nonblank search scopes, and explicit exceptions arrays.
