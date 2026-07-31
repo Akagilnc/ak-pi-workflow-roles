@@ -284,7 +284,8 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
   };
 
   try {
-    const batch = await runner.run(await dispatch(source.root, ["Standards prompt", "Spec prompt"]), { context });
+    const acceptedDispatch = await dispatch(source.root, ["Standards prompt", "Spec prompt"]);
+    const batch = await runner.run(acceptedDispatch, { context });
     const standards = batch.legs.standards;
     const spec = batch.legs.spec!;
 
@@ -294,6 +295,11 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     );
     assert.equal(standards.workspaceDisposition, "deleted");
     assert.equal(spec.workspaceDisposition, "deleted");
+    for (const [axis, leg] of [["standards", standards], ["spec", spec]] as const) {
+      assert.equal(leg.runtimeConstructionEvidence?.leg, axis);
+      assert.equal(leg.runtimeConstructionEvidence?.manifestSha256, acceptedDispatch.bundle.manifestSha256);
+      assert.deepEqual(leg.runtimeConstructionEvidence?.entries, acceptedDispatch.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256, verified: true })));
+    }
     assert.deepEqual(standards.target, spec.target);
     assert.equal(standards.target.refs["refs/heads/fixed-branch"]?.objectId, source.base);
     assert.equal(standards.target.refs["refs/tags/fixed-tag"]?.objectId, source.base);
@@ -489,6 +495,10 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
           }
           const accepted = error.outcome;
           assert.equal(accepted.legs.standards.failure, classification);
+          if (classification === "child") {
+            assert.equal(accepted.legs.standards.runtimeConstructionEvidence?.leg, "standards");
+            assert.equal(accepted.legs.standards.runtimeConstructionEvidence?.manifestSha256, acceptedDispatch.bundle.manifestSha256);
+          } else assert.equal(accepted.legs.standards.runtimeConstructionEvidence, undefined);
           const ledger = createReviewerExecutionLedger();
           // Project the exact failed settlement through the durable ledger seam.
           const construction = compileMechanicalBundle({ canonicalSkill: "skill", task: acceptedDispatch.legs[0]!.prompt.text, range: { base: acceptedDispatch.targetSnapshot.targetHead, target: acceptedDispatch.targetSnapshot.targetHead, diffCommand: "git diff", diffSha256: createHash("sha256").update("diff").digest("hex"), commits: [] }, materials: [] });

@@ -13,7 +13,7 @@ export class ReviewerDispatchExecutionError extends Error {
 function classify(error, signal) { if (signal?.aborted || (error instanceof Error && error.name === "AbortError"))
     return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error)
     return error.reviewerFailure; return "unknown"; }
-function failed(error, target, prompt, signal, retained) { const attached = typeof error === "object" && error !== null ? error : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained } }); }
+function failed(error, target, prompt, signal, retained, evidence) { const attached = typeof error === "object" && error !== null ? error : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
 export function createReviewerAgentRunner(dependencies = {}) {
     const workspaceOwner = createReviewerWorkspaceOwner(dependencies.fault === undefined ? {} : { fault: dependencies.fault });
     let accepted = false;
@@ -37,7 +37,7 @@ export function createReviewerAgentRunner(dependencies = {}) {
             catch (error) {
                 const prepared = typeof error === "object" && error !== null && "preparedWorkspaces" in error ? error.preparedWorkspaces ?? [] : [];
                 const failedIndex = prepared.length;
-                const legs = Object.fromEntries(dispatch.legs.map((leg, index) => [leg.axis, failed(error, dispatch.targetSnapshot, leg.prompt, options.signal, index < failedIndex ? prepared[index].path : undefined)]));
+                const legs = Object.fromEntries(dispatch.legs.map((leg, index) => [leg.axis, failed(error, dispatch.targetSnapshot, leg.prompt, options.signal, index < failedIndex ? prepared[index].path : undefined, index < failedIndex ? prepared[index].evidence : undefined)]));
                 // Siblings not yet attempted have no workspace; do not borrow the failed leg's retained path.
                 for (let index = failedIndex + 1; index < dispatch.legs.length; index += 1) {
                     const axis = dispatch.legs[index].axis;
@@ -54,7 +54,7 @@ export function createReviewerAgentRunner(dependencies = {}) {
                     return [leg.axis, Object.freeze({ status: "successful", report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition, runtimeConstructionEvidence: workspace.evidence })];
                 }
                 catch (error) {
-                    return [leg.axis, failed(error, batch.target, leg.prompt, options.signal, workspace.path)];
+                    return [leg.axis, failed(error, batch.target, leg.prompt, options.signal, workspace.path, workspace.evidence)];
                 }
             }));
             const pairs = settled.map(item => item.status === "fulfilled" ? item.value : (() => { throw item.reason; })());
