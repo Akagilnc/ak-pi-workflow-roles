@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { sha256Hex } from "../src/sha256.ts";
-import { produceStatsLineV1, type CommittedSnapshot } from "../src/stats-line.ts";
+import { produceStatsLineV1, validateStatsLineV1, type CommittedSnapshot } from "../src/stats-line.ts";
 
 const enc = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 function fixture(role: string, phase: string | undefined, id: string, details: unknown) {
@@ -28,6 +28,38 @@ test("StatsLine deterministically classifies exact roles/phases and preserves ty
   assert.deepEqual(first.recordedInvocationWindow, { status: "unavailable", reason: "recorder-does-not-record-invocation-timestamps" });
   assert.equal(first.paperApplyBytes.status, "measured");
   if (first.paperApplyBytes.status === "measured") assert.deepEqual(first.paperApplyBytes.value.ratio, { status: "measured", value: { numerator: judge.receipt.byteLength + doctor.receipt.byteLength, denominator: coder.receipt.byteLength } });
+});
+
+test("StatsLine closes every measured payload, unavailable reason, and cross-metric invariant", async () => {
+  const valid = await produceStatsLineV1({ snapshot: snapshot({}), issueNumber: 7, tracker: { repository: "ak/repo", issueNumber: 7, issueOpenedAt: "2026-01-01T00:00:00.000Z", pullRequest: { repository: "ak/repo", number: 19, issueNumber: 7, mergedAt: "2026-01-02T00:00:00.000Z", base: { name: "main", isDefault: true } } } });
+  const clone = () => structuredClone(valid) as any;
+  const invalid: Array<[string, (line: any) => void]> = [
+    ["wrong scalar type", line => { line.judgeContinueCount.value = "0"; }],
+    ["negative count", line => { line.judgeContinueCount.value = -1; }],
+    ["fractional count", line => { line.auditRejectionCount = { status: "measured", value: 0.5 }; }],
+    ["unsafe byte count", line => { line.paperApplyBytes.value.paperBytes = Number.MAX_SAFE_INTEGER + 1; }],
+    ["nested extra key", line => { line.paperApplyBytes.value.extra = true; }],
+    ["wrong metric reason", line => { line.recordedInvocationWindow = { status: "unavailable", reason: "tracker-metadata-invalid" }; }],
+    ["unordered window", line => { line.recordedInvocationWindow = { status: "measured", value: { first: "2026-01-02T00:00:00Z", last: "2026-01-01T00:00:00Z" } }; }],
+    ["invalid timestamp", line => { line.issueToDefaultMerge.value.mergedAt = "tomorrow"; }],
+    ["inexact merge milliseconds", line => { line.issueToDefaultMerge.value.milliseconds += 1; }],
+    ["zero measured ratio denominator", line => { line.paperApplyBytes.value.ratio = { status: "measured", value: { numerator: 0, denominator: 0 } }; }],
+    ["ratio does not match byte totals", line => { line.paperApplyBytes.value.ratio = { status: "measured", value: { numerator: 1, denominator: 2 } }; }],
+    ["no-apply reason with apply bytes", line => { line.paperApplyBytes.value.applyBytes = 1; }],
+    ["wrong wall-clock reason", line => { line.paperApplyWallClock = { status: "unavailable", reason: "no-apply-receipts" }; }],
+    ["role total mismatch", line => { line.recordedInvocations.value.total = 1; }],
+  ];
+  for (const [name, mutate] of invalid) {
+    const candidate = clone(); mutate(candidate);
+    assert.throws(() => validateStatsLineV1(candidate), Error, name);
+  }
+
+  const measured = clone();
+  measured.auditRejectionCount = { status: "measured", value: 2 };
+  measured.recordedInvocationWindow = { status: "measured", value: { first: "2026-01-01T00:00:00Z", last: "2026-01-02T00:00:00Z" } };
+  measured.paperApplyBytes = { status: "measured", value: { paperBytes: 6, applyBytes: 3, ratio: { status: "measured", value: { numerator: 6, denominator: 3 } } } };
+  measured.paperApplyWallClock = { status: "measured", value: { paperMilliseconds: 8, applyMilliseconds: 13 } };
+  assert.equal(validateStatsLineV1(measured), measured);
 });
 
 test("StatsLine rejects duplicate/corrupt committed manifests and ignores files without a manifest", async () => {
