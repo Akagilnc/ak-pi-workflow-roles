@@ -1,0 +1,20 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_Qjz1t6jTOnbcAXYedudbTFpx|fc_02f73ec5ef85107b016a6d2547293c8191acfd2c1c97bf0b92",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "One sustained PR39 class remains. Current canonical serialization still aliases JavaScript containers that carry non-JSON own members; repair that closed-domain hole without changing the other completed classes or dismissed documentation comments."
+    },
+    "classes": [
+      {
+        "name": "closed-canonical-json-domain",
+        "owner": "`src/canonical-json.ts` canonical serialization boundary",
+        "boundary": "The serializer must admit only the closed recursive JSON domain before emitting normalized evidence bytes; valid ordinary arrays and plain string-keyed records retain current canonical ordering, while unexpected proxy/getter failures remain unrelabeled.",
+        "disposition": "Current HEAD rejects the listed values when reached through array indices or enumerable string keys, but does not close the container domain. Mechanical counterexamples: a plain object with an own symbol-keyed `undefined` member serializes as `{}`, and an array with an own `extra = undefined` member serializes as `[]`; both alias containers without those members despite the requirement to reject every non-JSON value recursively. Audit own keys rather than only `Object.keys`/numeric slots: reject symbol-keyed and otherwise non-JSON own members (including extra array properties) with `CanonicalJsonValidationError` and a stable structural location, while preserving propagation of failures from reflective/property operations. Add these alias regressions once to `test/canonical-json.test.ts` and regenerate the shipped artifact."
+      }
+    ],
+    "note": "Mechanically verified the other six sustained classes on current HEAD: typed StatsLine codes/metrics, unexpected propagation and both cross-laws; resolver-required committed identities; the shipped complete Recorder schema reused by StatsLine; lowercase 40/64 Git IDs with repository-format and exact commit-object checks; and real npm-pack file-list assertions using the production canonical helper. `npm test` passed 358 with 5 skips, `npm run typecheck` and `git diff --check` passed, and the worktree remained clean. Forward thinning is confined to `CONTEXT.md` and ADR 0012; `owner-authority-03`, `owner-authority-06`, and `docs/adr/0013-doctor-patient-is-the-factory-never-a-case.md` are unchanged across the repair range, so dismissed comments remain dismissed and untouched."
+  },
+  "artifactKind": "acceptedReceipt"
+}

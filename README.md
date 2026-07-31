@@ -1,6 +1,6 @@
 # @ak/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, and `collector`.
+Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, and `doctor`.
 
 ## Judge
 
@@ -174,6 +174,35 @@ Runtime behavior highlights:
 - current orchestrator wiring is unsupported and requires a separately authorized migration plus thin adapter.
 
 Failure channels (non-zero, no receipt) include malformed/unsupported config or mode, loaded Skills (including command-only), ambient instruction surfaces, non-OPEN final snapshot, transport/API/pagination/size/model failures, unrecovered request response loss, and later-input/output-singleton violations. There is no Collector `refused` status.
+
+## Doctor
+
+Doctor consumes a caller-built frozen evidence index and exposes only the bounded evidence reader plus its terminating output tool:
+
+```bash
+pi --no-extensions -e /path/to/extensions/role-runtime.ts \
+  --ak-role doctor --ak-doctor-evidence /path/to/doctor-evidence-v1.json \
+  --mode json -p "Examine the admitted factory evidence."
+```
+
+The input is validated and digest-bound before activation. During the invocation, `ak_doctor_evidence` reads admitted evidence IDs in pages of at most 4096 units; arbitrary filesystem, shell, network, write, and Agent tools are inactive. The sole final `ak_doctor_output` result undergoes a fresh same-active-model compliance audit. A revise decision permits model resubmission; audit or transport failure aborts without manufacturing a refusal.
+
+Public TypeScript exports from `src/role-runtime.ts` include the Doctor index/output types, validators, evidence store, tool names, and runtime dependencies. Use those exports to construct input and consume output rather than parsing this guide.
+
+## StatsLine producer
+
+Call `produceStatsLineV1` with a package `CommittedSnapshot`, issue number, and optional normalized tracker metadata. `createGitCommittedSnapshot` supplies the production reader for an exact full commit:
+
+```ts
+const snapshot = createGitCommittedSnapshot({
+  repositoryRoot: "/absolute/repository",
+  repository: "owner/name",
+  targetCommit: "<40-hex-commit>",
+});
+const line = await produceStatsLineV1({ snapshot, issueNumber: 12, tracker });
+```
+
+The caller invokes this at closure and preserves the returned line in the same issue docket. The package does not schedule closure or query a tracker.
 
 ## Verdict contract
 

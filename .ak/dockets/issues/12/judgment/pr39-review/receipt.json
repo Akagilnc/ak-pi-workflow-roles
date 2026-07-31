@@ -1,0 +1,56 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_zsAOQfBgQ9GbzVvCIIWCPf8M|fc_099b6d83f6f75142016a6d20e2c0948191af5b4d1ca9d75581",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Dismiss the two immutable-exhibit rewrites and the ADR 0013 thinning request; sustain the remaining production/test defects, with partial documentation thinning. No Plan or owner choice is needed. Repair the seven consolidated Fixer classes below without rewriting docket history."
+    },
+    "classes": [
+      {
+        "name": "forward-documentation-thinning",
+        "owner": "Current forward documentation: `CONTEXT.md` and ADR 0012; archived authority inputs are not repair surfaces",
+        "boundary": "CONTEXT owns role-level terminology only; ADR 0012 owns durable evidence policy; `doctor-contracts.ts` owns field names, discriminants, and mechanical exclusivity.",
+        "disposition": "Partially sustain documentation comment 3693694686/4688 only on current forward files. Thin the StatsLine glossary entry to role meaning (for example: a versioned per-case factory vital-sign record produced at closure and consumed cumulatively by Doctor), removing target-commit derivation, typed-unavailable, and storage mechanics already owned by ADR 0014/runtime. In ADR 0012 retain the durable R1 policy—only an actual docket Receipt/verdict is a bite, a complete bounded search may prove no bite, and `keep` requires an actual bite—but remove `lastRealBite` field/discriminant and presentation-encoding wording. Do not alter ADR 0013: the closed five target kinds and byte-exact unnormalized key are explicit owner-ratified governance decisions, while runtime merely enforces them."
+      },
+      {
+        "name": "closed-canonical-json-domain",
+        "owner": "`src/canonical-json.ts` canonical serialization boundary",
+        "boundary": "Owns the one deterministic byte representation used for normalized evidence identity; callers own domain-specific shape validation.",
+        "disposition": "Sustain 3693694695 and test question 11. Reject every non-JSON value recursively before emitting bytes: undefined, functions, symbols, bigint, non-finite numbers, sparse array slots, cycles, and non-plain/custom objects. Use a dedicated typed canonical-JSON validation error carrying a stable code and structural path; do not convert unexpected property/proxy failures into that expected label. Preserve valid null/boolean/string/finite-number/array/plain-record sorting semantics. Current counterexamples are mechanical: `[undefined]` aliases `[]`, `NaN` aliases `null`, and `new Date(0)` aliases `{}`. Add these regressions and replace the private serializer duplicated in `test/doctor-evidence-resolution.test.ts` with the production canonical bytes helper."
+      },
+      {
+        "name": "typed-statsline-contract",
+        "owner": "`src/stats-line.ts` public `StatsLineV1` validator and Doctor's StatsLine type guard",
+        "boundary": "The validator owns closed metric and cross-metric truth; `produceStatsLineV1` owns derivation; Doctor intake may classify only expected validator rejection as invalid evidence.",
+        "disposition": "Sustain 3693694698 and grouped questions 8/10 as one root. Introduce a dedicated `StatsLineValidationError` with stable code and metric/section identity, and make every ordinary contract rejection use it. `isStatsLine` must return false only for that type and rethrow unexpected causes. Enforce `source.manifests.length === recordedInvocations.value.total` and `judgeContinueCount.value <= recordedInvocations.value.byRole.judge`. Current HEAD accepts both a one-manifest/zero-total line and one Judge continue with zero Judge invocations; existing tests assert only generic `Error`. Add exact code/metric assertions plus a regression proving an unexpected validator/property failure propagates."
+      },
+      {
+        "name": "resolver-sealed-committed-evidence",
+        "owner": "`resolveDoctorEvidenceIndex` plus `validateDoctorEvidenceIndex` at the Doctor activation boundary",
+        "boundary": "Resolver owns immutable target-byte identity for committed `manifest|receipt|verdict|disposition`; canonical serialization owns only normalized evidence identity.",
+        "disposition": "Sustain 3693694701. Remove the default/fallback that canonical-hashes committed entries. Every committed entry reaching validation must have a matching resolver-established identity or reject with a typed/anchored intake failure; normalized entries continue to use canonical bytes. Update direct-validator fixtures to provide identities or contain only normalized entries. Current `test/doctor-contracts.test.ts:index()` proves the bypass by admitting a self-declared committed receipt with no map."
+      },
+      {
+        "name": "single-recorder-manifest-contract",
+        "owner": "The shipped Recorder manifest v2 schema and `validatePublicManifest` in `src/recorder/manifest.ts`",
+        "boundary": "This seam owns complete archived-manifest structural and semantic validation for all consumers; StatsLine must call it and must not grow a second manifest schema.",
+        "disposition": "Sustain 3693694705. Make `validatePublicManifest` validate against the complete shipped `schemas/recorder-manifest-v2.schema.json` (and centralized semantic joins) rather than the current shallow cast; make `loadPublicManifestSchema` expose that real schema instead of a title-only stub. Validate exact nested keys/types/literals and artifact identity alternatives before asserting `RecorderManifestV2`. Add a production-path StatsLine regression. Current HEAD admits a manifest with malformed archive/provenance/child/recorder/redaction/session and `execution.stdio.stderr: \"captured\"`, demonstrating that the existing cast crosses the contract unchecked."
+      },
+      {
+        "name": "full-git-commit-identity",
+        "owner": "A shared full-Git-object-ID rule used by StatsLine/Doctor contracts, with repository-format verification owned by `createGitCommittedSnapshot`",
+        "boundary": "Pure serialized contracts validate canonical full IDs; the Git-backed snapshot factory additionally proves repository object format and commit object identity before any tree/blob read.",
+        "disposition": "Partially sustain 3693694708: validation is required, but reject the suggested SHA-1-only hardcode. Accept canonical lowercase full IDs of exactly 40 hex for SHA-1 or 64 hex for SHA-256 across Issue #12 target/metadata contracts. The Git factory must reject all other input synchronously, discover `--show-object-format`, require matching width, and verify the exact ID resolves as a commit before list/read; retain argument-array execution. Current factory returns a snapshot for option-like/arbitrary `targetCommit` without validation, while the repository's reviewer Git seam already supports both object formats. Add SHA-1, SHA-256, wrong-width, non-hex/leading-dash, format-mismatch, and non-commit-object regressions."
+      },
+      {
+        "name": "packed-artifact-and-seam-regressions",
+        "owner": "Package lifecycle tests and the seam-owned canonical/StatsLine/Doctor test suites",
+        "boundary": "Package tests prove real npm artifact inclusion; unit tests consume production helpers and anchor typed failures, without scratch or duplicate probe mechanisms.",
+        "disposition": "Sustain 3693694712 and the remaining test portions of grouped questions 10/11. Replace checkout `access()` assertions with the existing `packIsolatedPackage` real-pack file list (or tarball installation) and assert `souls/doctor.md`, `src/doctor-contracts.ts`, `src/stats-line.ts`, and their loaded canonical module are shipped. Keep role/flag assertions. Graduate each counterexample above once into its owning suite and remove duplicated test-only canonicalization."
+      }
+    ],
+    "note": "Per-comment disposition: (1) 3693694680 and 3693694682 dismissed—`owner-authority-03/06` are immutable copied exhibits. No forward clarification is needed: current `.ak/dockets/issues/12/authority/materials.md` already forbids Doctor product-source access and requires probes through the normal chain; ADR 0012/current final authority already makes prescriptions evidence-only and legally routed. (2) CONTEXT and ADR 0012 thinning sustained as specified; ADR 0013 thinning dismissed because those are durable ratified policy decisions. (3) canonical JSON sustained. (4) catch-all StatsLine classification sustained. (5) committed-identity bypass sustained. (6) manifest validation sustained. (7) validation sustained but `/^[0-9a-f]{40}$/` prescription rejected in favor of the repository's SHA-1/SHA-256 full-ID law. (8) both omitted cross-metric laws sustained. (9) packed-artifact test sustained. (10) typed StatsLine error anchoring sustained. (11) duplicate helper and missing unsupported-value regressions sustained. Independent HEAD probes produced `canonicalJson([undefined]) === canonicalJson([])`, `canonicalJson(NaN) === canonicalJson(null)`, accepted the malformed manifest, and accepted both StatsLine cross-metric contradictions; the 16 focused existing tests still passed, confirming missing oracles rather than stale comments."
+  },
+  "artifactKind": "acceptedReceipt"
+}

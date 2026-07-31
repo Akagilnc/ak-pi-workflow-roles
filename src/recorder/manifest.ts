@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+
+import { Check, Errors } from "typebox/value";
+
 import type { RecorderConfig } from "./config.ts";
 import type { AdmittedArtifact } from "./admit.ts";
 import type { ChildOutcome } from "./errors.ts";
@@ -34,7 +38,9 @@ export type RecorderManifestV2 = {
     };
   };
   provenance: RecorderConfig["provenance"] & { verification: "unverified" };
-  artifacts: AdmittedArtifact[];
+  artifacts: Array<AdmittedArtifact & {
+    receiptArtifactKind?: "acceptedReceipt" | "sanitizedDerivativeOfAcceptedReceipt";
+  }>;
   receipt: {
     toolName: string;
     toolCallId: string;
@@ -53,28 +59,31 @@ export type RecorderManifestV2 = {
   };
 };
 
-export function loadPublicManifestSchema() {
-  return {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    title: "Recorder manifest v2",
-  };
+const publicManifestSchema: object = JSON.parse(
+  readFileSync(new URL("../../schemas/recorder-manifest-v2.schema.json", import.meta.url), "utf8"),
+) as object;
+
+export function loadPublicManifestSchema(): object {
+  return publicManifestSchema;
 }
 
 export function validatePublicManifest(
   value: unknown,
 ): asserts value is RecorderManifestV2 {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw internalRecorderError("manifest", new Error("manifest shape"));
+  if (!Check(publicManifestSchema, value)) {
+    const first = Errors(publicManifestSchema, value)[0];
+    throw internalRecorderError(
+      "manifest",
+      new Error(`manifest schema${first ? ` at ${first.instancePath || "/"}: ${first.message}` : ""}`),
+    );
   }
   const manifest = value as RecorderManifestV2;
+  const receipt = manifest.artifacts.find((artifact) => artifact.id === "receipt");
   if (
-    manifest.version !== 2 ||
     manifest.invocation.id !== manifest.session.id ||
-    !manifest.receipt ||
-    manifest.execution.stdio.stdout !== "pass-through" ||
-    manifest.execution.stdio.diagnosticTailBytes !== 4096
+    receipt?.receiptArtifactKind !== manifest.receipt.artifactKind
   ) {
-    throw internalRecorderError("manifest", new Error("manifest invariant"));
+    throw internalRecorderError("manifest", new Error("manifest semantic join"));
   }
 }
 
@@ -112,7 +121,9 @@ export function buildManifest(options: {
       },
     },
     provenance: { ...options.config.provenance, verification: "unverified" },
-    artifacts: options.artifacts,
+    artifacts: options.artifacts.map((artifact) => artifact.kind === "receipt"
+      ? { ...artifact, receiptArtifactKind: options.extraction.artifactKind }
+      : artifact),
     receipt: {
       toolName: options.extraction.receipt.toolName,
       toolCallId: options.extraction.receipt.toolCallId,

@@ -1,0 +1,38 @@
+# Owner comment 1
+
+URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5119542560
+Created: 2026-07-29T14:57:52Z
+Author: Akagilnc
+
+## 病历素材:2026-07-29 全天(#10 施工日),外审记档
+
+医生角色首诊备用数据,全部可从 dockets/git 复核。
+
+### 主病案:issue 粒度(本日最大教训,可控项)
+
+#10 从立案(02:25)到当日深夜未见 PR,单票延迟 ~24h;但其实际内容 = 六条 authority 修正案(含两次整案推翻)+ 历史 /tmp 迁移 + §6 分支重建 + Recorder v1 全量实现(bin + 原生扩展 + 扫描器 + 事务 + 打包)+ 七轮 finding 修理。**epic 穿着 issue 外衣**。按 tracer-bullet 尺至少应为四票(归档法 / 历史迁移 / Recorder 核心 / 信证扫描器),各自数小时可落地,总工时不变而落地延迟正常化。切包能力现已达 finding 层(修理包),未达 issue 层——立案粒度暂无守门人。
+
+### 修理轮案数曲线与「同墙多洞」
+
+5(终判官)→3(recheck)→3(native/audit)→1(Receipt 衍生物)→4(fresh reviewer:2 P1+2 Standards)→3(post-repair)→1(High)。其中信证扫描器同墙五洞:组合 Basic/Bearer → 可晋升 metadata → 引号后缀 → 转义/未闭合引号 → 非 Bearer/[REDACTED]。病理一致:逐 scheme 正则、每条自定吃到哪。已到「同链多轮加深→候审换全称不变式」的临界样本。
+
+### 复杂度级联样本(护栏机制成本以修理单计价)
+
+1 条原子发布要求 → same-FS staging → kernel-atomic no-replace rename → 原生扩展 `rename_no_replace.node` → tracked 二进制与 cleanliness 矛盾案 → generated 化修理 → lockfile 同步修理 → CI 越出 ADR 0009「只跑 test+typecheck」被 fresh reviewer 判违宪 → 恢复最小 CI。合计 ≥4 张修理单 + 1 个原生依赖 + 1 次宪法违例回滚。
+
+### 基建死亡五连(全部诚实处置)
+
+窗口爆(grok coder,4542s,stopReason=length,零 receipt)/ 断网(fixer,附措辞精度更正案)/ 原子修理基建失败 / codex 过载 ×2(reviewer child fetch、judge WebSocket)。五张 disposition 同构:lawfulReceipt=null、session 不留、现场保全、原地重试。无一例伪造 receipt。
+
+### 并行成熟度与串行实数
+
+plan 腿(只读)并行自发出现(一 commit 三份 plan receipt);apply 仍串行(单工作树、无合并机器)——「只读并行/写入串行」为无机制下的正确自发分层。串行墙钟实数:五修理包 plan→fix→receipt 约 80 分钟(含一次死亡)。
+
+### fresh-eyes 再验证
+
+incumbent 判官三轮探针(产线扫描→内核语义→构建边界)后,fresh reviewer 仍抓出 2 条 P1(引号后缀泄漏、身份毁灭性脱敏)+ 1 条越权加戏(fixer 自加 ancestry 检查,被权威原文驳回并回滚)+ 1 条兄弟面漏扫(Git 引用修了、archive 身份没修)。编制考题结论第三次复验。
+
+### 设计院行动项(处方向,非机制)
+
+出库单粒度按「落地延迟」倒推切;issue 层切片属「S0 转世」的另一半职责,等拉力立法,不预建。
+

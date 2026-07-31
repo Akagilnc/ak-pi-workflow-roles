@@ -1,0 +1,15 @@
+# Issue #12 final Doctor/StatsLine closure review
+
+Review base `cd7eb3a43b33a0de775dcd6645e2f4ac8cfab256` through target `3e7089d21af465dee0bc7113a387156f852336df`.
+
+Use one atomic Reviewer proposal. Common materials:
+
+- `claude` → `CLAUDE.md`
+- `authority` → `.ak/dockets/issues/12/judgment/final-construction-authority/receipt.json`
+- `review001-judgment` → `.ak/dockets/issues/12/judgment/review-001/receipt.json`
+- `review002-judgment` → `.ak/dockets/issues/12/judgment/review-002/receipt.json`
+- `review002-repair` → `.ak/dockets/issues/12/repair/review-002-apply/receipt.json`
+
+Spec established. Both legs request `read,grep,find,ls,bash`, exact `git diff cd7eb3a43b33a0de775dcd6645e2f4ac8cfab256...3e7089d21af465dee0bc7113a387156f852336df`, and all eight prerequisite operations. Apply fixed single-axis adapters; all material remains readable.
+
+Check all authority and repairs, especially raw committed versus canonical normalized identity, actual-bite seals, closed StatsLine metrics, schema/context split, constrained tools/audit, R1/L1, anchored tests, package parity, and no topology. Do not rerun batteries or replace legs. Submit completed intent after settlement.

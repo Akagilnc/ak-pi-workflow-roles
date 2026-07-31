@@ -1,0 +1,226 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+    "root": ".ak/dockets",
+    "docketId": "issues/12/review/review-001"
+  },
+  "invocation": {
+    "id": "0198f1a0-1200-7000-8000-000000000002"
+  },
+  "session": {
+    "id": "0198f1a0-1200-7000-8000-000000000002",
+    "directory": ".ak/work/issues/12/runs/review-001/session",
+    "basename": "2026-07-31T21-29-30-895Z_0198f1a0-1200-7000-8000-000000000002.jsonl",
+    "sha256": "b21ec2a8b80e0aaa1a1113764fb5a4039e344c9f9eec71fa3e3affad91b22657",
+    "byteLength": 91604,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12/.ak/work/issues/12/runs/review-001/session",
+      "--session-id",
+      "0198f1a0-1200-7000-8000-000000000002",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--name",
+      "issue-12-review-001",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/12/review-001-task.md",
+      "--ak-review-capabilities",
+      ".ak/work/issues/12/review-001-capabilities.json",
+      "-p",
+      "Run the atomic Issue #12 Doctor/StatsLine construction review exactly as assigned, then submit completed intent."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": [
+        "PI_SESSION_DIR"
+      ]
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "6648de5b90b7ec201d166d10587a157fd0ab6ec7",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "claude",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+        "commit": "6648de5b90b7ec201d166d10587a157fd0ab6ec7",
+        "path": "CLAUDE.md",
+        "blobOid": "d82386f3c0d2c55b5ce3fa62584956642c3cb0f2",
+        "sha256": "e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+        "commit": "6648de5b90b7ec201d166d10587a157fd0ab6ec7",
+        "path": ".ak/dockets/issues/12/judgment/final-construction-authority/receipt.json",
+        "blobOid": "082d2656469bef302790de02d8bdf7000a929e5e",
+        "sha256": "255e6ce6d6bf985d8fb54869ec17f853b420216c3a9e766afca3fd9210222abe",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-receipt",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+        "commit": "6648de5b90b7ec201d166d10587a157fd0ab6ec7",
+        "path": ".ak/dockets/issues/12/apply/coder-001-doctor/receipt.json",
+        "blobOid": "613e2e701041289b13fdf9aaccd17e8b93e56730",
+        "sha256": "59c8b9635bea25aa385a68df7507acd5a215fb20d562b30864c1e121377c0d07",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr0012",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+        "commit": "6648de5b90b7ec201d166d10587a157fd0ab6ec7",
+        "path": "docs/adr/0012-doctor-is-an-evidence-only-seat.md",
+        "blobOid": "77ec8fb01b3cc9fa347bf31c334eb776f376b98f",
+        "sha256": "b0668ac54ae11ba5bc4ec8efd840ed179692bf056f292d68cf9c0babef4c4cfc",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr0013",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+        "commit": "6648de5b90b7ec201d166d10587a157fd0ab6ec7",
+        "path": "docs/adr/0013-doctor-patient-is-the-factory-never-a-case.md",
+        "blobOid": "0962fe0ce432bf31f94c4b8ea978ef9f0312603a",
+        "sha256": "127b28f19e54190250058211a05de47f213e8941274ad4f46fe029c1d7be1d41",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr0014",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue12",
+        "commit": "6648de5b90b7ec201d166d10587a157fd0ab6ec7",
+        "path": "docs/adr/0014-closure-produces-stats-one-dockets-ledger.md",
+        "blobOid": "df4838e8633e0d697b4fa61d1cf6c9c9fafbfbb0",
+        "sha256": "054de337a18e416ef0af9da7b02fac1bd53709c44f5b706be817807c40f6cffc",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "e2f1e43c26588ee8cd261272c4e7424f93bed2a9c7586779e8c3ea7660e13d2c",
+        "byteLength": 1448
+      }
+    },
+    {
+      "id": "capabilities",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/capabilities",
+        "sha256": "1bda5cf1e9ca00110ed45410e95dbef40c790901318fbdd52a0734258f2e7e49",
+        "byteLength": 624
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "94f4d61ccbb286510c9169d527206b43f41d4f3d905cd45100a79167077a268e",
+        "byteLength": 77121
+      }
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "9d612ff0a622c5619935dd7d5986a42af3b1575053d3aa9d9c11ce88f60e51d0",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_ep3CWb59RzzB0LZvZ04UAikU|fc_0f73083b9be3fa39016a6d1408222c8191bcc86343f8430f7a",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_ep3CWb59RzzB0LZvZ04UAikU|fc_0f73083b9be3fa39016a6d1408222c8191bcc86343f8430f7a",
+    "auditPassed": true,
+    "usage": {
+      "input": 55163,
+      "output": 230,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 55393
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

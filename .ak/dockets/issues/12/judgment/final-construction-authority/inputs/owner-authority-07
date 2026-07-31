@@ -1,0 +1,20 @@
+# Owner comment 7
+
+URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5139483564
+Created: 2026-07-31T05:07:59Z
+Author: Akagilnc
+
+## 生命体征增补:每票纸/码比(owner 2026-07-31 拍定收录)
+
+**定义**:纸面重量(authority+plan+judgment+review 等 docket 收据字节合计)÷ apply 实体重量(apply 收据字节;墙钟同维:前置+收环墙钟 ÷ apply 墙钟)。
+
+**采集**:closure 机械产出——docket 时间戳+字节数纯机械可算,挂 ADR 0014 的数单账本,零新机制。
+
+**语义(owner 原话定调)**:检查报告不是必须遵守的东西,但也不能忽略——单票高值不禁止任何事(重手术合法);**趋势上行=流程在长肉**,是医生开方的证据,不是自动闸。单票高值+爆炸半径小的组合=选道可疑线索,交医生判断。
+
+**基线实测(2026-07-31)**:
+- 重车道样本:#23(Recorder 内核手术)前置纸 20.6KB/21min vs apply 2.2KB/11min——该次合理;
+- 轻车道样本:#17 修理轮 29 包零 plan 腿,~11min/单——R 键包即 plan 的基线。
+
+**与导航层关系**:选道规则归导航文本(owner 同日拍,无强制力、靠 LLM 听话性生效);本体征是导航的事后验证仪——导航失灵时它先响。
+

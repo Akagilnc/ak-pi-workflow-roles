@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_eWnBBs0KD6WyI7YmRJUCayKf|fc_09ad6a77ec8f41b9016a6d265316388191834b5f41a7639039",
+  "details": {
+    "judgeStatus": "converged",
+    "note": "`closed-canonical-json-domain` is closed on current HEAD 4ba27bb07a34d8cb64e3dcf0f1bd94f5049777fc. Independent source-and-dist checks verified own-symbol aliases (including nested/object/array) reject with `CanonicalJsonValidationError`, code `canonical-json-invalid`, and stable `$/<symbol>` structural paths; extra array members reject at escaped structural paths; ordinary recursive JSON objects/arrays retain canonical ordering; and reflective/getter exceptions propagate by identity. `dist/canonical-json.js` byte-matches fresh TypeScript emission. The full suite passed 358 with 5 skips, typecheck and diff checks passed, the worktree is clean, and no production/test files outside the authorized canonical serializer seam changed after the prior census, so mechanically closed PR39 classes show no regression."
+  },
+  "artifactKind": "acceptedReceipt"
+}
