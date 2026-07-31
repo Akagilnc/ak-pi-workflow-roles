@@ -7,6 +7,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { createReviewerRoleRuntime, AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerAuditInput } from "../src/reviewer-role.ts";
 import type { AcceptedReviewerDispatch, AcceptedReviewerExecution, AcceptedReviewerLeg, ReviewerProposalV1 } from "../src/reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError } from "../src/reviewer-agent.ts";
+import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 
 const task = new TextEncoder().encode("review exact bytes\n");
 const digest = createHash("sha256").update(task).digest("hex");
@@ -27,7 +28,7 @@ function outputContext(id:string): ExtensionContext { const sessionManager=Sessi
 function captureReviewExpansion(reviewerHarness: ReturnType<typeof harness>) { reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"}); }
 function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> = {}) {
   const reviewerHarness=harness(); let starts=0; const audits:ReviewerAuditInput[]=[];
-  const runtime=createReviewerRoleRuntime(reviewerHarness.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>new TextEncoder().encode(path)}), hostTools:()=>["read", "bash"], runDispatch:async(dispatch:AcceptedReviewerExecution)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted"}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
+  const runtime=createReviewerRoleRuntime(reviewerHarness.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill,snapshotIdentity:reviewerPromptIdentity(skill)},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>new TextEncoder().encode(path)}), hostTools:()=>["read", "bash"], runDispatch:async(dispatch:AcceptedReviewerExecution)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted"}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
   return {...reviewerHarness,runtime,audits,get starts(){return starts;},get activeTools(){return reviewerHarness.activeTools;}};
 }
 
@@ -104,6 +105,8 @@ test("runtime receipt preserves exact report UTF-8 bytes, length, and SHA", asyn
   assert.deepEqual(receipt.details.reports.standards,{text:exact,utf8Length:Buffer.byteLength(exact),sha256:createHash("sha256").update(exact).digest("hex")});
 });
 
+test("runtime receipts preserve binding-owned and accepted canonical Skill content identity independent of locators",async()=>{const pre=setup();await pre.runtime.activate();const refused=await pre.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("pre",{status:"refused",diagnostic:"no accepted batch"},undefined,undefined,outputContext("pre"));assert.deepEqual(refused.details.identities.canonicalSkill.snapshotIdentity,reviewerPromptIdentity(skill));assert.equal(JSON.stringify(refused.details).includes("/skill"),false);const accepted=setup();await accepted.runtime.activate();captureReviewExpansion(accepted);await accepted.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);const completed=await accepted.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("done",{status:"completed"},undefined,undefined,outputContext("done"));assert.deepEqual(completed.details.identities.canonicalSkill.snapshotIdentity,accepted.audits[0]!.record.accepted!.input.canonicalSkill.snapshotIdentity);assert.equal(completed.details.identities.canonicalSkill.snapshotIdentity.text,skill)});
+
 test("runner result axes must exactly equal accepted one- and two-leg dispatch axes", async()=>{
   const cases = [
     { proposal: proposal(), legs: (dispatch: AcceptedReviewerExecution) => ({ standards: successfulLeg(dispatch.legs[0]!), spec: { ...successfulLeg(dispatch.legs[0]!, "HIDDEN SPEC ARTIFACT"), prompt: dispatch.legs[0]!.prompt } }) },
@@ -149,7 +152,7 @@ test("runner identity and pinned target must exactly match accepted dispatch bef
 });
 
 test("invalid expansion is fatal and makes a later refused receipt impossible", async()=>{
-  const reviewerHarness=setup({loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:()=>undefined})});
+  const reviewerHarness=setup({loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill,snapshotIdentity:reviewerPromptIdentity(skill)},invocation:x=>x,captureExpansion:()=>undefined})});
   await reviewerHarness.runtime.activate(); reviewerHarness.handlers.get("input")({text:"review",images:undefined});
   assert.throws(()=>reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"},{} as ExtensionContext),/expansion did not match/);
   await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"cannot continue"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);

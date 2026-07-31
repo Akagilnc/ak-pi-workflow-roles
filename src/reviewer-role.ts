@@ -20,10 +20,10 @@ import {
 import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
 import { assembleRuntimeReviewerReceipt, type RuntimeReviewerReceiptV2 } from "./reviewer-settlement.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedReviewerDetails, type ReviewerOutput } from "./package-contracts/reviewer-output.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME, validateReviewerIntent, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
-export type { ReviewerOutput };
+export type { ReviewerIntent as ReviewerOutput };
 export const AGENT_TOOL_NAME = "Agent";
 
 const requestSchema = Type.Object({
@@ -60,7 +60,7 @@ export type ReviewerRoleDependencies = {
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext): never };
 
-export function validateReviewerOutput(output: ReviewerOutputParameters): ReviewerOutput { return validateAcceptedReviewerDetails(output); }
+export function validateReviewerOutput(output: ReviewerOutputParameters): ReviewerIntent { return validateReviewerIntent(output); }
 function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void {
   const leaf = ctx.sessionManager.getLeafEntry();
   if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Reviewer output must be the sole final tool call");
@@ -208,11 +208,10 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
           let record: ReviewerExecutionRecord;
           try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx); throw error; }
-          const skillBytes = Buffer.from(binding.snapshot.raw, "utf8");
           const candidate = assembleRuntimeReviewerReceipt({
             intent: output,
             record,
-            canonicalSkill: { sha256: sha256Hex(binding.snapshot.raw), utf8Length: skillBytes.byteLength, snapshotIdentity: binding.snapshot.path },
+            canonicalSkillSnapshotIdentity: binding.snapshot.snapshotIdentity,
           });
           let audit: ComplianceDecision;
           try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }

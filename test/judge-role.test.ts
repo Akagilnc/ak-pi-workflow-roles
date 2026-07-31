@@ -10,6 +10,7 @@ import {
 
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
+import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
@@ -47,6 +48,7 @@ function tddBinding(): CanonicalSkillBinding<"tdd"> {
       path: tddPath,
       baseDir: tddBaseDir,
       body: tddBody,
+      snapshotIdentity: reviewerPromptIdentity(`---\nname: tdd\ndescription: test\n---\n\n${tddBody}`),
     },
     invocation(originalRequest) {
       return `/skill:tdd ${originalRequest}`;
