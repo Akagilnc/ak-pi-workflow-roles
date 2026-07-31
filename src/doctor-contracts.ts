@@ -74,6 +74,16 @@ function canonical(value: unknown): string {
 }
 export function statsLineEvidenceBytes(value: unknown): Uint8Array { return new TextEncoder().encode(canonical(value)); }
 function isStatsLine(value: unknown): value is StatsLineV1 { try { validateStatsLineV1(value); return true; } catch { return false; } }
+function timestamp(value: unknown, label: string) { text(value, label); if (!Number.isFinite(Date.parse(value))) throw new Error(`${label} must be an ISO timestamp`); }
+function validateGitMetadata(value: unknown) {
+  if (!record(value)) throw new Error("invalid Git metadata"); exact(value, ["commits"], "Git metadata"); if (!Array.isArray(value.commits)) throw new Error("Git metadata commits must be an array");
+  for (const commit of value.commits) { if (!record(commit)) throw new Error("invalid Git commit metadata"); exact(commit, ["commit", "timestamp", "paths"], "Git commit metadata"); if (typeof commit.commit !== "string" || !/^[0-9a-f]{40}$/.test(commit.commit)) throw new Error("Git commit identity is invalid"); timestamp(commit.timestamp, "Git timestamp"); strings(commit.paths, "Git paths", true); }
+}
+function validateTrackerMetadata(value: unknown) {
+  if (!record(value)) throw new Error("invalid tracker metadata"); exact(value, ["issues", "pullRequests"], "tracker metadata");
+  const validate = (items: unknown, kind: string) => { if (!Array.isArray(items)) throw new Error(`tracker ${kind} must be an array`); for (const item of items) { if (!record(item)) throw new Error(`invalid tracker ${kind} metadata`); const optional = kind === "issue" ? ["closedAt"] : ["mergedAt", "closedAt"]; const keys = ["repository", "number", "createdAt", ...optional.filter((key) => Object.hasOwn(item, key))]; exact(item, keys, `tracker ${kind} metadata`); text(item.repository, "tracker repository"); if (!Number.isSafeInteger(item.number) || Number(item.number) < 1) throw new Error("tracker number is invalid"); timestamp(item.createdAt, "tracker createdAt"); for (const key of optional) if (Object.hasOwn(item, key) && item[key] !== null) timestamp(item[key], `tracker ${key}`); } };
+  validate(value.issues, "issue"); validate(value.pullRequests, "pull request");
+}
 
 export function validateDoctorEvidenceIndex(value: unknown): DoctorEvidenceIndexV1 {
   if (!record(value)) throw new Error("Doctor evidence index must be an object");
@@ -93,6 +103,8 @@ export function validateDoctorEvidenceIndex(value: unknown): DoctorEvidenceIndex
     if (typeof raw.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(raw.sha256) || !Number.isSafeInteger(raw.byteLength) || Number(raw.byteLength) < 0) throw new Error("evidence sealed identity is invalid");
     if (committed.has(String(raw.kind))) { if (!record(raw.source)) throw new Error("committed evidence requires source"); exact(raw.source, ["commit", "path"], "evidence source"); if (raw.source.commit !== value.targetCommit) throw new Error("evidence source target mismatch"); text(raw.source.path, "evidence source path"); }
     if (raw.kind === "statsLine" && !isStatsLine(raw.data)) throw new Error("invalid StatsLine evidence");
+    if (raw.kind === "gitMetadata") validateGitMetadata(raw.data);
+    if (raw.kind === "trackerMetadata") validateTrackerMetadata(raw.data);
     const bytes = statsLineEvidenceBytes(raw.data); if (bytes.byteLength !== raw.byteLength || sha256Hex(bytes) !== raw.sha256) throw new Error(`Evidence digest mismatch: ${raw.id}`);
     entries.set(raw.id, raw as DoctorEvidenceEntry);
   }

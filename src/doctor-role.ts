@@ -1,10 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ComplianceDecision } from "./compliance-transport.ts";
-import { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME, DoctorEvidenceStore, doctorEvidenceReadSchema, doctorOutputSchema, validateDoctorEvidenceIndex, validateDoctorOutput, type DoctorEvidenceIndexV1 } from "./doctor-contracts.ts";
+import { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME, DoctorEvidenceStore, doctorEvidenceReadSchema, doctorOutputSchema, validateDoctorOutput, type DoctorEvidenceIndexV1 } from "./doctor-contracts.ts";
+import { resolveDoctorEvidenceIndex, type DoctorCommittedEvidenceReader } from "./doctor-evidence.ts";
 
 export { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME };
 export type DoctorRoleDependencies = {
-  loadSoul(): Promise<string>; loadEvidenceIndex(path: string): Promise<unknown>;
+  loadSoul(): Promise<string>; loadEvidenceIndex(path: string): Promise<unknown>; committedEvidenceReader: DoctorCommittedEvidenceReader;
   auditCompliance(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
 export type DoctorAuditInput = import("./doctor-auditor.ts").DoctorAuditInput;
@@ -15,7 +16,7 @@ export function createDoctorRoleRuntime(pi: ExtensionAPI, dependencies: DoctorRo
   return { async activate() {
     const path = pi.getFlag("ak-doctor-evidence"); if (typeof path !== "string" || path.trim() === "") throw new Error("Doctor requires --ak-doctor-evidence");
     const soul = (await dependencies.loadSoul()).trim(); if (!soul) throw new Error("Doctor soul is empty");
-    const index = validateDoctorEvidenceIndex(await dependencies.loadEvidenceIndex(path)); activation = { soul, index, store: new DoctorEvidenceStore(index) };
+    const index = await resolveDoctorEvidenceIndex(await dependencies.loadEvidenceIndex(path), dependencies.committedEvidenceReader); activation = { soul, index, store: new DoctorEvidenceStore(index) };
     if (!registered) { registered = true;
       pi.registerTool({ name: DOCTOR_EVIDENCE_TOOL_NAME, label: "Doctor Evidence", description: "Read one admitted frozen evidence ID with bounded pagination.", promptSnippet: "Read admitted Doctor evidence", promptGuidelines: ["Read only evidence IDs from the frozen catalog."], parameters: doctorEvidenceReadSchema,
         async execute(_id, params: { evidenceId: string; offset?: number; limit?: number }) { if (!activation) throw new Error("Doctor is not activated"); const details = activation.store.read(params.evidenceId, params.offset, params.limit); return { content: [{ type: "text" as const, text: JSON.stringify(details) }], details }; } });
