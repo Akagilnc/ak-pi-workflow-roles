@@ -17,7 +17,9 @@ import {
 } from "./admit.ts";
 import {
   buildChildEnv,
-  loadRecorderConfigStructure,
+  parseRecorderConfigStructure,
+  readRecorderConfig,
+  scanRecorderConfigMetadata,
   validateRecorderConfigState,
   parseRecorderArgv,
   type RecorderConfig,
@@ -284,10 +286,14 @@ export async function runRecorder(options: {
 
   try {
     const parsed = parseRecorderArgv(options.argv);
+    currentStage = "config-read";
+    const configText = readRecorderConfig(parsed.configPath);
     currentStage = "config-structure";
-    const structuralConfig = loadRecorderConfigStructure(parsed.configPath);
+    const structuralConfig = parseRecorderConfigStructure(configText);
+    currentStage = "config-metadata-scan";
+    const scannedConfig = scanRecorderConfigMetadata(structuralConfig);
     currentStage = "config-state";
-    const config = validateRecorderConfigState(structuralConfig);
+    const config = validateRecorderConfigState(scannedConfig);
     currentStage = "destination";
     const dest = destinationPath(config);
     assertPathNotSymlinkEscape(
@@ -370,6 +376,9 @@ export async function runRecorder(options: {
       return fail(internalRecorderError(currentStage, error));
     }
 
+    // Spawn has settled: install exact outcome before any post-spawn work can fail.
+    child = childOutcomeFromSpawn(spawnResult, null);
+    currentStage = "extraction";
     const stdoutText = readFileSync(stdoutPath);
     const stderrText = readFileSync(stderrPath);
     // Child tee is byte-exact and caller-owned; scanning of tee content is for
@@ -384,10 +393,7 @@ export async function runRecorder(options: {
     );
     // Public failure path may expose one bounded, already-scanned diagnostic
     // derived from the same captured bytes — never from live stream mutation.
-    child = childOutcomeFromSpawn(
-      spawnResult,
-      deriveChildDiagnostic(stdoutText, stderrText),
-    );
+    child = { ...child, diagnostic: deriveChildDiagnostic(stdoutText, stderrText) } as ChildOutcome;
 
     currentStage = "extraction";
     let extraction;
@@ -409,6 +415,7 @@ export async function runRecorder(options: {
       stderrScan.report,
     ];
 
+    currentStage = "generated-artifacts";
     if (extraction.receipt !== null) {
       const stored = storeGeneratedJson(
         stage,
@@ -488,12 +495,7 @@ export async function runRecorder(options: {
     // Writing must not discover additional redactions; the pre-persist closure
     // is the sole hit source for both manifest and optional report.
     if (manifestStored.report.redacted) {
-      return fail(
-        new RecorderError(
-          "admission-failed",
-          "manifest write-time scan diverged from final closure",
-        ),
-      );
+      return fail(internalRecorderError(currentStage, new Error("manifest closure divergence")));
     }
     if (finalHits.length > 0) {
       const reportStored = storeGeneratedJson(
@@ -503,12 +505,7 @@ export async function runRecorder(options: {
         "redaction-report",
       );
       if (reportStored.report.redacted) {
-        return fail(
-          new RecorderError(
-            "admission-failed",
-            "redaction report write-time scan diverged from final closure",
-          ),
-        );
+        return fail(internalRecorderError(currentStage, new Error("redaction report closure divergence")));
       }
     }
 

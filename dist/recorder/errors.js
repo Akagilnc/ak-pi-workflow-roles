@@ -27,14 +27,17 @@ function platformCode(value) {
         return null;
     return typeof value.code === "string" ? value.code : null;
 }
+const FILESYSTEM_CODES = new Set(["EEXIST", "ENOTDIR", "ENOTEMPTY", "EROFS", "EXDEV", "ELOOP", "ENOSPC", "EMFILE", "ENFILE"]);
+const PROCESS_CODES = new Set(["ECHILD", "ENOEXEC", "ESRCH"]);
 export function safeDiagnostic(stage, cause) {
     const code = platformCode(cause);
     const category = code === "ENOENT" ? "filesystem-missing"
         : code === "EACCES" || code === "EPERM" ? "filesystem-inaccessible"
             : code === "EISDIR" ? "filesystem-not-file"
-                : code !== null && code.startsWith("E") ? "filesystem"
-                    : code !== null ? "platform-error"
-                        : cause instanceof Error ? "error" : "non-error-throw";
+                : code !== null && FILESYSTEM_CODES.has(code) ? "filesystem"
+                    : code !== null && PROCESS_CODES.has(code) ? "process"
+                        : code !== null ? "platform-error"
+                            : cause instanceof Error ? "error" : "non-error-throw";
     return { stage, category };
 }
 export class RecorderError extends Error {

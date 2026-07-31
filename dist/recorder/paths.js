@@ -3,18 +3,6 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, statSync, 
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { RecorderError } from "./errors.js";
 const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const RESERVED_IDS = new Set([
-    "receipt",
-    "audit-observation",
-    "manifest",
-    "redaction-report",
-]);
-const RESERVED_PATH_PREFIXES = [
-    "receipt.json",
-    "audit-observation.json",
-    "manifest.json",
-    "redaction-report.json",
-];
 export function requireAbsoluteExistingDirectory(value, label) {
     if (typeof value !== "string" || value.length === 0 || !isAbsolute(value)) {
         throw new RecorderError("invalid-path", `${label} must be an absolute path`);
@@ -167,16 +155,6 @@ export function assertPathNotSymlinkEscape(absolutePath, rootReal, label) {
         if (next === parent)
             return;
         parent = next;
-    }
-}
-export function assertNotReservedArtifactId(id, label) {
-    if (RESERVED_IDS.has(id)) {
-        throw new RecorderError("invalid-config", `${label} uses a reserved generated id`);
-    }
-}
-export function assertNotReservedStoredPath(relativePath, label) {
-    if (RESERVED_PATH_PREFIXES.some((prefix) => relativePath === prefix || relativePath.startsWith(`${prefix}/`))) {
-        throw new RecorderError("invalid-config", `${label} uses a reserved generated path`);
     }
 }
 /**
