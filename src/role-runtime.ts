@@ -37,7 +37,7 @@ export type { DoctorEvidenceIndexV1, DoctorOutput, DoctorFinding, DoctorLastReal
 export { validateDoctorEvidenceIndex, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
 export { resolveDoctorEvidenceIndex, type DoctorCommittedEvidenceReader } from "./doctor-evidence.ts";
 export type { StatsLineV1, TrackerMergeMetadata, Metric, UnavailableReason, CommittedSnapshot } from "./stats-line.ts";
-export { produceStatsLineV1, createGitCommittedSnapshot, validateStatsLineV1 } from "./stats-line.ts";
+export { STATS_LINE_VALIDATION_ERROR_CODE, StatsLineValidationError, produceStatsLineV1, createGitCommittedSnapshot, validateStatsLineV1 } from "./stats-line.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,

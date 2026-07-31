@@ -1,8 +1,9 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { canonicalJson, canonicalJsonBytes } from "./canonical-json.js";
+import { isFullGitObjectId } from "./git-object-id.js";
 import { sha256Hex } from "./sha256.js";
-import { validateStatsLineV1 } from "./stats-line.js";
+import { StatsLineValidationError, validateStatsLineV1 } from "./stats-line.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
@@ -51,8 +52,10 @@ function isStatsLine(value) { try {
     validateStatsLineV1(value);
     return true;
 }
-catch {
-    return false;
+catch (error) {
+    if (error instanceof StatsLineValidationError)
+        return false;
+    throw error;
 } }
 function timestamp(value, label) { text(value, label); if (!Number.isFinite(Date.parse(value)))
     throw new Error(`${label} must be an ISO timestamp`); }
@@ -66,7 +69,7 @@ function validateGitMetadata(value) {
         if (!record(commit))
             throw new Error("invalid Git commit metadata");
         exact(commit, ["commit", "timestamp", "paths"], "Git commit metadata");
-        if (typeof commit.commit !== "string" || !/^[0-9a-f]{40}$/.test(commit.commit))
+        if (!isFullGitObjectId(commit.commit))
             throw new Error("Git commit identity is invalid");
         timestamp(commit.timestamp, "Git timestamp");
         strings(commit.paths, "Git paths", true);
@@ -111,7 +114,7 @@ export function validateDoctorEvidenceIndex(value, committedIdentities = new Map
     if (value.version !== 1)
         throw new Error("Doctor evidence index version must be 1");
     text(value.repository, "repository");
-    if (typeof value.targetCommit !== "string" || !/^[0-9a-f]{40}$/.test(value.targetCommit))
+    if (!isFullGitObjectId(value.targetCommit))
         throw new Error("targetCommit must be a full commit identity");
     if (!Array.isArray(value.catalog) || value.catalog.length === 0)
         throw new Error("catalog must be nonempty");

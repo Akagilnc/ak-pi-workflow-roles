@@ -2,8 +2,9 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 
 import { canonicalJson, canonicalJsonBytes } from "./canonical-json.ts";
+import { isFullGitObjectId } from "./git-object-id.ts";
 import { sha256Hex } from "./sha256.ts";
-import { validateStatsLineV1, type Metric, type StatsLineV1 } from "./stats-line.ts";
+import { StatsLineValidationError, validateStatsLineV1, type Metric, type StatsLineV1 } from "./stats-line.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -72,11 +73,11 @@ function text(value: unknown, label: string): asserts value is string { if (type
 function strings(value: unknown, label: string, allowEmpty = false): asserts value is string[] { if (!Array.isArray(value) || (!allowEmpty && value.length === 0) || !value.every((item) => typeof item === "string" && item.trim() !== "")) throw new Error(`${label} must be ${allowEmpty ? "an" : "a nonempty"} string array`); }
 function deepFreeze<T>(value: T): T { if (value && typeof value === "object" && !Object.isFrozen(value)) { for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child); Object.freeze(value); } return value; }
 export function statsLineEvidenceBytes(value: unknown): Uint8Array { return canonicalJsonBytes(value); }
-function isStatsLine(value: unknown): value is StatsLineV1 { try { validateStatsLineV1(value); return true; } catch { return false; } }
+function isStatsLine(value: unknown): value is StatsLineV1 { try { validateStatsLineV1(value); return true; } catch (error) { if (error instanceof StatsLineValidationError) return false; throw error; } }
 function timestamp(value: unknown, label: string) { text(value, label); if (!Number.isFinite(Date.parse(value))) throw new Error(`${label} must be an ISO timestamp`); }
 function validateGitMetadata(value: unknown) {
   if (!record(value)) throw new Error("invalid Git metadata"); exact(value, ["commits"], "Git metadata"); if (!Array.isArray(value.commits)) throw new Error("Git metadata commits must be an array");
-  for (const commit of value.commits) { if (!record(commit)) throw new Error("invalid Git commit metadata"); exact(commit, ["commit", "timestamp", "paths"], "Git commit metadata"); if (typeof commit.commit !== "string" || !/^[0-9a-f]{40}$/.test(commit.commit)) throw new Error("Git commit identity is invalid"); timestamp(commit.timestamp, "Git timestamp"); strings(commit.paths, "Git paths", true); }
+  for (const commit of value.commits) { if (!record(commit)) throw new Error("invalid Git commit metadata"); exact(commit, ["commit", "timestamp", "paths"], "Git commit metadata"); if (!isFullGitObjectId(commit.commit)) throw new Error("Git commit identity is invalid"); timestamp(commit.timestamp, "Git timestamp"); strings(commit.paths, "Git paths", true); }
 }
 function validateTrackerMetadata(value: unknown) {
   if (!record(value)) throw new Error("invalid tracker metadata"); exact(value, ["issues", "pullRequests"], "tracker metadata");
@@ -97,7 +98,7 @@ export function validateDoctorEvidenceIndex(value: unknown, committedIdentities:
   if (!record(value)) throw new Error("Doctor evidence index must be an object");
   exact(value, ["version", "repository", "targetCommit", "catalog", "populations", "evidence"], "Doctor evidence index");
   if (value.version !== 1) throw new Error("Doctor evidence index version must be 1"); text(value.repository, "repository");
-  if (typeof value.targetCommit !== "string" || !/^[0-9a-f]{40}$/.test(value.targetCommit)) throw new Error("targetCommit must be a full commit identity");
+  if (!isFullGitObjectId(value.targetCommit)) throw new Error("targetCommit must be a full commit identity");
   if (!Array.isArray(value.catalog) || value.catalog.length === 0) throw new Error("catalog must be nonempty");
   const targets = new Set<string>();
   for (const item of value.catalog) { if (!record(item)) throw new Error("catalog target must be an object"); exact(item, ["key", "kind", "active"], "catalog target"); text(item.key, "target key"); if (targets.has(item.key)) throw new Error(`Duplicate target key: ${item.key}`); targets.add(item.key); if (!(DOCTOR_TARGET_KINDS as readonly unknown[]).includes(item.kind) || item.active !== true) throw new Error("catalog admits only active factory targets"); }
