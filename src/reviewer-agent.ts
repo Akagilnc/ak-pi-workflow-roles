@@ -25,6 +25,7 @@ import type {
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
+import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
 
 const CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
 const REVIEW_REF_PREFIXES = ["refs/heads", "refs/tags", "refs/remotes"];
@@ -364,6 +365,7 @@ async function runChild(
     noContextFiles: true,
     systemPrompt: [
       "Work only in the supplied writable review clone.",
+      REVIEWER_VERIFICATION_POLICY,
       "Inspect and probe; do not repair the reviewed product, commit, push, or mutate remotes.",
       "Clearly distinguish scratch artifacts and probe changes from facts about the pinned reviewed target.",
       "Return one substantive non-blank review-leg report.",
