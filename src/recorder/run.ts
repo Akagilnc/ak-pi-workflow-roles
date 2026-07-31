@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -141,22 +140,6 @@ function destinationPath(config: RecorderConfig): string {
     `${config.archive.root}/${config.archive.docketId}`,
     "archive destination",
   );
-}
-
-function captureGitState(repo: string): string {
-  try {
-    const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-    }).trim();
-    const status = execFileSync(
-      "git",
-      ["-C", repo, "status", "--porcelain"],
-      { encoding: "utf8" },
-    );
-    return `${head}\n${status}`;
-  } catch {
-    return "";
-  }
 }
 
 function destinationOccupied(dest: string): boolean {
@@ -310,9 +293,6 @@ export async function runRecorder(options: {
       );
     }
 
-    currentStage = "git-state";
-    void captureGitState(config.archive.repositoryRoot);
-
     // Raw tee scratch stays outside the worktree (or ignored). Publication stage
     // lives under the archive's ignored `.ak/work` so promotion stays same-FS.
     currentStage = "stage-allocation";
@@ -376,8 +356,15 @@ export async function runRecorder(options: {
       return fail(internalRecorderError(currentStage, error));
     }
 
-    // Spawn has settled: install exact outcome before any post-spawn work can fail.
-    child = childOutcomeFromSpawn(spawnResult, null);
+    // Child settlement and tee completion are independent facts. Install exact
+    // child truth before allowing a sink failure to become Recorder failure.
+    const settlement = await spawnResult.settlement;
+    child = childOutcomeFromSpawn(settlement, null);
+    try {
+      await spawnResult.teeCompletion;
+    } catch (error) {
+      return fail(internalRecorderError(currentStage, error));
+    }
     currentStage = "extraction";
     const stdoutText = readFileSync(stdoutPath);
     const stderrText = readFileSync(stderrPath);

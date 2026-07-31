@@ -6,7 +6,7 @@ export const RECORDER_FAILURE_CODES = [
 ];
 export const RECORDER_STAGES = [
     "argv", "config-read", "config-structure", "config-metadata-scan", "config-state",
-    "destination", "git-state", "stage-allocation", "admission", "spawn", "extraction",
+    "destination", "stage-allocation", "admission", "spawn", "extraction",
     "generated-artifacts", "manifest", "cleanup", "promotion",
 ];
 export const RECORDER_DIAGNOSTIC_CATEGORIES = [

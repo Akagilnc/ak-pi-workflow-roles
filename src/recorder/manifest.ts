@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import type { RecorderConfig } from "./config.ts";
 import type { AdmittedArtifact } from "./admit.ts";
-import { RecorderError, type ChildOutcome } from "./errors.ts";
+import { internalRecorderError, type ChildOutcome } from "./errors.ts";
 import type {
   AuditObservation,
   ExtractionResult,
@@ -101,11 +101,7 @@ export function loadPublicManifestSchema(): JsonSchema {
       readFileSync(publicManifestSchemaPath(), "utf8"),
     ) as JsonSchema;
   } catch (error) {
-    throw new RecorderError(
-      "internal-error",
-      "public manifest schema is unreadable",
-      { cause: error },
-    );
+    throw internalRecorderError("manifest", new Error("manifest invariant"));
   }
   return cachedSchema;
 }
@@ -144,33 +140,21 @@ function resolveRef(
   ref: string,
 ): JsonSchema {
   if (typeof root === "boolean") {
-    throw new RecorderError(
-      "internal-error",
-      "public manifest schema $ref is unresolvable",
-    );
+    throw internalRecorderError("manifest", new Error("manifest invariant"));
   }
   if (!ref.startsWith("#/")) {
-    throw new RecorderError(
-      "internal-error",
-      "public manifest schema $ref must be local",
-    );
+    throw internalRecorderError("manifest", new Error("manifest invariant"));
   }
   let current: unknown = root;
   for (const part of ref.slice(2).split("/")) {
     if (!isObject(current) || !Object.hasOwn(current, part)) {
-      throw new RecorderError(
-        "internal-error",
-        "public manifest schema $ref is unresolvable",
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
     current = current[part];
   }
   if (typeof current !== "object" || current === null) {
     if (typeof current === "boolean") return current;
-    throw new RecorderError(
-      "internal-error",
-      "public manifest schema $ref is unresolvable",
-    );
+    throw internalRecorderError("manifest", new Error("manifest invariant"));
   }
   return current as JsonSchema;
 }
@@ -368,10 +352,7 @@ function schemaValid(
 export function validatePublicManifest(value: unknown): void {
   const schema = loadPublicManifestSchema();
   if (!schemaValid(schema, schema, value)) {
-    throw new RecorderError(
-      "internal-error",
-      "manifest failed public schema validation",
-    );
+    throw internalRecorderError("manifest", new Error("manifest invariant"));
   }
 }
 
@@ -381,25 +362,16 @@ function assertCoherentChild(child: ChildOutcome): {
   signal: string | null;
 } {
   if (child.status === "not-spawned") {
-    throw new RecorderError(
-      "internal-error",
-      "cannot build success manifest without spawn",
-    );
+    throw internalRecorderError("manifest", new Error("manifest invariant"));
   }
   if (child.status === "exited") {
     if (child.exitCode === null || child.signal !== null) {
-      throw new RecorderError(
-        "internal-error",
-        "incoherent exited child outcome",
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
     return { status: "exited", exitCode: child.exitCode, signal: null };
   }
   if (child.signal === null || child.exitCode !== null) {
-    throw new RecorderError(
-      "internal-error",
-      "incoherent signaled child outcome",
-    );
+    throw internalRecorderError("manifest", new Error("manifest invariant"));
   }
   return { status: "signaled", exitCode: null, signal: child.signal };
 }
@@ -408,16 +380,10 @@ function assertRuntimeJoins(manifest: RecorderManifestV1): void {
   // Equal-value joins ordinary JSON Schema cannot express.
   if (manifest.receipt !== null && manifest.auditObservation !== null) {
     if (manifest.receipt.toolCallId !== manifest.auditObservation.toolCallId) {
-      throw new RecorderError(
-        "internal-error",
-        "audit observation toolCallId does not match receipt",
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
     if (manifest.receipt.toolName !== manifest.auditObservation.toolName) {
-      throw new RecorderError(
-        "internal-error",
-        "audit observation toolName does not match receipt",
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
   }
   if (manifest.receipt !== null) {
@@ -426,10 +392,7 @@ function assertRuntimeJoins(manifest: RecorderManifestV1): void {
       !receiptArtifact ||
       receiptArtifact.receiptArtifactKind !== manifest.receipt.artifactKind
     ) {
-      throw new RecorderError(
-        "internal-error",
-        "receipt artifact kind does not match receipt metadata",
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
   }
 }
@@ -476,45 +439,30 @@ export function buildManifest(options: {
   // Receipt/audit link coherence.
   if (options.extraction.receipt === null) {
     if (options.extraction.auditObservation !== null) {
-      throw new RecorderError(
-        "internal-error",
-        "audit observation without receipt is incoherent",
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
     if (
       options.artifacts.some((a) => a.kind === "receipt" || a.id === "receipt")
     ) {
-      throw new RecorderError(
-        "internal-error",
-        "receipt artifact without extraction is incoherent",
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
   } else {
     const receiptArtifact = options.artifacts.find((a) => a.id === "receipt");
     if (!receiptArtifact || receiptArtifact.kind !== "receipt") {
-      throw new RecorderError(
-        "internal-error",
-        "receipt extraction missing stored artifact",
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
     if (options.extraction.auditObservation !== null) {
       const auditArtifact = options.artifacts.find((a) =>
         a.id === "audit-observation"
       );
       if (!auditArtifact || auditArtifact.kind !== "audit-observation") {
-        throw new RecorderError(
-          "internal-error",
-          "audit observation missing stored artifact",
-        );
+        throw internalRecorderError("manifest", new Error("manifest invariant"));
       }
       if (
         options.extraction.auditObservation.toolCallId !==
           options.extraction.receipt.toolCallId
       ) {
-        throw new RecorderError(
-          "internal-error",
-          "audit observation toolCallId does not match receipt",
-        );
+        throw internalRecorderError("manifest", new Error("manifest invariant"));
       }
     }
   }
@@ -525,19 +473,13 @@ export function buildManifest(options: {
   const storedPaths = new Set<string>();
   for (const artifact of options.artifacts) {
     if (ids.has(artifact.id)) {
-      throw new RecorderError(
-        "internal-error",
-        `duplicate artifact id ${artifact.id}`,
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
     ids.add(artifact.id);
     const hasRef = artifact.reference !== undefined;
     const hasStored = artifact.stored !== undefined;
     if (hasRef === hasStored) {
-      throw new RecorderError(
-        "internal-error",
-        `artifact ${artifact.id} must have exactly one identity`,
-      );
+      throw internalRecorderError("manifest", new Error("manifest invariant"));
     }
     if (artifact.reference) {
       const key = [
@@ -547,19 +489,13 @@ export function buildManifest(options: {
         artifact.reference.blobOid,
       ].join("|");
       if (refKeys.has(key)) {
-        throw new RecorderError(
-          "internal-error",
-          `duplicate reference identity for ${artifact.id}`,
-        );
+        throw internalRecorderError("manifest", new Error("manifest invariant"));
       }
       refKeys.add(key);
     }
     if (artifact.stored) {
       if (storedPaths.has(artifact.stored.path)) {
-        throw new RecorderError(
-          "internal-error",
-          `duplicate stored path for ${artifact.id}`,
-        );
+        throw internalRecorderError("manifest", new Error("manifest invariant"));
       }
       storedPaths.add(artifact.stored.path);
     }

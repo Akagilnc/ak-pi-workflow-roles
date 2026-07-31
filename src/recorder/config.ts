@@ -1,5 +1,5 @@
 import { accessSync, constants, readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, normalize } from "node:path";
 
 import { RecorderError, safeDiagnostic } from "./errors.ts";
 import {
@@ -72,7 +72,7 @@ export function parseRecorderConfigStructure(text:string):RecorderConfig{
   const gitReferences=(declarations.gitReferences as unknown[]).map(parseGit), externalInputs=(declarations.externalInputs as unknown[]).map(parseExternal), exhibits=(declarations.exhibits as unknown[]).map(parseExhibit);
   const repositoryRoot=absoluteAt(archive.repositoryRoot,["archive","repositoryRoot"]), archiveRoot=relativeAt(archive.root,["archive","root"]), docketId=relativeAt(archive.docketId,["archive","docketId"]), cwd=absoluteAt(execution.cwd,["execution","cwd"]);
   const indexed=[...gitReferences.map((item,i)=>({item,loc:["declarations","gitReferences",i,"id"] as Location})),...externalInputs.map((item,i)=>({item,loc:["declarations","externalInputs",i,"id"] as Location})),...exhibits.map((item,i)=>({item,loc:["declarations","exhibits",i,"id"] as Location}))];const ids=new Set<string>();for(const {item,loc} of indexed){if(RESERVED_IDS.has(item.id))invalid("declaration uses a reserved generated id",loc);if(ids.has(item.id))invalid("declaration id is duplicated",loc);ids.add(item.id)}
-  const identities=new Set<string>();for(const [i,ref] of gitReferences.entries()){if(RESERVED_PATHS.has(ref.path))invalid("git reference uses a reserved generated path",["declarations","gitReferences",i,"path"]);const key=[ref.repositoryRoot,ref.commit,ref.path,ref.blobOid].join("\0");if(identities.has(key))invalid("git reference identity is duplicated",["declarations","gitReferences",i]);identities.add(key)}
+  const identities=new Set<string>();for(const [i,ref] of gitReferences.entries()){if([...RESERVED_PATHS].some((reservedPath) => ref.path === reservedPath || ref.path.startsWith(`${reservedPath}/`)))invalid("git reference uses a reserved generated path",["declarations","gitReferences",i,"path"]);const key=[normalize(ref.repositoryRoot),ref.commit,ref.path,ref.blobOid].join("\0");if(identities.has(key))invalid("git reference identity is duplicated",["declarations","gitReferences",i]);identities.add(key)}
   if(![...gitReferences,...externalInputs].some(x=>x.kind==="authority"))invalid("authority declaration is required",["declarations"]);if(![...gitReferences,...externalInputs].some(x=>x.kind==="task"))invalid("task declaration is required",["declarations"]);
   return{version:1,archive:{repositoryRoot,root:archiveRoot,docketId},execution:{cwd,environment:{inherit:environment.inherit,overrides,unset},stdin:"inherit"},declarations:{gitReferences,externalInputs,exhibits},provenance:{package:nullableStringAt(provenance.package,["provenance","package"]),model:nullableStringAt(provenance.model,["provenance","model"]),target:nullableStringAt(provenance.target,["provenance","target"])}}
 }

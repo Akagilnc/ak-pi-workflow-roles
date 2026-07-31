@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -79,18 +78,6 @@ function bestEffortRm(path) {
 }
 function destinationPath(config) {
     return resolveInsideRoot(config.archive.repositoryRoot, `${config.archive.root}/${config.archive.docketId}`, "archive destination");
-}
-function captureGitState(repo) {
-    try {
-        const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
-            encoding: "utf8",
-        }).trim();
-        const status = execFileSync("git", ["-C", repo, "status", "--porcelain"], { encoding: "utf8" });
-        return `${head}\n${status}`;
-    }
-    catch {
-        return "";
-    }
 }
 function destinationOccupied(dest) {
     try {
@@ -208,8 +195,6 @@ export async function runRecorder(options) {
         if (destinationOccupied(dest)) {
             return fail(new RecorderError("destination-exists", "archive destination already exists"));
         }
-        currentStage = "git-state";
-        void captureGitState(config.archive.repositoryRoot);
         // Raw tee scratch stays outside the worktree (or ignored). Publication stage
         // lives under the archive's ignored `.ak/work` so promotion stays same-FS.
         currentStage = "stage-allocation";
@@ -264,8 +249,16 @@ export async function runRecorder(options) {
                 return fail(error);
             return fail(internalRecorderError(currentStage, error));
         }
-        // Spawn has settled: install exact outcome before any post-spawn work can fail.
-        child = childOutcomeFromSpawn(spawnResult, null);
+        // Child settlement and tee completion are independent facts. Install exact
+        // child truth before allowing a sink failure to become Recorder failure.
+        const settlement = await spawnResult.settlement;
+        child = childOutcomeFromSpawn(settlement, null);
+        try {
+            await spawnResult.teeCompletion;
+        }
+        catch (error) {
+            return fail(internalRecorderError(currentStage, error));
+        }
         currentStage = "extraction";
         const stdoutText = readFileSync(stdoutPath);
         const stderrText = readFileSync(stderrPath);
