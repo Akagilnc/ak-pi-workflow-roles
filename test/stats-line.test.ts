@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { sha256Hex } from "../src/sha256.ts";
-import { produceStatsLineV1, validateStatsLineV1, type CommittedSnapshot } from "../src/stats-line.ts";
+import { STATS_LINE_VALIDATION_ERROR_CODE, StatsLineValidationError, produceStatsLineV1, validateStatsLineV1, type CommittedSnapshot } from "../src/stats-line.ts";
 
 const enc = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 function fixture(role: string, phase: string | undefined, id: string, details: unknown) {
@@ -83,7 +83,7 @@ test("StatsLine closes every measured payload, unavailable reason, and cross-met
   ];
   for (const [name, mutate] of invalid) {
     const candidate = clone(); mutate(candidate);
-    assert.throws(() => validateStatsLineV1(candidate), Error, name);
+    assert.throws(() => validateStatsLineV1(candidate), (error) => error instanceof StatsLineValidationError && error.code === STATS_LINE_VALIDATION_ERROR_CODE && error.metric.length > 0, name);
   }
 
   const ratioContradictions: Array<[string, number, any]> = [
@@ -95,9 +95,19 @@ test("StatsLine closes every measured payload, unavailable reason, and cross-met
     const candidate = clone();
     candidate.recordedInvocations.value.total = unclassified;
     candidate.recordedInvocations.value.unclassified = unclassified;
+    candidate.source.manifests = unclassified === 0 ? [] : [{ path: "manifest.json", sha256: "a".repeat(64) }];
     candidate.paperApplyBytes.value.applyBytes = ratio.status === "measured" ? 1 : 0;
     candidate.paperApplyBytes.value.ratio = ratio;
-    assert.throws(() => validateStatsLineV1(candidate), Error, name);
+    assert.throws(() => validateStatsLineV1(candidate), (error) => error instanceof StatsLineValidationError && error.code === STATS_LINE_VALIDATION_ERROR_CODE && error.metric === "paperApplyBytes", name);
+  }
+
+  const crossLaws: Array<[string, (line: any) => void, string]> = [
+    ["manifest count differs from invocation total", line => { line.source.manifests = [{ path: "manifest.json", sha256: "a".repeat(64) }]; }, "recordedInvocations"],
+    ["Judge continues exceed Judge invocations", line => { line.judgeContinueCount.value = 1; }, "judgeContinueCount"],
+  ];
+  for (const [name, mutate, metric] of crossLaws) {
+    const candidate = clone(); mutate(candidate);
+    assert.throws(() => validateStatsLineV1(candidate), (error) => error instanceof StatsLineValidationError && error.code === STATS_LINE_VALIDATION_ERROR_CODE && error.metric === metric, name);
   }
 
   const measured = clone();

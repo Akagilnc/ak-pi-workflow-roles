@@ -61,6 +61,14 @@ test("Doctor intake rejects forbidden evidence kinds, digest drift, duplicate id
   assert.throws(() => validateIndex({ ...base, evidence: [...base.evidence.slice(0, 1), entry("stats-bad", "statsLine", malformed)] }), /invalid StatsLine evidence/);
 });
 
+test("Doctor StatsLine guard rethrows unexpected validator property failures", () => {
+  const base: any = index();
+  const boom = new Error("unexpected getter failure");
+  const data = new Proxy({}, { ownKeys() { throw boom; } });
+  const candidate = { ...base, populations: [], evidence: [{ id: "stats-boom", kind: "statsLine", sha256: "a".repeat(64), byteLength: 0, data }] };
+  assert.throws(() => validateIndex(candidate), (error) => error === boom);
+});
+
 test("direct validation cannot canonical-hash a self-declared committed claim", () => {
   const base = structuredClone(index());
   assert.throws(

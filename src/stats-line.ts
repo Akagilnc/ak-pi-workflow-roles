@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { gitObjectIdWidth, isFullGitObjectId, type GitObjectFormat } from "./git-object-id.ts";
 import { sha256Hex } from "./sha256.ts";
 import { validatePublicManifest, type RecorderManifestV2 } from "./recorder/manifest.ts";
 
@@ -34,62 +35,63 @@ export type TrackerMergeMetadata = {
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]) { const actual = Object.keys(value); return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key)); }
 function safeNonnegative(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) >= 0; }
-function measuredValue(metric: unknown, unavailableReason?: UnavailableReason): unknown {
-  if (!isRecord(metric)) throw new Error("Invalid StatsLine metric");
+export const STATS_LINE_VALIDATION_ERROR_CODE = "stats-line-invalid" as const;
+export class StatsLineValidationError extends Error {
+  readonly code = STATS_LINE_VALIDATION_ERROR_CODE;
+  constructor(readonly metric: string, message: string) { super(message); this.name = "StatsLineValidationError"; }
+}
+function invalid(metric: string, message: string): never { throw new StatsLineValidationError(metric, message); }
+function measuredValue(metric: unknown, identity: string, unavailableReason?: UnavailableReason): unknown {
+  if (!isRecord(metric)) invalid(identity, "Invalid StatsLine metric");
   if (metric.status === "measured" && exactKeys(metric, ["status", "value"])) return metric.value;
   if (unavailableReason !== undefined && metric.status === "unavailable" && exactKeys(metric, ["status", "reason"]) && metric.reason === unavailableReason) return undefined;
-  throw new Error("Invalid StatsLine metric state or unavailable reason");
+  return invalid(identity, "Invalid StatsLine metric state or unavailable reason");
 }
-function closedNumbers(value: unknown, keys: readonly string[]): Record<string, unknown> {
-  if (!isRecord(value) || !exactKeys(value, keys) || !keys.every((key) => safeNonnegative(value[key]))) throw new Error("Invalid StatsLine measured values");
+function closedNumbers(value: unknown, keys: readonly string[], identity: string): Record<string, unknown> {
+  if (!isRecord(value) || !exactKeys(value, keys) || !keys.every((key) => safeNonnegative(value[key]))) invalid(identity, "Invalid StatsLine measured values");
   return value;
 }
-function timestamp(value: unknown): number {
-  if (typeof value !== "string") throw new Error("Invalid StatsLine timestamp");
+function timestamp(value: unknown, identity: string): number {
+  if (typeof value !== "string") return invalid(identity, "Invalid StatsLine timestamp");
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new Error("Invalid StatsLine timestamp");
+  if (!Number.isFinite(parsed)) return invalid(identity, "Invalid StatsLine timestamp");
   return parsed;
 }
 export function validateStatsLineV1(value: unknown): StatsLineV1 {
   const top = ["version", "caseKey", "source", "recordedInvocations", "judgeContinueCount", "auditRejectionCount", "recordedInvocationWindow", "issueToDefaultMerge", "paperApplyBytes", "paperApplyWallClock"];
-  if (!isRecord(value) || !exactKeys(value, top) || value.version !== 1 || !isRecord(value.caseKey) || !exactKeys(value.caseKey, ["repository", "issueNumber"]) || typeof value.caseKey.repository !== "string" || value.caseKey.repository.trim() === "" || !Number.isSafeInteger(value.caseKey.issueNumber) || Number(value.caseKey.issueNumber) <= 0 || !isRecord(value.source) || !exactKeys(value.source, ["targetCommit", "manifests"]) || typeof value.source.targetCommit !== "string" || !/^[0-9a-f]{40}$/.test(value.source.targetCommit) || !Array.isArray(value.source.manifests)) throw new Error("Invalid StatsLine v1 contract");
+  if (!isRecord(value) || !exactKeys(value, top) || value.version !== 1) invalid("contract", "Invalid StatsLine v1 contract");
+  if (!isRecord(value.caseKey) || !exactKeys(value.caseKey, ["repository", "issueNumber"]) || typeof value.caseKey.repository !== "string" || value.caseKey.repository.trim() === "" || !Number.isSafeInteger(value.caseKey.issueNumber) || Number(value.caseKey.issueNumber) <= 0) invalid("caseKey", "Invalid StatsLine case key");
+  if (!isRecord(value.source) || !exactKeys(value.source, ["targetCommit", "manifests"]) || !isFullGitObjectId(value.source.targetCommit) || !Array.isArray(value.source.manifests)) invalid("source", "Invalid StatsLine source");
   let prior = ""; const paths = new Set<string>();
-  for (const item of value.source.manifests) { if (!isRecord(item) || !exactKeys(item, ["path", "sha256"]) || typeof item.path !== "string" || item.path <= prior || paths.has(item.path) || typeof item.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(item.sha256)) throw new Error("Invalid StatsLine source manifest population"); prior = item.path; paths.add(item.path); }
-  const invocations = measuredValue(value.recordedInvocations);
-  if (!isRecord(invocations) || !exactKeys(invocations, ["total", "byRole", "unclassified"]) || !safeNonnegative(invocations.total) || !safeNonnegative(invocations.unclassified) || !isRecord(invocations.byRole)) throw new Error("Invalid StatsLine invocation counts");
+  for (const item of value.source.manifests) { if (!isRecord(item) || !exactKeys(item, ["path", "sha256"]) || typeof item.path !== "string" || item.path <= prior || paths.has(item.path) || typeof item.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(item.sha256)) invalid("source", "Invalid StatsLine source manifest population"); prior = item.path; paths.add(item.path); }
+  const invocations = measuredValue(value.recordedInvocations, "recordedInvocations");
+  if (!isRecord(invocations) || !exactKeys(invocations, ["total", "byRole", "unclassified"]) || !safeNonnegative(invocations.total) || !safeNonnegative(invocations.unclassified) || !isRecord(invocations.byRole)) invalid("recordedInvocations", "Invalid StatsLine invocation counts");
   const byRole = invocations.byRole;
-  if (!exactKeys(byRole, ROLES) || !ROLES.every((role) => safeNonnegative(byRole[role])) || ROLES.reduce((sum, role) => sum + Number(byRole[role]), invocations.unclassified) !== invocations.total) throw new Error("Invalid StatsLine invocation counts");
+  if (!exactKeys(byRole, ROLES) || !ROLES.every((role) => safeNonnegative(byRole[role])) || ROLES.reduce((sum, role) => sum + Number(byRole[role]), invocations.unclassified) !== invocations.total) invalid("recordedInvocations", "Invalid StatsLine invocation counts");
+  if (value.source.manifests.length !== invocations.total) invalid("recordedInvocations", "StatsLine manifest population must equal invocation total");
 
-  if (!safeNonnegative(measuredValue(value.judgeContinueCount))) throw new Error("Invalid StatsLine judge count");
-  const auditCount = measuredValue(value.auditRejectionCount, "recorder-records-only-accepted-audits");
-  if (auditCount !== undefined && !safeNonnegative(auditCount)) throw new Error("Invalid StatsLine audit count");
-
-  const window = measuredValue(value.recordedInvocationWindow, "recorder-does-not-record-invocation-timestamps");
-  if (window !== undefined) {
-    if (!isRecord(window) || !exactKeys(window, ["first", "last"]) || timestamp(window.first) > timestamp(window.last)) throw new Error("Invalid StatsLine invocation window");
-  }
-  const merge = measuredValue(value.issueToDefaultMerge, "tracker-metadata-invalid");
+  const judgeContinues = measuredValue(value.judgeContinueCount, "judgeContinueCount");
+  if (!safeNonnegative(judgeContinues) || judgeContinues > Number(byRole.judge)) invalid("judgeContinueCount", "Invalid StatsLine judge count");
+  const auditCount = measuredValue(value.auditRejectionCount, "auditRejectionCount", "recorder-records-only-accepted-audits");
+  if (auditCount !== undefined && !safeNonnegative(auditCount)) invalid("auditRejectionCount", "Invalid StatsLine audit count");
+  const window = measuredValue(value.recordedInvocationWindow, "recordedInvocationWindow", "recorder-does-not-record-invocation-timestamps");
+  if (window !== undefined && (!isRecord(window) || !exactKeys(window, ["first", "last"]) || timestamp(window.first, "recordedInvocationWindow") > timestamp(window.last, "recordedInvocationWindow"))) invalid("recordedInvocationWindow", "Invalid StatsLine invocation window");
+  const merge = measuredValue(value.issueToDefaultMerge, "issueToDefaultMerge", "tracker-metadata-invalid");
   if (merge !== undefined) {
-    if (!isRecord(merge) || !exactKeys(merge, ["issueOpenedAt", "mergedAt", "milliseconds"]) || !safeNonnegative(merge.milliseconds)) throw new Error("Invalid StatsLine merge duration");
-    const opened = timestamp(merge.issueOpenedAt); const merged = timestamp(merge.mergedAt);
-    if (merged < opened || merged - opened !== merge.milliseconds) throw new Error("Invalid StatsLine merge duration");
+    if (!isRecord(merge) || !exactKeys(merge, ["issueOpenedAt", "mergedAt", "milliseconds"]) || !safeNonnegative(merge.milliseconds)) invalid("issueToDefaultMerge", "Invalid StatsLine merge duration");
+    const opened = timestamp(merge.issueOpenedAt, "issueToDefaultMerge"); const merged = timestamp(merge.mergedAt, "issueToDefaultMerge");
+    if (merged < opened || merged - opened !== merge.milliseconds) invalid("issueToDefaultMerge", "Invalid StatsLine merge duration");
   }
-
-  const bytes = measuredValue(value.paperApplyBytes);
-  if (!isRecord(bytes) || !exactKeys(bytes, ["paperBytes", "applyBytes", "ratio"]) || !safeNonnegative(bytes.paperBytes) || !safeNonnegative(bytes.applyBytes)) throw new Error("Invalid StatsLine byte counts");
+  const bytes = measuredValue(value.paperApplyBytes, "paperApplyBytes");
+  if (!isRecord(bytes) || !exactKeys(bytes, ["paperBytes", "applyBytes", "ratio"]) || !safeNonnegative(bytes.paperBytes) || !safeNonnegative(bytes.applyBytes)) invalid("paperApplyBytes", "Invalid StatsLine byte counts");
   const ratio = bytes.ratio;
-  if (!isRecord(ratio)) throw new Error("Invalid StatsLine byte ratio");
+  if (!isRecord(ratio)) invalid("paperApplyBytes", "Invalid StatsLine byte ratio");
   if (ratio.status === "measured" && exactKeys(ratio, ["status", "value"])) {
-    const pair = closedNumbers(ratio.value, ["numerator", "denominator"]);
-    if (invocations.unclassified > 0 || pair.denominator === 0 || pair.numerator !== bytes.paperBytes || pair.denominator !== bytes.applyBytes) throw new Error("Inconsistent StatsLine byte ratio");
-  } else if (ratio.status === "unavailable" && exactKeys(ratio, ["status", "reason"]) &&
-      ((ratio.reason === "unclassifiable-receipt" && invocations.unclassified > 0) ||
-       (ratio.reason === "no-apply-receipts" && invocations.unclassified === 0 && bytes.applyBytes === 0))) {
-    // The producer can know byte totals while receipt classification prevents a truthful ratio.
-  } else throw new Error("Invalid StatsLine byte ratio state or reason");
-
-  const wallClock = measuredValue(value.paperApplyWallClock, "recorder-does-not-record-wall-clock");
-  if (wallClock !== undefined) closedNumbers(wallClock, ["paperMilliseconds", "applyMilliseconds"]);
+    const pair = closedNumbers(ratio.value, ["numerator", "denominator"], "paperApplyBytes");
+    if (invocations.unclassified > 0 || pair.denominator === 0 || pair.numerator !== bytes.paperBytes || pair.denominator !== bytes.applyBytes) invalid("paperApplyBytes", "Inconsistent StatsLine byte ratio");
+  } else if (!(ratio.status === "unavailable" && exactKeys(ratio, ["status", "reason"]) && ((ratio.reason === "unclassifiable-receipt" && invocations.unclassified > 0) || (ratio.reason === "no-apply-receipts" && invocations.unclassified === 0 && bytes.applyBytes === 0)))) invalid("paperApplyBytes", "Invalid StatsLine byte ratio state or reason");
+  const wallClock = measuredValue(value.paperApplyWallClock, "paperApplyWallClock", "recorder-does-not-record-wall-clock");
+  if (wallClock !== undefined) closedNumbers(wallClock, ["paperMilliseconds", "applyMilliseconds"], "paperApplyWallClock");
   return value as unknown as StatsLineV1;
 }
 
@@ -134,7 +136,7 @@ function validTracker(metadata: TrackerMergeMetadata | undefined, repository: st
 
 export async function produceStatsLineV1(options: { snapshot: CommittedSnapshot; issueNumber: number; tracker?: TrackerMergeMetadata }): Promise<StatsLineV1> {
   if (!Number.isSafeInteger(options.issueNumber) || options.issueNumber <= 0) throw new Error("issueNumber must be a positive safe integer");
-  if (!/^[0-9a-f]{40}$/.test(options.snapshot.targetCommit)) throw new Error("targetCommit must be a full commit identity");
+  if (!isFullGitObjectId(options.snapshot.targetCommit)) throw new Error("targetCommit must be a full commit identity");
   const { isTerminatingToolName, validateAcceptedDetails } = await import("./package-contracts/terminating-tools.ts");
   const prefix = `.ak/dockets/issues/${options.issueNumber}/`;
   const allPaths = [...await options.snapshot.list(prefix)].sort();
@@ -187,10 +189,17 @@ export async function produceStatsLineV1(options: { snapshot: CommittedSnapshot;
 }
 
 export function createGitCommittedSnapshot(options: { repositoryRoot: string; repository: string; targetCommit: string }): CommittedSnapshot {
+  if (!isFullGitObjectId(options.targetCommit)) throw new Error("targetCommit must be a lowercase full Git object identity");
   const git = async (...args: string[]) => (await execFileAsync("git", ["-C", options.repositoryRoot, ...args], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 })).stdout as Buffer;
+  let readiness: Promise<void> | undefined;
+  const ready = () => readiness ??= (async () => {
+    const format = (await git("rev-parse", "--show-object-format")).toString("utf8").trim() as GitObjectFormat;
+    if ((format !== "sha1" && format !== "sha256") || options.targetCommit.length !== gitObjectIdWidth(format)) throw new Error("targetCommit width does not match repository object format");
+    if ((await git("cat-file", "-t", options.targetCommit)).toString("utf8").trim() !== "commit") throw new Error("targetCommit must identify an exact commit object");
+  })();
   return {
     repository: options.repository, targetCommit: options.targetCommit,
-    async list(prefix) { const out = await git("ls-tree", "-r", "--name-only", "-z", options.targetCommit, "--", prefix); return out.toString("utf8").split("\0").filter(Boolean); },
-    async read(path) { return new Uint8Array(await git("show", `${options.targetCommit}:${path}`)); },
+    async list(prefix) { await ready(); const out = await git("ls-tree", "-r", "--name-only", "-z", options.targetCommit, "--", prefix); return out.toString("utf8").split("\0").filter(Boolean); },
+    async read(path) { await ready(); return new Uint8Array(await git("show", `${options.targetCommit}:${path}`)); },
   };
 }
