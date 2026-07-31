@@ -126,9 +126,7 @@ pi --no-skills \
   -p "Review the requested fixed point."
 ```
 
-The capability file is a closed JSON object with exactly `version` (`1`), lowercase `taskSha256`, and unique arrays `tools`, `bashCommands`, and `prerequisiteOperations`. Tools are `read|grep|find|ls|bash|write|edit`; prerequisite operations are `preflight.git.pin-target|preflight.git.resolve-base|preflight.git.derive-range|preflight.git.list-ordered-commits|preflight.git.read-material|runner.git.materialize-mirror|runner.git.materialize-workspace|runner.git.verify-snapshot`. Commands are byte-exact strings, and listing one requires `bash` in `tools`.
-
-The parent submits a closed V1 `Agent` proposal with `base.revision`, a `standardsMaterials` array (which may be empty), one of `spec: { state: "established", materials: [...] }` or `spec: { state: "not-established", evidence: [...] }`, and `required` capability subsets for the applicable `standards` and `spec` legs. Material/evidence arrays for the selected Spec shape are non-empty. Per-leg prerequisite arrays may be empty; any entries request additional operations from the capability ceiling.
+The authoritative capability contract and validation live in the exported TypeScript API in [`src/reviewer-dispatch.ts`](src/reviewer-dispatch.ts). The authoritative `Agent` input contract is the exported runtime `reviewerProposalSchema` in [`src/reviewer-role.ts`](src/reviewer-role.ts), with its corresponding TypeScript proposal type in `reviewer-dispatch.ts`. Callers should derive validation and proposal construction from those exports rather than this invocation guide.
 
 Reviewer terminates with this exact receipt:
 

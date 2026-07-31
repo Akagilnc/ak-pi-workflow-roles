@@ -67,6 +67,7 @@ function harness(options: {
   hostTools?: readonly string[];
   run?: (dispatch: AcceptedReviewerDispatch) => Promise<unknown>;
   compilePrompt?: Parameters<typeof createReviewerDispatcher>[0]["compilePrompt"];
+  renderMaterial?: Parameters<typeof createReviewerDispatcher>[0]["renderMaterial"];
   decisionEvidence?: Parameters<typeof createReviewerDispatcher>[0]["decisionEvidence"];
 } = {}) {
   const calls: AcceptedReviewerDispatch[] = [];
@@ -78,6 +79,7 @@ function harness(options: {
     hostTools: options.hostTools ?? REVIEWER_CHILD_TOOLS,
     run: options.run ?? (async (dispatch) => { calls.push(dispatch); return { ok: true }; }),
     ...(options.compilePrompt === undefined ? {} : { compilePrompt: options.compilePrompt }),
+    ...(options.renderMaterial === undefined ? {} : { renderMaterial: options.renderMaterial }),
     ...(options.decisionEvidence === undefined ? {} : { decisionEvidence: options.decisionEvidence }),
   });
   return { dispatcher, calls };
@@ -524,13 +526,18 @@ test("opaque task prose and selected material bytes remain isolated in compiled 
   });
 });
 
-test("canonical snapshot perturbation changes only extracted Standards evidence", async () => {
+test("every prompt binds the exact canonical Skill snapshot without embedding unselected prose", async () => {
   const original = harness();
   await original.dispatcher.propose(proposal);
-  const changed = harness({ canonicalSkill: skill.replace("**Duplicated Code**", "**Repeated Code**") });
+  const unextractedSentinel = "UNEXTRACTED_SKILL_MUTATION";
+  const changed = harness({ canonicalSkill: `${skill}\n${unextractedSentinel}\n` });
   await changed.dispatcher.propose(proposal);
-  assert.notEqual(original.calls[0]!.legs[0]!.prompt.sha256, changed.calls[0]!.legs[0]!.prompt.sha256);
-  assert.equal(original.calls[0]!.legs[1]!.prompt.sha256, changed.calls[0]!.legs[1]!.prompt.sha256);
+  const canonicalDigest = createHash("sha256").update(skill).digest("hex");
+  for (let index = 0; index < 2; index += 1) {
+    assert.match(original.calls[0]!.legs[index]!.prompt.text, new RegExp(`Canonical-Skill-SHA256: ${canonicalDigest}`));
+    assert.doesNotMatch(changed.calls[0]!.legs[index]!.prompt.text, new RegExp(unextractedSentinel));
+    assert.notEqual(original.calls[0]!.legs[index]!.prompt.sha256, changed.calls[0]!.legs[index]!.prompt.sha256);
+  }
 });
 
 test("no-spec retains actual evidence bytes, length, and hash without creating a Spec leg", async () => {
@@ -725,18 +732,20 @@ test("rejects malformed and unequal compilation identities before child effects"
   }
 });
 
-test("rejects independently recompiled prompt mismatch before child effects", async () => {
+test("rejects independently replayed recipe render mismatch before child effects", async () => {
   let effects = 0;
+  let renders = 0;
   const { dispatcher } = harness({
-    compilePrompt(prompt, _axis, pass) {
-      const bytes = pass === 1 ? prompt : `${prompt}stateful`;
-      return { text: bytes, utf8Length: Buffer.byteLength(bytes), sha256: createHash("sha256").update(bytes).digest("hex") };
+    renderMaterial(evidence) {
+      renders += 1;
+      return `Material-Identity: ${JSON.stringify({ id: evidence.id, repositoryPath: evidence.repositoryPath })}\nMaterial-Bytes:\n${evidence.text}${renders === 3 ? "stateful" : ""}`;
     },
     async run() { effects++; },
   });
   const result = await dispatcher.propose(proposal);
   assert.equal(result.status, "rejected");
   if (result.status === "rejected") assert.deepEqual(result.violations, ["prompt-identity-mismatch"]);
+  assert.ok(renders >= 3);
   assert.equal(effects, 0);
 });
 

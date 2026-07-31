@@ -30,7 +30,7 @@ const requestSchema = Type.Object({
   prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
 }, { additionalProperties: false });
 const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }) }, { additionalProperties: false });
-const reviewerProposalSchema = Type.Object({
+export const reviewerProposalSchema = Type.Object({
   version: Type.Literal(1),
   base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
   standardsMaterials: Type.Array(materialSchema),

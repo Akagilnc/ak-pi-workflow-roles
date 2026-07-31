@@ -119,8 +119,10 @@ type DispatcherDependencies = Readonly<{
   run(dispatch: AcceptedReviewerDispatch, invocation: unknown): Promise<unknown>;
   /** Synchronous append-only projection at the lifecycle decision boundary. */
   decisionEvidence?: (decision: ReviewerDecisionEvidence) => void;
-  /** Testable compiler boundary; production uses reviewerPromptIdentity. */
+  /** Testable identity boundary; production uses reviewerPromptIdentity. */
   compilePrompt?: (prompt: string, axis: "standards" | "spec", pass: 1 | 2) => ReviewerPromptIdentity;
+  /** Testable recipe render seam; production renders exact frozen material evidence. */
+  renderMaterial?: (evidence: ReviewerMaterialEvidence, axis: "standards" | "spec", pass: 1 | 2) => string;
 }>;
 
 export class ReviewerPreflightError extends Error {
@@ -384,33 +386,30 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       }
     }
     const materialEvidence = new Map<string, ReviewerMaterialEvidence>();
-    const renderMaterials = async (items: readonly MaterialSelection[]): Promise<string> => {
-      const rendered: string[] = [];
-      for (const item of items) {
-        let bytes!: Uint8Array;
-        try { bytes = await dependencies.reader.material(item.repositoryPath, targetSnapshot.targetHead); }
-        catch (error) { classifyReadFailure(error); }
-        let text!: string;
-        try { text = exactUtf8(bytes, "Reviewer material"); }
-        catch { violation("material-invalid"); }
-        materialEvidence.set(item.id, Object.freeze({
-          ...item,
-          text: text,
-          utf8Length: bytes.byteLength,
-          sha256: sha256Hex(bytes),
-        }));
-        rendered.push(`Material-Identity: ${JSON.stringify({ id: item.id, repositoryPath: item.repositoryPath })}\nMaterial-Bytes:\n${text}`);
-      }
-      return rendered.join("\n\n");
-    };
+    for (const item of allSelections) {
+      let bytes!: Uint8Array;
+      try { bytes = await dependencies.reader.material(item.repositoryPath, targetSnapshot.targetHead); }
+      catch (error) { classifyReadFailure(error); }
+      let text!: string;
+      try { text = exactUtf8(bytes, "Reviewer material"); }
+      catch { violation("material-invalid"); }
+      materialEvidence.set(item.id, Object.freeze({
+        ...item,
+        text,
+        utf8Length: bytes.byteLength,
+        sha256: sha256Hex(bytes),
+      }));
+    }
 
     let taskText!: string;
     try { taskText = exactUtf8(task, "Reviewer task"); }
     catch { violation("prompt-identity-invalid"); }
     const taskEvidence: ReviewerPromptIdentity = reviewerPromptIdentity(taskText);
-    const common = [
+    const canonicalSkillSha256 = sha256Hex(canonicalSkill);
+    const renderCommonProvenance = () => [
       `Task-SHA256: ${taskEvidence.sha256}`,
       `Task-UTF8-Length: ${taskEvidence.utf8Length}`,
+      `Canonical-Skill-SHA256: ${canonicalSkillSha256}`,
       `Target: ${range.target}`,
       `Base: ${range.base}`,
       `Diff: ${range.diffCommand}`,
@@ -418,22 +417,26 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       "Commits:",
       range.commits.join("\n"),
     ].join("\n");
-    const baseline = skillSection(canonicalSkill, "### 3. Identify the standards sources", "### 4. Spawn both sub-agents in parallel");
-    const standardsBurden = skillSection(canonicalSkill, "**Standards sub-agent prompt**", "**Spec sub-agent prompt**");
-    const standardsPrompt = `${common}\n\nStandards materials:\n${await renderMaterials(proposal.standardsMaterials)}\n\n${baseline}\n\n${standardsBurden}\n`;
-    const promptInputs: Array<Readonly<{ axis: "standards" | "spec"; prompt: string; grant: ReviewerCapabilityRequest }>> = [
-      { axis: "standards", prompt: standardsPrompt, grant: standardsGrant },
+    const promptInputs: Array<Readonly<{ axis: "standards" | "spec"; selections: readonly MaterialSelection[]; grant: ReviewerCapabilityRequest }>> = [
+      { axis: "standards", selections: proposal.standardsMaterials, grant: standardsGrant },
+      ...(axisPlan.kind === "two-leg" ? [{ axis: "spec" as const, selections: axisPlan.selections, grant: specGrant! }] : []),
     ];
-    if (axisPlan.kind === "two-leg") {
-      const specBurden = skillSection(canonicalSkill, "**Spec sub-agent prompt**", "### 5. Aggregate");
-      const specPrompt = `${common}\n\nSpec materials:\n${await renderMaterials(axisPlan.selections)}\n\n${specBurden}\n`;
-      promptInputs.push({ axis: "spec", prompt: specPrompt, grant: specGrant! });
-    } else {
-      await renderMaterials(axisPlan.selections);
-    }
+    const defaultRenderMaterial = (evidence: ReviewerMaterialEvidence) =>
+      `Material-Identity: ${JSON.stringify({ id: evidence.id, repositoryPath: evidence.repositoryPath })}\nMaterial-Bytes:\n${evidence.text}`;
+    const renderMaterial = dependencies.renderMaterial ?? defaultRenderMaterial;
+    const constructPrompt = ({ axis, selections, grant }: typeof promptInputs[number], pass: 1 | 2): string => {
+      const rendered = selections.map((item) => renderMaterial(materialEvidence.get(item.id)!, axis, pass)).join("\n\n");
+      const burden = axis === "standards"
+        ? `${skillSection(canonicalSkill, "### 3. Identify the standards sources", "### 4. Spawn both sub-agents in parallel")}\n\n${skillSection(canonicalSkill, "**Standards sub-agent prompt**", "**Spec sub-agent prompt**")}`
+        : skillSection(canonicalSkill, "**Spec sub-agent prompt**", "### 5. Aggregate");
+      const label = axis === "standards" ? "Standards" : "Spec";
+      return `${renderCommonProvenance()}\nGrant: ${JSON.stringify(grant)}\n\n${label} materials:\n${rendered}\n\n${burden}\n`;
+    };
     const compilePrompt = dependencies.compilePrompt ?? ((prompt: string) => reviewerPromptIdentity(prompt));
-    const firstCompilations = promptInputs.map(({ axis, prompt }) => compilePrompt(prompt, axis, 1));
-    const secondCompilations = promptInputs.map(({ axis, prompt }) => compilePrompt(prompt, axis, 2));
+    const compileRecipe = (input: typeof promptInputs[number], pass: 1 | 2) =>
+      compilePrompt(constructPrompt(input, pass), input.axis, pass);
+    const firstCompilations = promptInputs.map((input) => compileRecipe(input, 1));
+    const secondCompilations = promptInputs.map((input) => compileRecipe(input, 2));
     for (let index = 0; index < firstCompilations.length; index++) {
       const first = firstCompilations[index]!;
       const second = secondCompilations[index]!;
@@ -460,7 +463,7 @@ export function createReviewerDispatcher(dependencies: DispatcherDependencies) {
       recipe: "reviewer-dispatch-v1",
       input: Object.freeze({
         task: taskEvidence,
-        canonicalSkillSha256: sha256Hex(canonicalSkill),
+        canonicalSkillSha256,
         capabilityDocument: capabilities.document,
       }),
       targetSnapshot,

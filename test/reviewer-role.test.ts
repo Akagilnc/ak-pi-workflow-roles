@@ -24,6 +24,7 @@ function harness() {
   return { pi, tools, flags, handlers };
 }
 function outputContext(id:string): ExtensionContext { const sessionManager=SessionManager.inMemory(); sessionManager.appendMessage({role:"assistant",content:[{type:"toolCall",id,name:REVIEWER_OUTPUT_TOOL_NAME,arguments:{}}],api:"x",provider:"x",model:"x",usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:"toolUse",timestamp:Date.now()}); return {sessionManager,abort(){},mode:"tui"} as unknown as ExtensionContext; }
+function captureReviewExpansion(reviewerHarness: ReturnType<typeof harness>) { reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"}); }
 function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> = {}) {
   const reviewerHarness=harness(); let starts=0; const audits:ReviewerAuditInput[]=[];
   const runtime=createReviewerRoleRuntime(reviewerHarness.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>new TextEncoder().encode(path)}), hostTools:()=>["read", "bash"], runDispatch:async(dispatch:AcceptedReviewerDispatch)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted"}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
@@ -113,7 +114,7 @@ test("runner result axes must exactly equal accepted one- and two-leg dispatch a
   for (const counterexample of cases) {
     const reviewerHarness=setup({runDispatch:async(dispatch)=>({identity:dispatch.identity,target:pin,legs:counterexample.legs(dispatch) as any})});
     await reviewerHarness.runtime.activate();
-    reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+    captureReviewExpansion(reviewerHarness);
     await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",counterexample.proposal,undefined,undefined,{} as ExtensionContext),/result axes/);
     for (const status of ["completed","refused"] as const) {
       await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(`out-${status}`,{status,report:"must not issue receipt"},undefined,undefined,outputContext(`out-${status}`)),/infrastructure previously failed/);
@@ -140,7 +141,7 @@ test("runner identity and pinned target must exactly match accepted dispatch bef
   }
 
   const exact=setup(); await exact.runtime.activate();
-  exact.handlers.get("input")({text:"review"}); exact.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+  captureReviewExpansion(exact);
   const accepted=await exact.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
   await exact.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"ok"},undefined,undefined,outputContext("out"));
   assert.equal(exact.audits[0]!.record.results.standards!.dispatchIdentity,accepted.details.dispatch.identity);
@@ -157,7 +158,7 @@ test("invalid expansion is fatal and makes a later refused receipt impossible", 
 
 test("completion audits projected facts and revise can be resubmitted without rerunning", async()=>{
   let calls=0; const reviewerHarness=setup({auditCompliance:async(input)=>{reviewerHarness.audits.push(input);calls++;return calls===1?{status:"revise",violations:["aggregate"]}:{status:"pass"};}}); await reviewerHarness.runtime.activate();
-  reviewerHarness.handlers.get("input")({text:"review",images:undefined}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+  captureReviewExpansion(reviewerHarness);
   await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
   const out=reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME); await assert.rejects(out.execute("one",{status:"completed",report:"report"},undefined,undefined,outputContext("one")),/aggregate/);
   const done=await out.execute("two",{status:"completed",report:"report"},undefined,undefined,outputContext("two")); assert.equal(done.terminate,true); assert.equal(reviewerHarness.starts,1); assert.equal(calls,2); assert.equal(reviewerHarness.audits[1]?.record.results.standards?.prompt.text,reviewerHarness.audits[1]?.record.accepted?.legs[0]?.prompt.text);
@@ -182,7 +183,7 @@ test("transport schema error records once, clears raw args, then permits correct
   reviewerHarness.handlers.get("tool_execution_end")({toolName:AGENT_TOOL_NAME,toolCallId:"bad",isError:true,result:{}});
   reviewerHarness.handlers.get("tool_result")({toolName:AGENT_TOOL_NAME,toolCallId:"bad",isError:true,input:secretArgs,content:[]});
   await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(),undefined,undefined,{} as ExtensionContext);
-  reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+  captureReviewExpansion(reviewerHarness);
   await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"done"},undefined,undefined,outputContext("out"));
   assert.equal(reviewerHarness.audits.length,1);
   assert.equal(reviewerHarness.audits[0]!.record.transportRejections.length,1);
@@ -196,7 +197,7 @@ test("schema-invalid transport settling after acceptance becomes one bounded clo
   await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(),undefined,undefined,{} as ExtensionContext);
   reviewerHarness.handlers.get("tool_result")({toolName:AGENT_TOOL_NAME,toolCallId:"late",isError:true,input:secretArgs,content:[]});
   reviewerHarness.handlers.get("tool_execution_end")({toolName:AGENT_TOOL_NAME,toolCallId:"late",isError:true,result:{}});
-  reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"});
+  captureReviewExpansion(reviewerHarness);
   await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"done"},undefined,undefined,outputContext("out"));
   const record=reviewerHarness.audits[0]!.record;
   assert.equal(record.transportRejections.length,0);
