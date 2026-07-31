@@ -98,6 +98,20 @@ function requireString(value: unknown, label: string): string {
   return value;
 }
 
+function normalizeStructuralPath(
+  value: string,
+  location: Array<string | number>,
+): string {
+  try {
+    return normalizeRepoRelativePath(value, "config path");
+  } catch (error) {
+    throw new RecorderError("invalid-config", "config path is invalid", {
+      cause: error,
+      location,
+    });
+  }
+}
+
 function requireStringOrNull(value: unknown, label: string): string | null {
   if (value === null) return null;
   if (typeof value !== "string") {
@@ -158,6 +172,7 @@ function parseGitReference(raw: unknown, index: number): GitReferenceDeclaration
     throw new RecorderError(
       "invalid-config",
       `declarations.gitReferences[${index}].kind is invalid`,
+      { location: ["declarations", "gitReferences", index, "kind"] },
     );
   }
   const commit = requireString(
@@ -197,9 +212,9 @@ function parseGitReference(raw: unknown, index: number): GitReferenceDeclaration
       `declarations.gitReferences[${index}].repositoryRoot`,
     ),
     commit: commit.toLowerCase(),
-    path: normalizeRepoRelativePath(
+    path: normalizeStructuralPath(
       requireString(raw.path, `declarations.gitReferences[${index}].path`),
-      `declarations.gitReferences[${index}].path`,
+      ["declarations", "gitReferences", index, "path"],
     ),
     blobOid: blobOid.toLowerCase(),
     sha256: sha256.toLowerCase(),
@@ -232,6 +247,7 @@ function parseExternalInput(
     throw new RecorderError(
       "invalid-config",
       `declarations.externalInputs[${index}].kind is invalid`,
+      { location: ["declarations", "externalInputs", index, "kind"] },
     );
   }
   const sourcePath = requireString(
@@ -339,7 +355,7 @@ export function parseRecorderArgv(argv: string[]): ParsedCli {
   return { configPath, childArgv };
 }
 
-export function loadRecorderConfig(configPath: string): RecorderConfig {
+export function loadRecorderConfigStructure(configPath: string): RecorderConfig {
   let text: string;
   try {
     accessSync(configPath, constants.R_OK);
@@ -468,43 +484,42 @@ export function loadRecorderConfig(configPath: string): RecorderConfig {
     );
   }
 
-  const repositoryRoot = requireCredentialFreeMetadata(
-    requireCanonicalGitWorktree(
-      requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"),
-      "archive.repositoryRoot",
-    ),
+  // Parse every structure-only declaration before consulting filesystem or Git.
+  const gitReferences = raw.declarations.gitReferences.map(parseGitReference);
+  const externalInputs = raw.declarations.externalInputs.map(parseExternalInput);
+  const exhibits = raw.declarations.exhibits.map(parseExhibit);
+
+  const repositoryRootRaw = requireCredentialFreeMetadata(
+    requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"),
     "archive.repositoryRoot",
   );
+  if (!isAbsolute(repositoryRootRaw)) {
+    throw new RecorderError("invalid-config", "archive.repositoryRoot must be absolute", {
+      location: ["archive", "repositoryRoot"],
+    });
+  }
+  const repositoryRoot = repositoryRootRaw;
 
   const root = requireCredentialFreeMetadata(
-    normalizeRepoRelativePath(
+    normalizeStructuralPath(
       requireString(raw.archive.root, "archive.root"),
-      "archive.root",
+      ["archive", "root"],
     ),
     "archive.root",
   );
   const docketId = requireCredentialFreeMetadata(
-    normalizeRepoRelativePath(
+    normalizeStructuralPath(
       requireString(raw.archive.docketId, "archive.docketId"),
-      "archive.docketId",
+      ["archive", "docketId"],
     ),
     "archive.docketId",
   );
-  const destination = resolveInsideRoot(
-    repositoryRoot,
-    `${root}/${docketId}`,
-    "archive destination",
-  );
-  assertPathNotSymlinkEscape(destination, repositoryRoot, "archive destination");
-
-  const cwd = requireAbsoluteExistingDirectory(
-    requireString(raw.execution.cwd, "execution.cwd"),
-    "execution.cwd",
-  );
-
-  const gitReferences = raw.declarations.gitReferences.map(parseGitReference);
-  const externalInputs = raw.declarations.externalInputs.map(parseExternalInput);
-  const exhibits = raw.declarations.exhibits.map(parseExhibit);
+  const cwd = requireString(raw.execution.cwd, "execution.cwd");
+  if (!isAbsolute(cwd)) {
+    throw new RecorderError("invalid-config", "execution.cwd must be absolute", {
+      location: ["execution", "cwd"],
+    });
+  }
 
   const ids = new Set<string>();
   for (const item of [...gitReferences, ...externalInputs, ...exhibits]) {
@@ -529,8 +544,9 @@ export function loadRecorderConfig(configPath: string): RecorderConfig {
     externalInputs.some((item) => item.kind === "task");
   if (!hasAuthority || !hasTask) {
     throw new RecorderError(
-      "admission-failed",
+      "invalid-config",
       "declarations must include at least one authority and one task",
+      { location: ["declarations"] },
     );
   }
 
@@ -554,6 +570,32 @@ export function loadRecorderConfig(configPath: string): RecorderConfig {
     },
   };
 }
+
+/** Consult external filesystem and Git state only after pure structure succeeds. */
+export function validateRecorderConfigState(config: RecorderConfig): RecorderConfig {
+  const repositoryRoot = requireCanonicalGitWorktree(
+    config.archive.repositoryRoot,
+    "archive.repositoryRoot",
+  );
+  const destination = resolveInsideRoot(
+    repositoryRoot,
+    `${config.archive.root}/${config.archive.docketId}`,
+    "archive destination",
+  );
+  assertPathNotSymlinkEscape(destination, repositoryRoot, "archive destination");
+  const cwd = requireAbsoluteExistingDirectory(config.execution.cwd, "execution.cwd");
+  return {
+    ...config,
+    archive: { ...config.archive, repositoryRoot },
+    execution: { ...config.execution, cwd },
+  };
+}
+
+/** Backwards-compatible stateful loader; production orchestration calls both phases explicitly. */
+export function loadRecorderConfig(configPath: string): RecorderConfig {
+  return validateRecorderConfigState(loadRecorderConfigStructure(configPath));
+}
+
 
 export function buildChildEnv(
   parentEnv: NodeJS.ProcessEnv,

@@ -13,16 +13,21 @@ const PUBLIC_MESSAGES = {
     "cleanup-failed": "required raw scratch cleanup failed",
     "promotion-failed": "atomic promotion failed",
     "opaque-content": "unsupported opaque content cannot be promoted",
+    "internal-error": "internal Recorder failure",
 };
 export class RecorderError extends Error {
     code;
     childDiagnostic;
+    location;
+    diagnostic;
     /** @param message Internal detail — never interpolated into public JSON. */
     constructor(code, message, options) {
         super(message ?? PUBLIC_MESSAGES[code], options?.cause === undefined ? undefined : { cause: options.cause });
         this.name = "RecorderError";
         this.code = code;
         this.childDiagnostic = options?.childDiagnostic ?? null;
+        this.location = options?.location ?? (code === "invalid-config" ? [] : null);
+        this.diagnostic = options?.diagnostic ?? null;
     }
     get publicMessage() {
         return PUBLIC_MESSAGES[this.code];
@@ -36,6 +41,8 @@ export function toPublicFailure(error, child) {
             code: error.code,
             // Fixed literal only — never error.message which may carry internal detail.
             message: error.publicMessage,
+            location: error.location,
+            diagnostic: error.diagnostic,
         },
         child: {
             status: child.status,
