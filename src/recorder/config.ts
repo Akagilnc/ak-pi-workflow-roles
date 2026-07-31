@@ -34,8 +34,9 @@ export type ExhibitDeclaration = {
   sha256: string;
 };
 export type RecorderConfig = {
-  version: 1;
+  version: 2;
   archive: { repositoryRoot: string; root: string; docketId: string };
+  session: { directory: string; id: string };
   execution: {
     cwd: string;
     environment: {
@@ -200,6 +201,10 @@ export function parseRecorderArgv(argv: string[]): ParsedCli {
   if (argv[2] !== "--") throw new RecorderError("invalid-argv");
   const childArgv = argv.slice(3);
   if (!childArgv.length) throw new RecorderError("invalid-argv");
+  const forbidden = new Set(["--mode","--json","--rpc","--session-dir","--session-id","--session","--fork","--continue","-c","--resume","-r","--no-session"]);
+  let prints = 0;
+  for (let i=1;i<childArgv.length;i++) { const arg=childArgv[i]!; const key=arg.split("=",1)[0]!; if (forbidden.has(key)) throw new RecorderError("invalid-argv"); if(arg==="-p"||arg==="--print"||arg.startsWith("--print=")) prints++; }
+  if (prints!==1) throw new RecorderError("invalid-argv");
   return { configPath, childArgv };
 }
 
@@ -233,17 +238,18 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
   }
   const root = closed(
     raw,
-    ["version", "archive", "execution", "declarations", "provenance"],
+    ["version", "archive", "session", "execution", "declarations", "provenance"],
     [],
     "config",
   );
-  if (root.version !== 1) invalid("config.version must be 1", ["version"]);
+  if (root.version !== 2) invalid("config.version must be 2", ["version"]);
   const archive = closed(
     root.archive,
     ["repositoryRoot", "root", "docketId"],
     ["archive"],
     "archive",
   );
+  const session = closed(root.session, ["directory", "id"], ["session"], "session");
   const execution = closed(
     root.execution,
     ["cwd", "environment", "stdin"],
@@ -284,6 +290,7 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
     ]);
   const overrides: Record<string, string> = {};
   for (const [key, value] of Object.entries(environment.overrides)) {
+    if (key === "PI_SESSION_DIR") invalid("PI_SESSION_DIR override is forbidden", ["execution","environment","overrides"]);
     // v1 environment name: nonempty, no NUL, no '=' (name/value boundary).
     // Reject at the container path — never expose the attacker-controlled key.
     if (key.length === 0 || key.includes("\0") || key.includes("="))
@@ -363,6 +370,9 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
     archiveRoot = relativeAt(archive.root, ["archive", "root"]),
     docketId = relativeAt(archive.docketId, ["archive", "docketId"]),
     cwd = absoluteAt(execution.cwd, ["execution", "cwd"]);
+  const sessionDirectory = relativeAt(session.directory, ["session","directory"]);
+  const sessionId = stringAt(session.id,["session","id"]);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId)) invalid("session.id must be canonical UUIDv7",["session","id"]);
   const indexed = [
     ...gitReferences.map((item, index) => ({
       item,
@@ -419,8 +429,9 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
   if (![...gitReferences, ...externalInputs].some((item) => item.kind === "task"))
     invalid("task declaration is required", ["declarations"]);
   return {
-    version: 1,
+    version: 2,
     archive: { repositoryRoot, root: archiveRoot, docketId },
+    session: { directory: sessionDirectory, id: sessionId },
     execution: {
       cwd,
       environment: { inherit: environment.inherit, overrides, unset },
@@ -489,13 +500,14 @@ export function validateRecorderConfigState(
     repositoryRoot,
     "archive destination",
   );
-  const cwd = requireAbsoluteExistingDirectory(
-    config.execution.cwd,
-    "execution.cwd",
-  );
+  const cwd = requireAbsoluteExistingDirectory(config.execution.cwd, "execution.cwd");
+  const workRoot = resolveInsideRoot(repositoryRoot, ".ak/work", "session work root");
+  const sessionDirectory = resolveInsideRoot(repositoryRoot, config.session.directory, "session.directory");
+  if (!sessionDirectory.startsWith(`${workRoot}/`)) invalid("session.directory must be strictly below .ak/work",["session","directory"]);
   return {
     ...config,
     archive: { ...config.archive, repositoryRoot },
+    session: { ...config.session, directory: config.session.directory },
     execution: { ...config.execution, cwd },
   };
 }
@@ -507,6 +519,7 @@ export function buildChildEnv(
   environment: RecorderConfig["execution"]["environment"],
 ): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = environment.inherit ? { ...parentEnvironment } : {};
+  delete result.PI_SESSION_DIR;
   for (const name of environment.unset) delete result[name];
   for (const [name, value] of Object.entries(environment.overrides)) result[name] = value;
   return result;

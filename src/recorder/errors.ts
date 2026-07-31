@@ -1,15 +1,15 @@
 export const RECORDER_FAILURE_CODES = [
   "invalid-argv", "invalid-config", "invalid-archive", "invalid-path",
   "destination-exists", "spawn-failed", "scan-failed", "admission-failed",
-  "reference-failed", "extraction-failed", "cleanup-failed", "promotion-failed",
+  "reference-failed", "session-collision", "session-missing", "session-ambiguous", "session-corrupt", "session-modified", "acceptance-missing", "acceptance-invalid", "extraction-failed", "promotion-failed",
   "opaque-content", "internal-error",
 ] as const;
 export type RecorderFailureCode = typeof RECORDER_FAILURE_CODES[number];
 
 export const RECORDER_STAGES = [
   "argv", "config-read", "config-structure", "config-metadata-scan", "config-state",
-  "destination", "stage-allocation", "admission", "spawn", "extraction",
-  "generated-artifacts", "manifest", "cleanup", "promotion", "launcher",
+  "destination", "stage-allocation", "admission", "session", "spawn", "extraction",
+  "generated-artifacts", "manifest", "promotion", "launcher",
 ] as const;
 export type RecorderStage = typeof RECORDER_STAGES[number];
 
@@ -30,8 +30,14 @@ export const RECORDER_PUBLIC_MESSAGES = {
   "scan-failed": "credential scan failed",
   "admission-failed": "declaration admission failed",
   "reference-failed": "git reference verification failed",
+  "session-collision": "session directory already exists",
+  "session-missing": "native session is missing",
+  "session-ambiguous": "native session inventory is ambiguous",
+  "session-corrupt": "native session is corrupt",
+  "session-modified": "native session changed while sealing",
+  "acceptance-missing": "accepted package result is missing",
+  "acceptance-invalid": "package acceptance lifecycle is invalid",
   "extraction-failed": "receipt extraction failed",
-  "cleanup-failed": "required raw scratch cleanup failed",
   "promotion-failed": "atomic promotion failed",
   "opaque-content": "unsupported opaque content cannot be promoted",
   "internal-error": "internal Recorder failure",
@@ -49,7 +55,7 @@ export type RecorderSupportedSignal = typeof RECORDER_SUPPORTED_SIGNALS[number];
 
 /** Finite v1 location path segment vocabulary (string keys only). */
 export const RECORDER_LOCATION_SEGMENTS = [
-  "version", "archive", "repositoryRoot", "root", "docketId",
+  "version", "archive", "repositoryRoot", "root", "docketId", "session", "directory",
   "execution", "cwd", "environment", "inherit", "overrides", "unset", "stdin",
   "declarations", "gitReferences", "externalInputs", "exhibits",
   "id", "commit", "path", "blobOid", "sha256", "kind", "sourcePath",
