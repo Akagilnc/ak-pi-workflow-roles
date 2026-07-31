@@ -1,0 +1,26 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_2amYmQdsaoy8RO4U8fK9gZ5C|fc_0c906c60f7d8001d016a6d055225f8819197ec5cadaf30c037",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Both Review-036 findings are sustained on current HEAD `5a5e5431a808f8ac96158fe06ebf05a2a9f8cfd9`. No public compatibility choice remains: repository search finds the legacy names only in package/role re-export chains and generated artifacts, not in a real consumer, while accepted authority already requires distinct intent and runtime-receipt leaves and forbids a compatibility core. Repair the two existing owner seams directly; no Plan, Soul change, parallel cleanup mechanism, or receipt-shape weakening is authorized."
+    },
+    "classes": [
+      {
+        "name": "Fallible preparation versus cleanup-owned resource state",
+        "owner": "`src/reviewer-workspace.ts` remains the sole owner of snapshot/mirror resource state and shutdown; `reviewer-agent` continues to project preparation failure as terminal failed outcomes, and `reviewer-role` continues to treat only genuine shutdown failure as fatal infrastructure.",
+        "boundary": "Do not retain or await the rejected `prepareSnapshot(...)` promise as the cleanup handle. Track cleanup ownership separately: before mirror creation shutdown has nothing to do; after successful snapshot acquisition shutdown removes the owned mirror exactly once; after a preparation failure whose disposition transfers an existing path as `{retained}`, shutdown must neither delete that retained evidence nor replay the already-classified operational rejection. Real `rm` failure while deleting a successfully owned mirror remains a shutdown/infrastructure failure. Preserve the original preparation cause, classification, target, and exact retained/not-created disposition.",
+        "disposition": "Add owner-seam regressions for both pre-creation and post-creation snapshot preparation rejection: `prepare` rejects with the truthful classification/disposition, subsequent `shutdown()` resolves without replay, and a retained path still exists until the test explicitly removes it. Add a production-lifecycle regression showing an accepted dispatch with snapshot preparation failure can settle, lock out spawning, and issue a validated refused `RuntimeReviewerReceiptV2` without `shutdownAgent` invoking `failInfrastructure`; retain success cleanup and genuine cleanup-failure coverage."
+      },
+      {
+        "name": "Remove the Reviewer compatibility core",
+        "owner": "`src/package-contracts/reviewer-output.ts` owns the distinct `ReviewerIntent` and `RuntimeReviewerReceiptV2` leaves; `src/package-contracts/terminating-tools.ts`, role/runtime re-export surfaces, Recorder, and generated `dist` files consume or project those authoritative leaves.",
+        "boundary": "Remove the compatibility type name `ReviewerOutput` and legacy validator `validateAcceptedReviewerDetails`. Migrate package registry imports/exports and any role/runtime re-export aliases to `ReviewerIntent`, `validateReviewerIntent`, `validateRuntimeReviewerReceipt`, and `projectReviewerIntentToReceipt` according to whether the value is submitted intent or runtime details. Do not collapse the two leaves, restore generic deep equality for Reviewer, alter the typed V2 receipt projection, or add replacement aliases. The names' historical presence is not evidence of a current consumer and does not override the accepted no-compatibility authority.",
+        "disposition": "Update source and generated `dist/package-contracts` artifacts together. Preserve installed-package behavior with typecheck, package/Recorder lifecycle tests, and installed-tarball coverage proving thin completed/refused intent projection still yields and records the validated enriched V2 receipt while the legacy runtime export is absent."
+      }
+    ],
+    "note": "The Standards report's replay diagnosis is correct, but cleanup must respect existing truthful-retention authority: a mirror path transferred into `{retained}` evidence is not an owned success resource to delete during shutdown. The Spec finding is sustained without escalation because no actual repository or installed-package consumer requiring either legacy name was found."
+  },
+  "artifactKind": "acceptedReceipt"
+}

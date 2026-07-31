@@ -1,0 +1,8 @@
+# Issue #17 Review-036 adjudication
+
+Adjudicate accepted receipt `.ak/dockets/issues/17/review/review-036-closure/receipt.json` on current HEAD.
+
+1. Standards reports that `reviewer-workspace` stores the fallible raw `prepareSnapshot(...)` promise and `shutdown()` awaits it again. A preparation rejection is first classified into terminal failed outcomes, but shutdown rethrows the same operational failure; role shutdown then becomes fatal and prevents truthful refused receipt issuance. Decide the resource-state/cleanup boundary and required regression.
+2. Spec reports a forbidden compatibility core in `src/package-contracts/reviewer-output.ts`: alias `ReviewerOutput = ReviewerIntent` and legacy `validateAcceptedReviewerDetails = validateReviewerIntent`, despite authority requiring distinct intent/runtime receipt leaves and no compatibility core. Decide whether any real public/package consumer requires these names; otherwise authorize removal and internal migration, including generated artifacts.
+
+Preserve current owner seams, typed Reviewer receipt projection, failure honesty, and installed package behavior. No Plan unless an actual unresolved public compatibility choice exists; the amended authority already rejects compatibility cores. Return direct Fixer classes or converge. No code edits; submit via `ak_judge_output`.
