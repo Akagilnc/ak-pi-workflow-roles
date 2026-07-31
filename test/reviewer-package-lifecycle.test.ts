@@ -138,8 +138,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.equal(rejected.message.details.status, "rejected");
       assert.equal(accepted.message.details.status, "accepted", JSON.stringify(accepted.message.details));
       assert.equal(accepted.message.details.dispatch.legs.length, 2);
-      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /\*\*Refused Bequest\*\*/);
-      assert.match(accepted.message.details.dispatch.legs[1].prompt.text, /Quote the spec line for each finding/);
+      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /canonical-skill\.md.*sha256/);
+      assert.match(accepted.message.details.dispatch.legs[1].prompt.text, /canonical-skill\.md.*sha256/);
       assert.doesNotMatch(accepted.message.details.dispatch.legs[0].prompt.text, /consumer text must become reviewed|Review current HEAD against/);
       assert.equal(accepted.message.details.dispatch.input.task.text, taskBytes.toString("utf8"));
       assert.equal(accepted.message.details.dispatch.input.task.sha256, createHash("sha256").update(taskBytes).digest("hex"));
@@ -159,7 +159,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
         "runner.git.materialize-workspace",
         "runner.git.verify-snapshot",
       ]);
-      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Identify the standards sources/);
+      assert.match(accepted.message.details.dispatch.legs[0].prompt.text, /Question: Apply the complete canonical Standards brief/);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.repositoryRoot, root);
       assert.equal(accepted.message.details.dispatch.targetSnapshot.targetHead, target);
       for (const leg of accepted.message.details.dispatch.legs) {
