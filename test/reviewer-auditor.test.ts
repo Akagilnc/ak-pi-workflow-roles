@@ -71,6 +71,10 @@ test("Reviewer auditor receives complete method inputs and has only its decision
   assert.match(textOfAuditContext(seen), /"dispatchIdentity":"dispatch-1"/);
   assert.match(seen?.systemPrompt ?? "", /not a second substantive reviewer/i);
   assert.match(seen?.systemPrompt ?? "", /Do not discover findings, rerank axes/i);
+  assert.match(seen?.systemPrompt ?? "", /package adapter controls.*output mechanics/i);
+  assert.match(seen?.systemPrompt ?? "", /Cross-axis material access or citation is lawful/i);
+  assert.match(seen?.systemPrompt ?? "", /revise for a second-axis assessment, finding count, conclusion, or section/i);
+  assert.match(seen?.systemPrompt ?? "", /Never apply source allowlists, parse prose mechanically/i);
 });
 
 function textOfAuditContext(seen: Context | undefined): string {
