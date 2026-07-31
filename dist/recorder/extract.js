@@ -33,10 +33,16 @@ export function extractAcceptedReceipt(rows) {
         const m = row.message;
         if (m.role === "assistant" && Array.isArray(m.content))
             for (const p of m.content)
-                if (record(p) && p.type === "toolCall" && typeof p.name === "string" && isTerminatingToolName(p.name) && typeof p.id === "string" && p.id)
+                if (record(p) && p.type === "toolCall" && typeof p.name === "string" && isTerminatingToolName(p.name)) {
+                    if (!exact(p, ["type", "id", "name", "arguments"]) || typeof p.id !== "string" || !p.id)
+                        throw new RecorderError("acceptance-invalid");
                     packageOccurrences.push({ i, role: "issue", id: p.id, name: p.name, args: p.arguments });
-        if (m.role === "toolResult" && typeof m.toolName === "string" && isTerminatingToolName(m.toolName) && typeof m.toolCallId === "string" && m.toolCallId)
+                }
+        if (m.role === "toolResult" && typeof m.toolName === "string" && isTerminatingToolName(m.toolName)) {
+            if (typeof m.toolCallId !== "string" || !m.toolCallId)
+                throw new RecorderError("acceptance-invalid");
             packageOccurrences.push({ i, role: "result", id: m.toolCallId, name: m.toolName, result: m });
+        }
     }
     if (!packageOccurrences.length)
         throw new RecorderError("acceptance-missing");
@@ -48,7 +54,10 @@ export function extractAcceptedReceipt(rows) {
         if (!issue || !result || issue.role !== "issue" || result.role !== "result" || result.i !== issue.i + 1 || issue.id !== result.id || issue.name !== result.name || used.has(issue.id))
             throw new RecorderError("acceptance-invalid");
         used.add(issue.id);
-        const m = result.result;
+        const issueRow = rows[issue.i], resultRow = rows[result.i];
+        const issueMessage = issueRow.message, m = result.result;
+        if (!exact(issueRow, ["type", "id", "parentId", "timestamp", "message"]) || !exact(resultRow, ["type", "id", "parentId", "timestamp", "message"]) || resultRow.parentId !== issueRow.id || !exact(issueMessage, ["role", "content", "stopReason", "timestamp"]) || issueMessage.role !== "assistant" || issueMessage.stopReason !== "toolUse" || typeof issueMessage.timestamp !== "number" || !Array.isArray(issueMessage.content) || issueMessage.content.length !== 1 || !exact(m, ["role", "toolCallId", "toolName", "content", "isError", "details"], ["timestamp", "usage"]) || m.role !== "toolResult")
+            throw new RecorderError("acceptance-invalid");
         if (m.isError === true) {
             p += 2;
             continue;
@@ -63,11 +72,14 @@ export function extractAcceptedReceipt(rows) {
         throw new RecorderError("acceptance-missing");
     if (accepted.i !== rows.length - 1 || acceptedIssue.i !== rows.length - 2)
         throw new RecorderError("acceptance-invalid");
+    const resultRow = rows[accepted.i];
+    if (!exact(resultRow, ["type", "id", "parentId", "timestamp", "message"]))
+        throw new RecorderError("acceptance-invalid");
     const m = accepted.result;
-    if (!exact(m, ["role", "toolCallId", "toolName", "content", "isError", "details"], ["timestamp", "usage"]) || !Array.isArray(m.content) || m.content.length !== 1 || !record(m.content[0]) || !exact(m.content[0], ["type", "text"]) || m.content[0].type !== "text" || m.content[0].text !== acceptedTextFor(accepted.name))
+    if (!exact(m, ["role", "toolCallId", "toolName", "content", "isError", "details"], ["timestamp", "usage"]) || m.role !== "toolResult" || (Object.hasOwn(m, "timestamp") && typeof m.timestamp !== "number") || !Array.isArray(m.content) || m.content.length !== 1 || !record(m.content[0]) || !exact(m.content[0], ["type", "text"]) || m.content[0].type !== "text" || m.content[0].text !== acceptedTextFor(accepted.name))
         throw new RecorderError("acceptance-invalid");
     const issueRow = rows[acceptedIssue.i], im = issueRow.message;
-    if (im.stopReason !== "toolUse" || !Array.isArray(im.content) || im.content.length !== 1)
+    if (!exact(issueRow, ["type", "id", "parentId", "timestamp", "message"]) || !exact(im, ["role", "content", "stopReason", "timestamp"]) || im.role !== "assistant" || im.stopReason !== "toolUse" || typeof im.timestamp !== "number" || !Array.isArray(im.content) || im.content.length !== 1)
         throw new RecorderError("acceptance-invalid");
     if (accepted.name === COLLECTOR_OUTPUT_TOOL ? !collectorProjection(acceptedIssue.args, m.details) : !deepEqual(acceptedIssue.args, m.details))
         throw new RecorderError("acceptance-invalid");
