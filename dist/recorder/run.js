@@ -10,25 +10,29 @@ import { isOccupiedRenameError, renameNoReplace } from "./rename-no-replace.js";
 import { combineReports, publicRedactionReport, scanString, } from "./scanner.js";
 import { createSessionLeaf, readSession } from "./session.js";
 import { spawnOnce } from "./spawn.js";
-const cleanup = (p) => {
-    if (p)
-        try {
-            rmSync(p, { recursive: true, force: true });
-        }
-        catch { }
-};
-function destination(c) {
-    return resolveInsideRoot(c.archive.repositoryRoot, `${c.archive.root}/${c.archive.docketId}`, "archive destination");
-}
-function occupied(p) {
+const cleanup = (stagePath) => {
+    if (!stagePath)
+        return null;
     try {
-        lstatSync(p);
+        rmSync(stagePath, { recursive: true, force: true });
+        return null;
+    }
+    catch (cause) {
+        return { status: "failed", category: safeDiagnostic("launcher", cause).category };
+    }
+};
+function destination(config) {
+    return resolveInsideRoot(config.archive.repositoryRoot, `${config.archive.root}/${config.archive.docketId}`, "archive destination");
+}
+function occupied(path) {
+    try {
+        lstatSync(path);
         return true;
     }
-    catch (e) {
-        if (e.code === "ENOENT")
+    catch (cause) {
+        if (cause.code === "ENOENT")
             return false;
-        throw e;
+        throw cause;
     }
 }
 function promote(stage, dest, root) {
@@ -39,18 +43,18 @@ function promote(stage, dest, root) {
     try {
         renameNoReplace(stage, dest);
     }
-    catch (e) {
-        if (e instanceof RecorderError)
-            throw e;
-        if (isOccupiedRenameError(e) || occupied(dest))
-            throw new RecorderError("destination-exists", undefined, { cause: e });
-        throw new RecorderError("promotion-failed", undefined, { cause: e });
+    catch (cause) {
+        if (cause instanceof RecorderError)
+            throw cause;
+        if (isOccupiedRenameError(cause) || occupied(dest))
+            throw new RecorderError("destination-exists", undefined, { cause });
+        throw new RecorderError("promotion-failed", undefined, { cause });
     }
 }
-function outcome(s, diagnostic) {
-    return s.signal
-        ? { status: "signaled", exitCode: null, signal: s.signal, diagnostic }
-        : { status: "exited", exitCode: s.exitCode ?? 1, signal: null, diagnostic };
+function outcome(settlement, diagnostic) {
+    return settlement.signal
+        ? { status: "signaled", exitCode: null, signal: settlement.signal, diagnostic }
+        : { status: "exited", exitCode: settlement.exitCode ?? 1, signal: null, diagnostic };
 }
 export async function runRecorder(options) {
     const stderr = options.stderr ?? process.stderr;
@@ -60,16 +64,16 @@ export async function runRecorder(options) {
         signal: null,
         diagnostic: null,
     }, stage = null, current = "argv";
-    const fail = (e) => {
-        cleanup(stage);
-        const err = e.diagnostic || e.cause === undefined
-            ? e
-            : new RecorderError(e.code, undefined, {
-                cause: e.cause,
-                location: e.location,
-                diagnostic: safeDiagnostic(current, e.cause),
+    const fail = (primaryError) => {
+        const cleanupFailure = cleanup(stage);
+        const publicError = primaryError.diagnostic || primaryError.cause === undefined
+            ? primaryError
+            : new RecorderError(primaryError.code, undefined, {
+                cause: primaryError.cause,
+                location: primaryError.location,
+                diagnostic: safeDiagnostic(current, primaryError.cause),
             });
-        const line = serializePublicFailure(err, child);
+        const line = serializePublicFailure(publicError, child, cleanupFailure);
         stderr.write(line);
         return {
             exitCode: RECORDER_FAILURE_EXIT,
@@ -113,8 +117,8 @@ export async function runRecorder(options) {
         try {
             await execution.streamCompletion;
         }
-        catch (e) {
-            return fail(internalRecorderError(current, e));
+        catch (streamCause) {
+            return fail(internalRecorderError(current, streamCause));
         }
         const tail = execution.stderrTail.bytes().length
             ? execution.stderrTail.bytes()
@@ -146,14 +150,14 @@ export async function runRecorder(options) {
         });
         reports.push(receiptStored.report);
         if (extraction.auditObservation) {
-            const s = storeGeneratedJson(stage, "audit-observation.json", extraction.auditObservation, "auditObservation");
+            const auditStored = storeGeneratedJson(stage, "audit-observation.json", extraction.auditObservation, "auditObservation");
             artifacts.push({
                 id: "audit-observation",
                 kind: "audit-observation",
-                redactionStatus: s.report.redacted ? "redacted" : "clean",
-                stored: s.stored,
+                redactionStatus: auditStored.report.redacted ? "redacted" : "clean",
+                stored: auditStored.stored,
             });
-            reports.push(s.report);
+            reports.push(auditStored.report);
         }
         current = "manifest";
         const built = buildManifest({
@@ -186,25 +190,27 @@ export async function runRecorder(options) {
             }
             : { exitCode: child.exitCode ?? 1, signal: null, failureJson: null };
     }
-    catch (e) {
-        return fail(e instanceof RecorderError ? e : internalRecorderError(current, e));
+    catch (primaryCause) {
+        return fail(primaryCause instanceof RecorderError
+            ? primaryCause
+            : internalRecorderError(current, primaryCause));
     }
 }
-function reRaiseSignal(s) {
-    process.removeAllListeners(s);
+function reRaiseSignal(signal) {
+    process.removeAllListeners(signal);
     try {
-        process.kill(process.pid, s);
+        process.kill(process.pid, signal);
     }
     catch {
         process.exit(RECORDER_FAILURE_EXIT);
     }
 }
 export async function main(argv = process.argv.slice(2)) {
-    const r = await runRecorder({ argv });
-    if (r.signal) {
-        reRaiseSignal(r.signal);
+    const result = await runRecorder({ argv });
+    if (result.signal) {
+        reRaiseSignal(result.signal);
         await new Promise(() => { });
     }
     else
-        process.exit(r.exitCode);
+        process.exit(result.exitCode);
 }

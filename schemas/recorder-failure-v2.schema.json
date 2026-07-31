@@ -16,7 +16,8 @@
         "code",
         "message",
         "location",
-        "diagnostic"
+        "diagnostic",
+        "cleanup"
       ],
       "properties": {
         "status": {
@@ -100,6 +101,38 @@
               }
             ]
           }
+        },
+        "cleanup": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "category"
+              ],
+              "properties": {
+                "status": {
+                  "const": "failed"
+                },
+                "category": {
+                  "enum": [
+                    "filesystem-missing",
+                    "filesystem-inaccessible",
+                    "filesystem-not-file",
+                    "filesystem",
+                    "process",
+                    "platform-error",
+                    "error",
+                    "non-error-throw"
+                  ]
+                }
+              }
+            }
+          ]
         },
         "diagnostic": {
           "oneOf": [

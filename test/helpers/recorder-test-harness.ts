@@ -244,7 +244,7 @@ export function spawnRecorderBin(
 }
 
 const COUNTER_SCRIPT = String.raw`#!/usr/bin/env node
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 const counter = process.env.AK_RECORDER_COUNTER;
 if (!counter) {
@@ -269,6 +269,7 @@ if (mode === "native-session") {
   writeFileSync(join(sessionDir, "native_" + sessionId + ".jsonl"), rows.map(JSON.stringify).join("\n") + "\n");
   process.stdout.write("OUT:native\n");
   process.stderr.write("ERR:native\n");
+  if (process.env.AK_LOCK_WORK === "1") chmodSync(join(process.cwd(), ".ak/work"), 0o500);
   process.exit(Number(process.env.AK_CHILD_EXIT ?? "0"));
 }
 if (mode === "stdout-stderr") {

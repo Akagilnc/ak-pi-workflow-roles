@@ -67,6 +67,7 @@ const PUBLIC_MESSAGES = RECORDER_PUBLIC_MESSAGES;
 
 export type SchemaLocation = Array<string | number>;
 export type SafeDiagnostic = { stage: RecorderStage; category: RecorderDiagnosticCategory };
+export type CleanupFailure = { status: "failed"; category: RecorderDiagnosticCategory };
 
 function platformCode(value: unknown): string | null {
   if (typeof value !== "object" || value === null || !("code" in value)) return null;
@@ -101,12 +102,12 @@ export type ChildOutcome =
   | { status: "not-spawned"; exitCode: null; signal: null; diagnostic: null }
   | { status: "exited"; exitCode: number; signal: null; diagnostic: string | null }
   | { status: "signaled"; exitCode: null; signal: string; diagnostic: string | null };
-export type PublicFailure = { recorder: { status: "failed"; code: RecorderFailureCode; message: string; location: SchemaLocation | null; diagnostic: SafeDiagnostic | null }; child: ChildOutcome };
+export type PublicFailure = { recorder: { status: "failed"; code: RecorderFailureCode; message: string; location: SchemaLocation | null; diagnostic: SafeDiagnostic | null; cleanup: CleanupFailure | null }; child: ChildOutcome };
 export const RECORDER_FAILURE_EXIT = 125;
 export function internalRecorderError(stage: RecorderStage, cause: unknown): RecorderError {
   return new RecorderError("internal-error", undefined, { cause, diagnostic: safeDiagnostic(stage, cause) });
 }
-export function toPublicFailure(error: RecorderError, child: ChildOutcome): PublicFailure {
+export function toPublicFailure(error: RecorderError, child: ChildOutcome, cleanup: CleanupFailure | null = null): PublicFailure {
   const diagnostic =
     error.diagnostic ??
     (error.code === "internal-error" && error.cause !== undefined
@@ -124,10 +125,11 @@ export function toPublicFailure(error: RecorderError, child: ChildOutcome): Publ
       message: error.publicMessage,
       location: error.location,
       diagnostic: publicDiagnostic,
+      cleanup,
     },
     child,
   };
 }
-export function serializePublicFailure(error: RecorderError, child: ChildOutcome): string {
-  return `${JSON.stringify(toPublicFailure(error, child))}\n`;
+export function serializePublicFailure(error: RecorderError, child: ChildOutcome, cleanup: CleanupFailure | null = null): string {
+  return `${JSON.stringify(toPublicFailure(error, child, cleanup))}\n`;
 }
