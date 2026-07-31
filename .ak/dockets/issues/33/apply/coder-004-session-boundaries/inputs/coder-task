@@ -1,0 +1,9 @@
+# Issue #33 direct Coder Apply slice A closure
+
+No Plan. Close only the explicit residuals in the admitted Coder-003 receipt under the converged design authority:
+
+1. production Recorder invocation tests with a real counter child proving every required invalid config/session/forbidden-flag case rejects before spawn, and valid v2 injects exact session id/directory, strips inherited `PI_SESSION_DIR`, rejects its override, preserves allowed argv/environment, and spawns exactly once;
+2. exact streamed JSONL boundaries for 16 MiB line including newline and 100000 entries: just-below/equal legal cases and first-illegal cases, with bounded memory and honest classification;
+3. deterministic real-file mutation while the active fd is being streamed, covering growth/shrink/replacement/metadata/inventory as applicable, without a production test hook or timing-flaky sleep oracle. If the current seam cannot prove this deterministically, deepen the session owner interface without exposing test-only controls.
+
+Repair the shared owner seams revealed. Preserve current green behavior and all #33 non-goals. Run focused red/green, typecheck/build, full isolated-HOME suite, package checks as affected, and `git diff --check`; commit forward. Submit completed only for this bounded residual slice, not whole Issue #33. Sol low, direct Apply, no Plan.
