@@ -43,3 +43,7 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 ## 失败诚实宪法
 
 **接住可以，洗白不行**：未识别异常不得冒用具体标签；真因必须落痕；catch 后照常继续视同缺陷，除非「此失败下继续」是文档化契约。
+
+## 锚定宪法
+
+**机器只咬契约，不咬呈现**：对自由文本的正则/措辞/表头机械依赖、对图像的像素机械依赖，视同缺陷；机器要消费的信息必须以键、typed 字段或 schema 提供。呈现为人服务，随时可重排。
