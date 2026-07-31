@@ -1,0 +1,7 @@
+# Issue #12 Fixer Apply — committed Doctor evidence resolution
+
+Sole authority: `.ak/dockets/issues/12/judgment/review-001/receipt.json`.
+
+Repair exactly `F4-committed-doctor-evidence-resolution` under its complete boundary. Before activation, resolve claim-chain artifacts from exact target-commit bytes at canonical confined `.ak/dockets/issues/<positive>/...` paths; reject escapes/aliases/missing/mismatch/malformed/duplicates/wrong target/inaccessible. Derive byte length, digest, parsed payload and sealed identity from committed bytes rather than caller-inline assertions. Add closed Git/tracker metadata normalization and consume only strengthened validated StatsLines. Actual bites must bind resolver-derived sealed identities. Keep model access limited to admitted IDs, no filesystem/Git/native tools.
+
+Add the authorized fabricated-receipt, mismatch, escape, metadata-shape red cases and frozen-target greens. Preserve F5 and all R1/L1/tool/audit laws. Do not repair F1-F3. Regenerate artifacts; run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this class.
