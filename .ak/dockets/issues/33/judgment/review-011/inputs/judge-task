@@ -1,0 +1,11 @@
+# Issue #33 Review-011 closure adjudication
+
+Adjudicate all three Standards findings in `.ak/dockets/issues/33/review/review-011/receipt.json` at fixed HEAD `c1243d0b66a4ea15fb265cec71addcd2cb2c7905`. Spec reports zero findings.
+
+Apply repository constitutions, amended C8, the design replacement/no-v1-core law, and prior Review-005/Review-009 authority. Decide:
+
+1. Cleanup failure honesty: whether `cleanup()` swallowing `rmSync` failure is lawful best-effort preservation of the primary failure or an undocumented caught cause. If sustained, authorize the smallest scanner-safe truthful evidence path without masking the primary Recorder/child outcome or publishing a false docket.
+2. `extractAcceptedReceipt(rows)` compatibility wrapper: whether a test-only exported array adapter violates replacement/one-core and compact-state boundaries despite delegating to the one collector implementation. Authorize deletion only if no public v2 contract requires it.
+3. Residual `run.ts` names (`p`, `c`, `s`, `e`, `dest`, `err`): determine which are actual trust-path readability defects under the already sustained class versus ordinary local names/noise. Bound any repair to source plus generated counterpart.
+
+Do not reopen the zero-finding Spec axis, owner option 4, rejected fixture duplication, or closed classes without a concrete counterexample. Return `continue` with stable direct-Fixer class boundaries, `converged` if all are rejected, or `escalate` only for a genuine major owner decision. No Plan and no code edits. Submit only through `ak_judge_output`.
