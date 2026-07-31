@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+    "root": ".ak/dockets",
+    "docketId": "issues/23/plan/coder-001"
+  },
+  "invocation": {
+    "id": "fb86f8aa-e9a7-4767-8d6f-cbe89902e597"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "plan",
+      "--ak-coder-task",
+      ".ak/work/issues/23/plan-task.md",
+      "-p",
+      "Prepare the diagnosis-first implementation plan. Do not edit or commit. Submit through ak_coder_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "cd77cf3b112446e6df838fa837d1e741a0ce50e3",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-23-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "cd77cf3b112446e6df838fa837d1e741a0ce50e3",
+        "path": ".ak/dockets/issues/23/authority/judge-001/receipt.json",
+        "blobOid": "d22ea33239618dcd52bc9fe5f17db2577e729113",
+        "sha256": "72c231a8e59009f991f64d8b4a3a6ae6c675d02e4984004daacd3be4306271fb",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/plan-task",
+        "sha256": "c69ba7ce6010ff06b89d2a20d3a8331d84a450d37bba3582e10cedfd989dbe9f",
+        "byteLength": 1497
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "073f01ae77ab536c4e64df82741f0f557cc62e22a783b7fa1261050404caa8bf",
+        "byteLength": 9938
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_Ycf9MKkkBE5BdXx7IjYDu9x4|fc_0ec13c3127d2fc75016a6c21ca5ae08191af9187b0b5fe09b3",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}
