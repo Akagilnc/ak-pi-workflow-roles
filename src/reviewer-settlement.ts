@@ -33,7 +33,7 @@ export function assembleRuntimeReviewerReceipt(input: {
     version: 2,
     status: input.intent.status,
     ...(input.intent.status === "refused" ? { diagnostic: input.intent.diagnostic } : {}),
-    ...(accepted === undefined ? {} : { batchIdentity: accepted.identity }),
+    ...(accepted === undefined ? {} : { acceptedBatch: { identity: accepted.identity, legs: accepted.legs.map(({ axis, prompt }) => ({ axis, prompt })) } }),
     reports,
     outcomes,
     identities: {
