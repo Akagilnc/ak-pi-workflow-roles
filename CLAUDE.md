@@ -46,9 +46,7 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 ## Role invocation evidence
 
-所有 Judge、Fixer、Coder、Reviewer、Collector 调用必须使用 Pi 原生 session 持久化：以 `--session-dir .ak/work/<issue>/runs/<invocation>/session` 取代 `--no-session`，stdout 可丢弃；同目录以 `0600` 保存 `stderr.log` 与 `invocation.json`（至少包含开始、结束、耗时、退出码和 session 目录）。`.ak/work/` 必须保持 gitignored；原始 session、stderr 和 invocation metadata 不得提交，确认无用后手工删除。
-
-上游/provider 诊断必须原样保留为素材，但不得过度声称：例如只有 `WebSocket error` 而没有 close code、close reason 或底层 cause 时，只能证明 WebSocket 层失败，真因仍为 `insufficient-evidence`。
+调用角色时使用 `pi --session-dir .ak/work/<issue>/runs/<invocation>/session`（不用 `--no-session`），stdout 可丢到 `/dev/null`，`stderr.log` 和 `invocation.json` 留在同次 `runs/` 目录。
 
 ## 锚定宪法
 
