@@ -33,8 +33,14 @@
             "scan-failed",
             "admission-failed",
             "reference-failed",
-            "extraction-failed",
+            "session-collision",
+            "session-missing",
+            "session-ambiguous",
+            "session-corrupt",
             "session-modified",
+            "acceptance-missing",
+            "acceptance-invalid",
+            "extraction-failed",
             "promotion-failed",
             "opaque-content",
             "internal-error"
@@ -192,101 +198,283 @@
           "oneOf": [
             {
               "properties": {
-                "code": { "const": "invalid-argv" },
-                "message": { "const": "invalid Recorder argv" }
+                "code": {
+                  "const": "invalid-argv"
+                },
+                "message": {
+                  "const": "invalid Recorder argv"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "invalid-config" },
-                "message": { "const": "invalid Recorder config" }
+                "code": {
+                  "const": "invalid-config"
+                },
+                "message": {
+                  "const": "invalid Recorder config"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "invalid-archive" },
-                "message": { "const": "invalid archive worktree" }
+                "code": {
+                  "const": "invalid-archive"
+                },
+                "message": {
+                  "const": "invalid archive worktree"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "invalid-path" },
-                "message": { "const": "invalid path" }
+                "code": {
+                  "const": "invalid-path"
+                },
+                "message": {
+                  "const": "invalid path"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "destination-exists" },
-                "message": { "const": "archive destination already exists" }
+                "code": {
+                  "const": "destination-exists"
+                },
+                "message": {
+                  "const": "archive destination already exists"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "spawn-failed" },
-                "message": { "const": "failed to spawn child process" }
+                "code": {
+                  "const": "spawn-failed"
+                },
+                "message": {
+                  "const": "failed to spawn child process"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "scan-failed" },
-                "message": { "const": "credential scan failed" }
+                "code": {
+                  "const": "scan-failed"
+                },
+                "message": {
+                  "const": "credential scan failed"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "admission-failed" },
-                "message": { "const": "declaration admission failed" }
+                "code": {
+                  "const": "admission-failed"
+                },
+                "message": {
+                  "const": "declaration admission failed"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "reference-failed" },
-                "message": { "const": "git reference verification failed" }
+                "code": {
+                  "const": "reference-failed"
+                },
+                "message": {
+                  "const": "git reference verification failed"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "extraction-failed" },
-                "message": { "const": "receipt extraction failed" }
+                "code": {
+                  "const": "session-collision"
+                },
+                "message": {
+                  "const": "session directory already exists"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "session-modified" },
-                "message": { "const": "required raw scratch cleanup failed" }
+                "code": {
+                  "const": "session-missing"
+                },
+                "message": {
+                  "const": "native session is missing"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "promotion-failed" },
-                "message": { "const": "atomic promotion failed" }
+                "code": {
+                  "const": "session-ambiguous"
+                },
+                "message": {
+                  "const": "native session inventory is ambiguous"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "opaque-content" },
-                "message": { "const": "unsupported opaque content cannot be promoted" }
+                "code": {
+                  "const": "session-corrupt"
+                },
+                "message": {
+                  "const": "native session is corrupt"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
             },
             {
               "properties": {
-                "code": { "const": "internal-error" },
-                "message": { "const": "internal Recorder failure" }
+                "code": {
+                  "const": "session-modified"
+                },
+                "message": {
+                  "const": "native session changed while sealing"
+                }
               },
-              "required": ["code", "message"]
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "acceptance-missing"
+                },
+                "message": {
+                  "const": "accepted package result is missing"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "acceptance-invalid"
+                },
+                "message": {
+                  "const": "package acceptance lifecycle is invalid"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "extraction-failed"
+                },
+                "message": {
+                  "const": "receipt extraction failed"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "promotion-failed"
+                },
+                "message": {
+                  "const": "atomic promotion failed"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "opaque-content"
+                },
+                "message": {
+                  "const": "unsupported opaque content cannot be promoted"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            },
+            {
+              "properties": {
+                "code": {
+                  "const": "internal-error"
+                },
+                "message": {
+                  "const": "internal Recorder failure"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
             }
           ]
         }
@@ -414,5 +602,6 @@
         }
       ]
     }
-  }
+  },
+  "title": "Recorder failure v2"
 }
