@@ -68,13 +68,15 @@ pi --ak-role fixer \
   -p "Apply the approved repair plan."
 ```
 
-Fixer terminates through `ak_fixer_output`:
+Fixer terminates through `ak_fixer_output`. Its legal status-dependent shapes are:
 
 ```json
-{"status":"planned|completed|refused","report":"Markdown report","commitSha":"optional self-report"}
+{"status":"planned","report":"Markdown report"}
+{"status":"completed","report":"Markdown report","commitSha":"optional self-report","classesRepaired":[{"name":"ClassName","searchScope":"non-empty census scope","exceptions":[{"where":"explicit location","reason":"non-empty reason"}]}]}
+{"status":"refused","report":"Markdown report","commitSha":"optional self-report"}
 ```
 
-`planned` cannot carry `commitSha`. Otherwise `commitSha` is advisory evidence for the caller, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence for the caller to dispose. The caller owns the next step after the receipt (and may or may not involve Judge).
+`classesRepaired` is optional and completed-only; when present it is non-empty, has unique comma-free nonblank names, nonblank search scopes, and explicit exception arrays (which may be empty). `planned` cannot carry `commitSha`. Otherwise `commitSha` is advisory evidence for the caller, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence for the caller to dispose. The caller owns the next step after the receipt (and may or may not involve Judge).
 
 Fixer-only bash seatbelt (both `plan` and `apply`): before a `bash` tool executes, the package inspects only the string `command` and blocks when it case-sensitively contains any one of these exact ASCII literals — `rm -rf`, `git reset --hard`, `git clean`, `git checkout --`. The block is an ordinary nonterminating tool error that names the matched literal; bash does not run, the Fixer session stays alive, and the model may retry a different spelling/operation or submit `refused`. This is accidental-destruction drift prevention only — not hostile-code defense, shell sandboxing, filesystem isolation, or bypass resistance. Callers that need isolation must supply a container or sandbox.
 
@@ -176,9 +178,19 @@ Failure channels (non-zero, no receipt) include malformed/unsupported config or 
 
 ## Verdict contract
 
+Judge's legal status-dependent shapes are:
+
+```json
+{"judgeStatus":"converged"}
+{"judgeStatus":"continue","fix":{"summary":"non-empty repair summary"},"classes":[{"name":"ClassName","owner":"owning seam","boundary":"bounded scope","disposition":"adjudication"}]}
+{"judgeStatus":"escalate","decisionGate":{"question":"non-empty owner question","options":["non-empty option"]}}
+```
+
+A `continue` receipt requires non-empty `classes` with unique comma-free nonblank names and nonblank owner, boundary, and disposition fields. `classes` is forbidden on `converged` and `escalate` receipts. The shapes retain these meanings:
+
 - `converged` — relative to the material under judgment (for a plan: construction authorization only)
-- `continue` with non-empty `fix.summary`
-- `escalate` with `decisionGate.question` and non-empty `decisionGate.options`
+- `continue` — further repair is warranted
+- `escalate` — an owner decision is required
 
 Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields (including apply obligations attached to a construction-ready plan). It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
 

@@ -22,6 +22,7 @@ import {
   validateAcceptedReviewerDetails,
   type ReviewerOutput,
 } from "./package-contracts/reviewer-output.ts";
+import { reviewerScopePrompt } from "./reviewer-scope-prompt.ts";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -405,9 +406,7 @@ export function createReviewerRoleRuntime(
               );
             }
           }
-          const scopePrompt = reviewScopeKeys === undefined
-            ? "<review_scope>full</review_scope>"
-            : `<review_scope_keys>${JSON.stringify(reviewScopeKeys)}</review_scope_keys>`;
+          const scopePrompt = reviewerScopePrompt(reviewScopeKeys);
           return {
             systemPrompt:
               `${event.systemPrompt}\n\n${scopePrompt}\n\n<reviewer_soul>\n${soul}\n</reviewer_soul>\n\n<reviewer_verification_policy>\n${REVIEWER_VERIFICATION_POLICY}\n</reviewer_verification_policy>\n\n<review_task>\n${task ?? ""}\n</review_task>`,

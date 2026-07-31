@@ -25,6 +25,7 @@ import type {
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
+import { reviewerScopePrompt } from "./reviewer-scope-prompt.ts";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
 
 const CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
@@ -366,9 +367,7 @@ async function runChild(
     noContextFiles: true,
     systemPrompt: [
       "Work only in the supplied writable review clone.",
-      reviewScopeKeys === undefined
-        ? "<review_scope>full</review_scope>"
-        : `<review_scope_keys>${JSON.stringify(reviewScopeKeys)}</review_scope_keys>`,
+      reviewerScopePrompt(reviewScopeKeys),
       REVIEWER_VERIFICATION_POLICY,
       "Inspect and probe; do not repair the reviewed product, commit, push, or mutate remotes.",
       "Clearly distinguish scratch artifacts and probe changes from facts about the pinned reviewed target.",
