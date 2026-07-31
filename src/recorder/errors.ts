@@ -36,12 +36,15 @@ function platformCode(value: unknown): string | null {
   if (typeof value !== "object" || value === null || !("code" in value)) return null;
   return typeof (value as { code?: unknown }).code === "string" ? (value as { code: string }).code : null;
 }
+const FILESYSTEM_CODES = new Set(["EEXIST", "ENOTDIR", "ENOTEMPTY", "EROFS", "EXDEV", "ELOOP", "ENOSPC", "EMFILE", "ENFILE"]);
+const PROCESS_CODES = new Set(["ECHILD", "ENOEXEC", "ESRCH"]);
 export function safeDiagnostic(stage: RecorderStage, cause: unknown): SafeDiagnostic {
   const code = platformCode(cause);
   const category: RecorderDiagnosticCategory = code === "ENOENT" ? "filesystem-missing"
     : code === "EACCES" || code === "EPERM" ? "filesystem-inaccessible"
     : code === "EISDIR" ? "filesystem-not-file"
-    : code !== null && code.startsWith("E") ? "filesystem"
+    : code !== null && FILESYSTEM_CODES.has(code) ? "filesystem"
+    : code !== null && PROCESS_CODES.has(code) ? "process"
     : code !== null ? "platform-error"
     : cause instanceof Error ? "error" : "non-error-throw";
   return { stage, category };
