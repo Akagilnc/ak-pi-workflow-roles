@@ -1,0 +1,15 @@
+# Issue #33 post-repair finding adjudication
+
+Adjudicate every finding in `.ak/dockets/issues/33/review/review-005/receipt.json` at fixed HEAD `0022128643d9bf51c02b9d8643fb7bf9febfadf6`, together with residual classes from `.ak/dockets/issues/33/judgment/review-003-merged/receipt.json` that the Reviewer census says remain partial/missing. Apply the C8 amendment.
+
+Resolve these classes from current code and authority:
+
+1. Exact package accepted-text dependency: design C3 currently requires an exact accepted literal, while CLAUDE's anchoring constitution forbids machine dependence on prose wording and ADR 0016 forbids format-only tests. Decide authority precedence and whether typed tool identity/details/isError plus package runtime acceptance suffice without text.
+2. Compact state: decide whether retaining every package attempt's full arguments/details in `AcceptanceCollector`, despite discarding irrelevant rows, violates the compact candidate-state law; authorize bounded immediate pair reduction if sustained.
+3. Representative production verticals: counter-child invocation, worker/audited/Collector derivative/scanning, child exit/signal/sealer-failure, atomic publication/raw exclusion, and cold installed-bin smoke. Preserve amended minimality, not cross-products.
+4. Prior lifecycle-shape deduplication and security-source readability classes, which Fixer claimed repaired but Reviewer says remain unapplied or still obscure.
+5. Standards fixture-name and duplicated corrupt-session setup findings: distinguish style-only cleanup worth authorizing from noise.
+
+The public-v2-schema class and custom lifecycle/format-only branches are reported closed; do not reopen without a concrete counterexample. Do not restore active-read timing or test quantity requirements.
+
+Return `continue` with stable class-oriented direct Fixer Apply authority for sustained defects/gaps, `converged` if none, or `escalate` only for a genuine owner choice. No Fixer Plan. Do not edit code or route beyond the authorized repair. Submit only through `ak_judge_output`.

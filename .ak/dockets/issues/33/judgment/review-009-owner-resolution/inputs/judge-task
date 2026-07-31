@@ -1,0 +1,18 @@
+# Issue #33 owner-resolution disposition
+
+Owner resolved the sole Review-009 decision gate by choosing option 4:
+
+> Relax compact-state policy for package call IDs and retain full strings within existing row/line limits.
+
+Authoritative tracker comment: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/33#issuecomment-5145249654
+
+At fixed HEAD `c81ef25f38df2984fd708c0057cc8e1ab5a05801`, convert `.ak/dockets/issues/33/judgment/review-009/receipt.json` into complete class-oriented direct Fixer Apply authority:
+
+- preserve exact full package call-ID replay state as an explicit compactness exception; authorize no digest, invented call-ID bound, or external index;
+- sustain native row-ID canonical-domain enforcement before exact retention;
+- carry forward the bounded security-source readability repair;
+- carry forward only the factually sustained `{path,dev,ino}` domain-type repair;
+- authorize only the narrowly identified ADR-0016 test thinning;
+- keep the lifecycle fixture-duplication finding rejected.
+
+No Plan. Do not reopen closed Review-005 classes or alter the owner resolution. Return `continue` with stable class keys and exact boundaries, unless the resolution itself is internally impossible. Submit only through `ak_judge_output`; do not edit code.

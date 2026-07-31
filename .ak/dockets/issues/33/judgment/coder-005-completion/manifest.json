@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/judgment/coder-005-completion"
+  },
+  "invocation": {
+    "id": "f633fda0-24b5-4a2a-b88d-6fb1fa3dc13f"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/coder-005-judge/session",
+      "--name",
+      "issue-33-coder-005-judge",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #33 adjudication of Coder-005 completion claim\n\nAdjudicate whether the mechanically accepted Coder-005 `completed` receipt substantively satisfies the converged Issue #33 design authority at fixed current HEAD `994494e0ef2c95e945a17d9673eb3c10ed8a81cc` (product implementation through `8ff5334623b28a3c2840d1dbd412e84378ed6677`; current HEAD adds only its docket).\n\nControlling evidence:\n\n- `.ak/dockets/issues/33/judgment/design-authority/receipt.json` and admitted candidate;\n- Coder-003 receipt: `.ak/dockets/issues/33/apply/coder-003-session-contract/receipt.json`;\n- Coder-004 receipt: `.ak/dockets/issues/33/apply/coder-004-session-boundaries/receipt.json`;\n- Coder-005 receipt: `.ak/dockets/issues/33/apply/coder-005-full-completion/receipt.json`.\n\nInspect current production code and tests rather than accepting report prose. Decide both carried residuals:\n\n1. Does the real counter-child invocation coverage prove pre-spawn rejection plus exact valid argv/environment injection at the production Recorder seam, or does the Coder-004 gap remain?\n2. Does the existing active-fd session snapshot/stream/verify construction deterministically prove replacement, growth, shrinkage, metadata and inventory mutation during the observed read as required by C2/C8? Distinguish an actual during-read oracle from post-read `verify()` coverage. Coder-004 said the synchronous seam cannot deterministically interleave without an authorized production owner-interface deepening. Coder-005 changed only the three public v2 schemas and implicitly treated prior coverage as sufficient. Decide whether:\n   - current implementation already satisfies the invariant;\n   - existing authority already permits an internal production-seam deepening as an Apply mechanism choice;\n   - the requirement must be narrowed or otherwise needs an owner decision.\n\nAlso verify that Code5's schema-only delta legitimately closes the remaining whole-ticket burden and that no deleted v1 invariant was lost merely because old suites disappeared. Use bounded probes only as needed; do not modify code.\n\nReturn `converged` only if the completed claim is sufficient. Return `continue` with exact class owner/boundary/disposition for every sustained implementation or proof gap. Return `escalate` only for a genuine owner-policy choice. Do not prescribe a Plan or route repairs; caller owns subsequent disposition. Submit only through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "994494e0ef2c95e945a17d9673eb3c10ed8a81cc",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "design-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "994494e0ef2c95e945a17d9673eb3c10ed8a81cc",
+        "path": ".ak/dockets/issues/33/judgment/design-authority/receipt.json",
+        "blobOid": "07f23b2a3595130c4dcd64570b3e6c6981c71a12",
+        "sha256": "6c485d2b6ed2326b904b1a33b4558a751a15072b50207e034a13e5a7ad45a994",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "design-candidate",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "994494e0ef2c95e945a17d9673eb3c10ed8a81cc",
+        "path": ".ak/dockets/issues/33/judgment/design-authority/inputs/candidate",
+        "blobOid": "8cc9eb0dd4dbdeb2e42980a5bbcd0bd8f0e7b3d8",
+        "sha256": "6fdf913bbfe27a62f3160d878cf50f9e37217d05983cc166e2df4ba7b874a0e0",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-003",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "994494e0ef2c95e945a17d9673eb3c10ed8a81cc",
+        "path": ".ak/dockets/issues/33/apply/coder-003-session-contract/receipt.json",
+        "blobOid": "dca9a78ea713e0ad012c018f609ee9c5e18cd288",
+        "sha256": "bfb28ed6af7cc711f7bce7bfd0c7b7c2965d4661395d70fb3f69ebb63dd8f076",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-004",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "994494e0ef2c95e945a17d9673eb3c10ed8a81cc",
+        "path": ".ak/dockets/issues/33/apply/coder-004-session-boundaries/receipt.json",
+        "blobOid": "ccc76de2d1ad63926e9fa3db7270601a6f3fd654",
+        "sha256": "7029d7cfe018ac265170de9605470ff81fd6e1d75c8b6b2e4f7ce32ac5fa27ac",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-005",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "994494e0ef2c95e945a17d9673eb3c10ed8a81cc",
+        "path": ".ak/dockets/issues/33/apply/coder-005-full-completion/receipt.json",
+        "blobOid": "39d090a0a67ea0250ba6bd47ba451dfa011bb408",
+        "sha256": "ba70b1aacbf44f19d943ff5fb6c3c87386eda81731ed4ce800a79f1f69777883",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "7e495e4ea94296d209cd64012634f0079fdcc3e84eced883b20e97d24dff3d65",
+        "byteLength": 2429
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "35cc944c56bccfd247ec98a3736de7151b42eec94b4fbe6e3ffe7652c14bb250",
+        "byteLength": 5237
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "d8c475bde3907234626169be77697ba0a715a04e5f49b88e5980dc3438a9abd1",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_eLVKlIhQJnylaphwCYw5kRU7|fc_0118879c9f654c3b016a6cbfac2498819193cf01cc31803097",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_eLVKlIhQJnylaphwCYw5kRU7|fc_0118879c9f654c3b016a6cbfac2498819193cf01cc31803097",
+    "auditPassed": true,
+    "usage": {
+      "input": 20267,
+      "output": 121,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 20388
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "root": ".ak/dockets",
+    "docketId": "issues/33/apply/coder-003-session-contract"
+  },
+  "invocation": {
+    "id": "02f9c27c-0dc3-419b-a48d-c2c02401ebed"
+  },
+  "execution": {
+    "argv": [
+      "node",
+      ".ak/work/issues/33/temporary-pi-json-filter.mjs",
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/33/runs/coder-003-session-contract/session",
+      "--name",
+      "issue-33-coder-003",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "apply",
+      "--ak-coder-task",
+      ".ak/work/issues/33/coder-003-session-contract-task.md",
+      "-p",
+      "Complete Issue #33 direct Apply slice A for config and native-session integrity, commit forward, and submit through ak_coder_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "fae1c273630796fda2b119c87b30f72544ea94d8",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "design-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "fae1c273630796fda2b119c87b30f72544ea94d8",
+        "path": ".ak/dockets/issues/33/judgment/design-authority/receipt.json",
+        "blobOid": "07f23b2a3595130c4dcd64570b3e6c6981c71a12",
+        "sha256": "6c485d2b6ed2326b904b1a33b4558a751a15072b50207e034a13e5a7ad45a994",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-002",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue33",
+        "commit": "fae1c273630796fda2b119c87b30f72544ea94d8",
+        "path": ".ak/dockets/issues/33/apply/coder-002/receipt.json",
+        "blobOid": "41337765ee83c97321780f3b27a86ce5ffb2660d",
+        "sha256": "97af890ac94bd254277a89777d20843e05c7fa9108116ca2e1bc135ee0f0db25",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/coder-task",
+        "sha256": "119bc8290168d2eb333ecec99262863eabf11f698011207cb0fefe951db0357b",
+        "byteLength": 1670
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "bfb28ed6af7cc711f7bce7bfd0c7b7c2965d4661395d70fb3f69ebb63dd8f076",
+        "byteLength": 2035
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_PH2vC1skfwRBI4y0WNT7aIAC|fc_019ee384b0dcb766016a6cbbc9a28c8191a1e334a3701b5793",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "session-credential",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}
