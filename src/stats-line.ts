@@ -81,8 +81,10 @@ export function validateStatsLineV1(value: unknown): StatsLineV1 {
   if (!isRecord(ratio)) throw new Error("Invalid StatsLine byte ratio");
   if (ratio.status === "measured" && exactKeys(ratio, ["status", "value"])) {
     const pair = closedNumbers(ratio.value, ["numerator", "denominator"]);
-    if (pair.denominator === 0 || pair.numerator !== bytes.paperBytes || pair.denominator !== bytes.applyBytes) throw new Error("Inconsistent StatsLine byte ratio");
-  } else if (ratio.status === "unavailable" && exactKeys(ratio, ["status", "reason"]) && (ratio.reason === "unclassifiable-receipt" || (ratio.reason === "no-apply-receipts" && bytes.applyBytes === 0))) {
+    if (invocations.unclassified > 0 || pair.denominator === 0 || pair.numerator !== bytes.paperBytes || pair.denominator !== bytes.applyBytes) throw new Error("Inconsistent StatsLine byte ratio");
+  } else if (ratio.status === "unavailable" && exactKeys(ratio, ["status", "reason"]) &&
+      ((ratio.reason === "unclassifiable-receipt" && invocations.unclassified > 0) ||
+       (ratio.reason === "no-apply-receipts" && invocations.unclassified === 0 && bytes.applyBytes === 0))) {
     // The producer can know byte totals while receipt classification prevents a truthful ratio.
   } else throw new Error("Invalid StatsLine byte ratio state or reason");
 

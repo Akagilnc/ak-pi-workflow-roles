@@ -86,6 +86,20 @@ test("StatsLine closes every measured payload, unavailable reason, and cross-met
     assert.throws(() => validateStatsLineV1(candidate), Error, name);
   }
 
+  const ratioContradictions: Array<[string, number, any]> = [
+    ["unclassifiable reason without unclassified receipts", 0, { status: "unavailable", reason: "unclassifiable-receipt" }],
+    ["no-apply reason with unclassified receipts", 1, { status: "unavailable", reason: "no-apply-receipts" }],
+    ["measured ratio with unclassified receipts", 1, { status: "measured", value: { numerator: 0, denominator: 1 } }],
+  ];
+  for (const [name, unclassified, ratio] of ratioContradictions) {
+    const candidate = clone();
+    candidate.recordedInvocations.value.total = unclassified;
+    candidate.recordedInvocations.value.unclassified = unclassified;
+    candidate.paperApplyBytes.value.applyBytes = ratio.status === "measured" ? 1 : 0;
+    candidate.paperApplyBytes.value.ratio = ratio;
+    assert.throws(() => validateStatsLineV1(candidate), Error, name);
+  }
+
   const measured = clone();
   measured.auditRejectionCount = { status: "measured", value: 2 };
   measured.recordedInvocationWindow = { status: "measured", value: { first: "2026-01-01T00:00:00Z", last: "2026-01-02T00:00:00Z" } };
