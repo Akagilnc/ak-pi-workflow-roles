@@ -6,11 +6,16 @@ import type { Readable } from "node:stream";
 
 import { RecorderError } from "./errors.ts";
 
-export type SpawnCapture = {
-  stdoutPath: string;
-  stderrPath: string;
+export type ChildSettlement = {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
+};
+
+export type SpawnExecution = {
+  stdoutPath: string;
+  stderrPath: string;
+  settlement: Promise<ChildSettlement>;
+  teeCompletion: Promise<void>;
 };
 
 async function teeStream(
@@ -21,16 +26,14 @@ async function teeStream(
   await mkdir(dirname(sinkPath), { recursive: true });
   const file = createWriteStream(sinkPath);
   stream.on("data", (chunk: Buffer | string) => {
-    const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-    mirror.write(buf);
-    file.write(buf);
+    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    mirror.write(buffer);
+    file.write(buffer);
   });
   await new Promise<void>((resolve, reject) => {
     stream.on("error", reject);
     file.on("error", reject);
-    stream.on("end", () => {
-      file.end(() => resolve());
-    });
+    stream.on("end", () => file.end(resolve));
   });
 }
 
@@ -43,55 +46,50 @@ export async function spawnOnce(options: {
   stdin: "inherit";
   stdoutMirror?: NodeJS.WriteStream;
   stderrMirror?: NodeJS.WriteStream;
-}): Promise<SpawnCapture> {
+}): Promise<SpawnExecution> {
   if (options.argv.length === 0) {
     throw new RecorderError("invalid-argv", "child argv must not be empty");
   }
-  const command = options.argv[0]!;
-  const args = options.argv.slice(1);
+
   let child: ChildProcess;
   try {
-    child = spawn(command, args, {
+    child = spawn(options.argv[0]!, options.argv.slice(1), {
       cwd: options.cwd,
       env: options.env,
       shell: false,
       stdio: [options.stdin, "pipe", "pipe"],
     });
   } catch (error) {
-    throw new RecorderError("spawn-failed", "failed to spawn child process", {
-      cause: error,
-    });
+    throw new RecorderError("spawn-failed", "failed to spawn child process", { cause: error });
   }
-
-  const stdoutMirror = options.stdoutMirror ?? process.stdout;
-  const stderrMirror = options.stderrMirror ?? process.stderr;
 
   if (child.stdout === null || child.stderr === null) {
     throw new RecorderError("spawn-failed", "child stdio pipes unavailable");
   }
 
-  const stdoutDone = teeStream(child.stdout, options.stdoutPath, stdoutMirror);
-  const stderrDone = teeStream(child.stderr, options.stderrPath, stderrMirror);
+  // Install all handlers immediately. Each promise has a rejection handler before
+  // this function waits for the process-start verdict.
+  const teeCompletion = Promise.all([
+    teeStream(child.stdout, options.stdoutPath, options.stdoutMirror ?? process.stdout),
+    teeStream(child.stderr, options.stderrPath, options.stderrMirror ?? process.stderr),
+  ]).then(() => undefined);
+  void teeCompletion.catch(() => undefined);
 
-  const close = await new Promise<{
-    exitCode: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolve, reject) => {
-    child.on("error", (error) => {
-      reject(
-        new RecorderError("spawn-failed", "child process error", { cause: error }),
-      );
-    });
-    child.on("close", (exitCode, signal) => {
-      resolve({ exitCode, signal });
-    });
+  const settlement = new Promise<ChildSettlement>((resolve) => {
+    child.once("close", (exitCode, signal) => resolve({ exitCode, signal }));
   });
 
-  await Promise.all([stdoutDone, stderrDone]);
+  await new Promise<void>((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", (error) => reject(
+      new RecorderError("spawn-failed", "failed to spawn child process", { cause: error }),
+    ));
+  });
+
   return {
     stdoutPath: options.stdoutPath,
     stderrPath: options.stderrPath,
-    exitCode: close.exitCode,
-    signal: close.signal,
+    settlement,
+    teeCompletion,
   };
 }

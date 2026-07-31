@@ -1,5 +1,5 @@
 import { accessSync, constants, readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, normalize } from "node:path";
 import { RecorderError, safeDiagnostic } from "./errors.js";
 import { assertPathNotSymlinkEscape, normalizeRepoRelativePath, requireAbsoluteExistingDirectory, requireCanonicalGitWorktree, resolveInsideRoot, } from "./paths.js";
 import { scanString } from "./scanner.js";
@@ -112,9 +112,9 @@ export function parseRecorderConfigStructure(text) {
     }
     const identities = new Set();
     for (const [i, ref] of gitReferences.entries()) {
-        if (RESERVED_PATHS.has(ref.path))
+        if ([...RESERVED_PATHS].some((reservedPath) => ref.path === reservedPath || ref.path.startsWith(`${reservedPath}/`)))
             invalid("git reference uses a reserved generated path", ["declarations", "gitReferences", i, "path"]);
-        const key = [ref.repositoryRoot, ref.commit, ref.path, ref.blobOid].join("\0");
+        const key = [normalize(ref.repositoryRoot), ref.commit, ref.path, ref.blobOid].join("\0");
         if (identities.has(key))
             invalid("git reference identity is duplicated", ["declarations", "gitReferences", i]);
         identities.add(key);

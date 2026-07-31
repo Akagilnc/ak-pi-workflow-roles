@@ -294,10 +294,25 @@ export function admitDeclarations(
   const reports: ScanReport[] = [];
 
   // Structural identity and path conflicts are owned by the config boundary.
+  const canonicalReferenceIdentities = new Set<string>();
   const storedDigests = new Set<string>();
 
   for (const ref of config.declarations.gitReferences) {
     const verified = verifyGitReference(ref);
+    const reference = verified.artifact.reference!;
+    const canonicalIdentity = [
+      reference.repositoryRoot,
+      reference.commit,
+      reference.path,
+      reference.blobOid,
+    ].join("\0");
+    if (canonicalReferenceIdentities.has(canonicalIdentity)) {
+      throw new RecorderError(
+        "admission-failed",
+        `duplicate canonical git reference identity for ${ref.id}`,
+      );
+    }
+    canonicalReferenceIdentities.add(canonicalIdentity);
     artifacts.push(verified.artifact);
     reports.push(verified.report);
   }

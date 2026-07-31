@@ -8,7 +8,7 @@ export type RecorderFailureCode = typeof RECORDER_FAILURE_CODES[number];
 
 export const RECORDER_STAGES = [
   "argv", "config-read", "config-structure", "config-metadata-scan", "config-state",
-  "destination", "git-state", "stage-allocation", "admission", "spawn", "extraction",
+  "destination", "stage-allocation", "admission", "spawn", "extraction",
   "generated-artifacts", "manifest", "cleanup", "promotion",
 ] as const;
 export type RecorderStage = typeof RECORDER_STAGES[number];
