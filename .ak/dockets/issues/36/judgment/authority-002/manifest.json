@@ -1,0 +1,177 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue36",
+    "root": ".ak/dockets",
+    "docketId": "issues/36/judgment/authority-002"
+  },
+  "invocation": {
+    "id": "0198f1a0-3600-7000-8000-000000000002"
+  },
+  "session": {
+    "id": "0198f1a0-3600-7000-8000-000000000002",
+    "directory": ".ak/work/issues/36/runs/judge-authority-002/session",
+    "basename": "2026-07-31T18-11-39-494Z_0198f1a0-3600-7000-8000-000000000002.jsonl",
+    "sha256": "41f7c924c21e9c33360e152e4889d3cb0e7c9b9eb8617c465e39afe19060d117",
+    "byteLength": 389462,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue36/.ak/work/issues/36/runs/judge-authority-002/session",
+      "--session-id",
+      "0198f1a0-3600-7000-8000-000000000002",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--name",
+      "issue-36-judge-002",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #36 Recorder native thinking-sibling adjudication\n\nAdjudicate Issue #36 at current clean default-based HEAD. Two real Issue #17 Judge invocations provide the counterexample: each child exited 0 and `ak_judge_output` was accepted exactly once, but the persisted final assistant issuance contained lawful Pi `thinking` blocks beside the sole direct terminating tool call; Recorder returned `acceptance-invalid` and published no docket. The raw sessions remain gitignored infrastructure evidence.\n\nDetermine the complete bounded defect class under #33's native-session lifecycle authority:\n\n- whether a final assistant row may contain zero or more lawful inert Pi `ThinkingContent` siblings plus exactly one direct package terminating `ToolCall`;\n- exact native field validation for inert thinking and the terminating call, including optional fields admitted by current Pi types;\n- continued rejection of text/image/arbitrary/tool-call siblings, multiple package calls, nested lookalikes, malformed rows, post-success content, and any attempt to promote thinking as machine state/evidence;\n- the smallest representative unit and real persisted-shape regression plus generated Recorder rebuild.\n\nThis is an urgent Recorder bootstrap blocker for medium-thinking Judge/Doctor work. Return `continue` with one stable direct Fixer class if sustained, `converged` if current behavior is correct, or escalate only for a genuine owner policy choice. No Plan, no code edits, and no unrelated Recorder redesign. Submit exactly once through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue36",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": [
+        "PI_SESSION_DIR"
+      ]
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "3fb482dd5f8c82e967bfba10143c408ba130f68b",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "extract",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue36",
+        "commit": "3fb482dd5f8c82e967bfba10143c408ba130f68b",
+        "path": "src/recorder/extract.ts",
+        "blobOid": "e6f1c0872fbb784b97ff5187e59fbb0f3cf22035",
+        "sha256": "bbe20faedacce684acb983eee5689eb10d8cb3d5aa37f358fb440f7d99849334",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "terminating-contracts",
+      "kind": "exhibit",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue36",
+        "commit": "3fb482dd5f8c82e967bfba10143c408ba130f68b",
+        "path": "src/package-contracts/terminating-tools.ts",
+        "blobOid": "e83660f4992fc3defaf786d1e017b1dc9748686b",
+        "sha256": "8aaf2f42cc087edde3ee94e29cd106341e84ff68e753d849fb5c6a7f3ac4ed44",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "native-tests",
+      "kind": "exhibit",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue36",
+        "commit": "3fb482dd5f8c82e967bfba10143c408ba130f68b",
+        "path": "test/native-session-sealer.test.ts",
+        "blobOid": "14db327ff2684a1a54544b0e727bf1d9a40aa21e",
+        "sha256": "404f0aebceb3cf0040f4ac5f713b286acc8ca597bbe8ac9be11decec0cf1eb3a",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "issue-36",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-36",
+        "sha256": "63c36a1b7f99980b1c34bca4c1c818237a950c44c978d6848581f695a65bc472",
+        "byteLength": 1531
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "6e3303378605f179e29b3fed1738935c93bb41b573f2cae340e6f6d5a289fd0b",
+        "byteLength": 1554
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "a50a016fe4d9d102ce7bdeec1e3f1665712d11ac4ade1885c504e8014d818007",
+        "byteLength": 4816
+      }
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "67dfae36d88dd77545ca4a2a19f6e675429b22dc9e1f51ac67c5dbef05ca7d2e",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_PYiio0AMJ9tahFabPtzDpX2f|fc_075f3011ccbbe3a6016a6ce606605881918e220f6398ca62ac",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_PYiio0AMJ9tahFabPtzDpX2f|fc_075f3011ccbbe3a6016a6ce606605881918e220f6398ca62ac",
+    "auditPassed": true,
+    "usage": {
+      "input": 22223,
+      "output": 417,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 22640
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
