@@ -11,6 +11,7 @@ import {
   createCollectorRoleRuntime,
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
 import {
   createJudgeRoleRuntime,
   type SoulAuditInput,
@@ -27,6 +28,15 @@ import {
   createFixerRoleRuntime,
 } from "./worker-role.ts";
 
+export {
+  DOCTOR_EVIDENCE_TOOL_NAME,
+  DOCTOR_OUTPUT_TOOL_NAME,
+  type DoctorAuditInput,
+} from "./doctor-role.ts";
+export type { DoctorEvidenceIndexV1, DoctorOutput, DoctorFinding, DoctorLastRealBite } from "./doctor-contracts.ts";
+export { validateDoctorEvidenceIndex, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
+export type { StatsLineV1, TrackerMergeMetadata, Metric, UnavailableReason, CommittedSnapshot } from "./stats-line.ts";
+export { produceStatsLineV1, createGitCommittedSnapshot, validateStatsLineV1 } from "./stats-line.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
@@ -77,6 +87,9 @@ export type RoleRuntimeDependencies = {
   reviewerHostTools?: readonly string[];
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
+  loadDoctorSoul?(): Promise<string>;
+  loadDoctorEvidenceIndex?(path: string): Promise<unknown>;
+  auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
   loadCanonicalSkillBinding?(
@@ -110,7 +123,7 @@ export function createRoleRuntimeExtension(
   return (pi) => {
     pi.registerFlag("ak-role", {
       description:
-        "Activate a packaged workflow role: judge, fixer, coder, reviewer, or collector",
+        "Activate a packaged workflow role: judge, fixer, coder, reviewer, collector, or doctor",
       type: "string",
     });
 
@@ -209,6 +222,11 @@ export function createRoleRuntimeExtension(
       },
       hostActions,
     );
+    const doctor = createDoctorRoleRuntime(pi, {
+      async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
+      async loadEvidenceIndex(path) { if (!dependencies.loadDoctorEvidenceIndex) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorEvidenceIndex(path); },
+      async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
+    }, hostActions);
     const collector = createCollectorRoleRuntime(
       pi,
       {
@@ -241,7 +259,7 @@ export function createRoleRuntimeExtension(
       if (role === undefined) return;
       if (
         role !== "judge" && role !== "fixer" && role !== "coder" &&
-        role !== "reviewer" && role !== "collector"
+        role !== "reviewer" && role !== "collector" && role !== "doctor"
       ) {
         throw new Error(`Unsupported workflow role: ${String(role)}`);
       }
@@ -260,6 +278,9 @@ export function createRoleRuntimeExtension(
           return;
         case "collector":
           await collector.activate(ctx, event);
+          return;
+        case "doctor":
+          await doctor.activate();
           return;
       }
     });

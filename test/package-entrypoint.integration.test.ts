@@ -61,7 +61,7 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
   return resolvePackageEntrypoint(manifest);
 }
 
-test("packaged CLI help exposes all five roles and Reviewer/Collector inputs", async () => {
+test("packaged CLI help exposes all six roles and Reviewer/Collector/Doctor inputs", async () => {
   const manifest = await loadRawPackageManifest();
   const result = await runPiSubprocess(
     ["--no-extensions", "-e", packageEntrypoint(manifest), "--help"],
@@ -70,13 +70,17 @@ test("packaged CLI help exposes all five roles and Reviewer/Collector inputs", a
   assert.equal(result.code, 0);
   assert.match(
     result.stdout,
-    /--ak-role <value>\s+Activate a packaged workflow role: judge, fixer, coder, reviewer, or collector/,
+    /--ak-role <value>\s+Activate a packaged workflow role: judge, fixer, coder, reviewer, collector, or doctor/,
   );
   assert.match(
     result.stdout,
     /--ak-review-task <value>\s+Opaque Markdown review task assigned to the reviewer role/,
   );
   assert.match(result.stdout, /--ak-review-capabilities <value>\s*Closed Reviewer capability grant bound to the exact task bytes/);
+  assert.match(result.stdout, /--ak-doctor-evidence <value>\s*Path to a frozen Doctor v1 evidence index JSON file/);
+  await access(resolve(packageRoot, "souls/doctor.md"));
+  await access(resolve(packageRoot, "src/doctor-contracts.ts"));
+  await access(resolve(packageRoot, "src/stats-line.ts"));
 });
 
 test("packaged CLI help exposes the complete fixer phase contract", async () => {
