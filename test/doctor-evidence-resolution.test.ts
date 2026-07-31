@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { canonicalJsonBytes } from "../src/canonical-json.ts";
 import { resolveDoctorEvidenceIndex } from "../src/doctor-evidence.ts";
 import { sha256Hex } from "../src/sha256.ts";
 
@@ -35,5 +36,4 @@ test("committed sources reject escapes, aliases, duplicates, wrong targets, malf
 
 test("Git and tracker metadata accept only their closed normalized fact shapes", async () => { const git = { commits: [{ commit, timestamp: "2026-01-01T00:00:00Z", paths: ["src/x.ts"] }] }; const tracker = { issues: [{ repository: "ak/repo", number: 12, createdAt: "2026-01-01T00:00:00Z", closedAt: null }], pullRequests: [] }; const metadata = [entry("git", "gitMetadata", git), entry("tracker", "trackerMetadata", tracker)]; const admitted = await resolveDoctorEvidenceIndex({ ...raw({ blocked: true }), evidence: [...raw({ blocked: true }).evidence, ...metadata] }, { async read() { return bytes({ blocked: true }); } }); assert.equal(admitted.evidence.length, 3); for (const bad of [{ ...git, branch: "main" }, { commits: [{ ...git.commits[0], message: "unbounded" }] }, { ...tracker, issues: [{ ...tracker.issues[0], title: "unbounded" }] }]) { const kind = Object.hasOwn(bad, "commits") ? "gitMetadata" : "trackerMetadata"; await assert.rejects(resolveDoctorEvidenceIndex({ ...raw({ blocked: true }), evidence: [...raw({ blocked: true }).evidence, entry("bad", kind, bad)] }, { async read() { return bytes({ blocked: true }); } }), /exact keys/); } });
 
-function entry(id: string, kind: string, data: unknown) { const body = bytesCanonical(data); return { id, kind, sha256: sha256Hex(body), byteLength: body.byteLength, data }; }
-function bytesCanonical(value: unknown) { const canonical = (item: unknown): string => item === null || typeof item !== "object" ? JSON.stringify(item) : Array.isArray(item) ? `[${item.map(canonical).join(",")}]` : `{${Object.keys(item as object).sort().map((key) => `${JSON.stringify(key)}:${canonical((item as Record<string, unknown>)[key])}`).join(",")}}`; return new TextEncoder().encode(canonical(value)); }
+function entry(id: string, kind: string, data: unknown) { const body = canonicalJsonBytes(data); return { id, kind, sha256: sha256Hex(body), byteLength: body.byteLength, data }; }
