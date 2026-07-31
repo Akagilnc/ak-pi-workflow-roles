@@ -263,7 +263,7 @@ if (mode === "native-session") {
   const issuedId = "00000001";
   const rows = [
     { type: "session", version: 3, id: sessionId, timestamp: "2026-01-01T00:00:00.000Z", cwd: process.cwd() },
-    { type: "message", id: issuedId, parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "call-1", name: "ak_coder_output", arguments: details }], stopReason: "toolUse", timestamp: Date.now() } },
+    { type: "message", id: issuedId, parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "thinking", thinking: "sanitized reasoning", thinkingSignature: "opaque-1" }, { type: "thinking", thinking: "sanitized redaction", thinkingSignature: "opaque-2", redacted: true }, { type: "toolCall", id: "call-1", name: "ak_coder_output", arguments: details, thoughtSignature: "opaque-call" }], api: "openai-codex-responses", provider: "openai-codex", model: "requested-model", responseModel: "served-model", responseId: "response-1", diagnostics: [], usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", rawStopReason: "tool_calls", timestamp: Date.now() } },
     { type: "message", id: "00000002", parentId: issuedId, timestamp: "2026-01-01T00:00:02.000Z", message: { role: "toolResult", toolCallId: "call-1", toolName: "ak_coder_output", content: [{ type: "text", text: "presentation" }], isError: false, details, timestamp: Date.now() } },
   ];
   writeFileSync(join(sessionDir, "native_" + sessionId + ".jsonl"), rows.map(JSON.stringify).join("\n") + "\n");
