@@ -87,7 +87,7 @@ function harness() {
     getAllTools() { return [...all].map((name) => ({ name })); },
     setActiveTools(names: string[]) { activeToolSets.push(names); },
   };
-  return { pi, handlers, tools, activeToolSets, registeredFlags };
+  return { pi, handlers, tools, activeToolSets, registeredFlags, flags };
 }
 
 function context(
@@ -175,10 +175,16 @@ test("focused Reviewer controller owns its flag, tools, hooks, narrowing, and pr
 
   await runtime.activate();
 
-  assert.deepEqual(h.registeredFlags, [["ak-review-task", {
-    description: "Opaque Markdown review task assigned to the reviewer role",
-    type: "string",
-  }]]);
+  assert.deepEqual(h.registeredFlags, [
+    ["ak-review-task", {
+      description: "Opaque Markdown review task assigned to the reviewer role",
+      type: "string",
+    }],
+    ["ak-review-scope-keys", {
+      description: "Optional comma-separated exact class keys limiting Reviewer scope",
+      type: "string",
+    }],
+  ]);
   assert.deepEqual([...h.tools.keys()], [AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME]);
   assert.deepEqual(h.activeToolSets, [[
     "read", "grep", "find", "ls", "bash", AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME,
@@ -197,8 +203,47 @@ test("focused Reviewer controller owns its flag, tools, hooks, narrowing, and pr
   assert.match(prompt.systemPrompt, /Reserve execution for judgment-oriented code inspection and bounded non-battery probes\./);
   assert.equal(
     prompt.systemPrompt,
-    "BASE\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<reviewer_verification_policy>\nDo not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery. Mechanically inspect supplied Fixer/Coder receipts and native invocation-session evidence for the already-run battery. Reserve execution for judgment-oriented code inspection and bounded non-battery probes.\n</reviewer_verification_policy>\n\n<review_task>\nRAW TASK\n\n</review_task>",
+    "BASE\n\n<review_scope>full</review_scope>\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<reviewer_verification_policy>\nDo not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery. Mechanically inspect supplied Fixer/Coder receipts and native invocation-session evidence for the already-run battery. Reserve execution for judgment-oriented code inspection and bounded non-battery probes.\n</reviewer_verification_policy>\n\n<review_task>\nRAW TASK\n\n</review_task>",
   );
+});
+
+test("Reviewer scope keys preserve exact bytes in parent and Agent dispatch and reject malformed input before child start", async () => {
+  const h = harness();
+  h.flags["ak-review-scope-keys"] = "ParserCase, parser-case";
+  const dispatches: unknown[] = [];
+  const runtime = createReviewerRoleRuntime(h.pi as unknown as ExtensionAPI, {
+    loadSoul: async () => "REVIEWER LAW",
+    loadTask: async () => "TASK",
+    loadCanonicalSkillBinding: async () => reviewerBinding(),
+    runAgent: async (input) => { dispatches.push(input); return { report: "axis", workspaceDisposition: "deleted" }; },
+    auditCompliance: async () => ({ status: "pass" }),
+  }, { failInfrastructure(error) { throw error; } });
+  await runtime.activate();
+  const parent = await h.handlers.get("before_agent_start")?.({ systemPrompt: "BASE", prompt: "idle" }, {});
+  assert.match(parent.systemPrompt, /<review_scope_keys>\["ParserCase"," parser-case"\]<\/review_scope_keys>/);
+  await h.tools.get(AGENT_TOOL_NAME).execute("leg", {
+    subagent_type: "general-purpose", description: "Standards", prompt: "review",
+  }, undefined, undefined, context("leg", AGENT_TOOL_NAME, [{
+    id: "leg", name: AGENT_TOOL_NAME,
+    arguments: { subagent_type: "general-purpose", description: "Standards", prompt: "review" },
+  }]));
+  assert.deepEqual(dispatches, [{
+    description: "Standards", prompt: "review", reviewScopeKeys: ["ParserCase", " parser-case"],
+  }]);
+
+  for (const malformed of ["", "a,,b", "a, ", "a,a"]) {
+    const rejected = harness();
+    rejected.flags["ak-review-scope-keys"] = malformed;
+    let starts = 0;
+    const invalid = createReviewerRoleRuntime(rejected.pi as unknown as ExtensionAPI, {
+      loadSoul: async () => "LAW", loadTask: async () => "TASK",
+      loadCanonicalSkillBinding: async () => reviewerBinding(),
+      runAgent: async () => { starts += 1; return { report: "axis", workspaceDisposition: "deleted" }; },
+      auditCompliance: async () => ({ status: "pass" }),
+    }, { failInfrastructure(error) { throw error; } });
+    await assert.rejects(invalid.activate(), /scope keys/);
+    assert.equal(starts, 0);
+  }
 });
 
 test("reviewer loads opaque input and exposes only its exact seven-tool surface", async () => {
@@ -263,7 +308,7 @@ test("reviewer preserves leading indentation and terminal newline in prompts and
   );
   assert.equal(
     prompt.systemPrompt,
-    `BASE\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<reviewer_verification_policy>\nDo not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery. Mechanically inspect supplied Fixer/Coder receipts and native invocation-session evidence for the already-run battery. Reserve execution for judgment-oriented code inspection and bounded non-battery probes.\n</reviewer_verification_policy>\n\n<review_task>\n${rawTask}\n</review_task>`,
+    `BASE\n\n<review_scope>full</review_scope>\n\n<reviewer_soul>\nREVIEWER LAW\n</reviewer_soul>\n\n<reviewer_verification_policy>\nDo not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery. Mechanically inspect supplied Fixer/Coder receipts and native invocation-session evidence for the already-run battery. Reserve execution for judgment-oriented code inspection and bounded non-battery probes.\n</reviewer_verification_policy>\n\n<review_task>\n${rawTask}\n</review_task>`,
   );
 
   await tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(

@@ -184,6 +184,10 @@ Any verdict may additionally carry an optional non-empty `note` Markdown string.
 
 Workflow ordering and routing are caller-owned. A separate orchestrator is optional infrastructure, not a package requirement.
 
+## Composing class-repair contracts
+
+Callers may use the typed contracts together without parsing Markdown: a `continue` Judge receipt identifies non-empty `classes[]`; a completed Fixer receipt may report `classesRepaired[]`; and `--ak-review-scope-keys <comma-separated keys>` limits Reviewer to exact class keys (omit it for a full review). Keys are comma-free, case-sensitive bytes and are not normalized. The caller, not this package, enforces contextual presence or absence and exact order-insensitive set equality between Judge and Fixer names. These contracts do not mandate any role ordering, repetition, routing, or workflow topology.
+
 ## Recorder (`ak-docket-record`)
 
 Opt-in mechanical wrapper that runs one exact caller-supplied command once and, on success, atomically promotes a small core docket under a caller-selected archive Git worktree. It is not a role, orchestrator, model router, or Git mutator.

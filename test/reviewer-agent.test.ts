@@ -215,11 +215,19 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
   try {
     const [standards, spec] = await Promise.all([
       runner.runReviewerAgent(
-        { description: "Standards", prompt: "Standards prompt" },
+        {
+          description: "Standards",
+          prompt: "Standards prompt",
+          reviewScopeKeys: ["ParserCase", " parser-case"],
+        },
         { context },
       ),
       runner.runReviewerAgent(
-        { description: "Spec", prompt: "Spec prompt" },
+        {
+          description: "Spec",
+          prompt: "Spec prompt",
+          reviewScopeKeys: ["ParserCase", " parser-case"],
+        },
         { context },
       ),
     ]);
@@ -240,6 +248,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     );
     assert.equal(new Set(requests.map((request) => request.sessionId)).size, 2);
     for (const request of requests) {
+      assert.match(request.systemPrompt, /<review_scope_keys>\["ParserCase"," parser-case"\]<\/review_scope_keys>/);
       assert.match(request.systemPrompt, /Do not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery\./);
       assert.match(request.systemPrompt, /Mechanically inspect supplied Fixer\/Coder receipts and native invocation-session evidence/);
       assert.match(request.systemPrompt, /Reserve execution for judgment-oriented code inspection and bounded non-battery probes\./);

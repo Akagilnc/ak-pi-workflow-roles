@@ -31,7 +31,7 @@ const CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
 const REVIEW_REF_PREFIXES = ["refs/heads", "refs/tags", "refs/remotes"];
 
 export type RunReviewerAgent = (
-  input: { description: string; prompt: string },
+  input: { description: string; prompt: string; reviewScopeKeys?: readonly string[] },
   options: { context: ExtensionContext; signal?: AbortSignal },
 ) => Promise<ReviewerAgentResult>;
 
@@ -346,6 +346,7 @@ async function createChildRuntime(
 async function runChild(
   workspace: string,
   prompt: string,
+  reviewScopeKeys: readonly string[] | undefined,
   context: ExtensionContext,
   signal?: AbortSignal,
 ): Promise<{ report: string; usage: Usage }> {
@@ -365,6 +366,9 @@ async function runChild(
     noContextFiles: true,
     systemPrompt: [
       "Work only in the supplied writable review clone.",
+      reviewScopeKeys === undefined
+        ? "<review_scope>full</review_scope>"
+        : `<review_scope_keys>${JSON.stringify(reviewScopeKeys)}</review_scope_keys>`,
       REVIEWER_VERIFICATION_POLICY,
       "Inspect and probe; do not repair the reviewed product, commit, push, or mutate remotes.",
       "Clearly distinguish scratch artifacts and probe changes from facts about the pinned reviewed target.",
@@ -459,6 +463,7 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
       const child = await runChild(
         workspace,
         input.prompt,
+        input.reviewScopeKeys,
         options.context,
         options.signal,
       );

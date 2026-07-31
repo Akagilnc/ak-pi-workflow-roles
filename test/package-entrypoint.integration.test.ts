@@ -105,6 +105,7 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
       "  --ak-coder-task <value>     Markdown task assigned to the coder role",
       "  --ak-coder-phase <value>    Coder phase: plan (inspect and propose an implementation plan; no edits or commits) or apply (execute the approved plan and verify the first implementation)",
       "  --ak-review-task <value>    Opaque Markdown review task assigned to the reviewer role",
+      "  --ak-review-scope-keys <value>Optional comma-separated exact class keys limiting Reviewer scope",
       "  --ak-collector-repo <value> GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",
       "  --ak-collector-pr <value>   Positive safe-integer pull request number for Collector. Supported profile: --no-skills, --no-extensions with only the explicit Collector package extension, no prompt templates/context files, one print/JSON prompt",
       "  --ak-collector-legs <value> Path to the Collector v1 leg manifest JSON file. Pi 0.82.1 late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
