@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ak.local/schemas/recorder-manifest-v1.schema.json",
+  "$id": "https://ak.local/schemas/recorder-manifest-v2.schema.json",
   "title": "RecorderManifestV1",
   "type": "object",
   "additionalProperties": false,
@@ -18,7 +18,7 @@
     "redaction"
   ],
   "properties": {
-    "version": { "const": 1 },
+    "version": { "const": 2 },
     "archive": {
       "type": "object",
       "additionalProperties": false,

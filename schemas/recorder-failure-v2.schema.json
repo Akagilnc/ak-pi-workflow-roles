@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ak.local/schemas/recorder-failure-v1.schema.json",
+  "$id": "https://ak.local/schemas/recorder-failure-v2.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -34,7 +34,7 @@
             "admission-failed",
             "reference-failed",
             "extraction-failed",
-            "cleanup-failed",
+            "session-modified",
             "promotion-failed",
             "opaque-content",
             "internal-error"
@@ -262,7 +262,7 @@
             },
             {
               "properties": {
-                "code": { "const": "cleanup-failed" },
+                "code": { "const": "session-modified" },
                 "message": { "const": "required raw scratch cleanup failed" }
               },
               "required": ["code", "message"]
