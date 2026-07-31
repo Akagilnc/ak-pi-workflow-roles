@@ -92,7 +92,7 @@ export const RECORDER_FAILURE_EXIT = 125;
 export function internalRecorderError(stage, cause) {
     return new RecorderError("internal-error", undefined, { cause, diagnostic: safeDiagnostic(stage, cause) });
 }
-export function toPublicFailure(error, child) {
+export function toPublicFailure(error, child, cleanup = null) {
     const diagnostic = error.diagnostic ??
         (error.code === "internal-error" && error.cause !== undefined
             ? safeDiagnostic("launcher", error.cause)
@@ -108,10 +108,11 @@ export function toPublicFailure(error, child) {
             message: error.publicMessage,
             location: error.location,
             diagnostic: publicDiagnostic,
+            cleanup,
         },
         child,
     };
 }
-export function serializePublicFailure(error, child) {
-    return `${JSON.stringify(toPublicFailure(error, child))}\n`;
+export function serializePublicFailure(error, child, cleanup = null) {
+    return `${JSON.stringify(toPublicFailure(error, child, cleanup))}\n`;
 }

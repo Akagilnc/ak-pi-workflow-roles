@@ -155,9 +155,3 @@ function finalizeAcceptedPair(pair) {
         report: report ?? emptyReport,
     };
 }
-/** Compatibility entry point; production and tests share the streaming reducer. */
-export function extractAcceptedReceipt(rows) {
-    const collector = new AcceptanceCollector();
-    rows.forEach((row, index) => collector.accept(row, index));
-    return collector.finish(rows.length);
-}

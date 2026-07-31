@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
@@ -55,6 +55,28 @@ test("Recorder rejects invalid argv before spawn and invokes one real child with
   assert.deepEqual(manifest.execution.argv, [valid.child, "--session-dir", join(realpathSync(valid.root), ".ak/work/018f22e2-7d5a-7abc-8abc-123456789abc/session"), "--session-id", "018f22e2-7d5a-7abc-8abc-123456789abc", "-p", "native-session", "tail"]);
   assert.equal(JSON.parse(readFileSync(join(valid.destination, "receipt.json"), "utf8")).details.report, "configured");
   assert.deepEqual(readdirSync(valid.destination).sort(), ["manifest.json", "receipt.json"]);
+});
+
+test("cleanup failure leaves bounded evidence without masking the primary or child truth", async () => {
+  const run = fixture();
+  let result;
+  try {
+    result = await runRecorder({
+      argv: ["--config", run.config, "--", run.child, "-p", "native-session"],
+      env: { ...process.env, AK_RECORDER_COUNTER: run.counter, AK_CHILD_EXIT: "23", AK_LOCK_WORK: "1" },
+    });
+  } finally {
+    chmodSync(join(run.root, ".ak/work"), 0o700);
+  }
+  assert.equal(result.exitCode, 125);
+  assert.equal(existsSync(run.destination), false);
+  const failure = JSON.parse(result.failureJson!);
+  assert.equal(failure.recorder.code, "promotion-failed");
+  assert.deepEqual(failure.recorder.cleanup, { status: "failed", category: "filesystem-inaccessible" });
+  assert.equal(failure.child.status, "exited");
+  assert.equal(failure.child.exitCode, 23);
+  assert.equal(JSON.stringify(failure).includes(run.root), false);
+  assert.equal(JSON.stringify(failure).includes("EACCES"), false);
 });
 
 test("cold-installed Recorder binary seals one native-session child", async () => {

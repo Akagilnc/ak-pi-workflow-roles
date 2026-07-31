@@ -20,6 +20,7 @@ import {
   safeDiagnostic,
   serializePublicFailure,
   type ChildOutcome,
+  type CleanupFailure,
   type RecorderStage,
 } from "./errors.ts";
 import { AcceptanceCollector } from "./extract.ts";
@@ -44,28 +45,31 @@ export type RunResult = {
   signal: NodeJS.Signals | null;
   failureJson: string | null;
 };
-const cleanup = (p: string | null) => {
-  if (p)
-    try {
-      rmSync(p, { recursive: true, force: true });
-    } catch {}
+const cleanup = (stagePath: string | null): CleanupFailure | null => {
+  if (!stagePath) return null;
+  try {
+    rmSync(stagePath, { recursive: true, force: true });
+    return null;
+  } catch (cause) {
+    return { status: "failed", category: safeDiagnostic("launcher", cause).category };
+  }
 };
-function destination(c: {
+function destination(config: {
   archive: { repositoryRoot: string; root: string; docketId: string };
 }) {
   return resolveInsideRoot(
-    c.archive.repositoryRoot,
-    `${c.archive.root}/${c.archive.docketId}`,
+    config.archive.repositoryRoot,
+    `${config.archive.root}/${config.archive.docketId}`,
     "archive destination",
   );
 }
-function occupied(p: string) {
+function occupied(path: string) {
   try {
-    lstatSync(p);
+    lstatSync(path);
     return true;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw e;
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw cause;
   }
 }
 function promote(stage: string, dest: string, root: string) {
@@ -75,20 +79,20 @@ function promote(stage: string, dest: string, root: string) {
   assertSameFilesystem(stage, parent, "publication");
   try {
     renameNoReplace(stage, dest);
-  } catch (e) {
-    if (e instanceof RecorderError) throw e;
-    if (isOccupiedRenameError(e) || occupied(dest))
-      throw new RecorderError("destination-exists", undefined, { cause: e });
-    throw new RecorderError("promotion-failed", undefined, { cause: e });
+  } catch (cause) {
+    if (cause instanceof RecorderError) throw cause;
+    if (isOccupiedRenameError(cause) || occupied(dest))
+      throw new RecorderError("destination-exists", undefined, { cause });
+    throw new RecorderError("promotion-failed", undefined, { cause });
   }
 }
 function outcome(
-  s: { exitCode: number | null; signal: NodeJS.Signals | null },
+  settlement: { exitCode: number | null; signal: NodeJS.Signals | null },
   diagnostic: string | null,
 ): ChildOutcome {
-  return s.signal
-    ? { status: "signaled", exitCode: null, signal: s.signal, diagnostic }
-    : { status: "exited", exitCode: s.exitCode ?? 1, signal: null, diagnostic };
+  return settlement.signal
+    ? { status: "signaled", exitCode: null, signal: settlement.signal, diagnostic }
+    : { status: "exited", exitCode: settlement.exitCode ?? 1, signal: null, diagnostic };
 }
 export async function runRecorder(options: {
   argv: string[];
@@ -105,17 +109,17 @@ export async function runRecorder(options: {
     },
     stage: string | null = null,
     current: RecorderStage = "argv";
-  const fail = (e: RecorderError): RunResult => {
-    cleanup(stage);
-    const err =
-      e.diagnostic || e.cause === undefined
-        ? e
-        : new RecorderError(e.code, undefined, {
-            cause: e.cause,
-            location: e.location,
-            diagnostic: safeDiagnostic(current, e.cause),
+  const fail = (primaryError: RecorderError): RunResult => {
+    const cleanupFailure = cleanup(stage);
+    const publicError =
+      primaryError.diagnostic || primaryError.cause === undefined
+        ? primaryError
+        : new RecorderError(primaryError.code, undefined, {
+            cause: primaryError.cause,
+            location: primaryError.location,
+            diagnostic: safeDiagnostic(current, primaryError.cause),
           });
-    const line = serializePublicFailure(err, child);
+    const line = serializePublicFailure(publicError, child, cleanupFailure);
     stderr.write(line);
     return {
       exitCode: RECORDER_FAILURE_EXIT,
@@ -168,8 +172,8 @@ export async function runRecorder(options: {
     child = outcome(settled, null);
     try {
       await execution.streamCompletion;
-    } catch (e) {
-      return fail(internalRecorderError(current, e));
+    } catch (streamCause) {
+      return fail(internalRecorderError(current, streamCause));
     }
     const tail = execution.stderrTail.bytes().length
       ? execution.stderrTail.bytes()
@@ -212,7 +216,7 @@ export async function runRecorder(options: {
     });
     reports.push(receiptStored.report);
     if (extraction.auditObservation) {
-      const s = storeGeneratedJson(
+      const auditStored = storeGeneratedJson(
         stage,
         "audit-observation.json",
         extraction.auditObservation,
@@ -221,10 +225,10 @@ export async function runRecorder(options: {
       artifacts.push({
         id: "audit-observation",
         kind: "audit-observation",
-        redactionStatus: s.report.redacted ? "redacted" : "clean",
-        stored: s.stored,
+        redactionStatus: auditStored.report.redacted ? "redacted" : "clean",
+        stored: auditStored.stored,
       });
-      reports.push(s.report);
+      reports.push(auditStored.report);
     }
     current = "manifest";
     const built = buildManifest({
@@ -256,24 +260,26 @@ export async function runRecorder(options: {
           failureJson: null,
         }
       : { exitCode: child.exitCode ?? 1, signal: null, failureJson: null };
-  } catch (e) {
+  } catch (primaryCause) {
     return fail(
-      e instanceof RecorderError ? e : internalRecorderError(current, e),
+      primaryCause instanceof RecorderError
+        ? primaryCause
+        : internalRecorderError(current, primaryCause),
     );
   }
 }
-function reRaiseSignal(s: NodeJS.Signals) {
-  process.removeAllListeners(s);
+function reRaiseSignal(signal: NodeJS.Signals) {
+  process.removeAllListeners(signal);
   try {
-    process.kill(process.pid, s);
+    process.kill(process.pid, signal);
   } catch {
     process.exit(RECORDER_FAILURE_EXIT);
   }
 }
 export async function main(argv = process.argv.slice(2)) {
-  const r = await runRecorder({ argv });
-  if (r.signal) {
-    reRaiseSignal(r.signal);
+  const result = await runRecorder({ argv });
+  if (result.signal) {
+    reRaiseSignal(result.signal);
     await new Promise(() => {});
-  } else process.exit(r.exitCode);
+  } else process.exit(result.exitCode);
 }
