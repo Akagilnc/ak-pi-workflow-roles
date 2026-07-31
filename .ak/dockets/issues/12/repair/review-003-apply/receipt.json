@@ -1,0 +1,22 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_m7lnrCR0IXPtOj6eHPPgEbE7|fc_010bac4ebcbe0878016a6d1aaf5dbc8191ad1a663442f2c166",
+  "details": {
+    "status": "completed",
+    "report": "Committed both authorized Doctor closure classes as forward commit d606a54. Extracted Doctor's duplicated recursive serializer into one package-internal canonical JSON owner used by contract identity/render/join operations and committed-evidence semantic comparison; exact raw committed digest/length sealing remains unchanged. StatsLine now classifies every verified receipt with an exact recognized role into exactly one byte bucket: only exact single Coder/Fixer corresponding apply is apply, all other recognized-role states are paper, and ambiguous/missing/unknown roles remain unclassified with unavailable ratio.\n\nAdded canonical consumer semantics coverage and table-driven production-seam coverage for all non-workers, both workers, apply/plan/missing/empty/unknown/duplicate phases, irrelevant opposite phase flags, and missing/empty/unknown/duplicate roles, including byte conservation and ratio laws. No finding was declined.\n\nVerification passed: focused Doctor/StatsLine tests (16/16), typecheck, regenerated dist artifacts, isolated-HOME full suite (349 pass, 5 skipped), package lifecycle/cold-install coverage in the full suite, npm pack dry-run, explicit tarball cold install/import, and diff checks. Worktree is clean.",
+    "commitSha": "d606a54",
+    "classesRepaired": [
+      {
+        "name": "canonical-json-owner",
+        "searchScope": "Doctor contract/evidence canonical serialization, normalized identities, store rendering and joins, raw committed semantic comparison, generated package artifact, focused canonical semantics, and packed/cold-installed imports",
+        "exceptions": []
+      },
+      {
+        "name": "stats-line-receipt-byte-classification",
+        "searchScope": "Committed-snapshot StatsLine receipt role/phase classification, invocation unclassified state, paper/apply byte totals and ratio availability, deterministic production-seam tests, generated artifact, and package/full regression suite",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
