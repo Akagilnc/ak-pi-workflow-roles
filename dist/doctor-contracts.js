@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { canonicalJson, canonicalJsonBytes } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
 import { validateStatsLineV1 } from "./stats-line.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
@@ -45,14 +46,7 @@ function deepFreeze(value) { if (value && typeof value === "object" && !Object.i
         deepFreeze(child);
     Object.freeze(value);
 } return value; }
-function canonical(value) {
-    if (value === null || typeof value !== "object")
-        return JSON.stringify(value);
-    if (Array.isArray(value))
-        return `[${value.map(canonical).join(",")}]`;
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
-}
-export function statsLineEvidenceBytes(value) { return new TextEncoder().encode(canonical(value)); }
+export function statsLineEvidenceBytes(value) { return canonicalJsonBytes(value); }
 function isStatsLine(value) { try {
     validateStatsLineV1(value);
     return true;
@@ -197,11 +191,11 @@ export class DoctorEvidenceStore {
     }
     read(evidenceId, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry)
         throw new Error(`Evidence ID is not admitted: ${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096)
-        throw new Error("Invalid evidence pagination"); const serialized = canonical(entry.data); const end = Math.min(serialized.length, offset + limit); if (offset > serialized.length)
+        throw new Error("Invalid evidence pagination"); const serialized = canonicalJson(entry.data); const end = Math.min(serialized.length, offset + limit); if (offset > serialized.length)
         throw new Error("Evidence offset exceeds content"); const ranges = this.ranges.get(evidenceId) ?? []; ranges.push([offset, end]); this.ranges.set(evidenceId, ranges); return { evidenceId, kind: entry.kind, source: entry.source, offset, content: serialized.slice(offset, end), nextOffset: end < serialized.length ? end : null, byteLength: entry.byteLength, sha256: entry.sha256 }; }
     hasRead(evidenceId) { return (this.ranges.get(evidenceId)?.length ?? 0) > 0; }
     hasFullyRead(evidenceId) { const entry = this.entries.get(evidenceId); if (!entry)
-        return false; const length = canonical(entry.data).length; const sorted = [...(this.ranges.get(evidenceId) ?? [])].sort((a, b) => a[0] - b[0]); let end = 0; for (const range of sorted) {
+        return false; const length = canonicalJson(entry.data).length; const sorted = [...(this.ranges.get(evidenceId) ?? [])].sort((a, b) => a[0] - b[0]); let end = 0; for (const range of sorted) {
         if (range[0] > end)
             return false;
         end = Math.max(end, range[1]);
@@ -241,7 +235,7 @@ export function validateDoctorOutput(value, index, store) {
                 throw new Error("trend must cite read StatsLines");
             const line = entry.data;
             const expected = line[trend.metric];
-            if (canonical(point.value) !== canonical(expected))
+            if (canonicalJson(point.value) !== canonicalJson(expected))
                 throw new Error("trend point does not exactly join its StatsLine");
             cases.add(`${line.caseKey.repository}#${line.caseKey.issueNumber}`);
         }
@@ -264,7 +258,7 @@ export function validateDoctorOutput(value, index, store) {
             throw new Error("lastRealBite target mismatch");
         if (bite.kind === "actual") {
             const entry = store.entries.get(bite.evidenceId);
-            if (!entry || (entry.kind !== "receipt" && entry.kind !== "verdict") || !store.hasRead(bite.evidenceId) || canonical(bite.sealedIdentity) !== canonical({ ...entry.source, sha256: entry.sha256 }))
+            if (!entry || (entry.kind !== "receipt" && entry.kind !== "verdict") || !store.hasRead(bite.evidenceId) || canonicalJson(bite.sealedIdentity) !== canonicalJson({ ...entry.source, sha256: entry.sha256 }))
                 throw new Error("actual bite must cite admitted/read sealed Receipt or verdict");
         }
         else {

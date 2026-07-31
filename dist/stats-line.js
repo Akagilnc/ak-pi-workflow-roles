@@ -172,12 +172,11 @@ export async function produceStatsLineV1(options) {
         const details = validateAcceptedDetails(receipt.toolName, receipt.details);
         if (role === "judge" && "judgeStatus" in details && details.judgeStatus === "continue")
             continues += 1;
+        const recognizedRole = role !== undefined && ROLES.includes(role);
         const phase = role === "coder" ? exactFlag(manifest.execution.argv, "--ak-coder-phase") : role === "fixer" ? exactFlag(manifest.execution.argv, "--ak-fixer-phase") : undefined;
         if ((role === "coder" || role === "fixer") && phase === "apply")
             applyBytes += receiptBytes.byteLength;
-        else if ((role === "coder" || role === "fixer") && phase === "plan")
-            paperBytes += receiptBytes.byteLength;
-        else if (role !== undefined && ROLES.includes(role))
+        else if (recognizedRole)
             paperBytes += receiptBytes.byteLength;
         else
             unclassifiable = true;
