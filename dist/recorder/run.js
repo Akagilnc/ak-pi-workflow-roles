@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, } 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { admitDeclarations, storeGeneratedJson, } from "./admit.js";
-import { buildChildEnv, loadRecorderConfig, parseRecorderArgv, } from "./config.js";
+import { buildChildEnv, loadRecorderConfigStructure, validateRecorderConfigState, parseRecorderArgv, } from "./config.js";
 import { RECORDER_FAILURE_EXIT, RecorderError, serializePublicFailure, } from "./errors.js";
 import { extractAcceptedReceipt } from "./extract.js";
 import { buildManifest, validatePublicManifest } from "./manifest.js";
@@ -156,7 +156,22 @@ export async function runRecorder(options) {
     let scratchRoot = null;
     let stageRoot = null;
     let requiredCleanupDone = false;
+    let currentStage = "argv";
     const fail = (error) => {
+        // Cause observability is deliberately allow-listed: no message, stack, argv,
+        // config, or environment data crosses this boundary.
+        const publicError = error.diagnostic !== null || error.cause === undefined
+            ? error
+            : new RecorderError(error.code, error.message, {
+                cause: error.cause,
+                ...(error.location === null ? {} : { location: error.location }),
+                diagnostic: {
+                    stage: currentStage,
+                    category: error.cause instanceof Error
+                        ? error.cause.constructor.name.slice(0, 64)
+                        : "NonErrorThrow",
+                },
+            });
         // Best-effort cleanup only after the required raw-cleanup decision point.
         // Before that decision, still attempt best-effort so we leave no complete docket.
         if (!requiredCleanupDone) {
@@ -172,7 +187,7 @@ export async function runRecorder(options) {
             ...child,
             diagnostic,
         };
-        const line = serializePublicFailure(error, publicChild);
+        const line = serializePublicFailure(publicError, publicChild);
         // Ensure the failure object itself is scanned (fixed literals + scanned diagnostic).
         const scannedLine = scanString(line.trim(), "failure").value;
         const out = `${scannedLine}\n`;
@@ -185,15 +200,21 @@ export async function runRecorder(options) {
     };
     try {
         const parsed = parseRecorderArgv(options.argv);
-        const config = loadRecorderConfig(parsed.configPath);
+        currentStage = "config-structure";
+        const structuralConfig = loadRecorderConfigStructure(parsed.configPath);
+        currentStage = "config-state";
+        const config = validateRecorderConfigState(structuralConfig);
+        currentStage = "destination";
         const dest = destinationPath(config);
         assertPathNotSymlinkEscape(dest, config.archive.repositoryRoot, "archive destination");
         if (destinationOccupied(dest)) {
             return fail(new RecorderError("destination-exists", "archive destination already exists"));
         }
+        currentStage = "git-state";
         void captureGitState(config.archive.repositoryRoot);
         // Raw tee scratch stays outside the worktree (or ignored). Publication stage
         // lives under the archive's ignored `.ak/work` so promotion stays same-FS.
+        currentStage = "stage-allocation";
         const scratch = mkdtempSync(join(tmpdir(), "ak-docket-record-scratch-"));
         scratchRoot = scratch;
         assertScratchOutsideOrIgnored(scratch, config.archive.repositoryRoot);
@@ -216,6 +237,7 @@ export async function runRecorder(options) {
         const stdoutPath = join(scratch, "stdout.bin");
         const stderrPath = join(scratch, "stderr.bin");
         // Declaration admission is fail-closed before any child spawn.
+        currentStage = "admission";
         let admitted;
         try {
             admitted = admitDeclarations(config, stage);
@@ -228,6 +250,7 @@ export async function runRecorder(options) {
                 cause: error,
             }));
         }
+        currentStage = "spawn";
         const childEnv = buildChildEnv(env, config.execution.environment);
         let spawnResult;
         try {
@@ -258,6 +281,7 @@ export async function runRecorder(options) {
         // Public failure path may expose one bounded, already-scanned diagnostic
         // derived from the same captured bytes — never from live stream mutation.
         child = childOutcomeFromSpawn(spawnResult, deriveChildDiagnostic(stdoutText, stderrText));
+        currentStage = "extraction";
         let extraction;
         try {
             extraction = extractAcceptedReceipt([
@@ -309,6 +333,7 @@ export async function runRecorder(options) {
             reports.push(stored.report);
         }
         const combined = combineReports(...reports);
+        currentStage = "manifest";
         let manifestBuild;
         try {
             manifestBuild = buildManifest({
@@ -354,6 +379,7 @@ export async function runRecorder(options) {
             }
         }
         // Required raw scratch cleanup BEFORE promotion.
+        currentStage = "cleanup";
         try {
             requiredRm(scratch);
             scratchRoot = null;
@@ -367,6 +393,7 @@ export async function runRecorder(options) {
             }));
         }
         // One-tree atomic no-replace publication (stage ownership transfers on success).
+        currentStage = "promotion";
         try {
             promoteStageAtomically(stage, dest, config.archive.repositoryRoot);
             stageRoot = null;
@@ -395,7 +422,15 @@ export async function runRecorder(options) {
     catch (error) {
         if (error instanceof RecorderError)
             return fail(error);
-        return fail(new RecorderError("invalid-config", "recorder failed", { cause: error }));
+        return fail(new RecorderError("internal-error", "recorder failed", {
+            cause: error,
+            diagnostic: {
+                stage: currentStage,
+                category: error instanceof Error
+                    ? error.constructor.name.slice(0, 64)
+                    : "NonErrorThrow",
+            },
+        }));
     }
 }
 function reRaiseSignal(signal) {

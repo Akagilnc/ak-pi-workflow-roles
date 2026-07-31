@@ -21,6 +21,17 @@ function requireString(value, label) {
     }
     return value;
 }
+function normalizeStructuralPath(value, location) {
+    try {
+        return normalizeRepoRelativePath(value, "config path");
+    }
+    catch (error) {
+        throw new RecorderError("invalid-config", "config path is invalid", {
+            cause: error,
+            location,
+        });
+    }
+}
 function requireStringOrNull(value, label) {
     if (value === null)
         return null;
@@ -60,7 +71,7 @@ function parseGitReference(raw, index) {
     const kind = raw.kind;
     if (kind !== "authority" && kind !== "task" && kind !== "input" &&
         kind !== "exhibit") {
-        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].kind is invalid`);
+        throw new RecorderError("invalid-config", `declarations.gitReferences[${index}].kind is invalid`, { location: ["declarations", "gitReferences", index, "kind"] });
     }
     const commit = requireString(raw.commit, `declarations.gitReferences[${index}].commit`);
     if (!FULL_SHA_RE.test(commit)) {
@@ -78,7 +89,7 @@ function parseGitReference(raw, index) {
         id,
         repositoryRoot: requireString(raw.repositoryRoot, `declarations.gitReferences[${index}].repositoryRoot`),
         commit: commit.toLowerCase(),
-        path: normalizeRepoRelativePath(requireString(raw.path, `declarations.gitReferences[${index}].path`), `declarations.gitReferences[${index}].path`),
+        path: normalizeStructuralPath(requireString(raw.path, `declarations.gitReferences[${index}].path`), ["declarations", "gitReferences", index, "path"]),
         blobOid: blobOid.toLowerCase(),
         sha256: sha256.toLowerCase(),
         kind,
@@ -94,7 +105,7 @@ function parseExternalInput(raw, index) {
     }
     const kind = raw.kind;
     if (kind !== "authority" && kind !== "task" && kind !== "input") {
-        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].kind is invalid`);
+        throw new RecorderError("invalid-config", `declarations.externalInputs[${index}].kind is invalid`, { location: ["declarations", "externalInputs", index, "kind"] });
     }
     const sourcePath = requireString(raw.sourcePath, `declarations.externalInputs[${index}].sourcePath`);
     if (!isAbsolute(sourcePath)) {
@@ -154,7 +165,7 @@ export function parseRecorderArgv(argv) {
     }
     return { configPath, childArgv };
 }
-export function loadRecorderConfig(configPath) {
+export function loadRecorderConfigStructure(configPath) {
     let text;
     try {
         accessSync(configPath, constants.R_OK);
@@ -254,15 +265,25 @@ export function loadRecorderConfig(configPath) {
         !Array.isArray(raw.declarations.exhibits)) {
         throw new RecorderError("invalid-config", "declaration collections must be arrays");
     }
-    const repositoryRoot = requireCredentialFreeMetadata(requireCanonicalGitWorktree(requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"), "archive.repositoryRoot"), "archive.repositoryRoot");
-    const root = requireCredentialFreeMetadata(normalizeRepoRelativePath(requireString(raw.archive.root, "archive.root"), "archive.root"), "archive.root");
-    const docketId = requireCredentialFreeMetadata(normalizeRepoRelativePath(requireString(raw.archive.docketId, "archive.docketId"), "archive.docketId"), "archive.docketId");
-    const destination = resolveInsideRoot(repositoryRoot, `${root}/${docketId}`, "archive destination");
-    assertPathNotSymlinkEscape(destination, repositoryRoot, "archive destination");
-    const cwd = requireAbsoluteExistingDirectory(requireString(raw.execution.cwd, "execution.cwd"), "execution.cwd");
+    // Parse every structure-only declaration before consulting filesystem or Git.
     const gitReferences = raw.declarations.gitReferences.map(parseGitReference);
     const externalInputs = raw.declarations.externalInputs.map(parseExternalInput);
     const exhibits = raw.declarations.exhibits.map(parseExhibit);
+    const repositoryRootRaw = requireCredentialFreeMetadata(requireString(raw.archive.repositoryRoot, "archive.repositoryRoot"), "archive.repositoryRoot");
+    if (!isAbsolute(repositoryRootRaw)) {
+        throw new RecorderError("invalid-config", "archive.repositoryRoot must be absolute", {
+            location: ["archive", "repositoryRoot"],
+        });
+    }
+    const repositoryRoot = repositoryRootRaw;
+    const root = requireCredentialFreeMetadata(normalizeStructuralPath(requireString(raw.archive.root, "archive.root"), ["archive", "root"]), "archive.root");
+    const docketId = requireCredentialFreeMetadata(normalizeStructuralPath(requireString(raw.archive.docketId, "archive.docketId"), ["archive", "docketId"]), "archive.docketId");
+    const cwd = requireString(raw.execution.cwd, "execution.cwd");
+    if (!isAbsolute(cwd)) {
+        throw new RecorderError("invalid-config", "execution.cwd must be absolute", {
+            location: ["execution", "cwd"],
+        });
+    }
     const ids = new Set();
     for (const item of [...gitReferences, ...externalInputs, ...exhibits]) {
         assertNotReservedArtifactId(item.id, `declaration ${item.id}`);
@@ -278,7 +299,7 @@ export function loadRecorderConfig(configPath) {
     const hasTask = gitReferences.some((item) => item.kind === "task") ||
         externalInputs.some((item) => item.kind === "task");
     if (!hasAuthority || !hasTask) {
-        throw new RecorderError("admission-failed", "declarations must include at least one authority and one task");
+        throw new RecorderError("invalid-config", "declarations must include at least one authority and one task", { location: ["declarations"] });
     }
     return {
         version: 1,
@@ -299,6 +320,22 @@ export function loadRecorderConfig(configPath) {
             target: requireStringOrNull(raw.provenance.target, "provenance.target"),
         },
     };
+}
+/** Consult external filesystem and Git state only after pure structure succeeds. */
+export function validateRecorderConfigState(config) {
+    const repositoryRoot = requireCanonicalGitWorktree(config.archive.repositoryRoot, "archive.repositoryRoot");
+    const destination = resolveInsideRoot(repositoryRoot, `${config.archive.root}/${config.archive.docketId}`, "archive destination");
+    assertPathNotSymlinkEscape(destination, repositoryRoot, "archive destination");
+    const cwd = requireAbsoluteExistingDirectory(config.execution.cwd, "execution.cwd");
+    return {
+        ...config,
+        archive: { ...config.archive, repositoryRoot },
+        execution: { ...config.execution, cwd },
+    };
+}
+/** Backwards-compatible stateful loader; production orchestration calls both phases explicitly. */
+export function loadRecorderConfig(configPath) {
+    return validateRecorderConfigState(loadRecorderConfigStructure(configPath));
 }
 export function buildChildEnv(parentEnv, environment) {
     const base = environment.inherit ? { ...parentEnv } : {};

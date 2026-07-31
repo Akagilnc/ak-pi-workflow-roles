@@ -11,7 +11,8 @@ export type RecorderFailureCode =
   | "extraction-failed"
   | "cleanup-failed"
   | "promotion-failed"
-  | "opaque-content";
+  | "opaque-content"
+  | "internal-error";
 
 /** Fixed non-secret public messages keyed by code. Never interpolate attacker text. */
 const PUBLIC_MESSAGES: Record<RecorderFailureCode, string> = {
@@ -28,17 +29,31 @@ const PUBLIC_MESSAGES: Record<RecorderFailureCode, string> = {
   "cleanup-failed": "required raw scratch cleanup failed",
   "promotion-failed": "atomic promotion failed",
   "opaque-content": "unsupported opaque content cannot be promoted",
+  "internal-error": "internal Recorder failure",
+};
+
+export type SchemaLocation = Array<string | number>;
+export type SafeDiagnostic = {
+  stage: string;
+  category: string;
 };
 
 export class RecorderError extends Error {
   readonly code: RecorderFailureCode;
   readonly childDiagnostic: string | null;
+  readonly location: SchemaLocation | null;
+  readonly diagnostic: SafeDiagnostic | null;
 
   /** @param message Internal detail — never interpolated into public JSON. */
   constructor(
     code: RecorderFailureCode,
     message?: string,
-    options?: { childDiagnostic?: string | null; cause?: unknown },
+    options?: {
+      childDiagnostic?: string | null;
+      cause?: unknown;
+      location?: SchemaLocation;
+      diagnostic?: SafeDiagnostic;
+    },
   ) {
     super(
       message ?? PUBLIC_MESSAGES[code],
@@ -47,6 +62,8 @@ export class RecorderError extends Error {
     this.name = "RecorderError";
     this.code = code;
     this.childDiagnostic = options?.childDiagnostic ?? null;
+    this.location = options?.location ?? (code === "invalid-config" ? [] : null);
+    this.diagnostic = options?.diagnostic ?? null;
   }
 
   get publicMessage(): string {
@@ -68,6 +85,8 @@ export type PublicFailure = {
     status: "failed";
     code: RecorderFailureCode;
     message: string;
+    location: SchemaLocation | null;
+    diagnostic: SafeDiagnostic | null;
   };
   child: {
     status: ChildStatus;
@@ -89,6 +108,8 @@ export function toPublicFailure(
       code: error.code,
       // Fixed literal only — never error.message which may carry internal detail.
       message: error.publicMessage,
+      location: error.location,
+      diagnostic: error.diagnostic,
     },
     child: {
       status: child.status,
