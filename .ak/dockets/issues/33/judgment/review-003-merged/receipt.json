@@ -1,0 +1,74 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_H2xs3wjl9UR7T1jYbnDRmnFR|fc_0e64632dcd118a9c016a6cc5e87f188191a982bc010fdd9fb7",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Direct Fixer Apply at fixed HEAD 8eaaa0c27696bd78d0d83cb5b2eddc514211b76c. Repair the implementation defects and retained minimal proof gaps below; do not add a Plan, restore deleted suite mass, build role/corruption cross-products, or expand into #12/#13/#22/#26."
+    },
+    "classes": [
+      {
+        "name": "ISS33-COMPACT-SESSION-STATE",
+        "owner": "Native JSONL session parser/extractor seam (`src/recorder/session.ts`, `src/recorder/extract.ts`)",
+        "boundary": "Streaming an initially bound Pi-v3 JSONL snapshot through framing, chain validation, and acceptance-candidate extraction without retaining every parsed row",
+        "disposition": "Sustained implementation defect. `readSession` appends every parsed object to `rows: unknown[]`, returns that array, and `runRecorder` only then calls `extractAcceptedReceipt`; at the lawful 100000-entry and 16-MiB-per-line limits this is not compact memory. Refactor the owner seam so framing/hash/identity checks and lifecycle extraction retain only bounded carry, chain/id state, and the compact package-lifecycle candidate state needed for the final Receipt. Keep the existing exact entry/line limits and snapshot verification. Add an observable regression that fails if the design again accumulates all parsed rows; do not add a test-only production hook."
+      },
+      {
+        "name": "ISS33-PUBLIC-V2-SYNCHRONIZATION",
+        "owner": "Recorder public-contract boundary (`schemas/recorder-manifest-v2.schema.json`, `schemas/recorder-failure-v2.schema.json`, `src/recorder/manifest.ts`, `src/recorder/errors.ts`)",
+        "boundary": "Shipped v2 schemas accepting exactly representative runtime-emitted success/failure objects and rejecting impossible or stale public objects",
+        "disposition": "Sustained implementation and proof defect; Reviewer Standards' closure claim is disproved by current files. Manifest v2 still has `receipt.oneOf` with `type: null` and a null-receipt conditional branch although runtime `RecorderManifestV2` and `validatePublicManifest` require a Receipt. Failure v2 still admits diagnostic stage `cleanup`, omits runtime stage `session`, and omits runtime location segments `session` and `directory`. Synchronize schemas with runtime and add representative runtime-object/schema tracers plus explicit null/stale counterexamples. This is the independently valid prior public-schema finding."
+      },
+      {
+        "name": "ISS33-COUNTER-CHILD-INVOCATION",
+        "owner": "Recorder invocation boundary (`src/recorder/config.ts`, `src/recorder/run.ts`, `src/recorder/spawn.ts`)",
+        "boundary": "Pre-spawn rejection and one valid real child invocation with the bound session argv, environment, stdin, and separated pass-through streams",
+        "disposition": "Sustained proof gap, narrowed exactly by C8. Current tests call `parseRecorderArgv` only and no test calls `runRecorder`. Add one representative invalid counter-child case proving zero spawn and one valid production-seam case proving exactly one spawn, absolute `--session-dir` and configured `--session-id` immediately after the executable, preservation of remaining argv, inherited `PI_SESSION_DIR` removal, configured environment precedence, stdin inheritance, and nonmerged stdout/stderr. Do not repeat all parser rejections through the child."
+      },
+      {
+        "name": "ISS33-LIFECYCLE-CUSTOM-ORACLES",
+        "owner": "Native lifecycle extractor and its leaf tests (`src/recorder/extract.ts`, `test/native-session-sealer.test.ts`)",
+        "boundary": "Missing-versus-invalid and unique-final-acceptance decisions from direct package lifecycle occurrences, excluding Pi-native persisted-row format",
+        "disposition": "Sustained proof gap. Existing tests cover rejection-then-success, rejection-only, one mismatched rejection, and duplicate successes, but omit retained custom branches such as nested lookalikes/no lifecycle, wrong accepted text or details, and post-success content. Add only representative custom branch oracles sufficient for the amended minimal lifecycle table; do not recreate exhaustive syntactic permutations."
+      },
+      {
+        "name": "ISS33-ADR0016-FORMAT-ONLY-TESTS",
+        "owner": "Recorder lifecycle test suite (`test/native-session-sealer.test.ts`) under ADR 0016",
+        "boundary": "Tests of custom lifecycle logic versus Pi-native persisted-row closed formatting",
+        "disposition": "Sustained standards defect, not an implementation failure. Delete the two format-only extra-field tests named `rejected lifecycle rows still require the direct closed Pi shape` and `accepted issuance and result reject extra persisted fields`. Preserve or replace only custom cross-field/branch evidence; Pi-native shape formatting is outside this suite's test ownership."
+      },
+      {
+        "name": "ISS33-LIFECYCLE-SHAPE-DEDUPLICATION",
+        "owner": "Native lifecycle extractor (`src/recorder/extract.ts`)",
+        "boundary": "Common direct issuance/result pair validation shared by rejected and accepted branches, with accepted-only text/details/validator rules layered once",
+        "disposition": "Sustained style/maintainability concern. The loop validates the closed outer/message pair and the accepted-final path repeats near-identical `exact(...)` checks. Consolidate the common lifecycle-pair invariants into one domain-named path, then apply accepted-only semantics once. Do not introduce a second validator framework or duplicate package-owned accepted-details validators."
+      },
+      {
+        "name": "ISS33-RECORDER-EXTRACTION-VERTICALS",
+        "owner": "Recorder extractor/dispatch and generated-artifact seam (`src/recorder/extract.ts`, `src/recorder/scanner.ts`, `src/recorder/admit.ts`, `src/recorder/run.ts`)",
+        "boundary": "Representative native role sealing and truthful scanning/revalidation of promoted derivatives while raw session/stream bytes remain unpromoted and unclaimed",
+        "disposition": "Sustained retained C8 proof gap. There is no `runRecorder` test and current extractor tests exercise only Coder. Keep cheap package/dispatch leaf coverage for the five terminating tools, including Collector projection and audited-role observation/usage, then use only a representative Recorder vertical set (ordinary worker, one audited role, and Collector, or equivalently strong coverage). Prove one credential-bearing accepted derivative is sanitized, revalidated, labelled and reported; clean derivative acceptance; scan-induced invalid derivative abort; and raw-session/stdout secrets are neither promoted nor represented as scanned. Do not run every role through every corruption case."
+      },
+      {
+        "name": "ISS33-TRANSACTION-PUBLICATION-VERTICALS",
+        "owner": "Recorder transaction and publication boundary (`src/recorder/run.ts`, `src/recorder/errors.ts`, `src/recorder/rename-no-replace.ts`, `src/recorder/manifest.ts`)",
+        "boundary": "Settled child truth, sealer-failure precedence, pre-publication snapshot verification, atomic no-replace complete-tree publication, and raw-source exclusion",
+        "disposition": "Sustained proof gap. Add minimal production-seam verticals for: nonzero exit plus valid session publishes and returns that code; signal plus valid session publishes and preserves/re-raises that signal; settled child plus independent sealer failure publishes nothing, returns 125, and records the known child outcome and honest cause; competing publication attempts yield one intact winner without overwrite; and a successful docket excludes main/leg sessions and raw streams while containing promoted derivatives. One successful path must cross the existing immediate pre-promotion `session.verify()`. No role/failure cross-product is authorized."
+      },
+      {
+        "name": "ISS33-PACKAGED-RECORDER-SEAM",
+        "owner": "Recorder package boundary (`package.json`, `bin/ak-docket-record.js`, generated `dist/recorder/**`, shipped `schemas/recorder-*-v2.schema.json`, package lifecycle tests)",
+        "boundary": "Cold-installed Recorder CLI using the same native-session v2 implementation and public assets shipped by the tarball",
+        "disposition": "Sustained proof gap. Package inventory currently lists the Recorder binary, dist modules, native helper, and v2 schemas, but no test invokes the cold-installed Recorder binary. Add a minimal installed-bin Recorder smoke covering the packaged production seam, with success/failure represented only as needed; do not run all roles end to end. Retain source/package inventory evidence that the superseded v1 transport core is absent."
+      },
+      {
+        "name": "ISS33-SECURITY-SOURCE-READABILITY",
+        "owner": "Security-sensitive Recorder implementation (`src/recorder/session.ts`, `src/recorder/run.ts`, `src/recorder/manifest.ts`, `src/recorder/spawn.ts`)",
+        "boundary": "Human reviewability of identity, mutation, child-outcome, manifest, and stream-forwarding decisions",
+        "disposition": "Sustained style-only concern. Dense one-line control flow and names such as `s`, `ds`, `x`, `m`, `im`, `o`, and `c` obscure trust decisions. Reformat touched security logic into readable statement boundaries and use domain-revealing names (including fixture helpers where touched) without changing contracts or adding mechanisms."
+      }
+    ],
+    "note": "HEAD and clean worktree were verified. A current-head `npm test` run passes 299 tests (294 pass, 5 skips), but no test references `runRecorder`, and schema/runtime contradictions remain mechanically visible. The prior active-read-during-synchronous-stream timing requirement is withdrawn and is not part of this repair; existing post-snapshot replacement/growth/shrink/metadata/inventory tests are retained evidence. Current real-filesystem session identity/inventory tests, representative Pi-v3 framing/limit tests, and the >2-GiB bounded forwarding leaf are otherwise accepted; no old line count, suite count, exhaustive role matrix, or corruption cross-product is required. This adjudication does not authorize merge/closure decisions or work on #12/#13/#22/#26."
+  },
+  "artifactKind": "acceptedReceipt"
+}
