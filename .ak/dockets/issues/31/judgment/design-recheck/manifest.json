@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+    "root": ".ak/dockets",
+    "docketId": "issues/31/judgment/design-recheck"
+  },
+  "invocation": {
+    "id": "bd5cd4e0-f6ee-4598-bbce-2a1c2fa72857"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--session-dir",
+      ".ak/work/issues/31/runs/design-recheck/session",
+      "--name",
+      "issue-31-design-recheck",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #31 bounded design recheck\n\nRecheck the already owner-reviewed Issue #31 design only against these two implementation-readiness objections. Sustain, dismiss, or narrow each; do not reopen settled decisions.\n\n## O1 — Fixer conditional combination law versus opaque input\n\nIssue #31 requires: `completed` with class-key-bearing dispatch material must include `classesRepaired`, its key set must align; no-class direct Fixer dispatch forbids `classesRepaired`. Current Fixer receives only opaque Markdown through `--ak-fix-packet`; Issue #31 also preserves opaque task/capability boundaries and the anchoring constitution forbids machine decisions based on prose. The runtime therefore appears unable to mechanically distinguish class-bearing from no-class dispatch or enforce cross-input key equality without an additional typed input channel. Decide whether:\n\n- the design already intends caller-only reconciliation and package validation only when `classesRepaired` is present; or\n- a typed Fixer class-key input is required; or\n- another already-decided mechanism makes the law implementable.\n\n## O2 — shared key-space grammar\n\n`Judge classes[].name`, `Fixer classesRepaired[].name`, and comma-separated Reviewer `scopeKeys` form one mechanical key space. The PRD states nonempty/minItems and rejects whitespace scope tokens, but does not explicitly settle comma-bearing Judge names, duplicate names/keys, case sensitivity, ordering, or set equality semantics. Decide whether existing wording already determines these facts; otherwise supply the minimum bounded grammar/uniqueness/comparison ruling needed for implementation.\n\nReturn `converged` only if both objections are dismissed or fully resolved by the existing design. Return `continue` or `escalate` only for an actual missing owner/design decision. Submit only through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue31",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "d721cb647f3c7981b625f605d0153ba31c9bebf6",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "issue-31-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-31-authority",
+        "sha256": "82b9cf39f955657836951c3617592ac75021d324fe48a4da57df2a8c80200e87",
+        "byteLength": 7311
+      }
+    },
+    {
+      "id": "recheck-request",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/recheck-request",
+        "sha256": "0555d37105c9ffa89626948efb7351e51eed409d693beef4bc6b014d0b9cdb09",
+        "byteLength": 1860
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "ceb31107c2c0fd270ea2b4d8e7960bdc51815dd53714c4d98fb64d42d184bf70",
+        "byteLength": 2273
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "acc640029f1fee2abac523c81b61e7c3125b5d9cb865c92ee341dc279c98e6c1",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_TPUvXlDEtB5P3focVFsFpmIO|fc_01750ace1477ca90016a6c90bb4f74819192296ce1fc7daef1",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_TPUvXlDEtB5P3focVFsFpmIO|fc_01750ace1477ca90016a6c90bb4f74819192296ce1fc7daef1",
+    "auditPassed": true,
+    "usage": {
+      "input": 12360,
+      "output": 252,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 12612
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
