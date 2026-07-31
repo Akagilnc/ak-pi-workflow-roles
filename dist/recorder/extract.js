@@ -52,7 +52,9 @@ function validUsage(value) {
 function validDiagnostics(value) {
     return Array.isArray(value) && value.every((diagnostic) => isRecord(diagnostic) &&
         hasExactKeys(diagnostic, ["type", "timestamp"], ["error", "details"]) && typeof diagnostic.type === "string" &&
-        typeof diagnostic.timestamp === "number" && isRecord(diagnostic.details ?? {}) && isRecord(diagnostic.error ?? {}));
+        typeof diagnostic.timestamp === "number" &&
+        (!Object.hasOwn(diagnostic, "details") || isRecord(diagnostic.details)) &&
+        (!Object.hasOwn(diagnostic, "error") || isRecord(diagnostic.error)));
 }
 function directIssuance(row, index) {
     if (row.type !== "message" || !isRecord(row.message))
