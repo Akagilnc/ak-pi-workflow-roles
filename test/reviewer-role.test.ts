@@ -19,16 +19,16 @@ const request = { tools: ["read", "bash"] as const, bashCommands: [diffCommand] 
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, materials: established ? [{ id: "rules", repositoryPath: "RULES.md" }, { id: "spec", repositoryPath: "SPEC.md" }] : [{ id: "rules", repositoryPath: "RULES.md" }, { id: "absence", repositoryPath: "README.md" }], spec: established ? { state: "established" } : { state: "not-established" }, required: established ? { standards: request, spec: request } : { standards: request } }; }
 function successfulLeg(leg: AcceptedReviewerLeg, report = `${leg.axis} report`) { return { status: "successful" as const, report, usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}, target:pin, prompt:leg.prompt, workspaceDisposition:"deleted" as const }; }
 function harness() {
-  const tools = new Map<string, any>(); const flags: Record<string,string> = { "ak-review-task":"/task", "ak-review-capabilities":"/caps" }; const handlers = new Map<string,any>();
-  const pi = { registerFlag() {}, getFlag(name:string){return flags[name];}, registerTool(tool:any){tools.set(tool.name,tool);}, getAllTools(){return [...tools.keys()].map(name=>({name}));}, setActiveTools() {}, on(name:string,handler:any){handlers.set(name,handler);} } as unknown as ExtensionAPI;
-  return { pi, tools, flags, handlers };
+  const tools = new Map<string, any>(); const flags: Record<string,string> = { "ak-review-task":"/task", "ak-review-capabilities":"/caps" }; const handlers = new Map<string,any>(); let activeTools:string[]=[];
+  const pi = { registerFlag() {}, getFlag(name:string){return flags[name];}, registerTool(tool:any){tools.set(tool.name,tool);}, getAllTools(){return [...tools.keys()].map(name=>({name}));}, setActiveTools(names:string[]) { activeTools=[...names]; }, on(name:string,handler:any){handlers.set(name,handler);} } as unknown as ExtensionAPI;
+  return { pi, tools, flags, handlers, get activeTools(){return activeTools;} };
 }
 function outputContext(id:string): ExtensionContext { const sessionManager=SessionManager.inMemory(); sessionManager.appendMessage({role:"assistant",content:[{type:"toolCall",id,name:REVIEWER_OUTPUT_TOOL_NAME,arguments:{}}],api:"x",provider:"x",model:"x",usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:"toolUse",timestamp:Date.now()}); return {sessionManager,abort(){},mode:"tui"} as unknown as ExtensionContext; }
 function captureReviewExpansion(reviewerHarness: ReturnType<typeof harness>) { reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"}); }
 function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> = {}) {
   const reviewerHarness=harness(); let starts=0; const audits:ReviewerAuditInput[]=[];
   const runtime=createReviewerRoleRuntime(reviewerHarness.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>new TextEncoder().encode(path)}), hostTools:()=>["read", "bash"], runDispatch:async(dispatch:AcceptedReviewerExecution)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted"}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
-  return {...reviewerHarness,runtime,audits,get starts(){return starts;}};
+  return {...reviewerHarness,runtime,audits,get starts(){return starts;},get activeTools(){return reviewerHarness.activeTools;}};
 }
 
 test("activation authorizes pin-target before creating the pinned Git reader", async()=>{
@@ -84,25 +84,24 @@ test("concurrent proposals keep each accepted invocation context and signal boun
   assert.deepEqual(seen,[{context:secondContext,signal:secondSignal}]);
 });
 
-test("successful dispatch exposes exact child reports with axis and prompt identities", async()=>{
+test("successful dispatch hides child prose and preserves axis settlement identities", async()=>{
   const reviewerHarness=setup(); await reviewerHarness.runtime.activate(); const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(true),undefined,undefined,{} as ExtensionContext);
   assert.equal(result.details.dispatch.legs.length,2);
-  assert.deepEqual(result.details.dispatch.legs.map((leg: { axis: string })=>leg.axis),["standards","spec"]);
-  const text=result.content[0].text;
-  for (const axis of ["standards","spec"] as const) {
-    const settled=result.details.results.legs[axis];
-    assert.equal(text.includes(`<<< REVIEWER CHILD REPORT axis=${axis} prompt=${JSON.stringify(settled.prompt)} >>>\n${axis} report\n<<< END REVIEWER CHILD REPORT axis=${axis} >>>`),true);
-  }
+  assert.deepEqual(Object.keys(result.details.outcomes),["standards","spec"]);
+  assert.equal(JSON.stringify(result).includes("standards report"),false);
+  assert.equal(JSON.stringify(result).includes("spec report"),false);
+  assert.deepEqual(reviewerHarness.activeTools,[REVIEWER_OUTPUT_TOOL_NAME]);
   assert.equal(reviewerHarness.starts,1);
 });
 
-test("aggregation preserves leading indentation and trailing newlines", async()=>{
-  const exact="    indented Markdown\n\ntrailing\n";
+test("runtime receipt preserves exact report UTF-8 bytes, length, and SHA", async()=>{
+  const exact="    indented Markdown\n\ntrailing π\n";
   const reviewerHarness=setup({runDispatch:async(dispatch)=>{const leg=dispatch.legs[0]!;return {identity:dispatch.identity,target:pin,legs:{standards:{status:"successful" as const,report:exact,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted"}}};}});
-  await reviewerHarness.runtime.activate();
+  await reviewerHarness.runtime.activate(); captureReviewExpansion(reviewerHarness);
   const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(false),undefined,undefined,{} as ExtensionContext);
-  assert.equal(result.details.results.legs.standards.report,exact);
-  assert.equal(result.content[0].text.includes(`>>>\n${exact}\n<<< END REVIEWER CHILD REPORT`),true);
+  assert.equal(JSON.stringify(result).includes(exact),false);
+  const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed"},undefined,undefined,outputContext("out"));
+  assert.deepEqual(receipt.details.reports.standards,{text:exact,utf8Length:Buffer.byteLength(exact),sha256:createHash("sha256").update(exact).digest("hex")});
 });
 
 test("runner result axes must exactly equal accepted one- and two-leg dispatch axes", async()=>{
@@ -117,7 +116,8 @@ test("runner result axes must exactly equal accepted one- and two-leg dispatch a
     captureReviewExpansion(reviewerHarness);
     await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",counterexample.proposal,undefined,undefined,{} as ExtensionContext),/result axes/);
     for (const status of ["completed","refused"] as const) {
-      await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(`out-${status}`,{status,report:"must not issue receipt"},undefined,undefined,outputContext(`out-${status}`)),/infrastructure previously failed/);
+      const intent = status === "completed" ? { status } : { status, diagnostic: "must not issue receipt" };
+      await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute(`out-${status}`,intent,undefined,undefined,outputContext(`out-${status}`)),/infrastructure previously failed/);
     }
     assert.equal(reviewerHarness.audits.length,0);
   }
@@ -136,14 +136,14 @@ test("runner identity and pinned target must exactly match accepted dispatch bef
     };}});
     await reviewerHarness.runtime.activate();
     await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext),mismatch.message);
-    await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",report:"infra"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
+    await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"infra"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
     assert.equal(reviewerHarness.audits.length,0);
   }
 
   const exact=setup(); await exact.runtime.activate();
   captureReviewExpansion(exact);
   const accepted=await exact.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
-  await exact.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"ok"},undefined,undefined,outputContext("out"));
+  await exact.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed"},undefined,undefined,outputContext("out"));
   assert.equal(exact.audits[0]!.record.results.standards!.dispatchIdentity,accepted.details.dispatch.identity);
   assert.deepEqual(exact.audits[0]!.record.results.standards!.target,pin);
 });
@@ -152,7 +152,7 @@ test("invalid expansion is fatal and makes a later refused receipt impossible", 
   const reviewerHarness=setup({loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill},invocation:x=>x,captureExpansion:()=>undefined})});
   await reviewerHarness.runtime.activate(); reviewerHarness.handlers.get("input")({text:"review",images:undefined});
   assert.throws(()=>reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"},{} as ExtensionContext),/expansion did not match/);
-  await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",report:"cannot continue"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
+  await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"cannot continue"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
   assert.equal(reviewerHarness.audits.length,0);
 });
 
@@ -160,8 +160,8 @@ test("completion audits projected facts and revise can be resubmitted without re
   let calls=0; const reviewerHarness=setup({auditCompliance:async(input)=>{reviewerHarness.audits.push(input);calls++;return calls===1?{status:"revise",violations:["aggregate"]}:{status:"pass"};}}); await reviewerHarness.runtime.activate();
   captureReviewExpansion(reviewerHarness);
   await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
-  const out=reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME); await assert.rejects(out.execute("one",{status:"completed",report:"report"},undefined,undefined,outputContext("one")),/aggregate/);
-  const done=await out.execute("two",{status:"completed",report:"report"},undefined,undefined,outputContext("two")); assert.equal(done.terminate,true); assert.equal(reviewerHarness.starts,1); assert.equal(calls,2); assert.equal(reviewerHarness.audits[1]?.record.results.standards?.prompt.text,reviewerHarness.audits[1]?.record.accepted?.legs[0]?.prompt.text);
+  const out=reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME); await assert.rejects(out.execute("one",{status:"completed"},undefined,undefined,outputContext("one")),/aggregate/);
+  const done=await out.execute("two",{status:"completed"},undefined,undefined,outputContext("two")); assert.equal(done.terminate,true); assert.equal(reviewerHarness.starts,1); assert.equal(calls,2); assert.equal(reviewerHarness.audits[1]?.record.results.standards?.prompt.text,reviewerHarness.audits[1]?.record.accepted?.legs[0]?.prompt.text);
   const evidence=reviewerHarness.audits[1]?.record.accepted?.materials.find((item:any) => item.id === "absence");
   assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",text:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
 });
@@ -171,9 +171,13 @@ test("one failed and one successful sibling are both audited before infrastructu
   await reviewerHarness.runtime.activate();
   await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(true),undefined,undefined,{} as ExtensionContext),(error: unknown)=>{
     assert.equal(String(error).includes("spec report"),false);
+    assert.deepEqual(reviewerHarness.activeTools,[REVIEWER_OUTPUT_TOOL_NAME]);
     return /execution failed/.test(String(error));
   });
-  await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",report:"infra"},undefined,undefined,outputContext("out")),/infrastructure previously failed/);
+  captureReviewExpansion(reviewerHarness);
+  const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"provider failed"},undefined,undefined,outputContext("out"));
+  assert.equal(receipt.details.outcomes.standards.failure,"provider");
+  assert.equal(receipt.details.reports.spec.text,"spec report");
 });
 
 test("transport schema error records once, clears raw args, then permits corrected acceptance", async()=>{
@@ -184,7 +188,7 @@ test("transport schema error records once, clears raw args, then permits correct
   reviewerHarness.handlers.get("tool_result")({toolName:AGENT_TOOL_NAME,toolCallId:"bad",isError:true,input:secretArgs,content:[]});
   await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(),undefined,undefined,{} as ExtensionContext);
   captureReviewExpansion(reviewerHarness);
-  await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"done"},undefined,undefined,outputContext("out"));
+  await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed"},undefined,undefined,outputContext("out"));
   assert.equal(reviewerHarness.audits.length,1);
   assert.equal(reviewerHarness.audits[0]!.record.transportRejections.length,1);
   assert.equal(JSON.stringify(reviewerHarness.audits[0]!.record).includes("DO_NOT_RETAIN"),false);
@@ -198,7 +202,7 @@ test("schema-invalid transport settling after acceptance becomes one bounded clo
   reviewerHarness.handlers.get("tool_result")({toolName:AGENT_TOOL_NAME,toolCallId:"late",isError:true,input:secretArgs,content:[]});
   reviewerHarness.handlers.get("tool_execution_end")({toolName:AGENT_TOOL_NAME,toolCallId:"late",isError:true,result:{}});
   captureReviewExpansion(reviewerHarness);
-  await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed",report:"done"},undefined,undefined,outputContext("out"));
+  await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed"},undefined,undefined,outputContext("out"));
   const record=reviewerHarness.audits[0]!.record;
   assert.equal(record.transportRejections.length,0);
   assert.deepEqual(record.closedAttempts,[{identity:`transport-${createHash("sha256").update(JSON.stringify(secretArgs)).digest("hex")}`,reason:"transport-after-acceptance",started:false}]);
@@ -209,5 +213,5 @@ test("schema-invalid transport settling after acceptance becomes one bounded clo
 test("runner infrastructure failure blocks refusal and completion before audit", async()=>{
   let audits=0; const reviewerHarness=setup({runDispatch:async()=>{throw new Error("provider unavailable");},auditCompliance:async()=>{audits++;return {status:"pass"};}}); await reviewerHarness.runtime.activate();
   await assert.rejects(reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{abort(){},mode:"tui"} as ExtensionContext),/provider unavailable/);
-  await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",report:"infra"},undefined,undefined,outputContext("out")),/infrastructure previously failed/); assert.equal(audits,0);
+  await assert.rejects(reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"refused",diagnostic:"infra"},undefined,undefined,outputContext("out")),/infrastructure previously failed/); assert.equal(audits,0);
 });

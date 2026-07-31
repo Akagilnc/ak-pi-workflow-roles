@@ -433,8 +433,10 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
     assert.deepEqual(
       Object.keys(tool.parameters.properties),
       fixture.role === "judge"
-        ? ["judgeStatus", "fix", "note", "decisionGate"]
-        : ["status", "report", "commitSha"],
+        ? ["judgeStatus", "fix", "classes", "note", "decisionGate"]
+        : fixture.role === "fixer"
+          ? ["status", "report", "commitSha", "classesRepaired"]
+          : ["status", "report", "commitSha"],
     );
     const result = await tool.execute(
       "receipt",
@@ -532,6 +534,7 @@ test("judge preserves an optional advisory note on every verdict", async () => {
     {
       judgeStatus: "continue",
       fix: { summary: "Repair the live defect." },
+      classes: [{ name: "LiveDefect", owner: "runtime", boundary: "live seam", disposition: "repair" }],
       note: "Keep the fresh test output with the repair record.",
     },
     {

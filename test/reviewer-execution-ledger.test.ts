@@ -62,6 +62,9 @@ test("audit evidence retains capability document identity and rejects mutation f
   const ledger = createReviewerExecutionLedger();
   const event = accepted() as any;
   ledger.append(event);
+  ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: "proposal-1", cardinality: 2 });
+  ledger.append(settled("standards", "standards π"));
+  ledger.append(settled("spec", "spec prompt"));
   assert.deepEqual(ledger.recordForAudit("refused").accepted?.input.capabilityDocument, event.input.capabilityDocument);
 
   for (const mutation of [
@@ -114,6 +117,8 @@ test("closed attempts project durably after acceptance without reopening lifecyc
   const ledger = createReviewerExecutionLedger();
   ledger.append(accepted(false));
   ledger.append({ source: "reviewer-dispatch", type: "closed-attempt", identity: "late", reason: "acceptance-closed", started: false });
+  ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: "proposal-1", cardinality: 1 });
+  ledger.append(settled("standards", "standards π"));
   const record = ledger.recordForAudit("refused");
   assert.deepEqual(record.closedAttempts, [{ identity: "late", reason: "acceptance-closed", started: false }]);
   assert.throws(() => (record.closedAttempts as any[]).push({}));

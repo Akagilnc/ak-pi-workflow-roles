@@ -17,8 +17,9 @@ import {
   type ReviewerPinnedGitReader,
   type ReviewerProposalV1,
 } from "./reviewer-dispatch.ts";
-import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult, type ReviewerSuccessfulDispatchRunResult } from "./reviewer-agent.ts";
+import { ReviewerDispatchExecutionError, type ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch, projectReviewerDispatchOutcome, type ReviewerExecutionRecord } from "./reviewer-execution-ledger.ts";
+import { assembleRuntimeReviewerReceipt, type RuntimeReviewerReceiptV2 } from "./reviewer-settlement.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedReviewerDetails, type ReviewerOutput } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -39,10 +40,13 @@ export const reviewerProposalSchema = Type.Object({
   spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: false }),
   required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: false }),
 }, { additionalProperties: false });
-const reviewerOutputSchema = Type.Object({ status: StringEnum(["completed", "refused"] as const), report: Type.String({ minLength: 1 }) }, { additionalProperties: false });
+const reviewerOutputSchema = Type.Union([
+  Type.Object({ status: Type.Literal("completed") }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal("refused"), diagnostic: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+]);
 type ReviewerOutputParameters = Static<typeof reviewerOutputSchema>;
 
-export type ReviewerAuditInput = { soul: string; canonicalSkill: string; task: string; record: ReviewerExecutionRecord; candidate: ReviewerOutput };
+export type ReviewerAuditInput = { soul: string; canonicalSkill: string; task: string; record: ReviewerExecutionRecord; candidate: RuntimeReviewerReceiptV2 };
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadTask(path: string): Promise<Uint8Array>;
@@ -140,6 +144,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
         if (error instanceof ReviewerDispatchExecutionError) {
           try { projectReviewerDispatchOutcome(ledger, dispatch, error.outcome); }
           catch (mismatch) { throw ledger.recordInfrastructureFailure(mismatch); }
+          throw error;
         }
         throw ledger.recordInfrastructureFailure(error);
       }
@@ -172,20 +177,28 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           admittedToolCalls.add(_id);
           let result;
           try { result = await dispatcher!.propose(proposal as ReviewerProposalV1, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
-          catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
+          catch (error) {
+            if (acceptedDispatch !== undefined) {
+              const available = new Set(pi.getAllTools().map((tool) => tool.name));
+              pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
+              if (error instanceof ReviewerDispatchExecutionError) throw error;
+            }
+            hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx);
+          }
+          if (result.status === "accepted") {
+            const available = new Set(pi.getAllTools().map((tool) => tool.name));
+            pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
+          }
           const text = result.status === "rejected"
             ? `Reviewer proposal rejected: ${result.violations.join("; ")}`
             : result.status === "closed"
               ? "Reviewer dispatch is already closed"
-              : result.dispatch.legs.map((leg) => {
-                const settled = (result.results as ReviewerSuccessfulDispatchRunResult).legs[leg.axis]!;
-                return [
-                  `<<< REVIEWER CHILD REPORT axis=${leg.axis} prompt=${JSON.stringify(settled.prompt)} >>>`,
-                  settled.report,
-                  `<<< END REVIEWER CHILD REPORT axis=${leg.axis} >>>`,
-                ].join("\n");
-              }).join("\n");
-          return { content: [{ type: "text" as const, text }], details: result };
+              : `Reviewer dispatch ${result.dispatch.identity} settled (${result.dispatch.legs.map((leg) => `${leg.axis}:successful`).join(", ")})`;
+          const details = result.status !== "accepted" ? result : {
+            status: result.status, identity: result.dispatch.identity, dispatch: result.dispatch,
+            outcomes: Object.fromEntries(result.dispatch.legs.map((leg) => [leg.axis, { status: "successful", prompt: leg.prompt }])),
+          };
+          return { content: [{ type: "text" as const, text }], details };
         } });
       pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`], parameters: reviewerOutputSchema,
         async execute(id, parameters, signal, _update, toolCtx) {
@@ -195,12 +208,18 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
           let record: ReviewerExecutionRecord;
           try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx); throw error; }
+          const skillBytes = Buffer.from(binding.snapshot.raw, "utf8");
+          const candidate = assembleRuntimeReviewerReceipt({
+            intent: output,
+            record,
+            canonicalSkill: { sha256: sha256Hex(binding.snapshot.raw), utf8Length: skillBytes.byteLength, snapshotIdentity: binding.snapshot.path },
+          });
           let audit: ComplianceDecision;
-          try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate: output }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
+          try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
           catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
           if (audit.status === "revise") throw new Error(`Reviewer receipt violates its method: ${audit.violations.join("; ")}`);
           try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
-          return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: output, terminate: true as const, ...(audit.usage === undefined ? {} : { usage: audit.usage }) };
+          return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(audit.usage === undefined ? {} : { usage: audit.usage }) };
         } });
       pi.on("tool_execution_start", (event) => {
         if (event.toolName !== AGENT_TOOL_NAME) return;

@@ -32,7 +32,11 @@ const input: any = {
     started: { dispatchIdentity: "dispatch-1", cardinality: 1 as const },
     results: { standards: { dispatchIdentity: "dispatch-1", axis: "standards" as const, status: "successful" as const, prompt: { text: "Inspect the pinned diff", utf8Length: 23, sha256: "prompt" }, target: { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "head", refs: {} }, report: "No findings", workspaceDisposition: "deleted" as const } },
   },
-  candidate: { status: "completed" as const, report: "No findings." },
+  candidate: {
+    version: 2 as const, status: "completed" as const, batchIdentity: "dispatch-1",
+    reports: { standards: { text: "No findings", utf8Length: 11, sha256: "report" } },
+    outcomes: {}, identities: { canonicalSkill: { sha256: "skill", utf8Length: 5, snapshotIdentity: "/skill" } },
+  },
 };
 
 const context = {
