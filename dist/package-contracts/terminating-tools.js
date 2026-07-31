@@ -4,9 +4,9 @@
  */
 import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollectorReceipt, } from "./collector-output.js";
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";
-import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedReviewerDetails, } from "./reviewer-output.js";
+import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, projectReviewerIntentToReceipt, validateAcceptedReviewerDetails, validateRuntimeReviewerReceipt, } from "./reviewer-output.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
-export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, validateAcceptedReviewerDetails, validateAcceptedWorkerDetails, };
+export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateAcceptedReviewerDetails, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, };
 export const TERMINATING_TOOL_NAMES = [
     CODER_OUTPUT_TOOL_NAME,
     FIXER_OUTPUT_TOOL_NAME,
@@ -38,7 +38,7 @@ export function validateAcceptedDetails(toolName, details) {
         case FIXER_OUTPUT_TOOL_NAME:
             return validateAcceptedWorkerDetails(details, "Fixer");
         case REVIEWER_OUTPUT_TOOL_NAME:
-            return validateAcceptedReviewerDetails(details);
+            return validateRuntimeReviewerReceipt(details);
         case JUDGE_OUTPUT_TOOL_NAME:
             return validateAcceptedJudgeDetails(details);
         case COLLECTOR_OUTPUT_TOOL:
