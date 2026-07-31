@@ -229,8 +229,10 @@ test("every mandated Reviewer fatal stage aborts print and JSON at its intended 
     tool: "Agent" | "ak_reviewer_output";
   }> = [
     {
+      // Bare-mirror retention no longer rethrows preparation failures on session
+      // shutdown; the print/json abort seam is the mandated fatal surface.
       stage: "child-preparation",
-      marker: /not a git repository/i,
+      marker: /Request was aborted|"stopReason":"aborted"/,
       calls: 1,
       tool: "Agent",
     },

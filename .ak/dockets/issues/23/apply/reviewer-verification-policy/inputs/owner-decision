@@ -1,0 +1,3 @@
+# Owner decision: Reviewer verification battery
+
+Issue #23 scope now includes this decision: test/typecheck/build/package battery execution belongs to Fixer/Coder, not Reviewer. Reviewer must mechanically verify admitted native invocation-session and receipt evidence for an already-run green battery, then spend its legs on judgment (code reading, finding discovery, and bounded non-battery probes). Reviewer must not rerun the same target's test/typecheck/build/package battery. Reviewer model policy is Sol low. Historical review evidence remains immutable.

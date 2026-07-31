@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_coder_output",
+  "toolCallId": "call_jrSzLHGmIW0Fk18kDXJSZEql|fc_041e6c1ecfab8262016a6c6bb92e14819abf5acf9bb3222770",
+  "details": {
+    "status": "completed",
+    "report": "Implemented the owner-assigned Reviewer verification policy as commit 0580c9e (`fix(reviewer): prohibit duplicate verification battery`).\n\nChanges:\n- Added one package-owned policy constant at `src/reviewer-verification-policy.ts`.\n- Injected it at the parent Reviewer recipe/system-prompt boundary in `src/reviewer-role.ts`.\n- Injected the same policy into each actual Reviewer child system prompt in `src/reviewer-agent.ts`.\n- Left Reviewer Soul, canonical code-review Skill, orchestration, model policy, and tool surfaces unchanged; retained bash without a command blacklist.\n\nTDD evidence:\n- RED: `node --import tsx --test test/reviewer-role.test.ts test/reviewer-agent.test.ts` failed 3 focused assertions because parent and actual child prompts lacked the policy (23 pass, 3 fail).\n- GREEN: the same command passed all 26 focused tests.\n\nBounded verification:\n- `npm run typecheck` passed.\n- `git diff --check` passed after whitespace correction.\n- Same-pattern/behavior check: the focused child integration test observed the policy in every captured Standards/Spec child request while retaining two concurrent sibling legs, distinct persisted session IDs, inherited provider/model dispatch, and the exact seven-child-tool surface. Existing focused parent tests continued to prove exact native Skill provenance/expansion and accepted output protocol.\n- Introduced-regression check: all 26 affected Reviewer role/agent tests passed; no full station was run, per owner instruction.\n- Working tree was clean after commit.",
+    "commitSha": "0580c9eb5fda4536d239e5bc2890a923e4cde2f9"
+  },
+  "artifactKind": "acceptedReceipt"
+}

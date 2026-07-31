@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call-d8629fcb-427a-498d-a0c2-1d90686b3643-46|fc_ae6f0632-1c50-9dac-b28a-50a565e0af2e_0",
+  "details": {
+    "status": "completed",
+    "report": "## Disposition\n\n**R1–R3: adopted (single class repair)**\n\nOwner decision applied: Reviewer bare session mirrors are retained for manual cleanup; automatic snapshot deletion is removed from the runtime path. No timers, refcounting, process hooks, merge detection, or substitute auto-cleanup added. Recorder / issue #23 and issue #13 behavior untouched.\n\n## Changes (commit `4964c4fb41708dc884e985a77914011ca19d4372`)\n\n- **`src/reviewer-agent.ts`**: Dropped `shutdown()` / `snapshotDeleted` and mirror `rm` from `createReviewerAgentRunner()`. Runner is now `{ runReviewerAgent }` only. Successful leg workspaces still `rm`; failed legs still `{ retained: workspace }`.\n- **`src/reviewer-role.ts`**: Removed `shutdownAgent` dependency, post-accept cleanup call, and `session_shutdown` cleanup handler.\n- **`src/role-runtime.ts`**, **`extensions/role-runtime.ts`**: Removed `shutdownReviewerAgent` wiring.\n- **Tests**: Assert no `session_shutdown` cleanup hook; accept path without cleanup; chronology without shutdown; removed cleanup-fatal / cleanup-identity seams; agent tests no longer call `shutdown()`; subprocess fatal suite no longer relies on shutdown rethrowing a rejected snapshot promise for `child-preparation` diagnostics (abort seam remains mandated).\n\n## Verification\n\n- Focused Reviewer tests: pass\n- `npm run typecheck`: pass\n- `npm test`: 366 pass / 0 fail\n- `npm run build:recorder` (+ native): pass\n- `npm pack --dry-run`: pass\n- Diff scope: 7 files, reviewer retention only\n- HEAD is strict forward descendant of pre-apply HEAD\n\n## Policy remainder\n\nTemporary `ak-reviewer-snapshot-*` / leg / child dirs may remain after Reviewer sessions; manual cleanup after workflow completion is acceptable per owner.",
+    "commitSha": "4964c4fb41708dc884e985a77914011ca19d4372"
+  },
+  "artifactKind": "acceptedReceipt"
+}

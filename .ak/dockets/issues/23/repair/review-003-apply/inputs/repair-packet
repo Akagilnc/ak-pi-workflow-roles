@@ -1,0 +1,17 @@
+# Issue #23 Judge-authorized Review-003 repair
+
+Sole[REDACTED]
+
+R1 — Delete dead `captureGitState`, call/import, and stale `git-state` vocabulary/schema entry if unowned. No replacement logging or historical-root inference.
+
+R2 — Restore correct two-layer identity rejection: pure config rejects generated path names and nested prefixes plus structure-decidable normalized repository/path aliases before scanning; stateful admission restores one verified canonical-reference identity duplicate set before spawn. Manifest uniqueness remains defense, not first rejection.
+
+R3 — Every manifest-owned internal invariant/schema failure must carry a non-null allow-listed safe manifest diagnostic/cause through the single internal-error owner, with no raw messages/IDs/paths/stacks/config/argv/environment/secrets.
+
+R4 — Deepen spawn result so child start, exact exit/signal settlement, and tee completion are independent. On tee failure after settlement, preserve exact exited/signaled child truth and return Recorder failure/no promotion; pre-spawn failure remains not-spawned; do not label post-start tee failure spawn-failed. Test real sink failure for exit and signal without test-only production hooks.
+
+R5 — Mechanically assert shipped failure schema code/stage/category enums equal TypeScript. Reformat config boundary and replace opaque names with descriptive names while preserving phase order/locations.
+
+R6 — Add all Judge-required reserved/alias/admission/manifest/tee/nonleak regressions; regenerate dist; run focused/full tests, typecheck, Recorder build, package/schema checks, pack, and diff check. Report current-head evidence only; preserve historical-root non-claim and issue #13 exclusion.
+
+Return exactly one nonblank keyed disposition for R1–R6; commit forward.

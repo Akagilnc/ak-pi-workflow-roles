@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,6 +21,7 @@ import {
 import {
   ModelRegistry,
   ModelRuntime,
+  SessionManager,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
@@ -121,6 +122,7 @@ async function parentContext(
       model,
       thinkingLevel: "off",
       modelRegistry: new ModelRegistry(runtime),
+      sessionManager: SessionManager.inMemory(cwd),
     } as unknown as ExtensionContext,
     faux,
   };
@@ -157,22 +159,18 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
       childReached = true;
     }, 1);
     const runner = createReviewerAgentRunner();
-    try {
-      const result = await runner.runReviewerAgent(
-        { description: "Standards", prompt: "Shallow snapshot review" },
-        { context },
-      );
-      assert.equal(childReached, true);
-      assert.match(result.report, /\S/);
-      assert.equal(result.targetSnapshot?.targetHead, tip);
-      assert.equal(result.targetSnapshot?.refs["refs/heads/fixed-branch"], tip);
-      assert.equal(result.targetSnapshot?.refs["refs/tags/fixed-tag"], tip);
-      assert.equal(result.targetSnapshot?.refs["refs/remotes/upstream/fixed"], tip);
-      for (const [name, sha] of Object.entries(sourceRefs)) {
-        assert.equal(result.targetSnapshot?.refs[name], sha);
-      }
-    } finally {
-      await runner.shutdown();
+    const result = await runner.runReviewerAgent(
+      { description: "Standards", prompt: "Shallow snapshot review" },
+      { context },
+    );
+    assert.equal(childReached, true);
+    assert.match(result.report, /\S/);
+    assert.equal(result.targetSnapshot?.targetHead, tip);
+    assert.equal(result.targetSnapshot?.refs["refs/heads/fixed-branch"], tip);
+    assert.equal(result.targetSnapshot?.refs["refs/tags/fixed-tag"], tip);
+    assert.equal(result.targetSnapshot?.refs["refs/remotes/upstream/fixed"], tip);
+    for (const [name, sha] of Object.entries(sourceRefs)) {
+      assert.equal(result.targetSnapshot?.refs[name], sha);
     }
   } finally {
     await rm(shallowRoot, { recursive: true, force: true });
@@ -184,6 +182,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
   const source = await repository();
   const requests: Array<{
     prompt: string;
+    systemPrompt: string;
     tools: string[];
     dispatch: Record<string, unknown>;
     sessionId: string | undefined;
@@ -194,6 +193,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
       prompt: user?.role === "user"
         ? (typeof user.content === "string" ? user.content : user.content.map((part) => part.type === "text" ? part.text : "").join(""))
         : "",
+      systemPrompt: childContext.systemPrompt ?? "",
       tools: childContext.tools?.map((tool) => tool.name) ?? [],
       sessionId: options?.sessionId,
       dispatch: {
@@ -240,6 +240,9 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     );
     assert.equal(new Set(requests.map((request) => request.sessionId)).size, 2);
     for (const request of requests) {
+      assert.match(request.systemPrompt, /Do not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery\./);
+      assert.match(request.systemPrompt, /Mechanically inspect supplied Fixer\/Coder receipts and native invocation-session evidence/);
+      assert.match(request.systemPrompt, /Reserve execution for judgment-oriented code inspection and bounded non-battery probes\./);
       assert.deepEqual(request.tools, ["read", "grep", "find", "ls", "bash", "write", "edit"]);
       assert.deepEqual(request.dispatch, {
         baseUrl: "https://resolved.invalid",
@@ -255,7 +258,27 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
       status: await git(source.root, "status", "--porcelain"),
     }, before);
   } finally {
-    await runner.shutdown();
+    await rm(source.root, { recursive: true, force: true });
+  }
+});
+
+test("Reviewer persists child sessions beside a persisted parent session", async () => {
+  const source = await repository();
+  const sessionRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-session-test-"));
+  const { context } = await parentContext(source.root, async () => {}, 1);
+  Object.assign(context, {
+    sessionManager: SessionManager.create(source.root, sessionRoot),
+  });
+  try {
+    const runner = createReviewerAgentRunner();
+    await runner.runReviewerAgent(
+      { description: "Standards", prompt: "Persist this child session" },
+      { context },
+    );
+    const files = await readdir(join(sessionRoot, "reviewer-legs"));
+    assert.equal(files.some((file) => file.endsWith(".jsonl")), true);
+  } finally {
+    await rm(sessionRoot, { recursive: true, force: true });
     await rm(source.root, { recursive: true, force: true });
   }
 });
@@ -331,6 +354,7 @@ test("Reviewer child provider delegates class-private streams to the original re
     model: originalModel,
     thinkingLevel: "off",
     modelRegistry: new ModelRegistry(runtime),
+    sessionManager: SessionManager.inMemory(source.root),
   } as unknown as ExtensionContext;
   const runner = createReviewerAgentRunner();
   try {
@@ -346,7 +370,6 @@ test("Reviewer child provider delegates class-private streams to the original re
       env: { PRIVATE_TENANT: "test" },
     }]);
   } finally {
-    await runner.shutdown();
     await rm(source.root, { recursive: true, force: true });
   }
 });
@@ -384,7 +407,6 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     assert.ok(retained);
     await access(retained);
   } finally {
-    await runner.shutdown().catch(() => {});
     if (retained !== undefined) {
       await rm(retained, { recursive: true, force: true });
     }

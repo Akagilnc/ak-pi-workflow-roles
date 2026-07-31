@@ -1,0 +1,2 @@
+export const REVIEWER_VERIFICATION_POLICY =
+  "Do not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery. Mechanically inspect supplied Fixer/Coder receipts and native invocation-session evidence for the already-run battery. Reserve execution for judgment-oriented code inspection and bounded non-battery probes.";

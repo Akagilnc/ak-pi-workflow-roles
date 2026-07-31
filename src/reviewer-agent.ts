@@ -25,6 +25,7 @@ import type {
   ReviewerTargetSnapshot,
   ReviewerWorkspaceDisposition,
 } from "./reviewer-execution-ledger.ts";
+import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.ts";
 
 const CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
 const REVIEW_REF_PREFIXES = ["refs/heads", "refs/tags", "refs/remotes"];
@@ -36,7 +37,6 @@ export type RunReviewerAgent = (
 
 export type ReviewerAgentRunner = {
   runReviewerAgent: RunReviewerAgent;
-  shutdown(): Promise<void>;
 };
 
 type GitSnapshot = ReviewerTargetSnapshot & {
@@ -365,6 +365,7 @@ async function runChild(
     noContextFiles: true,
     systemPrompt: [
       "Work only in the supplied writable review clone.",
+      REVIEWER_VERIFICATION_POLICY,
       "Inspect and probe; do not repair the reviewed product, commit, push, or mutate remotes.",
       "Clearly distinguish scratch artifacts and probe changes from facts about the pinned reviewed target.",
       "Return one substantive non-blank review-leg report.",
@@ -380,7 +381,12 @@ async function runChild(
     modelRuntime: runtime,
     resourceLoader: loader,
     tools: CHILD_TOOLS,
-    sessionManager: SessionManager.inMemory(workspace),
+    sessionManager: context.sessionManager.getSessionFile() === undefined
+      ? SessionManager.inMemory(workspace)
+      : SessionManager.create(
+          workspace,
+          join(context.sessionManager.getSessionDir(), "reviewer-legs"),
+        ),
     settingsManager: settings,
   });
   const usage = emptyUsage();
@@ -431,7 +437,6 @@ async function runChild(
 export function createReviewerAgentRunner(): ReviewerAgentRunner {
   let snapshotPromise: Promise<GitSnapshot> | undefined;
   let pinnedCwd: string | undefined;
-  let snapshotDeleted = false;
 
   const runReviewerAgent: RunReviewerAgent = async (input, options) => {
     if (snapshotPromise === undefined) {
@@ -472,13 +477,7 @@ export function createReviewerAgentRunner(): ReviewerAgentRunner {
     }
   };
 
-  return {
-    runReviewerAgent,
-    async shutdown() {
-      if (snapshotPromise === undefined || snapshotDeleted) return;
-      const snapshot = await snapshotPromise;
-      await rm(snapshot.mirrorRoot, { recursive: true, force: false });
-      snapshotDeleted = true;
-    },
-  };
+  // Session bare mirrors stay on disk for manual cleanup. Automatic deletion is
+  // not part of the Reviewer lifecycle (owner-authorized retention policy).
+  return { runReviewerAgent };
 }

@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import {
-  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -9,21 +8,18 @@ import {
 } from "node:fs";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
-import { RecorderError } from "./errors.ts";
+import { RecorderError, safeDiagnostic } from "./errors.ts";
 
 const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const RESERVED_IDS = new Set([
-  "receipt",
-  "audit-observation",
-  "manifest",
-  "redaction-report",
-]);
-const RESERVED_PATH_PREFIXES = [
-  "receipt.json",
-  "audit-observation.json",
-  "manifest.json",
-  "redaction-report.json",
-];
+
+function isEnoent(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
 
 export function requireAbsoluteExistingDirectory(
   value: string,
@@ -38,19 +34,21 @@ export function requireAbsoluteExistingDirectory(
   let real: string;
   try {
     real = realpathSync(value);
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "invalid-path",
       `${label} must resolve to an existing path`,
+      { cause: error },
     );
   }
   let st;
   try {
     st = statSync(real);
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "invalid-path",
       `${label} must resolve to an existing directory`,
+      { cause: error },
     );
   }
   if (!st.isDirectory()) {
@@ -86,19 +84,21 @@ export function requireCanonicalGitWorktree(
       ["-C", real, "rev-parse", "--show-toplevel"],
       { encoding: "utf8" },
     ).trim();
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "invalid-archive",
       `${label} must be a Git worktree`,
+      { cause: error },
     );
   }
   let topReal: string;
   try {
     topReal = realpathSync(toplevel);
-  } catch {
+  } catch (error) {
     throw new RecorderError(
       "invalid-archive",
       `${label} toplevel is unreadable`,
+      { cause: error },
     );
   }
   if (topReal !== real) {
@@ -196,88 +196,103 @@ export function resolveInsideRoot(
   return candidate;
 }
 
+function assertRealInsideRoot(
+  real: string,
+  rootReal: string,
+  label: string,
+): void {
+  const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
+  if (real !== rootReal && !real.startsWith(rootWithSep)) {
+    throw new RecorderError(
+      "invalid-path",
+      `${label} escapes the selected worktree via symlink`,
+    );
+  }
+}
+
 export function assertPathNotSymlinkEscape(
   absolutePath: string,
   rootReal: string,
   label: string,
 ): void {
+  // Prove leaf existence or absence; unexpected failures fail closed.
+  let leafExists = false;
   try {
-    if (existsSync(absolutePath)) {
-      const st = lstatSync(absolutePath);
-      if (st.isSymbolicLink()) {
-        const real = realpathSync(absolutePath);
-        const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
-        if (real !== rootReal && !real.startsWith(rootWithSep)) {
-          throw new RecorderError(
-            "invalid-path",
-            `${label} escapes the selected worktree via symlink`,
-          );
+    const st = lstatSync(absolutePath);
+    leafExists = true;
+    if (st.isSymbolicLink()) {
+      let real: string;
+      try {
+        real = realpathSync(absolutePath);
+      } catch (error) {
+        if (isEnoent(error)) {
+          // Dangling symlink race → treat as absence and walk parents.
+          leafExists = false;
+        } else {
+          throw new RecorderError("invalid-path", `${label} is unreadable`, {
+            cause: error,
+            diagnostic: safeDiagnostic("destination", error),
+          });
         }
       }
-    }
-    const real = existsSync(absolutePath)
-      ? realpathSync(absolutePath)
-      : null;
-    if (real) {
-      const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
-      if (real !== rootReal && !real.startsWith(rootWithSep)) {
-        throw new RecorderError(
-          "invalid-path",
-          `${label} escapes the selected worktree via symlink`,
-        );
+      if (leafExists) {
+        assertRealInsideRoot(real!, rootReal, label);
+        return;
       }
-      return;
+    } else {
+      let real: string;
+      try {
+        real = realpathSync(absolutePath);
+      } catch (error) {
+        if (isEnoent(error)) {
+          leafExists = false;
+        } else {
+          throw new RecorderError("invalid-path", `${label} is unreadable`, {
+            cause: error,
+            diagnostic: safeDiagnostic("destination", error),
+          });
+        }
+      }
+      if (leafExists) {
+        assertRealInsideRoot(real!, rootReal, label);
+        return;
+      }
     }
   } catch (error) {
     if (error instanceof RecorderError) throw error;
+    if (!isEnoent(error)) {
+      throw new RecorderError("invalid-path", `${label} is unreadable`, {
+        cause: error,
+        diagnostic: safeDiagnostic("destination", error),
+      });
+    }
   }
-  // path may not exist yet; validate existing parents
+
+  // Path absent: validate the nearest existing parent via realpath only.
   let parent = resolve(absolutePath, "..");
   while (true) {
     try {
-      if (existsSync(parent)) {
-        const realParent = realpathSync(parent);
-        const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
-        if (realParent !== rootReal && !realParent.startsWith(rootWithSep)) {
-          throw new RecorderError(
-            "invalid-path",
-            `${label} escapes the selected worktree via symlink`,
-          );
-        }
-        return;
+      const realParent = realpathSync(parent);
+      assertRealInsideRoot(realParent, rootReal, label);
+      return;
+    } catch (error) {
+      if (error instanceof RecorderError) throw error;
+      if (!isEnoent(error)) {
+        throw new RecorderError("invalid-path", `${label} is unreadable`, {
+          cause: error,
+          diagnostic: safeDiagnostic("destination", error),
+        });
       }
-    } catch (inner) {
-      if (inner instanceof RecorderError) throw inner;
     }
     const next = resolve(parent, "..");
-    if (next === parent) return;
+    if (next === parent) {
+      // No existing parent could be proved — fail closed rather than continue.
+      throw new RecorderError(
+        "invalid-path",
+        `${label} has no resolvable parent`,
+      );
+    }
     parent = next;
-  }
-}
-
-export function assertNotReservedArtifactId(id: string, label: string): void {
-  if (RESERVED_IDS.has(id)) {
-    throw new RecorderError(
-      "invalid-config",
-      `${label} uses a reserved generated id`,
-    );
-  }
-}
-
-export function assertNotReservedStoredPath(
-  relativePath: string,
-  label: string,
-): void {
-  if (
-    RESERVED_PATH_PREFIXES.some(
-      (prefix) =>
-        relativePath === prefix || relativePath.startsWith(`${prefix}/`),
-    )
-  ) {
-    throw new RecorderError(
-      "invalid-config",
-      `${label} uses a reserved generated path`,
-    );
   }
 }
 
@@ -295,24 +310,49 @@ export function assertScratchOutsideOrIgnored(
   let scratchReal: string;
   try {
     scratchReal = realpathSync(scratchPath);
-  } catch {
-    scratchReal = resolve(scratchPath);
+  } catch (error) {
+    if (isEnoent(error)) {
+      // Absence only: resolve lexically for the outside-worktree check.
+      scratchReal = resolve(scratchPath);
+    } else {
+      throw new RecorderError("invalid-path", "scratch path is unreadable", {
+        cause: error,
+        diagnostic: safeDiagnostic("stage-allocation", error),
+      });
+    }
   }
   if (scratchReal !== worktreeRoot && !scratchReal.startsWith(rootWithSep)) {
     return; // outside — fine
   }
-  // Inside worktree: must be ignored
+  // Inside worktree: must be ignored. Only exit 1 is the documented not-ignored negative.
   try {
-    const check = execFileSync(
+    execFileSync(
       "git",
       ["-C", worktreeRoot, "check-ignore", "-q", scratchReal],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
-    void check;
-  } catch {
+  } catch (error) {
+    const status =
+      typeof error === "object" &&
+      error !== null &&
+      "status" in error &&
+      typeof (error as { status?: unknown }).status === "number"
+        ? (error as { status: number }).status
+        : null;
+    // git check-ignore -q: exit 0 = ignored, exit 1 = not ignored.
+    if (status === 1) {
+      throw new RecorderError(
+        "invalid-path",
+        "scratch/stage inside worktree must be gitignored",
+      );
+    }
     throw new RecorderError(
       "invalid-path",
-      "scratch/stage inside worktree must be gitignored",
+      "scratch/stage gitignore check failed",
+      {
+        cause: error,
+        diagnostic: safeDiagnostic("stage-allocation", error),
+      },
     );
   }
 }

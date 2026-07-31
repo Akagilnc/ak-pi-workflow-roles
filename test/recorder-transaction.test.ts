@@ -295,6 +295,32 @@ test("path traversal and symlink escape fail closed without promotion", async ()
   }
 });
 
+test("structure-only defect is typed and rejected before repository state", async () => {
+  const ctx = setup();
+  try {
+    const configPath = configFor(ctx, "issues/23/apply/structural-first");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    config.archive.repositoryRoot = join(ctx.root, "repository-that-does-not-exist");
+    config.declarations.gitReferences[0].kind = "unknown-kind";
+    writeFileSync(configPath, JSON.stringify(config));
+
+    const result = await runRecorderBin(
+      ["--config", configPath, "--", process.execPath, ctx.script, "ok"],
+      { cwd: ctx.root, env: { ...process.env, AK_RECORDER_COUNTER: ctx.counter } },
+    );
+    assert.equal(result.code, 125);
+    const failure = JSON.parse(result.stderr.trim().split("\n").at(-1)!);
+    assert.equal(failure.recorder.code, "invalid-config");
+    assert.deepEqual(failure.recorder.location, [
+      "declarations", "gitReferences", 0, "kind",
+    ]);
+    assert.equal(failure.child.status, "not-spawned");
+    assert.equal(existsSync(ctx.counter), false);
+  } finally {
+    rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
 test("config failure before spawn reports not-spawned", async () => {
   const ctx = setup();
   try {

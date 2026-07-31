@@ -1,0 +1,35 @@
+# Issue #23 bounded closure review
+
+Review immutable range:
+
+- base: `58da62e0e35fef2f75e617d5bdc5c707a4b03f87`
+- target: `9a4832516b031b6afcaa0610d191c3f0962ae37d`
+
+This review has exactly two admitted scopes.
+
+## Scope A — seven keyed issue #23 acceptance items
+
+Report a finding only when one of these keys is not delivered:
+
+- K1 `no-mislabel`: unknown/non-Recorder exceptions cannot impersonate `invalid-config` or another specific label.
+- K2 `cause-trace`: caught internal causes leave scanner-safe stage/category evidence rather than being discarded.
+- K3 `structural-pointer`: config failures expose safe typed schema path/index locations.
+- K4 `mine-removed`: the evidenced pre-spawn catch-all/cost-order failure mechanisms are removed without claiming the unknowable historical 920-second root.
+- K5 `static-before-expensive`: pure structural defects are rejected before metadata scanning, filesystem/Git admission, scratch/state work, or child spawn.
+- K6 `shared-entry`: all Recorder-wrapped roles use the same entry and no role-specific bypass exists.
+- K7 `corrected-case`: evidence and docs preserve child `not-spawned`, valid historical config, catch-all impostor label, and indeterminate historical timing/root; no superseded allegation is revived.
+
+Review-009 Git-128, location-domain, `__proto__`, and any unknown constitutional residuals are transferred to issue #26 and are not issue-23 findings. Do not reopen full-Recorder constitutional debt.
+
+## Scope B — owner-added Reviewer verification policy
+
+Review commit `0580c9eb5fda4536d239e5bc2890a923e4cde2f9`: parent and both Standards/Spec children must receive package-owned instructions not to rerun test/typecheck/build/package batteries and instead mechanically verify supplied Coder/Fixer receipt/native session evidence. Preserve the canonical Skill, sibling topology, tools for code judgment/bounded probes, model inheritance, leg-session persistence, and output protocol.
+
+Mechanical evidence:
+
+- committed Coder receipt: `.ak/dockets/issues/23/apply/reviewer-verification-policy/receipt.json`
+- local native Coder session: `/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23/.ak/work/issues/23/runs/reviewer-verification-coder/session/2026-07-31T09-30-57-367Z_019fb783-35d7-768f-861b-1ad02d4298cf.jsonl`
+- session SHA-256: `fdd7cde713f6287da9120e98c94279b53c3b654088aea3857c006de29f118fc8`
+- invocation metadata reports exit 0, duration 114 seconds; receipt reports focused tests 26/26, typecheck and diff check green, with no full station run per owner instruction.
+
+Do not execute test suites, typecheck, builds, package checks, or pack. Use exactly one sibling-parallel Standards/Spec batch under the canonical Skill. Findings must cite K1–K7 or Scope B. Submit through `ak_reviewer_output`.

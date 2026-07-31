@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { RecorderError } from "./errors.js";
-import { assertNotReservedArtifactId, assertNotReservedStoredPath, requireCanonicalGitWorktree, } from "./paths.js";
+import { requireCanonicalGitWorktree } from "./paths.js";
 import { combineReports, scanBytes, scanJsonValue, scanString, } from "./scanner.js";
 function sha256Hex(buf) {
     return createHash("sha256").update(buf).digest("hex");
@@ -119,29 +119,54 @@ export function verifyGitReference(ref) {
         report,
     };
 }
-function isCommittedInContainingRepo(sourcePath) {
-    try {
-        const toplevel = execFileSync("git", ["-C", dirname(sourcePath), "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-        const rel = execFileSync("git", ["-C", toplevel, "ls-files", "--error-unmatch", "--", sourcePath], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-        return rel.length > 0;
+function gitStatus(error) {
+    if (typeof error === "object" &&
+        error !== null &&
+        "status" in error &&
+        typeof error.status === "number") {
+        return error.status;
     }
-    catch {
-        return false;
+    return null;
+}
+function isCommittedInContainingRepo(sourcePath) {
+    let toplevel;
+    try {
+        toplevel = execFileSync("git", ["-C", dirname(sourcePath), "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    }
+    catch (error) {
+        const status = gitStatus(error);
+        // Documented: not a git repository → exit 128 from rev-parse.
+        if (status === 128)
+            return { kind: "not-committed" };
+        return { kind: "failed", cause: error };
+    }
+    try {
+        const rel = execFileSync("git", ["-C", toplevel, "ls-files", "--error-unmatch", "--", sourcePath], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+        return rel.length > 0 ? { kind: "committed" } : { kind: "not-committed" };
+    }
+    catch (error) {
+        const status = gitStatus(error);
+        // Documented: path not tracked → exit 1 from ls-files --error-unmatch.
+        if (status === 1)
+            return { kind: "not-committed" };
+        return { kind: "failed", cause: error };
     }
 }
 function storeOnce(sourcePath, expectedSha256, destRelative, stageRoot, location, id) {
-    assertNotReservedArtifactId(id, location);
-    assertNotReservedStoredPath(destRelative, location);
     // External/exhibit bytes already committed in their containing repository are rejected.
-    if (isCommittedInContainingRepo(sourcePath)) {
+    const committedProbe = isCommittedInContainingRepo(sourcePath);
+    if (committedProbe.kind === "committed") {
         throw new RecorderError("admission-failed", `external/exhibit ${id} is already committed in its containing repository`);
+    }
+    if (committedProbe.kind === "failed") {
+        throw new RecorderError("admission-failed", `external/exhibit ${id} git admission probe failed`, { cause: committedProbe.cause });
     }
     let bytes;
     try {
         bytes = readFileSync(sourcePath);
     }
-    catch {
-        throw new RecorderError("admission-failed", `external source unreadable at ${location}`);
+    catch (error) {
+        throw new RecorderError("admission-failed", `external source unreadable at ${location}`, { cause: error });
     }
     const digest = sha256Hex(bytes);
     if (digest !== expectedSha256.toLowerCase()) {
@@ -166,48 +191,32 @@ function storeOnce(sourcePath, expectedSha256, destRelative, stageRoot, location
 export function admitDeclarations(config, stageRoot) {
     const artifacts = [];
     const reports = [];
-    // Uniqueness of canonical reference identities and stored copies.
-    const referenceKeys = new Set();
+    // Structural identity and path conflicts are owned by the config boundary.
+    const canonicalReferenceIdentities = new Set();
     const storedDigests = new Set();
-    const storedPaths = new Set();
-    const ids = new Set();
     for (const ref of config.declarations.gitReferences) {
-        assertNotReservedArtifactId(ref.id, `gitReference.${ref.id}`);
-        if (ids.has(ref.id)) {
-            throw new RecorderError("admission-failed", `duplicate artifact id ${ref.id}`);
-        }
-        ids.add(ref.id);
-        // Generated docket outputs are not pre-existing committed references.
-        assertNotReservedStoredPath(ref.path, `gitReference.${ref.id}.path`);
         const verified = verifyGitReference(ref);
-        const key = [
-            verified.artifact.reference.repositoryRoot,
-            verified.artifact.reference.commit,
-            verified.artifact.reference.path,
-            verified.artifact.reference.blobOid,
-        ].join("|");
-        if (referenceKeys.has(key)) {
+        const reference = verified.artifact.reference;
+        const canonicalIdentity = [
+            reference.repositoryRoot,
+            reference.commit,
+            reference.path,
+            reference.blobOid,
+        ].join("\0");
+        if (canonicalReferenceIdentities.has(canonicalIdentity)) {
             throw new RecorderError("admission-failed", `duplicate canonical git reference identity for ${ref.id}`);
         }
-        referenceKeys.add(key);
+        canonicalReferenceIdentities.add(canonicalIdentity);
         artifacts.push(verified.artifact);
         reports.push(verified.report);
     }
     for (const input of config.declarations.externalInputs) {
-        if (ids.has(input.id)) {
-            throw new RecorderError("admission-failed", `duplicate artifact id ${input.id}`);
-        }
-        ids.add(input.id);
         const dest = join("inputs", input.id);
-        if (storedPaths.has(dest)) {
-            throw new RecorderError("admission-failed", `duplicate stored path for ${input.id}`);
-        }
         const stored = storeOnce(input.sourcePath, input.sha256, dest, stageRoot, `externalInput.${input.id}`, input.id);
         if (storedDigests.has(stored.stored.sha256)) {
             throw new RecorderError("admission-failed", `duplicate stored artifact digest for ${input.id}`);
         }
         storedDigests.add(stored.stored.sha256);
-        storedPaths.add(stored.stored.path);
         artifacts.push({
             id: input.id,
             kind: input.kind,
@@ -217,20 +226,12 @@ export function admitDeclarations(config, stageRoot) {
         reports.push(stored.report);
     }
     for (const exhibit of config.declarations.exhibits) {
-        if (ids.has(exhibit.id)) {
-            throw new RecorderError("admission-failed", `duplicate artifact id ${exhibit.id}`);
-        }
-        ids.add(exhibit.id);
         const dest = join("exhibits", exhibit.id);
-        if (storedPaths.has(dest)) {
-            throw new RecorderError("admission-failed", `duplicate stored path for ${exhibit.id}`);
-        }
         const stored = storeOnce(exhibit.sourcePath, exhibit.sha256, dest, stageRoot, `exhibit.${exhibit.id}`, exhibit.id);
         if (storedDigests.has(stored.stored.sha256)) {
             throw new RecorderError("admission-failed", `duplicate stored artifact digest for ${exhibit.id}`);
         }
         storedDigests.add(stored.stored.sha256);
-        storedPaths.add(stored.stored.path);
         artifacts.push({
             id: exhibit.id,
             kind: "exhibit",

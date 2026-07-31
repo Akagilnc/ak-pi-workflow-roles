@@ -1,0 +1,12 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_9VGaHEEFhA8LfvO75Aeu7gHj|fc_06e13a05439f81c7016a6c214536548191b6cc4ec7a7091b80",
+  "auditPassed": true,
+  "usage": {
+    "input": 21208,
+    "output": 247,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 21455
+  }
+}

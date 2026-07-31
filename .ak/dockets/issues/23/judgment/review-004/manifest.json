@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+    "root": ".ak/dockets",
+    "docketId": "issues/23/judgment/review-004"
+  },
+  "invocation": {
+    "id": "ff36344f-6755-4c22-9d6e-335922432c07"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "high",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #23 Review-004 finding adjudication\n\nConstruction target: `8db808d23889de2d995639ad7385738162229551`; product repair commits `6b71d0c` and `3941a32`.\n\nAdjudicate every Review-004 Must, Should, and Nit before repair. Address real-cause retention in manifest schema loading, external input reads, and path/Git validation; manifest invariant construction duplication; leaked tee-test scratch; actual bin-emitted failure validation against the shipped schema; and remaining opaque parser names. Preserve fixed safe public messages, scanner boundaries, structural/stateful ordering, exact child truth, the historical-root non-claim, and issue #13 exclusion.\n\nIf sustained, return one bounded forward-only packet. Submit only through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:high",
+    "target": "8db808d23889de2d995639ad7385738162229551",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "8db808d23889de2d995639ad7385738162229551",
+        "path": ".ak/dockets/issues/23/authority/judge-001/receipt.json",
+        "blobOid": "d22ea33239618dcd52bc9fe5f17db2577e729113",
+        "sha256": "72c231a8e59009f991f64d8b4a3a6ae6c675d02e4984004daacd3be4306271fb",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-003-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "8db808d23889de2d995639ad7385738162229551",
+        "path": ".ak/dockets/issues/23/judgment/review-003/receipt.json",
+        "blobOid": "225d244680a4716236df23e70baa6b4cfec93eb2",
+        "sha256": "909d0dd91c1d9a946fae8dcdf60d53c618c7939d59f2db4beaefe74f31ee19cf",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "8db808d23889de2d995639ad7385738162229551",
+        "path": ".ak/dockets/issues/23/repair/review-003-apply/receipt.json",
+        "blobOid": "271c520a7b5dd3cba3bee8d575e8a17415d485d7",
+        "sha256": "2ab06e0b90c69b026b844ff9101185513cd91656c1859bc4ae3e06deb62036fe",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "8db808d23889de2d995639ad7385738162229551",
+        "path": ".ak/dockets/issues/23/review/review-004/receipt.json",
+        "blobOid": "40db2a28421aa65acc36a0be49ecd21b36c5051c",
+        "sha256": "6a403531d9c09b389d7c3f0ef5ae3d38ac4421117d710788389231ee94c5f073",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-request",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-request",
+        "sha256": "1fe3c054aa8be1dc173a217aa25d66371434aa530936eb20ca9718c1887cdb26",
+        "byteLength": 755
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "f59306afef451fcc67ed4077aa4c16d7686a361b9ca50cc0830f6f7024881fb1",
+        "byteLength": 8083
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "9750854a31631bc4a0104128f4d158c7d986df22fbb2361ccf5dc92463c9fbb2",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_FQguGbaWjsVdN1TD6P1KKeKx|fc_0691e7dc59d63c46016a6c41e5a2148191ab2954c49e2cbff4",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_FQguGbaWjsVdN1TD6P1KKeKx|fc_0691e7dc59d63c46016a6c41e5a2148191ab2954c49e2cbff4",
+    "auditPassed": true,
+    "usage": {
+      "input": 24385,
+      "output": 229,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 24614
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

@@ -1,0 +1,23 @@
+# Implement owner-assigned Reviewer verification policy
+
+Implement only the owner decision in `reviewer-verification-owner-decision.md`, test-first and as a small forward commit.
+
+## Behavior
+
+Every Reviewer invocation and each Standards/Spec child leg receive a package-owned instruction that they must not execute the target's test suite, typecheck, build, package lifecycle checks, pack dry-run, or equivalent verification battery. They instead mechanically inspect admitted Fixer/Coder receipt and native invocation-session evidence when supplied, and reserve execution for judgment-oriented code inspection and bounded non-battery probes. The canonical Matt code-review Skill remains unmodified and fully bound. The Reviewer retains bash for Git/code inspection and bounded probes; do not implement a brittle command-string blacklist.
+
+## Owner
+
+Own this policy at the Reviewer recipe/prompt boundary shared by parent and both child legs. Keep it outside the Soul unless it is irreducible judgment; do not modify role composition or caller orchestration.
+
+## Red
+
+Add focused tests proving both the parent Reviewer system prompt and actual child system prompt contain the no-duplicate-battery/evidence-verification policy. Existing behavior currently lacks that policy, so the focused tests must fail before production edits.
+
+## Green
+
+Focused Reviewer tests pass and prove the policy reaches parent plus both sibling legs without changing the exact native Skill expansion, tool surfaces, sibling-parallel cardinality, model inheritance, session persistence, or accepted output protocol. Run only focused affected tests, typecheck, and `git diff --check`; owner explicitly forbids spending time on the full station for this small change.
+
+## Scope
+
+Do not repair Review-009 Recorder residuals; they are transferred to issue #26. Do not alter the seven-key issue #23 closure test, Recorder behavior, Fixer Soul, Reviewer model selection, issue #13 behavior, or historical dockets. Commit forward and submit one Coder receipt with exact focused evidence.

@@ -1,0 +1,16 @@
+# Issue #23 implementation Plan task
+
+Governing authority: `.ak/dockets/issues/23/authority/judge-001/receipt.json` at construction HEAD after its archival commit.
+
+Produce a diagnosis-first implementation Plan using exactly `Behavior / Owner / Red / Green / Scope` for each slice. It must:
+
+- separate pure structural config validation from stateful pre-spawn validation/admission and prove cheap-before-expensive ordering;
+- make every public failure code truthful, reserve `invalid-config` for established config defects, and define a stable internal/unknown category for unrecognized exceptions;
+- provide typed/schema-anchored safe diagnostic location/detail without regex dependence or credential leakage, using the existing scanner or a bounded gitignored 0600 record;
+- preserve exact child `not-spawned|exited|signaled` truth;
+- instrument/reproduce the actual pre-spawn failure using the supplied run-1 config and owned seams, while treating historical elapsed time and unavailable raw logs as assertions rather than proof;
+- repair the diagnosed root seam only after evidence identifies it, or define an explicit escalation gate if not reproducible;
+- cover the one shared Recorder entry used for every wrapped role, with no role-specific implementation and no issue-#13 recurrence/retry behavior;
+- preserve atomic publication, credential scanning, exact evidence admission, and existing manifest/Receipt contracts.
+
+Plan only. Do not edit or commit. Submit through `ak_coder_output`.
