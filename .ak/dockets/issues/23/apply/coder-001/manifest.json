@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+    "root": ".ak/dockets",
+    "docketId": "issues/23/apply/coder-001"
+  },
+  "invocation": {
+    "id": "ab42b6a8-cd8a-48be-a329-b27e9c245f7d"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-session",
+      "--mode",
+      "json",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/tdd/SKILL.md",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "apply",
+      "--ak-coder-task",
+      ".ak/work/issues/23/apply-task.md",
+      "-p",
+      "Apply the authorized issue 23 Plan test-first, run all gates, commit forward, and submit through ak_coder_output."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "tee",
+      "stderr": "tee"
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "a9ddffad39f623cd82e94d2773877f651e20412b",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "a9ddffad39f623cd82e94d2773877f651e20412b",
+        "path": ".ak/dockets/issues/23/authority/judge-001/receipt.json",
+        "blobOid": "d22ea33239618dcd52bc9fe5f17db2577e729113",
+        "sha256": "72c231a8e59009f991f64d8b4a3a6ae6c675d02e4984004daacd3be4306271fb",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "a9ddffad39f623cd82e94d2773877f651e20412b",
+        "path": ".ak/dockets/issues/23/plan/coder-001/receipt.json",
+        "blobOid": "55db9465a185d71e193ae81d7816f199fda3b1d3",
+        "sha256": "073f01ae77ab536c4e64df82741f0f557cc62e22a783b7fa1261050404caa8bf",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "plan-judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "a9ddffad39f623cd82e94d2773877f651e20412b",
+        "path": ".ak/dockets/issues/23/plan/judge-001/receipt.json",
+        "blobOid": "0981670b425b9d5e60f950cd790d3f214e27c510",
+        "sha256": "9ee0be4e433016b964716ebc12bc79da1d90381eb87fff32538917fb7514ef8d",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "run-1-config",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue23",
+        "commit": "a9ddffad39f623cd82e94d2773877f651e20412b",
+        "path": ".ak/dockets/issues/23/plan/judge-001/inputs/run-1-config",
+        "blobOid": "84d9671d699c9cf393aed3438a104fc5d9ff3c99",
+        "sha256": "5037757dbe29bd821f92146d18511cf1eec67f0ee3be8bb83fc67e332cca2e06",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "apply-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/apply-task",
+        "sha256": "b78914e88d1024f96b48dba9d6ae4391e26ecd8fdcea593100f09172da842b15",
+        "byteLength": 1787
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "eb6834b5626f11ae897dc6ffc97b4263e23095b861d2ea9344312da0721ddff4",
+        "byteLength": 2150
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_cpK2JmVAD4HaMr4tZR6cW6ls|fc_05e54696f4cc9baa016a6c25c017088191b59ec1d9b9d08393",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "authorization-header",
+        "location": "child.stdout",
+        "count": 5
+      },
+      {
+        "ruleId": "token-assignment",
+        "location": "child.stdout",
+        "count": 5
+      }
+    ]
+  }
+}
