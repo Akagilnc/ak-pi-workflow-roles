@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { createGitCliTransportV1, createGhJsonTransportV1 } from "./assisted-acquisition.js";
 import { createRecorderAssistedTransportV1 } from "./assisted-recorder-transport.js";
 import { endAssistedRunV1, enterAssistedCallV1, readAssistedRunV1, recoverAssistedInvocationV1, resumeAssistedCallV1 } from "./assisted-runner.js";
@@ -41,7 +41,9 @@ async function main(argv = process.argv.slice(2)) {
 `);
     return result2.status === "infrastructure_failure" ? 1 : 0;
   }
-  const root = resolve(value(argv, "--repository-root")), runId = value(argv, "--run-id");
+  const rootValue = value(argv, "--repository-root");
+  if (!isAbsolute(rootValue) || resolve(rootValue) !== rootValue) throw new Error("invalid assisted run locator");
+  const root = rootValue, runId = value(argv, "--run-id");
   if (command === "status") {
     if (!argv.includes("--json")) throw new Error("status requires --json");
     const result2 = await readAssistedRunV1(root, runId, void 0, value(argv, "--call-id", false));
