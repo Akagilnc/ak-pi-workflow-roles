@@ -35,20 +35,33 @@ export function acceptedTextFor(toolName) {
             return "Doctor output accepted";
     }
 }
+export class AcceptedDetailsContractError extends Error {
+    constructor(message, options) {
+        super(message, options);
+        this.name = "AcceptedDetailsContractError";
+    }
+}
 export function validateAcceptedDetails(toolName, details) {
-    switch (toolName) {
-        case CODER_OUTPUT_TOOL_NAME:
-            return validateAcceptedWorkerDetails(details, "Coder");
-        case FIXER_OUTPUT_TOOL_NAME:
-            return validateAcceptedWorkerDetails(details, "Fixer");
-        case REVIEWER_OUTPUT_TOOL_NAME:
-            return validateRuntimeReviewerReceipt(details);
-        case JUDGE_OUTPUT_TOOL_NAME:
-            return validateAcceptedJudgeDetails(details);
-        case COLLECTOR_OUTPUT_TOOL:
-            return validateAcceptedCollectorReceipt(details);
-        case DOCTOR_OUTPUT_TOOL_NAME:
-            return validateRecordedDoctorOutput(details);
+    try {
+        switch (toolName) {
+            case CODER_OUTPUT_TOOL_NAME:
+                return validateAcceptedWorkerDetails(details, "Coder");
+            case FIXER_OUTPUT_TOOL_NAME:
+                return validateAcceptedWorkerDetails(details, "Fixer");
+            case REVIEWER_OUTPUT_TOOL_NAME:
+                return validateRuntimeReviewerReceipt(details);
+            case JUDGE_OUTPUT_TOOL_NAME:
+                return validateAcceptedJudgeDetails(details);
+            case COLLECTOR_OUTPUT_TOOL:
+                return validateAcceptedCollectorReceipt(details);
+            case DOCTOR_OUTPUT_TOOL_NAME:
+                return validateRecordedDoctorOutput(details);
+        }
+    }
+    catch (error) {
+        if (error instanceof Error)
+            throw new AcceptedDetailsContractError(error.message, { cause: error });
+        throw error;
     }
 }
 export function carriesPackageAuditObservation(toolName) {
