@@ -113,6 +113,27 @@ test("intermediate object details neither terminate nor manufacture session stat
   assert.deepEqual(patient.cost.commits, [{ source: "coder/session/terminal.jsonl", commit: "abc1234" }]);
 });
 
+test("timestamp-less terminating results leave the session incomplete at the last retained row", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-timestampless-terminal-"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(join(runs, "coder/session"), { recursive: true });
+  const fixture = [
+    { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
+    { type: "message", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "done" } } },
+    { type: "custom", timestamp: "2026-08-01T00:00:04.000Z" },
+  ];
+  await writeFile(join(runs, "coder/session/timestampless.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
+
+  const patient = await loadDoctorCase(runs);
+  assert.deepEqual(patient.cost.sessions[0], {
+    source: "coder/session/timestampless.jsonl",
+    startedAt: "2026-08-01T00:00:00.000Z",
+    endedAt: "2026-08-01T00:00:04.000Z",
+    wallMilliseconds: 4000,
+    completion: "incomplete",
+  });
+});
+
 test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
   assert.deepEqual(DOCTOR_TARGET_KINDS, ["law", "gate", "template", "station", "seat"]);
   const root = await mkdtemp(join(tmpdir(), "doctor-finding-"));
