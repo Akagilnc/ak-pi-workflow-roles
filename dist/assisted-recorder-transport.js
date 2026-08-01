@@ -1,11 +1,13 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 import { canonicalJson } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
 import { runRecorder } from "./recorder/run.js";
 import { buildChildEnv } from "./recorder/config.js";
 import { assistedRunDirectory } from "./assisted-ledger.js";
 import { createGitCliTransportV1 } from "./assisted-acquisition.js";
+import { validatePublicManifest } from "./recorder/manifest.js";
+import { validateAcceptedDetails } from "./package-contracts/terminating-tools.js";
 function rel(root, path) {
   return relative(root, path).split("\\").join("/");
 }
@@ -26,6 +28,25 @@ function modelArgs(argv) {
   }
   return out;
 }
+async function loadVerifiedAssistedDocketV1(repositoryRoot, docket, invocationId) {
+  if (resolve(docket) !== docket || relative(repositoryRoot, docket).startsWith("..")) throw new Error("docket escapes repository");
+  const manifestBytes = await readFile(join(docket, "manifest.json")), value = JSON.parse(manifestBytes.toString());
+  validatePublicManifest(value);
+  const manifest = value, artifact = manifest.artifacts.find((x) => x.id === manifest.receipt.artifactId), rootReal = await realpath(repositoryRoot), docketReal = await realpath(docket);
+  if (await realpath(join(manifest.archive.repositoryRoot, manifest.archive.root, manifest.archive.docketId)) !== docketReal || manifest.archive.docketId !== invocationId || manifest.invocation.id !== invocationId || manifest.session.id !== invocationId || !artifact?.stored) throw new Error("sealed docket identity join mismatch");
+  const receiptPath = resolve(docket, artifact.stored.path);
+  if (relative(docket, receiptPath).startsWith("..")) throw new Error("sealed artifact path escape");
+  const receiptBytes = await readFile(receiptPath);
+  if (receiptBytes.byteLength !== artifact.stored.byteLength || sha256Hex(receiptBytes) !== artifact.stored.sha256) throw new Error("sealed receipt authenticity mismatch");
+  const receipt = JSON.parse(receiptBytes.toString());
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt) || Object.keys(receipt).sort().join(",") !== "artifactKind,details,toolCallId,toolName" || receipt.toolName !== manifest.receipt.toolName || receipt.toolCallId !== manifest.receipt.toolCallId || receipt.artifactKind !== manifest.receipt.artifactKind) throw new Error("sealed receipt join mismatch");
+  validateAcceptedDetails(receipt.toolName, receipt.details);
+  const sessionPath = resolve(rootReal, manifest.session.directory, manifest.session.basename);
+  if (relative(rootReal, sessionPath).startsWith("..")) throw new Error("sealed session path escape");
+  const sessionBytes = await readFile(sessionPath);
+  if (sessionBytes.byteLength !== manifest.session.byteLength || sha256Hex(sessionBytes) !== manifest.session.sha256) throw new Error("sealed session authenticity mismatch");
+  return { receipt, receiptBytes: new Uint8Array(receiptBytes), sessionText: sessionBytes.toString(), manifest, reference: { id: `receipt:${invocationId}`, sha256: artifact.stored.sha256 } };
+}
 async function invoke(config, invocationId, childArgv, authority, task, env) {
   const runDir = assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), inputDir = join(runDir, "invocation-inputs", invocationId);
   await mkdir(inputDir, { recursive: true });
@@ -35,12 +56,15 @@ async function invoke(config, invocationId, childArgv, authority, task, env) {
   await writeFile(configPath, `${canonicalJson(rc)}
 `, { flag: "wx", mode: 384 });
   await mkdir(join(runDir, "sessions", invocationId), { recursive: true });
-  const result = await runRecorder({ argv: ["--config", configPath, "--", ...childArgv], env });
-  const docket = join(runDir, "invocations", invocationId);
-  if (result.failureJson) return { failure: result.failureJson };
-  const receipt = JSON.parse(await readFile(join(docket, "receipt.json"), "utf8"));
-  const manifest = await readFile(join(docket, "manifest.json")), parsed = JSON.parse(manifest.toString()), session = await readFile(join(config.subject.repositoryRoot, parsed.session.directory, parsed.session.basename), "utf8");
-  return { receipt, evidenceRead: sealedEvidenceReads(session), reference: { id: `invocation:${invocationId}`, sha256: sha256Hex(manifest) } };
+  const result = await runRecorder({ argv: ["--config", configPath, "--", ...childArgv], env }), docket = join(runDir, "invocations", invocationId);
+  if (result.failureJson) {
+    const path = join(inputDir, "failure.json"), bytes = new TextEncoder().encode(`${result.failureJson}
+`);
+    await writeFile(path, bytes, { flag: "wx", mode: 384 });
+    return { failure: result.failureJson, child: result, reference: { id: `failure:${invocationId}`, sha256: sha256Hex(bytes) } };
+  }
+  const verified = await loadVerifiedAssistedDocketV1(config.subject.repositoryRoot, docket, invocationId);
+  return { receipt: verified.receipt, evidenceRead: sealedEvidenceReads(verified.sessionText), reference: verified.reference, child: result };
 }
 function effectiveEnv(config, base) {
   return buildChildEnv(base, config.execution.environment);
@@ -79,21 +103,26 @@ function sealedEvidenceReads(sessionText) {
 async function existing(config, invocationId) {
   const docket = join(assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), "invocations", invocationId);
   try {
-    const receipt = JSON.parse(await readFile(join(docket, "receipt.json"), "utf8")), manifest = await readFile(join(docket, "manifest.json")), parsed = JSON.parse(manifest.toString()), session = await readFile(join(config.subject.repositoryRoot, parsed.session.directory, parsed.session.basename), "utf8");
-    return { receipt, evidenceRead: sealedEvidenceReads(session), reference: { id: `invocation:${invocationId}`, sha256: sha256Hex(manifest) } };
+    const verified = await loadVerifiedAssistedDocketV1(config.subject.repositoryRoot, docket, invocationId);
+    return { receipt: verified.receipt, evidenceRead: sealedEvidenceReads(verified.sessionText), reference: verified.reference, child: { exitCode: verified.manifest.child.exitCode, signal: verified.manifest.child.signal } };
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
 }
 function classifyRole(config, x, beforeTarget, afterTarget) {
+  if (x.child?.signal) return { terminalClass: "cancellation", reference: x.reference, beforeTarget, afterTarget };
+  if (x.child && x.child.exitCode !== 0) return { terminalClass: "infrastructure_failure", reference: x.reference, beforeTarget, afterTarget };
   const expected = { coder: "ak_coder_output", fixer: "ak_fixer_output", judge: "ak_judge_output", reviewer: "ak_reviewer_output", collector: "ak_collector_output", doctor: "ak_doctor_output" }[config.execution.role];
   if (x.receipt.toolName !== expected) throw new Error("sealed selected-role tool mismatch");
   const details = x.receipt.details, status = details.status;
   if (config.execution.phase === "plan" && status === "completed" || config.execution.phase === "apply" && status === "planned") throw new Error("sealed selected-role phase mismatch");
   let terminalClass = "accepted_receipt";
-  if (status === "refused") terminalClass = "role_refusal";
-  else if (status === "escalated") terminalClass = "role_escalation";
+  if (config.execution.role === "judge") {
+    const verdict = details.judgeStatus;
+    if (verdict === "escalate") terminalClass = "role_escalation";
+    else if (verdict !== "converged" && verdict !== "continue") throw new Error("sealed Judge posture mismatch");
+  } else if (status === "refused") terminalClass = "role_refusal";
   return { terminalClass, reference: x.reference, beforeTarget, afterTarget };
 }
 function createRecorderAssistedTransportV1(baseEnv = process.env) {
@@ -112,17 +141,21 @@ function createRecorderAssistedTransportV1(baseEnv = process.env) {
     const snapshotPath = join(assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), "invocation-inputs", invocationId, "authority.json");
     const navArgv = [piArgv[0], ...modelArgs(piArgv), "--ak-role", "navigator", "--ak-navigator-snapshot", snapshotPath, "--print", "Advise on this frozen current position and submit exactly one Navigator output."];
     const x = await invoke(config, invocationId, navArgv, position.snapshot, { kind: "navigator-consultation", snapshotDigest: position.snapshot.digest, positionCursor: position.snapshot.positionCursor }, effectiveEnv(config, baseEnv));
-    if ("failure" in x) return { kind: "infrastructure_failure", reference: { id: `recorder-failure:${invocationId}`, sha256: sha256Hex(x.failure) } };
+    if ("failure" in x) return { kind: "infrastructure_failure", reference: x.reference };
+    if (x.child.signal || x.child.exitCode !== 0) return { kind: "infrastructure_failure", reference: x.reference };
     if (x.receipt.toolName !== "ak_navigator_output") throw new Error("sealed Navigator tool mismatch");
     return { kind: "accepted", receipt: x.receipt.details, evidenceRead: x.evidenceRead, reference: x.reference };
   }, async invokeRole({ config, invocationId, piArgv, beforeTarget }) {
     const x = await invoke(config, invocationId, piArgv, { runId: config.runId, callId: config.callId, subject: config.subject }, { selected: { role: config.execution.role, phase: config.execution.phase }, argv: piArgv }, effectiveEnv(config, baseEnv));
     const afterTarget = (await createGitCliTransportV1().observeWorkspace(config.execution.cwd)).target;
-    if ("failure" in x) return { terminalClass: "infrastructure_failure", reference: { id: `recorder-failure:${invocationId}`, sha256: sha256Hex(x.failure) }, beforeTarget, afterTarget };
+    if ("failure" in x) return { terminalClass: "infrastructure_failure", reference: x.reference, beforeTarget, afterTarget };
+    if (x.child.signal) return { terminalClass: "cancellation", reference: x.reference, beforeTarget, afterTarget };
+    if (x.child.exitCode !== 0) return { terminalClass: "infrastructure_failure", reference: x.reference, beforeTarget, afterTarget };
     return classifyRole(config, x, beforeTarget, afterTarget);
   } };
 }
 export {
   createRecorderAssistedTransportV1,
+  loadVerifiedAssistedDocketV1,
   sealedEvidenceReads
 };

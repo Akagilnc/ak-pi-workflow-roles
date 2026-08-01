@@ -238,7 +238,15 @@ async function recoverAssistedInvocationInternalV1(repositoryRoot, runId, invoca
   let latest = rows.filter((r) => (r.type === "role_settled" || r.type === "recovered") && r.payload.latestAttempt).at(-1)?.payload.latestAttempt ?? null;
   if (started.type === "role_started") {
     const snapshot = rows.filter((r) => r.type === "acquisition").at(-1)?.payload.snapshot, workspace = snapshot.workspaces.find((w) => w.id === config.execution.workspaceId);
-    latest = { invocationId, role: config.execution.role, phase: config.execution.phase, beforeTarget: workspace.target, afterTarget: workspace.target, terminalClass: "outcome_unavailable_after_runner_loss", reference: { id: `recovery:${invocationId}`, sha256: sha256Hex("confirmed_stopped") } };
+    const recoveryBytes = `${canonicalJson({ version: 1, invocationId, terminalClass: "outcome_unavailable_after_runner_loss", attestation: "confirmed_stopped" })}
+`, recoveryDir = join(dir, "invocation-inputs", invocationId);
+    await mkdir(recoveryDir, { recursive: true });
+    try {
+      await writeFile(join(recoveryDir, "failure.json"), recoveryBytes, { flag: "wx", mode: 384 });
+    } catch (error) {
+      if (error.code !== "EEXIST" || sha256Hex(await readFile(join(recoveryDir, "failure.json"))) !== sha256Hex(recoveryBytes)) throw error;
+    }
+    latest = { invocationId, role: config.execution.role, phase: config.execution.phase, beforeTarget: workspace.target, afterTarget: workspace.target, terminalClass: "outcome_unavailable_after_runner_loss", reference: { id: `failure:${invocationId}`, sha256: sha256Hex(recoveryBytes) } };
     await appendAssistedGenerationV1(dir, { type: "recovered", runId, callId: started.callId, invocationId, positionCursor: cursor, payload: { attestation: "confirmed_stopped", terminalClass: "outcome_unavailable_after_runner_loss", latestAttempt: latest } });
   } else await appendAssistedGenerationV1(dir, { type: "recovered", runId, callId: started.callId, invocationId, positionCursor: cursor, payload: { attestation: "confirmed_stopped", terminalClass: "outcome_unavailable_after_runner_loss" } });
   const position = await acquireCurrentPositionV1(config, cursor, latest, { git: deps.git, github: deps.github });
