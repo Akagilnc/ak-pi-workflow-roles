@@ -1,0 +1,5 @@
+# Issue #28 final convergence retry 002
+
+Adjudicate current HEAD `bf4110cd4f7136251ddabf263f6a454ef0ada2a3` after `.ak/dockets/issues/28/repair/convergence-retry-apply/receipt.json` repaired the two executable counterexamples in the prior convergence retry.
+
+Independently rerun or inspect the exact out-of-catalog evidence-read ordering and overlapping identical-call lifecycle oracles, including live/recovered Recorder truth and pending/canonical ledger reconciliation. Verify all previously closed classes remain closed and no parallel orchestration/lock/tracker was added. Converge only on current executable proof; otherwise issue exact remaining authority. Submit exactly one verdict.
