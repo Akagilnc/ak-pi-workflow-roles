@@ -1,0 +1,16 @@
+# Issue #44 — final owner correction reconsideration
+
+Reconsider `.ak/dockets/issues/44/authority/final-authority-001/receipt.json` only where its decision gate is now answered by the sealed owner correction.
+
+Ratify a construction-ready smallest design with these owner-fixed semantics:
+
+- Fixer refusal has one purpose: assignment not presently lawfully executable.
+- Its exhaustive typed causes are only `authority_violation` and `prerequisite_unmet`; invent no third category or generic safety escape.
+- Apply settlements are exactly `completed`, `refused`, and `partially_completed` with typed per-finding dispositions and combination laws. Partial means a mixture of completed findings and findings refused for one of the two causes—not unfinished workload.
+- Executable unfinished work has no professional settlement; Fixer continues, caller cancels, or execution exits nonzero.
+- Add fresh same-active-model Fixer compliance audit after structural validation and before acceptance, scoped to demonstrated Soul/packet/invocation-record compliance. It does not redo repairs or adjudicate findings. Revise permits resubmission; audit infrastructure failure exits nonzero.
+- Hard-cut v0.1 prose-only leaves; preserve historical dockets unchanged.
+- Preserve multi-class batching, per-class accountability, and caller ownership. No orchestrator/scheduler.
+- Soul uses subtraction/minimal positive domain, not a list of anti-refusal warnings.
+
+Dispose exact schemas, runtime/auditor boundaries, plan-phase implications, package/Recorder/docs/tests, and direct-construction authority. No Plan unless a genuine interface choice remains.
