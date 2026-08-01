@@ -225,6 +225,7 @@ async function endAssistedRunV1(repositoryRoot, runId) {
 }
 async function recoverAssistedInvocationInternalV1(repositoryRoot, runId, invocationId, confirmedStopped, deps) {
   if (!confirmedStopped) throw new Error("recovery requires confirmed-stopped attestation");
+  if (!isUuidV7(invocationId)) throw new Error("invalid assisted run locator");
   const parentIssue = await runIndex(repositoryRoot, runId), dir = assistedRunDirectory(repositoryRoot, parentIssue, runId), rows = await readAssistedLedgerV1(dir);
   if (unresolved(rows) !== invocationId) {
     if (rows.some((r) => r.type === "recovered" && r.invocationId === invocationId)) return readAssistedRunV1(repositoryRoot, runId, parentIssue);
