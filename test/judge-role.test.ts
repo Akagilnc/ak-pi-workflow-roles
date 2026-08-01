@@ -228,13 +228,13 @@ test("stable factory registers all role flags in exact help order and stays iner
       type: "string",
     }],
   ]);
-  assert.deepEqual([...harness.handlers.keys()], ["session_start"]);
+  assert.deepEqual([...harness.handlers.keys()], ["input", "before_agent_start", "session_start"]);
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
   assert.deepEqual([...harness.tools], []);
   assert.deepEqual(harness.activeToolSets, []);
   for (const event of [
-    "input", "before_agent_start", "tool_execution_start", "tool_execution_end",
+    "tool_execution_start", "tool_execution_end",
     "tool_call", "tool_result", "session_shutdown",
   ]) assert.equal(harness.handlers.has(event), false, event);
 });
@@ -952,7 +952,7 @@ test("Fixer activation parses and freezes the typed packet before any agent work
     await assert.rejects(Promise.resolve(harness.handlers.get("session_start")?.({}, {})), /FixPacketV1/);
     assert.equal(audits, 0);
     assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), false);
-    assert.equal(harness.handlers.has("before_agent_start"), false);
+    assert.equal(harness.handlers.has("before_agent_start"), true);
   }
 });
 

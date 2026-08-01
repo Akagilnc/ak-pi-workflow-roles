@@ -150,8 +150,6 @@ export function createCollectorRoleRuntime(
   ): Promise<void>;
 } {
   let activation: CollectorActivation | undefined;
-  let activationInvalid = false;
-  let activationError: string | undefined;
   let inputCount = 0;
   let lifecycleRegistered = false;
   let toolsRegistered = false;
@@ -173,23 +171,11 @@ export function createCollectorRoleRuntime(
     type: "string",
   });
 
-  const latchStartupFailure = (error: unknown): void => {
-    activationInvalid = true;
-    activationError = error instanceof Error ? error.message : String(error);
-    if (process.exitCode === undefined || process.exitCode === 0) {
-      process.exitCode = 1;
-    }
-    console.error(`Collector activation failed: ${activationError}`);
-  };
-
   const ensureLifecycle = (): void => {
     if (lifecycleRegistered) return;
     lifecycleRegistered = true;
 
     pi.on("input", (event, ctx) => {
-      if (activationInvalid) {
-        return { action: "handled" as const };
-      }
       if (activation === undefined) {
         // role not active
         return { action: "continue" as const };
@@ -213,12 +199,6 @@ export function createCollectorRoleRuntime(
     });
 
     pi.on("before_agent_start", (event, ctx) => {
-      if (activationInvalid) {
-        hostActions.failInfrastructure(
-          new Error(activationError ?? "Collector activation failed"),
-          ctx,
-        );
-      }
       if (activation === undefined) return;
 
       // Detectable ambient instruction resources on the supported prompt surface.
@@ -279,7 +259,7 @@ export function createCollectorRoleRuntime(
     });
 
     pi.on("message_end", (event, ctx) => {
-      if (activationInvalid || activation === undefined) return;
+      if (activation === undefined) return;
       if (event.message.role !== "assistant") return;
       const calls = rawToolCallPartsFromMessage(event.message);
       if (calls.length === 0) return;
@@ -296,12 +276,6 @@ export function createCollectorRoleRuntime(
     });
 
     pi.on("tool_call", (event, ctx) => {
-      if (activationInvalid) {
-        return {
-          block: true,
-          reason: activationError ?? "Collector activation failed",
-        };
-      }
       if (activation === undefined) return;
       if (activation.ledger.fatal) {
         return {
@@ -330,12 +304,6 @@ export function createCollectorRoleRuntime(
     });
 
     pi.on("session_shutdown", () => {
-      if (activationInvalid) {
-        if (process.exitCode === undefined || process.exitCode === 0) {
-          process.exitCode = 1;
-        }
-        return;
-      }
       if (activation === undefined) return;
       if (!activation.ledger.outputAccepted || activation.ledger.fatal) {
         if (process.exitCode === undefined || process.exitCode === 0) {
@@ -360,8 +328,8 @@ export function createCollectorRoleRuntime(
       ],
       parameters: observeSchema,
       async execute(toolCallId, _params, signal, _onUpdate, ctx) {
-        if (activationInvalid || activation === undefined) {
-          throw new Error(activationError ?? "Collector is not activated");
+        if (activation === undefined) {
+          throw new Error("Collector is not activated");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, toolCallId);
@@ -399,8 +367,8 @@ export function createCollectorRoleRuntime(
       ],
       parameters: requestSchema,
       async execute(toolCallId, params: RequestParams, signal, _onUpdate, ctx) {
-        if (activationInvalid || activation === undefined) {
-          throw new Error(activationError ?? "Collector is not activated");
+        if (activation === undefined) {
+          throw new Error("Collector is not activated");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_REQUEST_TOOL, toolCallId);
@@ -435,8 +403,8 @@ export function createCollectorRoleRuntime(
       ],
       parameters: waitSchema,
       async execute(toolCallId, params: WaitParams, signal, _onUpdate, ctx) {
-        if (activationInvalid || activation === undefined) {
-          throw new Error(activationError ?? "Collector is not activated");
+        if (activation === undefined) {
+          throw new Error("Collector is not activated");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_WAIT_TOOL, toolCallId);
@@ -470,8 +438,8 @@ export function createCollectorRoleRuntime(
       ],
       parameters: outputSchema,
       async execute(toolCallId, params: OutputParams, _signal, _onUpdate, ctx) {
-        if (activationInvalid || activation === undefined) {
-          throw new Error(activationError ?? "Collector is not activated");
+        if (activation === undefined) {
+          throw new Error("Collector is not activated");
         }
         try {
           activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
@@ -508,8 +476,7 @@ export function createCollectorRoleRuntime(
     async activate(ctx, event) {
       ensureLifecycle();
 
-      try {
-        if (ctx.mode !== "print" && ctx.mode !== "json") {
+      if (ctx.mode !== "print" && ctx.mode !== "json") {
           throw new Error(
             `Collector supports only print or json mode (got ${ctx.mode})`,
           );
@@ -616,20 +583,15 @@ export function createCollectorRoleRuntime(
           manifest,
         });
 
-        activation = {
-          soul,
-          repository,
-          prNumber,
-          manifest,
-          ledger,
-          transport,
-          clock,
-        };
-      } catch (error) {
-        latchStartupFailure(error);
-        // Do not rethrow: Pi swallows session_start errors and may continue prompts.
-        // Handlers return handled/block based on activationInvalid.
-      }
+      activation = {
+        soul,
+        repository,
+        prNumber,
+        manifest,
+        ledger,
+        transport,
+        clock,
+      };
     },
   };
 }
