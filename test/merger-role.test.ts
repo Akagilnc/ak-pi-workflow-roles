@@ -17,6 +17,23 @@ function harness(flag: unknown = "/input.json") { const flags = new Map<string, 
 function context(id: string, args: Record<string, unknown>, calls = 1, abort = () => {}): ExtensionContext { const sessionManager = SessionManager.inMemory(); const content = Array.from({ length: calls }, (_, i) => ({ type: "toolCall" as const, id: i ? `sibling-${i}` : id, name: i ? "bash" : MERGER_OUTPUT_TOOL_NAME, arguments: i ? {} : args })); const message: AssistantMessage = { role: "assistant", content, api: "x", provider: "x", model: "x", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 0 }; sessionManager.appendMessage(message); return { sessionManager, abort, mode: "json" } as unknown as ExtensionContext; }
 function setup(overrides: any = {}) { const h = harness(); let completedCalls = 0; const runtime = createMergerRoleRuntime(h.pi as unknown as ExtensionAPI, { loadSoul: async () => "MERGER LAW", loadInput: async () => input, gitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async (id: string, tree: string) => { completedCalls++; assert.equal(tree, oid("d")); return { mergeCommitId: id, parentObjectIds: [oid("a"), oid("b")], unmergedPaths: [], worktreeClean: true, resolutionChangedPaths: ["same.txt"] }; } }, ...overrides }, { failInfrastructure(error: unknown, ctx: ExtensionContext): never { ctx.abort(); throw error; } }); return { ...h, runtime, completedCalls: () => completedCalls }; }
 
+test("role extension binds Merger Git state to session cwd while preserving injected state", async () => {
+  for (const injected of [false, true]) {
+    const h = harness();
+    h.pi.getFlag = (name: string) => name === "ak-role" ? "merger" : name === "ak-merger-input" ? "/input.json" : undefined;
+    const roots: string[] = [];
+    const state = { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } };
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "unused", transcriptFromContext: () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
+      loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input,
+      createMergerGitState(root) { roots.push(root); return state; },
+      ...(injected ? { mergerGitState: state } : {}),
+    })(h.pi as unknown as ExtensionAPI);
+    await h.handlers.get("session_start")({}, { cwd: "/session/repository" } as ExtensionContext);
+    assert.deepEqual(roots, injected ? [] : ["/session/repository"]);
+  }
+});
+
 test("Merger activation preflights frozen identity and narrows to the exact resolution tools", async () => {
   const h = setup(); await h.runtime.activate();
   assert.deepEqual(h.active(), ["read", "grep", "find", "ls", "bash", "write", "edit", MERGER_OUTPUT_TOOL_NAME]);
