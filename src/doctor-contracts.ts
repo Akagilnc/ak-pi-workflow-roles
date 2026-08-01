@@ -4,7 +4,7 @@ import { canonicalJson } from "./canonical-json.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
-export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"] as const;
+export const DOCTOR_TARGET_KINDS = ["case", "law", "gate", "template", "station", "seat"] as const;
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];
 export type DoctorCaseIdentity = { issueNumber: number; runsPath: string };
 export type DoctorSessionCost = { source: string; startedAt: string; endedAt: string; wallMilliseconds: number; completion: "accepted" | "incomplete" };
@@ -21,12 +21,17 @@ export type DoctorGuardrailAnswer = { answer: boolean; evidenceIds: string[]; ex
 export type DoctorLastRealBite =
   | { kind: "actual"; targetKey: string; evidenceId: string }
   | { kind: "noRealBite"; targetKey: string; eligibleEvidenceIds: string[] };
-export type DoctorFinding = {
-  targetKey: string; targetKind: DoctorTargetKind; evidenceIds: string[]; disposition: "keep" | "thin" | "delete";
+type DoctorFindingBody = {
+  evidenceIds: string[]; disposition: "keep" | "thin" | "delete";
   guardrails: { reproducibleFailure: DoctorGuardrailAnswer; owningSeamOrInvariant: DoctorGuardrailAnswer; deletionOrSimplificationSuffices: DoctorGuardrailAnswer };
   prescription: { kind: "retain" | "delete" | "simplify" | "patch" | "addMechanism"; recommendation: string; necessityExplanation?: string };
   lastRealBite: DoctorLastRealBite;
 };
+type DoctorAssetKind = Exclude<DoctorTargetKind, "case">;
+export type DoctorFinding = DoctorFindingBody & (
+  | { targetKey: string; targetKind: "case" }
+  | { targetKey: string; targetKind: DoctorAssetKind; assetEvidence: { targetKey: string; targetKind: DoctorAssetKind; evidenceId: string } }
+);
 export type DoctorOutput =
   | { status: "completed"; case: DoctorCaseIdentity; cost: DoctorCaseCost; findings: DoctorFinding[] }
   | { status: "refused"; reason: string; missingEvidence: Array<{ need: string; targetKeys: string[] }> };
@@ -41,13 +46,16 @@ const lastRealBite = Type.Union([
   Type.Object({ kind: Type.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
   Type.Object({ kind: Type.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false }),
 ]);
-const finding = Type.Object({
-  targetKey: nonblank, targetKind: Type.Union(DOCTOR_TARGET_KINDS.map((kind) => Type.Literal(kind))), evidenceIds,
-  disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]),
+const assetKinds = DOCTOR_TARGET_KINDS.filter((kind): kind is DoctorAssetKind => kind !== "case");
+const findingBody = {
+  evidenceIds, disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]),
   guardrails: Type.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: false }),
-  prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }),
-  lastRealBite,
-}, { additionalProperties: false });
+  prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }), lastRealBite,
+};
+const finding = Type.Union([
+  Type.Object({ targetKey: nonblank, targetKind: Type.Literal("case"), ...findingBody }, { additionalProperties: false }),
+  Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), assetEvidence: Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false }),
+]);
 const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
 const cost = Type.Object({
   invocations: count, legs: count, modelApiTurns: count, outputTokens: count, toolCalls: count,
@@ -77,10 +85,13 @@ export function validateDoctorOutput(value: unknown, patient: DoctorCase, store:
   const assertTargets = (targetKeys: string[]) => { for (const targetKey of targetKeys) if (!lawfulTargets.has(targetKey)) throw new Error(`Target key is not a lawful case target: ${targetKey}`); };
   if (output.status === "refused") { for (const missing of output.missingEvidence) assertTargets(missing.targetKeys); return output; }
   if (canonicalJson(output.case) !== canonicalJson(patient.identity) || canonicalJson(output.cost) !== canonicalJson(patient.cost)) throw new Error("Every reported number must equal the re-derived session-byte cost");
-  for (const finding of output.findings) if (finding.targetKey !== "case") throw new Error("A reusable-asset target requires typed asset evidence");
   const readCitations = (ids: string[], label: string) => { for (const id of ids) if (!store.entries.has(id) || !store.hasRead(id)) throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
   for (const finding of output.findings) {
-    assertTargets([finding.targetKey]);
+    if (finding.targetKind === "case") assertTargets([finding.targetKey]);
+    else {
+      if (finding.assetEvidence.targetKey !== finding.targetKey || finding.assetEvidence.targetKind !== finding.targetKind) throw new Error("Typed asset evidence must establish the finding identity");
+      readCitations([finding.assetEvidence.evidenceId], "asset evidence");
+    }
     readCitations(finding.evidenceIds, "finding");
     for (const answer of Object.values(finding.guardrails)) readCitations(answer.evidenceIds, "guardrail");
     const needsNecessity = finding.prescription.kind === "patch" || finding.prescription.kind === "addMechanism";
