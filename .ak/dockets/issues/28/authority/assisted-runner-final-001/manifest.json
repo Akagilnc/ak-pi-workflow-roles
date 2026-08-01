@@ -1,0 +1,216 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "root": ".ak/dockets",
+    "docketId": "issues/28/authority/assisted-runner-final-001"
+  },
+  "invocation": {
+    "id": "019fbb79-cb76-7011-82c6-6c873996287b"
+  },
+  "session": {
+    "id": "019fbb79-cb76-7011-82c6-6c873996287b",
+    "directory": ".ak/work/issues/28/runs/assisted-runner-final-001/session",
+    "basename": "2026-08-01T03-59-11-884Z_019fbb79-cb76-7011-82c6-6c873996287b.jsonl",
+    "sha256": "e5da983c7684b7dbf43dca238ca9ba99b77553fc2f9b3ce7f9dc93cb00700b61",
+    "byteLength": 286188,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28/.ak/work/issues/28/runs/assisted-runner-final-001/session",
+      "--session-id",
+      "019fbb79-cb76-7011-82c6-6c873996287b",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #28 final correction — package-owned Assisted Runner\n\nReconsider only the ownership/integration portions of the admitted Navigator authority in light of the owner correction. Preserve the Navigator profession, advisory law, snapshot binding, outcome honesty, existing-role compatibility, and caller autonomy unless a mechanical consequence requires a narrow amendment.\n\nProduce construction-ready final details for a package-owned Assisted Runner with no workflow-orchestrator dependency. Resolve:\n\n1. Exact public entry/config for entering/resuming one parent-issue assisted run and wrapping a caller-selected package role invocation.\n2. How initial consultation and `selected role settles -> fresh snapshot -> Navigator -> return` work without Navigator calling roles or Recorder becoming a composer.\n3. What state/ledger the package owns, atomicity/idempotency/concurrency law, invocation identities, and how a caller resumes after process death.\n4. The minimum typed snapshot/acquisition inputs. Decide what V1 may resolve itself versus what the caller must supply, while preserving the ergonomic parent-issue entry and avoiding prose inference.\n5. How the Runner identifies and seals the selected package-role result, failures without Receipts, and Navigator result. Preserve raw-session/credential boundaries.\n6. What ordinary advice deviation means on the next wrapped call; what insufficient/refused/escalated or infrastructure failure permits; how the caller exits assisted mode.\n7. Exact separation among Assisted Runner, Recorder, Navigator, current role runtimes, and caller-selected cwd/worktree/command.\n8. CLI/API/package exports, tests, documentation, and migration/compatibility. Existing direct role and Recorder invocation must remain legal and unchanged.\n9. Construction slices and whether any genuine Plan deliverable remains.\n\nUse current production seams rather than inventing an external orchestrator. Reject scheduling, automatic next-role dispatch, worktree management, queue policy, and hidden route enforcement. Submit exactly one verdict through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "814ad6a00e7eadeaf30ab1838804dcf046ead48f",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "navigator-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "814ad6a00e7eadeaf30ab1838804dcf046ead48f",
+        "path": ".ak/dockets/issues/28/authority/final-authority-001/receipt.json",
+        "blobOid": "b11d096a09a739f226f9229c4fcd5ddd9fbba351",
+        "sha256": "b4c5676059e59697ef65818563405381618a5b09dbe579665329f38d7c9d2443",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr-0010",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "814ad6a00e7eadeaf30ab1838804dcf046ead48f",
+        "path": "docs/adr/0010-callers-own-role-composition-and-repetition.md",
+        "blobOid": "e801e80b7eabe5a16610f74ae63585bad7745f91",
+        "sha256": "bfa32ab47682b96d2a6359dd8353da5b38df9f712d2812e0ba86f7e362ccb0ba",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "recorder-run",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "814ad6a00e7eadeaf30ab1838804dcf046ead48f",
+        "path": "src/recorder/run.ts",
+        "blobOid": "a41dba3c3eed72a0a3bf6e080386982916b7c15e",
+        "sha256": "a44c58306d3ee961c90e08eef48d2d21b89bb17aa94f48f52ed63985aca980b8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "recorder-config",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "814ad6a00e7eadeaf30ab1838804dcf046ead48f",
+        "path": "src/recorder/config.ts",
+        "blobOid": "ce6daab215eac4c4e715382bf5aef8c5a55c28f8",
+        "sha256": "48d7717feb96e240c6dd1364c606eb951195a39de3bb420dfdbcde2162254e1b",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "role-runtime",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "814ad6a00e7eadeaf30ab1838804dcf046ead48f",
+        "path": "src/role-runtime.ts",
+        "blobOid": "4a1338d80c5bd854ff1e0ac0c2dfc96f5072942f",
+        "sha256": "d732c3b47da7e496192cd0b5398bd7c429f7542b5b7f004707662acb8fda3fc4",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "readme",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "814ad6a00e7eadeaf30ab1838804dcf046ead48f",
+        "path": "README.md",
+        "blobOid": "5aa5b0fc7ef9072f5092a8db31101fe9a926a340",
+        "sha256": "3ebe44f2247a89e76257fe9a73366438916c9389fa9f853f13b20b6b05b54dcd",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "owner-correction",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/owner-correction",
+        "sha256": "a4c1d1474b9a8ec21b7ca40ab1deeea05f9b8552d48c6517e98b68d6aeab94cf",
+        "byteLength": 1705
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "f339cc2e0f4d4fa9045e9c6b964f798126d905039e0769a51fd7cf7c0d411334",
+        "byteLength": 2103
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "dc22f4303d3e02fa6bb8d3804d387644269d71f234c315f27616eff57eb399cd",
+        "byteLength": 16707
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "1632fe1bab0f67d92968337b8f5b95010270fc51f54019c95f032a8ed4b8cb52",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_aftxDk2a1f6dDiZJfBv89bGD|fc_09226e8f1d6de9d6016a6d6fd821a481919d8bdf9fd7a4e0ae",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_aftxDk2a1f6dDiZJfBv89bGD|fc_09226e8f1d6de9d6016a6d6fd821a481919d8bdf9fd7a4e0ae",
+    "auditPassed": true,
+    "usage": {
+      "input": 20708,
+      "output": 545,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 21253
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
