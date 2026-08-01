@@ -38,7 +38,7 @@ export function validateRecordedDoctorOutput(value) { if (!Value.Check(doctorOut
 export class DoctorEvidenceStore {
     patient;
     entries;
-    readIds = new Set();
+    coverage = new Map();
     constructor(patient) {
         this.patient = patient;
         this.entries = new Map(patient.evidence.map((entry) => [entry.id, entry]));
@@ -46,9 +46,15 @@ export class DoctorEvidenceStore {
     read(evidenceId, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry)
         throw new Error(`Evidence ID is not admitted: ${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096)
         throw new Error("Invalid evidence pagination"); if (offset > entry.content.length)
-        throw new Error("Evidence offset exceeds content"); this.readIds.add(evidenceId); const end = Math.min(entry.content.length, offset + limit); return { evidenceId, kind: entry.kind, offset, content: entry.content.slice(offset, end), nextOffset: end < entry.content.length ? end : null, byteLength: entry.byteLength, sha256: entry.sha256 }; }
-    hasRead(id) { return this.readIds.has(id); }
-    readRecord() { return [...this.readIds].sort().map((evidenceId) => ({ evidenceId, fullyRead: true })); }
+        throw new Error("Evidence offset exceeds content"); const end = Math.min(entry.content.length, offset + limit); const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end]].sort((a, b) => a[0] - b[0]); const merged = []; for (const range of ranges) {
+        const prior = merged.at(-1);
+        if (prior && range[0] <= prior[1])
+            prior[1] = Math.max(prior[1], range[1]);
+        else
+            merged.push([...range]);
+    } this.coverage.set(evidenceId, merged); return { evidenceId, kind: entry.kind, offset, content: entry.content.slice(offset, end), nextOffset: end < entry.content.length ? end : null, byteLength: entry.byteLength, sha256: entry.sha256 }; }
+    hasRead(id) { const entry = this.entries.get(id); const ranges = this.coverage.get(id); return !!entry && ranges?.length === 1 && ranges[0][0] === 0 && ranges[0][1] === entry.content.length; }
+    readRecord() { return [...this.coverage.keys()].sort().map((evidenceId) => ({ evidenceId, fullyRead: this.hasRead(evidenceId) })); }
 }
 export function validateDoctorOutput(value, patient, store) {
     const output = validateRecordedDoctorOutput(value);
@@ -63,6 +69,8 @@ export function validateDoctorOutput(value, patient, store) {
     }
     if (canonicalJson(output.case) !== canonicalJson(patient.identity) || canonicalJson(output.cost) !== canonicalJson(patient.cost))
         throw new Error("Every reported number must equal the re-derived session-byte cost");
+    if (output.findings.length)
+        throw new Error("A single-case cost report cannot assert reusable-asset findings without typed asset evidence");
     const readCitations = (ids, label) => { for (const id of ids)
         if (!store.entries.has(id) || !store.hasRead(id))
             throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
