@@ -100,10 +100,11 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
     lastRealBite: { kind: "actual", targetKey: "judge", evidenceId },
   } as const;
   const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [finding] } as const;
-  assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: "judge", eligibleEvidenceIds: [evidenceId] } }] }, patient, store), /noRealBite permits only thin or delete/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, prescription: { kind: "patch", recommendation: "Patch it" } }] }, patient, store), /necessity explanation/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, targetKey: "invented-gate", lastRealBite: { ...finding.lastRealBite, targetKey: "invented-gate" } }] }, patient, store), /lawful case target/);
+  assert.throws(() => validateDoctorOutput(output, patient, store), /single-case cost report cannot assert reusable-asset findings/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, targetKey: "judge", targetKind: "law" }] }, patient, store), /single-case cost report cannot assert reusable-asset findings/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: "judge", eligibleEvidenceIds: [evidenceId] } }] }, patient, store), /single-case cost report cannot assert reusable-asset findings/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, prescription: { kind: "patch", recommendation: "Patch it" } }] }, patient, store), /single-case cost report cannot assert reusable-asset findings/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, targetKey: "invented-gate", lastRealBite: { ...finding.lastRealBite, targetKey: "invented-gate" } }] }, patient, store), /single-case cost report cannot assert reusable-asset findings/);
   const refusal = { status: "refused", reason: "Need more bytes", missingEvidence: [{ need: "whole case", targetKeys: ["case"] }] } as const;
   assert.deepEqual(validateDoctorOutput(refusal, patient, store), refusal);
   assert.throws(() => validateDoctorOutput({ ...refusal, missingEvidence: [{ need: "unknown", targetKeys: ["invented-gate"] }] }, patient, store), /lawful case target/);
