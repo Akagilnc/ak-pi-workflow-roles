@@ -1,8 +1,8 @@
 import { canonicalJson } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
+import { isUuidV7 } from "./uuidv7.js";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./package-contracts/navigator-output.js";
 const PACKAGED_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator"];
-const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const OID = /^[0-9a-f]{40,64}$/;
 function record(v, keys, where) {
@@ -42,6 +42,12 @@ function obsFields(r, w) {
   if (r.state !== "open" && r.state !== "closed") fail(w);
   return { state: r.state, labels: labels(r.labels, w), observedAt: iso(r.observedAt, w), query: query(r.query, w) };
 }
+function validateSettledAttempt(v) {
+  if (v === null) return null;
+  const a = record(v, ["invocationId", "role", "phase", "beforeTarget", "afterTarget", "terminalClass", "reference"], "latestAttempt"), ref = record(a.reference, ["id", "sha256"], "latestAttempt reference");
+  if (!isUuidV7(a.invocationId) || !PACKAGED_ROLES.includes(a.role) || a.role === "navigator" || (a.role === "coder" || a.role === "fixer" ? a.phase !== "plan" && a.phase !== "apply" : a.phase !== null) || !OID.test(String(a.beforeTarget)) || !OID.test(String(a.afterTarget)) || !["accepted_receipt", "role_refusal", "role_escalation", "infrastructure_failure", "cancellation", "outcome_unavailable_after_runner_loss"].includes(String(a.terminalClass)) || !SHA256.test(String(ref.sha256))) fail("latestAttempt");
+  return { invocationId: a.invocationId, role: a.role, phase: a.phase, beforeTarget: String(a.beforeTarget), afterTarget: String(a.afterTarget), terminalClass: a.terminalClass, reference: { id: text(ref.id, "reference id"), sha256: String(ref.sha256) } };
+}
 function subject(v) {
   const r = record(v, ["repositoryRoot", "github", "parent"], "subject"), g = record(r.github, ["owner", "name", "id"], "github");
   return { repositoryRoot: text(r.repositoryRoot, "repositoryRoot"), github: { owner: text(g.owner, "owner"), name: text(g.name, "name"), id: text(g.id, "repository id") }, parent: issue(r.parent, "parent") };
@@ -52,7 +58,7 @@ function canonicalSnapshotDigestV1(value) {
 }
 function validateCurrentPositionSnapshotV1(value) {
   const r = record(value, ["version", "capturedAt", "runId", "subject", "children", "parentObservation", "workspaces", "evidence", "positionCursor", "latestAttempt", "digest"], "snapshot");
-  if (r.version !== 1 || !UUID7.test(String(r.runId)) || !Number.isSafeInteger(r.positionCursor) || r.positionCursor < 0) fail("snapshot identity");
+  if (r.version !== 1 || !isUuidV7(r.runId) || !Number.isSafeInteger(r.positionCursor) || r.positionCursor < 0) fail("snapshot identity");
   const sub = subject(r.subject);
   if (!Array.isArray(r.children) || !Array.isArray(r.workspaces) || !Array.isArray(r.evidence)) fail("snapshot collections");
   const children = r.children.map((x, i) => {
@@ -72,7 +78,7 @@ function validateCurrentPositionSnapshotV1(value) {
     if (!["authority", "acceptance", "issue_body", "task", "input", "failure"].includes(String(e.kind)) || !SHA256.test(String(e.sha256))) fail("evidence");
     return { id: text(e.id, "evidence id"), kind: e.kind, sha256: String(e.sha256), provenance: { kind: text(p.kind, "kind"), reference: text(p.reference, "reference") }, handle: text(e.handle, "handle") };
   });
-  const result = { version: 1, capturedAt: iso(r.capturedAt, "capturedAt"), runId: String(r.runId), subject: sub, children, parentObservation, workspaces, evidence, positionCursor: r.positionCursor, latestAttempt: r.latestAttempt, digest: String(r.digest) };
+  const result = { version: 1, capturedAt: iso(r.capturedAt, "capturedAt"), runId: String(r.runId), subject: sub, children, parentObservation, workspaces, evidence, positionCursor: r.positionCursor, latestAttempt: validateSettledAttempt(r.latestAttempt), digest: String(r.digest) };
   const { digest, ...digestInput } = result;
   if (!SHA256.test(result.digest) || canonicalSnapshotDigestV1(digestInput) !== result.digest) fail("snapshot digest");
   return result;
@@ -130,21 +136,20 @@ function validatePrimaryShape(v, status) {
   const p = v;
   return stringArray(p.evidenceIds, "primary evidence ids");
 }
-function validateNavigatorReceiptV1(value, snapshot, readIds) {
+function validateNavigatorReceiptV1(value, snapshot, actualReads) {
   const r = record(value, ["version", "status", "runId", "subject", "snapshotDigest", "positionCursor", "invocationId", "latestAttempt", "evidenceRead", "primary", "explanation"], "Navigator receipt");
-  if (r.version !== 1 || !["ordinary", "insufficient", "refused", "escalated"].includes(String(r.status)) || !UUID7.test(String(r.invocationId))) fail("Navigator receipt");
+  if (r.version !== 1 || !["ordinary", "insufficient", "refused", "escalated"].includes(String(r.status)) || !isUuidV7(r.invocationId)) fail("Navigator receipt");
   const cited = validatePrimaryShape(r.primary, r.status);
-  if (!Array.isArray(r.evidenceRead) || r.evidenceRead.some((x) => {
-    try {
-      const q = record(x, ["evidenceId", "fullyRead"], "evidence read");
-      return !readIds.has(String(q.evidenceId)) || typeof q.fullyRead !== "boolean";
-    } catch {
-      return true;
-    }
-  })) fail("evidence read record");
+  if (!Array.isArray(r.evidenceRead)) fail("evidence read record");
+  const reads = r.evidenceRead.map((x) => {
+    const q = record(x, ["evidenceId", "fullyRead"], "evidence read");
+    if (typeof q.evidenceId !== "string" || typeof q.fullyRead !== "boolean") fail("evidence read record");
+    return { evidenceId: q.evidenceId, fullyRead: q.fullyRead };
+  });
+  if (new Set(reads.map((x) => x.evidenceId)).size !== reads.length || canonicalJson(reads) !== canonicalJson(actualReads)) fail("evidence read record");
   const receipt = r;
   if (!navigatorBindingMatchesV1(snapshot, receipt) || canonicalJson(subject(r.subject)) !== canonicalJson(snapshot.subject) || canonicalJson(receipt.latestAttempt) !== canonicalJson(snapshot.latestAttempt)) fail("receipt binding");
-  if (cited.some((x) => !snapshot.evidence.some((e) => e.id === x) || !readIds.has(String(x)))) fail("evidence citation");
+  if (cited.some((x) => !snapshot.evidence.some((e) => e.id === x) || !actualReads.some((read) => read.evidenceId === x))) fail("evidence citation");
   return receipt;
 }
 function navigatorBindingMatchesV1(snapshot, receipt) {

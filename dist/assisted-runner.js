@@ -5,8 +5,19 @@ import { sha256Hex } from "./sha256.js";
 import { uuidv7 } from "./uuidv7.js";
 import { validateAssistedCallConfigV1, validateSelectedPiArgvV1 } from "./assisted-contracts.js";
 import { acquireCurrentPositionV1 } from "./assisted-acquisition.js";
-import { appendAssistedGenerationV1, assistedRunDirectory, readAssistedLedgerV1 } from "./assisted-ledger.js";
+import { appendAssistedGenerationV1 as publishAssistedGenerationV1, AssistedLedgerConflictError, assistedRunDirectory, readAssistedLedgerV1 } from "./assisted-ledger.js";
 import { navigatorBindingMatchesV1, validateNavigatorReceiptV1 } from "./navigator-contracts.js";
+async function appendAssistedGenerationV1(runDirectory, event, now) {
+  for (; ; ) {
+    try {
+      return await publishAssistedGenerationV1(runDirectory, event, now);
+    } catch (error) {
+      if (!(error instanceof AssistedLedgerConflictError)) throw error;
+      const rows = await readAssistedLedgerV1(runDirectory), winner = rows.find((row) => row.type === event.type && row.runId === event.runId && row.callId === event.callId && row.invocationId === event.invocationId && canonicalJson(row.payload) === canonicalJson(event.payload));
+      if (winner) return winner;
+    }
+  }
+}
 async function runIndex(root, runId, parentIssue) {
   if (!isAbsolute(root) || resolve(root) !== root || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(runId)) throw new Error("invalid assisted run locator");
   const path = join(root, ".ak", "work", "assisted-runs", `${runId}.json`);
@@ -51,16 +62,10 @@ async function publishResult(dir, result, now) {
 async function consult(config, position, piArgv, dir, deps, now, id) {
   const invocationId = id();
   await appendAssistedGenerationV1(dir, { type: "navigator_started", runId: config.runId, callId: config.callId, invocationId, positionCursor: position.snapshot.positionCursor, payload: { snapshotDigest: position.snapshot.digest } }, now);
-  let settled;
-  try {
-    settled = await deps.recorder.invokeNavigator({ config, position, invocationId, piArgv });
-  } catch (error) {
-    const ref = { id: `navigator-infrastructure:${invocationId}`, sha256: sha256Hex(String(error)) };
-    settled = { kind: "infrastructure_failure", reference: ref };
-  }
+  const settled = await deps.recorder.invokeNavigator({ config, position, invocationId, piArgv });
   if (settled.kind === "accepted") {
     if (settled.receipt.invocationId !== invocationId) throw new Error("Navigator invocation identity mismatch");
-    const receipt = validateNavigatorReceiptV1(settled.receipt, position.snapshot, new Set(settled.readEvidenceIds));
+    const receipt = validateNavigatorReceiptV1(settled.receipt, position.snapshot, settled.receipt.evidenceRead);
     await appendAssistedGenerationV1(dir, { type: "navigator_settled", runId: config.runId, callId: config.callId, invocationId, positionCursor: position.snapshot.positionCursor, payload: { classification: "accepted", receipt, reference: settled.reference } }, now);
     return { receipt, reference: settled.reference };
   }
@@ -88,7 +93,7 @@ async function run(mode, raw, argv, deps) {
       if (started.type === "navigator_started") {
         const nav = sealed;
         if (nav.kind !== "accepted" || !snapshot) throw new Error("sealed Navigator recovery mismatch");
-        const receipt = validateNavigatorReceiptV1(nav.receipt, snapshot, new Set(nav.readEvidenceIds));
+        const receipt = validateNavigatorReceiptV1(nav.receipt, snapshot, nav.receipt.evidenceRead);
         await appendAssistedGenerationV1(dir, { type: "navigator_settled", runId: config.runId, callId: started.callId, invocationId: lost, positionCursor: started.positionCursor, payload: { classification: "accepted", receipt, reference: nav.reference } }, now);
       } else {
         const role = sealed, cursor2 = started.positionCursor + 1, latestAttempt = { invocationId: lost, role: config.execution.role, phase: config.execution.phase, beforeTarget: role.beforeTarget, afterTarget: role.afterTarget, terminalClass: role.terminalClass, reference: role.reference };
@@ -139,12 +144,7 @@ async function run(mode, raw, argv, deps) {
   const selectedId = id();
   await appendAssistedGenerationV1(dir, { type: "action_reserved", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: { comparison, selected: { role: config.execution.role, phase: config.execution.phase } } }, now);
   await appendAssistedGenerationV1(dir, { type: "role_started", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: {} }, now);
-  let settlement;
-  try {
-    settlement = await deps.recorder.invokeRole({ config, invocationId: selectedId, piArgv, beforeTarget: position.snapshot.workspaces.find((w) => w.id === config.execution.workspaceId).target });
-  } catch (error) {
-    settlement = { terminalClass: "infrastructure_failure", reference: { id: `role-infrastructure:${selectedId}`, sha256: sha256Hex(String(error)) }, beforeTarget: position.snapshot.workspaces.find((w) => w.id === config.execution.workspaceId).target, afterTarget: position.snapshot.workspaces.find((w) => w.id === config.execution.workspaceId).target };
-  }
+  const settlement = await deps.recorder.invokeRole({ config, invocationId: selectedId, piArgv, beforeTarget: position.snapshot.workspaces.find((w) => w.id === config.execution.workspaceId).target });
   cursor++;
   latest = { invocationId: selectedId, role: config.execution.role, phase: config.execution.phase, beforeTarget: settlement.beforeTarget, afterTarget: settlement.afterTarget, terminalClass: settlement.terminalClass, reference: settlement.reference };
   await appendAssistedGenerationV1(dir, { type: "role_settled", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: { latestAttempt: latest } }, now);

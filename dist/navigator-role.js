@@ -29,7 +29,7 @@ function createNavigatorRoleRuntime(pi, deps, host) {
       pi.registerTool({ name: NAVIGATOR_OUTPUT_TOOL_NAME, label: "Navigator Output", description: "Submit one typed advisory posture.", parameters: navigatorReceiptV1Schema, async execute(id, p, signal, _update, ctx) {
         if (!active) throw new Error("Navigator not activated");
         singleton(id, ctx);
-        const output = validateNavigatorReceiptV1(p, active.snapshot, new Set(active.store.readRecord().map((x) => x.evidenceId)));
+        const output = validateNavigatorReceiptV1(p, active.snapshot, active.store.readRecord());
         let audit;
         try {
           audit = await deps.auditCompliance({ soul: active.soul, snapshot: active.snapshot, readRecord: active.store.readRecord(), output }, signal ? { context: ctx, signal } : { context: ctx });
