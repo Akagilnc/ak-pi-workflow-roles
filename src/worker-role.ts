@@ -4,6 +4,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import type { ComplianceDecision } from "./compliance-transport.ts";
 
 import type {
   AnyCanonicalSkillBinding,
@@ -18,6 +19,8 @@ import {
   type WorkerOutput,
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
+import { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket, type FixerPhase } from "./package-contracts/fixer-output.ts";
+import { parseFixPacketV1, type FixPacketV1 } from "./package-contracts/fixer-packet.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -48,19 +51,7 @@ const workerOutputFields = {
   commitSha: Type.Optional(Type.String({ minLength: 1 })),
 };
 const coderOutputSchema = Type.Object(workerOutputFields, { additionalProperties: false });
-const fixerOutputSchema = Type.Object({
-  ...workerOutputFields,
-  classesRepaired: Type.Optional(Type.Array(Type.Object({
-    name: Type.String({ minLength: 1 }),
-    searchScope: Type.String({ minLength: 1 }),
-    exceptions: Type.Array(Type.Object({
-      where: Type.String({ minLength: 1 }),
-      reason: Type.String({ minLength: 1 }),
-    }, { additionalProperties: false })),
-  }, { additionalProperties: false }), { minItems: 1 })),
-}, { additionalProperties: false });
-
-type WorkerOutputParameters = Static<typeof fixerOutputSchema>;
+type WorkerOutputParameters = Static<typeof coderOutputSchema> | FixerOutput;
 export type { FixerOutput, CoderOutput };
 type WorkerPhase = "plan" | "apply";
 
@@ -68,9 +59,12 @@ export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext): never;
 };
 
+export type FixerAuditInput = Readonly<{ soul: string; packet: FixPacketV1; phase: FixerPhase; transcript: string; candidate: FixerOutput }>;
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadPacket(path: string): Promise<string>;
+  transcriptFromContext?(ctx: ExtensionContext): string;
+  auditCompliance?(input: FixerAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
 
 export type CoderRoleDependencies = {
@@ -83,6 +77,12 @@ export type CoderRoleDependencies = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
 }
 
 function hasExactKeys(
@@ -99,15 +99,13 @@ export function validateWorkerOutput(
   phase: WorkerPhase,
   roleLabel: WorkerRoleLabel,
 ): WorkerOutput {
-  const accepted = validateAcceptedWorkerDetails(output, roleLabel);
-  if (phase === "plan" && output.status === "completed") {
-    throw new Error(`${roleLabel} plan phase permits only planned or refused`);
+  if (roleLabel === "Fixer") return validateFixerOutput(output, phase);
+  const accepted = validateAcceptedWorkerDetails(output, "Coder") as CoderOutput;
+  if (phase === "plan" && accepted.status === "completed") {
+    throw new Error("Coder plan phase permits only planned or refused");
   }
-  if (phase === "apply" && output.status === "planned") {
-    throw new Error(`${roleLabel} apply phase permits only completed or refused`);
-  }
-  if (output.status === "planned" && output.commitSha !== undefined) {
-    throw new Error(`${roleLabel} planned output forbids commitSha`);
+  if (phase === "apply" && accepted.status === "planned") {
+    throw new Error("Coder apply phase permits only completed or refused");
   }
   return accepted;
 }
@@ -135,14 +133,15 @@ function requireSingletonSubmissionCall(
 export function createFixerRoleRuntime(
   pi: ExtensionAPI,
   dependencies: FixerRoleDependencies,
+  hostActions?: WorkerRoleHostActions,
 ): { activate(): Promise<void> } {
   let soul: string | undefined;
-  let packet: string | undefined;
+  let packet: FixPacketV1 | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
 
   pi.registerFlag("ak-fix-packet", {
-    description: "Markdown repair packet assigned to the fixer role",
+    description: "Path to a closed FixPacketV1 JSON repair packet",
     type: "string",
   });
   pi.registerFlag("ak-fixer-phase", {
@@ -166,8 +165,7 @@ export function createFixerRoleRuntime(
       if (typeof packetPath !== "string" || packetPath.trim().length === 0) {
         throw new Error("Fixer role requires --ak-fix-packet");
       }
-      packet = (await dependencies.loadPacket(packetPath)).trim();
-      if (packet.length === 0) throw new Error("Fixer repair packet is empty");
+      packet = parseFixPacketV1(await dependencies.loadPacket(packetPath));
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
@@ -175,12 +173,12 @@ export function createFixerRoleRuntime(
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "Fixer Output",
           description:
-            "Submit a plan, completion, or refusal for the active fixer phase. commitSha is advisory evidence for the caller.",
+            "Submit the exact plan refusal or per-finding apply settlement for compliance audit.",
           promptSnippet: "Submit the final fixer report",
           promptGuidelines: [
             `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
-            `${FIXER_OUTPUT_TOOL_NAME} never escalates; explain any requested owner decision in report for the caller to dispose.`,
-            "plan permits planned|refused; apply permits completed|refused.",
+            `${FIXER_OUTPUT_TOOL_NAME} reports only lawful assignment blockers; infrastructure failures abort.`,
+            "plan permits planned|refused; apply permits completed|refused|partially_completed.",
           ],
           parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
@@ -193,11 +191,26 @@ export function createFixerRoleRuntime(
               "Fixer",
               ctx,
             );
-            const output = validateWorkerOutput(parameters, phase, "Fixer");
+            const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
+            if (dependencies.transcriptFromContext === undefined || dependencies.auditCompliance === undefined) {
+              const error = new Error("Fixer compliance auditor is not configured");
+              if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx);
+              throw error;
+            }
+            let audit: ComplianceDecision;
+            try {
+              const auditInput = Object.freeze({ soul: soul!, packet, phase, transcript: dependencies.transcriptFromContext(ctx), candidate: output });
+              audit = await dependencies.auditCompliance(auditInput, { context: ctx, ...(_signal === undefined ? {} : { signal: _signal }) });
+            } catch (error) {
+              if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx);
+              throw error;
+            }
+            if (audit.status === "revise") throw new Error(`Fixer output violates its law: ${audit.violations.join("; ")}`);
             return {
               content: [{ type: "text" as const, text: "Fixer report accepted" }],
               details: output,
               terminate: true as const,
+              ...(audit.usage === undefined ? {} : { usage: audit.usage }),
             };
           },
         });
@@ -217,7 +230,7 @@ export function createFixerRoleRuntime(
           if (soul === undefined) throw new Error("Fixer soul was not loaded");
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet ?? ""}\n</fix_packet>`,
+              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet === undefined ? "" : JSON.stringify(packet)}\n</fix_packet>`,
           };
         });
       }

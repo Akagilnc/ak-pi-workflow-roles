@@ -1,0 +1,19 @@
+# Issue #22 Merger fixed-target review
+
+Review target `daca2f7f6aba5df026a6fb3b5fd6735ae6414606` against base `9464d2e2d447f5742f75be7db2b44f5ec0d69991`. Production implementation commit: `fa794e7`.
+
+Construct exactly one proposal with:
+
+- `base.revision`: `9464d2e2d447f5742f75be7db2b44f5ec0d69991`
+- materials:
+  - `{ "id": "merger-authority", "repositoryPath": ".ak/dockets/issues/22/authority/final-synthesis-001/receipt.json" }`
+  - `{ "id": "repository-law", "repositoryPath": "CLAUDE.md" }`
+  - `{ "id": "merger-soul", "repositoryPath": "souls/merger.md" }`
+- `relevanceHints.standards`: `["repository-law", "merger-soul"]`
+- `relevanceHints.spec`: `["merger-authority"]`
+- `spec.state`: `established`
+- both axes tools: `["read", "grep", "find", "ls", "bash"]`
+- both axes bash command: `git diff 9464d2e2d447f5742f75be7db2b44f5ec0d69991...daca2f7f6aba5df026a6fb3b5fd6735ae6414606`
+- both axes prerequisite operations: exactly all eight supplied operations.
+
+Review both axes. Inspect all needed clone material. Focus on complete exact Git conflict preflight, immutable intent/scope/check binding, tool boundaries, completed two-parent/clean verification, escalation honesty, no merge initiation/abort/publication/orchestration, Recorder/public/cold-package completeness, and production Git tests. Report concrete findings only; do not repair.

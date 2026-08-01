@@ -134,17 +134,22 @@ test("timestamp-less terminating results leave the session incomplete at the las
   });
 });
 
-test("partial and non-monotonic sessions remain reportable with explicit degradation", async () => {
+test("partial and non-monotonic sessions remain reportable with every explicit degradation", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-degraded-"));
   const runs = join(root, ".ak/work/issues/40/runs");
   await mkdir(join(runs, "crashed/session"), { recursive: true });
   await writeFile(join(runs, "crashed/session/truncated.jsonl"), `${JSON.stringify({ type: "session", timestamp: "2026-08-01T00:00:02.000Z" })}\n{`);
   await writeFile(join(runs, "crashed/session/headerless.jsonl"), `${JSON.stringify({ type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "assistant", responseId: "r" } })}\n`);
-  await writeFile(join(runs, "crashed/session/backwards.jsonl"), [{ type: "session", timestamp: "2026-08-01T00:00:02.000Z" }, { type: "custom", timestamp: "2026-08-01T00:00:01.000Z" }].map((row) => JSON.stringify(row)).join("\n"));
+  await writeFile(join(runs, "crashed/session/backwards.jsonl"), `${[{ type: "session", timestamp: "2026-08-01T00:00:02.000Z" }, { type: "custom", timestamp: "2026-08-01T00:00:01.000Z" }].map((row) => JSON.stringify(row)).join("\n")}\n{`);
   const patient = await loadDoctorCase(runs);
   assert.equal(patient.cost.sessions.length, 3);
   assert.ok(patient.cost.sessions.every((session) => session.completion === "incomplete" && session.degradationReason));
-  assert.equal(patient.cost.sessions.find((session) => session.source.endsWith("backwards.jsonl"))?.wallMilliseconds, undefined);
+  const combined = patient.cost.sessions.find((session) => session.source.endsWith("backwards.jsonl"));
+  assert.equal(combined?.wallMilliseconds, undefined);
+  assert.equal(combined?.completion, "incomplete");
+  if (combined?.completion !== "incomplete") assert.fail("combined session must be incomplete");
+  assert.match(combined.degradationReason ?? "", /malformed JSON tail/);
+  assert.match(combined.degradationReason ?? "", /non-monotonic session timestamps/);
 });
 
 test("case identity is repository-relative with an absolute fallback outside repositories", async () => {
@@ -166,9 +171,11 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   const store = new DoctorEvidenceStore(patient);
   store.read(evidenceId);
   const guardrail = { answer: true, evidenceIds: [evidenceId], explanation: "Observed in the retained case" };
-  const finding = { targetKey: "case", evidenceIds: [evidenceId] } as const;
+  const finding = { targetKey: "case", observation: "The retained case used two tool calls", evidenceIds: [evidenceId] } as const;
   const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [finding] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ targetKey: "case", evidenceIds: [evidenceId] }] }, patient, store), /closed contract/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, observation: "" }] }, patient, store), /closed contract/);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "delete" }] }, patient, store), /closed contract/);
   const assetFinding = {
     targetKey: "judge-output-gate", targetKind: "gate", assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate", evidenceId }, evidenceIds: [evidenceId], disposition: "keep",

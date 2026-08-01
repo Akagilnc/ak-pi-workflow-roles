@@ -1,0 +1,25 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_26w0v5ulRUfZPRoGNG6kYjz7|fc_094f9c22f75f0a90016a6dfab102948191b7c98f0a585cc262",
+  "details": {
+    "status": "completed",
+    "report": "Repaired both open Merger output-instruction classes at the model-facing registration seam. The broad transport schema now carries structural examples for both exact legal terminal leaves and states that extra keys are forbidden, while validateMergerOutput remains the sole exact validator. Added structural registration coverage for both leaves and explicit proof that transport admission remains broad. Existing production Pi valid, missing-field, and extra-field terminal behavior remains intact. TDD evidence: the new registration test failed before implementation and passed after. Verification passed: targeted Merger suite (9/9), npm run typecheck, npm test (397 tests: 392 passed, 5 skipped), and git diff --check. Soul, fatal host behavior, Git verification, Recorder, orchestration, and history boundaries were unchanged.",
+    "classResults": [
+      {
+        "name": "MergerModelVisibleOutputContract",
+        "disposition": "completed",
+        "searchScope": "Inspected src/merger-role.ts registration, src/merger-contracts.ts exact validator, related Merger role/contract/Recorder/Git tests, and relevant Git history. Implemented both exact legal leaves only as model-visible metadata on the broad ak_merger_output registration schema.",
+        "exceptions": [],
+        "commitSha": "888211d95e8b5bee777d715a5925853afea579ee"
+      },
+      {
+        "name": "OutputInstructionRegression",
+        "disposition": "completed",
+        "searchScope": "Added structural registration coverage in test/merger-role.test.ts for both canonical leaves and for the absence of required/anyOf/oneOf transport narrowing; retained and ran real Pi valid, missing-field, and extra-field behavior plus all repository gates.",
+        "exceptions": [],
+        "commitSha": "f7ba180af229d8e990e6b070b553b8be8a26fde5"
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

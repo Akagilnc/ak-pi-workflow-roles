@@ -1,0 +1,38 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_9rjynejJ4MK3cEHdDpLxPJ1c|fc_089e120242a8ca10016a6df939cfd08191901dfcefca912aa1",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Teach the model both exact Merger terminal leaves at the `ak_merger_output` registration seam: completed `{status,attemptId,report,mergeCommitId}` and escalate `{status,attemptId,diagnosis,report}`, with no extra keys. Retain broad transport admission, `validateMergerOutput` as the sole exact validator, fatal malformed behavior, and the existing Soul. Add structural/behavior tests rather than regex checks of rendered prose."
+    },
+    "classes": [
+      {
+        "name": "CurrentMergeCommit",
+        "owner": "Git history plus the Merger production Git-state seam",
+        "boundary": "Commit 363eef34832e6513ce60379ea07717d507956966 only; no receipt issuance or history mutation",
+        "disposition": "Closed. HEAD and ordered parents are exact; both parents are ancestors; index and worktree are clean; the automatic merge tree differs from the commit only at `test/package-entrypoint.integration.test.ts`; the resolution preserves both sides; fresh `npm run typecheck` passed."
+      },
+      {
+        "name": "MergerModelVisibleOutputContract",
+        "owner": "The `ak_merger_output` model-facing registration in `src/merger-role.ts`",
+        "boundary": "Output instruction only; preserve transport, exact validator, fatal host action, Recorder, Git verification, and orchestration boundaries",
+        "disposition": "Open and repairable. The real session proves the broad empty schema plus current guidelines did not communicate field names or exact combinations. Put this transport/API contract at the tool-facing seam, not in `souls/merger.md`."
+      },
+      {
+        "name": "OutputInstructionRegression",
+        "owner": "Merger role tests at registration and production Pi seams",
+        "boundary": "Visibility and terminal behavior without prose-regex anchoring",
+        "disposition": "Open. Structurally prove both canonical leaf shapes are model-visible; retain production-Pi behavior proving exact leaves terminate and malformed missing/extra-field candidates traverse broad transport to fatal validation with no accepted result."
+      },
+      {
+        "name": "FailedInvocationDisposition",
+        "owner": "Caller and Recorder acceptance boundary",
+        "boundary": "Invocation `issue22-default-typed-prerequisite-merge-001` and its raw session",
+        "disposition": "Closed as failed/unaccepted. Session records malformed output, error, and abort; stderr records exit 1 and Recorder `acceptance-missing`; no receipt exists. Never retroactively seal it. Commit 363eef3 may remain as independently inspected forward history, but must not be represented as an accepted or Recorder-published Merger completion."
+      }
+    ],
+    "note": "No retry, recovery, retroactive sealing, orchestration, publication, parallel validator, Soul expansion, or history rewrite is authorized."
+  },
+  "artifactKind": "acceptedReceipt"
+}

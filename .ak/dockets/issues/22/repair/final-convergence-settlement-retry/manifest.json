@@ -1,0 +1,139 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "root": ".ak/dockets",
+    "docketId": "issues/22/repair/final-convergence-settlement-retry"
+  },
+  "invocation": {
+    "id": "019fbd04-eff2-7bf7-ab6c-c3c69e31bbf1"
+  },
+  "session": {
+    "id": "019fbd04-eff2-7bf7-ab6c-c3c69e31bbf1",
+    "directory": ".ak/work/issues/22/runs/final-convergence-settlement-retry/session",
+    "basename": "2026-08-01T11-10-46-158Z_019fbd04-eff2-7bf7-ab6c-c3c69e31bbf1.jsonl",
+    "sha256": "84590380986c1eb53c9eef9751b07867699c7e846c16bc40dd0a76ca751171f6",
+    "byteLength": 129596,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22/.ak/work/issues/22/runs/final-convergence-settlement-retry/session",
+      "--session-id",
+      "019fbd04-eff2-7bf7-ab6c-c3c69e31bbf1",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/22/final-convergence-settlement-retry.md",
+      "-p",
+      "Verify and settle both already-repaired authorized classes under the corrected forward-commit accounting, without empty commits."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "6d0072a7db4aafd414bbe21ee5fbdc74a580cdc7",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "repair-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "6d0072a7db4aafd414bbe21ee5fbdc74a580cdc7",
+        "path": ".ak/dockets/issues/22/judgment/final-convergence/receipt.json",
+        "blobOid": "38975d2299d934ba3d6e9be2ac249455be630c73",
+        "sha256": "b13d50814db22a65f4417c062afabc62f3c915d611038144e3c0d608ccac56b8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "fix-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/fix-packet",
+        "sha256": "59c6d4221a65f15d5897263e0956f478047dc7cdc8bed4797cd66c808faaac4c",
+        "byteLength": 1315
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "a5db4246b9c6bcc606e78202419346d0b74dc82db36deb3f19b4a333bdf3ccb9",
+        "byteLength": 1605
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "300e695db85379c5cb543da2dbc527c913eafe3042d47746943026cae3cc3808",
+        "byteLength": 283
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_qWx5DdbEVvyD8lhGBXgdcl68|fc_07812c227ac34205016a6dd4b526f4819183a256b050f46503",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_qWx5DdbEVvyD8lhGBXgdcl68|fc_07812c227ac34205016a6dd4b526f4819183a256b050f46503",
+    "auditPassed": true,
+    "usage": {
+      "input": 4279,
+      "output": 158,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 4437
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

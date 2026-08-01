@@ -25,6 +25,7 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateRecordedDoctorOutput, type DoctorOutput } from "../doctor-contracts.ts";
+import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -45,6 +46,8 @@ export {
   JUDGE_OUTPUT_TOOL_NAME,
   REVIEWER_ACCEPTED_TEXT,
   REVIEWER_OUTPUT_TOOL_NAME,
+  MERGER_ACCEPTED_TEXT,
+  MERGER_OUTPUT_TOOL_NAME,
   validateAcceptedCollectorReceipt,
   validateAcceptedJudgeDetails,
   projectReviewerIntentToReceipt,
@@ -52,6 +55,7 @@ export {
   validateRuntimeReviewerReceipt,
   validateAcceptedWorkerDetails,
   validateRecordedDoctorOutput,
+  validateMergerOutput,
 };
 export type {
   CollectorReceipt,
@@ -60,6 +64,7 @@ export type {
   RuntimeReviewerReceiptV2,
   WorkerOutput,
   DoctorOutput,
+  MergerOutput,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -69,6 +74,7 @@ export const TERMINATING_TOOL_NAMES = [
   JUDGE_OUTPUT_TOOL_NAME,
   COLLECTOR_OUTPUT_TOOL,
   DOCTOR_OUTPUT_TOOL_NAME,
+  MERGER_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -78,7 +84,8 @@ export type AcceptedDetails =
   | RuntimeReviewerReceiptV2
   | JudgeVerdict
   | CollectorReceipt
-  | DoctorOutput;
+  | DoctorOutput
+  | MergerOutput;
 
 export function isTerminatingToolName(
   name: string,
@@ -100,6 +107,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return COLLECTOR_ACCEPTED_TEXT;
     case DOCTOR_OUTPUT_TOOL_NAME:
       return "Doctor output accepted";
+    case MERGER_OUTPUT_TOOL_NAME:
+      return MERGER_ACCEPTED_TEXT;
   }
 }
 
@@ -126,8 +135,10 @@ export function validateAcceptedDetails(
       return validateAcceptedJudgeDetails(details);
     case COLLECTOR_OUTPUT_TOOL:
       return validateAcceptedCollectorReceipt(details);
-      case DOCTOR_OUTPUT_TOOL_NAME:
-        return validateRecordedDoctorOutput(details);
+    case DOCTOR_OUTPUT_TOOL_NAME:
+      return validateRecordedDoctorOutput(details);
+    case MERGER_OUTPUT_TOOL_NAME:
+      return validateMergerOutput(details);
     }
   } catch (error) {
     if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
@@ -138,10 +149,11 @@ export function validateAcceptedDetails(
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): { status?: string; commit?: string } {
   switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
-    case FIXER_OUTPUT_TOOL_NAME: { const output = details as WorkerOutput; return { status: output.status, ...(output.commitSha ? { commit: output.commitSha } : {}) }; }
+    case FIXER_OUTPUT_TOOL_NAME: { const output = details as WorkerOutput; return { status: output.status, ...("commitSha" in output && output.commitSha ? { commit: output.commitSha } : {}) }; }
     case REVIEWER_OUTPUT_TOOL_NAME: return { status: (details as RuntimeReviewerReceiptV2).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as JudgeVerdict).judgeStatus };
     case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as DoctorOutput).status };
+    case MERGER_OUTPUT_TOOL_NAME: { const output = details as MergerOutput; return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) }; }
     case COLLECTOR_OUTPUT_TOOL: return {};
   }
 }
@@ -151,6 +163,7 @@ export function carriesPackageAuditObservation(
 ): boolean {
   return (
     toolName === JUDGE_OUTPUT_TOOL_NAME ||
+    toolName === FIXER_OUTPUT_TOOL_NAME ||
     toolName === REVIEWER_OUTPUT_TOOL_NAME ||
     toolName === DOCTOR_OUTPUT_TOOL_NAME
   );

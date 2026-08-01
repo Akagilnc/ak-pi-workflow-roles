@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_coder_output",
+  "toolCallId": "call_0IYqKzWLtzY7iX7MPyFYBEki|fc_0f34f5b8ed40a91a016a6de6b1c7c88191b8bff2f1db0882d2",
+  "details": {
+    "status": "completed",
+    "report": "Implemented the prospective, assignment-domain-bound `prerequisite_unmet` policy at `src/fixer-auditor.ts`, clarified README semantics, and added production `createPiFixerAuditor` → `runComplianceAudit` → `ak_fixer_output` lifecycle coverage. Public enums/schemas, audit inputs, Soul, orchestration, and generated dist remain unchanged.\n\nTDD/provider evidence: before the policy change, a fresh same-model corrected-completion probe returned `revise`; after the change, fresh audits returned `revise` for the retrospective PR #47 refusal, `pass` for the truthful completed settlement, and `pass` for a genuinely absent packet-required owner decision. The authority-requested fresh current-head false-refusal red was not reproducible: the active model already inferred `revise` on that exact historical input before the change. This divergence is preserved honestly; no contrary red is claimed. Scratch probe code was deleted after the behavior graduated once into `test/judge-role.test.ts`; invocation/session/stderr/decision evidence remains under `.ak/work/issues/44/runs/prerequisite-{corrected-completion-red,repaired-head-greens}/`.\n\nVerification: focused Fixer/Judge tests 40/40; full suite 371 tests (366 pass, 5 skip, 0 fail); typecheck; build:recorder; npm pack --dry-run (114 files); git diff --check. Same-pattern/boundary check found one blocker enum owner and one new auditor-policy owner; Soul, schemas, and dist are unchanged. Behavior facts prove revise is nonterminating/no accepted receipt, while both valid candidates terminate and preserve their exact submitted details. Worktree is clean. Forward commit: `5ac28a9193257013e6998653524352939e1d63d6`.",
+    "commitSha": "5ac28a9193257013e6998653524352939e1d63d6"
+  },
+  "artifactKind": "acceptedReceipt"
+}

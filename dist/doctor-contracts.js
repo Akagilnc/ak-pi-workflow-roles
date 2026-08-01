@@ -19,7 +19,7 @@ const findingBody = {
     prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }), lastRealBite,
 };
 const finding = Type.Union([
-    Type.Object({ targetKey: nonblank, evidenceIds }, { additionalProperties: false }),
+    Type.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: false }),
     Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), assetEvidence: Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false }),
 ]);
 const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });

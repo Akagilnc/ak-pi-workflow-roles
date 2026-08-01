@@ -1,6 +1,6 @@
 # @ak/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, and `doctor`.
+Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
 
 ## Judge
 
@@ -45,26 +45,32 @@ The caller should treat the successful `ak_judge_output` tool result as the auth
 
 ## Fixer
 
-The fixer role loads `souls/fixer.md` plus the caller-supplied Markdown repair packet, then repairs/tests or returns an evidence-bearing refusal:
+The fixer role loads `souls/fixer.md` plus a caller-supplied closed JSON `FixPacketV1`, then repairs/tests or returns an evidence-bearing refusal. The packet contract is exported as `fixerPacketV1Schema`, `parseFixPacketV1`, and `FixPacketV1`:
+
+```json
+{"version":1,"instructions":"Opaque nonblank repair prose.","prerequisites":[{"id":"owner.choice","requirement":"The controlling owner decision exists."}]}
+```
+
+`instructions`, `requirement`, and blocker evidence are trim-nonblank but preserved byte-for-byte after JSON decoding; their prose, headings, and wording are never machine-parsed. Prerequisite IDs are case-sensitive, packet-unique, and match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The object is exact: legacy Markdown, extra keys, bad versions, blank strings, malformed or duplicate IDs, and malformed JSON fail activation before agent/model work. The admitted packet is frozen for the invocation. There is no fallback, frontmatter, adapter, or automatic carry-forward.
 
 The CLI advertises the complete phase vocabulary in `pi --ak-role fixer --help`:
 
 | `--ak-fixer-phase` | Meaning | Legal success status |
 | --- | --- | --- |
-| `plan` | Inspect and propose a repair plan; do not edit or commit | `planned` |
-| `apply` | Execute the approved plan, verify, and commit when repaired | `completed` |
+| `plan` | Inspect and propose a repair plan; do not edit or commit | `planned` or assignment-level `refused` |
+| `apply` | Settle every finding class lawfully | `completed`, `refused`, or `partially_completed` |
 
-There is no third phase. Either phase may return `refused` with evidence.
+There is no third phase. Apply partial means a mixture of completed and lawfully refused findings, never unfinished work.
 
 ```bash
 pi --ak-role fixer \
   --ak-fixer-phase plan \
-  --ak-fix-packet /path/to/fix-packet.md \
+  --ak-fix-packet /path/to/fix-packet.json \
   -p "Prepare the repair plan."
 
 pi --ak-role fixer \
   --ak-fixer-phase apply \
-  --ak-fix-packet /path/to/approved-fix.md \
+  --ak-fix-packet /path/to/approved-fix.json \
   -p "Apply the approved repair plan."
 ```
 
@@ -72,11 +78,14 @@ Fixer terminates through `ak_fixer_output`. Its legal status-dependent shapes ar
 
 ```json
 {"status":"planned","report":"Markdown report"}
-{"status":"completed","report":"Markdown report","commitSha":"optional self-report","classesRepaired":[{"name":"ClassName","searchScope":"non-empty census scope","exceptions":[{"where":"explicit location","reason":"non-empty reason"}]}]}
-{"status":"refused","report":"Markdown report","commitSha":"optional self-report"}
+{"status":"refused","report":"Markdown report","remainingScope":"assignment scope","blocker":{"cause":"authority_violation","evidence":"concrete evidence"}}
+{"status":"completed","report":"Markdown report","classResults":[{"name":"ClassName","disposition":"completed","searchScope":"complete census scope","exceptions":[{"where":"inspected location","reason":"why no repair was required"}],"commitSha":"full lowercase 40- or 64-hex object ID"}]}
+{"status":"partially_completed","report":"Markdown report","classResults":[{"name":"Done","disposition":"completed","searchScope":"all locations","exceptions":[],"commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"Blocked","disposition":"refused","remainingScope":"exact remaining assignment scope","blocker":{"cause":"prerequisite_unmet","prerequisiteId":"owner.choice","evidence":"concrete absent prerequisite"}}]}
 ```
 
-`classesRepaired` is optional and completed-only; when present it is non-empty, has unique comma-free nonblank names, nonblank search scopes, and explicit exception arrays (which may be empty). `planned` cannot carry `commitSha`. Otherwise `commitSha` is advisory evidence for the caller, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence for the caller to dispose. The caller owns the next step after the receipt (and may or may not involve Judge).
+Apply `classResults` is non-empty with unique comma-free names. `completed` contains only completed results, `refused` only refused results, and `partially_completed` at least one of each. Completed commit IDs are full, lowercase, and unique. The only blockers are `authority_violation` and `prerequisite_unmet`. The authority blocker remains exactly `{cause,evidence}`. A prerequisite blocker is exactly `{cause,prerequisiteId,evidence}`, and its ID must be declared by the invocation packet; an undeclared reference is rejected before audit and may be corrected. Empty declarations therefore forbid only `prerequisite_unmet`, not authority refusals or completed settlements.
+
+Typed admission guarantees declaration/reference integrity only. Whether the declared predecessor is actually absent, controlling, and causally blocks lawful work remains an explicitly nondeterministic auditor judgment. The semantic auditor rejects retrospective method/history laundering, but tests and callers must not treat prompt prose as deterministic proof. Completed work remains completed; its report must disclose any method breach, claim only current verification, and not claim test-first execution that did not occur. Provider, authentication, auditor, tool, or transport failure aborts without a receipt. Every admitted candidate is checked by one fresh same-active-model compliance audit over the exact frozen packet and unchanged candidate; revise permits corrected resubmission, while audit infrastructure failure is nonzero.
 
 Fixer-only bash seatbelt (both `plan` and `apply`): before a `bash` tool executes, the package inspects only the string `command` and blocks when it case-sensitively contains any one of these exact ASCII literals — `rm -rf`, `git reset --hard`, `git clean`, `git checkout --`. The block is an ordinary nonterminating tool error that names the matched literal; bash does not run, the Fixer session stays alive, and the model may retry a different spelling/operation or submit `refused`. This is accidental-destruction drift prevention only — not hostile-code defense, shell sandboxing, filesystem isolation, or bypass resistance. Callers that need isolation must supply a container or sandbox.
 
@@ -191,6 +200,48 @@ The completed output is one case's cost report plus findings; it never requires 
 
 Every number must exactly match the runtime's derivation from cited session bytes. The sole final `ak_doctor_output` result undergoes a fresh same-active-model compliance audit; revise permits resubmission, while audit or transport failure aborts without manufacturing refusal. Trend reporting is a separate output type for future multi-case readers.
 
+## Merger
+
+Merger resolves exactly one caller-assigned merge that is already in conflict. It has no phase and does not select branches, start/abort/retry a merge, publish a result, or route another role.
+
+```bash
+pi --no-extensions -e /path/to/extensions/role-runtime.ts \
+  --ak-role merger --ak-merger-input /path/to/merger-input-v1.json \
+  --mode json -p "Resolve the admitted in-progress merge or escalate the required decision."
+```
+
+The authoritative exported TypeScript contract is `mergerInputSchema` plus `validateMergerInput`. It binds `attemptId`, exact target/source full object IDs, digest-bound UTF-8 task/authority/target-intent/source-intent bytes, the byte-sorted complete conflict set, permitted resolution scope, and named authorized check argv. Repository location is caller transport and is intentionally absent from portable identity.
+
+Activation compares the contract with production Git facts in Pi's assigned session working directory: `HEAD`, the sole `MERGE_HEAD`, and the complete unmerged path set, and freezes Git's exact `AUTO_MERGE` tree. Before invoking Merger, the caller must have already started a conflicting merge that produced `AUTO_MERGE`; Git's `ort` merge strategy produces it. If `AUTO_MERGE` is absent, activation aborts honestly without a role outcome, as it does for drifted automatic-result evidence, a missing/non-conflicting merge, malformed input, or identity drift. Active tools are exactly `read`, `grep`, `find`, `ls`, `bash`, `write`, `edit`, and `ak_merger_output`. This gating prevents role drift; it is not filesystem or Git security. The caller must isolate the assigned worktree and credentials appropriately.
+
+`ak_merger_output` is singleton and terminating. Its exact leaves are:
+
+```json
+{"status":"completed","attemptId":"opaque attempt","report":"nonblank report","mergeCommitId":"full lowercase 40- or 64-hex object ID"}
+{"status":"escalate","attemptId":"opaque attempt","diagnosis":"required intent/authority decision","report":"nonblank report"}
+```
+
+Before accepting `completed`, the runtime establishes that `mergeCommitId` is current `HEAD`, has exactly the frozen target then source as its two parents, has no unmerged entries, and leaves a clean worktree. It also compares the frozen automatic-result tree with the completed tree using rename-disabled, NUL-delimited exact paths and rejects every resolution-changed path outside `resolutionScope`; clean source-side changes are not resolution edits. This proves only the candidate merge commit, not caller publication. `escalate` is only for a genuine new intent or authority decision. Malformed output and Git/tool/runtime failures abort nonzero rather than being relabeled.
+
+### Non-normative external capability exam
+
+The following is only a feasibility example, not a package recipe or executable/default/required workflow. An external caller may run independent tasks in caller-provided worktrees, integrate completed tasks in completion order, invoke Merger only for a real Git conflict, and perform a final pre-PR review/fix closure. A caller may instead provide a parent and children with a family integration base, start each child from a stable family tip selected by that caller, integrate completed children one at a time, optionally perform a bounded review/adjudication/fix closure after each integration, and perform a final family-wide closure. Every ordering choice, loop, stopping condition, and resource policy belongs to the caller; other compositions are equally lawful. No role knows a predecessor or successor.
+
+## StatsLine producer
+
+Call `produceStatsLineV1` with a package `CommittedSnapshot`, issue number, and optional normalized tracker metadata. `createGitCommittedSnapshot` supplies the production reader for an exact full commit:
+
+```ts
+const snapshot = createGitCommittedSnapshot({
+  repositoryRoot: "/absolute/repository",
+  repository: "owner/name",
+  targetCommit: "<40-hex-commit>",
+});
+const line = await produceStatsLineV1({ snapshot, issueNumber: 12, tracker });
+```
+
+The caller invokes this at closure and preserves the returned line in the same issue docket. The package does not schedule closure or query a tracker.
+
 ## Verdict contract
 
 Judge's legal status-dependent shapes are:
@@ -213,7 +264,7 @@ Workflow ordering and routing are caller-owned. A separate orchestrator is optio
 
 ## Composing class-repair contracts
 
-Callers may use the typed contracts together without parsing Markdown: a `continue` Judge receipt identifies non-empty `classes[]`; a completed Fixer receipt may report `classesRepaired[]`; and `--ak-review-scope-keys <comma-separated keys>` limits Reviewer to exact class keys (omit it for a full review). Keys are comma-free, case-sensitive bytes and are not normalized. The caller, not this package, enforces contextual presence or absence and exact order-insensitive set equality between Judge and Fixer names. These contracts do not mandate any role ordering, repetition, routing, or workflow topology.
+Callers may use the typed contracts together without parsing prose: a `continue` Judge receipt identifies non-empty `classes[]`; a caller composes a `FixPacketV1`; an apply Fixer receipt settles findings in `classResults[]`; and `--ak-review-scope-keys <comma-separated keys>` limits Reviewer to exact class keys (omit it for a full review). Fixer prerequisite declarations and blocker references are typed IDs, but the package does not infer, execute, graph, route, retry, or schedule dependencies. Packet composition, compatibility grouping, contextual reconciliation, sequencing, stopping, invocation budgets, routing, and next-hop acceptance remain caller-owned; these contracts create no orchestration topology.
 
 ## Recorder (`ak-docket-record`)
 
@@ -227,4 +278,4 @@ The closed config has `version: 2` and adds `session: { directory, id }`. `direc
 
 Recorder forwards stdout and stderr byte-for-byte with backpressure and retains only a 4096-byte tail per stream for bounded failure diagnostics. Pass-through bytes and raw main/Reviewer-leg sessions are **not credential-scanned** and are never promoted, copied, or deleted. Callers own sink security and raw-session access, retention, and cleanup. Only admitted declarations and promoted derivatives are scanned.
 
-A successful docket contains the non-null accepted package Receipt, optional Judge/Reviewer audit observation, and [`recorder-manifest-v2`](schemas/recorder-manifest-v2.schema.json). Failures use [`recorder-failure-v2`](schemas/recorder-failure-v2.schema.json), exit 125, preserve known child exit/signal truth, and publish no partial docket. Publication is an atomic same-filesystem create-if-absent rename.
+A successful docket contains the non-null accepted package Receipt, optional Judge/Fixer/Reviewer/Doctor audit observation, and [`recorder-manifest-v2`](schemas/recorder-manifest-v2.schema.json). For current Fixer leaves, Recorder preserves the typed `prerequisiteId` and audit usage exactly; it validates the current leaf shape but does not infer prerequisite truth or execute dependencies. Failures use [`recorder-failure-v2`](schemas/recorder-failure-v2.schema.json), exit 125, preserve known child exit/signal truth, and publish no partial docket. Publication is an atomic same-filesystem create-if-absent rename.
