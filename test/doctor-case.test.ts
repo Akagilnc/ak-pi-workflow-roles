@@ -57,20 +57,24 @@ test("runtime-derived metrics permit completion when a case exceeds evidence pag
   const root = await mkdtemp(join(tmpdir(), "doctor-large-case-"));
   const runs = join(root, ".ak/work/issues/40/runs");
   await mkdir(join(runs, "coder/session"), { recursive: true });
-  const padding = "x".repeat(5000);
+  const padding = "保留证据".repeat(1250);
   const fixture = [...rows, { type: "custom", timestamp: "2026-08-01T05:01:21.000Z", padding }];
   await writeFile(join(runs, "coder/session/large.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
   const patient = await loadDoctorCase(runs);
-  assert.ok(patient.evidence[0]!.content.length > 4096);
+  const entry = patient.evidence[0]!;
+  assert.ok(entry.contentLength > 4096);
+  assert.equal(entry.contentLength, entry.content.length);
+  assert.notEqual(entry.contentLength, entry.byteLength);
   const store = new DoctorEvidenceStore(patient);
-  const evidenceId = patient.evidence[0]!.id;
-  store.read(evidenceId, 0, 1);
-  assert.equal(store.hasRead(evidenceId), false);
-  assert.deepEqual(store.readRecord(), [{ evidenceId, fullyRead: false }]);
-  for (let offset = 1; offset < patient.evidence[0]!.content.length; offset += 4096) store.read(evidenceId, offset, 4096);
+  const evidenceId = entry.id;
+  for (let offset = 0; offset < entry.contentLength; offset += 4096) {
+    const page = store.read(evidenceId, offset, 4096);
+    assert.equal(page.contentLength, entry.contentLength);
+  }
   assert.equal(store.hasRead(evidenceId), true);
   assert.deepEqual(store.readRecord(), [{ evidenceId, fullyRead: true }]);
-  const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [] } as const;
+  const finding = { targetKey: "case", observation: "Non-ASCII retained evidence was fully read", evidenceIds: [evidenceId] } as const;
+  const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [finding] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
   assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, outputTokens: { ...patient.cost.outputTokens, count: 8 } } }, patient, store), /re-derived/);
 });
@@ -150,6 +154,13 @@ test("partial and non-monotonic sessions remain reportable with every explicit d
   if (combined?.completion !== "incomplete") assert.fail("combined session must be incomplete");
   assert.match(combined.degradationReason ?? "", /malformed JSON tail/);
   assert.match(combined.degradationReason ?? "", /non-monotonic session timestamps/);
+});
+
+test("case admission rejects runs trees outside the ADR 0017 path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-invalid-path-"));
+  const runs = join(root, "issues/40/runs");
+  await mkdir(runs, { recursive: true });
+  await assert.rejects(loadDoctorCase(runs), /\.ak\/work\/issues\/<n>\/runs/);
 });
 
 test("case identity is repository-relative with an absolute fallback outside repositories", async () => {

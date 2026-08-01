@@ -8,7 +8,7 @@ export type DoctorAuditInput = { soul: string; patient: DoctorCase; readRecord: 
 const tool = createComplianceDecisionTool(DOCTOR_AUDIT_TOOL_NAME, "Return whether the proposed Doctor output demonstrably follows the supplied Doctor Soul and frozen evidence record.");
 export function createPiDoctorAuditor(runCompletion?: ComplianceCompletion) {
   return (input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision> => {
-    const frozenIndex = { version: input.patient.version, identity: input.patient.identity, cost: input.patient.cost, evidence: input.patient.evidence.map(({ id, kind, byteLength, sha256 }) => ({ id, kind, byteLength, sha256 })) };
+    const frozenIndex = { version: input.patient.version, identity: input.patient.identity, cost: input.patient.cost, evidence: input.patient.evidence.map(({ id, kind, byteLength, contentLength, sha256 }) => ({ id, kind, byteLength, contentLength, sha256 })) };
     return runComplianceAudit({
     tool,
     systemPrompt: [

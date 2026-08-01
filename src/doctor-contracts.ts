@@ -37,7 +37,7 @@ export type DoctorFinding =
 export type DoctorOutput =
   | { status: "completed"; case: DoctorCaseIdentity; cost: DoctorCaseCost; findings: DoctorFinding[] }
   | { status: "refused"; reason: string; missingEvidence: Array<{ need: string; targetKeys: string[] }> };
-export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; sha256: string; content: string };
+export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byteLength: number; contentLength: number; sha256: string; content: string };
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
@@ -89,8 +89,8 @@ export function validateRecordedDoctorOutput(value: unknown): DoctorOutput { if 
 export class DoctorEvidenceStore {
   readonly entries: Map<string, DoctorEvidenceEntry>; private readonly coverage = new Map<string, Array<[number, number]>>();
   constructor(readonly patient: DoctorCase) { this.entries = new Map(patient.evidence.map((entry) => [entry.id, entry])); }
-  read(evidenceId: string, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry) throw new Error(`Evidence ID is not admitted: ${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096) throw new Error("Invalid evidence pagination"); if (offset > entry.content.length) throw new Error("Evidence offset exceeds content"); const end = Math.min(entry.content.length, offset + limit); const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end] as [number, number]].sort((a, b) => a[0] - b[0]); const merged: Array<[number, number]> = []; for (const range of ranges) { const prior = merged.at(-1); if (prior && range[0] <= prior[1]) prior[1] = Math.max(prior[1], range[1]); else merged.push([...range]); } this.coverage.set(evidenceId, merged); return { evidenceId, kind: entry.kind, offset, content: entry.content.slice(offset, end), nextOffset: end < entry.content.length ? end : null, byteLength: entry.byteLength, sha256: entry.sha256 }; }
-  hasRead(id: string) { const entry = this.entries.get(id); const ranges = this.coverage.get(id); return !!entry && ranges?.length === 1 && ranges[0]![0] === 0 && ranges[0]![1] === entry.content.length; }
+  read(evidenceId: string, offset = 0, limit = 4096) { const entry = this.entries.get(evidenceId); if (!entry) throw new Error(`Evidence ID is not admitted: ${evidenceId}`); if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096) throw new Error("Invalid evidence pagination"); if (offset > entry.contentLength) throw new Error("Evidence offset exceeds content"); const end = Math.min(entry.contentLength, offset + limit); const ranges = [...(this.coverage.get(evidenceId) ?? []), [offset, end] as [number, number]].sort((a, b) => a[0] - b[0]); const merged: Array<[number, number]> = []; for (const range of ranges) { const prior = merged.at(-1); if (prior && range[0] <= prior[1]) prior[1] = Math.max(prior[1], range[1]); else merged.push([...range]); } this.coverage.set(evidenceId, merged); return { evidenceId, kind: entry.kind, offset, content: entry.content.slice(offset, end), nextOffset: end < entry.contentLength ? end : null, contentLength: entry.contentLength, byteLength: entry.byteLength, sha256: entry.sha256 }; }
+  hasRead(id: string) { const entry = this.entries.get(id); const ranges = this.coverage.get(id); return !!entry && ranges?.length === 1 && ranges[0]![0] === 0 && ranges[0]![1] === entry.contentLength; }
   readRecord() { return [...this.coverage.keys()].sort().map((evidenceId) => ({ evidenceId, fullyRead: this.hasRead(evidenceId) })); }
 }
 export function validateDoctorOutput(value: unknown, patient: DoctorCase, store: DoctorEvidenceStore): DoctorOutput {
