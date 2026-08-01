@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage } from "@earendil-works/pi-ai";
 import { sha256Hex } from "../src/sha256.ts";
 import { createMergerRoleRuntime } from "../src/merger-role.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../src/merger-contracts.ts";
+import { withHermeticHome, withInProcessPi } from "./helpers/pi-test-harness.ts";
 
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });
@@ -49,6 +50,39 @@ test("Merger terminal contract and singleton failures abort without accepting a 
     const accepted = await h.tools.get(MERGER_OUTPUT_TOOL_NAME).execute("accepted", valid, undefined, undefined, context("accepted", valid));
     assert.equal(accepted.terminate, true);
   }
+});
+
+test("Pi transports malformed Merger candidates to the fatal validator while valid leaves still terminate", async () => {
+  await withHermeticHome({ prefix: "ak-merger-transport-" }, async ({ home, agentDir }) => {
+    for (const candidate of [
+      { status: "escalate", attemptId: "attempt", report: "missing diagnosis" },
+      { status: "escalate", attemptId: "attempt", diagnosis: "decision", report: "blocked", unknown: true },
+      { status: "escalate", attemptId: "attempt", diagnosis: "decision", report: "blocked" },
+    ]) {
+      const faux = fauxProvider({ api: `merger-${Object.keys(candidate).length}`, provider: `merger-${Object.keys(candidate).length}` });
+      faux.setResponses([fauxAssistantMessage(fauxToolCall(MERGER_OUTPUT_TOOL_NAME, candidate, { id: "out" }), { stopReason: "toolUse" })]);
+      let aborts = 0; let exitCode = 0;
+      await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-merger-input": "/input.json" }, extensionFactories: [(pi) => {
+        const runtime = createMergerRoleRuntime(pi, { loadSoul: async () => "MERGER LAW", loadInput: async () => input, gitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } } }, { failInfrastructure(error, ctx): never { aborts++; exitCode = 1; ctx.abort(); throw error; } });
+        pi.on("session_start", () => runtime.activate());
+      }] }, async ({ session, sessionManager }) => {
+        if (Object.hasOwn(candidate, "unknown") || !Object.hasOwn(candidate, "diagnosis")) {
+          await session.prompt("Settle.");
+          assert.equal(aborts, 1); assert.equal(exitCode, 1);
+          const results = sessionManager.getEntries().filter(entry => entry.type === "message" && entry.message.role === "toolResult") as any[];
+          assert.equal(results.length, 1); assert.equal(results[0]!.message.role, "toolResult");
+          if (results[0]!.message.role === "toolResult") { assert.equal(results[0]!.message.isError, true); assert.deepEqual(results[0]!.message.details, {}); assert.match(results[0]!.message.content[0]!.type === "text" ? results[0]!.message.content[0]!.text : "", /exact completed\|escalate contract/); }
+        } else {
+          await session.prompt("Settle.");
+          const results = sessionManager.getEntries().filter(entry => entry.type === "message" && entry.message.role === "toolResult") as any[];
+          assert.equal(aborts, 0); assert.equal(exitCode, 0); assert.equal(results.length, 1);
+          assert.equal(results[0]!.message.role, "toolResult");
+          if (results[0]!.message.role === "toolResult") { assert.equal(results[0]!.message.isError, false); assert.deepEqual(results[0]!.message.details, candidate); }
+        }
+        assert.equal(faux.getPendingResponseCount(), 0);
+      });
+    }
+  });
 });
 
 test("Merger completion requires exact parents, clean worktree, and no unmerged paths", async () => {
