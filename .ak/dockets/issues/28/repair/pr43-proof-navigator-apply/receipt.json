@@ -1,0 +1,32 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_fyu3QeG2KtE7k5dTlyAqBRPo|fc_0ca7fbaa754acd2d016a6da5e9196c81968bcb86720b8ded2f",
+  "details": {
+    "status": "completed",
+    "report": "Committed Navigator acquisition proof completion. Added production Recorder activation checks for both label-policy mappings; exercised createGhJsonTransportV1 through acquisition with null parent and child bodies; completed evidence admission coverage for generated/duplicate IDs, non-string/noncanonical paths, FIFO/device/oversize files, capability containment, immutable post-admission bytes, and failed-read accounting; and proved empty, overlapping, adjacent, sparse, failed-decode, and large bounded paging agreement between live Navigator reads and sealed reconstruction. Gates passed: typecheck, 414 tests (409 pass, 5 skip), build:recorder, git diff --check, and npm pack --dry-run.",
+    "commitSha": "f7ce1928492303ead601ff91341fcb6406ce4914",
+    "classesRepaired": [
+      {
+        "name": "NavigatorDecisionInputVisibility",
+        "searchScope": "Production Recorder Navigator activation and digest-bound acquisition snapshots for both label-policy mappings.",
+        "exceptions": []
+      },
+      {
+        "name": "TrackerNullBodyNormalization",
+        "searchScope": "createGhJsonTransportV1 real executable/JSON adapter path through parent-and-child acquisition.",
+        "exceptions": []
+      },
+      {
+        "name": "EvidenceAdmissionContainment",
+        "searchScope": "Assisted config admission, regular descriptor acquisition, generated evidence catalog, immutable NavigatorEvidenceStore capability boundary, and package/build gates.",
+        "exceptions": []
+      },
+      {
+        "name": "EvidencePagingCoverage",
+        "searchScope": "Live NavigatorEvidenceStore paging and sealed native-session reconstruction across empty, overlapping, adjacent, sparse, failed-decode, and large bounded reads.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

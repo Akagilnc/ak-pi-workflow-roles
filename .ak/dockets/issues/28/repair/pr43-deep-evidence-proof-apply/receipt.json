@@ -1,0 +1,32 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_jLjotKjNEZwZXmkdlYHt97Il|fc_0fc78d7abf493e31016a6dadcb7c1c8191830ecb9dce4b1e86",
+  "details": {
+    "status": "completed",
+    "report": "Committed 6065ac0. EvidenceAdmissionContainment now proves descriptor replacement races cannot escape descriptor-bound bytes, post-construction Uint8Array mutation cannot alter Navigator-owned bytes, and package-generated absolute content-addressed handles remain capability-contained. SelectedSettlementEvidenceTruth now drives converged, continue, escalation, refusal, infrastructure, and recovered artifacts through an actual post-settlement Recorder Navigator invocation and checks exact latestAttempt/artifact bytes. RecorderArtifactAuthenticity now proves a valid receipt followed by exit 7 or SIGTERM remains infrastructure_failure/cancellation identically live and via readSealed, never accepted_receipt. EvidencePagingCoverage now exercises empty, adjacent, overlap, sparse, failed-read, and large-offset matrices through createRecorderAssistedTransportV1.readSealed. No production seam failed, so production behavior was unchanged. Gates: typecheck passed; npm test passed 434, failed 0, skipped 5 (439 total); build:recorder passed; npm pack --dry-run passed; git diff --check passed. No findings outside the four authorized classes were adopted.",
+    "commitSha": "6065ac019d56998411d57988e9e538ffce6279f6",
+    "classesRepaired": [
+      {
+        "name": "EvidenceAdmissionContainment",
+        "searchScope": "Assisted evidence admission and production Navigator loader regressions in test/assisted-evidence-input-closure.test.ts",
+        "exceptions": []
+      },
+      {
+        "name": "SelectedSettlementEvidenceTruth",
+        "searchScope": "Recorder settlement through production post-settlement Navigator transport in test/assisted-settlement-truth.test.ts",
+        "exceptions": []
+      },
+      {
+        "name": "RecorderArtifactAuthenticity",
+        "searchScope": "Real Recorder child valid-receipt-then-nonzero/signal live and readSealed recovery in test/assisted-settlement-truth.test.ts",
+        "exceptions": []
+      },
+      {
+        "name": "EvidencePagingCoverage",
+        "searchScope": "Production createRecorderAssistedTransportV1.readSealed paging reconstruction matrix in test/assisted-recorder-evidence.test.ts",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

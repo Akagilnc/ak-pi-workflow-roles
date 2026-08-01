@@ -1,0 +1,11 @@
+{
+  "toolName": "ak_merger_output",
+  "toolCallId": "call_9BJbyTKzaLtTuv732xuCdJgB|fc_06ce83a7d70bf88a016a6e11ac341c8191b14bde4bc321f6aa",
+  "details": {
+    "status": "completed",
+    "attemptId": "issue28-current-default-merge-001",
+    "report": "Resolved the complete assigned nine-path conflict set by preserving Navigator/Assisted Runner alongside typed Fixer prerequisites and conflict-only Merger, including runtime registration, terminating-tool/Recorder contracts, package proofs, and documentation. `npm run typecheck` passed. Created an ordinary two-parent merge commit with the assigned target and source parents; the worktree is clean.",
+    "mergeCommitId": "2f12840b8dcee395ad4309bbf7e332774364e575"
+  },
+  "artifactKind": "acceptedReceipt"
+}

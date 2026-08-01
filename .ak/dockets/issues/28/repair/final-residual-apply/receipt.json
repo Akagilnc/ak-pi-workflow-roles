@@ -1,0 +1,27 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_4CmqodG3A4XWKg40YTV0lnZH|fc_0480a00293bfe9df016a6d8708f2488191b80a3b2ddb34d2e5",
+  "details": {
+    "status": "completed",
+    "report": "Committed forward as 5e7941e. Native Navigator evidence-tool pages now produce one authoritative typed read record preserving partial=false and paged-complete=true through Recorder live settlement and readSealed; Runner validates that record directly rather than manufacturing complete reads. Compatible lifecycle publication losers reread canonical ledger truth, return an already-completed canonical call result, and fail closed before child launch when the winning transition is still pending. Existing no-replace publication, hash-chain/corruption checks, and lock-free ledger remain unchanged. Added production-seam byte-coverage and replay regression coverage, rebuilt distributions, and passed typecheck plus the unified suite (375 pass, 5 skip, 0 fail).",
+    "commitSha": "5e7941ef319e31b19d5db782b33a2f81a4dc3b61",
+    "classesRepaired": [
+      {
+        "name": "NavigatorEvidenceReadTruthResidual",
+        "searchScope": "src/assisted-recorder-transport.ts and src/assisted-runner.ts live/recovered Navigator settlement consumers; associated assisted lifecycle/residual tests and rebuilt dist artifacts",
+        "exceptions": []
+      },
+      {
+        "name": "LedgerLoserRereadResidual",
+        "searchScope": "src/assisted-runner.ts publication-conflict reconciliation across enter/resume/recover launch-bearing transitions; assisted ledger/lifecycle/residual tests and rebuilt dist artifact",
+        "exceptions": [
+          {
+            "where": "A compatible loser observed before the winner publishes call_completed",
+            "reason": "No canonical terminal result exists yet; it fails closed with explicit transition-ownership error rather than waiting, locking, or launching another child. A later replay returns the canonical stored result."
+          }
+        ]
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

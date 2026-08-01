@@ -1,0 +1,238 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "root": ".ak/dockets",
+    "docketId": "issues/28/authority/final-authority-001"
+  },
+  "invocation": {
+    "id": "019fbb70-088a-74a7-98f9-9a4dadede5fb"
+  },
+  "session": {
+    "id": "019fbb70-088a-74a7-98f9-9a4dadede5fb",
+    "directory": ".ak/work/issues/28/runs/final-authority-001/session",
+    "basename": "2026-08-01T03-48-38-269Z_019fbb70-088a-74a7-98f9-9a4dadede5fb.jsonl",
+    "sha256": "3c8eeb984e79cd3e89e779084a3660f3d598738eae7aeee72fefc1b5d13f9927",
+    "byteLength": 260358,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28/.ak/work/issues/28/runs/final-authority-001/session",
+      "--session-id",
+      "019fbb70-088a-74a7-98f9-9a4dadede5fb",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #28 final construction authority — Navigator v1\n\nAdjudicate the owner direction together with issue #28, issue #24 navigation material, ADR 0001, ADR 0010, and the current package architecture. Produce a final construction scheme, or explicitly escalate only a genuinely unresolved owner-policy choice. This is Authority posture, not implementation proof.\n\nResolve:\n\n1. **Professional identity:** whether this is a distinct Navigator role, an extension of Triage, or merely documentation; define its irreducible advisory judgment and distinguish it from Judge, Doctor, Reviewer, and an orchestrator.\n2. **Patient and evidence boundary:** define “one parent issue complete development,” child-universe identity, current-position snapshot, latest settled role attempt, status/label evidence, and stale/drift behavior. Preserve the ergonomic parent-issue entry without permitting machine decisions from prose/presentation.\n3. **Automatic consultation:** define the assisted-run lifecycle, initial consultation if needed, exact settlement trigger, failure/refusal/escalation handling, no-recursion rule, and consult-before-next-role invariant.\n4. **Ownership:** separate package-owned Navigator capability from host/caller-owned trigger, run ledger, role invocation, worktrees, and actual next action. Decide the minimal integration contract needed to make automatic consultation real without turning Navigator or this package into an orchestrator.\n5. **Advisory output:** define a typed, audit-ready Receipt that gives one primary next-process recommendation, evidence, hazards/conditions, and an insufficient-evidence path, while remaining nonbinding and incapable of authorizing or routing execution.\n6. **Tools and failure honesty:** establish least privilege, audit behavior, credential/evidence boundaries, and abort-versus-role-outcome semantics.\n7. **Construction slices:** identify exact package code/docs/tests and any separately owned host adapter work. State whether issue #28 alone can claim end-to-end automatic consultation, or whether a linked host construction is required.\n8. **Compatibility:** preserve existing role contracts and caller autonomy. Reject a hidden workflow engine, direct Agent/subrole calls, next-role execution, compulsory compliance, long-lived Navigator memory, or automatic deviation punishment.\n9. **Plan necessity:** state whether a Plan has a legitimate missing deliverable.\n\nDo not prescribe shallow helper names. Submit exactly one verdict through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "9247ab883f07adf5eabb75abf60777b626a58d17",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "repository-law",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "CLAUDE.md",
+        "blobOid": "d82386f3c0d2c55b5ce3fa62584956642c3cb0f2",
+        "sha256": "e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr-0001",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "docs/adr/0001-roles-grow-by-demand.md",
+        "blobOid": "11da1c225b21369b06c67df59582be648e43ad1d",
+        "sha256": "6496ba5a1dee07de3cae7ed4c6693a2c43b4c77fcc84e241aafa27036723438f",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr-0010",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "docs/adr/0010-callers-own-role-composition-and-repetition.md",
+        "blobOid": "e801e80b7eabe5a16610f74ae63585bad7745f91",
+        "sha256": "bfa32ab47682b96d2a6359dd8353da5b38df9f712d2812e0ba86f7e362ccb0ba",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "readme",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "README.md",
+        "blobOid": "5aa5b0fc7ef9072f5092a8db31101fe9a926a340",
+        "sha256": "3ebe44f2247a89e76257fe9a73366438916c9389fa9f853f13b20b6b05b54dcd",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "role-runtime",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "src/role-runtime.ts",
+        "blobOid": "4a1338d80c5bd854ff1e0ac0c2dfc96f5072942f",
+        "sha256": "d732c3b47da7e496192cd0b5398bd7c429f7542b5b7f004707662acb8fda3fc4",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "doctor-contracts",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "src/doctor-contracts.ts",
+        "blobOid": "9d93e8f0d18fe82e877775dcefd263edc2f10063",
+        "sha256": "6d17d6f2fe3dd88c5fbe866e1595f954a9c77105a49f5a1b8ed71b35c698a5b6",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "issue-28",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-28",
+        "sha256": "670cbbddca37b52ca6c982867bf17ac38ad5cef18f8085342e7a4683674e5675",
+        "byteLength": 1636
+      }
+    },
+    {
+      "id": "issue-24",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-24",
+        "sha256": "13a47ac207d085ff63bc17ca5af54b4a49c38e2d8035deb388bf6b962774de74",
+        "byteLength": 8169
+      }
+    },
+    {
+      "id": "owner-direction",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/owner-direction",
+        "sha256": "b256fba71986e76cab154645e21b0f0b41007245a1d8b24e667c03b549bce29b",
+        "byteLength": 2290
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "60935d6c61f18317d17ba7b391591c8416bac4e08174a07441eceb389a08062d",
+        "byteLength": 2521
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "b4c5676059e59697ef65818563405381618a5b09dbe579665329f38d7c9d2443",
+        "byteLength": 12232
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "2b425765a3ea008bf05a72b74744735f974177d9528633933b86831618c4e9f3",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_141ZcacQUctpdFBnoMWPMKTk|fc_007c3e01a4e25970016a6d6da320748191b6403ac8b56affdc",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_141ZcacQUctpdFBnoMWPMKTk|fc_007c3e01a4e25970016a6d6da320748191b6403ac8b56affdc",
+    "auditPassed": true,
+    "usage": {
+      "input": 27060,
+      "output": 314,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 27374
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_B51QigUC51qpsZWuA9kYChdo|fc_0069d6fc6e0c248e016a6da091b74c8191aacbda320086fdef",
+  "details": {
+    "status": "refused",
+    "report": "Unable to honestly claim all thirteen production-proof classes complete. I committed the two reproduced root-cause repairs and their production-seam regressions: FIFO admission now opens nonblocking before descriptor stat (no timeout), and optional callId uses the shared UUIDv7 locator predicate before I/O. Gates passed: typecheck; isolated affected tests (8/8); full suite (399 pass, 5 skip, 0 fail); build:recorder; npm pack --dry-run; git diff --check. Exact class disposition: LifecycleAdmissionExclusion—OPEN, required barrier matrix not added; NavigatorDecisionInputVisibility—OPEN, active runtime typed-input proof not added; TrackerNullBodyNormalization—OPEN, real gh adapter parent/child proof not added; EvidenceAdmissionContainment—PARTIAL, FIFO defect repaired/proved, remaining authorized production matrix not completed; SelectedSettlementEvidenceTruth—OPEN, full outcome matrix not added; RecorderArtifactAuthenticity—OPEN, full live/recovery mutation and child-exit matrix not added; RecoveryStateContinuity—OPEN, crash-barrier matrix not added; LedgerTemporaryPublicationSafety—OPEN, cleanup-failure injection not added; EvidencePagingCoverage—OPEN, full live/readSealed paging matrix not added; NavigatorReceiptContract—OPEN, Recorder extraction/recovery malformed matrix not added; AssistedInputContractClosure—PARTIAL, optional callId defect repaired/proved, full TS/CLI no-side-effect matrix not completed; SchemaContractParity—OPEN, real-consumer and cold-package parity matrix not added; NavigatorActivationAtomicity—OPEN, complete activation-failure matrix not added. Claiming completion would contradict the accepted receipt and failure-honesty requirement.",
+    "commitSha": "7b0091fbca1e327a5b76896493108bca65cee74b"
+  },
+  "artifactKind": "acceptedReceipt"
+}

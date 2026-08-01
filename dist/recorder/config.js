@@ -1,5 +1,6 @@
 import { accessSync, constants, readFileSync } from "node:fs";
 import { isAbsolute, normalize } from "node:path";
+import { isUuidV7 } from "../uuidv7.js";
 import { RecorderError, safeDiagnostic } from "./errors.js";
 import { assertPathNotSymlinkEscape, normalizeRepoRelativePath, requireAbsoluteExistingDirectory, requireCanonicalGitWorktree, resolveInsideRoot, } from "./paths.js";
 import { scanString } from "./scanner.js";
@@ -269,7 +270,7 @@ export function parseRecorderConfigStructure(text) {
     ]), archiveRoot = relativeAt(archive.root, ["archive", "root"]), docketId = relativeAt(archive.docketId, ["archive", "docketId"]), cwd = absoluteAt(execution.cwd, ["execution", "cwd"]);
     const sessionDirectory = relativeAt(session.directory, ["session", "directory"]);
     const sessionId = stringAt(session.id, ["session", "id"]);
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId))
+    if (!isUuidV7(sessionId))
         invalid("session.id must be canonical UUIDv7", ["session", "id"]);
     const indexed = [
         ...gitReferences.map((item, index) => ({

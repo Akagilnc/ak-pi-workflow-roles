@@ -1,0 +1,38 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_nnqp0K1mppi8asASayP8hXE7|fc_019cc324808418a9016a6d7f8a8f948191ad152263c801104f",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Review-004 is method-refused but its code claims are independently disposable. Current HEAD d01449c still has four real defects. Navigator read truth and ledger loser reconciliation are residuals of Review-003 classes. Recovery environment identity and immutable resolved resume identity are newly discovered classes under the already converged Assisted Runner authority. All four have fixed behavior owners red cases green outcomes and unchanged scope so direct Fixer apply is legal without Plan. The lifecycle findings belong on the Spec axis rather than Standards."
+    },
+    "classes": [
+      {
+        "name": "NavigatorEvidenceReadTruthResidual",
+        "owner": "Recorder sealed Navigator settlement and Navigator receipt admission seam",
+        "boundary": "An accepted Navigator evidenceRead record must bind to authoritative byte coverage observed by the Navigator evidence store or reconstructed from native sealed evidence tool calls. Receipt fields and readEvidenceIds copied from those same fields are not independent evidence.",
+        "disposition": "Real residual of prior class NavigatorEvidenceReadTruth. Current consult and sealed recovery pass receipt.evidenceRead as actualReads while the production Recorder transport derives readEvidenceIds from that same receipt and the Runner ignores it. Repair the existing seam without a second tracker. Production-seam verification must run a real Navigator evidence read through role output and Recorder sealing then prove partial coverage cannot be declared full and forged omitted duplicate unknown or unread entries fail in both live consultation and sealed recovery while complete paged coverage succeeds."
+      },
+      {
+        "name": "RecoveryEnvironmentIdentity",
+        "owner": "Assisted call declaration and crash recovery credential boundary",
+        "boundary": "Recovery must preserve the caller-declared inherit override and unset policy while raw environment values and credentials remain outside the ledger. The authorized durable form is a typed opaque reference to caller-owned environment or credential material plus nonsecret policy structure and binding identity. Persisting raw override values is not authorized.",
+        "disposition": "Real new class under the final Assisted Runner authority. call_started currently replaces the policy with inherit true empty overrides and empty unset and recover reconstructs from that altered config. Repair the owning declaration and recovery seam without a package credential vault or secret promotion. Production-seam verification must abandon both a Navigator and selected-role invocation under nondefault inherit override and unset policy then recover in a fresh process and show equivalent effective child policy through Recorder while ledger docket snapshot and status artifacts contain no secret values. Missing mismatched or unavailable referenced material must halt honestly before consultation."
+      },
+      {
+        "name": "LedgerLoserRereadResidual",
+        "owner": "Assisted ledger publication and Assisted Runner lifecycle reconciliation seam",
+        "boundary": "After any generation conflict the loser must reread canonical state and decide whether its pending transition is already satisfied still legal or incompatible. It may not simply append its losing event at the next sequence and may not launch a child whose reservation lost.",
+        "disposition": "Real residual of prior class LedgerLoserReread. The wrapper only searches for an exactly equal event and otherwise retries forever until the incompatible losing event appends at a later generation. Distinct invocation IDs therefore permit concurrent callers to publish competing starts and launch duplicate Navigator and selected-role children. Replace retry-only behavior with state-aware reconciliation at the existing ledger seam. Production-seam verification must race real enter resume and recover calls with barriers around publication and child spawn and prove one compatible result one Navigator and at most one selected-role child. Incompatible acquisition action start settlement and completion winners must fail closed while identical replay returns the stored result and gap fork or digest corruption still halts."
+      },
+      {
+        "name": "ResolvedSubjectIdentityOnResume",
+        "owner": "Assisted acquisition and resume immutable subject gate",
+        "boundary": "The first accepted acquisition must establish immutable resolved GitHub repository and parent issue IDs and every resume must reacquire and compare those IDs before treating any observation as drift or consulting or launching a child. Configured owner name and issue number are locator inputs rather than sufficient immutable identity.",
+        "disposition": "Real new class under the final Assisted Runner authority. immutableSubject currently stores only repository root configured GitHub names and parent number. Changed repository or parent node IDs therefore become snapshot drift instead of a resume rejection. Extend the existing subject ledger and acquisition gate without making child IDs immutable because child declarations remain revisioned inputs. Production-seam verification must enter against one repository and parent ID then resume with unchanged configured names and numbers but changed repository ID changed parent ID and each combined case. Every mismatch must halt before acquisition publication consultation or role launch while ordinary mutable state labels body workspace and declared child revisions continue through the authorized drift lifecycle."
+      }
+    ],
+    "note": "Claim disposition: The Standards evidence-read and recovery-environment findings import lifecycle authority and are invalidly placed on that axis. The underlying evidence-read claim is accepted only as the residual Spec defect above. The underlying recovery claim is accepted as a new Spec defect but its suggestion to persist environment policy is narrowed by authority: raw values may not be copied and only a credential-safe typed reference is legal. Spec finding 1 on concurrent lifecycle races is correct and is a residual of LedgerLoserReread. Spec finding 2 on immutable resolved repository and parent IDs is correct despite paraphrasing its authority quotation and is a new class. Possible Divergent Change remains unsupported because the final authority deliberately gives this cohesive wrapper lifecycle to Assisted Runner. Long Function is not in the canonical smell baseline and creates no class. The repeated Mysterious Name claim lacks the required hunk quotation and a concrete semantic ambiguity and repeats the previously dismissed nonblocking presentation preference. No naming churn or lifecycle split is authorized. Passing existing tests does not dispose these counterexamples because current assisted tests cover a happy serial lifecycle and raw append contention rather than the four production boundaries above."
+  },
+  "artifactKind": "acceptedReceipt"
+}

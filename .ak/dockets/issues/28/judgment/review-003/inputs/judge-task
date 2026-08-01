@@ -1,0 +1,18 @@
+# Issue #28 adjudication of Review-003 evidence
+
+Adjudicate every concrete finding preserved in `.ak/dockets/issues/28/review/review-003/receipt.json` against the two Issue #28 authority receipts and current target `3842ef2cf29d3f31c6967085de42bd39b00fddd7`.
+
+The Reviewer invocation ended `refused` because its method audit found the Standards leg imported a Spec credential requirement as a Standards violation and named `Long Function` outside the canonical baseline. Do not treat the refused aggregate as approval or as authority. However, independently inspect and adjudicate each preserved child-report claim and its cited code. Separate unsupported axis/method claims from real implementation defects.
+
+At minimum dispose:
+
+- Navigator evidence fully-read truth;
+- arbitrary exception handling/failure evidence;
+- concurrent ledger loser-reread semantics;
+- closed validation of `latestAttempt`;
+- argv credential promotion/scanning order and contract;
+- UUID validator duplication;
+- dense naming/readability and lifecycle-owner concerns;
+- any overlap among Standards and Spec reports.
+
+For accepted defects, define class-oriented repair authority with unique comma-free class names, owning seam, boundary, disposition, and exact verification burden. Prefer a small number of complete classes over point patches. Dismiss only with current code/authority evidence. Decide whether repair may proceed directly through Fixer apply without Plan. Submit exactly one verdict through `ak_judge_output`.

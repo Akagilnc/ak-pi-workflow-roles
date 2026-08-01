@@ -1,0 +1,10 @@
+# Post-merge gate adjudication retry
+
+The prior unaccepted call found a bounded repairable class but used the invalid combination `converged + classes[]`. Recheck current HEAD and submit a valid `continue` leaf with:
+
+- fix summary authorizing only current lawful Fixer fixture leaves;
+- exactly one class named `StaleFixerApplyReceiptFixtures`;
+- owner, boundary, and repair disposition;
+- note preserving production contracts and requiring focused plus unified gates.
+
+Do not use `converged`, because executable repair remains.

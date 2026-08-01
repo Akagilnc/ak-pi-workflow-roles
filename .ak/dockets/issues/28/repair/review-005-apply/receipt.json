@@ -1,0 +1,27 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_VWRlmJ21yuFwLFxigXhyxw6d|fc_05d502b0c261e9fe016a6d83bd37c88191be5df272cbc381e1",
+  "details": {
+    "status": "completed",
+    "report": "Committed the three authorized code classes in forward commit 227b558. The Assisted Runner locator now delegates canonical UUIDv7 validation to isUuidV7; the AssistedCall validator's dense subject/acquisition/execution/path/provenance locals are domain-named without contract changes; and snapshot freshness now normalizes capturedAt only, so parent/child tracker observation-time drift invalidates prior Navigator advice. Added public locator coverage, digest/binding coverage, and a production lifecycle regression proving observation-time-only prelaunch drift reconsults before role launch. Rebuilt assisted/recorder distributions. Verification passed: focused red/green tests, npm test (373 passed, 5 skipped), npm run typecheck, npm run build:recorder, and git diff --check. No findings were declined; Soul prose and role topology were untouched.",
+    "commitSha": "227b5583a61953dd4b1302c035793864efb1b9d6",
+    "classesRepaired": [
+      {
+        "name": "Assisted run locator UUIDv7 predicate",
+        "searchScope": "src/assisted-runner.ts runIndex and public locator operations; src/uuidv7.ts shared predicate; test/assisted-runner.test.ts; rebuilt dist/assisted-runner.js",
+        "exceptions": []
+      },
+      {
+        "name": "Dense AssistedCall validator names",
+        "searchScope": "validateAssistedCallConfigV1 local record, path, workspace, evidence/provenance, label, environment, and child variables in src/assisted-contracts.ts; existing config boundary suite; rebuilt dist/assisted-contracts.js",
+        "exceptions": []
+      },
+      {
+        "name": "Tracker observation freshness digest",
+        "searchScope": "canonicalSnapshotDigestV1 and Navigator receipt binding in src/navigator-contracts.ts; Assisted Runner enter prelaunch lifecycle seam; test/navigator-contracts.test.ts and test/assisted-lifecycle.test.ts; rebuilt dist/navigator-contracts.js and dist/assisted-runner.js",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

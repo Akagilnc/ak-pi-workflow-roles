@@ -1,0 +1,56 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_gwpMsMQn3LuWMEX8J9Ibtfz2|fc_016a755696440ed9016a6d8ab74b9c8191800efef2dbd78ccf",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "HEAD bf4110c is not finally converged. The new overlapping-enter runtime oracle passes with canonical equality, 2 Navigator calls, and 1 role call, but current HEAD fails `npm run typecheck`, and the required production Recorder live/recovery and identical-resume/concurrent-recovery executable proofs are still absent. Repair only the existing test/proof and Recorder/Runner seams; add no tracker, lock, scheduler, or parallel orchestration."
+    },
+    "classes": [
+      {
+        "name": "NavigatorEvidenceReadTruthResidual",
+        "owner": "Navigator evidence store -> native session -> Recorder sealing/readSealed -> Runner receipt-validation seam",
+        "boundary": "Out-of-catalog native read order must preserve truthful partial and complete catalog-bound coverage through both live Recorder settlement and recovered `readSealed`, while forged, omitted, duplicate, unknown, and unread records fail closed.",
+        "disposition": "OPEN as Apply proof. `validateNavigatorReceiptV1` now canonicalizes authoritative reads by snapshot catalog order and rejects duplicate/unknown authoritative records, and its unit oracle passes. However, no test imports or invokes `createRecorderAssistedTransportV1`; the only native-session test still calls `sealedEvidenceReads` on handcrafted JSONL, so neither live `invokeNavigator` settlement nor recovered `readSealed` traverses the production Recorder seam with out-of-catalog partial/complete reads and all rejection cases. Add the previously required executable live and recovery oracles rather than another normalization mechanism."
+      },
+      {
+        "name": "LedgerLoserRereadResidual",
+        "owner": "Assisted Runner call replay and append-only lifecycle transition seam",
+        "boundary": "Compatible identical enter/resume callers return canonical completed truth, or fail closed while canonical truth is pending, before any Navigator/role launch; concurrent recovery publishes one recovery fact and does not duplicate consultation or role execution.",
+        "disposition": "OPEN as Apply proof. Source inspection confirms `fenceLaunch` rereads canonical ledger truth immediately before Navigator and role launch, and the new delayed identical-enter test executes successfully with deep-equal results, exactly 2 Navigator calls, and 1 role call. But there is no overlapping identical-resume oracle and no concurrent recovery barrier/count oracle anywhere in `test/`; the sole recovery test is sequential. Add those already-authorized deterministic cases, including pending fail-closed, canonical completion/status, one recovery fact, and fatal incompatible/hash-corrupt truth."
+      },
+      {
+        "name": "CurrentHeadExecutableGate",
+        "owner": "Issue-28 regression suite and TypeScript contract boundary",
+        "boundary": "Current HEAD must pass the repository's mechanical typecheck before its tests can constitute executable convergence proof.",
+        "disposition": "OPEN. Independent `npm run typecheck` fails at `test/assisted-residuals.test.ts:19:400` with TS2554 (`issue(input)` supplies one argument to a bound transport method requiring three). The focused runtime tests pass 11/11 only because `tsx` transpiles without enforcing this type error. Correct the test harness call and rerun typecheck plus the full suite on the resulting HEAD."
+      },
+      {
+        "name": "RecorderFailureTruth",
+        "owner": "Recorder to Assisted Runner invocation settlement seam",
+        "boundary": "Unexpected transport exceptions retain causal identity and do not become fabricated settlements.",
+        "disposition": "CLOSED. The repair does not change exception classification or settlement transport behavior."
+      },
+      {
+        "name": "IdentifierSnapshotCredentialAndResumeClosure",
+        "owner": "Navigator contracts/shared UUIDv7, promoted argv credential gate, recovery environment binding, and resolved-subject resume gates",
+        "boundary": "Previously accepted identifier, snapshot, credential, environment, and resume invariants remain unchanged.",
+        "disposition": "CLOSED by confined source diff and passing focused runtime coverage; the global typecheck failure is separately recorded above."
+      },
+      {
+        "name": "SoulLocatorNamingAndFreshnessClosure",
+        "owner": "Navigator Soul, assisted run locator, AssistedCall validator locals, and snapshot freshness digest",
+        "boundary": "Previously accepted Soul layering, shared UUIDv7 locator, domain naming, and tracker-observation freshness behavior remain unchanged.",
+        "disposition": "CLOSED. None of these owners changed in the repair."
+      },
+      {
+        "name": "NoParallelMechanismOrRoleBoundaryRegression",
+        "owner": "Existing Assisted Runner/ledger and Navigator/Recorder role boundary",
+        "boundary": "No new orchestrator, tracker, lock ledger, wait loop, scheduler, compulsory advice execution, or role-owned transition mechanism is introduced.",
+        "disposition": "CLOSED. The production diff adds only a canonical reread fence inside the existing Runner lifecycle and catalog-order receipt validation; no new files or parallel state mechanism were added."
+      }
+    ],
+    "note": "Independent current-HEAD evidence: exact HEAD and clean worktree confirmed; `git diff --check` passed; focused tests passed 11/11; delayed identical enter produced the required canonical/2-Navigator/1-role result; `npm run typecheck` failed as recorded. Search found no `createRecorderAssistedTransportV1` test, no overlapping resume test, and no concurrent recovery test. No new authority or owner decision is required."
+  },
+  "artifactKind": "acceptedReceipt"
+}

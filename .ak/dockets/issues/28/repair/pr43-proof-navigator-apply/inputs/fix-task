@@ -1,0 +1,10 @@
+# PR #43 Fixer apply — Navigator/acquisition proof completion
+
+Close exactly these still-open classes under `.ak/dockets/issues/28/judgment/pr43-final/receipt.json`:
+
+- `NavigatorDecisionInputVisibility`
+- `TrackerNullBodyNormalization`
+- `EvidenceAdmissionContainment`
+- `EvidencePagingCoverage`
+
+Honor the prior partial FIFO repair. Add all missing actual runtime/GitHub-adapter/evidence capability/immutability/paging/live-readSealed production matrices named by Judge, including both label mappings and null parent+child. No mocks where Judge requires real adapter/runtime, no timeout/second tracker. Run gates, commit, report exactly these keys.

@@ -25,6 +25,7 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateRecordedDoctorOutput, type DoctorOutput } from "../doctor-contracts.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorReceiptV1, type RecordedNavigatorReceiptV1 } from "./navigator-output.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
@@ -64,6 +65,7 @@ export type {
   RuntimeReviewerReceiptV2,
   WorkerOutput,
   DoctorOutput,
+  RecordedNavigatorReceiptV1,
   MergerOutput,
 };
 
@@ -74,6 +76,7 @@ export const TERMINATING_TOOL_NAMES = [
   JUDGE_OUTPUT_TOOL_NAME,
   COLLECTOR_OUTPUT_TOOL,
   DOCTOR_OUTPUT_TOOL_NAME,
+  NAVIGATOR_OUTPUT_TOOL_NAME,
   MERGER_OUTPUT_TOOL_NAME,
 ] as const;
 
@@ -85,6 +88,7 @@ export type AcceptedDetails =
   | JudgeVerdict
   | CollectorReceipt
   | DoctorOutput
+  | RecordedNavigatorReceiptV1
   | MergerOutput;
 
 export function isTerminatingToolName(
@@ -107,6 +111,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return COLLECTOR_ACCEPTED_TEXT;
     case DOCTOR_OUTPUT_TOOL_NAME:
       return "Doctor output accepted";
+    case NAVIGATOR_OUTPUT_TOOL_NAME:
+      return "Navigator output accepted";
     case MERGER_OUTPUT_TOOL_NAME:
       return MERGER_ACCEPTED_TEXT;
   }
@@ -137,6 +143,9 @@ export function validateAcceptedDetails(
       return validateAcceptedCollectorReceipt(details);
     case DOCTOR_OUTPUT_TOOL_NAME:
       return validateRecordedDoctorOutput(details);
+    case NAVIGATOR_OUTPUT_TOOL_NAME:
+      // Snapshot freshness is additionally checked by Assisted Runner.
+      return validateRecordedNavigatorReceiptV1(details);
     case MERGER_OUTPUT_TOOL_NAME:
       return validateMergerOutput(details);
     }
@@ -153,6 +162,7 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case REVIEWER_OUTPUT_TOOL_NAME: return { status: (details as RuntimeReviewerReceiptV2).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as JudgeVerdict).judgeStatus };
     case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as DoctorOutput).status };
+    case NAVIGATOR_OUTPUT_TOOL_NAME: return { status: (details as RecordedNavigatorReceiptV1).status };
     case MERGER_OUTPUT_TOOL_NAME: { const output = details as MergerOutput; return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) }; }
     case COLLECTOR_OUTPUT_TOOL: return {};
   }
@@ -165,7 +175,8 @@ export function carriesPackageAuditObservation(
     toolName === JUDGE_OUTPUT_TOOL_NAME ||
     toolName === FIXER_OUTPUT_TOOL_NAME ||
     toolName === REVIEWER_OUTPUT_TOOL_NAME ||
-    toolName === DOCTOR_OUTPUT_TOOL_NAME
+    toolName === DOCTOR_OUTPUT_TOOL_NAME ||
+    toolName === NAVIGATOR_OUTPUT_TOOL_NAME
   );
 }
 
