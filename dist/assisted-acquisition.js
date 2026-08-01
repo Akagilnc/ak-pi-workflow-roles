@@ -86,7 +86,7 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
   for (const d of config.acquisition.evidence) admit(d.id, d.kind, await readBoundedRegular(d.path), `${d.provenance.kind}:${d.provenance.reference}`, d.path);
   if (latestAttempt && (latestAttempt.reference.id.startsWith("receipt:") || latestAttempt.reference.id.startsWith("failure:"))) {
     const [artifactKind, artifactInvocation] = latestAttempt.reference.id.split(":");
-    if (artifactInvocation !== latestAttempt.invocationId) throw new Error("settlement artifact identity mismatch");
+    if (artifactInvocation !== latestAttempt.invocationId) admissionFailure("AK_EVIDENCE_SETTLEMENT_IDENTITY_MISMATCH", "settlement artifact identity mismatch");
     const runDir = assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), path = artifactKind === "receipt" ? join(runDir, "invocations", artifactInvocation, "receipt.json") : join(runDir, "invocation-inputs", artifactInvocation, "failure.json"), bytes = await readBoundedRegular(path);
     if (sha256Hex(bytes) !== latestAttempt.reference.sha256) admissionFailure("AK_EVIDENCE_DIGEST_MISMATCH", "settlement artifact digest mismatch");
     admit(`settlement:${artifactInvocation}`, artifactKind === "receipt" ? "acceptance" : "failure", bytes, latestAttempt.reference.id, path);
