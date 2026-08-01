@@ -36,14 +36,18 @@ async function loadVerifiedAssistedDocketV1(repositoryRoot, docket, invocationId
   if (await realpath(join(manifest.archive.repositoryRoot, manifest.archive.root, manifest.archive.docketId)) !== docketReal || manifest.archive.docketId !== invocationId || manifest.invocation.id !== invocationId || manifest.session.id !== invocationId || !artifact?.stored) throw new Error("sealed docket identity join mismatch");
   const receiptPath = resolve(docket, artifact.stored.path);
   if (relative(docket, receiptPath).startsWith("..")) throw new Error("sealed artifact path escape");
-  const receiptBytes = await readFile(receiptPath);
+  const receiptReal = await realpath(receiptPath);
+  if (relative(docketReal, receiptReal).startsWith("..")) throw new Error("sealed artifact path escape");
+  const receiptBytes = await readFile(receiptReal);
   if (receiptBytes.byteLength !== artifact.stored.byteLength || sha256Hex(receiptBytes) !== artifact.stored.sha256) throw new Error("sealed receipt authenticity mismatch");
   const receipt = JSON.parse(receiptBytes.toString());
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt) || Object.keys(receipt).sort().join(",") !== "artifactKind,details,toolCallId,toolName" || receipt.toolName !== manifest.receipt.toolName || receipt.toolCallId !== manifest.receipt.toolCallId || receipt.artifactKind !== manifest.receipt.artifactKind) throw new Error("sealed receipt join mismatch");
   validateAcceptedDetails(receipt.toolName, receipt.details);
   const sessionPath = resolve(rootReal, manifest.session.directory, manifest.session.basename);
   if (relative(rootReal, sessionPath).startsWith("..")) throw new Error("sealed session path escape");
-  const sessionBytes = await readFile(sessionPath);
+  const sessionReal = await realpath(sessionPath);
+  if (relative(rootReal, sessionReal).startsWith("..")) throw new Error("sealed session path escape");
+  const sessionBytes = await readFile(sessionReal);
   if (sessionBytes.byteLength !== manifest.session.byteLength || sha256Hex(sessionBytes) !== manifest.session.sha256) throw new Error("sealed session authenticity mismatch");
   return { receipt, receiptBytes: new Uint8Array(receiptBytes), sessionText: sessionBytes.toString(), manifest, reference: { id: `receipt:${invocationId}`, sha256: artifact.stored.sha256 } };
 }
@@ -84,11 +88,7 @@ function sealedEvidenceReads(sessionText) {
   for (const line of sessionText.split("\n")) {
     if (!line) continue;
     let row;
-    try {
-      row = JSON.parse(line);
-    } catch {
-      continue;
-    }
+    row = JSON.parse(line);
     const m = row?.message;
     if (m?.role !== "toolResult" || m.toolName !== "ak_navigator_evidence_read" || m.isError !== false) continue;
     const d = m.details;
@@ -131,6 +131,7 @@ function createRecorderAssistedTransportV1(baseEnv = process.env) {
     const x = await existing(config, invocationId);
     if (!x) return null;
     if (kind === "navigator") {
+      if (x.child.signal || x.child.exitCode !== 0) return { kind: "infrastructure_failure", reference: x.reference };
       if (x.receipt.toolName !== "ak_navigator_output") throw new Error("sealed Navigator tool mismatch");
       const receipt = x.receipt.details;
       return { kind: "accepted", receipt, evidenceRead: x.evidenceRead, reference: x.reference };
