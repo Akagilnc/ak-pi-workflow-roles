@@ -109,22 +109,72 @@ export { createProductionMergerGitState } from "./merger-git-state.ts";
 export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
+type ActivationRuntime = {
+  event: { reason: string };
+  context: ExtensionContext;
+  judge: { activate(): Promise<void> };
+  fixer: { activate(): Promise<void> };
+  coder: { activate(context: ExtensionContext): Promise<void> };
+  reviewer: { activate(context: ExtensionContext): Promise<void> };
+  collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
+  doctor: { activate(): Promise<void> };
+  navigator(): Promise<void>;
+  merger(): Promise<void>;
+};
+
+export type ActivationStage = {
+  readonly id: string;
+  run(): Promise<void>;
+};
+
+type ActivationStageDeclaration = {
+  readonly id: string;
+  run(runtime: ActivationRuntime): Promise<void>;
+};
+
 export const ROLE_REGISTRY = [
-  { role: "judge", stages: ["load-and-install"] },
-  { role: "fixer", stages: ["load-and-install"] },
-  { role: "coder", stages: ["load-and-install"] },
-  { role: "reviewer", stages: ["load-and-install"] },
-  { role: "collector", stages: ["load-and-install"] },
-  { role: "doctor", stages: ["load-and-install"] },
-  { role: "navigator", stages: ["load-and-install"] },
-  { role: "merger", stages: ["prepare-git-and-install"] },
-] as const;
+  { role: "judge", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.judge.activate() }] },
+  { role: "fixer", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.fixer.activate() }] },
+  { role: "coder", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.coder.activate(runtime.context) }] },
+  { role: "reviewer", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.reviewer.activate(runtime.context) }] },
+  { role: "collector", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.collector.activate(runtime.context, runtime.event) }] },
+  { role: "doctor", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.doctor.activate() }] },
+  { role: "navigator", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.navigator() }] },
+  { role: "merger", stages: [{ id: "prepare-git-and-install", run: async (runtime: ActivationRuntime) => runtime.merger() }] },
+] as const satisfies readonly { role: string; stages: readonly ActivationStageDeclaration[] }[];
 
 for (const entry of ROLE_REGISTRY) {
   const seen = new Set<string>();
-  for (const id of entry.stages) {
-    if (!/^[a-z][a-z0-9-]*$/.test(id) || seen.has(id)) throw new Error(`Invalid activation stage id for ${entry.role}: ${id}`);
-    seen.add(id);
+  for (const stage of entry.stages) {
+    if (!/^[a-z][a-z0-9-]*$/.test(stage.id) || seen.has(stage.id)) throw new Error(`Invalid activation stage id for ${entry.role}: ${stage.id}`);
+    seen.add(stage.id);
+  }
+}
+
+export async function executeActivationStages(
+  role: string,
+  stages: readonly ActivationStage[],
+  infrastructure: { clock(): string; writeTrace(record: ActivationTraceRecord): void | Promise<void> },
+): Promise<void> {
+  for (const stage of stages) {
+    await infrastructure.writeTrace({ role, stageId: stage.id, status: "started", timestamp: infrastructure.clock() });
+    try {
+      await stage.run();
+    } catch (activationError) {
+      try {
+        await infrastructure.writeTrace({
+          role,
+          stageId: stage.id,
+          status: "failed",
+          timestamp: infrastructure.clock(),
+          cause: namedActivationCause(activationError),
+        });
+      } catch (traceError) {
+        throw new AggregateError([activationError, traceError], `Activation stage ${stage.id} failed and its failure trace could not be emitted`);
+      }
+      throw activationError;
+    }
+    await infrastructure.writeTrace({ role, stageId: stage.id, status: "completed", timestamp: infrastructure.clock() });
   }
 }
 
@@ -185,7 +235,7 @@ export type RoleRuntimeDependencies = {
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ComplianceDecision>;
   activationClock?(): string;
-  activationTraceWriter?: ActivationTraceWriter;
+  activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
 };
 
 function abortContext(ctx: ExtensionContext): void {
@@ -437,22 +487,8 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
 
-    const activators: Record<(typeof ROLE_REGISTRY)[number]["role"], (event: { reason: string }, ctx: ExtensionContext) => Promise<void>> = {
-      judge: async () => judge.activate(),
-      fixer: async () => fixer.activate(),
-      coder: async (_event, ctx) => coder.activate(ctx),
-      reviewer: async (_event, ctx) => reviewer.activate(ctx),
-      collector: async (event, ctx) => collector.activate(ctx, event),
-      doctor: async () => doctor.activate(),
-      navigator: async (_event, ctx) => activateNavigator(ctx),
-      merger: async (_event, ctx) => {
-        sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
-        if (sessionMergerGitState === undefined) throw new Error("Merger runtime dependencies are not configured");
-        await merger.activate();
-      },
-    };
     const clock = dependencies.activationClock ?? (() => new Date().toISOString());
-    const writeTrace: ActivationTraceWriter = dependencies.activationTraceWriter ?? ((record) => { writeSync(2, `${JSON.stringify(record)}\n`); });
+    const writeTrace = dependencies.activationTraceWriter ?? ((record: ActivationTraceRecord) => { writeSync(2, `${JSON.stringify(record)}\n`); });
 
     pi.on("session_start", async (event, ctx) => {
       admitted = false;
@@ -466,16 +502,30 @@ export function createRoleRuntimeExtension(
         throw error;
       }
       selectedRole = entry.role;
-      const stageId = entry.stages[0];
-      writeTrace({ role: entry.role, stageId, status: "started", timestamp: clock() });
+      const runtime: ActivationRuntime = {
+        event,
+        context: ctx,
+        judge,
+        fixer,
+        coder,
+        reviewer,
+        collector,
+        doctor,
+        navigator: () => activateNavigator(ctx),
+        merger: async () => {
+          sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
+          if (sessionMergerGitState === undefined) throw new Error("Merger runtime dependencies are not configured");
+          await merger.activate();
+        },
+      };
       try {
-        await activators[entry.role](event, ctx);
-        writeTrace({ role: entry.role, stageId, status: "completed", timestamp: clock() });
+        await executeActivationStages(
+          entry.role,
+          entry.stages.map((stage) => ({ id: stage.id, run: () => stage.run(runtime) })),
+          { clock, writeTrace },
+        );
         admitted = true;
       } catch (error) {
-        const failed: ActivationTraceRecord = { role: entry.role, stageId, status: "failed", timestamp: clock(), cause: namedActivationCause(error) };
-        writeTrace(failed);
-        pi.on("session_shutdown", () => { process.exitCode = 1; });
         abortContext(ctx);
         if (typeof ctx.mode === "string") process.exitCode = 1;
         throw error;

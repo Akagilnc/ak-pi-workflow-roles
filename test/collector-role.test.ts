@@ -202,6 +202,7 @@ test("collector activation fails closed for unsupported mode and missing flags w
         assert.equal(transport.calls.user, 0);
         assert.equal(transport.calls.pull, 0);
         assert.equal(faux.getPendingResponseCount(), 1);
+        assert.equal(process.exitCode, 1);
       });
     } finally {
       process.exitCode = previousExit;
@@ -306,6 +307,7 @@ test("collector replaces first input entirely, strips images, and rejects later 
         const pendingBefore = faux.getPendingResponseCount();
         faux.setResponses([fauxAssistantMessage("should not run")]);
         await session.prompt("second prompt must die");
+        assert.equal(process.exitCode, 1);
         assert.equal(faux.getPendingResponseCount(), 1);
         void pendingBefore;
       });
@@ -778,6 +780,7 @@ test("collector rejects parallel operational siblings and mixed output batches",
           true,
         );
         assert.equal(transport.calls.pull, 0);
+        assert.equal(process.exitCode, 1);
       });
     } finally {
       process.exitCode = previousExit;
@@ -1885,6 +1888,7 @@ test("F3-required-tool-absence", async () => {
         noTools: "builtin",
       }, async ({ session }) => {
         await session.prompt("start");
+        assert.equal(process.exitCode, 1);
         assertZeroGitHub(transport, "required-tool-absence");
         assert.equal(faux.state.callCount, 0);
         assert.equal(faux.getPendingResponseCount(), 1);
@@ -1996,6 +2000,7 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
           ),
           "Pi must expose skill:hostile-cmd-only with source skill",
         );
+        assert.equal(process.exitCode, 1);
         const successfulOutput = sessionManager.getEntries().some((entry) =>
           entry.type === "message" &&
           entry.message.role === "toolResult" &&
@@ -2347,6 +2352,7 @@ test("F3-ambient-commands", async () => {
         noTools: "builtin",
       }, async ({ session }) => {
         await session.prompt("start");
+        assert.equal(process.exitCode, 1);
         assertZeroGitHub(transport, "ambient-commands");
         assert.equal(faux.state.callCount, 0);
         assert.equal(faux.getPendingResponseCount(), 1);
