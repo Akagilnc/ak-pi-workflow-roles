@@ -1,6 +1,7 @@
 import { accessSync, constants, readFileSync } from "node:fs";
 import { isAbsolute, normalize } from "node:path";
 
+import { isUuidV7 } from "../uuidv7.ts";
 import { RecorderError, safeDiagnostic } from "./errors.ts";
 import {
   assertPathNotSymlinkEscape,
@@ -372,7 +373,7 @@ export function parseRecorderConfigStructure(text: string): RecorderConfig {
     cwd = absoluteAt(execution.cwd, ["execution", "cwd"]);
   const sessionDirectory = relativeAt(session.directory, ["session","directory"]);
   const sessionId = stringAt(session.id,["session","id"]);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sessionId)) invalid("session.id must be canonical UUIDv7",["session","id"]);
+  if (!isUuidV7(sessionId)) invalid("session.id must be canonical UUIDv7",["session","id"]);
   const indexed = [
     ...gitReferences.map((item, index) => ({
       item,

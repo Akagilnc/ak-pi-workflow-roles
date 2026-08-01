@@ -148,6 +148,7 @@ export async function packIsolatedPackage(
 
 export interface RawPackageManifest {
   files?: string[];
+  bin?: Record<string, string>;
   pi?: { extensions?: string[] };
 }
 

@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { readFile, open, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { join, relative } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -17,6 +19,8 @@ import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiReviewerAuditor } from "../src/reviewer-auditor.ts";
 import { createPiFixerAuditor } from "../src/fixer-auditor.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
+import { createPiNavigatorAuditor } from "../src/navigator-auditor.ts";
+import type { CurrentPositionSnapshotV1 } from "../src/navigator-contracts.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { createPiSoulAuditor } from "../src/soul-auditor.ts";
@@ -29,6 +33,7 @@ const coderSoulPath = fileURLToPath(new URL("../souls/coder.md", import.meta.url
 const reviewerSoulPath = fileURLToPath(new URL("../souls/reviewer.md", import.meta.url));
 const collectorSoulPath = fileURLToPath(new URL("../souls/collector.md", import.meta.url));
 const doctorSoulPath = fileURLToPath(new URL("../souls/doctor.md", import.meta.url));
+const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.meta.url));
 const mergerSoulPath = fileURLToPath(new URL("../souls/merger.md", import.meta.url));
 
 function transcriptFromContext(ctx: ExtensionContext): string {
@@ -37,6 +42,42 @@ function transcriptFromContext(ctx: ExtensionContext): string {
     ctx.sessionManager.getLeafId(),
   );
   return serializeConversation(convertToLlm(context.messages));
+}
+
+export const MAX_NAVIGATOR_EVIDENCE_ITEMS = 256;
+export const MAX_NAVIGATOR_EVIDENCE_BYTES = 32 * 1024 * 1024;
+const MAX_NAVIGATOR_EVIDENCE_ITEM_BYTES = 8 * 1024 * 1024;
+
+export async function loadNavigatorEvidence(snapshot: CurrentPositionSnapshotV1): Promise<Map<string, Uint8Array>> {
+  if (snapshot.evidence.length > MAX_NAVIGATOR_EVIDENCE_ITEMS) {
+    throw new Error("Navigator evidence item count exceeds bound");
+  }
+  const root = await realpath(join(snapshot.subject.repositoryRoot, ".ak", "work", "issues", String(snapshot.subject.parent.number), "assisted", snapshot.runId, "evidence"));
+  const loaded = new Map<string, Uint8Array>();
+  let totalBytes = 0;
+  for (const item of snapshot.evidence) {
+    const path = await realpath(item.handle);
+    const rel = relative(root, path);
+    if (rel.startsWith("..") || rel === "" || rel.includes("/../")) throw new Error("evidence handle escapes admitted capability");
+    const fd = await open(path, constants.O_RDONLY | ("O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0));
+    try {
+      const stat = await fd.stat();
+      if (!stat.isFile() || stat.size > MAX_NAVIGATOR_EVIDENCE_ITEM_BYTES) throw new Error("invalid bounded evidence handle");
+      totalBytes += stat.size;
+      if (totalBytes > MAX_NAVIGATOR_EVIDENCE_BYTES) throw new Error("Navigator evidence aggregate byte budget exceeded");
+      const bytes = new Uint8Array(stat.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const result = await fd.read(bytes, offset, bytes.length - offset, offset);
+        if (!result.bytesRead) throw new Error("evidence changed while loading");
+        offset += result.bytesRead;
+      }
+      loaded.set(item.handle, bytes);
+    } finally {
+      await fd.close();
+    }
+  }
+  return loaded;
 }
 
 export default function roleRuntime(pi: ExtensionAPI): void {
@@ -57,6 +98,10 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorEvidenceIndex: async (path) => JSON.parse(await readFile(path, "utf8")),
     readDoctorCommittedEvidence: async (targetCommit, path) => { const { stdout } = await execFileAsync("git", ["show", `${targetCommit}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 }); return new Uint8Array(stdout); },
     auditDoctorCompliance: createPiDoctorAuditor(),
+    loadNavigatorSoul: () => readFile(navigatorSoulPath, "utf8"),
+    loadNavigatorSnapshot: async (path) => JSON.parse(await readFile(path, "utf8")),
+    loadNavigatorEvidence,
+    auditNavigatorCompliance: createPiNavigatorAuditor(),
     loadMergerSoul: () => readFile(mergerSoulPath, "utf8"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     createMergerGitState: (repositoryRoot) =>

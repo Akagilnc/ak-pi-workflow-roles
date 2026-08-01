@@ -1,0 +1,32 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_kQmUldw5y0ej6tdN2lOVy8Om|fc_00a00448ee9652e5016a6dabec28d88191924dad60cacd819b",
+  "details": {
+    "status": "completed",
+    "report": "Removed both Judge-identified test-only production APIs (`afterLedgerEvent` and ledger rename/cleanup injection). Replaced lifecycle crash probes with Recorder-owned invocation barriers and asserted exact selected/pre/post identities, durable recovered latestAttempt, one role launch, and one successful post-settlement consultation. Existing admission/end race and concurrent canonical publication proofs remain active. Gates passed: 425 tests (5 skipped), typecheck, build:recorder, npm pack --dry-run, and diff check. Ledger cleanup-causality injection test was removed with its forbidden API; no deterministic ordinary-filesystem setup was found that can force both publication and cleanup failures without adding a hook or altering production behavior.",
+    "commitSha": "ea66e35",
+    "classesRepaired": [
+      {
+        "name": "LifecycleAdmissionExclusion",
+        "searchScope": "Assisted runner lifecycle tests and production dependency surface",
+        "exceptions": []
+      },
+      {
+        "name": "RecoveryStateContinuity",
+        "searchScope": "Role/Navigator Recorder failure, recovery publication, same-call replay, and ledger identity assertions",
+        "exceptions": []
+      },
+      {
+        "name": "LedgerTemporaryPublicationSafety",
+        "searchScope": "Atomic ledger publisher, concurrent append tests, generated dist, and test-only I/O API removal",
+        "exceptions": [
+          {
+            "where": "test/assisted-runner.test.ts",
+            "reason": "The forbidden injected rename/cleanup causality test was removed. A deterministic dual-failure oracle cannot be induced through the existing ordinary filesystem API without a test hook or production mechanism, both explicitly prohibited by authority."
+          }
+        ]
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
