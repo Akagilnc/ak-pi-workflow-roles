@@ -51,10 +51,10 @@ The CLI advertises the complete phase vocabulary in `pi --ak-role fixer --help`:
 
 | `--ak-fixer-phase` | Meaning | Legal success status |
 | --- | --- | --- |
-| `plan` | Inspect and propose a repair plan; do not edit or commit | `planned` |
-| `apply` | Execute the approved plan, verify, and commit when repaired | `completed` |
+| `plan` | Inspect and propose a repair plan; do not edit or commit | `planned` or assignment-level `refused` |
+| `apply` | Settle every finding class lawfully | `completed`, `refused`, or `partially_completed` |
 
-There is no third phase. Either phase may return `refused` with evidence.
+There is no third phase. Apply partial means a mixture of completed and lawfully refused findings, never unfinished work.
 
 ```bash
 pi --ak-role fixer \
@@ -72,11 +72,12 @@ Fixer terminates through `ak_fixer_output`. Its legal status-dependent shapes ar
 
 ```json
 {"status":"planned","report":"Markdown report"}
-{"status":"completed","report":"Markdown report","commitSha":"optional self-report","classesRepaired":[{"name":"ClassName","searchScope":"non-empty census scope","exceptions":[{"where":"explicit location","reason":"non-empty reason"}]}]}
-{"status":"refused","report":"Markdown report","commitSha":"optional self-report"}
+{"status":"refused","report":"Markdown report","remainingScope":"assignment scope","blocker":{"cause":"authority_violation","evidence":"concrete evidence"}}
+{"status":"completed","report":"Markdown report","classResults":[{"name":"ClassName","disposition":"completed","searchScope":"complete census scope","exceptions":[{"where":"inspected location","reason":"why no repair was required"}],"commitSha":"full lowercase 40- or 64-hex object ID"}]}
+{"status":"partially_completed","report":"Markdown report","classResults":[{"name":"Done","disposition":"completed","searchScope":"all locations","exceptions":[],"commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"Blocked","disposition":"refused","remainingScope":"exact remaining assignment scope","blocker":{"cause":"prerequisite_unmet","evidence":"concrete absent prerequisite"}}]}
 ```
 
-`classesRepaired` is optional and completed-only; when present it is non-empty, has unique comma-free nonblank names, nonblank search scopes, and explicit exception arrays (which may be empty). `planned` cannot carry `commitSha`. Otherwise `commitSha` is advisory evidence for the caller, not a hard gate. Fixer never emits `escalate`; requested owner decisions return as `refused` evidence for the caller to dispose. The caller owns the next step after the receipt (and may or may not involve Judge).
+Apply `classResults` is non-empty with unique comma-free names. `completed` contains only completed results, `refused` only refused results, and `partially_completed` at least one of each. Completed commit IDs are full, lowercase, and unique. The only blockers are `authority_violation` and `prerequisite_unmet`; provider, authentication, auditor, tool, or transport failure aborts without a receipt. Every structurally valid candidate is checked by a fresh same-active-model compliance audit; revise permits corrected resubmission, while audit infrastructure failure is nonzero. The accepted candidate is not rewritten.
 
 Fixer-only bash seatbelt (both `plan` and `apply`): before a `bash` tool executes, the package inspects only the string `command` and blocks when it case-sensitively contains any one of these exact ASCII literals — `rm -rf`, `git reset --hard`, `git clean`, `git checkout --`. The block is an ordinary nonterminating tool error that names the matched literal; bash does not run, the Fixer session stays alive, and the model may retry a different spelling/operation or submit `refused`. This is accidental-destruction drift prevention only — not hostile-code defense, shell sandboxing, filesystem isolation, or bypass resistance. Callers that need isolation must supply a container or sandbox.
 
@@ -226,7 +227,7 @@ Workflow ordering and routing are caller-owned. A separate orchestrator is optio
 
 ## Composing class-repair contracts
 
-Callers may use the typed contracts together without parsing Markdown: a `continue` Judge receipt identifies non-empty `classes[]`; a completed Fixer receipt may report `classesRepaired[]`; and `--ak-review-scope-keys <comma-separated keys>` limits Reviewer to exact class keys (omit it for a full review). Keys are comma-free, case-sensitive bytes and are not normalized. The caller, not this package, enforces contextual presence or absence and exact order-insensitive set equality between Judge and Fixer names. These contracts do not mandate any role ordering, repetition, routing, or workflow topology.
+Callers may use the typed contracts together without parsing Markdown: a `continue` Judge receipt identifies non-empty `classes[]`; an apply Fixer receipt settles findings in `classResults[]`; and `--ak-review-scope-keys <comma-separated keys>` limits Reviewer to exact class keys (omit it for a full review). Keys are comma-free, case-sensitive bytes and are not normalized. Packet composition, compatibility grouping, contextual reconciliation, sequencing, stopping, routing, and next-hop acceptance remain caller-owned; these contracts create no scheduler or workflow topology.
 
 ## Recorder (`ak-docket-record`)
 
@@ -240,4 +241,4 @@ The closed config has `version: 2` and adds `session: { directory, id }`. `direc
 
 Recorder forwards stdout and stderr byte-for-byte with backpressure and retains only a 4096-byte tail per stream for bounded failure diagnostics. Pass-through bytes and raw main/Reviewer-leg sessions are **not credential-scanned** and are never promoted, copied, or deleted. Callers own sink security and raw-session access, retention, and cleanup. Only admitted declarations and promoted derivatives are scanned.
 
-A successful docket contains the non-null accepted package Receipt, optional Judge/Reviewer audit observation, and [`recorder-manifest-v2`](schemas/recorder-manifest-v2.schema.json). Failures use [`recorder-failure-v2`](schemas/recorder-failure-v2.schema.json), exit 125, preserve known child exit/signal truth, and publish no partial docket. Publication is an atomic same-filesystem create-if-absent rename.
+A successful docket contains the non-null accepted package Receipt, optional Judge/Fixer/Reviewer/Doctor audit observation, and [`recorder-manifest-v2`](schemas/recorder-manifest-v2.schema.json). Failures use [`recorder-failure-v2`](schemas/recorder-failure-v2.schema.json), exit 125, preserve known child exit/signal truth, and publish no partial docket. Publication is an atomic same-filesystem create-if-absent rename.

@@ -1,0 +1,164 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+    "root": ".ak/dockets",
+    "docketId": "issues/44/review/review-002"
+  },
+  "invocation": {
+    "id": "019fbcb4-5364-73df-9a0f-f55f058a048d"
+  },
+  "session": {
+    "id": "019fbcb4-5364-73df-9a0f-f55f058a048d",
+    "directory": ".ak/work/issues/44/runs/review-002/session",
+    "basename": "2026-08-01T09-42-44-637Z_019fbcb4-5364-73df-9a0f-f55f058a048d.jsonl",
+    "sha256": "d939fbcbdb51c50a2361c36da20233f31f6708acfe0d6ed98a784dd23eaaa56f",
+    "byteLength": 67545,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44/.ak/work/issues/44/runs/review-002/session",
+      "--session-id",
+      "019fbcb4-5364-73df-9a0f-f55f058a048d",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/44/review-002-task.md",
+      "--ak-review-capabilities",
+      ".ak/work/issues/44/review-002-capabilities.json",
+      "-p",
+      "Review the requested fixed point."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "dd418124fbfe3db09f752972c89ea6766560cc08",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "fixer-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+        "commit": "dd418124fbfe3db09f752972c89ea6766560cc08",
+        "path": ".ak/dockets/issues/44/authority/final-owner-correction-001/receipt.json",
+        "blobOid": "d499ab8a4044ed9132f3547a65d53dafe62f3ddc",
+        "sha256": "68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c",
+        "byteLength": 1546
+      }
+    },
+    {
+      "id": "capabilities",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/capabilities",
+        "sha256": "02490a1c425b0537fdc5b44968516b259fab31ea0752ffefcff386f477e54761",
+        "byteLength": 624
+      }
+    },
+    {
+      "id": "canonical-review-skill",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/canonical-review-skill",
+        "sha256": "6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f",
+        "byteLength": 6740
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "e5f56cb4da9d3f1c05e2a433621ab381fed0ce14d3ce45eb03aa9f509e498fcb",
+        "byteLength": 58882
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "472bda95ddf502a4d4ee5daaadae6d847508f269803939c87e94c5b276786590",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_lYCgKAMKY4o9Z08w9xMUiLqz|fc_0efb8a1b28609682016a6dbffc6fb481919313102f099e7ca7",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_lYCgKAMKY4o9Z08w9xMUiLqz|fc_0efb8a1b28609682016a6dbffc6fb481919313102f099e7ca7",
+    "auditPassed": true,
+    "usage": {
+      "input": 44074,
+      "output": 593,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 44667
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

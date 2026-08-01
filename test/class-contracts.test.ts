@@ -29,20 +29,13 @@ test("Judge class receipt enforces status, grammar, and exact-name uniqueness", 
   ]) assert.throws(() => validateAcceptedJudgeDetails(invalid), /class|forbids/);
 });
 
-test("classesRepaired is a Fixer completed-only receipt and Coder remains closed", () => {
-  const classesRepaired = [{
-    name: "ParserCase",
-    searchScope: "all parser entry points",
-    exceptions: [{ where: "legacy adapter", reason: "owned externally" }],
-  }];
-  assert.deepEqual(validateAcceptedWorkerDetails({
-    status: "completed", report: "done", classesRepaired,
-  }, "Fixer"), { status: "completed", report: "done", classesRepaired });
-  for (const [output, role] of [
-    [{ status: "planned", report: "plan", classesRepaired }, "Fixer"],
-    [{ status: "refused", report: "no", classesRepaired }, "Fixer"],
-    [{ status: "completed", report: "done", classesRepaired }, "Coder"],
-    [{ status: "completed", report: "done", classesRepaired: [{ ...classesRepaired[0], name: "bad,key" }] }, "Fixer"],
-    [{ status: "completed", report: "done", classesRepaired: [...classesRepaired, ...classesRepaired] }, "Fixer"],
-  ] as const) assert.throws(() => validateAcceptedWorkerDetails(output, role), /classesRepaired/);
+test("current Fixer settlement is independent while Coder remains byte-compatible and closed", () => {
+  const fixer = { status: "completed", report: "done", classResults: [{
+    name: "ParserCase", disposition: "completed", searchScope: "all parser entry points",
+    exceptions: [{ where: "legacy adapter", reason: "already correct" }], commitSha: "a".repeat(40),
+  }] };
+  assert.deepEqual(validateAcceptedWorkerDetails(fixer, "Fixer"), fixer);
+  assert.deepEqual(validateAcceptedWorkerDetails({ status: "completed", report: "done", commitSha: "advisory" }, "Coder"), { status: "completed", report: "done", commitSha: "advisory" });
+  assert.throws(() => validateAcceptedWorkerDetails(fixer, "Coder"), /Coder output/);
+  assert.throws(() => validateAcceptedWorkerDetails({ status: "completed", report: "old", classesRepaired: [] }, "Fixer"), /Fixer output/);
 });
