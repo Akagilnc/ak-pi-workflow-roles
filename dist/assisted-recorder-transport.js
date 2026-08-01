@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { canonicalJson } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
@@ -103,12 +103,13 @@ function sealedEvidenceReads(sessionText) {
 async function existing(config, invocationId) {
   const docket = join(assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), "invocations", invocationId);
   try {
-    const verified = await loadVerifiedAssistedDocketV1(config.subject.repositoryRoot, docket, invocationId);
-    return { receipt: verified.receipt, evidenceRead: sealedEvidenceReads(verified.sessionText), reference: verified.reference, child: { exitCode: verified.manifest.child.exitCode, signal: verified.manifest.child.signal } };
+    await stat(docket);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
+  const verified = await loadVerifiedAssistedDocketV1(config.subject.repositoryRoot, docket, invocationId);
+  return { receipt: verified.receipt, evidenceRead: sealedEvidenceReads(verified.sessionText), reference: verified.reference, child: { exitCode: verified.manifest.child.exitCode, signal: verified.manifest.child.signal } };
 }
 function classifyRole(config, x, beforeTarget, afterTarget) {
   if (x.child?.signal) return { terminalClass: "cancellation", reference: x.reference, beforeTarget, afterTarget };
