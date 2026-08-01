@@ -1,4 +1,7 @@
+import { writeSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+
+import { namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -38,6 +41,9 @@ import {
   createFixerRoleRuntime,
 } from "./worker-role.ts";
 import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
+
+export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
+export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -103,7 +109,26 @@ export { createProductionMergerGitState } from "./merger-git-state.ts";
 export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
-export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator", "merger"] as const;
+export const ROLE_REGISTRY = [
+  { role: "judge", stages: ["load-and-install"] },
+  { role: "fixer", stages: ["load-and-install"] },
+  { role: "coder", stages: ["load-and-install"] },
+  { role: "reviewer", stages: ["load-and-install"] },
+  { role: "collector", stages: ["load-and-install"] },
+  { role: "doctor", stages: ["load-and-install"] },
+  { role: "navigator", stages: ["load-and-install"] },
+  { role: "merger", stages: ["prepare-git-and-install"] },
+] as const;
+
+for (const entry of ROLE_REGISTRY) {
+  const seen = new Set<string>();
+  for (const id of entry.stages) {
+    if (!/^[a-z][a-z0-9-]*$/.test(id) || seen.has(id)) throw new Error(`Invalid activation stage id for ${entry.role}: ${id}`);
+    seen.add(id);
+  }
+}
+
+export const WORKFLOW_ROLES = ROLE_REGISTRY.map(({ role }) => role) as Array<(typeof ROLE_REGISTRY)[number]["role"]>;
 export const ROLE_FLAG = {
   name: "ak-role",
   definition: {
@@ -159,10 +184,17 @@ export type RoleRuntimeDependencies = {
     input: ReviewerAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ComplianceDecision>;
+  activationClock?(): string;
+  activationTraceWriter?: ActivationTraceWriter;
 };
 
+function abortContext(ctx: ExtensionContext): void {
+  const abort = (ctx as ExtensionContext & { abort?: () => void }).abort;
+  if (typeof abort === "function") abort.call(ctx);
+}
+
 function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
-  ctx.abort();
+  abortContext(ctx);
   if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
   throw error;
 }
@@ -172,6 +204,23 @@ export function createRoleRuntimeExtension(
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
+
+    let admitted = false;
+    let selectedRole: string | undefined;
+    pi.on("input", () => {
+      const role = pi.getFlag(ROLE_FLAG.name);
+      if (role !== undefined && selectedRole !== undefined && !admitted) return { action: "handled" as const };
+      return { action: "continue" as const };
+    });
+    pi.on("before_agent_start", (_event, ctx) => {
+      const role = pi.getFlag(ROLE_FLAG.name);
+      if (role === undefined) return;
+      if (!admitted || selectedRole !== role) {
+        abortContext(ctx);
+        if (typeof ctx.mode === "string") process.exitCode = 1;
+        throw new Error(`Workflow role ${String(role)} activation did not complete`);
+      }
+    });
 
     const hostActions = { failInfrastructure };
     const judge = createJudgeRoleRuntime(
@@ -347,9 +396,9 @@ export function createRoleRuntimeExtension(
       } catch (error) {
         navigatorActive = undefined;
         try { pi.setActiveTools([]); } catch (cleanupError) {
-          hostActions.failInfrastructure(new AggregateError([error, cleanupError], "Navigator activation and fail-closed cleanup failed"), ctx);
+          throw new AggregateError([error, cleanupError], "Navigator activation and fail-closed cleanup failed");
         }
-        hostActions.failInfrastructure(error, ctx);
+        throw error;
       }
     };
     let sessionMergerGitState = dependencies.mergerGitState;
@@ -388,41 +437,48 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
 
+    const activators: Record<(typeof ROLE_REGISTRY)[number]["role"], (event: { reason: string }, ctx: ExtensionContext) => Promise<void>> = {
+      judge: async () => judge.activate(),
+      fixer: async () => fixer.activate(),
+      coder: async (_event, ctx) => coder.activate(ctx),
+      reviewer: async (_event, ctx) => reviewer.activate(ctx),
+      collector: async (event, ctx) => collector.activate(ctx, event),
+      doctor: async () => doctor.activate(),
+      navigator: async (_event, ctx) => activateNavigator(ctx),
+      merger: async (_event, ctx) => {
+        sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
+        if (sessionMergerGitState === undefined) throw new Error("Merger runtime dependencies are not configured");
+        await merger.activate();
+      },
+    };
+    const clock = dependencies.activationClock ?? (() => new Date().toISOString());
+    const writeTrace: ActivationTraceWriter = dependencies.activationTraceWriter ?? ((record) => { writeSync(2, `${JSON.stringify(record)}\n`); });
+
     pi.on("session_start", async (event, ctx) => {
-      const role = pi.getFlag(ROLE_FLAG.name);
-      if (role === undefined) return;
-      if (!(WORKFLOW_ROLES as readonly unknown[]).includes(role)) {
-        throw new Error(`Unsupported workflow role: ${String(role)}`);
+      admitted = false;
+      const rawRole = pi.getFlag(ROLE_FLAG.name);
+      if (rawRole === undefined) return;
+      const entry = ROLE_REGISTRY.find(({ role }) => role === rawRole);
+      if (entry === undefined) {
+        const error = new Error(`Unsupported workflow role: ${String(rawRole)}`);
+        abortContext(ctx);
+        if (typeof ctx.mode === "string") process.exitCode = 1;
+        throw error;
       }
-      switch (role) {
-        case "judge":
-          await judge.activate();
-          return;
-        case "fixer":
-          await fixer.activate();
-          return;
-        case "coder":
-          await coder.activate(ctx);
-          return;
-        case "reviewer":
-          await reviewer.activate(ctx);
-          return;
-        case "collector":
-          await collector.activate(ctx, event);
-          return;
-        case "doctor":
-          await doctor.activate();
-          return;
-        case "navigator":
-          await activateNavigator(ctx);
-          return;
-        case "merger":
-          sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
-          if (sessionMergerGitState === undefined) {
-            throw new Error("Merger runtime dependencies are not configured");
-          }
-          await merger.activate();
-          return;
+      selectedRole = entry.role;
+      const stageId = entry.stages[0];
+      writeTrace({ role: entry.role, stageId, status: "started", timestamp: clock() });
+      try {
+        await activators[entry.role](event, ctx);
+        writeTrace({ role: entry.role, stageId, status: "completed", timestamp: clock() });
+        admitted = true;
+      } catch (error) {
+        const failed: ActivationTraceRecord = { role: entry.role, stageId, status: "failed", timestamp: clock(), cause: namedActivationCause(error) };
+        writeTrace(failed);
+        pi.on("session_shutdown", () => { process.exitCode = 1; });
+        abortContext(ctx);
+        if (typeof ctx.mode === "string") process.exitCode = 1;
+        throw error;
       }
     });
   };
