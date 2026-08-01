@@ -1,0 +1,7 @@
+# Owner reconsideration — Issue #22 merger seat
+
+The owner accepts the first Judge verdict except for A2 (Merger shape) and requests reconsideration of that point.
+
+Owner objection: **Merger and Fixer have materially different responsibilities.** Fixer repairs an adjudicated defect class under repair authority. A Merger resolves one real integration conflict while preserving both branches' intent and then returns control; it must not decide queue topology, ordering, retry, publication, or unrelated repair. Treating this as Fixer apply risks collapsing two distinct professional judgments and conflicts with the class-oriented Fixer contract.
+
+Reconsider whether the observed conflict-only integration demand is sufficient under ADR 0001 to justify a distinct Merger role, Soul, tool boundary, and typed receipt. Do not preserve the prior result merely for consistency. Do not reopen A1 or A3–A7 unless A2's correction logically requires a narrowly identified amendment.
