@@ -53,7 +53,7 @@ function subject(v) {
   return { repositoryRoot: text(r.repositoryRoot, "repositoryRoot"), github: { owner: text(g.owner, "owner"), name: text(g.name, "name"), id: text(g.id, "repository id") }, parent: issue(r.parent, "parent") };
 }
 function canonicalSnapshotDigestV1(value) {
-  const stable = { ...value, capturedAt: "<capture-time>", parentObservation: { ...value.parentObservation, observedAt: "<observation-time>" }, children: value.children.map((child) => ({ ...child, observedAt: "<observation-time>" })) };
+  const stable = { ...value, capturedAt: "<capture-time>" };
   return sha256Hex(canonicalJson(stable));
 }
 function validateCurrentPositionSnapshotV1(value) {
