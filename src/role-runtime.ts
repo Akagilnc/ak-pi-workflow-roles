@@ -57,6 +57,9 @@ export {
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
+export { fixerOutputSchema, validateFixerOutput } from "./package-contracts/fixer-output.ts";
+export type { FixerBlocker, FixerClassResult, FixerPhase } from "./package-contracts/fixer-output.ts";
+export { FIXER_AUDIT_TOOL_NAME, createPiFixerAuditor } from "./fixer-auditor.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
@@ -116,6 +119,10 @@ export type RoleRuntimeDependencies = {
     input: SoulAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
+  auditFixerCompliance?(
+    input: import("./worker-role.ts").FixerAuditInput,
+    options: { context: ExtensionContext; signal?: AbortSignal },
+  ): Promise<ComplianceDecision>;
   auditReviewerCompliance?(
     input: ReviewerAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
@@ -159,7 +166,13 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadFixPacket(path);
         },
+        transcriptFromContext: dependencies.transcriptFromContext,
+        async auditCompliance(input, options) {
+          if (dependencies.auditFixerCompliance === undefined) throw new Error("Fixer compliance auditor is not configured");
+          return dependencies.auditFixerCompliance(input, options);
+        },
       },
+      hostActions,
     );
     const coder = createCoderRoleRuntime(
       pi,

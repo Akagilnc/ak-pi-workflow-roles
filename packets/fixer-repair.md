@@ -7,13 +7,14 @@ predecessor/successor.
 
 Selection, composition, and use are **caller-owned** (ADR 0010). This template
 owns only the contributor-facing repair request shape. It must **not** claim
-Judge origin, Fixer destination, return-to-Judge flow, mechanical enforcement,
-Soul-compliance audit, receipt-envelope enforcement, or a cross-role ledger.
+Judge origin, Fixer destination, return-to-Judge flow, or a cross-role ledger.
 
-Current Fixer public output remains the thin contract in `src/worker-role.ts`:
-`status`, free-form Markdown `report`, and optional `commitSha`. Mechanical
-Fixer receipt enforcement of an `R#` ledger requires **separate authority** that
-explicitly changes that public contract.
+The current Fixer public apply receipt settles each named finding through typed
+`classResults`: completed findings carry census scope, inspected exceptions, and
+a full commit ID; refused findings carry remaining scope and one of the two
+lawful blockers. The package compliance audit checks the submitted receipt
+against the supplied packet, but this template does not define how `R#` packet
+IDs map to finding names.
 
 ## Identity seal
 
@@ -73,8 +74,8 @@ Headings and header spelling are ignored and are not evidence. No per-item
 wording grammar is required beyond a nonblank disposition.
 
 Acceptance or rejection of that reconciliation is recorded **externally** in the
-contributor trail (see `docs/development-closure.md`). This template does **not**
-claim runtime, schema, Soul-audit, or receipt-gate enforcement of the ledger.
+contributor trail (see `docs/development-closure.md`). This template does **not** claim package enforcement of this repository-specific
+`R#` reconciliation.
 
 ## Forward-only amendment
 
