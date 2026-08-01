@@ -9,8 +9,9 @@ import { DoctorEvidenceStore, validateDoctorOutput } from "../src/doctor-contrac
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
-  { type: "message", timestamp: "2026-08-01T05:01:19.000Z", message: { role: "assistant", responseId: "r1", usage: { output: 7 }, content: [{ type: "toolCall", id: "c1", name: "ak_judge_output", arguments: {} }] } },
-  { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_judge_output", isError: false, details: { judgeStatus: "converged", commitSha: "abc1234" } } },
+  { type: "message", timestamp: "2026-08-01T05:01:18.900Z", message: { role: "assistant", content: [{ type: "toolCall", id: "c0", name: "read", arguments: {} }] } },
+  { type: "message", timestamp: "2026-08-01T05:01:19.000Z", message: { role: "assistant", responseId: "r1", usage: { output: 7 }, content: [{ type: "toolCall", id: "c1", name: "ak_coder_output", arguments: {} }] } },
+  { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "done", commitSha: "abc1234" } } },
 ];
 
 test("Doctor mission licenses a retained runs case as the subject of a completed cost report", async () => {
@@ -34,9 +35,9 @@ test("one retained runs directory yields an independently cited single-case cost
   assert.deepEqual(patient.cost.legs, { count: 1, sources: ["review-004/session/real.jsonl"] });
   assert.equal(patient.cost.modelApiTurns.count, 1);
   assert.equal(patient.cost.outputTokens.count, 7);
-  assert.equal(patient.cost.toolCalls.count, 1);
+  assert.equal(patient.cost.toolCalls.count, 2);
   assert.equal(patient.cost.retries.count, 1);
-  assert.equal(patient.cost.statuses[0]?.status, "converged");
+  assert.equal(patient.cost.statuses[0]?.status, "completed");
   assert.equal(patient.cost.outputBytes.payload, "raw JSONL bytes");
   assert.equal(patient.cost.sessions[0]?.completion, "accepted");
   assert.equal(patient.cost.sessions[0]?.wallMilliseconds, 1420);
@@ -45,7 +46,7 @@ test("one retained runs directory yields an independently cited single-case cost
   store.read("review-004/session/real.jsonl");
   const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-  assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, toolCalls: { ...patient.cost.toolCalls, count: 2 } } }, patient, store), /re-derived/);
+  assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, toolCalls: { ...patient.cost.toolCalls, count: 3 } } }, patient, store), /re-derived/);
 });
 
 test("runtime-derived metrics permit completion when a case exceeds evidence pagination, but unequal metrics fail", async () => {
