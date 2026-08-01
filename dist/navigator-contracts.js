@@ -2,6 +2,8 @@ import { canonicalJson } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
 import { isUuidV7 } from "./uuidv7.js";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./package-contracts/navigator-output.js";
+import { validateRecordedNavigatorReceiptV1 } from "./package-contracts/navigator-output.js";
+import publishedNavigatorReceiptV1Schema from "../schemas/navigator-receipt-v1.schema.json";
 const PACKAGED_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator"];
 const SHA256 = /^[0-9a-f]{64}$/;
 const OID = /^[0-9a-f]{40,64}$/;
@@ -144,8 +146,8 @@ function validatePrimaryShape(v, status) {
   return stringArray(p.evidenceIds, "primary evidence ids");
 }
 function validateNavigatorReceiptV1(value, snapshot, actualReads) {
+  validateRecordedNavigatorReceiptV1(value);
   const r = record(value, ["version", "status", "runId", "subject", "snapshotDigest", "positionCursor", "invocationId", "latestAttempt", "evidenceRead", "primary", "explanation"], "Navigator receipt");
-  if (r.version !== 1 || !["ordinary", "insufficient", "refused", "escalated"].includes(String(r.status)) || !isUuidV7(r.invocationId)) fail("Navigator receipt");
   const cited = validatePrimaryShape(r.primary, r.status);
   if (!Array.isArray(r.evidenceRead)) fail("evidence read record");
   const reads = r.evidenceRead.map((x) => {
@@ -159,13 +161,14 @@ function validateNavigatorReceiptV1(value, snapshot, actualReads) {
   const receipt = r;
   if (!navigatorBindingMatchesV1(snapshot, receipt) || canonicalJson(subject(r.subject)) !== canonicalJson(snapshot.subject) || canonicalJson(receipt.latestAttempt) !== canonicalJson(snapshot.latestAttempt)) fail("receipt binding");
   if (cited.some((x) => !snapshot.evidence.some((e) => e.id === x) || !actualById.has(x))) fail("evidence citation");
+  if (receipt.primary.kind === "return_scope_or_authority_defect" && (!cited.includes(receipt.primary.defect.evidenceId) || !actualById.has(receipt.primary.defect.evidenceId))) fail("defect evidence citation");
   return receipt;
 }
 function navigatorBindingMatchesV1(snapshot, receipt) {
   return receipt.runId === snapshot.runId && receipt.snapshotDigest === snapshot.digest && receipt.positionCursor === snapshot.positionCursor;
 }
 const currentPositionSnapshotV1Schema = { type: "object", additionalProperties: false, required: ["version", "runId", "subject", "children", "positionCursor", "digest"] };
-const navigatorReceiptV1Schema = { type: "object", additionalProperties: false, required: ["version", "status", "runId", "subject", "snapshotDigest", "positionCursor", "invocationId", "latestAttempt", "evidenceRead", "primary", "explanation"], properties: { version: { type: "integer", const: 1 }, status: { type: "string", enum: ["ordinary", "insufficient", "refused", "escalated"] }, runId: { type: "string" }, subject: { type: "object" }, snapshotDigest: { type: "string" }, positionCursor: { type: "integer", minimum: 0 }, invocationId: { type: "string" }, latestAttempt: { anyOf: [{ type: "object" }, { type: "null" }] }, evidenceRead: { type: "array", items: { type: "object", additionalProperties: false, required: ["evidenceId", "fullyRead"], properties: { evidenceId: { type: "string" }, fullyRead: { type: "boolean" } } } }, primary: { type: "object" }, explanation: { type: "string", minLength: 1 } } };
+const navigatorReceiptV1Schema = publishedNavigatorReceiptV1Schema;
 export {
   NAVIGATOR_OUTPUT_TOOL_NAME,
   PACKAGED_ROLES,

@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
+import publishedAssistedCallV1Schema from "../schemas/assisted-call-v1.schema.json";
 import { isUuidV7 } from "./uuidv7.js";
 import { scanJsonValue } from "./recorder/scanner.js";
 import { PACKAGED_ROLES } from "./navigator-contracts.js";
@@ -82,7 +83,7 @@ function validateSelectedPiArgvV1(argv, execution) {
   }
   return [...argv];
 }
-const assistedCallConfigV1Schema = { type: "object", additionalProperties: false, required: ["version", "runId", "callId", "subject", "acquisition", "execution"] };
+const assistedCallConfigV1Schema = publishedAssistedCallV1Schema;
 export {
   assistedCallConfigV1Schema,
   validateAssistedCallConfigV1,
