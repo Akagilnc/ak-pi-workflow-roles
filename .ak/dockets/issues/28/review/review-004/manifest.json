@@ -1,0 +1,178 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "root": ".ak/dockets",
+    "docketId": "issues/28/review/review-004"
+  },
+  "invocation": {
+    "id": "019fbbb4-c160-7d08-801f-f7c594291e18"
+  },
+  "session": {
+    "id": "019fbbb4-c160-7d08-801f-f7c594291e18",
+    "directory": ".ak/work/issues/28/runs/review-004-retry/session",
+    "basename": "2026-08-01T05-03-50-192Z_019fbbb4-c160-7d08-801f-f7c594291e18.jsonl",
+    "sha256": "de743e6681165251bdf705fd311a19a75241ebf38ce2ef4ef5e48b7c8e42f175",
+    "byteLength": 95379,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28/.ak/work/issues/28/runs/review-004-retry/session",
+      "--session-id",
+      "019fbbb4-c160-7d08-801f-f7c594291e18",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/code-review/SKILL.md",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "reviewer",
+      "--ak-review-task",
+      ".ak/work/issues/28/review-004-retry-task.md",
+      "--ak-review-capabilities",
+      ".ak/work/issues/28/review-004-retry-capabilities.json",
+      "-p",
+      "Submit one Agent proposal with base 4e96b7b1a95d16fb6dbf14cb424d63f3225bdbc5; materials navigator-authority=.ak/dockets/issues/28/authority/final-authority-001/receipt.json, runner-authority=.ak/dockets/issues/28/authority/assisted-runner-final-001/receipt.json, repository-law=CLAUDE.md; relevanceHints standards=[repository-law] and spec=[navigator-authority,runner-authority]; established spec; for both grants tools=[read,grep,find,ls,bash], bashCommands=[git diff 4e96b7b1a95d16fb6dbf14cb424d63f3225bdbc5...0100affe834d39736faa79dddc5724482edf6901], and all eight supplied prerequisite operations exactly. Then complete the review and submit the package receipt."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "0100affe834d39736faa79dddc5724482edf6901",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "navigator-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "0100affe834d39736faa79dddc5724482edf6901",
+        "path": ".ak/dockets/issues/28/authority/final-authority-001/receipt.json",
+        "blobOid": "b11d096a09a739f226f9229c4fcd5ddd9fbba351",
+        "sha256": "b4c5676059e59697ef65818563405381618a5b09dbe579665329f38d7c9d2443",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "runner-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "0100affe834d39736faa79dddc5724482edf6901",
+        "path": ".ak/dockets/issues/28/authority/assisted-runner-final-001/receipt.json",
+        "blobOid": "e9146000d2856bf81055197065505ba1f21d2b7e",
+        "sha256": "dc22f4303d3e02fa6bb8d3804d387644269d71f234c315f27616eff57eb399cd",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/review-task",
+        "sha256": "4b84a08d2ba7b757a542a6ce0f18c407f806a0404707cd54740ce07a07598910",
+        "byteLength": 738
+      }
+    },
+    {
+      "id": "capabilities",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/capabilities",
+        "sha256": "73499f64c30c8f1cbf70f3d69bd94b4acb5ed9a86d2811bafd7192ae7b38f257",
+        "byteLength": 624
+      }
+    },
+    {
+      "id": "canonical-review-skill",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/canonical-review-skill",
+        "sha256": "6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f",
+        "byteLength": 6740
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "0585f8c2695b1e792e7f04a00c76425f2b56edb07be7fba6d917ef29e8c8c5e0",
+        "byteLength": 81497
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "6725b42b46e6b2e0514be71eb5580256167627c59acb859a71397a1da6c7c57c",
+        "byteLength": 288
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_Jcb3uYAzt0bS2gLweEml6Evz|fc_044e5021eaf29c25016a6d7e87a94881919620254d6bcd1876",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_reviewer_output",
+    "toolCallId": "call_Jcb3uYAzt0bS2gLweEml6Evz|fc_044e5021eaf29c25016a6d7e87a94881919620254d6bcd1876",
+    "auditPassed": true,
+    "usage": {
+      "input": 56116,
+      "output": 274,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 56390
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
