@@ -41,6 +41,21 @@ test("one retained runs directory yields an independently cited single-case cost
   assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, toolCalls: { ...patient.cost.toolCalls, count: 2 } } }, patient, store), /re-derived/);
 });
 
+test("runtime-derived metrics permit completion when a case exceeds evidence pagination, but unequal metrics fail", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-large-case-"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(join(runs, "coder/session"), { recursive: true });
+  const padding = "x".repeat(5000);
+  const fixture = [...rows, { type: "custom", timestamp: "2026-08-01T05:01:21.000Z", padding }];
+  await writeFile(join(runs, "coder/session/large.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const patient = await loadDoctorCase(runs);
+  assert.ok(patient.evidence[0]!.content.length > 4096);
+  const store = new DoctorEvidenceStore(patient);
+  const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [] } as const;
+  assert.deepEqual(validateDoctorOutput(output, patient, store), output);
+  assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, outputTokens: { ...patient.cost.outputTokens, count: 8 } } }, patient, store), /re-derived/);
+});
+
 test("intermediate object details neither terminate nor manufacture session status", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-endpoint-"));
   const runs = join(root, ".ak/work/issues/40/runs");
