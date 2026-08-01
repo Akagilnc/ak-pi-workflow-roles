@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import {
+  ActivationBarrierError,
   ROLE_REGISTRY,
   createRoleRuntimeExtension,
   executeActivationStages,
+  writeActivationTraceRecord,
   type ActivationStage,
 } from "../src/role-runtime.ts";
-import type { ActivationTraceRecord } from "../src/activation-trace.ts";
+import { activationTraceRecordSchema, type ActivationTraceRecord } from "../src/activation-trace.ts";
+
+const originalExitCode = process.exitCode;
+afterEach(() => { process.exitCode = originalExitCode; });
 
 test("registration enrolls every role in stable named activation stages", () => {
   assert.equal(ROLE_REGISTRY.length, 8);
@@ -15,7 +21,7 @@ test("registration enrolls every role in stable named activation stages", () => 
     assert.ok(entry.stages.length > 0);
     assert.equal(new Set(entry.stages.map(({ id }) => id)).size, entry.stages.length);
     for (const stage of entry.stages) {
-      assert.match(stage.id, /^[a-z][a-z0-9-]*$/);
+      assert.equal(Value.Check(activationTraceRecordSchema, { role: entry.role, stageId: stage.id, status: "started", timestamp: "2025-01-01T00:00:00.000Z" }), true);
       assert.equal(typeof stage.run, "function");
     }
   }
@@ -39,13 +45,14 @@ function runtimeHarness(options: {
   clock?: () => string;
   writeTrace?: (record: ActivationTraceRecord) => void | Promise<void>;
 } = {}) {
-  const handlers = new Map<string, Function[]>();
+  type Handler = (event: { reason?: string; systemPrompt?: string }, ctx: ExtensionContext) => unknown;
+  const handlers = new Map<string, Handler[]>();
   const traces: ActivationTraceRecord[] = [];
   let aborts = 0;
   const pi = {
     registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
     getFlag(name: string) { return name === "ak-role" ? "judge" : undefined; },
-    on(name: string, handler: Function) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+    on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
   } as unknown as ExtensionAPI;
   createRoleRuntimeExtension({
     loadJudgeSoul: options.activate ?? (async () => { throw new TypeError("soul unavailable"); }),
@@ -54,23 +61,28 @@ function runtimeHarness(options: {
     activationTraceWriter: options.writeTrace ?? ((record) => { traces.push(record); }),
   })(pi);
   const ctx = { mode: "print", abort() { aborts++; } } as unknown as ExtensionContext;
-  return { handlers, traces, ctx, aborts: () => aborts };
+  const handler = (name: string): Handler => {
+    const found = handlers.get(name)?.[0];
+    assert.ok(found, `missing ${name} handler`);
+    return found;
+  };
+  return { handler, traces, ctx, aborts: () => aborts };
 }
 
 test("a rejected registered activation fails closed with a structured named cause and dispatch barrier", async () => {
   const h = runtimeHarness();
-  await assert.rejects(() => h.handlers.get("session_start")![0]!({}, h.ctx), /soul unavailable/);
+  await assert.rejects(async () => h.handler("session_start")({}, h.ctx), /soul unavailable/);
   assert.equal(h.aborts(), 1);
   assert.equal(process.exitCode, 1);
   assert.deepEqual(h.traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
     { role: "judge", stageId: "load-and-install", status: "started" },
     { role: "judge", stageId: "load-and-install", status: "failed" },
   ]);
+  for (const trace of h.traces) assert.equal(Value.Check(activationTraceRecordSchema, trace), true);
   const failure = h.traces[1]!;
   assert.equal(failure.status, "failed");
   if (failure.status === "failed") assert.deepEqual(failure.cause, { name: "TypeError", message: "soul unavailable" });
-  await assert.rejects(async () => h.handlers.get("before_agent_start")![0]!({}, h.ctx), /did not complete/);
-  process.exitCode = undefined;
+  await assert.rejects(async () => h.handler("before_agent_start")({}, h.ctx), (error: unknown) => error instanceof ActivationBarrierError && error.code === "AK_ACTIVATION_NOT_ADMITTED");
 });
 
 for (const failure of ["clock", "writer"] as const) {
@@ -81,12 +93,11 @@ for (const failure of ["clock", "writer"] as const) {
       activate: async () => { activations++; return "SOUL"; },
       ...(failure === "clock" ? { clock: () => { throw infrastructureError; } } : { writeTrace: () => { throw infrastructureError; } }),
     });
-    await assert.rejects(() => h.handlers.get("session_start")![0]!({}, h.ctx), infrastructureError);
+    await assert.rejects(async () => h.handler("session_start")({}, h.ctx), infrastructureError);
     assert.equal(activations, 0);
     assert.equal(h.aborts(), 1);
     assert.equal(process.exitCode, 1);
-    process.exitCode = undefined;
-  });
+    });
 }
 
 test("completed trace emission failure still terminates the invocation", async () => {
@@ -96,10 +107,9 @@ test("completed trace emission failure still terminates the invocation", async (
     activate: async () => "SOUL",
     writeTrace: () => { if (++writes === 2) throw traceError; },
   });
-  await assert.rejects(() => h.handlers.get("session_start")![0]!({}, h.ctx), traceError);
+  await assert.rejects(async () => h.handler("session_start")({}, h.ctx), traceError);
   assert.equal(h.aborts(), 1);
   assert.equal(process.exitCode, 1);
-  process.exitCode = undefined;
 });
 
 test("failed trace emission cannot mask the activation cause or skip termination", async () => {
@@ -111,10 +121,37 @@ test("failed trace emission cannot mask the activation cause or skip termination
     writeTrace: async () => { if (++writes === 2) throw traceError; },
   });
   await assert.rejects(
-    () => h.handlers.get("session_start")![0]!({}, h.ctx),
+    async () => h.handler("session_start")({}, h.ctx),
     (error: unknown) => error instanceof AggregateError && error.errors[0] === activationError && error.errors[1] === traceError,
   );
   assert.equal(h.aborts(), 1);
   assert.equal(process.exitCode, 1);
-  process.exitCode = undefined;
+});
+
+
+test("default trace writer retries transient and short writes until one complete JSONL record", () => {
+  const chunks: Buffer[] = [];
+  let calls = 0;
+  writeActivationTraceRecord(
+    { role: "judge", stageId: "load", status: "started", timestamp: "2025-01-01T00:00:00.000Z" },
+    ((_fd: number, buffer: Uint8Array, offset: number, length: number) => {
+      calls += 1;
+      if (calls === 1) throw Object.assign(new Error("busy"), { code: "EAGAIN" });
+      const count = Math.min(7, length);
+      chunks.push(Buffer.from(buffer.subarray(offset, offset + count)));
+      return count;
+    }) as typeof import("node:fs").writeSync,
+  );
+  const line = Buffer.concat(chunks).toString();
+  assert.equal(line.endsWith("\n"), true);
+  assert.equal(Value.Check(activationTraceRecordSchema, JSON.parse(line)), true);
+  assert.ok(calls > 2);
+});
+
+test("executor rejects schema-invalid dependency output without emitting it", async () => {
+  const traces: ActivationTraceRecord[] = [];
+  await assert.rejects(() => executeActivationStages("judge", [{ id: "load", run: async () => {} }], {
+    clock: () => "invalid", writeTrace: (record) => { traces.push(record); },
+  }), /closed contract/);
+  assert.deepEqual(traces, []);
 });

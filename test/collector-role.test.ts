@@ -216,7 +216,7 @@ test("collector activation fails closed for unsupported mode and missing flags w
         assert.equal(transport.calls.user, 0);
         assert.equal(transport.calls.pull, 0);
         assert.equal(faux.getPendingResponseCount(), 1);
-        assert.equal(process.exitCode, 1);
+        assert.equal(process.exitCode, undefined);
       });
     } finally {
       process.exitCode = previousExit;

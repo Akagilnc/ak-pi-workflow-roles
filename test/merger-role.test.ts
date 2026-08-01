@@ -59,15 +59,18 @@ test("role extension binds Merger Git state to session cwd while preserving inje
     const h = harness();
     h.pi.getFlag = (name: string) => name === "ak-role" ? "merger" : name === "ak-merger-input" ? "/input.json" : undefined;
     const roots: string[] = [];
+    const states: object[] = [];
     const state = { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } };
     createRoleRuntimeExtension({
       loadJudgeSoul: async () => "unused", transcriptFromContext: () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
       loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input,
-      createMergerGitState(root) { roots.push(root); return state; },
+      createMergerGitState(root) { roots.push(root); const created = { ...state }; states.push(created); return created; },
       ...(injected ? { mergerGitState: state } : {}),
     })(h.pi as unknown as ExtensionAPI);
-    await h.handlers.get("session_start")({}, { cwd: "/session/repository" } as ExtensionContext);
-    assert.deepEqual(roots, injected ? [] : ["/session/repository"]);
+    await h.handlers.get("session_start")({}, { cwd: "/session/repository-a" } as ExtensionContext);
+    await h.handlers.get("session_start")({}, { cwd: "/session/repository-b" } as ExtensionContext);
+    assert.deepEqual(roots, injected ? [] : ["/session/repository-a", "/session/repository-b"]);
+    if (!injected) assert.notEqual(states[0], states[1]);
   }
 });
 

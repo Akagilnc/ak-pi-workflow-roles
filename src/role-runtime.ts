@@ -1,7 +1,8 @@
 import { writeSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 
-import { namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
+import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -151,18 +152,32 @@ for (const entry of ROLE_REGISTRY) {
   }
 }
 
+function validateActivationTraceRecord(record: unknown): ActivationTraceRecord {
+  if (!Value.Check(activationTraceRecordSchema, record)) {
+    throw new TypeError("Activation trace record does not match its closed contract");
+  }
+  return record as ActivationTraceRecord;
+}
+
+async function emitActivationTrace(
+  writeTrace: (record: ActivationTraceRecord) => void | Promise<void>,
+  record: unknown,
+): Promise<void> {
+  await writeTrace(validateActivationTraceRecord(record));
+}
+
 export async function executeActivationStages(
   role: string,
   stages: readonly ActivationStage[],
   infrastructure: { clock(): string; writeTrace(record: ActivationTraceRecord): void | Promise<void> },
 ): Promise<void> {
   for (const stage of stages) {
-    await infrastructure.writeTrace({ role, stageId: stage.id, status: "started", timestamp: infrastructure.clock() });
+    await emitActivationTrace(infrastructure.writeTrace, { role, stageId: stage.id, status: "started", timestamp: infrastructure.clock() });
     try {
       await stage.run();
     } catch (activationError) {
       try {
-        await infrastructure.writeTrace({
+        await emitActivationTrace(infrastructure.writeTrace, {
           role,
           stageId: stage.id,
           status: "failed",
@@ -174,7 +189,38 @@ export async function executeActivationStages(
       }
       throw activationError;
     }
-    await infrastructure.writeTrace({ role, stageId: stage.id, status: "completed", timestamp: infrastructure.clock() });
+    await emitActivationTrace(infrastructure.writeTrace, { role, stageId: stage.id, status: "completed", timestamp: infrastructure.clock() });
+  }
+}
+
+const TRACE_WRITE_RETRY_LIMIT = 100;
+
+export function writeActivationTraceRecord(
+  record: ActivationTraceRecord,
+  write: typeof writeSync = writeSync,
+): void {
+  const bytes = Buffer.from(`${JSON.stringify(record)}\n`);
+  let offset = 0;
+  let retries = 0;
+  while (offset < bytes.length) {
+    try {
+      const written = write(2, bytes, offset, bytes.length - offset);
+      if (written <= 0) throw new Error("Activation trace write made no progress");
+      offset += written;
+      retries = 0;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code === "EAGAIN" || code === "EINTR") && retries++ < TRACE_WRITE_RETRY_LIMIT) continue;
+      throw error;
+    }
+  }
+}
+
+export class ActivationBarrierError extends Error {
+  readonly code = "AK_ACTIVATION_NOT_ADMITTED";
+  constructor(role: unknown) {
+    super(`Workflow role ${String(role)} activation did not complete`);
+    this.name = "ActivationBarrierError";
   }
 }
 
@@ -259,16 +305,14 @@ export function createRoleRuntimeExtension(
     let selectedRole: string | undefined;
     pi.on("input", () => {
       const role = pi.getFlag(ROLE_FLAG.name);
-      if (role !== undefined && selectedRole !== undefined && !admitted) return { action: "handled" as const };
+      if (role !== undefined && !admitted) return { action: "handled" as const };
       return { action: "continue" as const };
     });
     pi.on("before_agent_start", (_event, ctx) => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
-        abortContext(ctx);
-        if (typeof ctx.mode === "string") process.exitCode = 1;
-        throw new Error(`Workflow role ${String(role)} activation did not complete`);
+        failInfrastructure(new ActivationBarrierError(role), ctx);
       }
     });
 
@@ -488,18 +532,16 @@ export function createRoleRuntimeExtension(
     );
 
     const clock = dependencies.activationClock ?? (() => new Date().toISOString());
-    const writeTrace = dependencies.activationTraceWriter ?? ((record: ActivationTraceRecord) => { writeSync(2, `${JSON.stringify(record)}\n`); });
+    const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
 
     pi.on("session_start", async (event, ctx) => {
       admitted = false;
+      selectedRole = undefined;
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = ROLE_REGISTRY.find(({ role }) => role === rawRole);
       if (entry === undefined) {
-        const error = new Error(`Unsupported workflow role: ${String(rawRole)}`);
-        abortContext(ctx);
-        if (typeof ctx.mode === "string") process.exitCode = 1;
-        throw error;
+        failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
       const runtime: ActivationRuntime = {
@@ -513,7 +555,9 @@ export function createRoleRuntimeExtension(
         doctor,
         navigator: () => activateNavigator(ctx),
         merger: async () => {
-          sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
+          if (dependencies.mergerGitState === undefined) {
+            sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);
+          }
           if (sessionMergerGitState === undefined) throw new Error("Merger runtime dependencies are not configured");
           await merger.activate();
         },
@@ -526,9 +570,7 @@ export function createRoleRuntimeExtension(
         );
         admitted = true;
       } catch (error) {
-        abortContext(ctx);
-        if (typeof ctx.mode === "string") process.exitCode = 1;
-        throw error;
+        failInfrastructure(error, ctx);
       }
     });
   };
