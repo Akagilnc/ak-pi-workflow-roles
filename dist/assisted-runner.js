@@ -206,6 +206,7 @@ async function reconciledRun(mode, config, piArgv, deps) {
 const enterAssistedCallV1 = (config, piArgv, deps) => reconciledRun("enter", config, piArgv, deps);
 const resumeAssistedCallV1 = (config, piArgv, deps) => reconciledRun("resume", config, piArgv, deps);
 async function readAssistedRunV1(repositoryRoot, runId, parentIssue, callId) {
+  if (callId !== void 0 && !isUuidV7(callId)) throw new Error("invalid assisted run locator");
   const parent = parentIssue ?? await runIndex(repositoryRoot, runId);
   const rows = await readAssistedLedgerV1(assistedRunDirectory(repositoryRoot, parent, runId));
   if (!rows.length) throw new Error("assisted run does not exist");

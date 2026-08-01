@@ -35,7 +35,7 @@ function createGhJsonTransportV1(env = process.env) {
 }
 const MAX_ASSISTED_EVIDENCE_BYTES = 8 * 1024 * 1024;
 async function readBoundedRegular(path) {
-  const descriptor = await open(path, constants.O_RDONLY | ("O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0));
+  const descriptor = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | ("O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0));
   try {
     const stat = await descriptor.stat();
     if (!stat.isFile()) throw new Error("evidence must be a regular file");
