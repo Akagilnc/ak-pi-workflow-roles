@@ -72,10 +72,14 @@ export class DoctorEvidenceStore {
   readRecord() { return [...this.readIds].sort().map((evidenceId) => ({ evidenceId, fullyRead: true })); }
 }
 export function validateDoctorOutput(value: unknown, patient: DoctorCase, store: DoctorEvidenceStore): DoctorOutput {
-  const output = validateRecordedDoctorOutput(value); if (output.status === "refused") return output;
+  const output = validateRecordedDoctorOutput(value);
+  const lawfulTargets = new Set(["case", ...patient.cost.invocations.sources]);
+  const assertTargets = (targetKeys: string[]) => { for (const targetKey of targetKeys) if (!lawfulTargets.has(targetKey)) throw new Error(`Target key is not a lawful case target: ${targetKey}`); };
+  if (output.status === "refused") { for (const missing of output.missingEvidence) assertTargets(missing.targetKeys); return output; }
   if (canonicalJson(output.case) !== canonicalJson(patient.identity) || canonicalJson(output.cost) !== canonicalJson(patient.cost)) throw new Error("Every reported number must equal the re-derived session-byte cost");
   const readCitations = (ids: string[], label: string) => { for (const id of ids) if (!store.entries.has(id) || !store.hasRead(id)) throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
   for (const finding of output.findings) {
+    assertTargets([finding.targetKey]);
     readCitations(finding.evidenceIds, "finding");
     for (const answer of Object.values(finding.guardrails)) readCitations(answer.evidenceIds, "guardrail");
     const needsNecessity = finding.prescription.kind === "patch" || finding.prescription.kind === "addMechanism";
