@@ -1,0 +1,44 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_NvwH29rR9QAfZecVQjcFIUpE|fc_0d38b7a194610815016a6d7bc5bf8c8191822b1f1df5670896",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Current head 3842ef2 preserves five repair classes: Navigator read truth is not bound to the model receipt; arbitrary Recorder transport exceptions are relabeled and settled with synthetic hashes; ledger publication losers are not reread and reconciled; latestAttempt is admitted by cast while UUIDv7 validation is duplicated; and promoted Pi argv is persisted before the authoritative credential scanner establishes the no-credential boundary. The two converged Issue 28 authority receipts already fix behavior ownership red cases green outcomes and unchanged scope so these classes may proceed directly through Fixer apply without another Plan."
+    },
+    "classes": [
+      {
+        "name": "NavigatorEvidenceReadTruth",
+        "owner": "Navigator evidence store to Navigator receipt validation seam",
+        "boundary": "The accepted evidenceRead record and every cited evidence identity must be checked against the store's actual byte coverage rather than a Set of merely touched IDs or a model supplied fullyRead boolean.",
+        "disposition": "Accepted from Spec finding 1. Pass the authoritative read record into validation and enforce its truth without creating a second evidence tracker. Verification must traverse the production role output seam and prove that a one byte read reported as fully read is rejected that the same read reported as partial is represented truthfully that complete paged coverage is accepted as fully read and that omitted duplicate unknown or fabricated read entries and unread citations fail closed."
+      },
+      {
+        "name": "RecorderFailureTruth",
+        "owner": "Recorder to Assisted Runner invocation settlement seam",
+        "boundary": "Only a sealed typed Recorder settlement may become Navigator or selected role terminal evidence; an arbitrary thrown transport exception is not itself a classified sealed settlement.",
+        "disposition": "Accepted once for overlapping Standards finding 1 and Spec finding 2. Delete both synthetic sha256(String(error)) catch conversions. Preserve the original error or cause and halt without a fabricated reference settlement Receipt call completion or later consultation; documented typed Recorder infrastructure settlements remain legal. Verification must inject arbitrary non Recorder exceptions through both invokeNavigator and invokeRole at the production runner seam and assert nonzero rejection exact causal identity no synthetic navigator_settled or role_settled or call_completed fact and no subsequent child launch while separately proving a genuine sealed infrastructure settlement follows the authorized lifecycle."
+      },
+      {
+        "name": "LedgerLoserReread",
+        "owner": "Assisted ledger publication and Assisted Runner lifecycle seam",
+        "boundary": "A no replace generation conflict is an internal race signal that requires rereading canonical winning generations and reconciling the pending lifecycle fact rather than leaking AssistedLedgerConflictError as the call result.",
+        "disposition": "Accepted from Spec finding 3. Implement loser reread and state reconciliation at the owning lifecycle seam without weakening no replace publication or adding a parallel lock ledger. Verification must race real lifecycle operations rather than only appendAssistedGenerationV1 and prove one generation wins the loser rereads the valid hash chain identical call replay returns the stored result incompatible or unresolved winning truth fails closed with its truthful state and concurrent recovery yields one recovery fact with the loser reconciling it. Gap fork and digest mismatch must still halt."
+      },
+      {
+        "name": "IdentifierAndSnapshotClosure",
+        "owner": "Navigator contract validation and shared UUIDv7 primitive",
+        "boundary": "CurrentPositionSnapshotV1 must deeply validate latestAttempt including null or closed object shape identity role phase targets terminal class and sealed reference while package consumers share one canonical UUIDv7 predicate.",
+        "disposition": "Accepted from Spec finding 4 and the Standards Duplicated Code UUID finding. Replace the latestAttempt cast with closed validation and remove the three cited independent UUIDv7 regex definitions through the existing shared identifier module rather than adding another validator family. Verification must mutate each latestAttempt key shape invocation UUID role phase combination before and after target terminal class reference ID and SHA256 and observe rejection before digest bearing use; valid null and every valid terminal class must pass. A shared valid and invalid UUID corpus must produce identical behavior at Navigator receipt snapshot Assisted config and run locator boundaries without a regex count or source text assertion."
+      },
+      {
+        "name": "PromotedArgvCredentialBoundary",
+        "owner": "Assisted selected command admission before ledger and Recorder promotion",
+        "boundary": "The exact Pi argv may be promoted only after role phase and session ownership validation plus the package's authoritative credential scanner prove the promoted bytes clean.",
+        "disposition": "Accepted from Spec finding 5. The Standards credential claim is rejected as an axis claim because its rule comes from Issue 28 authority rather than CLAUDE.md and its proposed allowlist is not authorized; the underlying implementation defect remains real. Replace keyword guessing with the existing credential scanner or one shared scanner owned by the same credential boundary and scan before run index creation call_started publication Recorder task input or child invocation. Verification must reject Authorization [REDACTED] provider token assignment credential URL and credential value carried through a generic Pi flag with no durable argv bytes or child launch; clean role phase print and ordinary task argv must round trip unchanged and recovery must consume only previously scanned promoted argv."
+      }
+    ],
+    "note": "Disposition of the remaining preserved claims: the refused aggregate is neither approval nor authority. Standards failure honesty and Spec unknown exception handling are one accepted RecorderFailureTruth defect rather than two patches. Standards credential weakness is method invalid on that axis but its Spec counterpart is accepted as PromotedArgvCredentialBoundary; an argv allowlist is only reviewer repair preference and is not imposed. The UUID duplication is a valid canonical Duplicated Code judgment and is accepted narrowly through shared behavioral validation. The dense rec str r s a e x and p naming complaint is a Mysterious Name judgment but supplies no concrete ambiguity or failed behavior beyond source presentation so it is dismissed as nonblocking style preference; repair may choose clearer local names while touching the accepted contract seam but no broad naming churn is authorized. The run function owns acquisition consultation comparison settlement recovery and publication because the Assisted Runner authority expressly assigns that cohesive lifecycle to this module. Possible Divergent Change is therefore unsupported and Long Function is outside the canonical smell baseline; neither authorizes a new lifecycle owner or orchestration seam. No Feature Envy Data Clumps Primitive Obsession Repeated Switches Shotgun Surgery Speculative Generality Message Chains Middle Man or Refused Bequest claim was made. The current general test run does not cure these counterexamples because existing tests only show an append winner a happy lifecycle and shallow contract acceptance."
+  },
+  "artifactKind": "sanitizedDerivativeOfAcceptedReceipt"
+}
