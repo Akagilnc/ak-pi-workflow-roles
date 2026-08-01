@@ -23,8 +23,8 @@ function deriveSession(content: string, id: string): SessionDerivation {
     if (message?.role === "assistant") { for (const part of Array.isArray(message.content) ? message.content : []) if (record(part) && part.type === "toolCall") calls++; if (typeof message.responseId === "string") { turns++; const usage = record(message.usage) ? message.usage : undefined; if (usage && typeof usage.output === "number") tokens += usage.output; } }
     if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && record(message.details)) { let details: Record<string, unknown>; try { details = validateAcceptedDetails(message.toolName, message.details) as unknown as Record<string, unknown>; } catch (error) { if (error instanceof AcceptedDetailsContractError) continue; throw error; } accepted = row; const commit = details.commitSha; if (typeof commit === "string" && commit !== observedCommit) { commits.push({ source: id, commit }); observedCommit = commit; } const status = ["status", "judgeStatus"].map((key) => details[key]).find((item) => typeof item === "string"); statuses.length = 0; if (typeof status === "string") statuses.push({ source: id, status }); }
   }
-  const final = accepted ?? rows.at(-1)!; const endedAt = timestamp(final) ?? startedAt;
-  return { session: { source: id, startedAt, endedAt, wallMilliseconds: Date.parse(endedAt) - Date.parse(startedAt), completion: accepted ? "accepted" : "incomplete" }, turns, calls, tokens, statuses, commits };
+  const acceptedAt = accepted && timestamp(accepted); const final = acceptedAt ? accepted! : rows.at(-1)!; const endedAt = timestamp(final) ?? startedAt;
+  return { session: { source: id, startedAt, endedAt, wallMilliseconds: Date.parse(endedAt) - Date.parse(startedAt), completion: acceptedAt ? "accepted" : "incomplete" }, turns, calls, tokens, statuses, commits };
 }
 
 /** Read Pi's retained session directory as the sole raw material for one case. */
