@@ -22,13 +22,26 @@ test("production Merger Git seam freezes the exact automatic merge tree and repo
   try {
     const state = createProductionMergerGitState(fixture.cwd);
     const active = await state.activeMerge();
-    assert.deepEqual(active.unmergedPaths, ["conflict.txt"]);
+    assert.deepEqual(active, {
+      targetObjectId: fixture.target,
+      sourceObjectId: fixture.source,
+      unmergedPaths: ["conflict.txt"],
+      automaticMergeTreeId: active.automaticMergeTreeId,
+    });
     assert.match(active.automaticMergeTreeId, /^[0-9a-f]{40,64}$/);
     await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n");
     await writeFile(resolve(fixture.cwd, "unrelated.txt"), "tampered\n");
     git(fixture.cwd, "add", "."); git(fixture.cwd, "commit", "-m", "resolve assigned merge");
     const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
-    assert.deepEqual((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths, ["conflict.txt", "unrelated.txt"]);
+    assert.deepEqual(await state.completedMerge(mergeCommitId, active.automaticMergeTreeId), {
+      mergeCommitId,
+      parentObjectIds: [fixture.target, fixture.source],
+      unmergedPaths: [],
+      worktreeClean: true,
+      resolutionChangedPaths: ["conflict.txt", "unrelated.txt"],
+    });
+    await writeFile(resolve(fixture.cwd, "untracked.txt"), "dirty\n");
+    assert.equal((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).worktreeClean, false);
   } finally { await rm(fixture.cwd, { recursive: true, force: true }); }
 });
 
