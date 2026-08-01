@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+  ActivationBarrierError,
   createRoleRuntimeExtension,
   NAVIGATOR_EVIDENCE_TOOL_NAME,
   NAVIGATOR_OUTPUT_TOOL_NAME,
@@ -56,7 +57,7 @@ function harness(failure?: Failure) {
     },
     getActiveTools() { return failure === "verify" && active.length > 0 ? [NAVIGATOR_EVIDENCE_TOOL_NAME] : active; },
     on(name: string, handler: (event: any, ctx: ExtensionContext) => any) {
-      if (failure === "prompt" && name === "before_agent_start") throw new Error("prompt installation failed");
+      if (failure === "prompt" && name === "before_agent_start" && handlers.has(name)) throw new Error("prompt installation failed");
       const existing = handlers.get(name) ?? [];
       existing.push(handler);
       handlers.set(name, existing);
@@ -73,6 +74,7 @@ function harness(failure?: Failure) {
   })(pi as unknown as ExtensionAPI);
   const ctx = { mode: "interactive", cwd: "/r", abort() { aborts += 1; } } as unknown as ExtensionContext;
   return {
+    ctx,
     active: () => active,
     aborts: () => aborts,
     tools,
@@ -90,8 +92,9 @@ test("the shared envelope admits Navigator state, narrows tools, and installs it
   await h.start();
   assert.deepEqual(h.active(), [NAVIGATOR_EVIDENCE_TOOL_NAME, NAVIGATOR_OUTPUT_TOOL_NAME]);
   assert.deepEqual([...h.tools.keys()], [NAVIGATOR_EVIDENCE_TOOL_NAME, NAVIGATOR_OUTPUT_TOOL_NAME]);
-  assert.equal(h.before().length, 1);
-  const installed = await h.before()[0]!({ systemPrompt: "BASE" }, {} as ExtensionContext);
+  assert.equal(h.before().length, 2);
+  const installed = (await Promise.all(h.before().map((before) => before({ systemPrompt: "BASE" }, {} as ExtensionContext))))
+    .find((result) => result?.systemPrompt);
   assert.match(installed.systemPrompt, /NAVIGATOR LAW/);
   assert.match(installed.systemPrompt, /current_position_snapshot/);
 });
@@ -101,8 +104,15 @@ for (const failure of ["clear", "flag", "soul", "snapshot", "evidence", "collisi
     const h = harness(failure);
     await assert.rejects(h.start());
     assert.equal(h.aborts(), 1);
+    assert.equal(process.exitCode, undefined);
     assert.deepEqual(h.active(), []);
-    for (const before of h.before()) assert.equal(await before({ systemPrompt: "BASE" }, {} as ExtensionContext), undefined);
+    const [barrier, prompt] = h.before();
+    assert.ok(barrier);
+    await assert.rejects(
+      async () => barrier({ systemPrompt: "BASE" }, h.ctx),
+      (error: unknown) => error instanceof ActivationBarrierError && error.code === "AK_ACTIVATION_NOT_ADMITTED",
+    );
+    if (prompt !== undefined) assert.equal(await prompt({ systemPrompt: "BASE" }, h.ctx), undefined);
     for (const tool of h.tools.values()) {
       if (typeof tool.execute === "function") await assert.rejects(tool.execute("x", { evidenceId: "e" }), /not activated/);
     }

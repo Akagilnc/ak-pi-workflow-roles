@@ -1,4 +1,8 @@
+import { writeSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
+
+import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -38,6 +42,9 @@ import {
   createFixerRoleRuntime,
 } from "./worker-role.ts";
 import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
+
+export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
+export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -103,7 +110,121 @@ export { createProductionMergerGitState } from "./merger-git-state.ts";
 export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
-export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator", "merger"] as const;
+type ActivationRuntime = {
+  event: { reason: string };
+  context: ExtensionContext;
+  judge: { activate(): Promise<void> };
+  fixer: { activate(): Promise<void> };
+  coder: { activate(context: ExtensionContext): Promise<void> };
+  reviewer: { activate(context: ExtensionContext): Promise<void> };
+  collector: { activate(context: ExtensionContext, event: { reason: string }): Promise<void> };
+  doctor: { activate(): Promise<void> };
+  navigator(): Promise<void>;
+  merger(): Promise<void>;
+};
+
+export type ActivationStage = {
+  readonly id: string;
+  run(): Promise<void>;
+};
+
+type ActivationStageDeclaration = {
+  readonly id: string;
+  run(runtime: ActivationRuntime): Promise<void>;
+};
+
+export const ROLE_REGISTRY = [
+  { role: "judge", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.judge.activate() }] },
+  { role: "fixer", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.fixer.activate() }] },
+  { role: "coder", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.coder.activate(runtime.context) }] },
+  { role: "reviewer", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.reviewer.activate(runtime.context) }] },
+  { role: "collector", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.collector.activate(runtime.context, runtime.event) }] },
+  { role: "doctor", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.doctor.activate() }] },
+  { role: "navigator", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.navigator() }] },
+  { role: "merger", stages: [{ id: "prepare-git-and-install", run: async (runtime: ActivationRuntime) => runtime.merger() }] },
+] as const satisfies readonly { role: string; stages: readonly ActivationStageDeclaration[] }[];
+
+for (const entry of ROLE_REGISTRY) {
+  const seen = new Set<string>();
+  for (const stage of entry.stages) {
+    if (!/^[a-z][a-z0-9-]*$/.test(stage.id) || seen.has(stage.id)) throw new Error(`Invalid activation stage id for ${entry.role}: ${stage.id}`);
+    seen.add(stage.id);
+  }
+}
+
+function validateActivationTraceRecord(record: unknown): ActivationTraceRecord {
+  if (!Value.Check(activationTraceRecordSchema, record)) {
+    throw new TypeError("Activation trace record does not match its closed contract");
+  }
+  return record as ActivationTraceRecord;
+}
+
+async function emitActivationTrace(
+  writeTrace: (record: ActivationTraceRecord) => void | Promise<void>,
+  record: unknown,
+): Promise<void> {
+  await writeTrace(validateActivationTraceRecord(record));
+}
+
+export async function executeActivationStages(
+  role: string,
+  stages: readonly ActivationStage[],
+  infrastructure: { clock(): string; writeTrace(record: ActivationTraceRecord): void | Promise<void> },
+): Promise<void> {
+  for (const stage of stages) {
+    await emitActivationTrace(infrastructure.writeTrace, { role, stageId: stage.id, status: "started", timestamp: infrastructure.clock() });
+    try {
+      await stage.run();
+    } catch (activationError) {
+      try {
+        await emitActivationTrace(infrastructure.writeTrace, {
+          role,
+          stageId: stage.id,
+          status: "failed",
+          timestamp: infrastructure.clock(),
+          cause: namedActivationCause(activationError),
+        });
+      } catch (traceError) {
+        throw new AggregateError([activationError, traceError], `Activation stage ${stage.id} failed and its failure trace could not be emitted`);
+      }
+      throw activationError;
+    }
+    await emitActivationTrace(infrastructure.writeTrace, { role, stageId: stage.id, status: "completed", timestamp: infrastructure.clock() });
+  }
+}
+
+const TRACE_WRITE_RETRY_LIMIT = 100;
+
+export function writeActivationTraceRecord(
+  record: ActivationTraceRecord,
+  write: typeof writeSync = writeSync,
+): void {
+  const bytes = Buffer.from(`${JSON.stringify(record)}\n`);
+  let offset = 0;
+  let retries = 0;
+  while (offset < bytes.length) {
+    try {
+      const written = write(2, bytes, offset, bytes.length - offset);
+      if (written <= 0) throw new Error("Activation trace write made no progress");
+      offset += written;
+      retries = 0;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code === "EAGAIN" || code === "EINTR") && retries++ < TRACE_WRITE_RETRY_LIMIT) continue;
+      throw error;
+    }
+  }
+}
+
+export class ActivationBarrierError extends Error {
+  readonly code = "AK_ACTIVATION_NOT_ADMITTED";
+  constructor(role: unknown) {
+    super(`Workflow role ${String(role)} activation did not complete`);
+    this.name = "ActivationBarrierError";
+  }
+}
+
+export const WORKFLOW_ROLES = ROLE_REGISTRY.map(({ role }) => role) as Array<(typeof ROLE_REGISTRY)[number]["role"]>;
 export const ROLE_FLAG = {
   name: "ak-role",
   definition: {
@@ -159,10 +280,17 @@ export type RoleRuntimeDependencies = {
     input: ReviewerAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<ComplianceDecision>;
+  activationClock?(): string;
+  activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
 };
 
+function abortContext(ctx: ExtensionContext): void {
+  const abort = (ctx as ExtensionContext & { abort?: () => void }).abort;
+  if (typeof abort === "function") abort.call(ctx);
+}
+
 function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
-  ctx.abort();
+  abortContext(ctx);
   if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
   throw error;
 }
@@ -172,6 +300,21 @@ export function createRoleRuntimeExtension(
 ): (pi: ExtensionAPI) => void {
   return (pi) => {
     pi.registerFlag(ROLE_FLAG.name, ROLE_FLAG.definition);
+
+    let admitted = false;
+    let selectedRole: string | undefined;
+    pi.on("input", () => {
+      const role = pi.getFlag(ROLE_FLAG.name);
+      if (role !== undefined && !admitted) return { action: "handled" as const };
+      return { action: "continue" as const };
+    });
+    pi.on("before_agent_start", (_event, ctx) => {
+      const role = pi.getFlag(ROLE_FLAG.name);
+      if (role === undefined) return;
+      if (!admitted || selectedRole !== role) {
+        failInfrastructure(new ActivationBarrierError(role), ctx);
+      }
+    });
 
     const hostActions = { failInfrastructure };
     const judge = createJudgeRoleRuntime(
@@ -347,9 +490,9 @@ export function createRoleRuntimeExtension(
       } catch (error) {
         navigatorActive = undefined;
         try { pi.setActiveTools([]); } catch (cleanupError) {
-          hostActions.failInfrastructure(new AggregateError([error, cleanupError], "Navigator activation and fail-closed cleanup failed"), ctx);
+          throw new AggregateError([error, cleanupError], "Navigator activation and fail-closed cleanup failed");
         }
-        hostActions.failInfrastructure(error, ctx);
+        throw error;
       }
     };
     let sessionMergerGitState = dependencies.mergerGitState;
@@ -388,41 +531,46 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
 
+    const clock = dependencies.activationClock ?? (() => new Date().toISOString());
+    const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
+
     pi.on("session_start", async (event, ctx) => {
-      const role = pi.getFlag(ROLE_FLAG.name);
-      if (role === undefined) return;
-      if (!(WORKFLOW_ROLES as readonly unknown[]).includes(role)) {
-        throw new Error(`Unsupported workflow role: ${String(role)}`);
+      admitted = false;
+      selectedRole = undefined;
+      const rawRole = pi.getFlag(ROLE_FLAG.name);
+      if (rawRole === undefined) return;
+      const entry = ROLE_REGISTRY.find(({ role }) => role === rawRole);
+      if (entry === undefined) {
+        failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
-      switch (role) {
-        case "judge":
-          await judge.activate();
-          return;
-        case "fixer":
-          await fixer.activate();
-          return;
-        case "coder":
-          await coder.activate(ctx);
-          return;
-        case "reviewer":
-          await reviewer.activate(ctx);
-          return;
-        case "collector":
-          await collector.activate(ctx, event);
-          return;
-        case "doctor":
-          await doctor.activate();
-          return;
-        case "navigator":
-          await activateNavigator(ctx);
-          return;
-        case "merger":
-          sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
-          if (sessionMergerGitState === undefined) {
-            throw new Error("Merger runtime dependencies are not configured");
+      selectedRole = entry.role;
+      const runtime: ActivationRuntime = {
+        event,
+        context: ctx,
+        judge,
+        fixer,
+        coder,
+        reviewer,
+        collector,
+        doctor,
+        navigator: () => activateNavigator(ctx),
+        merger: async () => {
+          if (dependencies.mergerGitState === undefined) {
+            sessionMergerGitState = dependencies.createMergerGitState?.(ctx.cwd);
           }
+          if (sessionMergerGitState === undefined) throw new Error("Merger runtime dependencies are not configured");
           await merger.activate();
-          return;
+        },
+      };
+      try {
+        await executeActivationStages(
+          entry.role,
+          entry.stages.map((stage) => ({ id: stage.id, run: () => stage.run(runtime) })),
+          { clock, writeTrace },
+        );
+        admitted = true;
+      } catch (error) {
+        failInfrastructure(error, ctx);
       }
     });
   };
