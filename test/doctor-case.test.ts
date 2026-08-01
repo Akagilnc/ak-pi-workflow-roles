@@ -14,11 +14,11 @@ const rows = [
   { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "done", commitSha: "abc1234" } } },
 ];
 
-test("Doctor mission licenses a retained runs case as the subject of a completed cost report", async () => {
+test("Doctor mission preserves honest retained-work cost accounting without transport mechanics", async () => {
   const soul = await (await import("node:fs/promises")).readFile(new URL("../souls/doctor.md", import.meta.url), "utf8");
-  assert.match(soul, /保留的单案.*过程成本报告/);
-  assert.match(soul, /三问.*开方/);
-  assert.doesNotMatch(soul, /案子只是跨案症状证据，不是病人/);
+  assert.match(soul, /保留工作.*成本/);
+  assert.match(soul, /typed asset identity/);
+  assert.doesNotMatch(soul, /单案.*合法病人|输入|输出/);
 });
 
 test("one retained runs directory yields an independently cited single-case cost report", async () => {
