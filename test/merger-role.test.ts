@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -16,6 +19,40 @@ const input = { version: 1 as const, attemptId: "attempt", targetObjectId: oid("
 function harness(flag: unknown = "/input.json") { const flags = new Map<string, unknown>([["ak-merger-input", flag]]); const tools = new Map<string, any>(); const handlers = new Map<string, any>(); let active: string[] = []; const host = ["read", "grep", "find", "ls", "bash", "write", "edit", "Agent", "web"]; const pi = { registerFlag(name: string) { if (!flags.has(name)) flags.set(name, undefined); }, getFlag(name: string) { return flags.get(name); }, registerTool(tool: any) { tools.set(tool.name, tool); }, getAllTools() { return [...host, ...tools.keys()].map(name => ({ name })); }, setActiveTools(names: string[]) { active = names; }, getActiveTools() { return active; }, on(name: string, fn: any) { handlers.set(name, fn); } }; return { pi, tools, handlers, active: () => active }; }
 function context(id: string, args: Record<string, unknown>, calls = 1, abort = () => {}): ExtensionContext { const sessionManager = SessionManager.inMemory(); const content = Array.from({ length: calls }, (_, i) => ({ type: "toolCall" as const, id: i ? `sibling-${i}` : id, name: i ? "bash" : MERGER_OUTPUT_TOOL_NAME, arguments: i ? {} : args })); const message: AssistantMessage = { role: "assistant", content, api: "x", provider: "x", model: "x", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 0 }; sessionManager.appendMessage(message); return { sessionManager, abort, mode: "json" } as unknown as ExtensionContext; }
 function setup(overrides: any = {}) { const h = harness(); let completedCalls = 0; const runtime = createMergerRoleRuntime(h.pi as unknown as ExtensionAPI, { loadSoul: async () => "MERGER LAW", loadInput: async () => input, gitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async (id: string, tree: string) => { completedCalls++; assert.equal(tree, oid("d")); return { mergeCommitId: id, parentObjectIds: [oid("a"), oid("b")], unmergedPaths: [], worktreeClean: true, resolutionChangedPaths: ["same.txt"] }; } }, ...overrides }, { failInfrastructure(error: unknown, ctx: ExtensionContext): never { ctx.abort(); throw error; } }); return { ...h, runtime, completedCalls: () => completedCalls }; }
+
+test("production extension observes session repository B, not ambient repository A, through activation and completion", async () => {
+  const repositoryB = await mkdtemp(resolve(tmpdir(), "ak-merger-session-b-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repositoryB, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const env = { ...process.env, GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z" };
+  try {
+    git("init", "-b", "main"); git("config", "user.name", "Merger Test"); git("config", "user.email", "merger@test.local");
+    await writeFile(resolve(repositoryB, "same.txt"), "base\n"); git("add", "."); git("commit", "-m", "base");
+    git("checkout", "-b", "source"); await writeFile(resolve(repositoryB, "same.txt"), "source\n"); git("commit", "-am", "source"); const source = git("rev-parse", "HEAD");
+    git("checkout", "main"); await writeFile(resolve(repositoryB, "same.txt"), "target\n"); git("commit", "-am", "target"); const target = git("rev-parse", "HEAD");
+    assert.throws(() => git("merge", "--no-edit", source));
+    const resolutionBlob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: repositoryB, input: "resolved\n", encoding: "utf8" }).trim();
+    const temporaryIndex = resolve(repositoryB, "expected-index");
+    execFileSync("git", ["read-tree", "AUTO_MERGE^{tree}"], { cwd: repositoryB, env: { ...process.env, GIT_INDEX_FILE: temporaryIndex } });
+    execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${resolutionBlob},same.txt`], { cwd: repositoryB, env: { ...process.env, GIT_INDEX_FILE: temporaryIndex } });
+    const tree = execFileSync("git", ["write-tree"], { cwd: repositoryB, env: { ...process.env, GIT_INDEX_FILE: temporaryIndex }, encoding: "utf8" }).trim();
+    const mergeCommitId = execFileSync("git", ["commit-tree", tree, "-p", target, "-p", source, "-m", "resolve"], { cwd: repositoryB, env, encoding: "utf8" }).trim();
+    const realInput = { ...input, targetObjectId: target, sourceObjectId: source };
+    const inputPath = resolve(repositoryB, "input.json"); await writeFile(inputPath, JSON.stringify(realInput));
+    await writeFile(resolve(repositoryB, ".git/info/exclude"), "input.json\nexpected-index\n");
+    await withHermeticHome({ prefix: "ak-merger-production-extension-" }, async ({ agentDir }) => {
+      const faux = fauxProvider({ api: "merger-session-cwd", provider: "merger-session-cwd" });
+      faux.setResponses([
+        fauxAssistantMessage(fauxToolCall("bash", { command: `git reset --hard ${mergeCommitId}` }, { id: "resolve" }), { stopReason: "toolUse" }),
+        fauxAssistantMessage(fauxToolCall(MERGER_OUTPUT_TOOL_NAME, { status: "completed", attemptId: "attempt", report: "resolved", mergeCommitId }, { id: "out" }), { stopReason: "toolUse" }),
+      ]);
+      await withInProcessPi({ cwd: repositoryB, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-role": "merger", "ak-merger-input": inputPath }, additionalExtensionPaths: [fileURLToPath(new URL("../extensions/role-runtime.ts", import.meta.url))] }, async ({ session, sessionManager }) => {
+        await session.prompt("Resolve and settle.");
+        const result = sessionManager.getEntries().find(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === MERGER_OUTPUT_TOOL_NAME) as any;
+        assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content)); assert.equal(result?.message.details.mergeCommitId, mergeCommitId);
+      });
+    });
+  } finally { await rm(repositoryB, { recursive: true, force: true }); }
+});
 
 test("role extension binds Merger Git state to session cwd while preserving injected state", async () => {
   for (const injected of [false, true]) {
