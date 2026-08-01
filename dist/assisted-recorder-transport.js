@@ -38,17 +38,38 @@ async function invoke(config, invocationId, childArgv, authority, task, env) {
   const docket = join(runDir, "invocations", invocationId);
   if (result.failureJson) return { failure: result.failureJson };
   const receipt = JSON.parse(await readFile(join(docket, "receipt.json"), "utf8"));
-  const manifest = await readFile(join(docket, "manifest.json"));
-  return { receipt, reference: { id: `invocation:${invocationId}`, sha256: sha256Hex(manifest) } };
+  const manifest = await readFile(join(docket, "manifest.json")), parsed = JSON.parse(manifest.toString()), session = await readFile(join(config.subject.repositoryRoot, parsed.session.directory, parsed.session.basename), "utf8");
+  return { receipt, readEvidenceIds: sealedEvidenceReads(session), reference: { id: `invocation:${invocationId}`, sha256: sha256Hex(manifest) } };
 }
 function effectiveEnv(config, base) {
   return buildChildEnv(base, config.execution.environment);
 }
+function sealedEvidenceReads(sessionText) {
+  const coverage = /* @__PURE__ */ new Map();
+  for (const line of sessionText.split("\n")) {
+    if (!line) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const m = row?.message;
+    if (m?.role !== "toolResult" || m.toolName !== "ak_navigator_evidence_read" || m.isError !== false) continue;
+    const d = m.details;
+    if (!d || typeof d.evidenceId !== "string" || !Number.isSafeInteger(d.offset) || !Number.isSafeInteger(d.byteLength) || !Number.isSafeInteger(d.totalByteLength) || d.offset < 0 || d.byteLength < 0 || d.offset + d.byteLength > d.totalByteLength) throw new Error("sealed Navigator evidence read malformed");
+    const c = coverage.get(d.evidenceId) ?? { total: d.totalByteLength, bytes: /* @__PURE__ */ new Set() };
+    if (c.total !== d.totalByteLength) throw new Error("sealed Navigator evidence length conflict");
+    for (let i = d.offset; i < d.offset + d.byteLength; i++) c.bytes.add(i);
+    coverage.set(d.evidenceId, c);
+  }
+  return [...coverage].filter(([, c]) => c.bytes.size === c.total).map(([id]) => id);
+}
 async function existing(config, invocationId) {
   const docket = join(assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), "invocations", invocationId);
   try {
-    const receipt = JSON.parse(await readFile(join(docket, "receipt.json"), "utf8")), manifest = await readFile(join(docket, "manifest.json"));
-    return { receipt, reference: { id: `invocation:${invocationId}`, sha256: sha256Hex(manifest) } };
+    const receipt = JSON.parse(await readFile(join(docket, "receipt.json"), "utf8")), manifest = await readFile(join(docket, "manifest.json")), parsed = JSON.parse(manifest.toString()), session = await readFile(join(config.subject.repositoryRoot, parsed.session.directory, parsed.session.basename), "utf8");
+    return { receipt, readEvidenceIds: sealedEvidenceReads(session), reference: { id: `invocation:${invocationId}`, sha256: sha256Hex(manifest) } };
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -71,7 +92,7 @@ function createRecorderAssistedTransportV1(baseEnv = process.env) {
     if (kind === "navigator") {
       if (x.receipt.toolName !== "ak_navigator_output") throw new Error("sealed Navigator tool mismatch");
       const receipt = x.receipt.details;
-      return { kind: "accepted", receipt, readEvidenceIds: receipt.evidenceRead.map((r) => r.evidenceId), reference: x.reference };
+      return { kind: "accepted", receipt, readEvidenceIds: x.readEvidenceIds, reference: x.reference };
     }
     if (beforeTarget === null) throw new Error("missing role before target");
     const afterTarget = (await createGitCliTransportV1().observeWorkspace(config.execution.cwd)).target;
@@ -82,7 +103,7 @@ function createRecorderAssistedTransportV1(baseEnv = process.env) {
     const x = await invoke(config, invocationId, navArgv, position.snapshot, { kind: "navigator-consultation", snapshotDigest: position.snapshot.digest, positionCursor: position.snapshot.positionCursor }, effectiveEnv(config, baseEnv));
     if ("failure" in x) return { kind: "infrastructure_failure", reference: { id: `recorder-failure:${invocationId}`, sha256: sha256Hex(x.failure) } };
     if (x.receipt.toolName !== "ak_navigator_output") throw new Error("sealed Navigator tool mismatch");
-    return { kind: "accepted", receipt: x.receipt.details, readEvidenceIds: x.receipt.details.evidenceRead.map((x2) => x2.evidenceId), reference: x.reference };
+    return { kind: "accepted", receipt: x.receipt.details, readEvidenceIds: x.readEvidenceIds, reference: x.reference };
   }, async invokeRole({ config, invocationId, piArgv, beforeTarget }) {
     const x = await invoke(config, invocationId, piArgv, { runId: config.runId, callId: config.callId, subject: config.subject }, { selected: { role: config.execution.role, phase: config.execution.phase }, argv: piArgv }, effectiveEnv(config, baseEnv));
     const afterTarget = (await createGitCliTransportV1().observeWorkspace(config.execution.cwd)).target;

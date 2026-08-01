@@ -10,7 +10,11 @@ function value(args, name, required = true) {
   return v;
 }
 function common() {
-  return { git: createGitCliTransportV1(), github: createGhJsonTransportV1(), recorder: createRecorderAssistedTransportV1() };
+  return { git: createGitCliTransportV1(), github: createGhJsonTransportV1(), recorder: createRecorderAssistedTransportV1(), async resolveEnvironmentPolicy() {
+    const path = process.env.AK_ASSISTED_ENVIRONMENT_POLICY_FILE;
+    if (!path) throw new Error("recovery environment reference unavailable");
+    return JSON.parse(await readFile(resolve(path), "utf8"));
+  } };
 }
 const HELP = `ak-assisted-run
   enter --config <assisted-call-v1.json> -- <pi argv>
