@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, mergerOutputSchema, validateMergerInput, validateMergerOutput, type MergerInput } from "./merger-contracts.ts";
 import type { MergerGitState } from "./merger-git-state.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
+import { isFullGitObjectId } from "./git-object-id.ts";
 
 export { MERGER_OUTPUT_TOOL_NAME };
 export const MERGER_INPUT_FLAG = { name: "ak-merger-input", definition: { description: "Path to an immutable digest-bound Merger v1 input JSON file", type: "string" as const } } as const;
@@ -14,7 +15,7 @@ function singleton(id: string, ctx: ExtensionContext): void { const leaf = ctx.s
 function materialText(input: MergerInput, key: keyof MergerInput["materials"]): string { return exactUtf8(Buffer.from(input.materials[key].bytesBase64, "base64"), `Merger ${key}`); }
 
 export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRoleDependencies, host: MergerRoleHostActions) {
-  let activation: { soul: string; input: Readonly<MergerInput> } | undefined;
+  let activation: { soul: string; input: Readonly<MergerInput>; automaticMergeTreeId: string } | undefined;
   let registered = false;
   let accepted = false;
   pi.registerFlag(MERGER_INPUT_FLAG.name, MERGER_INPUT_FLAG.definition);
@@ -24,8 +25,8 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
     const soul = (await dependencies.loadSoul()).trim(); if (!soul) throw new Error("Merger soul is empty");
     const input = validateMergerInput(await dependencies.loadInput(path));
     const state = await dependencies.gitState.activeMerge();
-    if (state.targetObjectId !== input.targetObjectId || state.sourceObjectId !== input.sourceObjectId || !same(state.unmergedPaths, input.expectedConflictPaths) || state.unmergedPaths.length === 0) throw new Error("Merger activation rejected repository parent, merge, or complete conflict-set drift");
-    activation = { soul, input }; accepted = false;
+    if (state.targetObjectId !== input.targetObjectId || state.sourceObjectId !== input.sourceObjectId || !same(state.unmergedPaths, input.expectedConflictPaths) || state.unmergedPaths.length === 0 || !isFullGitObjectId(state.automaticMergeTreeId) || state.automaticMergeTreeId.length !== input.targetObjectId.length) throw new Error("Merger activation rejected repository parent, merge, automatic-result, or complete conflict-set drift");
+    activation = { soul, input, automaticMergeTreeId: state.automaticMergeTreeId }; accepted = false;
     if (!registered) { registered = true;
       pi.registerTool({ name: MERGER_OUTPUT_TOOL_NAME, label: "Merger Output", description: "Submit the sole completed merge candidate or genuine intent/authority escalation.", promptSnippet: "Submit the Merger result", promptGuidelines: [`Use ${MERGER_OUTPUT_TOOL_NAME} as the sole final action.`, "Infrastructure and Git failures abort; they are not escalations."], parameters: mergerOutputSchema,
         async execute(id, params, _signal, _update, ctx) {
@@ -35,9 +36,10 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
           const output = validateMergerOutput(params, activation.input.attemptId);
           if (output.status === "completed") {
             let state;
-            try { state = await dependencies.gitState.completedMerge(output.mergeCommitId); }
+            try { state = await dependencies.gitState.completedMerge(output.mergeCommitId, activation.automaticMergeTreeId); }
             catch (error) { host.failInfrastructure(error, ctx); }
-            if (state.mergeCommitId !== output.mergeCommitId || !same(state.parentObjectIds, [activation.input.targetObjectId, activation.input.sourceObjectId]) || state.unmergedPaths.length !== 0 || !state.worktreeClean) host.failInfrastructure(new Error("Merger completed-state verification failed"), ctx);
+            const scope = new Set(activation.input.resolutionScope);
+            if (state.mergeCommitId !== output.mergeCommitId || !same(state.parentObjectIds, [activation.input.targetObjectId, activation.input.sourceObjectId]) || state.unmergedPaths.length !== 0 || !state.worktreeClean || state.resolutionChangedPaths.some(path => !scope.has(path))) host.failInfrastructure(new Error("Merger completed-state verification failed"), ctx);
           }
           accepted = true;
           return { content: [{ type: "text" as const, text: MERGER_ACCEPTED_TEXT }], details: output, terminate: true as const };
