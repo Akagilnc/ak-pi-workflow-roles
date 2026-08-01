@@ -1,9 +1,9 @@
-import { readFile, open, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
+import { open, readFile, realpath } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+
+import { loadDoctorCase } from "../src/doctor-evidence.ts";
 
 import {
   buildSessionContext,
@@ -25,7 +25,6 @@ import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { createPiSoulAuditor } from "../src/soul-auditor.ts";
 
-const execFileAsync = promisify(execFile);
 const extensionPath = fileURLToPath(import.meta.url);
 const judgeSoulPath = fileURLToPath(new URL("../souls/judge.md", import.meta.url));
 const fixerSoulPath = fileURLToPath(new URL("../souls/fixer.md", import.meta.url));
@@ -95,8 +94,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadCollectorSoul: () => readFile(collectorSoulPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
     loadDoctorSoul: () => readFile(doctorSoulPath, "utf8"),
-    loadDoctorEvidenceIndex: async (path) => JSON.parse(await readFile(path, "utf8")),
-    readDoctorCommittedEvidence: async (targetCommit, path) => { const { stdout } = await execFileAsync("git", ["show", `${targetCommit}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 }); return new Uint8Array(stdout); },
+    loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadNavigatorSoul: () => readFile(navigatorSoulPath, "utf8"),
     loadNavigatorSnapshot: async (path) => JSON.parse(await readFile(path, "utf8")),

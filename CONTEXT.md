@@ -23,9 +23,8 @@
 - **三态判词**:`converged` / `continue` / `escalate`。环境/工具链故障不是判词,以非零退出走故障通道。
 - **裁类循环（Class-repair loop）**：由判词类字段、回执对账键、圈界参数三份合同自然组成的修理循环；次序是合同的推论，非规定流程。
 - **Merger（合并员）**：只调和调用方指定、已开始的一次 Git merge 的完整冲突集，创建该次普通双亲候选 commit 或在需要新意图/权力决定时升级；不发起、不发布、不编排 merge。
-- **Doctor(医生)**:对工厂做体检并开方的举证角色;不施工、不裁决、不改法。唯一病人=工厂,方子走正常法链。
+- **Doctor(医生)**:从一个保留的 Pi 原生 session-dir 案例读取工厂症状，产出单案过程成本诊断并开方的举证角色;不施工、不裁决、不改法。病人仍是工厂,方子走正常法链。
 - **工厂(Factory)**:车间整体——角色、闸、法、包模板、流程站点。医生的唯一病人;案子只是症状载体,永远不是病人。
 - **方子(Prescription)**:医生的 finding 加处置建议(`keep|thin|delete`);治系统不治症状,同任何提案一样走法链。
-- **真咬人(Real bite)**:某道闸最近真拦下东西的证据——dockets 里的实际 Receipt/verdict 引用;回声与散文不构成证据。完整有界检索得到的 `noRealBite` 是无咬人证明,不是一次咬人。
-- **生命体征(Vital sign)**:issue 立案到 PR 并入 default 的墙钟,按跨案人口统计读;一天仅是 owner 校准语境,不是 SLA 或判定。
-- **计数行(Stats line)**:closure 产出的版本化每案工厂生命体征记录，供医生跨案累积读取。
+- **真咬人(Real bite)**:某道闸最近真拦下东西的证据——保留 session 中实际被接受的 typed terminating tool result;回声与散文不构成证据。完整有界检索得到的 `noRealBite` 是无咬人证明,不是一次咬人。
+- **过程成本报告(Process-cost report)**:由保留 runs 路径中的 Pi session 字节可重算的单案调用数、腿数、墙钟、turn/token、工具调用、命名重试、typed 状态、commit 观察和具名 payload 字节账。趋势是读取多案后才有的独立输出类型。

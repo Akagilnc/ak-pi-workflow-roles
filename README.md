@@ -206,17 +206,19 @@ Failure channels (non-zero, no receipt) include malformed/unsupported config or 
 
 ## Doctor
 
-Doctor consumes a caller-built frozen evidence index and exposes only the bounded evidence reader plus its terminating output tool:
+Doctor reads one retained Pi-native case and exposes only the bounded evidence reader plus its terminating output tool:
 
 ```bash
 pi --no-extensions -e /path/to/extensions/role-runtime.ts \
-  --ak-role doctor --ak-doctor-evidence /path/to/doctor-evidence-v1.json \
-  --mode json -p "Examine the admitted factory evidence."
+  --ak-role doctor --ak-doctor-case .ak/work/issues/40/runs \
+  --mode json -p "Produce this case's process-cost diagnosis."
 ```
 
-The input is validated and digest-bound before activation. During the invocation, `ak_doctor_evidence` reads admitted evidence IDs in pages of at most 4096 units; arbitrary filesystem, shell, network, write, and Agent tools are inactive. The sole final `ak_doctor_output` result undergoes a fresh same-active-model compliance audit. A revise decision permits model resubmission; audit or transport failure aborts without manufacturing a refusal.
+Case identity is the issue number plus the repository-relative retained-runs path when a `.git` worktree root contains it; outside a repository the resolved absolute path is the explicit fallback. Do not delete or rewrite run directories before Doctor examines them. Each recursive `*.jsonl` is one model-session leg; each immediate run directory is one caller invocation, and `stderr.log` remains evidence for invocations that died before a session header. `ak_doctor_evidence` pages exact admitted session bytes in chunks of at most 4096 characters; filesystem, shell, network, write, and Agent tools remain inactive.
 
-Public TypeScript exports from `src/role-runtime.ts` include the Doctor index/output types, validators, evidence store, tool names, and runtime dependencies. Use those exports to construct input and consume output rather than parsing this guide.
+The completed output is one case's cost report plus findings; it never requires a trend. Wall time runs from the session-header outer timestamp to the final accepted, non-error terminating `toolResult`, or to the last row and is labeled incomplete. Truncated JSON tails, missing headers, and non-monotonic endpoints remain incomplete evidence with an explicit degradation reason; unavailable or negative durations are omitted rather than invented or clamped. Assistant message rows with `responseId` count model/API turns and their `usage.output` tokens are summed. Assistant `content[]` `toolCall` items count calls, including the terminal call. Retries are reported only when an immediate run-directory name contains the delimiter-bounded word `retry` (case-insensitive; start/end, `-`, and `_` are delimiters): `review-004-retry-2` counts, while `review-004-retry2` and `2nd-try` do not. Status comes only from typed details on a non-error terminating result, never prose or an attempted call. Commits are only `commitSha` values in typed details of accepted terminating results; abbreviated SHAs retain their stated precision. This deliberately narrows the earlier “observed state transitions” wording under the anchoring law: free-text SHA mentions are not observations, trading broader inference for honest reduced coverage. Output bytes explicitly mean raw JSONL bytes; provider-wire bytes are unavailable, so token counts are reported separately.
+
+Every number must exactly match the runtime's derivation from cited session bytes. The sole final `ak_doctor_output` result undergoes a fresh same-active-model compliance audit; revise permits resubmission, while audit or transport failure aborts without manufacturing refusal. Trend reporting is a separate output type for future multi-case readers.
 
 ## Merger
 
