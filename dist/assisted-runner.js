@@ -126,18 +126,29 @@ async function run(mode, raw, argv, deps) {
   }
   let lost = unresolved(rows);
   if (lost && deps.recorder.readSealed) {
-    const started = rows.find((r) => r.invocationId === lost && (r.type === "navigator_started" || r.type === "role_started")), snapshot = rows.filter((r) => r.type === "acquisition").at(-1)?.payload.snapshot, before = snapshot?.workspaces.find((w) => w.id === config.execution.workspaceId)?.target ?? null, sealed = await deps.recorder.readSealed({ config, invocationId: lost, kind: started.type === "navigator_started" ? "navigator" : "role", beforeTarget: before });
+    const started = rows.find((r) => r.invocationId === lost && (r.type === "navigator_started" || r.type === "role_started")), originCall = rows.filter((r) => r.type === "call_started" && r.callId === started.callId).at(-1);
+    if (!originCall) throw new Error("sealed recovery call declaration missing");
+    const originConfig = validateAssistedCallConfigV1(originCall.payload.recoveryConfig);
+    if (originConfig.runId !== originCall.runId || originConfig.callId !== originCall.callId || originCall.payload.acquisitionDigest !== acquisitionDigest(originConfig) || canonicalJson(originCall.payload.selected) !== canonicalJson({ role: originConfig.execution.role, phase: originConfig.execution.phase }) || canonicalJson(originConfig.execution.environment) !== canonicalJson(defaultEnvironment()) || rows[0]?.payload.immutableSubject !== immutableSubject(originConfig)) throw new Error("sealed recovery config binding mismatch");
+    const snapshot = rows.filter((r) => r.type === "acquisition").at(-1)?.payload.snapshot, before = snapshot?.workspaces.find((w) => w.id === originConfig.execution.workspaceId)?.target ?? null, sealed = await deps.recorder.readSealed({ config: originConfig, invocationId: lost, kind: started.type === "navigator_started" ? "navigator" : "role", beforeTarget: before });
     if (sealed) {
       if (started.type === "navigator_started") {
         const nav = sealed;
         if (nav.kind !== "accepted" || !snapshot) throw new Error("sealed Navigator recovery mismatch");
         const receipt = validateNavigatorReceiptV1(nav.receipt, snapshot, nav.evidenceRead);
-        await appendAssistedGenerationV1(dir, { type: "navigator_settled", runId: config.runId, callId: started.callId, invocationId: lost, positionCursor: started.positionCursor, payload: { classification: "accepted", receipt, reference: nav.reference } }, now);
+        await appendAssistedGenerationV1(dir, { type: "navigator_settled", runId: originConfig.runId, callId: started.callId, invocationId: lost, positionCursor: started.positionCursor, payload: { classification: "accepted", receipt, reference: nav.reference } }, now);
       } else {
-        const role = sealed, cursor2 = started.positionCursor + 1, latestAttempt = { invocationId: lost, role: config.execution.role, phase: config.execution.phase, beforeTarget: role.beforeTarget, afterTarget: role.afterTarget, terminalClass: role.terminalClass, reference: role.reference };
-        await appendAssistedGenerationV1(dir, { type: "role_settled", runId: config.runId, callId: started.callId, invocationId: lost, positionCursor: cursor2, payload: { latestAttempt } }, now);
+        const role = sealed, cursor2 = started.positionCursor + 1, latestAttempt = { invocationId: lost, role: originConfig.execution.role, phase: originConfig.execution.phase, beforeTarget: role.beforeTarget, afterTarget: role.afterTarget, terminalClass: role.terminalClass, reference: role.reference };
+        await appendAssistedGenerationV1(dir, { type: "role_settled", runId: originConfig.runId, callId: started.callId, invocationId: lost, positionCursor: cursor2, payload: { latestAttempt } }, now);
       }
       rows = await readAssistedLedgerV1(dir);
+      if (started.type === "role_started" && started.callId !== config.callId) {
+        const recoveredRole = rows.find((r) => r.type === "role_settled" && r.invocationId === lost), latestAttempt = recoveredRole.payload.latestAttempt, cursor2 = recoveredRole.positionCursor, originArgv = validateSelectedPiArgvV1(originCall.payload.piArgv, originConfig.execution), position2 = await acquireCurrentPositionV1(originConfig, cursor2, latestAttempt, { git: deps.git, github: deps.github });
+        await appendAssistedGenerationV1(dir, { type: "acquisition", runId: originConfig.runId, callId: originConfig.callId, positionCursor: cursor2, payload: { snapshot: position2.snapshot, reason: "docket_recovery" } }, now);
+        const post2 = await consult(originConfig, position2, originArgv, dir, deps, now, id), navRows = rows.filter((r) => r.type === "navigator_settled" && r.callId === originConfig.callId && r.payload.classification === "accepted"), preReceipt = navRows[0]?.payload.receipt ?? null, comparison2 = rows.filter((r) => r.type === "action_reserved" && r.callId === originConfig.callId).at(-1)?.payload.comparison ?? null;
+        await publishResult(dir, { version: 1, runId: originConfig.runId, callId: originConfig.callId, status: post2.receipt ? post2.receipt.status === "ordinary" ? "completed" : "navigation_halted" : "infrastructure_failure", positionCursor: cursor2, selectedInvocationId: lost, preNavigation: preReceipt, settlement: { terminalClass: latestAttempt.terminalClass, reference: latestAttempt.reference }, postNavigation: post2.receipt, actionComparison: comparison2 }, now);
+        rows = await readAssistedLedgerV1(dir);
+      }
       lost = unresolved(rows);
     }
   }
