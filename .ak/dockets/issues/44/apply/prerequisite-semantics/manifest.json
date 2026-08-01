@@ -1,0 +1,120 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+    "root": ".ak/dockets",
+    "docketId": "issues/44/apply/prerequisite-semantics"
+  },
+  "invocation": {
+    "id": "019fbd3b-ea0f-7acd-ad2b-b0ed360330d2"
+  },
+  "session": {
+    "id": "019fbd3b-ea0f-7acd-ad2b-b0ed360330d2",
+    "directory": ".ak/work/issues/44/runs/coder-prerequisite-semantics/session",
+    "basename": "2026-08-01T12-10-49-277Z_019fbd3b-ea0f-7acd-ad2b-b0ed360330d2.jsonl",
+    "sha256": "3255e442d48ca0a96c4f7e3645c5d2fe4ce4104579d5975e8d1e99b866011422",
+    "byteLength": 625273,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44/.ak/work/issues/44/runs/coder-prerequisite-semantics/session",
+      "--session-id",
+      "019fbd3b-ea0f-7acd-ad2b-b0ed360330d2",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/tdd/SKILL.md",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "apply",
+      "--ak-coder-task",
+      ".ak/work/issues/44/coder-prerequisite-semantics.md",
+      "-p",
+      "Implement the prospective prerequisite Fixer audit semantics test-first, run all gates, and commit."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "22b03a1b1d88e0c2fcdc05671b4af79c0e65c46c",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "construction-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+        "commit": "22b03a1b1d88e0c2fcdc05671b4af79c0e65c46c",
+        "path": ".ak/dockets/issues/44/authority/prerequisite-semantics-followup/receipt.json",
+        "blobOid": "f70df1ed6fb0172e9f91d90fd280b25084459099",
+        "sha256": "2e7dfa0405f3411d4ebc4e0225a04845e345e88d291c1459857d1ce198b941a1",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/coder-task",
+        "sha256": "2fe7c67163b4d876cdc381be34e249afa57dd6350a3f93c7503e788d7a160114",
+        "byteLength": 1111
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "4ce58991b6072420f1f41b80aac148709b54b7e20ac8bf025cd11cdb640d89be",
+        "byteLength": 1978
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_0IYqKzWLtzY7iX7MPyFYBEki|fc_0f34f5b8ed40a91a016a6de6b1c7c88191b8bff2f1db0882d2",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

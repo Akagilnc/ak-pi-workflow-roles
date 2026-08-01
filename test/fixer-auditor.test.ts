@@ -6,7 +6,7 @@ import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-audito
 
 const input = {
   soul: "Fixer law exact bytes",
-  packet: "Assigned finding packet",
+  packet: Object.freeze({ version: 1 as const, instructions: "Assigned finding packet", prerequisites: Object.freeze([{ id: "owner.choice", requirement: "Owner chooses." }]) }),
   phase: "apply" as const,
   transcript: "invocation transcript",
   candidate: { status: "completed" as const, report: "settled", classResults: [{ name: "Parser", disposition: "completed" as const, searchScope: "all parsers", exceptions: [], commitSha: "a".repeat(40) }] },
@@ -29,7 +29,7 @@ test("Fixer auditor uses the active model, exact invocation inputs, and a non-ov
   const userContent = seen?.messages.find((message) => message.role === "user")?.content;
   assert.ok(Array.isArray(userContent));
   const auditInput = userContent.map((part) => part.type === "text" ? part.text : "").join("");
-  for (const exactInput of [input.soul, input.packet, input.phase, input.transcript, JSON.stringify(input.candidate)]) {
+  for (const exactInput of [input.soul, JSON.stringify(input.packet), input.phase, input.transcript, JSON.stringify(input.candidate)]) {
     assert.equal(auditInput.includes(exactInput), true);
   }
 });

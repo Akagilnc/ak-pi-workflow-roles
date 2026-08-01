@@ -1,0 +1,5 @@
+# Issue #44 typed prerequisite final convergence
+
+Independently verify current HEAD against typed-prerequisite authority. Do not treat refused Reviewer reports as accepted findings, but inspect their recorded observations, especially possible TypeBox whitespace admission, directly against authority and the real submission pipeline.
+
+Verify every packet/blocker/admission/audit/Recorder/export/docs/generated/cold-package red/green, semantic nondeterminism honesty, Coder/Soul preservation, and no compatibility/orchestration. Also verify actual Coder commit identity rather than trusting prose. Run gates. Converge only if no residual; otherwise classify exact classes for direct Fixer.
