@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_wQvo9SrQOyUHZ3HYyhxmmIvY|fc_0688267270bc2ce4016a6da91cd1c0819ab7cb929c24a3cc77",
+  "details": {
+    "status": "completed",
+    "report": "AssistedInputContractClosure: centralized locator validation now rejects malformed roots, UUIDs, parent IDs, and optional call IDs before filesystem effects; CLI no longer canonicalizes traversal-bearing roots into acceptance. Added TS/CLI no-publication matrix while preserving the optional-callId repair.\nSchemaContractParity: added TypeBox Value.Check behavioral parity across all role/phase and Navigator status variants, invalid variants/phases/extras, and cold built-package schema exports.\nNavigatorActivationAtomicity: completed soul, snapshot, evidence, collision, registration, and active-tool verification failure-state/corrected-activation coverage, including prior-active state clearing and exactly-two-tool commit.\nGates: npm run typecheck; npm test (426 pass, 5 skipped); npm run build:recorder; npm pack --dry-run; git diff --check. Worktree clean.",
+    "commitSha": "e471bc5c10cf3edd88d576a1471a6c67adafc751"
+  },
+  "artifactKind": "acceptedReceipt"
+}
