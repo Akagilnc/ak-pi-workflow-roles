@@ -77,7 +77,7 @@ export function validateDoctorOutput(value: unknown, patient: DoctorCase, store:
   const assertTargets = (targetKeys: string[]) => { for (const targetKey of targetKeys) if (!lawfulTargets.has(targetKey)) throw new Error(`Target key is not a lawful case target: ${targetKey}`); };
   if (output.status === "refused") { for (const missing of output.missingEvidence) assertTargets(missing.targetKeys); return output; }
   if (canonicalJson(output.case) !== canonicalJson(patient.identity) || canonicalJson(output.cost) !== canonicalJson(patient.cost)) throw new Error("Every reported number must equal the re-derived session-byte cost");
-  if (output.findings.length) throw new Error("A single-case cost report cannot assert reusable-asset findings without typed asset evidence");
+  for (const finding of output.findings) if (finding.targetKey !== "case") throw new Error("A reusable-asset target requires typed asset evidence");
   const readCitations = (ids: string[], label: string) => { for (const id of ids) if (!store.entries.has(id) || !store.hasRead(id)) throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
   for (const finding of output.findings) {
     assertTargets([finding.targetKey]);
