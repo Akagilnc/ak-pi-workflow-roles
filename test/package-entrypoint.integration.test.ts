@@ -25,6 +25,8 @@ import {
   parseFixPacketV1,
   validateFixerOutputForPacket,
   JUDGE_OUTPUT_TOOL_NAME,
+  MERGER_INPUT_FLAG,
+  MERGER_OUTPUT_TOOL_NAME,
   ROLE_FLAG,
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
@@ -72,10 +74,12 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
 test("packed package includes Doctor role, evidence flag, and runtime dependencies", async () => {
   const manifest = await loadRawPackageManifest();
   packageEntrypoint(manifest);
-  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor"]);
+  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"]);
   assert.equal(ROLE_FLAG.name, "ak-role");
   assert.equal(DOCTOR_EVIDENCE_FLAG.name, "ak-doctor-evidence");
   assert.equal(DOCTOR_EVIDENCE_FLAG.definition.type, "string");
+  assert.equal(MERGER_INPUT_FLAG.name, "ak-merger-input");
+  assert.equal(MERGER_OUTPUT_TOOL_NAME, "ak_merger_output");
   const packet = parseFixPacketV1(JSON.stringify({ version: 1, instructions: "repair", prerequisites: [] }));
   assert.equal((fixerPacketV1Schema as any).additionalProperties, false);
   assert.deepEqual(validateFixerOutputForPacket({ status: "planned", report: "plan" }, "plan", packet), { status: "planned", report: "plan" });
@@ -89,6 +93,10 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
         "src/doctor-contracts.ts",
         "src/stats-line.ts",
         "src/canonical-json.ts",
+        "souls/merger.md",
+        "src/merger-contracts.ts",
+        "src/merger-git-state.ts",
+        "src/merger-role.ts",
         "src/package-contracts/fixer-packet.ts",
         "dist/package-contracts/fixer-packet.js",
         "packets/fixer-repair.json",

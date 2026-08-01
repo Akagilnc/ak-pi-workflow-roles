@@ -1,0 +1,177 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "root": ".ak/dockets",
+    "docketId": "issues/22/judgment/final-convergence"
+  },
+  "invocation": {
+    "id": "019fbcf6-ea2a-7bad-9889-97c5c92f7248"
+  },
+  "session": {
+    "id": "019fbcf6-ea2a-7bad-9889-97c5c92f7248",
+    "directory": ".ak/work/issues/22/runs/final-convergence-judge/session",
+    "basename": "2026-08-01T10-55-27-437Z_019fbcf6-ea2a-7bad-9889-97c5c92f7248.jsonl",
+    "sha256": "2063381609c394f527ed86ecfd21beea2b1ce800a6efa3ab013aa103c610bdfd",
+    "byteLength": 519276,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22/.ak/work/issues/22/runs/final-convergence-judge/session",
+      "--session-id",
+      "019fbcf6-ea2a-7bad-9889-97c5c92f7248",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #22 Merger final convergence\n\nIndependently verify current HEAD against `.ak/dockets/issues/22/authority/final-synthesis-001/receipt.json` and the Review-001 judgment/repair chain.\n\nCheck the complete Merger v1 class: closed digest-bound input/output contracts; exact in-progress merge preflight and conflict set; immutable automatic merge result and permitted resolution scope; constrained tools and singleton settlement; completed exact two-parent/clean verification; honest escalation/failure; no merge initiation/abort/retry/publication/orchestration; public exports/registration/Recorder/docs/cold package; deterministic production Git tests; existing role meanings unchanged. Verify Review-001 is closed with corrected automatic-tree semantics.\n\nRun gates. Converge only if no authorized residual remains."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "93291c1373c494da80a887a0a31fc995ac865f01",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "93291c1373c494da80a887a0a31fc995ac865f01",
+        "path": ".ak/dockets/issues/22/authority/final-synthesis-001/receipt.json",
+        "blobOid": "bfef10db6ce968eb969137da36db4fd4791209fb",
+        "sha256": "77e174cdff622a4658b4680650410bdbf7c9a8151f4b84dff30f4afee85de925",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "93291c1373c494da80a887a0a31fc995ac865f01",
+        "path": ".ak/dockets/issues/22/review/review-001/receipt.json",
+        "blobOid": "ac2a72716e416d279fc75dffcbf7c2ed8aa78163",
+        "sha256": "912306cd55db8d38b1407edc504cea441a6f73954f5c2157716f927fc4ce8805",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judgment",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "93291c1373c494da80a887a0a31fc995ac865f01",
+        "path": ".ak/dockets/issues/22/judgment/review-001/receipt.json",
+        "blobOid": "b7c0bada9aeae156fab2d772e1b01d09e336bea1",
+        "sha256": "e41f299e6abd05b0f8544e2b617ca8eb9455d0c4da58802b566a9e8ec727cb45",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "93291c1373c494da80a887a0a31fc995ac865f01",
+        "path": ".ak/dockets/issues/22/repair/review-001-apply/receipt.json",
+        "blobOid": "c11cd44b524a71e91f970c51152f4db1f483b983",
+        "sha256": "93c1465326e38371be652a1a23462ad194e63989774520448a764a9ecd5cbfb8",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "ffd228c7dd68bd0c880833ffee12a46cdf2911b6315be5e4ae118f2e57d2e644",
+        "byteLength": 819
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "b13d50814db22a65f4417c062afabc62f3c915d611038144e3c0d608ccac56b8",
+        "byteLength": 4525
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "0993daa597d84879c88a648bb90adf75b211a3e37b592cf8cd0682a6371f81d9",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_GfzMOkqMf89hOddG6pMvGRhz|fc_00348674d82a8507016a6dd1d8c370819194d3c5880fbe4c96",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_GfzMOkqMf89hOddG6pMvGRhz|fc_00348674d82a8507016a6dd1d8c370819194d3c5880fbe4c96",
+    "auditPassed": true,
+    "usage": {
+      "input": 25017,
+      "output": 697,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 25714
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

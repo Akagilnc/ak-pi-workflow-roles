@@ -27,6 +27,7 @@ import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "./worker-role.ts";
+import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -79,8 +80,14 @@ export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
+export { MERGER_INPUT_FLAG, MERGER_ACTIVE_TOOLS, createMergerRoleRuntime } from "./merger-role.ts";
+export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
+export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";
+export { createProductionMergerGitState } from "./merger-git-state.ts";
+export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
+export type { MergerRoleDependencies } from "./merger-role.ts";
 
-export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor"] as const;
+export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"] as const;
 export const ROLE_FLAG = {
   name: "ak-role",
   definition: {
@@ -104,6 +111,10 @@ export type RoleRuntimeDependencies = {
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
   loadDoctorEvidenceIndex?(path: string): Promise<unknown>;
+  loadMergerSoul?(): Promise<string>;
+  loadMergerInput?(path: string): Promise<unknown>;
+  mergerGitState?: MergerRoleDependencies["gitState"];
+  createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
   readDoctorCommittedEvidence?(targetCommit: string, path: string): Promise<Uint8Array>;
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
@@ -250,6 +261,15 @@ export function createRoleRuntimeExtension(
       committedEvidenceReader: { async read(targetCommit, path) { if (!dependencies.readDoctorCommittedEvidence) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.readDoctorCommittedEvidence(targetCommit, path); } },
       async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
     }, hostActions);
+    let sessionMergerGitState = dependencies.mergerGitState;
+    const merger = createMergerRoleRuntime(pi, {
+      async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
+      async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
+      gitState: {
+        activeMerge() { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.activeMerge(); },
+        completedMerge(mergeCommitId, automaticMergeTreeId) { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.completedMerge(mergeCommitId, automaticMergeTreeId); },
+      },
+    }, hostActions);
     const collector = createCollectorRoleRuntime(
       pi,
       {
@@ -301,6 +321,13 @@ export function createRoleRuntimeExtension(
           return;
         case "doctor":
           await doctor.activate();
+          return;
+        case "merger":
+          sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
+          if (sessionMergerGitState === undefined) {
+            throw new Error("Merger runtime dependencies are not configured");
+          }
+          await merger.activate();
           return;
       }
     });

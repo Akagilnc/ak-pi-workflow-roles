@@ -1,0 +1,3 @@
+# PR #47 final retry
+
+Prior model reached convergence but submitted invalid `converged + classes[]`, so no Receipt exists. Re-submit the independently verified conclusion using a valid Judge shape: `judgeStatus:"converged"` with full nonblank `note` only; omit classes/fix/decisionGate. Recheck current HEAD/gates first.

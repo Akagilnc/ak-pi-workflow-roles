@@ -1,0 +1,17 @@
+# Issue #22 final authority synthesis
+
+Produce a final construction scheme—or an explicit bounded discussion draft if a genuine unresolved interface choice remains—using the new owner synthesis and the two prior Judge receipts.
+
+The owner defines the parallel workflow as an external capability exam, not repository-owned orchestration. Reconcile the prior authority accordingly.
+
+Decide:
+
+1. The exact non-normative reference workflow that may be documented without prescribing caller topology.
+2. Which existing package roles/contracts already satisfy each single-invocation seat in that workflow.
+3. Which missing package capability is genuinely pulled into construction scope. In particular, finalize the Merger role boundary after reconsideration.
+4. Whether any existing Judge, Fixer, Coder, or Reviewer contract requires modification to support the exam. Do not invent changes merely to encode orchestration.
+5. Remove or demote every prior prescription that belongs only to an external lane/queue/worktree/publication implementation, including candidate/CAS policy. Preserve only role-level input facts needed by a single invocation.
+6. Give minimal package-owned construction slices, contract acceptance criteria, Soul placement, exports/docs/tests, and explicit out-of-scope items.
+7. State whether construction can proceed directly or whether a Plan has a legitimate missing deliverable.
+
+Respect ADR 0001 and ADR 0010. The example must not become a hidden workflow engine, normative ordering law, next-role field, or package-owned stopping/retry policy. Submit exactly one verdict through `ak_judge_output`.
