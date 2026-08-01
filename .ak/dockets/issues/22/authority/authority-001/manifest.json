@@ -1,0 +1,188 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "root": ".ak/dockets",
+    "docketId": "issues/22/authority/authority-001"
+  },
+  "invocation": {
+    "id": "019fbb4a-873f-77a3-8f94-49225126b5c8"
+  },
+  "session": {
+    "id": "019fbb4a-873f-77a3-8f94-49225126b5c8",
+    "directory": ".ak/work/issues/22/runs/authority-001/session",
+    "basename": "2026-08-01T03-08-09-053Z_019fbb4a-873f-77a3-8f94-49225126b5c8.jsonl",
+    "sha256": "d760b545ca56723b22b98f1a9019751e8d13e72a07a7c232cf2b188c180b8892",
+    "byteLength": 219221,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22/.ak/work/issues/22/runs/authority-001/session",
+      "--session-id",
+      "019fbb4a-873f-77a3-8f94-49225126b5c8",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #22 first authority review — parallel apply lanes\n\nAdjudicate GitHub issue #22 against the fixed repository snapshot and its durable law. This is an Authority-posture review only: do not implement, edit, or require apply-level proof.\n\nThe admitted issue snapshot contains the owner’s explicit priority escalation and the observed serial wall-clock costs. Treat those as authority/evidence, while independently checking current repository contracts and ADRs.\n\nDecide whether construction authority is presently converged. In particular, resolve or explicitly escalate:\n\n1. **Ownership and repository boundary:** which parts, if any, belong in this independently installable roles package, which are caller/driver mechanics, and whether construction requires a separate orchestrator repository. Preserve ADR 0010 caller-owned composition and avoid placing workflow topology inside roles.\n2. **Merger shape:** whether conflict handling is an existing Fixer apply packet, a new role, or neither; identify what real demand is sufficient under ADR 0001.\n3. **Worktree lifecycle:** owner of creation, naming, cleanup, failed residue, branch identity, and immutable inputs.\n4. **Mechanical merge queue:** exact boundary between model-free Git operations and role judgment; preconditions, post-merge verification, failure behavior, and preservation of both branches.\n5. **Concurrency and degradation:** who selects lane width, what limits are package law versus caller policy, and how the mechanism safely degrades when conflicts or failures occur.\n6. **Credential/evidence/failure honesty:** minimum durable evidence and diagnostics without promoting generic sessions or hiding causes.\n7. **Construction slicing:** identify independently authorized slices and prerequisites. Do not prescribe shallow helper names. State whether a Plan leg has a legitimate missing deliverable or whether the authority verdict itself is construction-ready.\n\nReject attractive but unlawful scope expansion. Existing roles must continue to own one invocation; no role may decide ordering, repetition, budgets, stopping, commits, or cross-ticket composition. Do not infer that this package must own a mechanism merely because the issue is filed here.\n\nSubmit exactly one verdict through `ak_judge_output` after inspecting the admitted issue snapshot, CLAUDE.md, ADR 0001, ADR 0010, README, and relevant current code."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "9247ab883f07adf5eabb75abf60777b626a58d17",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "repository-law",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "CLAUDE.md",
+        "blobOid": "d82386f3c0d2c55b5ce3fa62584956642c3cb0f2",
+        "sha256": "e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr-0001",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "docs/adr/0001-roles-grow-by-demand.md",
+        "blobOid": "11da1c225b21369b06c67df59582be648e43ad1d",
+        "sha256": "6496ba5a1dee07de3cae7ed4c6693a2c43b4c77fcc84e241aafa27036723438f",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "adr-0010",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "docs/adr/0010-callers-own-role-composition-and-repetition.md",
+        "blobOid": "e801e80b7eabe5a16610f74ae63585bad7745f91",
+        "sha256": "bfa32ab47682b96d2a6359dd8353da5b38df9f712d2812e0ba86f7e362ccb0ba",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "package-readme",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "9247ab883f07adf5eabb75abf60777b626a58d17",
+        "path": "README.md",
+        "blobOid": "5aa5b0fc7ef9072f5092a8db31101fe9a926a340",
+        "sha256": "3ebe44f2247a89e76257fe9a73366438916c9389fa9f853f13b20b6b05b54dcd",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "issue-22",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/issue-22",
+        "sha256": "afd1077b1e8e3dbf1458008f6ad7c5a9379df6cc30f46463a52e53341cbbc0ca",
+        "byteLength": 3783
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "25ca0a91b85f089ca761da1f6e9785feb4090e79660a75989e68d69d1f9bf7c2",
+        "byteLength": 2399
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "2dc372d97229d5d6090dbe7f1a1e3624b1bb2ac2259953b26af0eea4b996b88b",
+        "byteLength": 11161
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "e9a25eca3d19af9f4e4613894d67bdf5b05b64aa6b7075f90f8180da5676731f",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_GftbcOSt5IpsaBgQ6NVqaEqu|fc_0de5970ff7575bd1016a6d6392022c81918724411703ee2aa9",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_GftbcOSt5IpsaBgQ6NVqaEqu|fc_0de5970ff7575bd1016a6d6392022c81918724411703ee2aa9",
+    "auditPassed": true,
+    "usage": {
+      "input": 16885,
+      "output": 786,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 17671
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
