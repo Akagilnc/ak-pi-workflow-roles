@@ -1,0 +1,15 @@
+# Issue #28 fixed-target review retry
+
+Review target `3bee9562c59a22b033dd05c3557d8c0b1d3b2ff4` against base `4e96b7b1a95d16fb6dbf14cb424d63f3225bdbc5`. The production implementation is commit `bb1ddc114fae652e4a68b13b7c016c0cd7ad1547`; later commits preserve its Recorder evidence only.
+
+Authoritative spec materials in the target clone:
+
+- ID `navigator-authority`: `.ak/dockets/issues/28/authority/final-authority-001/receipt.json`
+- ID `runner-authority`: `.ak/dockets/issues/28/authority/assisted-runner-final-001/receipt.json`
+- ID `repository-law`: `CLAUDE.md`
+
+Mechanical proposal constraint: select exactly those three materials. `relevanceHints.standards` must contain only `repository-law`; `relevanceHints.spec` must contain only `navigator-authority` and `runner-authority`. Relevance hints are material IDs, not prose descriptions or paths. Use established spec state and the capabilities actually granted by the supplied capability document.
+
+Review both Standards and Spec. Inspect all clone material needed. Pay particular attention to authored TypeScript ownership versus generated artifacts, whether package-owned automatic consultation is truly complete/callable, contract closure and digest identity, Recorder preservation, ledger atomicity/crash truth, Navigator tool/audit isolation, failure honesty, credential boundaries, cold-install behavior, and whether tests cross production seams.
+
+Report concrete findings only. Do not authorize or apply repairs.
