@@ -45,6 +45,16 @@ async function invoke(config, invocationId, childArgv, authority, task, env) {
 function effectiveEnv(config, base) {
   return buildChildEnv(base, config.execution.environment);
 }
+function mergeRange(ranges, start, end) {
+  let i = 0;
+  while (i < ranges.length && ranges[i][1] < start) i++;
+  while (i < ranges.length && ranges[i][0] <= end) {
+    start = Math.min(start, ranges[i][0]);
+    end = Math.max(end, ranges[i][1]);
+    ranges.splice(i, 1);
+  }
+  ranges.splice(i, 0, [start, end]);
+}
 function sealedEvidenceReads(sessionText) {
   const coverage = /* @__PURE__ */ new Map();
   for (const line of sessionText.split("\n")) {
@@ -59,12 +69,12 @@ function sealedEvidenceReads(sessionText) {
     if (m?.role !== "toolResult" || m.toolName !== "ak_navigator_evidence_read" || m.isError !== false) continue;
     const d = m.details;
     if (!d || typeof d.evidenceId !== "string" || !Number.isSafeInteger(d.offset) || !Number.isSafeInteger(d.byteLength) || !Number.isSafeInteger(d.totalByteLength) || d.offset < 0 || d.byteLength < 0 || d.offset + d.byteLength > d.totalByteLength) throw new Error("sealed Navigator evidence read malformed");
-    const c = coverage.get(d.evidenceId) ?? { total: d.totalByteLength, bytes: /* @__PURE__ */ new Set() };
+    const c = coverage.get(d.evidenceId) ?? { total: d.totalByteLength, ranges: [] };
     if (c.total !== d.totalByteLength) throw new Error("sealed Navigator evidence length conflict");
-    for (let i = d.offset; i < d.offset + d.byteLength; i++) c.bytes.add(i);
+    mergeRange(c.ranges, d.offset, d.offset + d.byteLength);
     coverage.set(d.evidenceId, c);
   }
-  return [...coverage].map(([evidenceId, c]) => ({ evidenceId, fullyRead: c.bytes.size === c.total }));
+  return [...coverage].map(([evidenceId, c]) => ({ evidenceId, fullyRead: c.total === 0 || c.ranges.length === 1 && c.ranges[0][0] === 0 && c.ranges[0][1] === c.total }));
 }
 async function existing(config, invocationId) {
   const docket = join(assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), "invocations", invocationId);

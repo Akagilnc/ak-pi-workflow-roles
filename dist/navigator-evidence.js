@@ -1,12 +1,46 @@
 import { sha256Hex } from "./sha256.js";
+function credit(intervals, start, end) {
+  if (start === end) return;
+  let i = 0;
+  while (i < intervals.length && intervals[i][1] < start) i++;
+  while (i < intervals.length && intervals[i][0] <= end) {
+    start = Math.min(start, intervals[i][0]);
+    end = Math.max(end, intervals[i][1]);
+    intervals.splice(i, 1);
+  }
+  intervals.splice(i, 0, [start, end]);
+}
+function utf8End(bytes, start, target) {
+  let end = target;
+  while (end > start) {
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end));
+      return end;
+    } catch {
+      end--;
+    }
+  }
+  if (start < bytes.length) {
+    for (end = target + 1; end <= Math.min(bytes.length, target + 3); end++) {
+      try {
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end));
+        return end;
+      } catch {
+      }
+    }
+  }
+  return target;
+}
 class NavigatorEvidenceStore {
   constructor(evidence, handles, maxPageBytes = 16384) {
     this.maxPageBytes = maxPageBytes;
     for (const item of evidence) {
-      const bytes = handles.get(item.handle);
-      if (!bytes) throw new Error(`missing evidence handle: ${item.id}`);
+      if (this.#byId.has(item.id)) throw new Error("duplicate evidence id");
+      const source = handles.get(item.handle);
+      if (!source) throw new Error(`missing evidence handle: ${item.id}`);
+      const bytes = new Uint8Array(source);
       if (sha256Hex(bytes) !== item.sha256) throw new Error(`evidence digest mismatch: ${item.id}`);
-      this.#byId.set(item.id, { bytes, read: /* @__PURE__ */ new Set() });
+      this.#byId.set(item.id, { bytes, read: [], touched: false });
     }
   }
   maxPageBytes;
@@ -15,13 +49,21 @@ class NavigatorEvidenceStore {
     const item = this.#byId.get(evidenceId);
     if (!item) throw new Error("evidence id is not admitted");
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) throw new Error("invalid evidence page");
-    const length = Math.min(limit, this.maxPageBytes, item.bytes.length - offset);
-    if (length < 0) throw new Error("offset beyond evidence");
-    for (let i = offset; i < offset + length; i++) item.read.add(i);
-    return { evidenceId, offset, byteLength: length, totalByteLength: item.bytes.length, content: new TextDecoder("utf-8", { fatal: true }).decode(item.bytes.slice(offset, offset + length)), truncated: offset + length < item.bytes.length };
+    if (offset > item.bytes.length) throw new Error("offset beyond evidence");
+    const target = Math.min(offset, item.bytes.length) + Math.min(limit, this.maxPageBytes, item.bytes.length - offset), end = utf8End(item.bytes, offset, target), slice = item.bytes.subarray(offset, end);
+    let content;
+    try {
+      content = new TextDecoder("utf-8", { fatal: true }).decode(slice);
+    } catch {
+      throw new Error("evidence page is not valid UTF-8");
+    }
+    ;
+    item.touched = true;
+    credit(item.read, offset, end);
+    return { evidenceId, offset, byteLength: end - offset, totalByteLength: item.bytes.length, content, truncated: end < item.bytes.length };
   }
   readRecord() {
-    return [...this.#byId].map(([evidenceId, v]) => ({ evidenceId, fullyRead: v.read.size === v.bytes.length })).filter((x) => x.fullyRead || this.#byId.get(x.evidenceId).read.size > 0);
+    return [...this.#byId].flatMap(([evidenceId, v]) => v.touched ? [{ evidenceId, fullyRead: v.bytes.length === 0 || v.read.length === 1 && v.read[0][0] === 0 && v.read[0][1] === v.bytes.length }] : []);
   }
 }
 const navigatorEvidenceReadSchema = { type: "object", additionalProperties: false, required: ["evidenceId"], properties: { evidenceId: { type: "string" }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 16384 } } };

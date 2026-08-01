@@ -35,7 +35,7 @@ async function appendAssistedGenerationV1(runDirectory, event, now) {
   }
 }
 async function runIndex(root, runId, parentIssue) {
-  if (!isAbsolute(root) || resolve(root) !== root || !isUuidV7(runId)) throw new Error("invalid assisted run locator");
+  if (typeof root !== "string" || !isAbsolute(root) || resolve(root) !== root || !isUuidV7(runId) || parentIssue !== void 0 && (!Number.isSafeInteger(parentIssue) || parentIssue < 1)) throw new Error("invalid assisted run locator");
   const path = join(root, ".ak", "work", "assisted-runs", `${runId}.json`);
   if (parentIssue !== void 0) {
     await mkdir(join(root, ".ak", "work", "assisted-runs"), { recursive: true });
@@ -47,7 +47,7 @@ async function runIndex(root, runId, parentIssue) {
     }
   }
   const value = JSON.parse(await readFile(path, "utf8"));
-  if (value.version !== 1 || value.runId !== runId || !Number.isSafeInteger(value.parentIssue) || parentIssue !== void 0 && value.parentIssue !== parentIssue) throw new Error("assisted run index conflict");
+  if (value.version !== 1 || value.runId !== runId || !Number.isSafeInteger(value.parentIssue) || value.parentIssue < 1 || parentIssue !== void 0 && value.parentIssue !== parentIssue) throw new Error("assisted run index conflict");
   return value.parentIssue;
 }
 const configDigest = (c) => sha256Hex(canonicalJson(c));

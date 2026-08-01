@@ -57,7 +57,7 @@ function canonicalSnapshotDigestV1(value) {
   return sha256Hex(canonicalJson(stable));
 }
 function validateCurrentPositionSnapshotV1(value) {
-  const r = record(value, ["version", "capturedAt", "runId", "subject", "children", "parentObservation", "workspaces", "evidence", "positionCursor", "latestAttempt", "digest"], "snapshot");
+  const r = record(value, ["version", "capturedAt", "runId", "subject", "children", "parentObservation", "labelPolicy", "workspaces", "evidence", "positionCursor", "latestAttempt", "digest"], "snapshot");
   if (r.version !== 1 || !isUuidV7(r.runId) || !Number.isSafeInteger(r.positionCursor) || r.positionCursor < 0) fail("snapshot identity");
   const sub = subject(r.subject);
   if (!Array.isArray(r.children) || !Array.isArray(r.workspaces) || !Array.isArray(r.evidence)) fail("snapshot collections");
@@ -68,6 +68,12 @@ function validateCurrentPositionSnapshotV1(value) {
   });
   if (children.some((c, i) => i > 0 && c.number <= children[i - 1].number) || new Set(children.map((c) => c.id)).size !== children.length) fail("sorted exact child universe");
   const po = record(r.parentObservation, ["state", "labels", "observedAt", "query"], "parent observation"), parentObservation = obsFields(po, "parent observation");
+  if (!Array.isArray(r.labelPolicy)) fail("label policy");
+  const labelPolicy = r.labelPolicy.map((x, i) => {
+    const p = record(x, ["labelId", "meaning"], `label policy/${i}`);
+    return { labelId: text(p.labelId, "label id"), meaning: text(p.meaning, "label meaning") };
+  });
+  if (new Set(labelPolicy.map((x) => x.labelId)).size !== labelPolicy.length) fail("label policy");
   const workspaces = r.workspaces.map((x, i) => {
     const w = record(x, ["id", "root", "relation", "head", "target"], `workspace/${i}`);
     if (w.relation !== "repository" && w.relation !== "worktree" || !OID.test(String(w.head)) || !OID.test(String(w.target))) fail("workspace");
@@ -78,7 +84,8 @@ function validateCurrentPositionSnapshotV1(value) {
     if (!["authority", "acceptance", "issue_body", "task", "input", "failure"].includes(String(e.kind)) || !SHA256.test(String(e.sha256))) fail("evidence");
     return { id: text(e.id, "evidence id"), kind: e.kind, sha256: String(e.sha256), provenance: { kind: text(p.kind, "kind"), reference: text(p.reference, "reference") }, handle: text(e.handle, "handle") };
   });
-  const result = { version: 1, capturedAt: iso(r.capturedAt, "capturedAt"), runId: String(r.runId), subject: sub, children, parentObservation, workspaces, evidence, positionCursor: r.positionCursor, latestAttempt: validateSettledAttempt(r.latestAttempt), digest: String(r.digest) };
+  if (new Set(evidence.map((x) => x.id)).size !== evidence.length) fail("duplicate evidence id");
+  const result = { version: 1, capturedAt: iso(r.capturedAt, "capturedAt"), runId: String(r.runId), subject: sub, children, parentObservation, labelPolicy, workspaces, evidence, positionCursor: r.positionCursor, latestAttempt: validateSettledAttempt(r.latestAttempt), digest: String(r.digest) };
   const { digest, ...digestInput } = result;
   if (!SHA256.test(result.digest) || canonicalSnapshotDigestV1(digestInput) !== result.digest) fail("snapshot digest");
   return result;
