@@ -67,6 +67,13 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
   admit("parent-issue-body", "issue_body", new TextEncoder().encode(parent.body ?? ""), `github-issue:${config.subject.parentIssue}`, "memory:parent-body");
   for (let i = 0; i < childObs.length; i++) admit(`child-${config.subject.children[i].number}-issue-body`, "issue_body", new TextEncoder().encode(childObs[i].body ?? ""), `github-issue:${config.subject.children[i].number}`, `memory:child-${i}-body`);
   for (const d of config.acquisition.evidence) admit(d.id, d.kind, await readBoundedRegular(d.path), `${d.provenance.kind}:${d.provenance.reference}`, d.path);
+  if (latestAttempt && (latestAttempt.reference.id.startsWith("receipt:") || latestAttempt.reference.id.startsWith("failure:"))) {
+    const [artifactKind, artifactInvocation] = latestAttempt.reference.id.split(":");
+    if (artifactInvocation !== latestAttempt.invocationId) throw new Error("settlement artifact identity mismatch");
+    const runDir = assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), path = artifactKind === "receipt" ? join(runDir, "invocations", artifactInvocation, "receipt.json") : join(runDir, "invocation-inputs", artifactInvocation, "failure.json"), bytes = await readBoundedRegular(path);
+    if (sha256Hex(bytes) !== latestAttempt.reference.sha256) throw new Error("settlement artifact digest mismatch");
+    admit(`settlement:${artifactInvocation}`, artifactKind === "receipt" ? "acceptance" : "failure", bytes, latestAttempt.reference.id, path);
+  }
   evidence.sort((a, b) => a.id.localeCompare(b.id));
   const evidenceRoot = join(assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), "evidence");
   await mkdir(evidenceRoot, { recursive: true });
