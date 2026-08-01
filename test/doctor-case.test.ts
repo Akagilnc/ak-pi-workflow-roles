@@ -74,21 +74,19 @@ test("runtime-derived metrics permit completion when a case exceeds evidence pag
   assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, outputTokens: { ...patient.cost.outputTokens, count: 8 } } }, patient, store), /re-derived/);
 });
 
-test("commit accounting follows observed session transitions at available SHA precision", async () => {
+test("commit accounting admits only typed commit SHAs from accepted terminating results", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-commits-"));
   const runs = join(root, ".ak/work/issues/40/runs");
   await mkdir(join(runs, "coder/session"), { recursive: true });
   const fixture = [
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
-    { type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "toolResult", toolName: "bash", content: "HEAD is now at abc1234 first" } },
-    { type: "message", timestamp: "2026-08-01T00:00:02.000Z", message: { role: "toolResult", toolName: "bash", content: "HEAD abc1234" } },
-    { type: "message", timestamp: "2026-08-01T00:00:03.000Z", message: { role: "toolResult", toolName: "bash", content: "commit def56789" } },
+    { type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "toolResult", toolName: "bash", content: "HEAD is now at badcafe; commit def56789" } },
+    { type: "message", timestamp: "2026-08-01T00:00:02.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "mentions commit badcafe in free text", commitSha: "abc1234" } } },
   ];
   await writeFile(join(runs, "coder/session/commits.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
   const patient = await loadDoctorCase(runs);
   assert.deepEqual(patient.cost.commits, [
     { source: "coder/session/commits.jsonl", commit: "abc1234" },
-    { source: "coder/session/commits.jsonl", commit: "def56789" },
   ]);
 });
 
@@ -110,10 +108,7 @@ test("intermediate object details neither terminate nor manufacture session stat
   assert.deepEqual(terminal && { wall: terminal.wallMilliseconds, completion: terminal.completion }, { wall: 5000, completion: "accepted" });
   assert.deepEqual(incomplete && { wall: incomplete.wallMilliseconds, completion: incomplete.completion }, { wall: 4000, completion: "incomplete" });
   assert.deepEqual(patient.cost.statuses, [{ source: "coder/session/terminal.jsonl", status: "refused" }]);
-  assert.deepEqual(patient.cost.commits, [
-    { source: "coder/session/incomplete.jsonl", commit: "badcafe" },
-    { source: "coder/session/terminal.jsonl", commit: "badcafe" },
-  ]);
+  assert.deepEqual(patient.cost.commits, []);
 });
 
 test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
