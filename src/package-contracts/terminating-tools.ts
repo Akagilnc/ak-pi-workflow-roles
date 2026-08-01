@@ -103,11 +103,19 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
   }
 }
 
+export class AcceptedDetailsContractError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AcceptedDetailsContractError";
+  }
+}
+
 export function validateAcceptedDetails(
   toolName: TerminatingToolName,
   details: unknown,
 ): AcceptedDetails {
-  switch (toolName) {
+  try {
+    switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
       return validateAcceptedWorkerDetails(details, "Coder");
     case FIXER_OUTPUT_TOOL_NAME:
@@ -118,8 +126,12 @@ export function validateAcceptedDetails(
       return validateAcceptedJudgeDetails(details);
     case COLLECTOR_OUTPUT_TOOL:
       return validateAcceptedCollectorReceipt(details);
-    case DOCTOR_OUTPUT_TOOL_NAME:
-      return validateRecordedDoctorOutput(details);
+      case DOCTOR_OUTPUT_TOOL_NAME:
+        return validateRecordedDoctorOutput(details);
+    }
+  } catch (error) {
+    if (error instanceof Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
+    throw error;
   }
 }
 
