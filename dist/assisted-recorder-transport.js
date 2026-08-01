@@ -34,6 +34,7 @@ async function invoke(config, invocationId, childArgv, authority, task, env) {
   const configPath = join(inputDir, "recorder-config.json");
   await writeFile(configPath, `${canonicalJson(rc)}
 `, { flag: "wx", mode: 384 });
+  await mkdir(join(runDir, "sessions", invocationId), { recursive: true });
   const result = await runRecorder({ argv: ["--config", configPath, "--", ...childArgv], env });
   const docket = join(runDir, "invocations", invocationId);
   if (result.failureJson) return { failure: result.failureJson };
