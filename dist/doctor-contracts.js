@@ -6,7 +6,19 @@ export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: false });
-const finding = Type.Object({ targetKey: nonblank, targetKind: Type.Union(DOCTOR_TARGET_KINDS.map((kind) => Type.Literal(kind))), evidenceIds: Type.Array(nonblank, { minItems: 1 }), disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]), recommendation: nonblank }, { additionalProperties: false });
+const evidenceIds = Type.Array(nonblank, { minItems: 1 });
+const guardrail = Type.Object({ answer: Type.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
+const lastRealBite = Type.Union([
+    Type.Object({ kind: Type.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
+    Type.Object({ kind: Type.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false }),
+]);
+const finding = Type.Object({
+    targetKey: nonblank, targetKind: Type.Union(DOCTOR_TARGET_KINDS.map((kind) => Type.Literal(kind))), evidenceIds,
+    disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]),
+    guardrails: Type.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: false }),
+    prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }),
+    lastRealBite,
+}, { additionalProperties: false });
 const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
 const cost = Type.Object({
     invocations: count, legs: count, modelApiTurns: count, outputTokens: count, toolCalls: count,
@@ -44,9 +56,32 @@ export function validateDoctorOutput(value, patient, store) {
         return output;
     if (canonicalJson(output.case) !== canonicalJson(patient.identity) || canonicalJson(output.cost) !== canonicalJson(patient.cost))
         throw new Error("Every reported number must equal the re-derived session-byte cost");
-    for (const finding of output.findings)
-        for (const id of finding.evidenceIds)
-            if (!store.entries.has(id) || !store.hasRead(id))
-                throw new Error(`finding must cite admitted/read evidence: ${id}`);
+    const readCitations = (ids, label) => { for (const id of ids)
+        if (!store.entries.has(id) || !store.hasRead(id))
+            throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
+    for (const finding of output.findings) {
+        readCitations(finding.evidenceIds, "finding");
+        for (const answer of Object.values(finding.guardrails))
+            readCitations(answer.evidenceIds, "guardrail");
+        const needsNecessity = finding.prescription.kind === "patch" || finding.prescription.kind === "addMechanism";
+        if (needsNecessity !== (finding.prescription.necessityExplanation !== undefined))
+            throw new Error("patch/addMechanism alone require a necessity explanation");
+        if (finding.lastRealBite.targetKey !== finding.targetKey)
+            throw new Error("lastRealBite target mismatch");
+        if (finding.lastRealBite.kind === "actual") {
+            const entry = store.entries.get(finding.lastRealBite.evidenceId);
+            if (!entry || entry.kind !== "session" || !store.hasRead(entry.id))
+                throw new Error("actual bite must cite an admitted/read retained session");
+        }
+        else {
+            if (finding.disposition === "keep")
+                throw new Error("noRealBite permits only thin or delete");
+            const eligible = patient.evidence.map((entry) => entry.id).sort();
+            const claimed = [...finding.lastRealBite.eligibleEvidenceIds].sort();
+            if (canonicalJson(claimed) !== canonicalJson(eligible))
+                throw new Error("noRealBite must prove the complete eligible single-case evidence population");
+            readCitations(eligible, "noRealBite");
+        }
+    }
     return output;
 }
