@@ -6,7 +6,7 @@ import { endAssistedRunV1, enterAssistedCallV1, readAssistedRunV1, recoverAssist
 function value(args, name, required = true) {
   const i = args.indexOf(name);
   const v = i >= 0 ? args[i + 1] : void 0;
-  if (required && !v) throw new Error(`missing ${name}`);
+  if (i >= 0 && (!v || v.startsWith("-")) || required && !v) throw new Error(`missing ${name}`);
   return v;
 }
 function common() {
@@ -24,7 +24,8 @@ const HELP = `ak-assisted-run
   status --repository-root <root> --run-id <uuidv7> [--call-id <uuidv7>] --json
 `;
 async function main(argv = process.argv.slice(2)) {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  const separator = argv.indexOf("--"), assistedArgs = separator < 0 ? argv : argv.slice(0, separator);
+  if (assistedArgs.includes("--help") || assistedArgs.includes("-h")) {
     process.stdout.write(HELP);
     return 0;
   }
@@ -35,7 +36,8 @@ async function main(argv = process.argv.slice(2)) {
     if (split < 0 || split === argv.length - 1) throw new Error("exactly one Pi argv is required after --");
     const before = argv.slice(1, split);
     if (before.length !== 2 || before[0] !== "--config") throw new Error("usage: enter|resume --config <file> -- <pi argv>");
-    const config = JSON.parse(await readFile(resolve(before[1]), "utf8"));
+    const configPath = value(before, "--config");
+    const config = JSON.parse(await readFile(resolve(configPath), "utf8"));
     const result2 = command === "enter" ? await enterAssistedCallV1(config, argv.slice(split + 1), common()) : await resumeAssistedCallV1(config, argv.slice(split + 1), common());
     process.stderr.write(`Assisted call ${result2.status}; inspect status --json for the authoritative result.
 `);
