@@ -1,0 +1,17 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_yiohe7XYI81xIXNYwoD51RLA|fc_094f7c7d18c8d9d7016a6d8e5c75848191b43d2ed1062a5ac3",
+  "details": {
+    "status": "completed",
+    "report": "Committed the final production Recorder proof as efd4497. The fixture now emits each counterexample in the native session before extraction; no post-extraction array mutation and no direct sealedEvidenceReads calls are used. Both live invokeNavigator and recovered readSealed traverse production Recorder artifacts, with malformed extraction and receipt-validation mismatches failing closed. Production behavior was unchanged. Gates passed: npm run typecheck; focused assisted tests (20/20); isolated-HOME full suite (388 passed, 0 failed, 5 skipped); npm pack --dry-run; git diff --check. Worktree is clean. No findings were left unaddressed.",
+    "commitSha": "efd4497ad70b3ae6e086399d16c34c9a0533b2de",
+    "classesRepaired": [
+      {
+        "name": "NavigatorEvidenceReadTruthResidual",
+        "searchScope": "Production Recorder native-session evidence seam in test/assisted-recorder-evidence.test.ts, covering live createRecorderAssistedTransportV1.invokeNavigator and recovered readSealed for malformed, forged, omitted, duplicate, unknown, and unread records.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

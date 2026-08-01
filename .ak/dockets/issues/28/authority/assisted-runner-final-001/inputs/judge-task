@@ -1,0 +1,17 @@
+# Issue #28 final correction — package-owned Assisted Runner
+
+Reconsider only the ownership/integration portions of the admitted Navigator authority in light of the owner correction. Preserve the Navigator profession, advisory law, snapshot binding, outcome honesty, existing-role compatibility, and caller autonomy unless a mechanical consequence requires a narrow amendment.
+
+Produce construction-ready final details for a package-owned Assisted Runner with no workflow-orchestrator dependency. Resolve:
+
+1. Exact public entry/config for entering/resuming one parent-issue assisted run and wrapping a caller-selected package role invocation.
+2. How initial consultation and `selected role settles -> fresh snapshot -> Navigator -> return` work without Navigator calling roles or Recorder becoming a composer.
+3. What state/ledger the package owns, atomicity/idempotency/concurrency law, invocation identities, and how a caller resumes after process death.
+4. The minimum typed snapshot/acquisition inputs. Decide what V1 may resolve itself versus what the caller must supply, while preserving the ergonomic parent-issue entry and avoiding prose inference.
+5. How the Runner identifies and seals the selected package-role result, failures without Receipts, and Navigator result. Preserve raw-session/credential boundaries.
+6. What ordinary advice deviation means on the next wrapped call; what insufficient/refused/escalated or infrastructure failure permits; how the caller exits assisted mode.
+7. Exact separation among Assisted Runner, Recorder, Navigator, current role runtimes, and caller-selected cwd/worktree/command.
+8. CLI/API/package exports, tests, documentation, and migration/compatibility. Existing direct role and Recorder invocation must remain legal and unchanged.
+9. Construction slices and whether any genuine Plan deliverable remains.
+
+Use current production seams rather than inventing an external orchestrator. Reject scheduling, automatic next-role dispatch, worktree management, queue policy, and hidden route enforcement. Submit exactly one verdict through `ak_judge_output`.

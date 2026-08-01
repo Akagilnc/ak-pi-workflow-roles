@@ -1,0 +1,10 @@
+# Issue #28 Fixer apply — final convergence residuals
+
+Apply the two still-open class families from `.ak/dockets/issues/28/judgment/final-convergence/receipt.json`:
+
+1. `NavigatorEvidenceReadTruthResidual`
+2. `LedgerLoserRereadResidual`
+
+Close the exact production seams and verification burdens in the final judgment. Preserve partial and complete evidence byte-coverage truth through native Navigator tool results, Recorder sealing, live settlement, and `readSealed`; do not reconstruct all IDs as fully read or add a second tracker. Reconcile compatible ledger losers to canonical lifecycle state/result so stale local execution cannot launch another consultation/role/recovery fact after losing; preserve no-replace, hash chain, corruption failure, and no lock ledger.
+
+Add deterministic production-seam tests for all named counterexamples, work test-first, rebuild distributions, run unified gates, commit forward, and report exactly these two class keys with honest scopes/exceptions. No Plan or new orchestration seam.

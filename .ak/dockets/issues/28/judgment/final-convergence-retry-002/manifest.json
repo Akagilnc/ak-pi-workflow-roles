@@ -1,0 +1,149 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "root": ".ak/dockets",
+    "docketId": "issues/28/judgment/final-convergence-retry-002"
+  },
+  "invocation": {
+    "id": "019fbbe5-0193-7f2c-8194-4cd56a343032"
+  },
+  "session": {
+    "id": "019fbbe5-0193-7f2c-8194-4cd56a343032",
+    "directory": ".ak/work/issues/28/runs/final-convergence-retry-002/session",
+    "basename": "2026-08-01T05-56-16-375Z_019fbbe5-0193-7f2c-8194-4cd56a343032.jsonl",
+    "sha256": "b43f68206adfe9a976f1f505e4e4c594778428d5b23c7c2de412ad7992453838",
+    "byteLength": 293756,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28/.ak/work/issues/28/runs/final-convergence-retry-002/session",
+      "--session-id",
+      "019fbbe5-0193-7f2c-8194-4cd56a343032",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #28 final convergence retry 002\n\nAdjudicate current HEAD `bf4110cd4f7136251ddabf263f6a454ef0ada2a3` after `.ak/dockets/issues/28/repair/convergence-retry-apply/receipt.json` repaired the two executable counterexamples in the prior convergence retry.\n\nIndependently rerun or inspect the exact out-of-catalog evidence-read ordering and overlapping identical-call lifecycle oracles, including live/recovered Recorder truth and pending/canonical ledger reconciliation. Verify all previously closed classes remain closed and no parallel orchestration/lock/tracker was added. Converge only on current executable proof; otherwise issue exact remaining authority. Submit exactly one verdict."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "bf4110cd4f7136251ddabf263f6a454ef0ada2a3",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "prior",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "bf4110cd4f7136251ddabf263f6a454ef0ada2a3",
+        "path": ".ak/dockets/issues/28/judgment/final-convergence-retry/receipt.json",
+        "blobOid": "c2d734f78cd359c35c5cdcbede6537a438f55191",
+        "sha256": "563481620a2edffddcc439089ed1990868e1ea132bf63be48e980190cc6334e5",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "bf4110cd4f7136251ddabf263f6a454ef0ada2a3",
+        "path": ".ak/dockets/issues/28/repair/convergence-retry-apply/receipt.json",
+        "blobOid": "9bf3cf05b511e2ca5b5b891f034514f11ae18d22",
+        "sha256": "d1b6f2f73c99e5596fd0efaa4cf7f88b9429a5e35e948dda9334f860aa580c27",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "4f6a526f5649fb2acb94baf093a9ea67315d4fc0176d26f653c3f61659b4af04",
+        "byteLength": 691
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "37b72d08d1700eb2608f504ac0a9c1a8eefc62c6e1f2129c37021f237bf98655",
+        "byteLength": 5915
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "4d6325411d00e21413416eb7642b836150de6c23031c4198933319afa2a0ac04",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_gwpMsMQn3LuWMEX8J9Ibtfz2|fc_016a755696440ed9016a6d8ab74b9c8191800efef2dbd78ccf",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_gwpMsMQn3LuWMEX8J9Ibtfz2|fc_016a755696440ed9016a6d8ab74b9c8191800efef2dbd78ccf",
+    "auditPassed": true,
+    "usage": {
+      "input": 14963,
+      "output": 363,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 15326
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

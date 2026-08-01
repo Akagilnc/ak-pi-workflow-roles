@@ -1,0 +1,9 @@
+# PR #43 Fixer apply — Recorder/receipt proof completion
+
+Close exactly:
+
+- `SelectedSettlementEvidenceTruth`
+- `RecorderArtifactAuthenticity`
+- `NavigatorReceiptContract`
+
+Use `.ak/dockets/issues/28/judgment/pr43-final/receipt.json`. Add the complete real outcome/artifact mutation/exit-signal and malformed Receipt extraction/recovery matrices required by Judge. Traverse live and readSealed production seams; do not use helper-only or post-extraction substitutes. Run gates, commit, and report exactly these keys.

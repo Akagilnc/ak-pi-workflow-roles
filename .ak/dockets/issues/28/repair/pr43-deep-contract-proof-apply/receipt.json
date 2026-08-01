@@ -1,0 +1,27 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_aI3tkbYX0GujCCqqlnWkFh6L|fc_0e8c06d4f37fa79e016a6db0a1530c8191948fdc65000da0bc",
+  "details": {
+    "status": "completed",
+    "report": "Closed exact keys NavigatorReceiptContract, AssistedInputContractClosure, and SchemaContractParity. Recovery invocationId now rejects before run-index/filesystem access; malformed recovery proves no filesystem, ledger, acquisition, or spawn side effects. Recorded refused-defect receipts now require the defect evidenceId in top-level citations and a fully-read receipt record, so extraction/recovery fail closed. Schema parity now packs an isolated source tree, cold-installs the tarball into a new consumer, imports package runtime exports, and checks deep/cross-variant matrices without touching shared dist. Gates passed: git diff --check; npm run typecheck; npm test (435 passed, 0 failed, 5 skipped); npm run build:recorder; npm pack --dry-run. Commit 32320f343afc997cf18acfc9e3396d63df6b4c42.",
+    "commitSha": "32320f343afc997cf18acfc9e3396d63df6b4c42",
+    "classesRepaired": [
+      {
+        "name": "NavigatorReceiptContract",
+        "searchScope": "Recorded Navigator receipt validator, Recorder extraction/recovery activation tests, and refused-defect citation joins",
+        "exceptions": []
+      },
+      {
+        "name": "AssistedInputContractClosure",
+        "searchScope": "Assisted recovery locator admission plus TS no-filesystem/ledger/acquisition/spawn regression; existing complete TS/CLI input matrices",
+        "exceptions": []
+      },
+      {
+        "name": "SchemaContractParity",
+        "searchScope": "Assisted/Navigator runtime schemas exercised from an isolated npm-packed, cold-installed consumer across valid, missing nested, nested-extra, and cross-variant cases",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
