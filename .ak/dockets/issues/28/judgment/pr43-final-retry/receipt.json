@@ -1,0 +1,92 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_8Z8OJAmsN6pDMLGhYNdt43qO|fc_0764f035f009b227016a6daa7f50088191999fac8655817415",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "HEAD d9351c5 is not Apply-converged. The two reproduced defects are repaired (FIFO admission now opens nonblocking before descriptor stat; optional callId is validated), all current gates pass, and rejected timeout/retry/environment/style/dependency proposals remain absent. However, several exact production-proof obligations from the accepted authority are still missing, and the lifecycle repair added test-only production hooks. Complete only the OPEN classes below; do not add locks, timeouts, retries, schedulers, parallel trackers, or test-only production hooks."
+    },
+    "classes": [
+      {
+        "name": "LifecycleAdmissionExclusion",
+        "owner": "Assisted Runner append-only lifecycle admission seam",
+        "boundary": "Ended, active-call, Navigator-settlement, and role-reservation admission remain mutually exclusive under races.",
+        "disposition": "OPEN. Tests use the new AssistedRunnerDependenciesV1.afterLedgerEvent production hook solely as a crash probe, contrary to the no-test-only-production-hook Apply rule. Remove that hook and prove the call_started-before-Navigator, Navigator-settlement-versus-reservation, and end-versus-call barriers through an owned production seam, including no loser child launch or post-ended generation."
+      },
+      {
+        "name": "NavigatorDecisionInputVisibility",
+        "owner": "Assisted acquisition to digest-bound Navigator snapshot seam",
+        "boundary": "Both label-policy meanings are digest-bound typed input observed by an active Navigator.",
+        "disposition": "CLOSED. The Recorder-backed fake Pi reads the actual --ak-navigator-snapshot for both mappings and acquisition binds the mapping into the canonical digest."
+      },
+      {
+        "name": "TrackerNullBodyNormalization",
+        "owner": "GitHub REST acquisition adapter",
+        "boundary": "Null parent and child bodies become zero-byte sealed evidence.",
+        "disposition": "CLOSED. createGhJsonTransportV1 is exercised via an executable gh adapter through parent-and-child acquisition and both zero-byte digests/handles are asserted."
+      },
+      {
+        "name": "EvidenceAdmissionContainment",
+        "owner": "Assisted evidence admission and Navigator loader seam",
+        "boundary": "Regular descriptor reads, immutable bytes, unique IDs, and capability-contained handles are enforced.",
+        "disposition": "OPEN. FIFO/device/oversize, ID/path, file mutation, and [REDACTED] rejection are covered, but the authorized descriptor-race proof is absent; the prior post-admission Uint8Array mutation proof was replaced by file mutation; and valid package-generated versus declared absolute-handle capability behavior is not proved at the production loader seam. Add those exact regressions without timeout logic."
+      },
+      {
+        "name": "SelectedSettlementEvidenceTruth",
+        "owner": "Recorder settlement to post-settlement acquisition seam",
+        "boundary": "Every selected terminal outcome reaches the post-settlement Navigator as exactly one authentic artifact.",
+        "disposition": "OPEN. The new tests classify accepted role outcomes and separately call acquisition for failure/recovery, but never activate the post-settlement Navigator with those artifacts. Prove converged, continue, escalation, refusal, infrastructure, and recovered outcomes in actual post-settlement Navigator input, with exact artifact identity and pre/post distinction."
+      },
+      {
+        "name": "RecorderArtifactAuthenticity",
+        "owner": "Shared live/readSealed Recorder docket loader",
+        "boundary": "All manifest, receipt, session, identity, length, digest, and child outcome joins gate settlement.",
+        "disposition": "OPEN. The join mutation loop is broader, but no child submits a valid receipt and then exits nonzero or receives a signal. Add both real Recorder child cases and verify live plus recovery preserve exact infrastructure/cancellation truth and never accept the role or Navigator outcome."
+      },
+      {
+        "name": "RecoveryStateContinuity",
+        "owner": "Assisted Runner reservation and same-call replay seam",
+        "boundary": "Reservation, recovered publication, and settled post-navigation replay preserve one selected identity and durable pre/post truth.",
+        "disposition": "OPEN. Crash tests depend on afterLedgerEvent, a test-only production hook, and assert only non-null receipts. Replace the hook with owned-seam barriers and prove exact pre/post receipt identities, durable latestAttempt across later calls, no duplicate selected launch, and no duplicate post-consultation."
+      },
+      {
+        "name": "LedgerTemporaryPublicationSafety",
+        "owner": "Assisted ledger atomic generation publisher",
+        "boundary": "Peer temporaries survive, true losers are typed, and cleanup failure preserves both causes.",
+        "disposition": "OPEN. The test creates an arbitrary peer temp rather than holding an appender at its real temporary-publication seam, and production now exports optional rename/cleanup callbacks used only by the test. Remove the test-only I/O API and use an owned filesystem seam/barrier to prove a live peer temp, canonical winner, typed loser, and primary-plus-cleanup causality."
+      },
+      {
+        "name": "EvidencePagingCoverage",
+        "owner": "Navigator evidence reader and sealed reconstruction seam",
+        "boundary": "Successful-read-only merged interval coverage agrees live and through Recorder recovery.",
+        "disposition": "OPEN. The matrix compares NavigatorEvidenceStore directly with exported sealedEvidenceReads; it does not traverse createRecorderAssistedTransportV1.readSealed as required. Add the empty/adjacent/overlap/sparse/failed-decode/large matrix through the real recovery surface without a second tracker."
+      },
+      {
+        "name": "NavigatorReceiptContract",
+        "owner": "Navigator Receipt validation and Recorder extraction/recovery seam",
+        "boundary": "Recorded receipts are closed, identity-bound, variant-correct, and citation-valid.",
+        "disposition": "OPEN. Recorder coverage adds only extra, runId binding, status/primary mismatch, and one unknown refused defect citation. It still omits malformed UUIDv7, digest, cursor, subject, latestAttempt, explanation, primary required-field variants, and unread/top-level-disagreeing refused defect evidenceId cases through both extraction and recovery."
+      },
+      {
+        "name": "AssistedInputContractClosure",
+        "owner": "AssistedCall and public run-locator admission seam",
+        "boundary": "All paths, environment names, issue IDs, and locator identities reject before I/O, publication, or spawn.",
+        "disposition": "OPEN (implementation and proof). callId is fixed, but recoverAssistedInvocationV1 still does not validate invocationId before runIndex/filesystem access. The TS/CLI matrix also omits malformed recovery IDs, zero/negative parent and child variants, duplicate/illegal/overlapping unset variants, enter/resume traversal/coercible paths, and explicit ledger/spawn no-side-effect oracles."
+      },
+      {
+        "name": "SchemaContractParity",
+        "owner": "Published schemas and runtime schema exports",
+        "boundary": "Actual consumers and cold-installed package exports match runtime behavior for all valid and invalid variants.",
+        "disposition": "OPEN. Value.Check exercises workspace source schemas and a cache-busted ../dist import, not a packed and cold-installed package. Add the cold npm-package consumer path and the missing required-field/nested-extra/cross-variant behavioral matrix."
+      },
+      {
+        "name": "NavigatorActivationAtomicity",
+        "owner": "Navigator activation and tool registration seam",
+        "boundary": "Soul, snapshot, evidence, collision, registration, and active-tool failures are fail-closed and retryable.",
+        "disposition": "CLOSED. The production runtime harness now covers prior-active clearing, soul/snapshot/evidence failures, both registration positions, collision preservation, active verification, retry, and exactly two active tools."
+      }
+    ],
+    "note": "Independent current-HEAD verification: git status clean; git diff --check passed; npm run typecheck passed; npm test passed 426, failed 0, skipped 5; npm run build:recorder passed; npm pack --dry-run passed. No new dependency, assisted timeout/retry/backoff/scheduler/lock, raw Recorder environment promotion, or style-only extraction appeared. The final Fixer receipt's missing classesRepaired does not independently block convergence: the published contract makes that field optional and says contextual set equality is caller-owned. It also supplies no mechanical closure evidence, so no class was closed from its prose; the dispositions above come from current code and executable proof."
+  },
+  "artifactKind": "sanitizedDerivativeOfAcceptedReceipt"
+}

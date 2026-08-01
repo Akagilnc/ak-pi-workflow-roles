@@ -1,0 +1,8 @@
+# PR #43 Fixer apply — Recorder/settlement truth classes
+
+Apply exactly these Judge-authorized classes from `.ak/dockets/issues/28/judgment/pr43-review/receipt.json`:
+
+- `SelectedSettlementEvidenceTruth`
+- `RecorderArtifactAuthenticity`
+
+Admit one verified sealed latest-attempt artifact into post-settlement Navigator evidence; preserve role-specific outcomes including Judge escalation, refusal, infrastructure, recovery, child nonzero exit, and signal. Use one verified docket loader for live/recovery and validate complete schema/identity/digest/length/session/receipt joins. Do not promote raw environment values or trust prose. Work test-first, rebuild, run unified gates, commit, and report exactly both keys.

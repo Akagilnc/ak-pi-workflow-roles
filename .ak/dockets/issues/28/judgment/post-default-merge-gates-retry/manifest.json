@@ -1,0 +1,149 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "root": ".ak/dockets",
+    "docketId": "issues/28/judgment/post-default-merge-gates-retry"
+  },
+  "invocation": {
+    "id": "019fbdfc-2e84-784f-87b4-4e1ec38d83d6"
+  },
+  "session": {
+    "id": "019fbdfc-2e84-784f-87b4-4e1ec38d83d6",
+    "directory": ".ak/work/issues/28/runs/post-merge-gate-judge-retry/session",
+    "basename": "2026-08-01T15-40-49-667Z_019fbdfc-2e84-784f-87b4-4e1ec38d83d6.jsonl",
+    "sha256": "dd23ce4a75494628a68be631e3b199355daa0537dae21ac939be8664b3872d11",
+    "byteLength": 325641,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28/.ak/work/issues/28/runs/post-merge-gate-judge-retry/session",
+      "--session-id",
+      "019fbdfc-2e84-784f-87b4-4e1ec38d83d6",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Post-merge gate adjudication retry\n\nThe prior unaccepted call found a bounded repairable class but used the invalid combination `converged + classes[]`. Recheck current HEAD and submit a valid `continue` leaf with:\n\n- fix summary authorizing only current lawful Fixer fixture leaves;\n- exactly one class named `StaleFixerApplyReceiptFixtures`;\n- owner, boundary, and repair disposition;\n- note preserving production contracts and requiring focused plus unified gates.\n\nDo not use `converged`, because executable repair remains."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "22dd83ff7dd6962367a2f324dd8416b7556202ed",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "navigator-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "22dd83ff7dd6962367a2f324dd8416b7556202ed",
+        "path": ".ak/dockets/issues/28/authority/final-authority-001/receipt.json",
+        "blobOid": "b11d096a09a739f226f9229c4fcd5ddd9fbba351",
+        "sha256": "b4c5676059e59697ef65818563405381618a5b09dbe579665329f38d7c9d2443",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "assisted-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "22dd83ff7dd6962367a2f324dd8416b7556202ed",
+        "path": ".ak/dockets/issues/28/authority/assisted-runner-final-001/receipt.json",
+        "blobOid": "e9146000d2856bf81055197065505ba1f21d2b7e",
+        "sha256": "dc22f4303d3e02fa6bb8d3804d387644269d71f234c315f27616eff57eb399cd",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "551ea92f7a71ccccd59c7762fc78661213f95f5c6bf885a95dff1ff8a50543a2",
+        "byteLength": 529
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "2e0a8d68978913759bc13fabb64bee5e70974af23d46f25f7aa69fc537a1f5b7",
+        "byteLength": 1928
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "f8aebcbee134600a58e8fa572dd94f2206f7ce8c7dcdf555d388c1f6cb8e1ed1",
+        "byteLength": 283
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_TFNP9A9dnz7u3xvcBZeALyYN|fc_0a55a515e6037f9d016a6e1497a2a08191a7a96c9efe45a6be",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_TFNP9A9dnz7u3xvcBZeALyYN|fc_0a55a515e6037f9d016a6e1497a2a08191a7a96c9efe45a6be",
+    "auditPassed": true,
+    "usage": {
+      "input": 7805,
+      "output": 127,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 7932
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

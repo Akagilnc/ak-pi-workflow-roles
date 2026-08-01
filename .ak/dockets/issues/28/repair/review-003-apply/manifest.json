@@ -1,0 +1,145 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "root": ".ak/dockets",
+    "docketId": "issues/28/repair/review-003-apply"
+  },
+  "invocation": {
+    "id": "019fbbad-832d-7829-8d3a-ad562dbcf86b"
+  },
+  "session": {
+    "id": "019fbbad-832d-7829-8d3a-ad562dbcf86b",
+    "directory": ".ak/work/issues/28/runs/review-003-fixer/session",
+    "basename": "2026-08-01T04-55-39-541Z_019fbbad-832d-7829-8d3a-ad562dbcf86b.jsonl",
+    "sha256": "e0e1e47b3c114188cd537740aa8b6954eeea50da7eaad7cf8d9f0a74daba930c",
+    "byteLength": 437486,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28/.ak/work/issues/28/runs/review-003-fixer/session",
+      "--session-id",
+      "019fbbad-832d-7829-8d3a-ad562dbcf86b",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/28/review-003-fixer.md",
+      "-p",
+      "Apply the five Judge-authorized Issue #28 repair classes test-first, verify, and commit forward."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "2be359a68e7cd5c7821344350f3a85ae5ec211a5",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "repair-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "2be359a68e7cd5c7821344350f3a85ae5ec211a5",
+        "path": ".ak/dockets/issues/28/judgment/review-003/receipt.json",
+        "blobOid": "597b39a29cfbf2cb9d07344b9b35e054f151022e",
+        "sha256": "be48b76e1741107e558044f375b56e91b6d8aa4f6a84f215eeaf7023c664f516",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "navigator-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "2be359a68e7cd5c7821344350f3a85ae5ec211a5",
+        "path": ".ak/dockets/issues/28/authority/final-authority-001/receipt.json",
+        "blobOid": "b11d096a09a739f226f9229c4fcd5ddd9fbba351",
+        "sha256": "b4c5676059e59697ef65818563405381618a5b09dbe579665329f38d7c9d2443",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "runner-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "2be359a68e7cd5c7821344350f3a85ae5ec211a5",
+        "path": ".ak/dockets/issues/28/authority/assisted-runner-final-001/receipt.json",
+        "blobOid": "e9146000d2856bf81055197065505ba1f21d2b7e",
+        "sha256": "dc22f4303d3e02fa6bb8d3804d387644269d71f234c315f27616eff57eb399cd",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "fix-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/fix-task",
+        "sha256": "87b422167cd8206a692d9689f123a48e04fd08c49972cbb45e446c7ea735f06c",
+        "byteLength": 1510
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "83e1579ca9f406b7f290cac50488696e31ebb1990dfbf2075a111fada4aaa039",
+        "byteLength": 2546
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_StwyOX1QnQPWCc8qyxwaCTmT|fc_087b9431fd6477db016a6d7d5445088191b1ccf529f8266476",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

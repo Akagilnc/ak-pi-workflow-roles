@@ -1,0 +1,7 @@
+# PR #43 final convergence retry
+
+Adjudicate current HEAD `d9351c58ebfc3641251b34d80fa60267ebeaed4c` after the honest partial repair and four bounded production-proof repairs under `.ak/dockets/issues/28/judgment/pr43-final/receipt.json`.
+
+Independently verify all thirteen previously open classes at their exact production seams, including the two reproduced implementation defects, lifecycle barriers, real GitHub/runtime/Recorder/CLI/schema/cold-package paths, and no-side-effect failure oracles. Note that the final contract-proof Fixer Receipt omitted `classesRepaired`; do not infer mechanical key closure from prose alone—use current code/proof and decide whether the missing typed accounting itself blocks convergence or requires a bounded corrective Receipt/repair.
+
+Confirm all rejected policy/style findings remain absent and current gates pass. Converge only if every accepted class is truthfully closed.

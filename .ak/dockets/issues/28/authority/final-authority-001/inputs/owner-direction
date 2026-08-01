@@ -1,0 +1,23 @@
+# Owner direction — Navigator v1
+
+The owner replaces the earlier understanding of a manually invoked Triage consultation with an automatically heard but nonbinding Navigator.
+
+## Product metaphor and authority
+
+The main driver is the rally driver. Navigator is the co-driver. Navigator does not drive, dispatch existing roles, operate worktrees, edit code, authorize repairs, adjudicate findings, or enforce a route. It only states what it believes the next process step should be, grounded in the current evidence. The driver retains full autonomy and may ignore the advice without being blocked or required to justify the deviation.
+
+## V1 bounded patient
+
+Navigator v1 is limited to the complete development of one parent issue and its child-issue context. It may use parent/child issue status and labels, current role outcomes, and current development evidence to advise direction. This is not a general portfolio scheduler or multi-parent orchestrator.
+
+## Consultation cadence
+
+Navigator is not called only when the driver remembers to ask. Within an explicitly entered Navigator-assisted parent-issue run, after every non-Navigator role attempt settles and before the driver makes the next role invocation, the host automatically obtains one fresh Navigator recommendation. The recommendation is then shown to the driver. Navigator's own settlement must not recursively trigger Navigator.
+
+“Settles” must not be narrowed to successful `completed`: lawful refusal/escalation/verdict outcomes and infrastructure failure evidence can change the road and require advice. The consultation must use the latest frozen run evidence rather than a long-lived Navigator session or remembered prose.
+
+The automatic consultation requirement guarantees a co-driver voice at each decision point; it does not guarantee compliance. The driver still owns composition, role choice, ordering, repetition, budgets, stopping, worktrees, merge policy, and commits.
+
+## Audit intent
+
+Each recommendation must be a durable typed Receipt bound to the exact observed snapshot, so later review can compare advice with the driver's actual next action. Such comparison is evidence, not an enforcement mechanism. Navigator must not claim that advice is authority, completion, approval, routing, or execution.

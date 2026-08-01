@@ -1,0 +1,5 @@
+# Issue #28 final convergence retry 004
+
+Adjudicate current HEAD `65bcc6c4b75074feb7c855eb8571eaa310d0ef2c` after `.ak/dockets/issues/28/repair/final-proof-apply/receipt.json` added the sole missing production Recorder proof.
+
+Independently verify malformed/forged/omitted/duplicate/unknown/unread native evidence records fail closed through both live `createRecorderAssistedTransportV1.invokeNavigator` and recovered `readSealed`, with no post-extraction mutation/helper substitution. Confirm current gates and all prior closed classes remain closed. Converge only on executable proof. Submit exactly one verdict.

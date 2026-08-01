@@ -1,0 +1,32 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_f5UwFesC1emiqR3qDfqDm7MH|fc_0e522e5281e9f7d5016a6d81527d18819188603845cda57df4",
+  "details": {
+    "status": "completed",
+    "report": "Applied and committed all four authorized residual classes in forward commits 411ed56 and 360aa7b. Navigator admission now reconstructs complete byte coverage from successful native sealed evidence-tool results for live and recovered settlements instead of trusting receipt claims. Recovery declarations retain only a bound opaque environment-policy digest plus redacted policy; fresh-process recovery resolves caller-owned policy material, validates the binding, and fails closed when absent or mismatched. Ledger conflict handling now rereads canonical state, returns exact replay, and rejects incompatible active lifecycle winners before child launch. Resume reacquires and compares resolved repository and parent IDs before publication, consultation, or role launch. Added regression coverage for forged evidence claims, repository/parent/both identity drift, concurrent callers, and Navigator/selected-role crash recovery with nondefault environment policy and secret non-persistence. Verification: npm test (375 tests: 370 pass, 5 skipped), npm run typecheck, npm run build:recorder, git diff --check. No authorized exclusions or unadopted findings.",
+    "commitSha": "360aa7b895bc866a829d7bd510a04cc1f7d60195",
+    "classesRepaired": [
+      {
+        "name": "NavigatorEvidenceReadTruthResidual",
+        "searchScope": "Recorder-assisted transport live sealing and readSealed recovery; Assisted Runner Navigator receipt admission; native Navigator evidence tool-result session records",
+        "exceptions": []
+      },
+      {
+        "name": "RecoveryEnvironmentIdentity",
+        "searchScope": "Assisted call_started declaration, explicit recover path, CLI fresh-process caller-owned environment resolver, Navigator and selected-role abandonment tests",
+        "exceptions": []
+      },
+      {
+        "name": "LedgerLoserRereadResidual",
+        "searchScope": "All Assisted ledger publication event types, canonical conflict reread/replay, active call and unresolved invocation reconciliation, concurrent enter lifecycle test",
+        "exceptions": []
+      },
+      {
+        "name": "ResolvedSubjectIdentityOnResume",
+        "searchScope": "Assisted enter/resume acquisition owner, first accepted acquisition identity, repository ID, parent ID, and combined drift cases",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}

@@ -1,0 +1,898 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NavigatorReceiptV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "status",
+    "runId",
+    "subject",
+    "snapshotDigest",
+    "positionCursor",
+    "invocationId",
+    "latestAttempt",
+    "evidenceRead",
+    "primary",
+    "explanation"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "ordinary",
+        "insufficient",
+        "refused",
+        "escalated"
+      ]
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryRoot",
+        "github",
+        "parent"
+      ],
+      "properties": {
+        "repositoryRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "github": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "owner",
+            "name",
+            "id"
+          ],
+          "properties": {
+            "owner": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "parent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "number",
+            "id"
+          ],
+          "properties": {
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "snapshotDigest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "positionCursor": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "invocationId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "latestAttempt": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "invocationId",
+            "role",
+            "phase",
+            "beforeTarget",
+            "afterTarget",
+            "terminalClass",
+            "reference"
+          ],
+          "properties": {
+            "invocationId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "role": {
+              "enum": [
+                "judge",
+                "fixer",
+                "coder",
+                "reviewer",
+                "collector",
+                "doctor"
+              ]
+            },
+            "phase": {
+              "enum": [
+                "plan",
+                "apply",
+                null
+              ]
+            },
+            "beforeTarget": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            },
+            "afterTarget": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            },
+            "terminalClass": {
+              "enum": [
+                "accepted_receipt",
+                "role_refusal",
+                "role_escalation",
+                "infrastructure_failure",
+                "cancellation",
+                "outcome_unavailable_after_runner_loss"
+              ]
+            },
+            "reference": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "sha256"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "coder",
+                      "fixer"
+                    ]
+                  }
+                },
+                "required": [
+                  "role"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "phase": {
+                    "enum": [
+                      "plan",
+                      "apply"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "judge",
+                      "reviewer",
+                      "collector",
+                      "doctor"
+                    ]
+                  }
+                },
+                "required": [
+                  "role"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "phase": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidenceRead": {
+      "type": "object",
+      "propertyNames": {
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "primary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "role",
+            "phase",
+            "conditions",
+            "hazards",
+            "evidenceIds"
+          ],
+          "properties": {
+            "kind": {
+              "const": "package_role"
+            },
+            "role": {
+              "enum": [
+                "judge",
+                "fixer",
+                "coder",
+                "reviewer",
+                "collector",
+                "doctor"
+              ]
+            },
+            "phase": {
+              "enum": [
+                "plan",
+                "apply",
+                null
+              ]
+            },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hazards": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "evidenceIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "coder",
+                      "fixer"
+                    ]
+                  }
+                },
+                "required": [
+                  "role"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "phase": {
+                    "enum": [
+                      "plan",
+                      "apply"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "judge",
+                      "reviewer",
+                      "collector",
+                      "doctor"
+                    ]
+                  }
+                },
+                "required": [
+                  "role"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "phase": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "actionCategory",
+            "conditions",
+            "hazards",
+            "evidenceIds"
+          ],
+          "properties": {
+            "kind": {
+              "const": "caller_action"
+            },
+            "actionCategory": {
+              "enum": [
+                "obtain_evidence",
+                "design_authority",
+                "review_batch",
+                "repository_action"
+              ]
+            },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hazards": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "evidenceIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reasonCategory",
+            "conditions",
+            "hazards",
+            "evidenceIds"
+          ],
+          "properties": {
+            "kind": {
+              "const": "stop"
+            },
+            "reasonCategory": {
+              "enum": [
+                "complete",
+                "unsafe",
+                "not_cost_effective"
+              ]
+            },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hazards": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "evidenceIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "missing",
+            "evidenceIds"
+          ],
+          "properties": {
+            "kind": {
+              "const": "obtain_evidence_and_reconsult"
+            },
+            "missing": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "identity"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "identity": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            },
+            "evidenceIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "defect",
+            "evidenceIds"
+          ],
+          "properties": {
+            "kind": {
+              "const": "return_scope_or_authority_defect"
+            },
+            "defect": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "category",
+                "evidenceId"
+              ],
+              "properties": {
+                "category": {
+                  "enum": [
+                    "contradictory_subject",
+                    "out_of_scope",
+                    "authority_conflict"
+                  ]
+                },
+                "evidenceId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "evidenceIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "decision",
+            "evidenceIds"
+          ],
+          "properties": {
+            "kind": {
+              "const": "seek_owner_decision"
+            },
+            "decision": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "category",
+                "question"
+              ],
+              "properties": {
+                "category": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "question": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "evidenceIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "explanation": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ordinary"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "primary": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "role",
+                  "phase",
+                  "conditions",
+                  "hazards",
+                  "evidenceIds"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "package_role"
+                  },
+                  "role": {
+                    "enum": [
+                      "judge",
+                      "fixer",
+                      "coder",
+                      "reviewer",
+                      "collector",
+                      "doctor"
+                    ]
+                  },
+                  "phase": {
+                    "enum": [
+                      "plan",
+                      "apply",
+                      null
+                    ]
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "hazards": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "evidenceIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "actionCategory",
+                  "conditions",
+                  "hazards",
+                  "evidenceIds"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "caller_action"
+                  },
+                  "actionCategory": {
+                    "enum": [
+                      "obtain_evidence",
+                      "design_authority",
+                      "review_batch",
+                      "repository_action"
+                    ]
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "hazards": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "evidenceIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "reasonCategory",
+                  "conditions",
+                  "hazards",
+                  "evidenceIds"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "stop"
+                  },
+                  "reasonCategory": {
+                    "enum": [
+                      "complete",
+                      "unsafe",
+                      "not_cost_effective"
+                    ]
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "hazards": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "evidenceIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "insufficient"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "primary": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "missing",
+                  "evidenceIds"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "obtain_evidence_and_reconsult"
+                  },
+                  "missing": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "identity"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "identity": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    }
+                  },
+                  "evidenceIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "refused"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "primary": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "defect",
+                  "evidenceIds"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "return_scope_or_authority_defect"
+                  },
+                  "defect": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "category",
+                      "evidenceId"
+                    ],
+                    "properties": {
+                      "category": {
+                        "enum": [
+                          "contradictory_subject",
+                          "out_of_scope",
+                          "authority_conflict"
+                        ]
+                      },
+                      "evidenceId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "evidenceIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "escalated"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "primary": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "decision",
+                  "evidenceIds"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "seek_owner_decision"
+                  },
+                  "decision": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "category",
+                      "question"
+                    ],
+                    "properties": {
+                      "category": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "question": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "evidenceIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

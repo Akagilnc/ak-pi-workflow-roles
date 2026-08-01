@@ -5,13 +5,15 @@
   "type": "module",
   "keywords": ["pi-package"],
   "bin": {
-    "ak-docket-record": "./bin/ak-docket-record.js"
+    "ak-docket-record": "./bin/ak-docket-record.js",
+    "ak-assisted-run": "./bin/ak-assisted-run.js"
   },
   "files": [
     "bin",
     "dist",
     "extensions",
     "scripts/build-rename-no-replace.mjs",
+    "scripts/build-assisted.mjs",
     "scripts/rename_no_replace.c",
     "src",
     "souls",
@@ -23,7 +25,7 @@
   "cpu": ["x64", "arm64"],
   "scripts": {
     "build:native": "node scripts/build-rename-no-replace.mjs",
-    "build:recorder": "tsc -p tsconfig.recorder.json && npm run build:native",
+    "build:recorder": "tsc -p tsconfig.recorder.json && node scripts/build-assisted.mjs && npm run build:native",
     "prepack": "npm run build:recorder",
     "install": "node scripts/build-rename-no-replace.mjs",
     "test": "node --import tsx --test test/**/*.test.ts",
@@ -44,6 +46,7 @@
     "@earendil-works/pi-ai": "latest",
     "@earendil-works/pi-coding-agent": "latest",
     "@types/node": "latest",
+    "esbuild": "^0.28.1",
     "tsx": "latest",
     "typebox": "latest",
     "typescript": "latest"

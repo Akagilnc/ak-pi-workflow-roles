@@ -1,0 +1,149 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "root": ".ak/dockets",
+    "docketId": "issues/28/judgment/final-convergence-retry-004"
+  },
+  "invocation": {
+    "id": "019fbbf4-b50d-7d2d-9a31-1b13499aa8b6"
+  },
+  "session": {
+    "id": "019fbbf4-b50d-7d2d-9a31-1b13499aa8b6",
+    "directory": ".ak/work/issues/28/runs/final-convergence-retry-004/session",
+    "basename": "2026-08-01T06-13-25-489Z_019fbbf4-b50d-7d2d-9a31-1b13499aa8b6.jsonl",
+    "sha256": "82db83f23bc014aba55787d078822e48d27885d0fe8192f8b430aa86abcbe77e",
+    "byteLength": 305182,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28/.ak/work/issues/28/runs/final-convergence-retry-004/session",
+      "--session-id",
+      "019fbbf4-b50d-7d2d-9a31-1b13499aa8b6",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #28 final convergence retry 004\n\nAdjudicate current HEAD `65bcc6c4b75074feb7c855eb8571eaa310d0ef2c` after `.ak/dockets/issues/28/repair/final-proof-apply/receipt.json` added the sole missing production Recorder proof.\n\nIndependently verify malformed/forged/omitted/duplicate/unknown/unread native evidence records fail closed through both live `createRecorderAssistedTransportV1.invokeNavigator` and recovered `readSealed`, with no post-extraction mutation/helper substitution. Confirm current gates and all prior closed classes remain closed. Converge only on executable proof. Submit exactly one verdict."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "65bcc6c4b75074feb7c855eb8571eaa310d0ef2c",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "prior",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "65bcc6c4b75074feb7c855eb8571eaa310d0ef2c",
+        "path": ".ak/dockets/issues/28/judgment/final-convergence-retry-003/receipt.json",
+        "blobOid": "eda7e2e5059346833abb6d7f16ef89eb72d9b9cc",
+        "sha256": "e7c17da96ddf0becb51fcde4f186e63f0e99c3195bdfc39d94bfc3976ced2f5e",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "repair",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "65bcc6c4b75074feb7c855eb8571eaa310d0ef2c",
+        "path": ".ak/dockets/issues/28/repair/final-proof-apply/receipt.json",
+        "blobOid": "ca60474886924576f0c33e31108d3407af188d8f",
+        "sha256": "831ab256d76761a25991cd16bef0699bbf94b27ebfa4e77e17f1634c83bd0b55",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "3929107160ed2264d9fa37f06ba8c1c14044ff1d4823195a87651b1a87a49a4a",
+        "byteLength": 614
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "15e4449c74283782d7cdc6556114bbe3dc3261397a44c5d235c9de66c171133b",
+        "byteLength": 1346
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "844f73bfdac4b605ecf0677a50d01a54ccaf0f34db73a88ce62663d107787ece",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_c4pxAJ8KdgwTMNmAfJJjpd9C|fc_04f12bce6f3dba77016a6d8f68f7788191aa182f9a8f5f0357",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_c4pxAJ8KdgwTMNmAfJJjpd9C|fc_04f12bce6f3dba77016a6d8f68f7788191aa182f9a8f5f0357",
+    "auditPassed": true,
+    "usage": {
+      "input": 14156,
+      "output": 342,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 14498
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
