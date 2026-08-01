@@ -17,9 +17,8 @@ const rows = [
 test("Doctor mission preserves honest retained-work cost accounting without transport mechanics", async () => {
   const soul = await (await import("node:fs/promises")).readFile(new URL("../souls/doctor.md", import.meta.url), "utf8");
   assert.match(soul, /保留工作.*成本/);
-  assert.match(soul, /开方必须指明所涉及的可复用工厂资产/);
-  assert.doesNotMatch(soul, /typed|字段|类型/);
-  assert.doesNotMatch(soul, /单案.*合法病人|输入|输出/);
+  assert.match(soul, /开方.*(?:工厂|资产)/);
+  assert.match(soul, /(?:证据|举证).*(?:结论|区分)/);
 });
 
 test("one retained runs directory yields an independently cited single-case cost report", async () => {

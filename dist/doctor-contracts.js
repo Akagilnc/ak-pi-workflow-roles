@@ -19,7 +19,7 @@ const findingBody = {
     prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }), lastRealBite,
 };
 const finding = Type.Union([
-    Type.Object({ targetKey: nonblank, ...findingBody }, { additionalProperties: false }),
+    Type.Object({ targetKey: nonblank, evidenceIds }, { additionalProperties: false }),
     Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), assetEvidence: Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false }),
 ]);
 const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
@@ -28,7 +28,10 @@ const cost = Type.Object({
     retries: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), evidence: Type.Literal("literal run-dir naming") }, { additionalProperties: false }),
     statuses: Type.Array(Type.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
     commits: Type.Array(Type.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
-    sessions: Type.Array(Type.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type.Number({ minimum: 0 }), completion: Type.Union([Type.Literal("accepted"), Type.Literal("incomplete")]) }, { additionalProperties: false })),
+    sessions: Type.Array(Type.Union([
+        Type.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type.Number({ minimum: 0 }), completion: Type.Literal("accepted") }, { additionalProperties: false }),
+        Type.Object({ source: nonblank, startedAt: Type.Optional(nonblank), endedAt: Type.Optional(nonblank), wallMilliseconds: Type.Optional(Type.Number({ minimum: 0 })), completion: Type.Literal("incomplete"), degradationReason: Type.Optional(nonblank) }, { additionalProperties: false }),
+    ])),
     outputBytes: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), payload: Type.Literal("raw JSONL bytes"), providerWireBytes: Type.Literal("unavailable") }, { additionalProperties: false }),
 }, { additionalProperties: false });
 export const doctorOutputSchema = Type.Union([
@@ -76,13 +79,14 @@ export function validateDoctorOutput(value, patient, store) {
         if (!store.entries.has(id) || !store.hasRead(id))
             throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
     for (const finding of output.findings) {
-        if (!("assetEvidence" in finding))
+        if (!("assetEvidence" in finding)) {
             assertTargets([finding.targetKey]);
-        else {
-            if (finding.assetEvidence.targetKey !== finding.targetKey || finding.assetEvidence.targetKind !== finding.targetKind)
-                throw new Error("Typed asset evidence must establish the finding identity");
-            readCitations([finding.assetEvidence.evidenceId], "asset evidence");
+            readCitations(finding.evidenceIds, "finding");
+            continue;
         }
+        if (finding.assetEvidence.targetKey !== finding.targetKey || finding.assetEvidence.targetKind !== finding.targetKind)
+            throw new Error("Typed asset evidence must establish the finding identity");
+        readCitations([finding.assetEvidence.evidenceId], "asset evidence");
         readCitations(finding.evidenceIds, "finding");
         for (const answer of Object.values(finding.guardrails))
             readCitations(answer.evidenceIds, "guardrail");
