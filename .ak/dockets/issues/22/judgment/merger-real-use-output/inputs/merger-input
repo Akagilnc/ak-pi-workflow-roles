@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "attemptId": "issue22-default-typed-prerequisite-merge-001",
+  "targetObjectId": "f076bc4cfc7705906406f1ff7c904df54a7ce47e",
+  "sourceObjectId": "88e3acdcb1bc32de076ec999b4115b4d41d3d328",
+  "materials": {
+    "task": {
+      "bytesBase64": "UmVzb2x2ZSB0aGUgb25lIGN1cnJlbnQgY29uZmxpY3Qgd2hpbGUgaW50ZWdyYXRpbmcgZGVmYXVsdC1icmFuY2ggdHlwZWQgRml4ZXIgcHJlcmVxdWlzaXRlIGNvbnRyYWN0cyBpbnRvIHRoZSBNZXJnZXIgZmVhdHVyZSBicmFuY2guIFByZXNlcnZlIGJvdGggYXV0aG9yaXplZCBpbXBsZW1lbnRhdGlvbnMgYW5kIGNyZWF0ZSB0aGUgb3JkaW5hcnkgbWVyZ2UgY29tbWl0Lg==",
+      "sha256": "1cf84c1e56ef9219b634402022c49f771d8b21b69352eb36dff80b1f4e331556"
+    },
+    "authority": {
+      "bytesBase64": "SXNzdWUgIzIyIGZpbmFsIE1lcmdlciBhdXRob3JpdHkgYXBwbGllczogcmVzb2x2ZSB0aGUgY29tcGxldGUgY2FsbGVyLWFzc2lnbmVkIGNvbmZsaWN0IHNldCBmb3IgdGhpcyBvbmUgYWxyZWFkeS1zdGFydGVkIG1lcmdlLCBwcmVzZXJ2ZSBib3RoIGF1dGhvcml6ZWQgaW50ZW50cywgYW5kIGVzY2FsYXRlIG9ubHkgZm9yIGEgZ2VudWluZSBuZXcgcHJvZHVjdCBvciBhdXRob3JpdHkgZGVjaXNpb24u",
+      "sha256": "b678ad4aeb2b9d352f40c817bb212c2cfc45fbd19fb9bc2c3e4201f72a31a7d2"
+    },
+    "targetIntent": {
+      "bytesBase64": "UHJlc2VydmUgdGhlIGNvbXBsZXRlZCBjb25mbGljdC1vbmx5IE1lcmdlciB2MSBpbXBsZW1lbnRhdGlvbiwgdGVzdHMsIFJlY29yZGVyIHN1cHBvcnQsIHB1YmxpYyBleHBvcnRzLCBkb2N1bWVudGF0aW9uLCBhbmQgSXNzdWUgIzIyIGV2aWRlbmNlIG9uIHRoZSB0YXJnZXQgYnJhbmNoLg==",
+      "sha256": "c7f43c35f9b47f2157b8b8e685bc779a78cded3f852631df24a092011e0880f4"
+    },
+    "sourceIntent": {
+      "bytesBase64": "UHJlc2VydmUgdGhlIG1lcmdlZCBJc3N1ZSAjNDQgRml4ZXIgY29udHJhY3Q6IEZpeFBhY2tldFYxIHR5cGVkIHByZXJlcXVpc2l0ZSBkZWNsYXJhdGlvbnMsIHByb3NwZWN0aXZlIHByZXJlcXVpc2l0ZSByZWZlcmVuY2VzLCBhdWRpdCBzZW1hbnRpY3MsIFJlY29yZGVyL3B1YmxpYy9nZW5lcmF0ZWQvZG9jcy90ZXN0cywgYW5kIGFsbCBkZWZhdWx0LWJyYW5jaCBoaXN0b3J5Lg==",
+      "sha256": "bf2dba203034890a1c70f67e67294e712725af886fc7125fe74f139fce9a2a89"
+    }
+  },
+  "expectedConflictPaths": [
+    "test/package-entrypoint.integration.test.ts"
+  ],
+  "resolutionScope": [
+    "test/package-entrypoint.integration.test.ts"
+  ],
+  "authorizedChecks": [
+    {
+      "name": "typecheck",
+      "argv": [
+        "npm",
+        "run",
+        "typecheck"
+      ]
+    }
+  ]
+}
