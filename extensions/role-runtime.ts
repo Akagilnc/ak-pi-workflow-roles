@@ -44,6 +44,42 @@ function transcriptFromContext(ctx: ExtensionContext): string {
   return serializeConversation(convertToLlm(context.messages));
 }
 
+export const MAX_NAVIGATOR_EVIDENCE_ITEMS = 256;
+export const MAX_NAVIGATOR_EVIDENCE_BYTES = 32 * 1024 * 1024;
+const MAX_NAVIGATOR_EVIDENCE_ITEM_BYTES = 8 * 1024 * 1024;
+
+export async function loadNavigatorEvidence(snapshot: CurrentPositionSnapshotV1): Promise<Map<string, Uint8Array>> {
+  if (snapshot.evidence.length > MAX_NAVIGATOR_EVIDENCE_ITEMS) {
+    throw new Error("Navigator evidence item count exceeds bound");
+  }
+  const root = await realpath(join(snapshot.subject.repositoryRoot, ".ak", "work", "issues", String(snapshot.subject.parent.number), "assisted", snapshot.runId, "evidence"));
+  const loaded = new Map<string, Uint8Array>();
+  let totalBytes = 0;
+  for (const item of snapshot.evidence) {
+    const path = await realpath(item.handle);
+    const rel = relative(root, path);
+    if (rel.startsWith("..") || rel === "" || rel.includes("/../")) throw new Error("evidence handle escapes admitted capability");
+    const fd = await open(path, constants.O_RDONLY | ("O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0));
+    try {
+      const stat = await fd.stat();
+      if (!stat.isFile() || stat.size > MAX_NAVIGATOR_EVIDENCE_ITEM_BYTES) throw new Error("invalid bounded evidence handle");
+      totalBytes += stat.size;
+      if (totalBytes > MAX_NAVIGATOR_EVIDENCE_BYTES) throw new Error("Navigator evidence aggregate byte budget exceeded");
+      const bytes = new Uint8Array(stat.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const result = await fd.read(bytes, offset, bytes.length - offset, offset);
+        if (!result.bytesRead) throw new Error("evidence changed while loading");
+        offset += result.bytesRead;
+      }
+      loaded.set(item.handle, bytes);
+    } finally {
+      await fd.close();
+    }
+  }
+  return loaded;
+}
+
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner();
   createRoleRuntimeExtension({
@@ -64,7 +100,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadNavigatorSoul: () => readFile(navigatorSoulPath, "utf8"),
     loadNavigatorSnapshot: async (path) => JSON.parse(await readFile(path, "utf8")),
-    loadNavigatorEvidence: async (snapshot: CurrentPositionSnapshotV1) => { const root=await realpath(join(snapshot.subject.repositoryRoot,".ak","work","issues",String(snapshot.subject.parent.number),"assisted",snapshot.runId,"evidence")); return new Map(await Promise.all(snapshot.evidence.map(async item=>{const path=await realpath(item.handle),rel=relative(root,path);if(rel.startsWith("..")||rel===""||rel.includes("/../"))throw new Error("evidence handle escapes admitted capability");const fd=await open(path,constants.O_RDONLY|("O_NOFOLLOW" in constants?constants.O_NOFOLLOW:0));try{const stat=await fd.stat();if(!stat.isFile()||stat.size>8*1024*1024)throw new Error("invalid bounded evidence handle");const bytes=new Uint8Array(stat.size);let offset=0;while(offset<bytes.length){const r=await fd.read(bytes,offset,bytes.length-offset,offset);if(!r.bytesRead)throw new Error("evidence changed while loading");offset+=r.bytesRead}return[item.handle,bytes]as const}finally{await fd.close()}})))},
+    loadNavigatorEvidence,
     auditNavigatorCompliance: createPiNavigatorAuditor(),
     loadMergerSoul: () => readFile(mergerSoulPath, "utf8"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
