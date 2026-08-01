@@ -41,6 +41,26 @@ test("one retained runs directory yields an independently cited single-case cost
   assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, toolCalls: { ...patient.cost.toolCalls, count: 2 } } }, patient, store), /re-derived/);
 });
 
+test("intermediate object details neither terminate nor manufacture session status", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-endpoint-"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(join(runs, "coder/session"), { recursive: true });
+  const fixture = [
+    { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
+    { type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "toolResult", toolName: "read", isError: false, details: { status: "completed", commitSha: "badcafe" } } },
+    { type: "message", timestamp: "2026-08-01T00:00:04.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "refused", reason: "blocked" } } },
+  ];
+  await writeFile(join(runs, "coder/session/terminal.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  await writeFile(join(runs, "coder/session/incomplete.jsonl"), fixture.slice(0, 2).map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const patient = await loadDoctorCase(runs);
+  const terminal = patient.cost.sessions.find((session) => session.source.endsWith("terminal.jsonl"));
+  const incomplete = patient.cost.sessions.find((session) => session.source.endsWith("incomplete.jsonl"));
+  assert.deepEqual(terminal && { wall: terminal.wallMilliseconds, completion: terminal.completion }, { wall: 4000, completion: "accepted" });
+  assert.deepEqual(incomplete && { wall: incomplete.wallMilliseconds, completion: incomplete.completion }, { wall: 1000, completion: "incomplete" });
+  assert.deepEqual(patient.cost.statuses, [{ source: "coder/session/terminal.jsonl", status: "refused" }]);
+  assert.deepEqual(patient.cost.commits, []);
+});
+
 test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-finding-"));
   const runs = join(root, ".ak/work/issues/40/runs");
