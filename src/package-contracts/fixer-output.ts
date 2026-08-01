@@ -1,13 +1,20 @@
 import { Type, type Static } from "typebox";
+import { FIXER_PREREQUISITE_ID_PATTERN, type FixPacketV1 } from "./fixer-packet.ts";
 
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
 export const FIXER_ACCEPTED_TEXT = "Fixer report accepted";
 
 const nonblankTransportString = Type.String({ minLength: 1 });
-const blockerSchema = Type.Object({
-  cause: Type.Union([Type.Literal("authority_violation"), Type.Literal("prerequisite_unmet")]),
+const authorityBlockerSchema = Type.Object({
+  cause: Type.Literal("authority_violation"),
   evidence: nonblankTransportString,
 }, { additionalProperties: false });
+const prerequisiteBlockerSchema = Type.Object({
+  cause: Type.Literal("prerequisite_unmet"),
+  prerequisiteId: Type.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }),
+  evidence: nonblankTransportString,
+}, { additionalProperties: false });
+const blockerSchema = Type.Union([authorityBlockerSchema, prerequisiteBlockerSchema]);
 const exceptionSchema = Type.Object({
   where: nonblankTransportString,
   reason: nonblankTransportString,
@@ -55,8 +62,11 @@ export type FixerPhase = "plan" | "apply";
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const exact = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const nonblank = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
-const validBlocker = (value: unknown): value is FixerBlocker => record(value) && exact(value, ["cause", "evidence"]) &&
-  (value.cause === "authority_violation" || value.cause === "prerequisite_unmet") && nonblank(value.evidence);
+const validBlocker = (value: unknown): value is FixerBlocker => record(value) && nonblank(value.evidence) && (
+  (value.cause === "authority_violation" && exact(value, ["cause", "evidence"])) ||
+  (value.cause === "prerequisite_unmet" && exact(value, ["cause", "prerequisiteId", "evidence"]) &&
+    typeof value.prerequisiteId === "string" && new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(value.prerequisiteId))
+);
 const validException = (value: unknown) => record(value) && exact(value, ["where", "reason"]) && nonblank(value.where) && nonblank(value.reason);
 
 function fail(): never { throw new Error("Fixer output violates the exact phase settlement contract"); }
@@ -99,4 +109,17 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
       (value.status === "refused" && (completed !== 0 || refused === 0)) ||
       (value.status === "partially_completed" && (completed === 0 || refused === 0))) fail();
   return { status: value.status, report: value.report, classResults } as FixerOutput;
+}
+
+/** Packet-aware admission used after structural/phase validation and before audit. */
+export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, packet: FixPacketV1): FixerOutput {
+  const output = validateFixerOutput(value, phase);
+  const declaredIds = new Set(packet.prerequisites.map((entry) => entry.id));
+  const blockers: FixerBlocker[] = "blocker" in output
+    ? [output.blocker]
+    : "classResults" in output
+      ? output.classResults.filter((entry) => entry.disposition === "refused").map((entry) => entry.blocker)
+      : [];
+  if (blockers.some((blocker) => blocker.cause === "prerequisite_unmet" && !declaredIds.has(blocker.prerequisiteId))) fail();
+  return output;
 }

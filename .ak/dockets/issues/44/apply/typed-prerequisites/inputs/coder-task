@@ -1,0 +1,9 @@
+# Issue #44 Coder apply — typed Fixer prerequisites
+
+Implement test-first the entire hard-cut contract in `.ak/dockets/issues/44/authority/typed-prerequisite-interface-retry/receipt.json`.
+
+Deliver `FixPacketV1`, exact parser/schema/types, typed prerequisite IDs, prerequisite blocker reference, packet-aware admission before audit, immutable audit input, current-leaf Recorder preservation, public exports/docs/generated/packed surfaces, and every required production red/green. Keep opaque instructions/prose unparsed and semantic auditor claims explicitly nondeterministic.
+
+Hard cut: no Markdown fallback, missing-ID compatibility, frontmatter, migration adapter, second guard, dependency inference/execution, graph, routing, retry, scheduling, or orchestration. Preserve Coder, Soul, authority-violation shape, settlement combinations, and historical dockets.
+
+No Plan. Run full gates, commit forward, and report TDD/self-check evidence.

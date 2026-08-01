@@ -1,0 +1,135 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+    "root": ".ak/dockets",
+    "docketId": "issues/44/judgment/pr50-review"
+  },
+  "invocation": {
+    "id": "019fbd81-b8c7-7c56-95fe-ed4cb18e739c"
+  },
+  "session": {
+    "id": "019fbd81-b8c7-7c56-95fe-ed4cb18e739c",
+    "directory": ".ak/work/issues/44/runs/pr50-review-judge/session",
+    "basename": "2026-08-01T13-27-04-081Z_019fbd81-b8c7-7c56-95fe-ed4cb18e739c.jsonl",
+    "sha256": "780f81a818ead9e5c01b081a8104f8ea84521524dcd1a6d5581e73f237da76a6",
+    "byteLength": 184763,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44/.ak/work/issues/44/runs/pr50-review-judge/session",
+      "--session-id",
+      "019fbd81-b8c7-7c56-95fe-ed4cb18e739c",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# PR #50 finding adjudication\n\nAdjudicate inline finding 3695686959: `docs/development-closure.md` still references deleted `packets/fixer-repair.md` and Markdown R-key reconciliation after the hard cut to `FixPacketV1` and `packets/fixer-repair.json`.\n\nVerify current files and authority. If valid, authorize the smallest documentation consistency class only; do not alter runtime/schema/Soul or invent workflow."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "2b41009431cc1c7d3554c0da41aa1096f2be40bf",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+        "commit": "2b41009431cc1c7d3554c0da41aa1096f2be40bf",
+        "path": ".ak/dockets/issues/44/authority/typed-prerequisite-interface-retry/receipt.json",
+        "blobOid": "52967660575a6584541d2bb1867d46ca54e51de2",
+        "sha256": "4560691b67003ddb99d299754d4502e5463850af887fee64a11337d54a9eca7a",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "7d0aad132674787c66955c714c799f1abd647fdfffc7d673218b07cbbe7d62c5",
+        "byteLength": 413
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "252ce384ee1096f597f029064b6eee6abfd03a205202f72eef74c9b4fe7d65aa",
+        "byteLength": 2013
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "06459994ccefbcb01b9b7f88d0ba61278adaf265ac08bbb20ccbd3ba752ee190",
+        "byteLength": 283
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_HYyqvj9ax9izBrFpivhOrniq|fc_0053ee76907e95af016a6df44b071081918bde9c22d1763369",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_HYyqvj9ax9izBrFpivhOrniq|fc_0053ee76907e95af016a6df44b071081918bde9c22d1763369",
+    "auditPassed": true,
+    "usage": {
+      "input": 7927,
+      "output": 140,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 8067
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

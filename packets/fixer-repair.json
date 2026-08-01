@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "instructions": "Repair and verify the caller-assigned findings. This string is opaque prose; headings and wording have no machine semantics.",
+  "prerequisites": [
+    {
+      "id": "owner.choice",
+      "requirement": "The controlling owner decision required before this repair exists."
+    }
+  ]
+}
