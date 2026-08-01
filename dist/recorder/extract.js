@@ -36,6 +36,8 @@ function receiptKind(toolName) {
         return "reviewer";
     if (toolName === "ak_doctor_output")
         return "doctor";
+    if (toolName === "ak_navigator_output")
+        return "navigator";
     return "worker";
 }
 function validUsage(value) {

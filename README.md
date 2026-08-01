@@ -1,6 +1,24 @@
 # @ak/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, and `doctor`.
+Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `navigator`.
+
+## Navigator and Assisted Runner
+
+Navigator advises the least-cost safe **single next process** from a frozen, digest-bound current-position snapshot. It has exactly two active tools: a bounded admitted-evidence reader and terminating `ak_navigator_output`. A fresh same-active-model compliance call audits the typed output. Navigator never invokes roles, Agent, shell, Git/GitHub, filesystems, Runner, or Recorder; its ordinary advice is not authorization and callers may deviate.
+
+Assisted Runner is a separate package capability. It persistently wraps exactly one caller-selected packaged non-Navigator role, automatically consulting Navigator before launch and again after settlement. It never selects or automatically dispatches the recommended role, manages worktrees, or continues a workflow. Recorder remains the one-physical-invocation evidence sealer; the caller still owns role/phase/argv/cwd, evidence declarations, retries, budgets, worktrees, and whether to end assisted mode.
+
+```bash
+ak-assisted-run enter --config assisted-call-v1.json -- pi --ak-role coder --ak-coder-phase apply --ak-coder-task task.md --print "Apply it."
+ak-assisted-run resume --config assisted-call-v1.json -- pi --ak-role reviewer --ak-review-task review.md --ak-review-capabilities capabilities.json --print "Review it."
+ak-assisted-run status --repository-root "$PWD" --run-id <uuidv7> --json
+ak-assisted-run recover --repository-root "$PWD" --run-id <uuidv7> --invocation-id <uuidv7> --confirmed-stopped
+ak-assisted-run end --repository-root "$PWD" --run-id <uuidv7>
+```
+
+`enter`/`resume` require canonical UUIDv7 `runId` and `callId`, an exact caller-declared child set, registered workspaces/evidence, and one typed role/phase agreeing with argv. Session flags, Navigator, shells, non-package roles, conflicting phases, and credential-shaped argv are rejected. The authoritative machine result is `status --json`; child stdout/stderr remains presentation passthrough. State is append-only and hash-chained below `.ak/work/issues/<parent>/assisted/<runId>/`. A completed `callId` replays its stored result; conflicting reuse, ledger gaps/forks, concurrent generation loss, or an unresolved started invocation fails closed. `recover` records `outcome_unavailable_after_runner_loss`, never fabricates a role outcome. `end` ends assisted mode only and does not mean issue closure or correctness.
+
+Authoritative runtime validation and public types are exported from `src/navigator-contracts.ts`, `src/assisted-contracts.ts`, and `src/assisted-runner.ts`; acquisition transport contracts are in `src/assisted-acquisition.ts`. Raw GitHub responses, credentials, environment values, and Pi sessions are not promoted as snapshot evidence.
 
 ## Judge
 

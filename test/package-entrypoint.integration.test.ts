@@ -68,7 +68,8 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
 test("packed package includes Doctor role, evidence flag, and runtime dependencies", async () => {
   const manifest = await loadRawPackageManifest();
   packageEntrypoint(manifest);
-  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor"]);
+  assert.equal(manifest.bin?.["ak-assisted-run"], "./bin/ak-assisted-run.js");
+  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator"]);
   assert.equal(ROLE_FLAG.name, "ak-role");
   assert.equal(DOCTOR_EVIDENCE_FLAG.name, "ak-doctor-evidence");
   assert.equal(DOCTOR_EVIDENCE_FLAG.definition.type, "string");
@@ -82,6 +83,11 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
         "src/doctor-contracts.ts",
         "src/stats-line.ts",
         "src/canonical-json.ts",
+        "souls/navigator.md",
+        "src/navigator-contracts.ts",
+        "src/assisted-runner.ts",
+        "schemas/assisted-call-v1.schema.json",
+        "bin/ak-assisted-run.js",
       ]) {
         assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
       }

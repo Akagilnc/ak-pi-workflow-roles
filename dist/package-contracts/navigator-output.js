@@ -1,0 +1,4 @@
+export const NAVIGATOR_OUTPUT_TOOL_NAME = "ak_navigator_output";
+export function validateRecordedNavigatorReceiptV1(value) { if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("invalid Navigator receipt"); const r = value, keys = ["version", "status", "runId", "subject", "snapshotDigest", "positionCursor", "invocationId", "latestAttempt", "evidenceRead", "primary", "explanation"]; if (Object.keys(r).length !== keys.length || !keys.every(k => Object.hasOwn(r, k)) || r.version !== 1 || !["ordinary", "insufficient", "refused", "escalated"].includes(String(r.status)) || typeof r.runId !== "string" || typeof r.invocationId !== "string" || typeof r.snapshotDigest !== "string" || !Number.isSafeInteger(r.positionCursor) || !Array.isArray(r.evidenceRead) || !r.primary || typeof r.primary !== "object")
+    throw new Error("invalid Navigator receipt"); return r; }
