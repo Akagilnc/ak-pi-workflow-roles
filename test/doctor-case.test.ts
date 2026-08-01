@@ -110,7 +110,10 @@ test("intermediate object details neither terminate nor manufacture session stat
   assert.deepEqual(terminal && { wall: terminal.wallMilliseconds, completion: terminal.completion }, { wall: 5000, completion: "accepted" });
   assert.deepEqual(incomplete && { wall: incomplete.wallMilliseconds, completion: incomplete.completion }, { wall: 4000, completion: "incomplete" });
   assert.deepEqual(patient.cost.statuses, [{ source: "coder/session/terminal.jsonl", status: "refused" }]);
-  assert.deepEqual(patient.cost.commits, []);
+  assert.deepEqual(patient.cost.commits, [
+    { source: "coder/session/incomplete.jsonl", commit: "badcafe" },
+    { source: "coder/session/terminal.jsonl", commit: "badcafe" },
+  ]);
 });
 
 test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
