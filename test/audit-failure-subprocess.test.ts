@@ -50,13 +50,25 @@ async function runCli(mode: "print" | "json") {
 async function runFixerAuditFailureCli(mode: "print" | "json") {
   return withHermeticHome({ prefix: "ak-fixer-audit-fatal-cli-" }, async ({ home, agentDir }) => {
     const packet = resolve(home, "packet.md");
+    const runDirectory = resolve(packageRoot, `.ak/work/issues/44/runs/audit-failure-subprocess-${mode}`);
+    const sessionDirectory = resolve(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
     await writeFile(packet, "# Assigned repair\n\nSettle Contract.\n");
-    const args = ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-session",
+    await writeFile(resolve(runDirectory, "invocation.json"), JSON.stringify({
+      role: "fixer",
+      phase: "apply",
+      mode,
+      provider: "ak-fixer-audit-failure",
+      model: "faux-1",
+    }, null, 2));
+    const args = ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--session-dir", sessionDirectory,
       "-e", resolve(packageRoot, "extensions/role-runtime.ts"), "-e", resolve(packageRoot, "test/fixtures/fixer-audit-failure-provider.ts"),
       "--ak-role", "fixer", "--ak-fixer-phase", "apply", "--ak-fix-packet", packet,
       "--provider", "ak-fixer-audit-failure", "--model", "faux-1",
       ...(mode === "print" ? ["-p", "Apply."] : ["--mode", "json", "Apply."])];
-    return runPiSubprocess(args, { cwd: packageRoot, env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" } });
+    const result = await runPiSubprocess(args, { cwd: packageRoot, env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" } });
+    await writeFile(resolve(runDirectory, "stderr.log"), result.stderr);
+    return result;
   });
 }
 
