@@ -32,8 +32,13 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
         async execute(id, params, _signal, _update, ctx) {
           if (!activation) throw new Error("Merger is not activated");
           if (accepted) throw new Error("Merger output already accepted");
-          singleton(id, ctx);
-          const output = validateMergerOutput(params, activation.input.attemptId);
+          let output;
+          try {
+            singleton(id, ctx);
+            output = validateMergerOutput(params, activation.input.attemptId);
+          } catch (error) {
+            host.failInfrastructure(error, ctx);
+          }
           if (output.status === "completed") {
             let state;
             try { state = await dependencies.gitState.completedMerge(output.mergeCommitId, activation.automaticMergeTreeId); }
