@@ -102,6 +102,7 @@ for (const failure of ["clear", "flag", "soul", "snapshot", "evidence", "collisi
     const h = harness(failure);
     await assert.rejects(h.start());
     assert.equal(h.aborts(), 1);
+    assert.equal(process.exitCode, 1);
     assert.deepEqual(h.active(), []);
     for (const before of h.before()) {
       try {
