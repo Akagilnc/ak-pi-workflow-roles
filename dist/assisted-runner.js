@@ -15,6 +15,8 @@ async function appendAssistedGenerationV1(runDirectory, event, now) {
       if (!(error instanceof AssistedLedgerConflictError)) throw error;
       const rows = await readAssistedLedgerV1(runDirectory), winner = rows.find((row) => row.type === event.type && row.runId === event.runId && row.callId === event.callId && row.invocationId === event.invocationId && canonicalJson(row.payload) === canonicalJson(event.payload));
       if (winner) return winner;
+      const active = rows.filter((r) => r.type === "call_started" && !rows.some((x) => x.type === "call_completed" && x.callId === r.callId)).at(-1);
+      if (event.type === "entered" && rows.some((r) => r.type === "entered") || event.type === "call_started" && active || event.callId && active && active.callId !== event.callId || ["navigator_started", "action_reserved", "role_started"].includes(event.type) && unresolved(rows) || ["navigator_settled", "role_settled", "recovered"].includes(event.type) && unresolved(rows) !== event.invocationId || event.type === "call_completed" && rows.some((r) => r.type === "call_completed" && r.callId === event.callId)) throw new Error(`incompatible assisted lifecycle winner for ${event.type}`);
     }
   }
 }
@@ -37,6 +39,9 @@ async function runIndex(root, runId, parentIssue) {
 const configDigest = (c) => sha256Hex(canonicalJson(c));
 const acquisitionDigest = (c) => sha256Hex(canonicalJson({ children: c.subject.children, acquisition: c.acquisition }));
 const immutableSubject = (c) => canonicalJson({ repositoryRoot: c.subject.repositoryRoot, github: c.subject.github, parentIssue: c.subject.parentIssue });
+const resolvedSubject = (s) => canonicalJson({ repositoryId: s.subject.github.id, parentId: s.subject.parent.id });
+const environmentReference = (c) => `environment-policy:sha256:${sha256Hex(canonicalJson(c.execution.environment))}`;
+const defaultEnvironment = () => ({ inherit: true, overrides: {}, unset: [] });
 function payloadResult(row) {
   return row.type === "call_completed" ? row.payload.result : null;
 }
@@ -65,7 +70,7 @@ async function consult(config, position, piArgv, dir, deps, now, id) {
   const settled = await deps.recorder.invokeNavigator({ config, position, invocationId, piArgv });
   if (settled.kind === "accepted") {
     if (settled.receipt.invocationId !== invocationId) throw new Error("Navigator invocation identity mismatch");
-    const receipt = validateNavigatorReceiptV1(settled.receipt, position.snapshot, settled.receipt.evidenceRead);
+    const receipt = validateNavigatorReceiptV1(settled.receipt, position.snapshot, settled.readEvidenceIds.map((evidenceId) => ({ evidenceId, fullyRead: true })));
     await appendAssistedGenerationV1(dir, { type: "navigator_settled", runId: config.runId, callId: config.callId, invocationId, positionCursor: position.snapshot.positionCursor, payload: { classification: "accepted", receipt, reference: settled.reference } }, now);
     return { receipt, reference: settled.reference };
   }
@@ -86,6 +91,13 @@ async function run(mode, raw, argv, deps) {
   }
   rows = await readAssistedLedgerV1(dir);
   if (rows.some((r) => r.type === "ended")) throw new Error("assisted run has ended");
+  if (mode === "resume") {
+    const established = rows.find((r) => r.type === "acquisition")?.payload.snapshot;
+    if (!established) throw new Error("resolved subject identity missing");
+    const latest2 = rows.filter((r) => r.type === "role_settled").at(-1)?.payload.latestAttempt ?? null;
+    const observed = await acquireCurrentPositionV1(config, rows.at(-1)?.positionCursor ?? 0, latest2, { git: deps.git, github: deps.github });
+    if (resolvedSubject(observed.snapshot) !== resolvedSubject(established)) throw new Error("resolved subject identity mismatch");
+  }
   let lost = unresolved(rows);
   if (lost && deps.recorder.readSealed) {
     const started = rows.find((r) => r.invocationId === lost && (r.type === "navigator_started" || r.type === "role_started")), snapshot = rows.filter((r) => r.type === "acquisition").at(-1)?.payload.snapshot, before = snapshot?.workspaces.find((w) => w.id === config.execution.workspaceId)?.target ?? null, sealed = await deps.recorder.readSealed({ config, invocationId: lost, kind: started.type === "navigator_started" ? "navigator" : "role", beforeTarget: before });
@@ -93,7 +105,7 @@ async function run(mode, raw, argv, deps) {
       if (started.type === "navigator_started") {
         const nav = sealed;
         if (nav.kind !== "accepted" || !snapshot) throw new Error("sealed Navigator recovery mismatch");
-        const receipt = validateNavigatorReceiptV1(nav.receipt, snapshot, nav.receipt.evidenceRead);
+        const receipt = validateNavigatorReceiptV1(nav.receipt, snapshot, nav.readEvidenceIds.map((evidenceId) => ({ evidenceId, fullyRead: true })));
         await appendAssistedGenerationV1(dir, { type: "navigator_settled", runId: config.runId, callId: started.callId, invocationId: lost, positionCursor: started.positionCursor, payload: { classification: "accepted", receipt, reference: nav.reference } }, now);
       } else {
         const role = sealed, cursor2 = started.positionCursor + 1, latestAttempt = { invocationId: lost, role: config.execution.role, phase: config.execution.phase, beforeTarget: role.beforeTarget, afterTarget: role.afterTarget, terminalClass: role.terminalClass, reference: role.reference };
@@ -121,7 +133,7 @@ async function run(mode, raw, argv, deps) {
   let cursor = rows.at(-1)?.positionCursor ?? 0;
   const priorAcquisition = rows.filter((r) => r.type === "call_started").at(-1)?.payload.acquisitionDigest;
   if (priorAcquisition && priorAcquisition !== acquisitionDigest(config)) cursor++;
-  if (!same) await appendAssistedGenerationV1(dir, { type: "call_started", runId: config.runId, callId: config.callId, positionCursor: cursor, payload: { configDigest: configDigest(config), acquisitionDigest: acquisitionDigest(config), selected: { role: config.execution.role, phase: config.execution.phase }, argvDigest: sha256Hex(canonicalJson(piArgv)), piArgv, recoveryConfig: { ...config, execution: { ...config.execution, environment: { inherit: true, overrides: {}, unset: [] } } } } }, now);
+  if (!same) await appendAssistedGenerationV1(dir, { type: "call_started", runId: config.runId, callId: config.callId, positionCursor: cursor, payload: { configDigest: configDigest(config), acquisitionDigest: acquisitionDigest(config), selected: { role: config.execution.role, phase: config.execution.phase }, argvDigest: sha256Hex(canonicalJson(piArgv)), piArgv, environmentReference: environmentReference(config), recoveryConfig: { ...config, execution: { ...config.execution, environment: defaultEnvironment() } } } }, now);
   let latest = null;
   const lastSettlement = rows.filter((r) => r.type === "role_settled").at(-1)?.payload.latestAttempt;
   if (lastSettlement) latest = lastSettlement;
@@ -176,7 +188,13 @@ async function recoverAssistedInvocationV1(repositoryRoot, runId, invocationId, 
   if (unresolved(rows) !== invocationId) throw new Error("invocation is not the unresolved head");
   const started = rows.find((r) => r.invocationId === invocationId && (r.type === "role_started" || r.type === "navigator_started")), call = rows.filter((r) => r.type === "call_started" && r.callId === started.callId).at(-1);
   if (!call) throw new Error("recovery call declaration missing");
-  const config = validateAssistedCallConfigV1(call.payload.recoveryConfig), piArgv = validateSelectedPiArgvV1(call.payload.piArgv, config.execution), priorCursor = rows.at(-1)?.positionCursor ?? 0, cursor = started.type === "role_started" ? priorCursor + 1 : priorCursor;
+  const redacted = validateAssistedCallConfigV1(call.payload.recoveryConfig), reference = call.payload.environmentReference;
+  if (typeof reference !== "string") throw new Error("recovery environment reference missing");
+  const policy = reference === `environment-policy:sha256:${sha256Hex(canonicalJson(defaultEnvironment()))}` ? defaultEnvironment() : await deps.resolveEnvironmentPolicy?.(reference);
+  if (!policy) throw new Error("recovery environment reference unavailable");
+  const config = validateAssistedCallConfigV1({ ...redacted, execution: { ...redacted.execution, environment: policy } });
+  if (environmentReference(config) !== reference) throw new Error("recovery environment reference mismatch");
+  const piArgv = validateSelectedPiArgvV1(call.payload.piArgv, config.execution), priorCursor = rows.at(-1)?.positionCursor ?? 0, cursor = started.type === "role_started" ? priorCursor + 1 : priorCursor;
   await appendAssistedGenerationV1(dir, { type: "recovered", runId, callId: started.callId, invocationId, positionCursor: cursor, payload: { attestation: "confirmed_stopped", terminalClass: "outcome_unavailable_after_runner_loss" } });
   let latest = rows.filter((r) => r.type === "role_settled").at(-1)?.payload.latestAttempt ?? null;
   if (started.type === "role_started") {
