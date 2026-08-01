@@ -177,32 +177,19 @@ Failure channels (non-zero, no receipt) include malformed/unsupported config or 
 
 ## Doctor
 
-Doctor consumes a caller-built frozen evidence index and exposes only the bounded evidence reader plus its terminating output tool:
+Doctor reads one retained Pi-native case and exposes only the bounded evidence reader plus its terminating output tool:
 
 ```bash
 pi --no-extensions -e /path/to/extensions/role-runtime.ts \
-  --ak-role doctor --ak-doctor-evidence /path/to/doctor-evidence-v1.json \
-  --mode json -p "Examine the admitted factory evidence."
+  --ak-role doctor --ak-doctor-case .ak/work/issues/40/runs \
+  --mode json -p "Produce this case's process-cost diagnosis."
 ```
 
-The input is validated and digest-bound before activation. During the invocation, `ak_doctor_evidence` reads admitted evidence IDs in pages of at most 4096 units; arbitrary filesystem, shell, network, write, and Agent tools are inactive. The sole final `ak_doctor_output` result undergoes a fresh same-active-model compliance audit. A revise decision permits model resubmission; audit or transport failure aborts without manufacturing a refusal.
+Case identity is the issue number plus the resolved retained-runs path. Do not delete or rewrite run directories before Doctor examines them. Each recursive `*.jsonl` is one model-session leg; each immediate run directory is one caller invocation, and `stderr.log` remains evidence for invocations that died before a session header. `ak_doctor_evidence` pages exact admitted session bytes in chunks of at most 4096 characters; filesystem, shell, network, write, and Agent tools remain inactive.
 
-Public TypeScript exports from `src/role-runtime.ts` include the Doctor index/output types, validators, evidence store, tool names, and runtime dependencies. Use those exports to construct input and consume output rather than parsing this guide.
+The completed output is one case's cost report plus findings; it never requires a trend. Wall time runs from the session-header outer timestamp to the final accepted, non-error terminating `toolResult`, or to the last row and is labeled incomplete. Assistant message rows with `responseId` count model/API turns and their `usage.output` tokens are summed. Assistant `content[]` `toolCall` items count calls, including the terminal call. Retries are reported only as literal run-directory naming evidence. Status comes only from typed details on a non-error terminating result, never prose or an attempted call. Commits are observed typed session-row transitions; abbreviated SHAs retain their stated precision. Output bytes explicitly mean raw JSONL bytes; provider-wire bytes are unavailable, so token counts are reported separately.
 
-## StatsLine producer
-
-Call `produceStatsLineV1` with a package `CommittedSnapshot`, issue number, and optional normalized tracker metadata. `createGitCommittedSnapshot` supplies the production reader for an exact full commit:
-
-```ts
-const snapshot = createGitCommittedSnapshot({
-  repositoryRoot: "/absolute/repository",
-  repository: "owner/name",
-  targetCommit: "<40-hex-commit>",
-});
-const line = await produceStatsLineV1({ snapshot, issueNumber: 12, tracker });
-```
-
-The caller invokes this at closure and preserves the returned line in the same issue docket. The package does not schedule closure or query a tracker.
+Every number must exactly match the runtime's derivation from cited session bytes. The sole final `ak_doctor_output` result undergoes a fresh same-active-model compliance audit; revise permits resubmission, while audit or transport failure aborts without manufacturing refusal. Trend reporting is a separate output type for future multi-case readers.
 
 ## Verdict contract
 
