@@ -1,0 +1,56 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_u53sFQeqJ0GWoF8ekj3HU8sZ|fc_09f207b1a0ccb630016a6d8d50035481919bdf1c92c7303a7c",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "HEAD c45ffbe is not yet executable-proof converged. Keep the current production behavior and add the missing production Recorder rejection oracles: drive malformed native evidence-read records through both live `invokeNavigator` settlement and recovered `readSealed` (and assert fail-closed), rather than relying on the direct `sealedEvidenceReads` helper or post-extraction array mutation. Do not add another normalization, tracker, lock, scheduler, or orchestration mechanism."
+    },
+    "classes": [
+      {
+        "name": "NavigatorEvidenceReadTruthResidual",
+        "owner": "Navigator evidence store -> native session -> Recorder sealing/readSealed -> Runner receipt-validation seam",
+        "boundary": "Out-of-catalog native reads and every required forged, omitted, duplicate, unknown, and malformed/unread rejection must have executable proof through the production Recorder live and recovered paths.",
+        "disposition": "OPEN as Apply proof only. The positive current-HEAD oracle genuinely invokes `createRecorderAssistedTransportV1`, proves out-of-catalog partial/complete truth live, validates catalog canonicalization, and proves `readSealed` equality. The rejection test, despite its title, never supplies a malformed native session to either production path: it mutates receipt or already-extracted authoritative arrays after one valid live invocation. The older malformed/length-conflict assertion calls `sealedEvidenceReads` directly on handcrafted JSONL, the exact seam prior judgment found insufficient. Add live and readSealed malformed-session counterexamples and assert rejection."
+      },
+      {
+        "name": "LedgerLoserRereadResidual",
+        "owner": "Assisted Runner call replay and append-only lifecycle transition seam",
+        "boundary": "Identical enter/resume callers return canonical completion or fail closed while pending; concurrent recovery emits one recovery fact and one consultation while exposing canonical ledger status; incompatible and hash-corrupt truth fails closed.",
+        "disposition": "CLOSED on current executable evidence. Focused tests deterministically cover overlapping identical enter and resume, pending fail-closed without another role launch, incompatible recovery identity, and hash corruption. The concurrent barrier produced one `recovered` row and one Navigator consultation. An independent probe confirmed the losing recovery returns the canonical current pending status (the winner's new Navigator invocation), while the winner returns the later settled status; it does not fabricate completion or duplicate consultation."
+      },
+      {
+        "name": "CurrentHeadExecutableGate",
+        "owner": "Issue-28 regression suite and TypeScript contract boundary",
+        "boundary": "Current HEAD passes repository mechanical gates and tests execute the asserted behavior.",
+        "disposition": "CLOSED. Independent `npm run typecheck` passed; focused assisted/Navigator tests passed 24/24; isolated-HOME full suite passed 382, failed 0, skipped 5; `npm pack --dry-run` and `git diff --check` passed; worktree remained clean at exact HEAD c45ffbe2963b6176ef00fa5a7dfafeabb7d748db."
+      },
+      {
+        "name": "RecorderFailureTruth",
+        "owner": "Recorder to Assisted Runner invocation settlement seam",
+        "boundary": "Unexpected transport exceptions retain causal identity and do not become fabricated settlements.",
+        "disposition": "CLOSED. No exception-classification expansion was introduced, and the full current-HEAD suite passes."
+      },
+      {
+        "name": "IdentifierSnapshotCredentialAndResumeClosure",
+        "owner": "Navigator contracts/shared UUIDv7, promoted argv credential gate, recovery environment binding, and resolved-subject resume gates",
+        "boundary": "Previously accepted identifier, snapshot, credential, environment, and resume invariants remain intact.",
+        "disposition": "CLOSED by confined diff plus passing focused and full current-HEAD coverage."
+      },
+      {
+        "name": "SoulLocatorNamingAndFreshnessClosure",
+        "owner": "Navigator Soul, assisted run locator, AssistedCall validator locals, and snapshot freshness digest",
+        "boundary": "Previously accepted Soul layering, shared locator, domain naming, and tracker-observation freshness remain intact.",
+        "disposition": "CLOSED. These owners were not changed by the repair, and current focused/full tests pass."
+      },
+      {
+        "name": "NoParallelMechanismOrRoleBoundaryRegression",
+        "owner": "Existing Assisted Runner/ledger and Navigator/Recorder role boundary",
+        "boundary": "No new orchestrator, tracker, lock ledger, wait loop, scheduler, compulsory advice execution, or role-owned transition mechanism is introduced.",
+        "disposition": "CLOSED. The repair stays in the existing Recorder/Runner seams and tests; no parallel state mechanism or new production hook was added."
+      }
+    ],
+    "note": "The accepted fixer receipt overstates its malformed-authoritative proof. All other requested current-HEAD checks were independently reproduced. The remaining repair is test/proof-only and requires no authority or owner decision."
+  },
+  "artifactKind": "acceptedReceipt"
+}
