@@ -1,0 +1,146 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "root": ".ak/dockets",
+    "docketId": "issues/22/judgment/merger-real-use-output"
+  },
+  "invocation": {
+    "id": "019fbd92-67c8-76f5-b950-0faf35160a3d"
+  },
+  "session": {
+    "id": "019fbd92-67c8-76f5-b950-0faf35160a3d",
+    "directory": ".ak/work/issues/22/runs/merger-real-use-output-judge/session",
+    "basename": "2026-08-01T13-45-17-495Z_019fbd92-67c8-76f5-b950-0faf35160a3d.jsonl",
+    "sha256": "0e55403c9e31a3b82c541c3a814af26a29da45c3f5a800d7871053552026f2b6",
+    "byteLength": 513411,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22/.ak/work/issues/22/runs/merger-real-use-output-judge/session",
+      "--session-id",
+      "019fbd92-67c8-76f5-b950-0faf35160a3d",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #22 first real Merger use — output contract failure adjudication\n\nCurrent HEAD `363eef34832e6513ce60379ea07717d507956966` was created by the first real Merger invocation while resolving the sole conflict integrating default commit `88e3acdcb1bc32de076ec999b4115b4d41d3d328` into target `f076bc4cfc7705906406f1ff7c904df54a7ce47e`.\n\nThe role correctly resolved/staged/typechecked/committed an ordinary two-parent merge, but submitted:\n\n```json\n{\"attemptId\":\"...\",\"status\":\"completed\",\"mergeCommit\":\"363eef...\",\"parents\":[...],\"resolvedPaths\":[...],\"checks\":[...],\"summary\":\"...\"}\n```\n\ninstead of exact `{status,attemptId,report,mergeCommitId}`. The deliberately broad Pi transport schema admitted it; exact runtime validation fatally aborted; Recorder correctly published no receipt. Raw session: `.ak/work/issues/22/runs/merge-default-typed-prerequisite/session/`.\n\nAdjudicate:\n\n1. Verify the current merge commit mechanically but do not retroactively manufacture a Merger Receipt or rewrite history.\n2. Determine whether Merger lacks sufficient model-visible exact output-contract instruction after transport was broadened for fatal malformed submissions. The tool's broad schema no longer teaches fields, while current prompt guidelines only say “sole final action.”\n3. If valid, authorize the smallest class repair that communicates both legal exact leaves to the model while retaining broad transport admission, sole exact runtime validator, and fatal malformed behavior. Use behavior tests, not prose-regex anchoring.\n4. Define honest disposition of this failed invocation and whether the existing merge commit may remain as caller-inspected forward history.\n\nDo not add retry, output recovery, retroactive sealing, orchestration, or history rewriting."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "363eef34832e6513ce60379ea07717d507956966",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "363eef34832e6513ce60379ea07717d507956966",
+        "path": ".ak/dockets/issues/22/authority/final-synthesis-001/receipt.json",
+        "blobOid": "bfef10db6ce968eb969137da36db4fd4791209fb",
+        "sha256": "77e174cdff622a4658b4680650410bdbf7c9a8151f4b84dff30f4afee85de925",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "a0d19e6ba8d61fa811514e6610ae652176b4f5c8dcfd1bab4f7efbb98221dc26",
+        "byteLength": 1770
+      }
+    },
+    {
+      "id": "merger-input",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/merger-input",
+        "sha256": "819e6aac99f5b07ff7040022be11836c50b1bf92e3c996855b7684c4b7424374",
+        "byteLength": 2168
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "91920627cf0bd0ea32f8b60cf4f1fd831f6786e07dd2b13bb2ef2d51b63e8064",
+        "byteLength": 3086
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "5d00436e406aad557551dc5127f2c61a071016be27231c431abd54a6dc410d40",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_9rjynejJ4MK3cEHdDpLxPJ1c|fc_089e120242a8ca10016a6df939cfd08191901dfcefca912aa1",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_9rjynejJ4MK3cEHdDpLxPJ1c|fc_089e120242a8ca10016a6df939cfd08191901dfcefca912aa1",
+    "auditPassed": true,
+    "usage": {
+      "input": 16373,
+      "output": 134,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 16507
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

@@ -8,12 +8,12 @@ import {
   type AcceptedDetails,
   type TerminatingToolName,
 } from "../package-contracts/terminating-tools.ts";
-import type { CollectorReceipt, DoctorOutput, JudgeVerdict, RecordedNavigatorReceiptV1, RuntimeReviewerReceiptV2, WorkerOutput } from "../package-contracts/terminating-tools.ts";
+import type { CollectorReceipt, DoctorOutput, JudgeVerdict, MergerOutput, RecordedNavigatorReceiptV1, RuntimeReviewerReceiptV2, WorkerOutput } from "../package-contracts/terminating-tools.ts";
 import { RecorderError } from "./errors.ts";
 import { combineReports, scanJsonValue, type ScanReport } from "./scanner.ts";
 
-export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt | DoctorOutput | RecordedNavigatorReceiptV1; kind: "worker" | "reviewer" | "judge" | "collector" | "doctor" | "navigator" };
-export type AuditObservation = { toolName: "ak_judge_output" | "ak_reviewer_output" | "ak_doctor_output" | "ak_navigator_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
+export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt | DoctorOutput | RecordedNavigatorReceiptV1 | MergerOutput; kind: "worker" | "reviewer" | "judge" | "collector" | "doctor" | "navigator" | "merger" };
+export type AuditObservation = { toolName: "ak_judge_output" | "ak_fixer_output" | "ak_reviewer_output" | "ak_doctor_output" | "ak_navigator_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
 export type ExtractionResult = { receipt: AcceptedReceipt; auditObservation: AuditObservation | null; artifactKind: "acceptedReceipt" | "sanitizedDerivativeOfAcceptedReceipt"; report: ScanReport };
 
 type DirectIssuance = { index: number; rowId: unknown; toolCallId: string; toolName: TerminatingToolName; arguments: unknown };
@@ -50,6 +50,7 @@ function receiptKind(toolName: TerminatingToolName): AcceptedReceipt["kind"] {
   if (toolName === "ak_reviewer_output") return "reviewer";
   if (toolName === "ak_doctor_output") return "doctor";
   if (toolName === "ak_navigator_output") return "navigator";
+  if (toolName === "ak_merger_output") return "merger";
   return "worker";
 }
 
@@ -160,6 +161,7 @@ export class AcceptanceCollector {
 
 function finalizeAcceptedPair(pair: AcceptedPair): ExtractionResult {
   const { issuance, resultMessage } = pair;
+  if (issuance.toolName === "ak_fixer_output" && !validUsage(resultMessage.usage)) invalid();
   const content = resultMessage.content;
   if (!Array.isArray(content) || content.length !== 1 || !isRecord(content[0]) ||
       !hasExactKeys(content[0], ["type", "text"]) || content[0].type !== "text" || typeof content[0].text !== "string") invalid();

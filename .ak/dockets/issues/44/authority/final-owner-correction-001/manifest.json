@@ -1,0 +1,146 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+    "root": ".ak/dockets",
+    "docketId": "issues/44/authority/final-owner-correction-001"
+  },
+  "invocation": {
+    "id": "019fbc96-4867-7664-9f05-55836fdc37ee"
+  },
+  "session": {
+    "id": "019fbc96-4867-7664-9f05-55836fdc37ee",
+    "directory": ".ak/work/issues/44/runs/authority-reconsideration-judge/session",
+    "basename": "2026-08-01T09-09-54-714Z_019fbc96-4867-7664-9f05-55836fdc37ee.jsonl",
+    "sha256": "0dbd55a4b81e2ba87e40b98ab523eca4861725b58ab6c0f52d035623280b3e73",
+    "byteLength": 260617,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44/.ak/work/issues/44/runs/authority-reconsideration-judge/session",
+      "--session-id",
+      "019fbc96-4867-7664-9f05-55836fdc37ee",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #44 — final owner correction reconsideration\n\nReconsider `.ak/dockets/issues/44/authority/final-authority-001/receipt.json` only where its decision gate is now answered by the sealed owner correction.\n\nRatify a construction-ready smallest design with these owner-fixed semantics:\n\n- Fixer refusal has one purpose: assignment not presently lawfully executable.\n- Its exhaustive typed causes are only `authority_violation` and `prerequisite_unmet`; invent no third category or generic safety escape.\n- Apply settlements are exactly `completed`, `refused`, and `partially_completed` with typed per-finding dispositions and combination laws. Partial means a mixture of completed findings and findings refused for one of the two causes—not unfinished workload.\n- Executable unfinished work has no professional settlement; Fixer continues, caller cancels, or execution exits nonzero.\n- Add fresh same-active-model Fixer compliance audit after structural validation and before acceptance, scoped to demonstrated Soul/packet/invocation-record compliance. It does not redo repairs or adjudicate findings. Revise permits resubmission; audit infrastructure failure exits nonzero.\n- Hard-cut v0.1 prose-only leaves; preserve historical dockets unchanged.\n- Preserve multi-class batching, per-class accountability, and caller ownership. No orchestrator/scheduler.\n- Soul uses subtraction/minimal positive domain, not a list of anti-refusal warnings.\n\nDispose exact schemas, runtime/auditor boundaries, plan-phase implications, package/Recorder/docs/tests, and direct-construction authority. No Plan unless a genuine interface choice remains."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "1bde4677da092487100fa2a15e1e001658b1448e",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "prior-authority",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+        "commit": "1bde4677da092487100fa2a15e1e001658b1448e",
+        "path": ".ak/dockets/issues/44/authority/final-authority-001/receipt.json",
+        "blobOid": "dd0a522087f164d1daf7ddd244229997ee53d4c2",
+        "sha256": "af01deb4033ef2d608d79c0594face7f9b753aad3ef873b2204cec8a5be623e7",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "owner-correction",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/owner-correction",
+        "sha256": "b055cca1d4231ded14586f28b41e6175ff1ee9c45d3b8a3aa76f7243ba3fabba",
+        "byteLength": 3029
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "2afc4d571b5c6612a0f2d07959092a592444c423aced0bc5e9a1d2c9a675f5d4",
+        "byteLength": 1640
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527",
+        "byteLength": 5663
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "3828bead640cadab40e1e470e6365996cd75e72a3d2bf8c1e51c1d6ea4a6a300",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_THsBGPLVbLB5sKULKBmIxBVp|fc_019135c75dd59a5f016a6db8c0a5e48191a96cdddb2ac34729",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_THsBGPLVbLB5sKULKBmIxBVp|fc_019135c75dd59a5f016a6db8c0a5e48191a96cdddb2ac34729",
+    "auditPassed": true,
+    "usage": {
+      "input": 19328,
+      "output": 391,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 19719
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}
