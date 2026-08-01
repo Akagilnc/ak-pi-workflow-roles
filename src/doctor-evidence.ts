@@ -9,7 +9,8 @@ async function discoverCaseFiles(root: string): Promise<string[]> { const found:
 function sourceList(count: number, sources: string[]) { return { count, sources: [...new Set(sources)].sort() }; }
 function accumulate(metric: DoctorCount, value: number, source: string) { metric.count += value; if (value) metric.sources.push(source); }
 function timestamp(row: Record<string, unknown>) { return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : undefined; }
-async function stableRunsIdentity(root: string): Promise<string> { let cursor = root; while (true) { try { if ((await stat(resolve(cursor, ".git"))).isDirectory() || (await stat(resolve(cursor, ".git"))).isFile()) return relative(cursor, root).split(sep).join("/"); } catch {} const parent = dirname(cursor); if (parent === cursor) return root; cursor = parent; } }
+function isMissingPathError(error: unknown): boolean { return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"); }
+async function stableRunsIdentity(root: string): Promise<string> { let cursor = root; while (true) { try { const git = await stat(resolve(cursor, ".git")); if (git.isDirectory() || git.isFile()) return relative(cursor, root).split(sep).join("/"); } catch (error) { if (!isMissingPathError(error)) throw error; } const parent = dirname(cursor); if (parent === cursor) return root; cursor = parent; } }
 
 type SessionDerivation = { session: DoctorCaseCost["sessions"][number]; turns: number; calls: number; tokens: number; statuses: DoctorCaseCost["statuses"]; commits: DoctorCaseCost["commits"] };
 function deriveSession(content: string, id: string): SessionDerivation {

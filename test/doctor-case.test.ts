@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -153,11 +153,24 @@ test("partial and non-monotonic sessions remain reportable with every explicit d
 });
 
 test("case identity is repository-relative with an absolute fallback outside repositories", async () => {
-  const root = await mkdtemp(join(tmpdir(), "doctor-identity-"));
-  await mkdir(join(root, ".git"));
+  const repository = await mkdtemp(join(tmpdir(), "doctor-identity-repository-"));
+  await mkdir(join(repository, ".git"));
+  const repositoryRuns = join(repository, ".ak/work/issues/40/runs");
+  await mkdir(repositoryRuns, { recursive: true });
+  assert.equal((await loadDoctorCase(repositoryRuns)).identity.runsPath, ".ak/work/issues/40/runs");
+
+  const outside = await mkdtemp(join(tmpdir(), "doctor-identity-outside-"));
+  const outsideRuns = join(outside, ".ak/work/issues/40/runs");
+  await mkdir(outsideRuns, { recursive: true });
+  assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
+});
+
+test("case identity discovery propagates unexpected filesystem errors", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-identity-error-"));
+  await symlink(".git", join(root, ".git"));
   const runs = join(root, ".ak/work/issues/40/runs");
   await mkdir(runs, { recursive: true });
-  assert.equal((await loadDoctorCase(runs)).identity.runsPath, ".ak/work/issues/40/runs");
+  await assert.rejects(loadDoctorCase(runs), (error: NodeJS.ErrnoException) => error.code === "ELOOP");
 });
 
 test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
