@@ -118,11 +118,19 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
   }
 }
 
+export class AcceptedDetailsContractError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AcceptedDetailsContractError";
+  }
+}
+
 export function validateAcceptedDetails(
   toolName: TerminatingToolName,
   details: unknown,
 ): AcceptedDetails {
-  switch (toolName) {
+  try {
+    switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
       return validateAcceptedWorkerDetails(details, "Coder");
     case FIXER_OUTPUT_TOOL_NAME:
@@ -140,6 +148,23 @@ export function validateAcceptedDetails(
       return validateRecordedNavigatorReceiptV1(details);
     case MERGER_OUTPUT_TOOL_NAME:
       return validateMergerOutput(details);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
+    throw error;
+  }
+}
+
+export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): { status?: string; commit?: string } {
+  switch (toolName) {
+    case CODER_OUTPUT_TOOL_NAME:
+    case FIXER_OUTPUT_TOOL_NAME: { const output = details as WorkerOutput; return { status: output.status, ...("commitSha" in output && output.commitSha ? { commit: output.commitSha } : {}) }; }
+    case REVIEWER_OUTPUT_TOOL_NAME: return { status: (details as RuntimeReviewerReceiptV2).status };
+    case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as JudgeVerdict).judgeStatus };
+    case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as DoctorOutput).status };
+    case NAVIGATOR_OUTPUT_TOOL_NAME: return { status: (details as RecordedNavigatorReceiptV1).status };
+    case MERGER_OUTPUT_TOOL_NAME: { const output = details as MergerOutput; return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) }; }
+    case COLLECTOR_OUTPUT_TOOL: return {};
   }
 }
 

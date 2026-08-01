@@ -43,25 +43,56 @@ export function acceptedTextFor(toolName) {
             return MERGER_ACCEPTED_TEXT;
     }
 }
+export class AcceptedDetailsContractError extends Error {
+    constructor(message, options) {
+        super(message, options);
+        this.name = "AcceptedDetailsContractError";
+    }
+}
 export function validateAcceptedDetails(toolName, details) {
+    try {
+        switch (toolName) {
+            case CODER_OUTPUT_TOOL_NAME:
+                return validateAcceptedWorkerDetails(details, "Coder");
+            case FIXER_OUTPUT_TOOL_NAME:
+                return validateAcceptedWorkerDetails(details, "Fixer");
+            case REVIEWER_OUTPUT_TOOL_NAME:
+                return validateRuntimeReviewerReceipt(details);
+            case JUDGE_OUTPUT_TOOL_NAME:
+                return validateAcceptedJudgeDetails(details);
+            case COLLECTOR_OUTPUT_TOOL:
+                return validateAcceptedCollectorReceipt(details);
+            case DOCTOR_OUTPUT_TOOL_NAME:
+                return validateRecordedDoctorOutput(details);
+            case NAVIGATOR_OUTPUT_TOOL_NAME:
+                // Snapshot freshness is additionally checked by Assisted Runner.
+                return validateRecordedNavigatorReceiptV1(details);
+            case MERGER_OUTPUT_TOOL_NAME:
+                return validateMergerOutput(details);
+        }
+    }
+    catch (error) {
+        if (error instanceof Error && error.constructor === Error)
+            throw new AcceptedDetailsContractError(error.message, { cause: error });
+        throw error;
+    }
+}
+export function acceptedFacts(toolName, details) {
     switch (toolName) {
         case CODER_OUTPUT_TOOL_NAME:
-            return validateAcceptedWorkerDetails(details, "Coder");
-        case FIXER_OUTPUT_TOOL_NAME:
-            return validateAcceptedWorkerDetails(details, "Fixer");
-        case REVIEWER_OUTPUT_TOOL_NAME:
-            return validateRuntimeReviewerReceipt(details);
-        case JUDGE_OUTPUT_TOOL_NAME:
-            return validateAcceptedJudgeDetails(details);
-        case COLLECTOR_OUTPUT_TOOL:
-            return validateAcceptedCollectorReceipt(details);
-        case DOCTOR_OUTPUT_TOOL_NAME:
-            return validateRecordedDoctorOutput(details);
-        case NAVIGATOR_OUTPUT_TOOL_NAME:
-            // Snapshot freshness is additionally checked by Assisted Runner.
-            return validateRecordedNavigatorReceiptV1(details);
-        case MERGER_OUTPUT_TOOL_NAME:
-            return validateMergerOutput(details);
+        case FIXER_OUTPUT_TOOL_NAME: {
+            const output = details;
+            return { status: output.status, ...("commitSha" in output && output.commitSha ? { commit: output.commitSha } : {}) };
+        }
+        case REVIEWER_OUTPUT_TOOL_NAME: return { status: details.status };
+        case JUDGE_OUTPUT_TOOL_NAME: return { status: details.judgeStatus };
+        case DOCTOR_OUTPUT_TOOL_NAME: return { status: details.status };
+        case NAVIGATOR_OUTPUT_TOOL_NAME: return { status: details.status };
+        case MERGER_OUTPUT_TOOL_NAME: {
+            const output = details;
+            return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) };
+        }
+        case COLLECTOR_OUTPUT_TOOL: return {};
     }
 }
 export function carriesPackageAuditObservation(toolName) {
