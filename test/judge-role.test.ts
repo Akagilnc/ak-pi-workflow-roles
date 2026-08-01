@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
 import {
   SessionManager,
   type ExtensionAPI,
@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
+import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
@@ -1047,6 +1048,70 @@ test("Fixer audits every structurally valid attempt freshly and revise permits c
   assert.equal(seen.length, 2);
   assert.deepEqual(accepted.details, candidate);
   assert.notEqual(seen[0], seen[1]);
+});
+
+test("Fixer prospective prerequisite decisions survive the production submission lifecycle unchanged", async () => {
+  const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" });
+  const decisions = [
+    { status: "revise", violations: ["completed work was retrospectively relabeled as blocked"] },
+    { status: "pass", violations: [] },
+    { status: "pass", violations: [] },
+  ] as const;
+  let auditCalls = 0;
+  const auditInputs: Context[] = [];
+  const audit = createPiFixerAuditor(async (_model, request) => {
+    auditInputs.push(request);
+    return fauxAssistantMessage(
+      fauxToolCall(FIXER_AUDIT_TOOL_NAME, decisions[auditCalls++]!),
+      { stopReason: "toolUse" },
+    );
+  });
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "judge",
+    loadFixerSoul: async () => "fixer",
+    loadFixPacket: async () => "A predecessor owner decision is required before work when the packet says so.",
+    transcriptFromContext: () => "Current invocation record and verification evidence.",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+    auditFixerCompliance: audit,
+  })(harness.pi as ExtensionAPI);
+  await harness.handlers.get("session_start")?.({}, {});
+  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
+  const productionBeforeRegressionRefusal = {
+    status: "refused", report: "Both repairs and regressions exist, but commit ordering cannot be rewritten.",
+    classResults: [{ name: "Binding", disposition: "refused", remainingScope: "retrospective test-first ordering", blocker: { cause: "prerequisite_unmet", evidence: "production commit preceded the regression commit" } }],
+  };
+  const correctedCompletion = {
+    status: "completed", report: "The production change preceded its regression, so this does not claim TDD. Current focused and full verification pass.",
+    classResults: [{ name: "Binding", disposition: "completed", searchScope: "all binding sites", exceptions: [], commitSha: "a".repeat(40) }],
+  };
+  const absentOwnerDecision = {
+    status: "refused", report: "No work began because the packet-required owner decision is still absent and execution is presently inadmissible.",
+    classResults: [{ name: "Policy", disposition: "refused", remainingScope: "the entire policy change", blocker: { cause: "prerequisite_unmet", evidence: "the packet requires an owner decision before editing, and no such decision exists" } }],
+  };
+  const auditedContext = (id: string) => Object.assign(toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]), {
+    model: { provider: "active", id: "same-model" },
+    modelRegistry: {
+      async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
+      async getApiKeyAndHeaders() { return { ok: true, apiKey: "secret" }; },
+    },
+  }) as ExtensionContext;
+
+  await assert.rejects(
+    tool.execute("retrospective", productionBeforeRegressionRefusal, undefined, undefined, auditedContext("retrospective")),
+    /Fixer output violates its law/,
+  );
+  const corrected = await tool.execute("corrected", correctedCompletion, undefined, undefined, auditedContext("corrected"));
+  const prerequisite = await tool.execute("prerequisite", absentOwnerDecision, undefined, undefined, auditedContext("prerequisite"));
+  assert.deepEqual(corrected.details, correctedCompletion);
+  assert.deepEqual(prerequisite.details, absentOwnerDecision);
+  assert.equal(corrected.terminate, true);
+  assert.equal(prerequisite.terminate, true);
+  assert.equal(auditCalls, 3);
+  for (const [index, candidate] of [productionBeforeRegressionRefusal, correctedCompletion, absentOwnerDecision].entries()) {
+    const userContent = auditInputs[index]?.messages.find((message) => message.role === "user")?.content;
+    assert.ok(Array.isArray(userContent));
+    assert.equal(userContent.some((part) => part.type === "text" && part.text.includes(JSON.stringify(candidate))), true);
+  }
 });
 
 test("worker output rejects malformed, unknown, blank, and non-object values", async () => {
