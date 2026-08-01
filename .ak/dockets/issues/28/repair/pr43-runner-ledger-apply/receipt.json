@@ -1,0 +1,32 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_nAd2W0lGj4wZsvN7Op4MkCAV|fc_098622e976bb8a48016a6d96e987648191be1d43c455b3d1c6",
+  "details": {
+    "status": "completed",
+    "report": "Committed forward fix 2f46146. Centralized append-time lifecycle admission closes end/call/reservation races; resumable reservations retain invocation identity; recovered role attempts and post-navigation settlements remain durable across replay; ledger publication no longer deletes peer temporaries and preserves cleanup failures; recovery reconciliation now uses a typed internal signal rather than message text. Added production-ledger regression coverage for typed conflict losers and live peer temporary preservation. Rebuilt dist. Unified verification passed: build:recorder, typecheck, full suite (388 pass, 0 fail, 5 skipped), git diff --check, and npm pack --dry-run. No unauthorized scheduler, timeout, retry cap, backoff, lock, Recorder-boundary change, or public error taxonomy was added.",
+    "commitSha": "2f46146af2feecea52214463e8790b09d87b76f0",
+    "classesRepaired": [
+      {
+        "name": "LifecycleAdmissionExclusion",
+        "searchScope": "Assisted Runner append-only admission across call_started, action_reserved, role_started, call_completed, ended, and concurrent generation reconciliation.",
+        "exceptions": []
+      },
+      {
+        "name": "RecoveryStateContinuity",
+        "searchScope": "Assisted Runner pre-spawn reservation replay, recovered latestAttempt persistence, and settled post-navigation call completion replay.",
+        "exceptions": []
+      },
+      {
+        "name": "LedgerTemporaryPublicationSafety",
+        "searchScope": "Assisted ledger generation temporary-file ownership, canonical rename conflict classification, and cleanup error propagation.",
+        "exceptions": []
+      },
+      {
+        "name": "TypedMachineControlFlow",
+        "searchScope": "Assisted recovery reconciliation and ledger concurrency regression assertions.",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
