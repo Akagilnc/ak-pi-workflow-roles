@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { readFile, open, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { join, relative } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -60,7 +62,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadNavigatorSoul: () => readFile(navigatorSoulPath, "utf8"),
     loadNavigatorSnapshot: async (path) => JSON.parse(await readFile(path, "utf8")),
-    loadNavigatorEvidence: async (snapshot: CurrentPositionSnapshotV1) => new Map(await Promise.all(snapshot.evidence.map(async (item) => [item.handle, new Uint8Array(await readFile(item.handle))] as const))),
+    loadNavigatorEvidence: async (snapshot: CurrentPositionSnapshotV1) => { const root=await realpath(join(snapshot.subject.repositoryRoot,".ak","work","issues",String(snapshot.subject.parent.number),"assisted",snapshot.runId,"evidence")); return new Map(await Promise.all(snapshot.evidence.map(async item=>{const path=await realpath(item.handle),rel=relative(root,path);if(rel.startsWith("..")||rel===""||rel.includes("/../"))throw new Error("evidence handle escapes admitted capability");const fd=await open(path,constants.O_RDONLY|("O_NOFOLLOW" in constants?constants.O_NOFOLLOW:0));try{const stat=await fd.stat();if(!stat.isFile()||stat.size>8*1024*1024)throw new Error("invalid bounded evidence handle");const bytes=new Uint8Array(stat.size);let offset=0;while(offset<bytes.length){const r=await fd.read(bytes,offset,bytes.length-offset,offset);if(!r.bytesRead)throw new Error("evidence changed while loading");offset+=r.bytesRead}return[item.handle,bytes]as const}finally{await fd.close()}})))},
     auditNavigatorCompliance: createPiNavigatorAuditor(),
     collectorPackageExtensionPath: extensionPath,
     loadCanonicalSkillBinding,

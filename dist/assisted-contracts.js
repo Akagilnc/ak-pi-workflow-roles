@@ -21,10 +21,15 @@ function validateAssistedCallConfigV1(value) {
   if (executionRecord.stdin !== "inherit" || typeof environmentRecord.inherit !== "boolean" || !environmentRecord.overrides || typeof environmentRecord.overrides !== "object" || !Array.isArray(environmentRecord.unset)) throw new Error("invalid execution policy");
   str(githubRecord.owner, "github owner");
   str(githubRecord.name, "github name");
+  const canonicalPath = (value2, where) => {
+    if (typeof value2 !== "string" || !isAbsolute(value2) || resolve(value2) !== value2) throw new Error(`invalid ${where}`);
+    return value2;
+  };
   const workspaces = acquisitionRecord.workspaces.map((x, i) => {
     const w = rec(x, ["id", "root", "relation"], `workspace/${i}`);
     str(w.id, "workspace id");
-    if (!isAbsolute(String(w.root)) || w.relation !== "repository" && w.relation !== "worktree") throw new Error("invalid workspace");
+    canonicalPath(w.root, "workspace root");
+    if (w.relation !== "repository" && w.relation !== "worktree") throw new Error("invalid workspace");
     return w;
   });
   if (new Set(workspaces.map((w) => w.id)).size !== workspaces.length || !workspaces.some((w) => w.id === executionRecord.workspaceId && w.root === executionRecord.cwd)) throw new Error("selected workspace mismatch");
@@ -33,20 +38,23 @@ function validateAssistedCallConfigV1(value) {
     str(declaration.id, "evidence id");
     str(provenanceRecord.kind, "evidence provenance kind");
     str(provenanceRecord.reference, "evidence provenance reference");
-    if (!["authority", "acceptance", "task", "input"].includes(String(declaration.kind)) || !isAbsolute(String(declaration.path))) throw new Error("invalid evidence declaration");
+    if (!["authority", "acceptance", "task", "input"].includes(String(declaration.kind))) throw new Error("invalid evidence declaration");
+    canonicalPath(declaration.path, "evidence path");
     return declaration;
   });
   if (new Set(evidence.map((declaration) => declaration.id)).size !== evidence.length) throw new Error("duplicate evidence id");
-  for (const [i, x] of acquisitionRecord.labelPolicy.entries()) {
+  const labelPolicy = acquisitionRecord.labelPolicy.map((x, i) => {
     const labelRecord = rec(x, ["labelId", "meaning"], `labelPolicy/${i}`);
     str(labelRecord.labelId, "label id");
     str(labelRecord.meaning, "label meaning");
-  }
-  if (typeof environmentRecord.overrides !== "object" || Array.isArray(environmentRecord.overrides) || Object.entries(environmentRecord.overrides).some(([k, v]) => !k || k.includes("\0") || k.includes("=") || typeof v !== "string" || v.includes("\0")) || environmentRecord.unset.some((x) => typeof x !== "string" || !x)) throw new Error("invalid environment policy");
+    return labelRecord;
+  });
+  if (new Set(labelPolicy.map((x) => x.labelId)).size !== labelPolicy.length) throw new Error("duplicate label policy id");
+  if (typeof environmentRecord.overrides !== "object" || Array.isArray(environmentRecord.overrides) || Object.entries(environmentRecord.overrides).some(([k, v]) => !k || k.includes("\0") || k.includes("=") || typeof v !== "string" || v.includes("\0")) || environmentRecord.unset.some((x) => typeof x !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(x)) || Object.keys(environmentRecord.overrides).some((x) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(x)) || new Set(environmentRecord.unset).size !== environmentRecord.unset.length || environmentRecord.unset.some((x) => Object.hasOwn(environmentRecord.overrides, x))) throw new Error("invalid environment policy");
   const children = subjectRecord.children;
   for (let i = 0; i < children.length; i++) {
     const childRecord = rec(children[i], ["number", "relation", "provenance"], "child"), childProvenance = rec(childRecord.provenance, ["kind", "reference"], "provenance");
-    if (childRecord.relation !== "sub_issue" || !Number.isSafeInteger(childRecord.number) || i > 0 && childRecord.number <= children[i - 1].number || childProvenance.kind !== "caller" && childProvenance.kind !== "tracker" || typeof childProvenance.reference !== "string" || !childProvenance.reference) throw new Error("invalid exact child set");
+    if (childRecord.relation !== "sub_issue" || !Number.isSafeInteger(childRecord.number) || childRecord.number < 1 || i > 0 && childRecord.number <= children[i - 1].number || childProvenance.kind !== "caller" && childProvenance.kind !== "tracker" || typeof childProvenance.reference !== "string" || !childProvenance.reference) throw new Error("invalid exact child set");
   }
   ;
   return value;
