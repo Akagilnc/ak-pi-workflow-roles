@@ -233,25 +233,13 @@
       ]
     },
     "evidenceRead": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "evidenceId",
-          "fullyRead"
-        ],
-        "properties": {
-          "evidenceId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "fullyRead": {
-            "type": "boolean"
-          }
-        }
+      "type": "object",
+      "propertyNames": {
+        "minLength": 1
       },
-      "uniqueItems": true
+      "additionalProperties": {
+        "type": "boolean"
+      }
     },
     "primary": {
       "oneOf": [
