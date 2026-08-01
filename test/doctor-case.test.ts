@@ -13,6 +13,13 @@ const rows = [
   { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_judge_output", isError: false, details: { judgeStatus: "converged", commitSha: "abc1234" } } },
 ];
 
+test("Doctor mission licenses a retained runs case as the subject of a completed cost report", async () => {
+  const soul = await (await import("node:fs/promises")).readFile(new URL("../souls/doctor.md", import.meta.url), "utf8");
+  assert.match(soul, /保留的单案.*过程成本报告/);
+  assert.match(soul, /三问.*开方/);
+  assert.doesNotMatch(soul, /案子只是跨案症状证据，不是病人/);
+});
+
 test("one retained runs directory yields an independently cited single-case cost report", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-case-"));
   const runs = join(root, ".ak/work/issues/28/runs");
