@@ -1,0 +1,15 @@
+# Issue #28 adjudication of post-repair Review-004 evidence
+
+Adjudicate every concrete claim in `.ak/dockets/issues/28/review/review-004/receipt.json` against current HEAD and the two final authority receipts.
+
+The aggregate is `refused` for method defects: the Standards leg imported authority lifecycle claims, omitted required hunk quotations for smells, and used unsupported `Long Function`; the Spec report paraphrased one authority line. Independently verify the underlying code claims rather than accepting or discarding them wholesale.
+
+Dispose at least:
+
+- whether Navigator evidence-read truth is still self-validated rather than bound to native/Recorder evidence;
+- whether recovery loses caller-declared environment policy and what credential-safe durable identity is authorized;
+- whether the Review-003 loser-reread repair can append incompatible losing facts and launch duplicate children;
+- whether resume verifies immutable resolved GitHub repository/parent IDs rather than only configured names/numbers;
+- repeated lifecycle/naming style claims and any invalid axis placement.
+
+For real defects, issue unique comma-free class repair authority with owner, boundary, disposition, and production-seam verification. Explicitly state whether these are residuals of prior classes or new classes, and whether direct Fixer apply is legal without Plan. Submit exactly one verdict through `ak_judge_output`.
