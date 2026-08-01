@@ -7,6 +7,13 @@ import { validateAssistedCallConfigV1, validateSelectedPiArgvV1 } from "./assist
 import { acquireCurrentPositionV1 } from "./assisted-acquisition.js";
 import { appendAssistedGenerationV1 as publishAssistedGenerationV1, AssistedLedgerConflictError, assistedRunDirectory, readAssistedLedgerV1 } from "./assisted-ledger.js";
 import { navigatorBindingMatchesV1, validateNavigatorReceiptV1 } from "./navigator-contracts.js";
+class CanonicalLifecycleResult extends Error {
+  constructor(result) {
+    super("canonical assisted result won publication");
+    this.result = result;
+  }
+  result;
+}
 async function appendAssistedGenerationV1(runDirectory, event, now) {
   for (; ; ) {
     try {
@@ -14,7 +21,12 @@ async function appendAssistedGenerationV1(runDirectory, event, now) {
     } catch (error) {
       if (!(error instanceof AssistedLedgerConflictError)) throw error;
       const rows = await readAssistedLedgerV1(runDirectory), winner = rows.find((row) => row.type === event.type && row.runId === event.runId && row.callId === event.callId && row.invocationId === event.invocationId && canonicalJson(row.payload) === canonicalJson(event.payload));
-      if (winner) return winner;
+      if (winner) {
+        const completed = event.callId && rows.find((r) => r.type === "call_completed" && r.callId === event.callId);
+        if (completed) throw new CanonicalLifecycleResult(completed.payload.result);
+        if (["call_started", "navigator_started", "action_reserved", "role_started", "recovered"].includes(event.type)) throw new Error(`compatible assisted lifecycle transition already owned for ${event.type}`);
+        return winner;
+      }
       const active = rows.filter((r) => r.type === "call_started" && !rows.some((x) => x.type === "call_completed" && x.callId === r.callId)).at(-1);
       if (event.type === "entered" && rows.some((r) => r.type === "entered") || event.type === "call_started" && active || event.callId && active && active.callId !== event.callId || ["navigator_started", "action_reserved", "role_started"].includes(event.type) && unresolved(rows) || ["navigator_settled", "role_settled", "recovered"].includes(event.type) && unresolved(rows) !== event.invocationId || event.type === "call_completed" && rows.some((r) => r.type === "call_completed" && r.callId === event.callId)) throw new Error(`incompatible assisted lifecycle winner for ${event.type}`);
     }
@@ -70,7 +82,7 @@ async function consult(config, position, piArgv, dir, deps, now, id) {
   const settled = await deps.recorder.invokeNavigator({ config, position, invocationId, piArgv });
   if (settled.kind === "accepted") {
     if (settled.receipt.invocationId !== invocationId) throw new Error("Navigator invocation identity mismatch");
-    const receipt = validateNavigatorReceiptV1(settled.receipt, position.snapshot, settled.readEvidenceIds.map((evidenceId) => ({ evidenceId, fullyRead: true })));
+    const receipt = validateNavigatorReceiptV1(settled.receipt, position.snapshot, settled.evidenceRead);
     await appendAssistedGenerationV1(dir, { type: "navigator_settled", runId: config.runId, callId: config.callId, invocationId, positionCursor: position.snapshot.positionCursor, payload: { classification: "accepted", receipt, reference: settled.reference } }, now);
     return { receipt, reference: settled.reference };
   }
@@ -105,7 +117,7 @@ async function run(mode, raw, argv, deps) {
       if (started.type === "navigator_started") {
         const nav = sealed;
         if (nav.kind !== "accepted" || !snapshot) throw new Error("sealed Navigator recovery mismatch");
-        const receipt = validateNavigatorReceiptV1(nav.receipt, snapshot, nav.readEvidenceIds.map((evidenceId) => ({ evidenceId, fullyRead: true })));
+        const receipt = validateNavigatorReceiptV1(nav.receipt, snapshot, nav.evidenceRead);
         await appendAssistedGenerationV1(dir, { type: "navigator_settled", runId: config.runId, callId: started.callId, invocationId: lost, positionCursor: started.positionCursor, payload: { classification: "accepted", receipt, reference: nav.reference } }, now);
       } else {
         const role = sealed, cursor2 = started.positionCursor + 1, latestAttempt = { invocationId: lost, role: config.execution.role, phase: config.execution.phase, beforeTarget: role.beforeTarget, afterTarget: role.afterTarget, terminalClass: role.terminalClass, reference: role.reference };
@@ -166,8 +178,16 @@ async function run(mode, raw, argv, deps) {
   const status = post.receipt ? post.receipt.status === "ordinary" ? "completed" : "navigation_halted" : "infrastructure_failure";
   return publishResult(dir, { version: 1, runId: config.runId, callId: config.callId, status, positionCursor: cursor, selectedInvocationId: selectedId, preNavigation: pre.receipt, settlement: { terminalClass: settlement.terminalClass, reference: settlement.reference }, postNavigation: post.receipt, actionComparison: comparison }, now);
 }
-const enterAssistedCallV1 = (config, piArgv, deps) => run("enter", config, piArgv, deps);
-const resumeAssistedCallV1 = (config, piArgv, deps) => run("resume", config, piArgv, deps);
+async function reconciledRun(mode, config, piArgv, deps) {
+  try {
+    return await run(mode, config, piArgv, deps);
+  } catch (error) {
+    if (error instanceof CanonicalLifecycleResult) return error.result;
+    throw error;
+  }
+}
+const enterAssistedCallV1 = (config, piArgv, deps) => reconciledRun("enter", config, piArgv, deps);
+const resumeAssistedCallV1 = (config, piArgv, deps) => reconciledRun("resume", config, piArgv, deps);
 async function readAssistedRunV1(repositoryRoot, runId, parentIssue, callId) {
   const parent = parentIssue ?? await runIndex(repositoryRoot, runId);
   const rows = await readAssistedLedgerV1(assistedRunDirectory(repositoryRoot, parent, runId));
@@ -182,7 +202,7 @@ async function endAssistedRunV1(repositoryRoot, runId) {
   if (!rows.some((r) => r.type === "ended")) await appendAssistedGenerationV1(dir, { type: "ended", runId, callId: null, positionCursor: rows.at(-1).positionCursor, payload: { meaning: "assisted_mode_ended_only" } });
   return readAssistedRunV1(repositoryRoot, runId, parentIssue);
 }
-async function recoverAssistedInvocationV1(repositoryRoot, runId, invocationId, confirmedStopped, deps) {
+async function recoverAssistedInvocationInternalV1(repositoryRoot, runId, invocationId, confirmedStopped, deps) {
   if (!confirmedStopped) throw new Error("recovery requires confirmed-stopped attestation");
   const parentIssue = await runIndex(repositoryRoot, runId), dir = assistedRunDirectory(repositoryRoot, parentIssue, runId), rows = await readAssistedLedgerV1(dir);
   if (unresolved(rows) !== invocationId) throw new Error("invocation is not the unresolved head");
@@ -205,6 +225,14 @@ async function recoverAssistedInvocationV1(repositoryRoot, runId, invocationId, 
   await appendAssistedGenerationV1(dir, { type: "acquisition", runId, callId: started.callId, positionCursor: cursor, payload: { snapshot: position.snapshot, reason: "recovery" } });
   await consult(config, position, piArgv, dir, deps, deps.now ?? (() => (/* @__PURE__ */ new Date()).toISOString()), deps.uuid ?? uuidv7);
   return readAssistedRunV1(repositoryRoot, runId, parentIssue);
+}
+async function recoverAssistedInvocationV1(repositoryRoot, runId, invocationId, confirmedStopped, deps) {
+  try {
+    return await recoverAssistedInvocationInternalV1(repositoryRoot, runId, invocationId, confirmedStopped, deps);
+  } catch (error) {
+    if (error instanceof CanonicalLifecycleResult) return readAssistedRunV1(repositoryRoot, runId);
+    throw error;
+  }
 }
 export {
   endAssistedRunV1,
