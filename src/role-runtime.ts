@@ -33,11 +33,9 @@ export {
   DOCTOR_OUTPUT_TOOL_NAME,
   type DoctorAuditInput,
 } from "./doctor-role.ts";
-export type { DoctorEvidenceIndexV1, DoctorOutput, DoctorFinding, DoctorLastRealBite } from "./doctor-contracts.ts";
-export { validateDoctorEvidenceIndex, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
-export { resolveDoctorEvidenceIndex, type DoctorCommittedEvidenceReader } from "./doctor-evidence.ts";
-export type { StatsLineV1, TrackerMergeMetadata, Metric, UnavailableReason, CommittedSnapshot } from "./stats-line.ts";
-export { STATS_LINE_VALIDATION_ERROR_CODE, StatsLineValidationError, produceStatsLineV1, createGitCommittedSnapshot, validateStatsLineV1 } from "./stats-line.ts";
+export type { DoctorCase, DoctorCaseCost, DoctorOutput, DoctorFinding } from "./doctor-contracts.ts";
+export { validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
+export { loadDoctorCase } from "./doctor-evidence.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
@@ -98,8 +96,7 @@ export type RoleRuntimeDependencies = {
   loadCollectorSoul?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
-  loadDoctorEvidenceIndex?(path: string): Promise<unknown>;
-  readDoctorCommittedEvidence?(targetCommit: string, path: string): Promise<Uint8Array>;
+  loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
@@ -231,8 +228,7 @@ export function createRoleRuntimeExtension(
     );
     const doctor = createDoctorRoleRuntime(pi, {
       async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
-      async loadEvidenceIndex(path) { if (!dependencies.loadDoctorEvidenceIndex) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorEvidenceIndex(path); },
-      committedEvidenceReader: { async read(targetCommit, path) { if (!dependencies.readDoctorCommittedEvidence) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.readDoctorCommittedEvidence(targetCommit, path); } },
+      async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
       async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
     }, hostActions);
     const collector = createCollectorRoleRuntime(

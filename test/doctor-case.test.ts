@@ -18,7 +18,7 @@ test("one retained runs directory yields an independently cited single-case cost
   const runs = join(root, ".ak/work/issues/28/runs");
   await mkdir(join(runs, "review-004/session"), { recursive: true });
   await mkdir(join(runs, "review-004-retry"), { recursive: true });
-  const body = rows.map(JSON.stringify).join("\n") + "\n";
+  const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
   await writeFile(join(runs, "review-004/session/real.jsonl"), body);
   await writeFile(join(runs, "review-004-retry/stderr.log"), "failed before session\n");
   const patient = await loadDoctorCase(runs);
