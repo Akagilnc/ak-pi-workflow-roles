@@ -1,0 +1,169 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "root": ".ak/dockets",
+    "docketId": "issues/28/judgment/review-003"
+  },
+  "invocation": {
+    "id": "019fbba8-042a-794f-aab5-5f323eac5d6d"
+  },
+  "session": {
+    "id": "019fbba8-042a-794f-aab5-5f323eac5d6d",
+    "directory": ".ak/work/issues/28/runs/review-003-judge/session",
+    "basename": "2026-08-01T04-49-39-416Z_019fbba8-042a-794f-aab5-5f323eac5d6d.jsonl",
+    "sha256": "26142877f8fb73648004ed9619b3fe2cd518f3e0b84a20ed7af5770bfe877df0",
+    "byteLength": 460955,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28/.ak/work/issues/28/runs/review-003-judge/session",
+      "--session-id",
+      "019fbba8-042a-794f-aab5-5f323eac5d6d",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "judge",
+      "-p",
+      "# Issue #28 adjudication of Review-003 evidence\n\nAdjudicate every concrete finding preserved in `.ak/dockets/issues/28/review/review-003/receipt.json` against the two Issue #28 authority receipts and current target `3842ef2cf29d3f31c6967085de42bd39b00fddd7`.\n\nThe Reviewer invocation ended `refused` because its method audit found the Standards leg imported a Spec credential requirement as a Standards violation and named `Long Function` outside the canonical baseline. Do not treat the refused aggregate as approval or as authority. However, independently inspect and adjudicate each preserved child-report claim and its cited code. Separate unsupported axis/method claims from real implementation defects.\n\nAt minimum dispose:\n\n- Navigator evidence fully-read truth;\n- arbitrary exception handling/failure evidence;\n- concurrent ledger loser-reread semantics;\n- closed validation of `latestAttempt`;\n- argv credential promotion/scanning order and contract;\n- UUID validator duplication;\n- dense naming/readability and lifecycle-owner concerns;\n- any overlap among Standards and Spec reports.\n\nFor accepted defects, define class-oriented repair authority with unique comma-free class names, owning seam, boundary, disposition, and exact verification burden. Prefer a small number of complete classes over point patches. Dismiss only with current code/authority evidence. Decide whether repair may proceed directly through Fixer apply without Plan. Submit exactly one verdict through `ak_judge_output`."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "3842ef2cf29d3f31c6967085de42bd39b00fddd7",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "navigator-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "3842ef2cf29d3f31c6967085de42bd39b00fddd7",
+        "path": ".ak/dockets/issues/28/authority/final-authority-001/receipt.json",
+        "blobOid": "b11d096a09a739f226f9229c4fcd5ddd9fbba351",
+        "sha256": "b4c5676059e59697ef65818563405381618a5b09dbe579665329f38d7c9d2443",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "runner-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "3842ef2cf29d3f31c6967085de42bd39b00fddd7",
+        "path": ".ak/dockets/issues/28/authority/assisted-runner-final-001/receipt.json",
+        "blobOid": "e9146000d2856bf81055197065505ba1f21d2b7e",
+        "sha256": "dc22f4303d3e02fa6bb8d3804d387644269d71f234c315f27616eff57eb399cd",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "review-evidence",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue28",
+        "commit": "3842ef2cf29d3f31c6967085de42bd39b00fddd7",
+        "path": ".ak/dockets/issues/28/review/review-003/receipt.json",
+        "blobOid": "6bbd826ac1ac3260f8aa7d99bcf98f6d7e9694f9",
+        "sha256": "6197eccfe6110cbf1bd756994872d18abc53675db4c22c22e021083ce1005ec3",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "judge-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/judge-task",
+        "sha256": "6c155e1985b8a7c68597e9c7348d5c13eac174ee646b9c54bd739bcb617dc156",
+        "byteLength": 1503
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "sanitized-derivative",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "be48b76e1741107e558044f375b56e91b6d8aa4f6a84f215eeaf7023c664f516",
+        "byteLength": 7888
+      },
+      "receiptArtifactKind": "sanitizedDerivativeOfAcceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "ebf20d5ad95a2ff655b349c811d858db3653cbc068b44daa30c19893f5042cea",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_NvwH29rR9QAfZecVQjcFIUpE|fc_0d38b7a194610815016a6d7bc5bf8c8191822b1f1df5670896",
+    "artifactId": "receipt",
+    "artifactKind": "sanitizedDerivativeOfAcceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_judge_output",
+    "toolCallId": "call_NvwH29rR9QAfZecVQjcFIUpE|fc_0d38b7a194610815016a6d7bc5bf8c8191822b1f1df5670896",
+    "auditPassed": true,
+    "usage": {
+      "input": 17995,
+      "output": 297,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 18292
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": [
+      {
+        "ruleId": "bearer-credential",
+        "location": "receipt.details.classes[4].disposition",
+        "count": 1
+      }
+    ]
+  }
+}
