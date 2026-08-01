@@ -1,0 +1,12 @@
+# Issue #28 fixed-target review
+
+Review the complete Issue #28 Navigator v1 and package-owned Assisted Runner construction at target `37be4e9fb18263ab994fa41103e087b947e53237` against base `4e96b7b1a95d16fb6dbf14cb424d63f3225bdbc5`.
+
+Authoritative requirements are the committed receipts:
+
+- `.ak/dockets/issues/28/authority/final-authority-001/receipt.json`
+- `.ak/dockets/issues/28/authority/assisted-runner-final-001/receipt.json`
+
+Inspect all clone material needed for either Standards or Spec. Pay particular attention to whether production ownership lives in authored TypeScript rather than generated artifacts, whether the claimed package-owned automatic lifecycle is actually complete and callable, contract closure and digest identity, Recorder one-invocation preservation, ledger atomicity/crash truth, Navigator tool/audit isolation, failure honesty, credential/raw-evidence boundaries, package/cold-install behavior, and whether tests exercise production seams rather than shallow facades.
+
+Report concrete findings only. Do not authorize or apply repairs.
