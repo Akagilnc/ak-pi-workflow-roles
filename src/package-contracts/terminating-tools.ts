@@ -130,7 +130,7 @@ export function validateAcceptedDetails(
         return validateRecordedDoctorOutput(details);
     }
   } catch (error) {
-    if (error instanceof Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
+    if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
     throw error;
   }
 }
