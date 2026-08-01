@@ -1,0 +1,15 @@
+# Owner synthesis — Issue #22 capability-exam boundary
+
+The owner clarifies the controlling product boundary.
+
+Issue #22's parallel-development workflow is an **external orchestration capability exam** for this independently installable roles package. The workflow itself is not implemented in this repository. It may be preserved in the issue or documentation as a non-normative example, but this repository must not own lanes, family worktrees, queue order, completion-order policy, concurrency width, retries, stopping, merge publication, or review/fix-loop orchestration. External callers remain free to compose roles differently.
+
+The reference exam is:
+
+1. For independent tasks, use separate worktrees; whichever finishes first may merge first; a later real conflict adds one Merger invocation; perform a final pre-PR review/fix closure.
+2. For a parent with multiple children, the parent has a family integration worktree/base. Children branch from the latest stable family tip available when they start. Completed children merge back one at a time. A real conflict adds one Merger invocation. After each child integration, run an independent bounded code-review/Judge/Fixer closure so defects are not all deferred into one enormous final loop. After all children integrate, run a final family-wide review/fix closure.
+3. This is a feasible target scenario, not mandatory topology. It asks: which single-invocation roles or contracts are missing? Only those missing package capabilities are construction scope.
+
+The owner rejects making candidate-ref/CAS publication, a persistent single-writer family worktree, or any other external merge transaction mandatory package law. Those are caller implementation choices. They may be discussed as alternative examples, but package runtime and role contracts must neither implement nor require them.
+
+Use this clarification to produce the final Issue #22 package construction scope. Preserve the accepted finding that Merger and Fixer are distinct professions unless new evidence disproves it.
