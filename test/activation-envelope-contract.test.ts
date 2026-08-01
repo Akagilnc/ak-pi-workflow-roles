@@ -89,6 +89,19 @@ for (const failure of ["clock", "writer"] as const) {
   });
 }
 
+test("completed trace emission failure still terminates the invocation", async () => {
+  const traceError = new Error("completion trace unavailable");
+  let writes = 0;
+  const h = runtimeHarness({
+    activate: async () => "SOUL",
+    writeTrace: () => { if (++writes === 2) throw traceError; },
+  });
+  await assert.rejects(() => h.handlers.get("session_start")![0]!({}, h.ctx), traceError);
+  assert.equal(h.aborts(), 1);
+  assert.equal(process.exitCode, 1);
+  process.exitCode = undefined;
+});
+
 test("failed trace emission cannot mask the activation cause or skip termination", async () => {
   const activationError = new TypeError("soul unavailable");
   const traceError = new Error("trace unavailable");
