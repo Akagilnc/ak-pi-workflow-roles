@@ -4,6 +4,7 @@ import { canonicalJson } from "./canonical-json.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
+export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "Submit the sole final typed single-case diagnosis. Use completed for a byte-rederivable cost diagnosis, including when findings is empty or contains only non-prescriptive case observations. Refuse only when the evidence cannot support even a truthful cost diagnosis or case observation; unavailable reusable-asset or bounded-bite evidence blocks only the corresponding asset prescription.";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"] as const;
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];
 export type DoctorCaseIdentity = { issueNumber: number; runsPath: string };
@@ -70,8 +71,17 @@ const cost = Type.Object({
   outputBytes: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), payload: Type.Literal("raw JSONL bytes"), providerWireBytes: Type.Literal("unavailable") }, { additionalProperties: false }),
 }, { additionalProperties: false });
 export const doctorOutputSchema = Type.Union([
-  Type.Object({ status: Type.Literal("completed"), case: caseIdentity, cost, findings: Type.Array(finding) }, { additionalProperties: false }),
-  Type.Object({ status: Type.Literal("refused"), reason: nonblank, missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 }) }, { additionalProperties: false }),
+  Type.Object({
+    status: Type.Literal("completed", { description: "A truthful single-case diagnosis was completed; an unavailable prescription axis does not prevent completion." }),
+    case: caseIdentity,
+    cost,
+    findings: Type.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." }),
+  }, { additionalProperties: false, description: "A byte-rederivable single-case cost diagnosis is a first-class completed output, without requiring any prescription or reusable finding." }),
+  Type.Object({
+    status: Type.Literal("refused", { description: "Reserved for inability to support even a truthful cost diagnosis or case observation, not for an unavailable prescription axis." }),
+    reason: nonblank,
+    missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 }),
+  }, { additionalProperties: false, description: "Evidence is insufficient for even a truthful cost diagnosis or case observation." }),
 ]);
 export const doctorEvidenceReadSchema = Type.Object({ evidenceId: nonblank, offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
 export function validateRecordedDoctorOutput(value: unknown): DoctorOutput { if (!Value.Check(doctorOutputSchema, value)) throw new Error("Doctor output does not match its closed contract"); return value as DoctorOutput; }
