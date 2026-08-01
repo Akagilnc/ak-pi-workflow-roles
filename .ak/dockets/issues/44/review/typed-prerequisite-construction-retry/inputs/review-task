@@ -1,0 +1,7 @@
+# Typed prerequisite construction review
+
+Review target `568c5f1a651a026874ab228b8950d57c9079286d` against base `07437649e4721016ca83468faf1331dfb45c0854`.
+
+One proposal; base exact. Materials: `typed-authority` `.ak/dockets/issues/44/authority/typed-prerequisite-interface-retry/receipt.json`, `repository-law` `CLAUDE.md`, `fixer-soul` `souls/fixer.md`. Standards hints law/Soul; Spec hint authority; established. Both axes tools read/grep/find/ls/bash, command `git diff 07437649e4721016ca83468faf1331dfb45c0854...568c5f1a651a026874ab228b8950d57c9079286d`, all eight prerequisites.
+
+Review both axes. Focus closed packet parsing, immutable IDs, packet-aware pre-audit rejection, plan/apply/partial references, audit nondeterminism honesty, Recorder/public/generated/cold package hard cut, no prose parsing/compatibility/orchestration. Report concrete findings; a normal no-findings axis conclusion is allowed.
