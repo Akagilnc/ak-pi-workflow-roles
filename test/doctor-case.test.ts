@@ -145,22 +145,23 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   const store = new DoctorEvidenceStore(patient);
   store.read(evidenceId);
   const guardrail = { answer: true, evidenceIds: [evidenceId], explanation: "Observed in the retained case" };
-  const finding = {
-    targetKey: "case", evidenceIds: [evidenceId], disposition: "keep",
-    guardrails: { reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: { ...guardrail, answer: false } },
-    prescription: { kind: "retain", recommendation: "Retain the gate" },
-    lastRealBite: { kind: "actual", targetKey: "case", evidenceId },
-  } as const;
+  const finding = { targetKey: "case", evidenceIds: [evidenceId] } as const;
   const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [finding] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-  const assetFinding = { ...finding, targetKey: "judge-output-gate", targetKind: "gate", assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate", evidenceId }, lastRealBite: { ...finding.lastRealBite, targetKey: "judge-output-gate" } } as const;
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "delete" }] }, patient, store), /closed contract/);
+  const assetFinding = {
+    targetKey: "judge-output-gate", targetKind: "gate", assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate", evidenceId }, evidenceIds: [evidenceId], disposition: "keep",
+    guardrails: { reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: { ...guardrail, answer: false } },
+    prescription: { kind: "retain", recommendation: "Retain the gate" },
+    lastRealBite: { kind: "actual", targetKey: "judge-output-gate", evidenceId },
+  } as const;
   const assetOutput = { ...output, findings: [assetFinding] } as const;
   assert.deepEqual(validateDoctorOutput(assetOutput, patient, store), assetOutput);
   const { assetEvidence: _missing, ...assetWithoutEvidence } = assetFinding;
   assert.throws(() => validateDoctorOutput({ ...output, findings: [assetWithoutEvidence] }, patient, store), /closed contract|typed asset evidence/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: "case", eligibleEvidenceIds: [evidenceId] } }] }, patient, store), /noRealBite permits only thin or delete/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, prescription: { kind: "patch", recommendation: "Patch it" } }] }, patient, store), /necessity explanation/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, targetKey: "invented-run", lastRealBite: { ...finding.lastRealBite, targetKey: "invented-run" } }] }, patient, store), /lawful case target/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...assetFinding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: assetFinding.targetKey, eligibleEvidenceIds: [evidenceId] } }] }, patient, store), /noRealBite permits only thin or delete/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...assetFinding, prescription: { kind: "patch", recommendation: "Patch it" } }] }, patient, store), /necessity explanation/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, targetKey: "invented-run" }] }, patient, store), /lawful case target/);
   const refusal = { status: "refused", reason: "Need more bytes", missingEvidence: [{ need: "whole case", targetKeys: ["case"] }] } as const;
   assert.deepEqual(validateDoctorOutput(refusal, patient, store), refusal);
   assert.throws(() => validateDoctorOutput({ ...refusal, missingEvidence: [{ need: "unknown", targetKeys: ["invented-gate"] }] }, patient, store), /lawful case target/);

@@ -8,14 +8,14 @@ export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];
 export type DoctorCaseIdentity = { issueNumber: number; runsPath: string };
 export type DoctorSessionCost = { source: string; startedAt: string; endedAt: string; wallMilliseconds: number; completion: "accepted" | "incomplete" };
-type Count = { count: number; sources: string[] };
+export type DoctorCount = { count: number; sources: string[] };
 export type DoctorCaseCost = {
-  invocations: Count; legs: Count; modelApiTurns: Count; outputTokens: Count; toolCalls: Count;
-  retries: Count & { evidence: "literal run-dir naming" };
+  invocations: DoctorCount; legs: DoctorCount; modelApiTurns: DoctorCount; outputTokens: DoctorCount; toolCalls: DoctorCount;
+  retries: DoctorCount & { evidence: "literal run-dir naming" };
   statuses: Array<{ source: string; status: string }>;
   commits: Array<{ source: string; commit: string }>;
   sessions: DoctorSessionCost[];
-  outputBytes: Count & { payload: "raw JSONL bytes"; providerWireBytes: "unavailable" };
+  outputBytes: DoctorCount & { payload: "raw JSONL bytes"; providerWireBytes: "unavailable" };
 };
 export type DoctorGuardrailAnswer = { answer: boolean; evidenceIds: string[]; explanation: string };
 export type DoctorLastRealBite =
@@ -28,10 +28,9 @@ type DoctorFindingBody = {
   lastRealBite: DoctorLastRealBite;
 };
 type DoctorAssetKind = DoctorTargetKind;
-export type DoctorFinding = DoctorFindingBody & (
-  | { targetKey: string }
-  | { targetKey: string; targetKind: DoctorAssetKind; assetEvidence: { targetKey: string; targetKind: DoctorAssetKind; evidenceId: string } }
-);
+export type DoctorFinding =
+  | { targetKey: string; evidenceIds: string[] }
+  | (DoctorFindingBody & { targetKey: string; targetKind: DoctorAssetKind; assetEvidence: { targetKey: string; targetKind: DoctorAssetKind; evidenceId: string } });
 export type DoctorOutput =
   | { status: "completed"; case: DoctorCaseIdentity; cost: DoctorCaseCost; findings: DoctorFinding[] }
   | { status: "refused"; reason: string; missingEvidence: Array<{ need: string; targetKeys: string[] }> };
@@ -53,7 +52,7 @@ const findingBody = {
   prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }), lastRealBite,
 };
 const finding = Type.Union([
-  Type.Object({ targetKey: nonblank, ...findingBody }, { additionalProperties: false }),
+  Type.Object({ targetKey: nonblank, evidenceIds }, { additionalProperties: false }),
   Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), assetEvidence: Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false }),
 ]);
 const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
@@ -87,11 +86,13 @@ export function validateDoctorOutput(value: unknown, patient: DoctorCase, store:
   if (canonicalJson(output.case) !== canonicalJson(patient.identity) || canonicalJson(output.cost) !== canonicalJson(patient.cost)) throw new Error("Every reported number must equal the re-derived session-byte cost");
   const readCitations = (ids: string[], label: string) => { for (const id of ids) if (!store.entries.has(id) || !store.hasRead(id)) throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
   for (const finding of output.findings) {
-    if (!("assetEvidence" in finding)) assertTargets([finding.targetKey]);
-    else {
-      if (finding.assetEvidence.targetKey !== finding.targetKey || finding.assetEvidence.targetKind !== finding.targetKind) throw new Error("Typed asset evidence must establish the finding identity");
-      readCitations([finding.assetEvidence.evidenceId], "asset evidence");
+    if (!("assetEvidence" in finding)) {
+      assertTargets([finding.targetKey]);
+      readCitations(finding.evidenceIds, "finding");
+      continue;
     }
+    if (finding.assetEvidence.targetKey !== finding.targetKey || finding.assetEvidence.targetKind !== finding.targetKind) throw new Error("Typed asset evidence must establish the finding identity");
+    readCitations([finding.assetEvidence.evidenceId], "asset evidence");
     readCitations(finding.evidenceIds, "finding");
     for (const answer of Object.values(finding.guardrails)) readCitations(answer.evidenceIds, "guardrail");
     const needsNecessity = finding.prescription.kind === "patch" || finding.prescription.kind === "addMechanism";
