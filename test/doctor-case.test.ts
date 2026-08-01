@@ -38,6 +38,7 @@ test("one retained runs directory yields an independently cited single-case cost
   assert.equal(patient.cost.toolCalls.count, 2);
   assert.equal(patient.cost.retries.count, 1);
   assert.equal(patient.cost.statuses[0]?.status, "completed");
+  assert.deepEqual(patient.cost.commits, [{ source: "review-004/session/real.jsonl", commit: "abc1234" }]);
   assert.equal(patient.cost.outputBytes.payload, "raw JSONL bytes");
   assert.equal(patient.cost.sessions[0]?.completion, "accepted");
   assert.equal(patient.cost.sessions[0]?.wallMilliseconds, 1420);
@@ -69,6 +70,24 @@ test("runtime-derived metrics permit completion when a case exceeds evidence pag
   const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
   assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, outputTokens: { ...patient.cost.outputTokens, count: 8 } } }, patient, store), /re-derived/);
+});
+
+test("commit accounting follows observed session transitions at available SHA precision", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-commits-"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(join(runs, "coder/session"), { recursive: true });
+  const fixture = [
+    { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
+    { type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "toolResult", toolName: "bash", content: "HEAD is now at abc1234 first" } },
+    { type: "message", timestamp: "2026-08-01T00:00:02.000Z", message: { role: "toolResult", toolName: "bash", content: "HEAD abc1234" } },
+    { type: "message", timestamp: "2026-08-01T00:00:03.000Z", message: { role: "toolResult", toolName: "bash", content: "commit def56789" } },
+  ];
+  await writeFile(join(runs, "coder/session/commits.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const patient = await loadDoctorCase(runs);
+  assert.deepEqual(patient.cost.commits, [
+    { source: "coder/session/commits.jsonl", commit: "abc1234" },
+    { source: "coder/session/commits.jsonl", commit: "def56789" },
+  ]);
 });
 
 test("intermediate object details neither terminate nor manufacture session status", async () => {
