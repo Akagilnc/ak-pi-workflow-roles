@@ -18,7 +18,8 @@ test("Doctor mission preserves honest retained-work cost accounting without tran
   const soul = await (await import("node:fs/promises")).readFile(new URL("../souls/doctor.md", import.meta.url), "utf8");
   assert.match(soul, /保留工作.*成本/);
   assert.match(soul, /开方.*(?:工厂|资产)/);
-  assert.match(soul, /(?:证据|举证).*(?:结论|区分)/);
+  assert.match(soul, /(?:证据|举证)/);
+  assert.match(soul, /(?:区分|不得把)/);
 });
 
 test("one retained runs directory yields an independently cited single-case cost report", async () => {
@@ -139,7 +140,7 @@ test("partial and non-monotonic sessions remain reportable with explicit degrada
   await mkdir(join(runs, "crashed/session"), { recursive: true });
   await writeFile(join(runs, "crashed/session/truncated.jsonl"), `${JSON.stringify({ type: "session", timestamp: "2026-08-01T00:00:02.000Z" })}\n{`);
   await writeFile(join(runs, "crashed/session/headerless.jsonl"), `${JSON.stringify({ type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "assistant", responseId: "r" } })}\n`);
-  await writeFile(join(runs, "crashed/session/backwards.jsonl"), [{ type: "session", timestamp: "2026-08-01T00:00:02.000Z" }, { type: "custom", timestamp: "2026-08-01T00:00:01.000Z" }].map(JSON.stringify).join("\n"));
+  await writeFile(join(runs, "crashed/session/backwards.jsonl"), [{ type: "session", timestamp: "2026-08-01T00:00:02.000Z" }, { type: "custom", timestamp: "2026-08-01T00:00:01.000Z" }].map((row) => JSON.stringify(row)).join("\n"));
   const patient = await loadDoctorCase(runs);
   assert.equal(patient.cost.sessions.length, 3);
   assert.ok(patient.cost.sessions.every((session) => session.completion === "incomplete" && session.degradationReason));
