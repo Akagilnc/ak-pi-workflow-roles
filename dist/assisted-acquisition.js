@@ -39,22 +39,33 @@ function createGhJsonTransportV1(env = process.env) {
     }), observedAt: (/* @__PURE__ */ new Date()).toISOString() };
   } };
 }
+class EvidenceAdmissionError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+  name = "EvidenceAdmissionError";
+}
+function admissionFailure(code, message) {
+  throw new EvidenceAdmissionError(code, message);
+}
 const MAX_ASSISTED_EVIDENCE_BYTES = 8 * 1024 * 1024;
 async function readBoundedRegular(path) {
   const descriptor = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | ("O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0));
   try {
     const stat = await descriptor.stat();
-    if (!stat.isFile()) throw new Error("evidence must be a regular file");
-    if (stat.size > MAX_ASSISTED_EVIDENCE_BYTES) throw new Error("evidence exceeds size bound");
+    if (!stat.isFile()) admissionFailure("AK_EVIDENCE_NOT_REGULAR", "evidence must be a regular file");
+    if (stat.size > MAX_ASSISTED_EVIDENCE_BYTES) admissionFailure("AK_EVIDENCE_TOO_LARGE", "evidence exceeds size bound");
     const bytes = new Uint8Array(stat.size);
     let offset = 0;
     while (offset < bytes.length) {
       const { bytesRead } = await descriptor.read(bytes, offset, bytes.length - offset, offset);
-      if (!bytesRead) throw new Error("evidence changed during admission");
+      if (!bytesRead) admissionFailure("AK_EVIDENCE_CHANGED", "evidence changed during admission");
       offset += bytesRead;
     }
     const after = await descriptor.stat();
-    if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ino !== stat.ino) throw new Error("evidence changed during admission");
+    if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ino !== stat.ino) admissionFailure("AK_EVIDENCE_CHANGED", "evidence changed during admission");
     return bytes;
   } finally {
     await descriptor.close();
@@ -64,8 +75,8 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
   const repo = await deps.github.repository(config.subject.github.owner, config.subject.github.name), parent = await deps.github.issue(config.subject.github.owner, config.subject.github.name, config.subject.parentIssue), childObs = await Promise.all(config.subject.children.map((c) => deps.github.issue(config.subject.github.owner, config.subject.github.name, c.number))), workObs = await Promise.all(config.acquisition.workspaces.map((w) => deps.git.observeWorkspace(w.root)));
   const handles = /* @__PURE__ */ new Map(), evidence = [];
   function admit(id, kind, source, reference, handle) {
-    if (evidence.some((x) => x.id === id)) throw new Error("duplicate evidence id");
-    if (source.byteLength > MAX_ASSISTED_EVIDENCE_BYTES) throw new Error("evidence exceeds size bound");
+    if (evidence.some((x) => x.id === id)) admissionFailure("AK_EVIDENCE_DUPLICATE_ID", "duplicate evidence id");
+    if (source.byteLength > MAX_ASSISTED_EVIDENCE_BYTES) admissionFailure("AK_EVIDENCE_TOO_LARGE", "evidence exceeds size bound");
     const bytes = new Uint8Array(source);
     handles.set(id, bytes);
     evidence.push({ id, kind, sha256: sha256Hex(bytes), provenance: { kind: "acquired", reference }, handle });
@@ -77,7 +88,7 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
     const [artifactKind, artifactInvocation] = latestAttempt.reference.id.split(":");
     if (artifactInvocation !== latestAttempt.invocationId) throw new Error("settlement artifact identity mismatch");
     const runDir = assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), path = artifactKind === "receipt" ? join(runDir, "invocations", artifactInvocation, "receipt.json") : join(runDir, "invocation-inputs", artifactInvocation, "failure.json"), bytes = await readBoundedRegular(path);
-    if (sha256Hex(bytes) !== latestAttempt.reference.sha256) throw new Error("settlement artifact digest mismatch");
+    if (sha256Hex(bytes) !== latestAttempt.reference.sha256) admissionFailure("AK_EVIDENCE_DIGEST_MISMATCH", "settlement artifact digest mismatch");
     admit(`settlement:${artifactInvocation}`, artifactKind === "receipt" ? "acceptance" : "failure", bytes, latestAttempt.reference.id, path);
   }
   evidence.sort((a, b) => a.id.localeCompare(b.id));
@@ -85,13 +96,13 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
   await mkdir(evidenceRoot, { recursive: true });
   for (const item of evidence) {
     const bytes = handles.get(item.id);
-    if (!bytes) throw new Error("admitted evidence bytes unavailable");
+    if (!bytes) admissionFailure("AK_EVIDENCE_BYTES_UNAVAILABLE", "admitted evidence bytes unavailable");
     const path = join(evidenceRoot, item.sha256);
     try {
       await writeFile(path, bytes, { flag: "wx", mode: 384 });
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      if (sha256Hex(await readFile(path)) !== item.sha256) throw new Error("evidence content-address collision");
+      if (sha256Hex(await readFile(path)) !== item.sha256) admissionFailure("AK_EVIDENCE_CONTENT_COLLISION", "evidence content-address collision");
     }
     ;
     handles.delete(item.id);
@@ -103,6 +114,7 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
   return { snapshot: { ...base, digest: canonicalSnapshotDigestV1(base) }, handles };
 }
 export {
+  EvidenceAdmissionError,
   GH_API_TIMEOUT_MS,
   MAX_ASSISTED_EVIDENCE_BYTES,
   acquireCurrentPositionV1,
