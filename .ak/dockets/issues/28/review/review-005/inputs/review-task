@@ -1,0 +1,7 @@
+# Issue #28 final fixed-target review
+
+Review target `05b29d90dcb7ba477e079e80039ba4671e3de8ee` against base `4e96b7b1a95d16fb6dbf14cb424d63f3225bdbc5` for the complete Navigator v1 and package-owned Assisted Runner delivery after both authorized repair rounds.
+
+The established Spec is the two committed Issue #28 authority receipts; repository law is `CLAUDE.md`. Review Standards and Spec independently. Verify the complete package lifecycle and every prior repaired class, including evidence-read truth from sealed native calls, environment-safe recovery, concurrency reconciliation, resolved subject identity, credentials, failure honesty, Recorder preservation, package/cold-install surfaces, and production-seam tests.
+
+Use only supplied capabilities. Standards must use only documented standards and the canonical listed smell baseline, with required hunk quotations; Spec findings must quote applicable authority. Report concrete findings only. Do not repair.
