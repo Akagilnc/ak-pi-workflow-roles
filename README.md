@@ -20,6 +20,8 @@ ak-assisted-run end --repository-root "$PWD" --run-id <uuidv7>
 
 Authoritative runtime validation and public types are exported from `src/navigator-contracts.ts`, `src/assisted-contracts.ts`, and `src/assisted-runner.ts`; acquisition transport contracts are in `src/assisted-acquisition.ts`. Raw GitHub responses, credentials, environment values, and Pi sessions are not promoted as snapshot evidence.
 
+An ignition that cannot activate its role exits nonzero; nothing falls back to uncaged pi (ADR 0018).
+
 ## Judge
 
 The judge role:
