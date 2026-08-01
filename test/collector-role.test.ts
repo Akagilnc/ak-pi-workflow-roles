@@ -34,7 +34,10 @@ import {
   collectorRequestArgsSchema,
   collectorWaitArgsSchema,
 } from "../src/collector-tool-schemas.ts";
-import { createRoleRuntimeExtension } from "../src/role-runtime.ts";
+import {
+  createRoleRuntimeExtension,
+  type ActivationTraceRecord,
+} from "../src/role-runtime.ts";
 import {
   createFakeGitHubTransport,
   sampleIssueComment,
@@ -46,6 +49,17 @@ import {
   withHermeticHome,
   withInProcessPi,
 } from "./helpers/pi-test-harness.ts";
+
+function assertCollectorActivationFailure(
+  traces: readonly ActivationTraceRecord[],
+  expectedMessage: string,
+): void {
+  const failed = traces.find((trace) => trace.status === "failed");
+  assert.ok(failed, "Collector activation must emit a typed failed trace");
+  assert.equal(failed.role, "collector");
+  assert.equal(failed.stageId, "load-and-install");
+  assert.deepEqual(failed.cause, { name: "Error", message: expectedMessage });
+}
 
 const COLLECTOR_SOUL = [
   "# Collector Soul",
@@ -1846,12 +1860,7 @@ test("F3-required-tool-absence", async () => {
     faux.setResponses([fauxAssistantMessage("should not run")]);
     const previousExit = process.exitCode;
     process.exitCode = undefined;
-    const logs: string[] = [];
-    const origError = console.error;
-    console.error = (...args: unknown[]) => {
-      logs.push(args.map(String).join(" "));
-      origError(...args);
-    };
+    const traces: ActivationTraceRecord[] = [];
     try {
       await withInProcessPi({
         cwd: home,
@@ -1873,6 +1882,7 @@ test("F3-required-tool-absence", async () => {
               createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
               transcriptFromContext: () => "",
               auditSoulCompliance: async () => ({ status: "pass" }),
+              activationTraceWriter: (record) => { traces.push(record); },
             })(pi);
           },
         ],
@@ -1889,12 +1899,15 @@ test("F3-required-tool-absence", async () => {
       }, async ({ session }) => {
         await session.prompt("start");
         assert.equal(process.exitCode, 1);
+        assertCollectorActivationFailure(
+          traces,
+          "Collector required tool missing: ak_collector_wait",
+        );
         assertZeroGitHub(transport, "required-tool-absence");
         assert.equal(faux.state.callCount, 0);
         assert.equal(faux.getPendingResponseCount(), 1);
       });
     } finally {
-      console.error = origError;
       process.exitCode = previousExit;
     }
   });
@@ -1939,12 +1952,7 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
     faux.setResponses([fauxAssistantMessage("should not run")]);
     const previousExit = process.exitCode;
     process.exitCode = undefined;
-    const logs: string[] = [];
-    const origError = console.error;
-    console.error = (...args: unknown[]) => {
-      logs.push(args.map(String).join(" "));
-      origError(...args);
-    };
+    const traces: ActivationTraceRecord[] = [];
     const exposedSkillCommands: Array<{ name: string; source: string }> = [];
     try {
       await withInProcessPi({
@@ -1974,6 +1982,7 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
             createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
             transcriptFromContext: () => "",
             auditSoulCompliance: async () => ({ status: "pass" }),
+            activationTraceWriter: (record) => { traces.push(record); },
           }),
         ],
         noExtensions: true,
@@ -2001,6 +2010,10 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
           "Pi must expose skill:hostile-cmd-only with source skill",
         );
         assert.equal(process.exitCode, 1);
+        assertCollectorActivationFailure(
+          traces,
+          "Collector detected ambient instruction commands: skill:hostile-cmd-only",
+        );
         const successfulOutput = sessionManager.getEntries().some((entry) =>
           entry.type === "message" &&
           entry.message.role === "toolResult" &&
@@ -2013,7 +2026,6 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
         assert.equal(faux.getPendingResponseCount(), 1);
       });
     } finally {
-      console.error = origError;
       process.exitCode = previousExit;
     }
   });
@@ -2310,12 +2322,7 @@ test("F3-ambient-commands", async () => {
     faux.setResponses([fauxAssistantMessage("should not run")]);
     const previousExit = process.exitCode;
     process.exitCode = undefined;
-    const logs: string[] = [];
-    const origError = console.error;
-    console.error = (...args: unknown[]) => {
-      logs.push(args.map(String).join(" "));
-      origError(...args);
-    };
+    const traces: ActivationTraceRecord[] = [];
     try {
       await withInProcessPi({
         cwd: home,
@@ -2338,6 +2345,7 @@ test("F3-ambient-commands", async () => {
             createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
             transcriptFromContext: () => "",
             auditSoulCompliance: async () => ({ status: "pass" }),
+            activationTraceWriter: (record) => { traces.push(record); },
           }),
         ],
         noExtensions: true,
@@ -2353,12 +2361,15 @@ test("F3-ambient-commands", async () => {
       }, async ({ session }) => {
         await session.prompt("start");
         assert.equal(process.exitCode, 1);
+        assertCollectorActivationFailure(
+          traces,
+          "Collector detected ambient instruction commands: skill-ambient",
+        );
         assertZeroGitHub(transport, "ambient-commands");
         assert.equal(faux.state.callCount, 0);
         assert.equal(faux.getPendingResponseCount(), 1);
       });
     } finally {
-      console.error = origError;
       process.exitCode = previousExit;
     }
   });
