@@ -59,9 +59,22 @@ export function validateAcceptedDetails(toolName, details) {
         }
     }
     catch (error) {
-        if (error instanceof Error)
+        if (error instanceof Error && error.constructor === Error)
             throw new AcceptedDetailsContractError(error.message, { cause: error });
         throw error;
+    }
+}
+export function acceptedFacts(toolName, details) {
+    switch (toolName) {
+        case CODER_OUTPUT_TOOL_NAME:
+        case FIXER_OUTPUT_TOOL_NAME: {
+            const output = details;
+            return { status: output.status, ...(output.commitSha ? { commit: output.commitSha } : {}) };
+        }
+        case REVIEWER_OUTPUT_TOOL_NAME: return { status: details.status };
+        case JUDGE_OUTPUT_TOOL_NAME: return { status: details.judgeStatus };
+        case DOCTOR_OUTPUT_TOOL_NAME: return { status: details.status };
+        case COLLECTOR_OUTPUT_TOOL: return {};
     }
 }
 export function carriesPackageAuditObservation(toolName) {
