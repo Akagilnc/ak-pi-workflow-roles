@@ -1,0 +1,15 @@
+# Issue #44 Coder apply — Fixer lawful settlement and audit
+
+Implement test-first the complete construction authority in `.ak/dockets/issues/44/authority/final-owner-correction-001/receipt.json` at current HEAD. The owner-direct minimal Soul correction is already committed; preserve its exact bytes and do not add Soul implementation prose.
+
+Deliver the full vertical:
+
+- independent Coder/Fixer public output types and validators;
+- exact Fixer plan/apply unions, per-finding class results, two-cause blockers, combination/identity laws, and hard removal of legacy Fixer leaves;
+- fresh same-active-model Fixer compliance auditor with revise resubmission and honest nonzero infrastructure failure;
+- runtime wiring, transcript input, unchanged accepted candidate projection and audit usage/observation;
+- terminating tools and Recorder current-leaf acceptance;
+- exports, schemas if package-owned schema is appropriate, README, contributor packet, development closure, forward ADR terminology, generated dist/package lifecycle;
+- every required red/green named by Judge, including real TypeBox submission, production validator/runtime, audit overreach/failure, Recorder, and cold packed package surfaces.
+
+No Plan. Do not add orchestration, dispatch policy, one-class cardinality, retries, timeouts, safety categories, compatibility aliases, or modify historical dockets. Run typecheck, isolated-HOME full tests, build:recorder, npm pack --dry-run, and diff check. Commit forward and report the complete implementation.

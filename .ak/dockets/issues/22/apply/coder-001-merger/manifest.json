@@ -1,0 +1,134 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "root": ".ak/dockets",
+    "docketId": "issues/22/apply/coder-001-merger"
+  },
+  "invocation": {
+    "id": "019fbcda-3887-7f74-a54c-c32e88859a48"
+  },
+  "session": {
+    "id": "019fbcda-3887-7f74-a54c-c32e88859a48",
+    "directory": ".ak/work/issues/22/runs/coder-001-merger/session",
+    "basename": "2026-08-01T10-24-06-830Z_019fbcda-3887-7f74-a54c-c32e88859a48.jsonl",
+    "sha256": "fa09030571aba90d365f2eac5c11d843f5e62a1241b5ac3154f01f110d3b998e",
+    "byteLength": 729388,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22/.ak/work/issues/22/runs/coder-001-merger/session",
+      "--session-id",
+      "019fbcda-3887-7f74-a54c-c32e88859a48",
+      "--no-skills",
+      "--skill",
+      "/Users/akagilnc/.agents/skills/tdd/SKILL.md",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "medium",
+      "--ak-role",
+      "coder",
+      "--ak-coder-phase",
+      "apply",
+      "--ak-coder-task",
+      ".ak/work/issues/22/coder-001-merger.md",
+      "-p",
+      "Implement the complete authorized Merger v1 test-first, run all gates, and commit."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "a9d3eb00bafc012e023ecc03d4ecfb0e5e11dbeb",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "construction-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "a9d3eb00bafc012e023ecc03d4ecfb0e5e11dbeb",
+        "path": ".ak/dockets/issues/22/authority/final-synthesis-001/receipt.json",
+        "blobOid": "bfef10db6ce968eb969137da36db4fd4791209fb",
+        "sha256": "77e174cdff622a4658b4680650410bdbf7c9a8151f4b84dff30f4afee85de925",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "owner-soul",
+      "kind": "input",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "a9d3eb00bafc012e023ecc03d4ecfb0e5e11dbeb",
+        "path": "souls/merger.md",
+        "blobOid": "5abfd2bf2b5668a5e9251a6860d1d4025f781732",
+        "sha256": "05b252e25e9e0a2a53666df898f45541bb84418419344dd55e05058338c3930e",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "coder-task",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/coder-task",
+        "sha256": "198f818288f311b492a17a8fff9ca48d91497240a912081a633d3c8eaaec22e1",
+        "byteLength": 1563
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "c5ef7e7f42070eafc2c9913d46378916ad5aa0108d316a9d68772c988cc7f0e1",
+        "byteLength": 1866
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_coder_output",
+    "toolCallId": "call_I4UpKlIHKGIYV7k0fvlmtzJ0|fc_0c5aebb04c90f0eb016a6dcd8fe4c0819194f97fb1e4300ad5",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": null,
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

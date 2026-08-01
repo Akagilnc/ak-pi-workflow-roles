@@ -1,0 +1,3 @@
+# Issue #22 Merger final convergence retry 002
+
+Independently verify current HEAD after `.ak/dockets/issues/22/repair/terminal-transport-apply/receipt.json` against all Merger authority and prior convergence findings. Confirm malformed transport candidates traverse the real Pi path to fatal abort/nonzero/no receipt, valid exact leaves remain, and all previously closed Git scope/proof/package boundaries remain closed. Run gates and converge only if no residual.

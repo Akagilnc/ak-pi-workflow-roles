@@ -1,0 +1,10 @@
+# PR #47 Fixer apply
+
+Repair both classes from `.ak/dockets/issues/22/judgment/pr47-review/receipt.json` in one invocation:
+
+1. `Issue22MergerSessionCwdBinding`
+2. `Issue22MergerAutoMergePrerequisiteDocumentation`
+
+Bind production Merger Git state to Pi `session_start` `ExtensionContext.cwd` while preserving injection and no worktree/ref ownership. Add the exact distinct ambient-A/session-B real-Git production-extension regression. Document only the accepted caller-observable AUTO_MERGE prerequisite and honest activation abort; do not add Git version floors, version detection, strategy selection, fallback, merge initiation, or generic compatibility policy. Do not repair the rejected active-tool/docstring findings.
+
+Work test-first, keep per-class accountability with forward commits, run all gates, and submit typed completed results for exactly both classes.

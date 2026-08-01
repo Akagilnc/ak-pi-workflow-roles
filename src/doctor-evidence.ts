@@ -13,9 +13,9 @@ async function stableRunsIdentity(root: string): Promise<string> { let cursor = 
 
 type SessionDerivation = { session: DoctorCaseCost["sessions"][number]; turns: number; calls: number; tokens: number; statuses: DoctorCaseCost["statuses"]; commits: DoctorCaseCost["commits"] };
 function deriveSession(content: string, id: string): SessionDerivation {
-  const rows: Record<string, unknown>[] = []; let degradationReason: string | undefined;
-  for (const line of content.split("\n")) if (line.trim()) { try { const row: unknown = JSON.parse(line); if (!record(row)) { degradationReason = `non-object session row in ${id}`; break; } rows.push(row); } catch (error) { if (error instanceof SyntaxError) { degradationReason = `malformed JSON tail in ${id}: ${error.message}`; break; } throw error; } }
-  const started = rows.find((row) => row.type === "session"); const startedAt = started && timestamp(started); if (!startedAt) degradationReason ??= `Pi session header is missing: ${id}`;
+  const rows: Record<string, unknown>[] = []; const degradationReasons: string[] = [];
+  for (const line of content.split("\n")) if (line.trim()) { try { const row: unknown = JSON.parse(line); if (!record(row)) { degradationReasons.push(`non-object session row in ${id}`); break; } rows.push(row); } catch (error) { if (error instanceof SyntaxError) { degradationReasons.push(`malformed JSON tail in ${id}: ${error.message}`); break; } throw error; } }
+  const started = rows.find((row) => row.type === "session"); const startedAt = started && timestamp(started); if (!startedAt) degradationReasons.push(`Pi session header is missing: ${id}`);
   let accepted: Record<string, unknown> | undefined, observedCommit: string | undefined, turns = 0, calls = 0, tokens = 0;
   const statuses: DoctorCaseCost["statuses"] = [], commits: DoctorCaseCost["commits"] = [];
   for (const row of rows) {
@@ -24,7 +24,8 @@ function deriveSession(content: string, id: string): SessionDerivation {
     if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && record(message.details)) { let details; try { details = validateAcceptedDetails(message.toolName, message.details); } catch (error) { if (error instanceof AcceptedDetailsContractError) continue; throw error; } accepted = row; const facts = acceptedFacts(message.toolName, details); if (facts.commit && facts.commit !== observedCommit) { commits.push({ source: id, commit: facts.commit }); observedCommit = facts.commit; } statuses.length = 0; statuses.push({ source: id, status: facts.status ?? "unavailable (terminating receipt has no receipt-level status)" }); }
   }
   const acceptedAt = accepted && timestamp(accepted); const final = acceptedAt ? accepted! : rows.at(-1); const endedAt = final && timestamp(final); const wall = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : undefined;
-  if (wall !== undefined && wall < 0) degradationReason ??= `non-monotonic session timestamps in ${id}`;
+  if (wall !== undefined && wall < 0) degradationReasons.push(`non-monotonic session timestamps in ${id}`);
+  const degradationReason = degradationReasons.length ? degradationReasons.join("; ") : undefined;
   const complete = !!acceptedAt && !degradationReason && wall !== undefined && wall >= 0;
   const session = complete
     ? { source: id, startedAt: startedAt!, endedAt: endedAt!, wallMilliseconds: wall!, completion: "accepted" as const }
