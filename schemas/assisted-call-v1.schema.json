@@ -4,18 +4,356 @@
   "title": "AssistedCallConfigV1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "runId", "callId", "subject", "acquisition", "execution"],
+  "required": [
+    "version",
+    "runId",
+    "callId",
+    "subject",
+    "acquisition",
+    "execution"
+  ],
   "properties": {
-    "version": {"const": 1},
-    "runId": {"$ref": "#/$defs/uuidv7"},
-    "callId": {"$ref": "#/$defs/uuidv7"},
-    "subject": {"type":"object","additionalProperties":false,"required":["repositoryRoot","github","parentIssue","children"],"properties":{"repositoryRoot":{"type":"string","minLength":1},"github":{"type":"object","additionalProperties":false,"required":["owner","name"],"properties":{"owner":{"type":"string","minLength":1},"name":{"type":"string","minLength":1}}},"parentIssue":{"type":"integer","minimum":1},"children":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["number","relation","provenance"],"properties":{"number":{"type":"integer","minimum":1},"relation":{"const":"sub_issue"},"provenance":{"$ref":"#/$defs/provenance"}}}}}},
-    "acquisition": {"type":"object","additionalProperties":false,"required":["workspaces","evidence","labelPolicy"],"properties":{"workspaces":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["id","root","relation"],"properties":{"id":{"type":"string","minLength":1},"root":{"type":"string","minLength":1},"relation":{"enum":["repository","worktree"]}}}},"evidence":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","kind","path","provenance"],"properties":{"id":{"type":"string","minLength":1},"kind":{"enum":["authority","acceptance","task","input"]},"path":{"type":"string","minLength":1},"provenance":{"$ref":"#/$defs/openProvenance"}}}},"labelPolicy":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["labelId","meaning"],"properties":{"labelId":{"type":"string","minLength":1},"meaning":{"type":"string","minLength":1}}}}}},
-    "execution": {"type":"object","additionalProperties":false,"required":["workspaceId","cwd","role","phase","environment","stdin"],"properties":{"workspaceId":{"type":"string","minLength":1},"cwd":{"type":"string","minLength":1},"role":{"enum":["judge","fixer","coder","reviewer","collector","doctor"]},"phase":{"enum":["plan","apply",null]},"environment":{"type":"object","additionalProperties":false,"required":["inherit","overrides","unset"],"properties":{"inherit":{"type":"boolean"},"overrides":{"type":"object","additionalProperties":{"type":"string"}},"unset":{"type":"array","items":{"type":"string","minLength":1}}}},"stdin":{"const":"inherit"}}}
+    "version": {
+      "const": 1
+    },
+    "runId": {
+      "$ref": "#/$defs/uuidv7"
+    },
+    "callId": {
+      "$ref": "#/$defs/uuidv7"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryRoot",
+        "github",
+        "parentIssue",
+        "children"
+      ],
+      "properties": {
+        "repositoryRoot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "github": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "owner",
+            "name"
+          ],
+          "properties": {
+            "owner": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "parentIssue": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "number",
+              "relation",
+              "provenance"
+            ],
+            "properties": {
+              "number": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "relation": {
+                "const": "sub_issue"
+              },
+              "provenance": {
+                "$ref": "#/$defs/provenance"
+              }
+            }
+          }
+        }
+      }
+    },
+    "acquisition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaces",
+        "evidence",
+        "labelPolicy"
+      ],
+      "properties": {
+        "workspaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "root",
+              "relation"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "root": {
+                "type": "string",
+                "minLength": 1
+              },
+              "relation": {
+                "enum": [
+                  "repository",
+                  "worktree"
+                ]
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "path",
+              "provenance"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "authority",
+                  "acceptance",
+                  "task",
+                  "input"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provenance": {
+                "$ref": "#/$defs/openProvenance"
+              }
+            }
+          }
+        },
+        "labelPolicy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "labelId",
+              "meaning"
+            ],
+            "properties": {
+              "labelId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "meaning": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "cwd",
+        "role",
+        "phase",
+        "environment",
+        "stdin"
+      ],
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "enum": [
+            "judge",
+            "fixer",
+            "coder",
+            "reviewer",
+            "collector",
+            "doctor"
+          ]
+        },
+        "phase": {
+          "enum": [
+            "plan",
+            "apply",
+            null
+          ]
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "inherit",
+            "overrides",
+            "unset"
+          ],
+          "properties": {
+            "inherit": {
+              "type": "boolean"
+            },
+            "overrides": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "unset": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "stdin": {
+          "const": "inherit"
+        }
+      }
+    }
   },
   "$defs": {
-    "uuidv7": {"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
-    "provenance": {"type":"object","additionalProperties":false,"required":["kind","reference"],"properties":{"kind":{"enum":["caller","tracker"]},"reference":{"type":"string","minLength":1}}},
-    "openProvenance": {"type":"object","additionalProperties":false,"required":["kind","reference"],"properties":{"kind":{"type":"string","minLength":1},"reference":{"type":"string","minLength":1}}}
-  }
+    "uuidv7": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reference"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "caller",
+            "tracker"
+          ]
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "openProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reference"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "coder",
+                  "fixer"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "phase": {
+                "enum": [
+                  "plan",
+                  "apply"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "judge",
+                  "reviewer",
+                  "collector",
+                  "doctor"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "phase": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
