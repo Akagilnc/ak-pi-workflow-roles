@@ -4,6 +4,7 @@ import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earen
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage } from "@earendil-works/pi-ai";
 import { sha256Hex } from "../src/sha256.ts";
 import { createMergerRoleRuntime } from "../src/merger-role.ts";
+import { createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../src/merger-contracts.ts";
 import { withHermeticHome, withInProcessPi } from "./helpers/pi-test-harness.ts";
 
@@ -61,26 +62,28 @@ test("Pi transports malformed Merger candidates to the fatal validator while val
     ]) {
       const faux = fauxProvider({ api: `merger-${Object.keys(candidate).length}`, provider: `merger-${Object.keys(candidate).length}` });
       faux.setResponses([fauxAssistantMessage(fauxToolCall(MERGER_OUTPUT_TOOL_NAME, candidate, { id: "out" }), { stopReason: "toolUse" })]);
-      let aborts = 0; let exitCode = 0;
-      await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-merger-input": "/input.json" }, extensionFactories: [(pi) => {
-        const runtime = createMergerRoleRuntime(pi, { loadSoul: async () => "MERGER LAW", loadInput: async () => input, gitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } } }, { failInfrastructure(error, ctx): never { aborts++; exitCode = 1; ctx.abort(); throw error; } });
-        pi.on("session_start", () => runtime.activate());
-      }] }, async ({ session, sessionManager }) => {
+      const priorExitCode = process.exitCode; process.exitCode = 0;
+      await withInProcessPi({ cwd: home, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-role": "merger", "ak-merger-input": "/input.json" }, extensionFactories: [createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "unused", transcriptFromContext: () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
+        loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input,
+        mergerGitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } },
+      })] }, async ({ session, sessionManager }) => {
         if (Object.hasOwn(candidate, "unknown") || !Object.hasOwn(candidate, "diagnosis")) {
           await session.prompt("Settle.");
-          assert.equal(aborts, 1); assert.equal(exitCode, 1);
+          assert.equal(process.exitCode, 1);
           const results = sessionManager.getEntries().filter(entry => entry.type === "message" && entry.message.role === "toolResult") as any[];
           assert.equal(results.length, 1); assert.equal(results[0]!.message.role, "toolResult");
           if (results[0]!.message.role === "toolResult") { assert.equal(results[0]!.message.isError, true); assert.deepEqual(results[0]!.message.details, {}); assert.match(results[0]!.message.content[0]!.type === "text" ? results[0]!.message.content[0]!.text : "", /exact completed\|escalate contract/); }
         } else {
           await session.prompt("Settle.");
           const results = sessionManager.getEntries().filter(entry => entry.type === "message" && entry.message.role === "toolResult") as any[];
-          assert.equal(aborts, 0); assert.equal(exitCode, 0); assert.equal(results.length, 1);
+          assert.equal(process.exitCode, 0); assert.equal(results.length, 1);
           assert.equal(results[0]!.message.role, "toolResult");
           if (results[0]!.message.role === "toolResult") { assert.equal(results[0]!.message.isError, false); assert.deepEqual(results[0]!.message.details, candidate); }
         }
         assert.equal(faux.getPendingResponseCount(), 0);
       });
+      process.exitCode = priorExitCode;
     }
   });
 });
