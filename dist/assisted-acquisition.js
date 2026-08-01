@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile, mkdir, writeFile, open } from "node:fs/promises";
 import { constants } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { canonicalSnapshotDigestV1 } from "./navigator-contracts.js";
 import { sha256Hex } from "./sha256.js";
 import { assistedRunDirectory } from "./assisted-ledger.js";
@@ -11,21 +11,27 @@ const exec = promisify(execFile);
 ;
 function createGitCliTransportV1() {
   return { async observeWorkspace(root) {
-    const [{ stdout: head }, { stdout: common }] = await Promise.all([exec("git", ["rev-parse", "HEAD"], { cwd: root }), exec("git", ["rev-parse", "--git-common-dir"], { cwd: root })]);
-    return { head: head.trim(), target: head.trim(), relation: common.trim() === ".git" ? "repository" : "worktree" };
+    const [{ stdout: head }, { stdout: gitDir }, { stdout: common }] = await Promise.all([exec("git", ["rev-parse", "HEAD"], { cwd: root }), exec("git", ["rev-parse", "--absolute-git-dir"], { cwd: root }), exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: root })]);
+    return { head: head.trim(), target: head.trim(), relation: resolve(root, gitDir.trim()) === resolve(root, common.trim()) ? "repository" : "worktree" };
   } };
+}
+const GH_API_TIMEOUT_MS = 6e4;
+function githubComponent(value) {
+  if (!value || value.startsWith("-") || value.includes("..") || /[\/?#\x00-\x1f\x7f]/.test(value)) throw new Error("invalid GitHub repository identity");
+  return value;
 }
 function createGhJsonTransportV1(env = process.env) {
   async function api(path) {
-    const { stdout } = await exec("gh", ["api", path], { env, maxBuffer: 8 * 1024 * 1024 });
+    const { stdout } = await exec("gh", ["api", path], { env, maxBuffer: 8 * 1024 * 1024, timeout: GH_API_TIMEOUT_MS });
     return JSON.parse(stdout);
   }
   return { async repository(owner, name) {
-    const x = await api(`repos/${owner}/${name}`);
+    const x = await api(`repos/${githubComponent(owner)}/${githubComponent(name)}`);
     if (typeof x.node_id !== "string") throw new Error("invalid GitHub repository response");
     return { id: x.node_id };
   }, async issue(owner, name, number) {
-    const x = await api(`repos/${owner}/${name}/issues/${number}`);
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error("invalid GitHub issue number");
+    const x = await api(`repos/${githubComponent(owner)}/${githubComponent(name)}/issues/${number}`);
     if (typeof x.node_id !== "string" || x.body !== null && typeof x.body !== "string" || !(x.state === "open" || x.state === "closed") || !Array.isArray(x.labels)) throw new Error("invalid GitHub issue response");
     return { id: x.node_id, state: x.state, body: x.body, labels: x.labels.map((l) => {
       if (typeof l.node_id !== "string" || typeof l.name !== "string") throw new Error("invalid GitHub label response");
@@ -61,7 +67,7 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
     if (evidence.some((x) => x.id === id)) throw new Error("duplicate evidence id");
     if (source.byteLength > MAX_ASSISTED_EVIDENCE_BYTES) throw new Error("evidence exceeds size bound");
     const bytes = new Uint8Array(source);
-    handles.set(handle, bytes);
+    handles.set(id, bytes);
     evidence.push({ id, kind, sha256: sha256Hex(bytes), provenance: { kind: "acquired", reference }, handle });
   }
   admit("parent-issue-body", "issue_body", new TextEncoder().encode(parent.body ?? ""), `github-issue:${config.subject.parentIssue}`, "memory:parent-body");
@@ -78,7 +84,8 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
   const evidenceRoot = join(assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId), "evidence");
   await mkdir(evidenceRoot, { recursive: true });
   for (const item of evidence) {
-    const bytes = handles.get(item.handle);
+    const bytes = handles.get(item.id);
+    if (!bytes) throw new Error("admitted evidence bytes unavailable");
     const path = join(evidenceRoot, item.sha256);
     try {
       await writeFile(path, bytes, { flag: "wx", mode: 384 });
@@ -87,7 +94,7 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
       if (sha256Hex(await readFile(path)) !== item.sha256) throw new Error("evidence content-address collision");
     }
     ;
-    handles.delete(item.handle);
+    handles.delete(item.id);
     item.handle = path;
     handles.set(path, bytes);
   }
@@ -96,6 +103,7 @@ async function acquireCurrentPositionV1(config, positionCursor, latestAttempt, d
   return { snapshot: { ...base, digest: canonicalSnapshotDigestV1(base) }, handles };
 }
 export {
+  GH_API_TIMEOUT_MS,
   MAX_ASSISTED_EVIDENCE_BYTES,
   acquireCurrentPositionV1,
   createGhJsonTransportV1,
