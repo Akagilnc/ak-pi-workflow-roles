@@ -6,7 +6,7 @@ import { validateRecordedNavigatorReceiptV1 } from "./package-contracts/navigato
 import publishedNavigatorReceiptV1Schema from "../schemas/navigator-receipt-v1.schema.json";
 const PACKAGED_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator"];
 const SHA256 = /^[0-9a-f]{64}$/;
-const OID = /^[0-9a-f]{40,64}$/;
+const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 function record(v, keys, where) {
   if (typeof v !== "object" || v === null || Array.isArray(v) || Object.keys(v).length !== keys.length || !keys.every((k) => Object.hasOwn(v, k))) throw new Error(`${where} must be a closed object`);
   return v;
@@ -148,15 +148,9 @@ function validatePrimaryShape(v, status) {
 function validateNavigatorReceiptV1(value, snapshot, actualReads) {
   validateRecordedNavigatorReceiptV1(value);
   const r = record(value, ["version", "status", "runId", "subject", "snapshotDigest", "positionCursor", "invocationId", "latestAttempt", "evidenceRead", "primary", "explanation"], "Navigator receipt");
-  const cited = validatePrimaryShape(r.primary, r.status);
-  if (!Array.isArray(r.evidenceRead)) fail("evidence read record");
-  const reads = r.evidenceRead.map((x) => {
-    const q = record(x, ["evidenceId", "fullyRead"], "evidence read");
-    if (typeof q.evidenceId !== "string" || typeof q.fullyRead !== "boolean") fail("evidence read record");
-    return { evidenceId: q.evidenceId, fullyRead: q.fullyRead };
-  }), actualById = new Map(actualReads.map((x) => [x.evidenceId, x]));
-  if (new Set(reads.map((x) => x.evidenceId)).size !== reads.length || actualById.size !== actualReads.length || actualReads.some((x) => typeof x.evidenceId !== "string" || typeof x.fullyRead !== "boolean" || !snapshot.evidence.some((e) => e.id === x.evidenceId))) fail("evidence read record");
-  const canonicalActual = snapshot.evidence.flatMap((e) => actualById.has(e.id) ? [actualById.get(e.id)] : []);
+  const cited = validatePrimaryShape(r.primary, r.status), reads = record(r.evidenceRead, Object.keys(r.evidenceRead), "evidence read record"), actualById = new Map(actualReads.map((x) => [x.evidenceId, x]));
+  if (Object.keys(reads).some((id) => !id || typeof reads[id] !== "boolean") || actualById.size !== actualReads.length || actualReads.some((x) => typeof x.evidenceId !== "string" || typeof x.fullyRead !== "boolean" || !snapshot.evidence.some((e) => e.id === x.evidenceId))) fail("evidence read record");
+  const canonicalActual = Object.fromEntries(snapshot.evidence.flatMap((e) => actualById.has(e.id) ? [[e.id, actualById.get(e.id).fullyRead]] : []));
   if (canonicalJson(reads) !== canonicalJson(canonicalActual)) fail("evidence read record");
   const receipt = r;
   if (!navigatorBindingMatchesV1(snapshot, receipt) || canonicalJson(subject(r.subject)) !== canonicalJson(snapshot.subject) || canonicalJson(receipt.latestAttempt) !== canonicalJson(snapshot.latestAttempt)) fail("receipt binding");

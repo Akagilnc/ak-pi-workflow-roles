@@ -1,7 +1,7 @@
 import { isUuidV7 } from "../uuidv7.js";
 export const NAVIGATOR_OUTPUT_TOOL_NAME = "ak_navigator_output";
 const SHA256 = /^[0-9a-f]{64}$/;
-const OID = /^[0-9a-f]{40,64}$/;
+const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor"];
 function fail(reason = "invalid Navigator receipt") { throw new Error(reason); }
 function rec(v, keys) { if (!v || typeof v !== "object" || Array.isArray(v) || Object.keys(v).length !== keys.length || !keys.every(k => Object.hasOwn(v, k)))
@@ -69,11 +69,6 @@ else if (kind === "seek_owner_decision") {
 else
     fail(); strings(p.evidenceIds); }
 export function validateRecordedNavigatorReceiptV1(value) { const r = rec(value, ["version", "status", "runId", "subject", "snapshotDigest", "positionCursor", "invocationId", "latestAttempt", "evidenceRead", "primary", "explanation"]); if (r.version !== 1 || !["ordinary", "insufficient", "refused", "escalated"].includes(String(r.status)) || !isUuidV7(r.runId) || !isUuidV7(r.invocationId) || !SHA256.test(String(r.snapshotDigest)) || !Number.isSafeInteger(r.positionCursor) || r.positionCursor < 0)
-    fail(); subject(r.subject); attempt(r.latestAttempt); if (!Array.isArray(r.evidenceRead))
-    fail(); for (const read of r.evidenceRead) {
-    const x = rec(read, ["evidenceId", "fullyRead"]);
-    text(x.evidenceId);
-    if (typeof x.fullyRead !== "boolean")
-        fail();
-} if (new Set(r.evidenceRead.map(x => x.evidenceId)).size !== r.evidenceRead.length)
-    fail(); primary(r.primary, String(r.status), new Map(r.evidenceRead.map(x => [String(x.evidenceId), Boolean(x.fullyRead)]))); text(r.explanation); return r; }
+    fail(); subject(r.subject); attempt(r.latestAttempt); if (!r.evidenceRead || typeof r.evidenceRead !== "object" || Array.isArray(r.evidenceRead))
+    fail(); const reads = r.evidenceRead; if (Object.keys(reads).some(id => id.length === 0 || typeof reads[id] !== "boolean"))
+    fail(); primary(r.primary, String(r.status), new Map(Object.entries(reads))); text(r.explanation); return r; }
