@@ -474,6 +474,7 @@ export function createCollectorRoleRuntime(
 
   return {
     async activate(ctx, event) {
+      activation = undefined;
       ensureLifecycle();
 
       if (ctx.mode !== "print" && ctx.mode !== "json") {

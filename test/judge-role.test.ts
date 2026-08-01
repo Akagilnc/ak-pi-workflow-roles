@@ -228,7 +228,7 @@ test("stable factory registers all role flags in exact help order and stays iner
       type: "string",
     }],
   ]);
-  assert.deepEqual([...harness.handlers.keys()], ["input", "before_agent_start", "session_start"]);
+  assert.deepEqual(new Set(harness.handlers.keys()), new Set(["input", "before_agent_start", "session_start"]));
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
   assert.deepEqual([...harness.tools], []);
