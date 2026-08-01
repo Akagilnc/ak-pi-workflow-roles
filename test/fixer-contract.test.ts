@@ -21,7 +21,7 @@ const refused = (name = "TransportCase") => ({
   name,
   disposition: "refused" as const,
   remainingScope: "provider-backed execution",
-  blocker: { cause: "prerequisite_unmet" as const, evidence: "required repository is absent" },
+  blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "repository.ready", evidence: "required repository is absent" },
 });
 
 const legal: Array<{ phase: "plan" | "apply"; output: FixerOutput }> = [
@@ -47,7 +47,8 @@ test("Fixer hard-cuts legacy leaves and enforces exact plan/apply unions", () =>
     ["plan", { status: "planned", report: "x", classResults: [completed()] }],
     ["plan", { status: "partially_completed", report: "x" }],
     ["apply", { status: "planned", report: "x" }],
-    ["plan", { status: "refused", report: "x", remainingScope: " ", blocker: { cause: "prerequisite_unmet", evidence: "x" } }],
+    ["plan", { status: "refused", report: "x", remainingScope: " ", blocker: { cause: "prerequisite_unmet", prerequisiteId: "repository.ready", evidence: "x" } }],
+    ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "prerequisite_unmet", evidence: "x" } }],
     ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "safety", evidence: "x" } }],
     ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }],
     ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("B", shaA)] }],

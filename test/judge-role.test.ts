@@ -36,6 +36,9 @@ type Tool = {
   execute: (...args: any[]) => Promise<any>;
 };
 
+const emptyFixPacket = JSON.stringify({ version: 1, instructions: "Repair the assigned findings.", prerequisites: [] });
+const declaredFixPacket = JSON.stringify({ version: 1, instructions: "Repair the assigned findings.", prerequisites: [{ id: "owner.choice", requirement: "Owner selects the contract." }] });
+
 const tddPath = "/home/test/.agents/skills/tdd/SKILL.md";
 const tddBaseDir = "/home/test/.agents/skills/tdd";
 const tddBody = "# Canonical TDD\n\nRun red then green.";
@@ -170,7 +173,7 @@ test("stable factory registers all role flags in exact help order and stays iner
       type: "string",
     }],
     ["ak-fix-packet", {
-      description: "Markdown repair packet assigned to the fixer role",
+      description: "Path to a closed FixPacketV1 JSON repair packet",
       type: "string",
     }],
     ["ak-fixer-phase", {
@@ -282,7 +285,7 @@ test("focused Fixer and Coder controllers own their flags and distinct lifecycle
     fixer.pi as ExtensionAPI,
     {
       loadSoul: async () => "FIXER LAW",
-      loadPacket: async () => "PACKET",
+      loadPacket: async () => emptyFixPacket,
     },
   );
   assert.deepEqual([...fixer.flags.keys()], ["ak-fix-packet", "ak-fixer-phase"]);
@@ -324,9 +327,9 @@ test("stable factory preserves exact Judge, Fixer, and Coder prompt bytes", asyn
       dependencies: {
         loadJudgeSoul: async () => "judge",
         loadFixerSoul: async () => "\n FIXER LAW \n",
-        loadFixPacket: async () => "\n PACKET BODY \n",
+        loadFixPacket: async () => emptyFixPacket,
       },
-      expected: "BASE\n\n<fixer_soul>\nFIXER LAW\n</fixer_soul>\n\n<fixer_phase>\napply\n</fixer_phase>\n\n<fix_packet>\nPACKET BODY\n</fix_packet>",
+      expected: `BASE\n\n<fixer_soul>\nFIXER LAW\n</fixer_soul>\n\n<fixer_phase>\napply\n</fixer_phase>\n\n<fix_packet>\n${emptyFixPacket}\n</fix_packet>`,
     },
     {
       role: "coder",
@@ -378,7 +381,7 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       dependencies: {
         loadJudgeSoul: async () => "judge",
         loadFixerSoul: async () => "fixer",
-        loadFixPacket: async () => "packet",
+        loadFixPacket: async () => emptyFixPacket,
       },
       name: FIXER_OUTPUT_TOOL_NAME,
       metadata: {
@@ -926,7 +929,73 @@ test("coder apply binds completion to the immediately following canonical tdd ex
   );
 });
 
-test("fixer role loads its Markdown packet and returns a thin report envelope", async () => {
+test("Fixer activation parses and freezes the typed packet before any agent work", async () => {
+  for (const source of ["# legacy Markdown", JSON.stringify({ version: 1, instructions: " ", prerequisites: [] })]) {
+    const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.json", "ak-fixer-phase": "apply" });
+    let audits = 0;
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "judge",
+      loadFixerSoul: async () => "fixer",
+      loadFixPacket: async () => source,
+      transcriptFromContext: () => "record",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      auditFixerCompliance: async () => { audits += 1; return { status: "pass" }; },
+    })(harness.pi as ExtensionAPI);
+    await assert.rejects(Promise.resolve(harness.handlers.get("session_start")?.({}, {})), /FixPacketV1/);
+    assert.equal(audits, 0);
+    assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), false);
+    assert.equal(harness.handlers.has("before_agent_start"), false);
+  }
+});
+
+test("undeclared prerequisite submissions are correctable before audit and declared references receive one immutable audit input", async () => {
+  const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.json", "ak-fixer-phase": "apply" });
+  const seen: unknown[] = [];
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async () => declaredFixPacket,
+    transcriptFromContext: () => "record", auditSoulCompliance: async () => ({ status: "pass" }),
+    auditFixerCompliance: async (input) => { seen.push(input); return { status: "pass", usage }; },
+  })(harness.pi as ExtensionAPI);
+  await harness.handlers.get("session_start")?.({}, {});
+  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
+  const candidate = (prerequisiteId: string) => ({ status: "refused", report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId, evidence: "Choice absent." } }] });
+  await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }])), /Fixer output/);
+  assert.equal(seen.length, 0);
+  const accepted = await tool.execute("good", candidate("owner.choice"), undefined, undefined, toolCallContext([{ id: "good", name: FIXER_OUTPUT_TOOL_NAME }]));
+  assert.equal(seen.length, 1);
+  assert.equal(Object.isFrozen(seen[0]), true);
+  assert.equal(Object.isFrozen((seen[0] as any).packet), true);
+  assert.equal(Object.isFrozen((seen[0] as any).candidate), true);
+  assert.equal(Object.isFrozen((seen[0] as any).candidate.classResults[0].blocker), true);
+  assert.deepEqual(accepted.details, candidate("owner.choice"));
+  assert.deepEqual(accepted.usage, usage);
+});
+
+test("declared plan refusal, apply refusal, and partial apply each reach exactly one fresh audit", async () => {
+  const rows = [
+    { phase: "plan", candidate: { status: "refused", report: "Blocked.", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "Choice absent." } } },
+    { phase: "apply", candidate: { status: "refused", report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "Choice absent." } }] } },
+    { phase: "apply", candidate: { status: "partially_completed", report: "Mixed.", classResults: [{ name: "Done", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }, { name: "Policy", disposition: "refused", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "Choice absent." } }] } },
+  ] as const;
+  const auditInputs: unknown[] = [];
+  for (const [index, row] of rows.entries()) {
+    const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.json", "ak-fixer-phase": row.phase });
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async () => declaredFixPacket,
+      transcriptFromContext: () => `record-${index}`, auditSoulCompliance: async () => ({ status: "pass" }),
+      auditFixerCompliance: async (input) => { auditInputs.push(input); return { status: "pass", usage }; },
+    })(harness.pi as ExtensionAPI);
+    await harness.handlers.get("session_start")?.({}, {});
+    const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
+    const id = `declared-${index}`;
+    const accepted = await tool.execute(id, row.candidate, undefined, undefined, toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]));
+    assert.deepEqual(accepted.details, row.candidate);
+  }
+  assert.equal(auditInputs.length, 3);
+  assert.equal(new Set(auditInputs).size, 3);
+});
+
+test("fixer role loads its typed JSON packet and returns a thin report envelope", async () => {
   const loadedPaths: string[] = [];
   const harness = extensionHarness("fixer", {
     "ak-fix-packet": "/materials/fix.md",
@@ -937,7 +1006,7 @@ test("fixer role loads its Markdown packet and returns a thin report envelope", 
     loadFixerSoul: async () => "FIXER LAW\nCreate one forward commit.",
     loadFixPacket: async (path) => {
       loadedPaths.push(path);
-      return "REPAIR PACKET\nFix the live findings.";
+      return JSON.stringify({ version: 1, instructions: "REPAIR PACKET\nFix the live findings.", prerequisites: [] });
     },
     transcriptFromContext: () => "invocation record",
     auditSoulCompliance: async () => ({ status: "pass" }),
@@ -989,7 +1058,7 @@ test("fixer plan phase accepts plans but rejects construction receipts", async (
   const extension = createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
-    loadFixPacket: async () => "REPAIR PACKET",
+    loadFixPacket: async () => emptyFixPacket,
     transcriptFromContext: () => "record",
     auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: async () => ({ status: "pass" }),
@@ -1036,7 +1105,7 @@ test("Fixer audits every structurally valid attempt freshly and revise permits c
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" });
   const seen: unknown[] = [];
   createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async () => "packet",
+    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async () => emptyFixPacket,
     transcriptFromContext: () => "current invocation transcript", auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: async (input) => { seen.push(input); return seen.length === 1 ? { status: "revise", violations: ["dishonest incomplete label"] } : { status: "pass" }; },
   })(harness.pi as ExtensionAPI);
@@ -1069,7 +1138,7 @@ test("Fixer prospective prerequisite decisions survive the production submission
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge",
     loadFixerSoul: async () => "fixer",
-    loadFixPacket: async () => "A predecessor owner decision is required before work when the packet says so.",
+    loadFixPacket: async () => JSON.stringify({ version: 1, instructions: "A predecessor owner decision is required before work when the packet says so.", prerequisites: [{ id: "owner.choice", requirement: "The predecessor owner decision exists." }] }),
     transcriptFromContext: () => "Current invocation record and verification evidence.",
     auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: audit,
@@ -1078,7 +1147,7 @@ test("Fixer prospective prerequisite decisions survive the production submission
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
   const productionBeforeRegressionRefusal = {
     status: "refused", report: "Both repairs and regressions exist, but commit ordering cannot be rewritten.",
-    classResults: [{ name: "Binding", disposition: "refused", remainingScope: "retrospective test-first ordering", blocker: { cause: "prerequisite_unmet", evidence: "production commit preceded the regression commit" } }],
+    classResults: [{ name: "Binding", disposition: "refused", remainingScope: "retrospective test-first ordering", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "production commit preceded the regression commit" } }],
   };
   const correctedCompletion = {
     status: "completed", report: "The production change preceded its regression, so this does not claim TDD. Current focused and full verification pass.",
@@ -1086,7 +1155,7 @@ test("Fixer prospective prerequisite decisions survive the production submission
   };
   const absentOwnerDecision = {
     status: "refused", report: "No work began because the packet-required owner decision is still absent and execution is presently inadmissible.",
-    classResults: [{ name: "Policy", disposition: "refused", remainingScope: "the entire policy change", blocker: { cause: "prerequisite_unmet", evidence: "the packet requires an owner decision before editing, and no such decision exists" } }],
+    classResults: [{ name: "Policy", disposition: "refused", remainingScope: "the entire policy change", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "the packet requires an owner decision before editing, and no such decision exists" } }],
   };
   const auditedContext = (id: string) => Object.assign(toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]), {
     model: { provider: "active", id: "same-model" },
@@ -1122,7 +1191,7 @@ test("worker output rejects malformed, unknown, blank, and non-object values", a
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge",
     loadFixerSoul: async () => "fixer",
-    loadFixPacket: async () => "packet",
+    loadFixPacket: async () => emptyFixPacket,
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
@@ -1161,7 +1230,7 @@ test("fixer output must be the sole call in its assistant batch", async () => {
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
-    loadFixPacket: async () => "REPAIR PACKET",
+    loadFixPacket: async () => emptyFixPacket,
     transcriptFromContext: () => "record",
     auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: async () => ({ status: "pass" }),
@@ -1217,7 +1286,7 @@ test("fixer activation leaves its tool surface unchanged", async () => {
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
-    loadFixPacket: async () => "REPAIR PACKET",
+    loadFixPacket: async () => emptyFixPacket,
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
