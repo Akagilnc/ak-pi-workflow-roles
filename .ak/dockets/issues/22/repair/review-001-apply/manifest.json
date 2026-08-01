@@ -1,0 +1,139 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "root": ".ak/dockets",
+    "docketId": "issues/22/repair/review-001-apply"
+  },
+  "invocation": {
+    "id": "019fbcf1-4956-7b42-bff5-54153eacb2ca"
+  },
+  "session": {
+    "id": "019fbcf1-4956-7b42-bff5-54153eacb2ca",
+    "directory": ".ak/work/issues/22/runs/review-001-fixer/session",
+    "basename": "2026-08-01T10-49-19-232Z_019fbcf1-4956-7b42-bff5-54153eacb2ca.jsonl",
+    "sha256": "6a288571e827973f2489fb247f43524dc2d20d7973f9e57f1b6f4fb1df6b7925",
+    "byteLength": 441217,
+    "retention": "caller-owned-raw-not-promoted"
+  },
+  "execution": {
+    "argv": [
+      "pi",
+      "--session-dir",
+      "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22/.ak/work/issues/22/runs/review-001-fixer/session",
+      "--session-id",
+      "019fbcf1-4956-7b42-bff5-54153eacb2ca",
+      "-e",
+      "./extensions/role-runtime.ts",
+      "--model",
+      "openai-codex/gpt-5.6-sol",
+      "--thinking",
+      "low",
+      "--ak-role",
+      "fixer",
+      "--ak-fixer-phase",
+      "apply",
+      "--ak-fix-packet",
+      ".ak/work/issues/22/review-001-fixer.md",
+      "-p",
+      "Repair the authorized Merger resolution-scope class test-first, run all gates, and commit."
+    ],
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit",
+    "stdio": {
+      "stdout": "pass-through",
+      "stderr": "pass-through",
+      "diagnosticTailBytes": 4096
+    }
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:low",
+    "target": "5ab3c6022bf9f9ea603cb50adb226d2ecd729a42",
+    "verification": "unverified"
+  },
+  "artifacts": [
+    {
+      "id": "repair-authority",
+      "kind": "authority",
+      "redactionStatus": "clean",
+      "reference": {
+        "identity": "reference",
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue22",
+        "commit": "5ab3c6022bf9f9ea603cb50adb226d2ecd729a42",
+        "path": ".ak/dockets/issues/22/judgment/review-001/receipt.json",
+        "blobOid": "b7c0bada9aeae156fab2d772e1b01d09e336bea1",
+        "sha256": "e41f299e6abd05b0f8544e2b617ca8eb9455d0c4da58802b566a9e8ec727cb45",
+        "mode": "100644"
+      }
+    },
+    {
+      "id": "fix-packet",
+      "kind": "task",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "inputs/fix-packet",
+        "sha256": "a76378f00a5360bef7a1850f9588d699453098779841dfb38859c4eba4822c5d",
+        "byteLength": 937
+      }
+    },
+    {
+      "id": "receipt",
+      "kind": "receipt",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "receipt.json",
+        "sha256": "93c1465326e38371be652a1a23462ad194e63989774520448a764a9ecd5cbfb8",
+        "byteLength": 1996
+      },
+      "receiptArtifactKind": "acceptedReceipt"
+    },
+    {
+      "id": "audit-observation",
+      "kind": "audit-observation",
+      "redactionStatus": "clean",
+      "stored": {
+        "identity": "stored",
+        "path": "audit-observation.json",
+        "sha256": "f941b31d2eb728ba9735067176434057c232619849fecbdba70270a17cd4db40",
+        "byteLength": 285
+      }
+    }
+  ],
+  "receipt": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_kYINkJhKhH0Q6Spdol8I1Hf2|fc_03c3033b92c69678016a6dd05d3d6c8191ae25807a88bd8585",
+    "artifactId": "receipt",
+    "artifactKind": "acceptedReceipt"
+  },
+  "auditObservation": {
+    "toolName": "ak_fixer_output",
+    "toolCallId": "call_kYINkJhKhH0Q6Spdol8I1Hf2|fc_03c3033b92c69678016a6dd05d3d6c8191ae25807a88bd8585",
+    "auditPassed": true,
+    "usage": {
+      "input": 18476,
+      "output": 389,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 18865
+    }
+  },
+  "child": {
+    "status": "exited",
+    "exitCode": 0,
+    "signal": null
+  },
+  "recorder": {
+    "status": "completed"
+  },
+  "redaction": {
+    "hits": []
+  }
+}

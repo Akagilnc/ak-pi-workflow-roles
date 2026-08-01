@@ -1,0 +1,7 @@
+# Issue #22 Review-001 Fixer apply
+
+Repair exactly `Issue22MergerResolutionScopeAtCompletion` under `.ak/dockets/issues/22/judgment/review-001/receipt.json`.
+
+Implement Judge's corrected automatic-merge-tree semantics at the existing Merger activation/completion seam. Add all three deterministic Git reds/greens: unrelated resolution edit rejected, source-only first-parent change accepted, and tampered clean source-side path rejected. Use frozen exact automatic merge-result identity, NUL-safe exact paths, rename detection disabled, and honest abort on unavailable/drifted evidence. Do not use first-parent/target diff as scope oracle.
+
+Do not change Soul/profession or add merge initiation, generic Git policy, orchestration, queue, publication, routing, shell classification, compatibility, or unrelated repair. Work test-first, run all gates, commit forward, and submit the typed Fixer completed settlement for exactly this class.
