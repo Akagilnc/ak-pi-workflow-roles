@@ -16,6 +16,8 @@ import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
 import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiReviewerAuditor } from "../src/reviewer-auditor.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
+import { createPiNavigatorAuditor } from "../src/navigator-auditor.ts";
+import type { CurrentPositionSnapshotV1 } from "../src/navigator-contracts.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { createPiSoulAuditor } from "../src/soul-auditor.ts";
@@ -28,6 +30,7 @@ const coderSoulPath = fileURLToPath(new URL("../souls/coder.md", import.meta.url
 const reviewerSoulPath = fileURLToPath(new URL("../souls/reviewer.md", import.meta.url));
 const collectorSoulPath = fileURLToPath(new URL("../souls/collector.md", import.meta.url));
 const doctorSoulPath = fileURLToPath(new URL("../souls/doctor.md", import.meta.url));
+const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.meta.url));
 
 function transcriptFromContext(ctx: ExtensionContext): string {
   const context = buildSessionContext(
@@ -55,6 +58,10 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorEvidenceIndex: async (path) => JSON.parse(await readFile(path, "utf8")),
     readDoctorCommittedEvidence: async (targetCommit, path) => { const { stdout } = await execFileAsync("git", ["show", `${targetCommit}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 }); return new Uint8Array(stdout); },
     auditDoctorCompliance: createPiDoctorAuditor(),
+    loadNavigatorSoul: () => readFile(navigatorSoulPath, "utf8"),
+    loadNavigatorSnapshot: async (path) => JSON.parse(await readFile(path, "utf8")),
+    loadNavigatorEvidence: async (snapshot: CurrentPositionSnapshotV1) => new Map(await Promise.all(snapshot.evidence.map(async (item) => [item.handle, new Uint8Array(await readFile(item.handle))] as const))),
+    auditNavigatorCompliance: createPiNavigatorAuditor(),
     collectorPackageExtensionPath: extensionPath,
     loadCanonicalSkillBinding,
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),

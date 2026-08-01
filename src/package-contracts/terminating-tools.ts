@@ -25,6 +25,7 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateRecordedDoctorOutput, type DoctorOutput } from "../doctor-contracts.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorReceiptV1, type RecordedNavigatorReceiptV1 } from "./navigator-output.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -60,6 +61,7 @@ export type {
   RuntimeReviewerReceiptV2,
   WorkerOutput,
   DoctorOutput,
+  RecordedNavigatorReceiptV1,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -69,6 +71,7 @@ export const TERMINATING_TOOL_NAMES = [
   JUDGE_OUTPUT_TOOL_NAME,
   COLLECTOR_OUTPUT_TOOL,
   DOCTOR_OUTPUT_TOOL_NAME,
+  NAVIGATOR_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -78,7 +81,8 @@ export type AcceptedDetails =
   | RuntimeReviewerReceiptV2
   | JudgeVerdict
   | CollectorReceipt
-  | DoctorOutput;
+  | DoctorOutput
+  | RecordedNavigatorReceiptV1;
 
 export function isTerminatingToolName(
   name: string,
@@ -100,6 +104,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return COLLECTOR_ACCEPTED_TEXT;
     case DOCTOR_OUTPUT_TOOL_NAME:
       return "Doctor output accepted";
+    case NAVIGATOR_OUTPUT_TOOL_NAME:
+      return "Navigator output accepted";
   }
 }
 
@@ -120,6 +126,9 @@ export function validateAcceptedDetails(
       return validateAcceptedCollectorReceipt(details);
     case DOCTOR_OUTPUT_TOOL_NAME:
       return validateRecordedDoctorOutput(details);
+    case NAVIGATOR_OUTPUT_TOOL_NAME:
+      // Snapshot freshness is additionally checked by Assisted Runner.
+      return validateRecordedNavigatorReceiptV1(details);
   }
 }
 
@@ -129,7 +138,8 @@ export function carriesPackageAuditObservation(
   return (
     toolName === JUDGE_OUTPUT_TOOL_NAME ||
     toolName === REVIEWER_OUTPUT_TOOL_NAME ||
-    toolName === DOCTOR_OUTPUT_TOOL_NAME
+    toolName === DOCTOR_OUTPUT_TOOL_NAME ||
+    toolName === NAVIGATOR_OUTPUT_TOOL_NAME
   );
 }
 

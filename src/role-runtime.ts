@@ -12,6 +12,7 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
+import { createNavigatorRoleRuntime, type NavigatorRoleDependencies } from "./navigator-role.ts";
 import {
   createJudgeRoleRuntime,
   type SoulAuditInput,
@@ -74,8 +75,16 @@ export type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 export type { CollectorReceipt } from "./collector-receipt.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
+export { NAVIGATOR_EVIDENCE_TOOL_NAME, NAVIGATOR_OUTPUT_TOOL_NAME } from "./navigator-role.ts";
+export * from "./navigator-contracts.ts";
+export { NavigatorEvidenceStore } from "./navigator-evidence.ts";
+export * from "./assisted-contracts.ts";
+export * from "./assisted-acquisition.ts";
+export * from "./assisted-ledger.ts";
+export * from "./assisted-runner.ts";
+export { createRecorderAssistedTransportV1 } from "./assisted-recorder-transport.ts";
 
-export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor"] as const;
+export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator"] as const;
 export const ROLE_FLAG = {
   name: "ak-role",
   definition: {
@@ -103,6 +112,10 @@ export type RoleRuntimeDependencies = {
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
+  loadNavigatorSoul?(): Promise<string>;
+  loadNavigatorSnapshot?(path: string): Promise<unknown>;
+  loadNavigatorEvidence?(snapshot: Parameters<NavigatorRoleDependencies["loadEvidence"]>[0]): Promise<ReadonlyMap<string, Uint8Array>>;
+  auditNavigatorCompliance?: NavigatorRoleDependencies["auditCompliance"];
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -235,6 +248,12 @@ export function createRoleRuntimeExtension(
       committedEvidenceReader: { async read(targetCommit, path) { if (!dependencies.readDoctorCommittedEvidence) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.readDoctorCommittedEvidence(targetCommit, path); } },
       async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
     }, hostActions);
+    const navigator = createNavigatorRoleRuntime(pi, {
+      async loadSoul() { if (!dependencies.loadNavigatorSoul) throw new Error("Navigator runtime dependencies are not configured"); return dependencies.loadNavigatorSoul(); },
+      async loadSnapshot(path) { if (!dependencies.loadNavigatorSnapshot) throw new Error("Navigator runtime dependencies are not configured"); return dependencies.loadNavigatorSnapshot(path); },
+      async loadEvidence(snapshot) { if (!dependencies.loadNavigatorEvidence) throw new Error("Navigator runtime dependencies are not configured"); return dependencies.loadNavigatorEvidence(snapshot); },
+      async auditCompliance(input, options) { if (!dependencies.auditNavigatorCompliance) throw new Error("Navigator runtime dependencies are not configured"); return dependencies.auditNavigatorCompliance(input, options); },
+    }, hostActions);
     const collector = createCollectorRoleRuntime(
       pi,
       {
@@ -286,6 +305,9 @@ export function createRoleRuntimeExtension(
           return;
         case "doctor":
           await doctor.activate();
+          return;
+        case "navigator":
+          await navigator.activate();
           return;
       }
     });

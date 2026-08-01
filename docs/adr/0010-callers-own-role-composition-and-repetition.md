@@ -19,3 +19,7 @@ Date: 2026-07-28
 - 同一角色可被不同调用者以不同拓扑和次数复用；
 - 调用者负责无限循环、成本和停止策略；
 - 角色回执只证明该次调用的工作，不表达下一步应该调用谁。
+
+## Narrow amendment — Navigator / Assisted Runner（Issue #28）
+
+Navigator 是唯一可在回执中给出单一下一过程建议的角色；该建议没有执行或授权效力。Assisted Runner 可在一次调用者指定的非 Navigator 角色调用前后自动咨询 Navigator，并记录调用者动作是 followed 或 deviated。它不得选择该角色、自动派发推荐角色或继续工作流。除此窄例外外，本 ADR 的调用者所有权与现有角色语义不变。
