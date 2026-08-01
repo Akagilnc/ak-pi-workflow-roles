@@ -34,8 +34,6 @@ async function readAssistedLedgerV1(runDirectory) {
 async function appendAssistedGenerationV1(runDirectory, event, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
   const dir = join(runDirectory, "ledger");
   await mkdir(dir, { recursive: true });
-  for (const file of await readdir(dir)) if (file.startsWith(".tmp-")) await unlink(join(dir, file)).catch(() => {
-  });
   const rows = await readAssistedLedgerV1(runDirectory), sequence = rows.length + 1;
   const unsigned = { version: 1, sequence, previousDigest: rows.at(-1)?.digest ?? null, createdAt: now(), ...event };
   const row = { ...unsigned, digest: sha256Hex(canonicalJson(unsigned)) };
@@ -50,8 +48,11 @@ async function appendAssistedGenerationV1(runDirectory, event, now = () => (/* @
     handle = void 0;
     renameNoReplace(tempPath, finalPath);
   } catch (e) {
-    await unlink(tempPath).catch(() => {
-    });
+    try {
+      await unlink(tempPath);
+    } catch (cleanup) {
+      if (cleanup.code !== "ENOENT") throw new AggregateError([e, cleanup], "assisted ledger publication and cleanup failed", { cause: e });
+    }
     if (e.code === "EEXIST" || isOccupiedRenameError(e)) throw new AssistedLedgerConflictError();
     throw e;
   } finally {

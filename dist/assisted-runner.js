@@ -14,21 +14,23 @@ class CanonicalLifecycleResult extends Error {
   }
   result;
 }
+class CanonicalLifecycleTransition extends Error {
+}
 async function appendAssistedGenerationV1(runDirectory, event, now) {
   for (; ; ) {
+    const rows = await readAssistedLedgerV1(runDirectory), winner = rows.find((row) => row.type === event.type && row.runId === event.runId && row.callId === event.callId && row.invocationId === event.invocationId && canonicalJson(row.payload) === canonicalJson(event.payload));
+    if (winner) {
+      const completed = event.callId && rows.find((r) => r.type === "call_completed" && r.callId === event.callId);
+      if (completed) throw new CanonicalLifecycleResult(completed.payload.result);
+      if (["call_started", "navigator_started", "action_reserved", "role_started", "recovered"].includes(event.type)) throw new CanonicalLifecycleTransition();
+      return winner;
+    }
+    const active = rows.filter((r) => r.type === "call_started" && !rows.some((x) => x.type === "call_completed" && x.callId === r.callId)).at(-1), reservation = rows.find((r) => r.type === "action_reserved" && !rows.some((x) => (x.type === "role_settled" || x.type === "recovered") && x.invocationId === r.invocationId));
+    if (rows.some((r) => r.type === "ended") || event.type === "ended" && (active || reservation || unresolved(rows)) || event.type === "call_started" && active || event.callId && active && active.callId !== event.callId || event.type === "action_reserved" && (reservation || unresolved(rows)) || ["navigator_started", "role_started"].includes(event.type) && unresolved(rows) || ["navigator_settled", "role_settled", "recovered"].includes(event.type) && unresolved(rows) !== event.invocationId || event.type === "call_completed" && rows.some((r) => r.type === "call_completed" && r.callId === event.callId)) throw new Error(`incompatible assisted lifecycle winner for ${event.type}`);
     try {
       return await publishAssistedGenerationV1(runDirectory, event, now);
     } catch (error) {
       if (!(error instanceof AssistedLedgerConflictError)) throw error;
-      const rows = await readAssistedLedgerV1(runDirectory), winner = rows.find((row) => row.type === event.type && row.runId === event.runId && row.callId === event.callId && row.invocationId === event.invocationId && canonicalJson(row.payload) === canonicalJson(event.payload));
-      if (winner) {
-        const completed = event.callId && rows.find((r) => r.type === "call_completed" && r.callId === event.callId);
-        if (completed) throw new CanonicalLifecycleResult(completed.payload.result);
-        if (["call_started", "navigator_started", "action_reserved", "role_started", "recovered"].includes(event.type)) throw new Error(`compatible assisted lifecycle transition already owned for ${event.type}`);
-        return winner;
-      }
-      const active = rows.filter((r) => r.type === "call_started" && !rows.some((x) => x.type === "call_completed" && x.callId === r.callId)).at(-1);
-      if (event.type === "entered" && rows.some((r) => r.type === "entered") || event.type === "call_started" && active || event.callId && active && active.callId !== event.callId || ["navigator_started", "action_reserved", "role_started"].includes(event.type) && unresolved(rows) || ["navigator_settled", "role_settled", "recovered"].includes(event.type) && unresolved(rows) !== event.invocationId || event.type === "call_completed" && rows.some((r) => r.type === "call_completed" && r.callId === event.callId)) throw new Error(`incompatible assisted lifecycle winner for ${event.type}`);
     }
   }
 }
@@ -142,11 +144,11 @@ async function run(mode, raw, argv, deps) {
     const done = rows.find((r) => r.type === "call_completed" && r.callId === config.callId);
     if (done) return done.payload.result;
     if (lost) throw new Error(`recovery required for invocation ${lost}`);
-    const recoveredRole = rows.filter((r) => r.type === "role_settled" && r.callId === config.callId).at(-1);
+    const recoveredRole = rows.filter((r) => (r.type === "role_settled" || r.type === "recovered") && r.callId === config.callId && r.payload.latestAttempt).at(-1);
     if (recoveredRole) {
-      const latestAttempt = recoveredRole.payload.latestAttempt, cursor2 = recoveredRole.positionCursor, position2 = await acquireCurrentPositionV1(config, cursor2, latestAttempt, { git: deps.git, github: deps.github });
-      await appendAssistedGenerationV1(dir, { type: "acquisition", runId: config.runId, callId: config.callId, positionCursor: cursor2, payload: { snapshot: position2.snapshot, reason: "docket_recovery" } }, now);
-      const post2 = await consult(config, position2, piArgv, dir, deps, now, id), preReceipt = rows.filter((r) => r.type === "navigator_settled" && r.callId === config.callId && r.payload.classification === "accepted").at(-1)?.payload.receipt ?? null, comparison2 = rows.filter((r) => r.type === "action_reserved" && r.callId === config.callId).at(-1)?.payload.comparison ?? null;
+      const latestAttempt = recoveredRole.payload.latestAttempt, cursor2 = recoveredRole.positionCursor, navRows = rows.filter((r) => r.type === "navigator_settled" && r.callId === config.callId && r.payload.classification === "accepted"), preReceipt = navRows[0]?.payload.receipt ?? null, settledPost = navRows.find((r) => r.sequence > recoveredRole.sequence), position2 = await acquireCurrentPositionV1(config, cursor2, latestAttempt, { git: deps.git, github: deps.github });
+      if (!settledPost) await appendAssistedGenerationV1(dir, { type: "acquisition", runId: config.runId, callId: config.callId, positionCursor: cursor2, payload: { snapshot: position2.snapshot, reason: "docket_recovery" } }, now);
+      const post2 = settledPost ? { receipt: settledPost.payload.receipt } : await consult(config, position2, piArgv, dir, deps, now, id), comparison2 = rows.filter((r) => r.type === "action_reserved" && r.callId === config.callId).at(-1)?.payload.comparison ?? null;
       return publishResult(dir, { version: 1, runId: config.runId, callId: config.callId, status: post2.receipt ? post2.receipt.status === "ordinary" ? "completed" : "navigation_halted" : "infrastructure_failure", positionCursor: cursor2, selectedInvocationId: recoveredRole.invocationId ?? null, preNavigation: preReceipt, settlement: { terminalClass: latestAttempt.terminalClass, reference: latestAttempt.reference }, postNavigation: post2.receipt, actionComparison: comparison2 }, now);
     }
   }
@@ -156,7 +158,7 @@ async function run(mode, raw, argv, deps) {
   if (priorAcquisition && priorAcquisition !== acquisitionDigest(config)) cursor++;
   if (!same) await appendAssistedGenerationV1(dir, { type: "call_started", runId: config.runId, callId: config.callId, positionCursor: cursor, payload: { configDigest: configDigest(config), acquisitionDigest: acquisitionDigest(config), selected: { role: config.execution.role, phase: config.execution.phase }, argvDigest: sha256Hex(canonicalJson(piArgv)), piArgv, environmentReference: environmentReference(config), recoveryConfig: { ...config, execution: { ...config.execution, environment: defaultEnvironment() } } } }, now);
   let latest = null;
-  const lastSettlement = rows.filter((r) => r.type === "role_settled").at(-1)?.payload.latestAttempt;
+  const lastSettlement = rows.filter((r) => (r.type === "role_settled" || r.type === "recovered") && r.payload.latestAttempt).at(-1)?.payload.latestAttempt;
   if (lastSettlement) latest = lastSettlement;
   let position = await acquireCurrentPositionV1(config, cursor, latest, { git: deps.git, github: deps.github });
   await appendAssistedGenerationV1(dir, { type: "acquisition", runId: config.runId, callId: config.callId, positionCursor: cursor, payload: { snapshot: position.snapshot } }, now);
@@ -173,10 +175,15 @@ async function run(mode, raw, argv, deps) {
     pre = await consult(config, position, piArgv, dir, deps, now, id);
     if (!pre.receipt || pre.receipt.status !== "ordinary") return publishResult(dir, { version: 1, runId: config.runId, callId: config.callId, status: pre.receipt ? "navigation_halted" : "infrastructure_failure", positionCursor: cursor, selectedInvocationId: null, preNavigation: pre.receipt, settlement: null, postNavigation: null, actionComparison: null }, now);
   }
-  const primary = pre.receipt.primary, comparison = primary.kind === "package_role" && primary.role === config.execution.role && primary.phase === config.execution.phase ? "followed" : "deviated";
-  await fenceLaunch(dir, config, "role", cursor);
-  const selectedId = id();
-  await appendAssistedGenerationV1(dir, { type: "action_reserved", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: { comparison, selected: { role: config.execution.role, phase: config.execution.phase } } }, now);
+  const primary = pre.receipt.primary, comparison = primary.kind === "package_role" && primary.role === config.execution.role && primary.phase === config.execution.phase ? "followed" : "deviated", reserved = rows.filter((r) => r.type === "action_reserved" && r.callId === config.callId && !rows.some((x) => (x.type === "role_settled" || x.type === "recovered") && x.invocationId === r.invocationId)).at(-1);
+  let selectedId;
+  if (reserved) {
+    selectedId = reserved.invocationId;
+  } else {
+    await fenceLaunch(dir, config, "role", cursor);
+    selectedId = id();
+    await appendAssistedGenerationV1(dir, { type: "action_reserved", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: { comparison, selected: { role: config.execution.role, phase: config.execution.phase } } }, now);
+  }
   await appendAssistedGenerationV1(dir, { type: "role_started", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: {} }, now);
   const settlement = await deps.recorder.invokeRole({ config, invocationId: selectedId, piArgv, beforeTarget: position.snapshot.workspaces.find((w) => w.id === config.execution.workspaceId).target });
   cursor++;
@@ -228,12 +235,12 @@ async function recoverAssistedInvocationInternalV1(repositoryRoot, runId, invoca
   const config = validateAssistedCallConfigV1({ ...redacted, execution: { ...redacted.execution, environment: policy } });
   if (environmentReference(config) !== reference) throw new Error("recovery environment reference mismatch");
   const piArgv = validateSelectedPiArgvV1(call.payload.piArgv, config.execution), priorCursor = rows.at(-1)?.positionCursor ?? 0, cursor = started.type === "role_started" ? priorCursor + 1 : priorCursor;
-  await appendAssistedGenerationV1(dir, { type: "recovered", runId, callId: started.callId, invocationId, positionCursor: cursor, payload: { attestation: "confirmed_stopped", terminalClass: "outcome_unavailable_after_runner_loss" } });
-  let latest = rows.filter((r) => r.type === "role_settled").at(-1)?.payload.latestAttempt ?? null;
+  let latest = rows.filter((r) => (r.type === "role_settled" || r.type === "recovered") && r.payload.latestAttempt).at(-1)?.payload.latestAttempt ?? null;
   if (started.type === "role_started") {
     const snapshot = rows.filter((r) => r.type === "acquisition").at(-1)?.payload.snapshot, workspace = snapshot.workspaces.find((w) => w.id === config.execution.workspaceId);
     latest = { invocationId, role: config.execution.role, phase: config.execution.phase, beforeTarget: workspace.target, afterTarget: workspace.target, terminalClass: "outcome_unavailable_after_runner_loss", reference: { id: `recovery:${invocationId}`, sha256: sha256Hex("confirmed_stopped") } };
-  }
+    await appendAssistedGenerationV1(dir, { type: "recovered", runId, callId: started.callId, invocationId, positionCursor: cursor, payload: { attestation: "confirmed_stopped", terminalClass: "outcome_unavailable_after_runner_loss", latestAttempt: latest } });
+  } else await appendAssistedGenerationV1(dir, { type: "recovered", runId, callId: started.callId, invocationId, positionCursor: cursor, payload: { attestation: "confirmed_stopped", terminalClass: "outcome_unavailable_after_runner_loss" } });
   const position = await acquireCurrentPositionV1(config, cursor, latest, { git: deps.git, github: deps.github });
   await appendAssistedGenerationV1(dir, { type: "acquisition", runId, callId: started.callId, positionCursor: cursor, payload: { snapshot: position.snapshot, reason: "recovery" } });
   await consult(config, position, piArgv, dir, deps, deps.now ?? (() => (/* @__PURE__ */ new Date()).toISOString()), deps.uuid ?? uuidv7);
@@ -243,7 +250,7 @@ async function recoverAssistedInvocationV1(repositoryRoot, runId, invocationId, 
   try {
     return await recoverAssistedInvocationInternalV1(repositoryRoot, runId, invocationId, confirmedStopped, deps);
   } catch (error) {
-    if (error instanceof CanonicalLifecycleResult || error instanceof Error && error.message === "compatible assisted lifecycle transition already owned for recovered") return readAssistedRunV1(repositoryRoot, runId);
+    if (error instanceof CanonicalLifecycleResult || error instanceof CanonicalLifecycleTransition) return readAssistedRunV1(repositoryRoot, runId);
     throw error;
   }
 }
