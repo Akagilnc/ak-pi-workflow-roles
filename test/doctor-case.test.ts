@@ -134,6 +134,27 @@ test("timestamp-less terminating results leave the session incomplete at the las
   });
 });
 
+test("partial and non-monotonic sessions remain reportable with explicit degradation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-degraded-"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(join(runs, "crashed/session"), { recursive: true });
+  await writeFile(join(runs, "crashed/session/truncated.jsonl"), `${JSON.stringify({ type: "session", timestamp: "2026-08-01T00:00:02.000Z" })}\n{`);
+  await writeFile(join(runs, "crashed/session/headerless.jsonl"), `${JSON.stringify({ type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "assistant", responseId: "r" } })}\n`);
+  await writeFile(join(runs, "crashed/session/backwards.jsonl"), [{ type: "session", timestamp: "2026-08-01T00:00:02.000Z" }, { type: "custom", timestamp: "2026-08-01T00:00:01.000Z" }].map(JSON.stringify).join("\n"));
+  const patient = await loadDoctorCase(runs);
+  assert.equal(patient.cost.sessions.length, 3);
+  assert.ok(patient.cost.sessions.every((session) => session.completion === "incomplete" && session.degradationReason));
+  assert.equal(patient.cost.sessions.find((session) => session.source.endsWith("backwards.jsonl"))?.wallMilliseconds, undefined);
+});
+
+test("case identity is repository-relative with an absolute fallback outside repositories", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-identity-"));
+  await mkdir(join(root, ".git"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(runs, { recursive: true });
+  assert.equal((await loadDoctorCase(runs)).identity.runsPath, ".ak/work/issues/40/runs");
+});
+
 test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
   assert.deepEqual(DOCTOR_TARGET_KINDS, ["law", "gate", "template", "station", "seat"]);
   const root = await mkdtemp(join(tmpdir(), "doctor-finding-"));
