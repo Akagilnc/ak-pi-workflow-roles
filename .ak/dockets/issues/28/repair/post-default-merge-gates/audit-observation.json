@@ -1,0 +1,12 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_vnrk1nwCRrS4WHW7gkD1GDjq|fc_0c10f22390446938016a6e174210ac81918dbae1a18fb4ace5",
+  "auditPassed": true,
+  "usage": {
+    "input": 17960,
+    "output": 174,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 18134
+  }
+}
