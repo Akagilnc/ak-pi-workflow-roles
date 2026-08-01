@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage } from "@earendil-works/pi-ai";
@@ -56,9 +58,9 @@ test("Merger terminal contract and singleton failures abort without accepting a 
 test("Pi transports malformed Merger candidates to the fatal validator while valid leaves still terminate", async () => {
   await withHermeticHome({ prefix: "ak-merger-transport-" }, async ({ home, agentDir }) => {
     for (const candidate of [
+      { status: "escalate", attemptId: "attempt", diagnosis: "decision", report: "blocked" },
       { status: "escalate", attemptId: "attempt", report: "missing diagnosis" },
       { status: "escalate", attemptId: "attempt", diagnosis: "decision", report: "blocked", unknown: true },
-      { status: "escalate", attemptId: "attempt", diagnosis: "decision", report: "blocked" },
     ]) {
       const faux = fauxProvider({ api: `merger-${Object.keys(candidate).length}`, provider: `merger-${Object.keys(candidate).length}` });
       faux.setResponses([fauxAssistantMessage(fauxToolCall(MERGER_OUTPUT_TOOL_NAME, candidate, { id: "out" }), { stopReason: "toolUse" })]);
@@ -83,8 +85,12 @@ test("Pi transports malformed Merger candidates to the fatal validator while val
         }
         assert.equal(faux.getPendingResponseCount(), 0);
       });
-      process.exitCode = priorExitCode;
+      if (process.env.AK_MERGER_FATAL_CHILD !== "1") process.exitCode = priorExitCode;
     }
+    if (process.env.AK_MERGER_FATAL_CHILD === "1") process.exit(process.exitCode ?? 0);
+    const { NODE_TEST_CONTEXT: _nodeTestContext, ...childEnv } = process.env;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--test", fileURLToPath(import.meta.url)], { env: { ...childEnv, AK_MERGER_FATAL_CHILD: "1" }, encoding: "utf8" });
+    assert.equal(child.status, 1);
   });
 });
 
