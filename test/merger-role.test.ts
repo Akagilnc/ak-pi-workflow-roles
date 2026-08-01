@@ -83,6 +83,9 @@ test("Merger registration exposes both exact terminal leaf shapes without narrow
   const parameters = h.tools.get(MERGER_OUTPUT_TOOL_NAME).parameters;
   assert.deepEqual(parameters.properties, {});
   assert.equal(parameters.additionalProperties, true);
+  assert.equal(parameters.required, undefined);
+  assert.equal(parameters.anyOf, undefined);
+  assert.equal(parameters.oneOf, undefined);
   assert.deepEqual(parameters.examples, [
     { status: "completed", attemptId: "<assignment attemptId>", report: "<non-blank report>", mergeCommitId: "<full Git object ID>" },
     { status: "escalate", attemptId: "<assignment attemptId>", diagnosis: "<non-blank intent or authority diagnosis>", report: "<non-blank report>" },
