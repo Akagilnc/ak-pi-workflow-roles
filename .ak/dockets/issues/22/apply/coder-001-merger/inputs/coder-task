@@ -1,0 +1,16 @@
+# Issue #22 Coder apply — Merger v1
+
+Implement test-first the complete Merger construction authorized by `.ak/dockets/issues/22/authority/final-synthesis-001/receipt.json` on the current default-integrated branch. The owner-direct minimal `souls/merger.md` is already committed; preserve its bytes and do not add implementation prose to the Soul.
+
+Deliver all five authorized slices as one coherent vertical:
+
+- deep typed immutable/digest-bound Merger input and exact completed/escalate output contracts;
+- production Git-state adapter and activation preflight binding exact target/source, MERGE_HEAD, complete unmerged path set, admitted intent/authority bytes, scope, and authorized checks;
+- constrained tools, singleton output, completed-state two-parent/clean-worktree verification, and honest nonzero infrastructure paths;
+- role registration, public exports, package entrypoint, Recorder terminating census/extraction/lifecycle;
+- README/help/census and only the explicitly non-normative external capability exam;
+- deterministic temporary-Git production seam tests and cold/package tests required by authority.
+
+Do not add phases, Fixer semantics, branch selection, merge initiation/abort/retry, scheduler, queue, candidate/CAS publication, worktree allocation, network/tracker/push, next-role fields, StatsLine changes, generic Git workflow modules, command heuristics, or orchestration.
+
+No Plan. Run typecheck, isolated-HOME full tests, build:recorder, npm pack --dry-run, and diff checks. Commit forward and report complete TDD/self-check evidence.

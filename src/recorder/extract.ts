@@ -8,11 +8,11 @@ import {
   type AcceptedDetails,
   type TerminatingToolName,
 } from "../package-contracts/terminating-tools.ts";
-import type { CollectorReceipt, DoctorOutput, JudgeVerdict, RuntimeReviewerReceiptV2, WorkerOutput } from "../package-contracts/terminating-tools.ts";
+import type { CollectorReceipt, DoctorOutput, JudgeVerdict, MergerOutput, RuntimeReviewerReceiptV2, WorkerOutput } from "../package-contracts/terminating-tools.ts";
 import { RecorderError } from "./errors.ts";
 import { combineReports, scanJsonValue, type ScanReport } from "./scanner.ts";
 
-export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt | DoctorOutput; kind: "worker" | "reviewer" | "judge" | "collector" | "doctor" };
+export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt | DoctorOutput | MergerOutput; kind: "worker" | "reviewer" | "judge" | "collector" | "doctor" | "merger" };
 export type AuditObservation = { toolName: "ak_judge_output" | "ak_fixer_output" | "ak_reviewer_output" | "ak_doctor_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
 export type ExtractionResult = { receipt: AcceptedReceipt; auditObservation: AuditObservation | null; artifactKind: "acceptedReceipt" | "sanitizedDerivativeOfAcceptedReceipt"; report: ScanReport };
 
@@ -49,6 +49,7 @@ function receiptKind(toolName: TerminatingToolName): AcceptedReceipt["kind"] {
   if (toolName === "ak_judge_output") return "judge";
   if (toolName === "ak_reviewer_output") return "reviewer";
   if (toolName === "ak_doctor_output") return "doctor";
+  if (toolName === "ak_merger_output") return "merger";
   return "worker";
 }
 

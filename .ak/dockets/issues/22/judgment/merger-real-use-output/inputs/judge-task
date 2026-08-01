@@ -1,0 +1,20 @@
+# Issue #22 first real Merger use — output contract failure adjudication
+
+Current HEAD `363eef34832e6513ce60379ea07717d507956966` was created by the first real Merger invocation while resolving the sole conflict integrating default commit `88e3acdcb1bc32de076ec999b4115b4d41d3d328` into target `f076bc4cfc7705906406f1ff7c904df54a7ce47e`.
+
+The role correctly resolved/staged/typechecked/committed an ordinary two-parent merge, but submitted:
+
+```json
+{"attemptId":"...","status":"completed","mergeCommit":"363eef...","parents":[...],"resolvedPaths":[...],"checks":[...],"summary":"..."}
+```
+
+instead of exact `{status,attemptId,report,mergeCommitId}`. The deliberately broad Pi transport schema admitted it; exact runtime validation fatally aborted; Recorder correctly published no receipt. Raw session: `.ak/work/issues/22/runs/merge-default-typed-prerequisite/session/`.
+
+Adjudicate:
+
+1. Verify the current merge commit mechanically but do not retroactively manufacture a Merger Receipt or rewrite history.
+2. Determine whether Merger lacks sufficient model-visible exact output-contract instruction after transport was broadened for fatal malformed submissions. The tool's broad schema no longer teaches fields, while current prompt guidelines only say “sole final action.”
+3. If valid, authorize the smallest class repair that communicates both legal exact leaves to the model while retaining broad transport admission, sole exact runtime validator, and fatal malformed behavior. Use behavior tests, not prose-regex anchoring.
+4. Define honest disposition of this failed invocation and whether the existing merge commit may remain as caller-inspected forward history.
+
+Do not add retry, output recovery, retroactive sealing, orchestration, or history rewriting.
