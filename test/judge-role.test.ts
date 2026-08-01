@@ -196,8 +196,8 @@ test("stable factory registers all role flags in exact help order and stays iner
       description: "Optional comma-separated exact class keys limiting Reviewer scope",
       type: "string",
     }],
-    ["ak-doctor-evidence", {
-      description: "Path to a frozen Doctor v1 evidence index JSON file",
+    ["ak-doctor-case", {
+      description: "Retained .ak/work/issues/<n>/runs directory",
       type: "string",
     }],
     ["ak-collector-repo", {

@@ -26,7 +26,7 @@ export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: D
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: false });
-const finding = Type.Object({ targetKey: nonblank, targetKind: Type.Union(DOCTOR_TARGET_KINDS.map(Type.Literal)), evidenceIds: Type.Array(nonblank, { minItems: 1 }), disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]), recommendation: nonblank }, { additionalProperties: false });
+const finding = Type.Object({ targetKey: nonblank, targetKind: Type.Union(DOCTOR_TARGET_KINDS.map((kind) => Type.Literal(kind))), evidenceIds: Type.Array(nonblank, { minItems: 1 }), disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]), recommendation: nonblank }, { additionalProperties: false });
 const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
 const cost = Type.Object({
   invocations: count, legs: count, modelApiTurns: count, outputTokens: count, toolCalls: count,

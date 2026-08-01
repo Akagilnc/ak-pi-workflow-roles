@@ -24,7 +24,7 @@ import {
   ROLE_FLAG,
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
-import { DOCTOR_EVIDENCE_FLAG } from "../src/doctor-role.ts";
+import { DOCTOR_CASE_FLAG } from "../src/doctor-role.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
 import {
   loadRawPackageManifest,
@@ -70,8 +70,8 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   packageEntrypoint(manifest);
   assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor"]);
   assert.equal(ROLE_FLAG.name, "ak-role");
-  assert.equal(DOCTOR_EVIDENCE_FLAG.name, "ak-doctor-evidence");
-  assert.equal(DOCTOR_EVIDENCE_FLAG.definition.type, "string");
+  assert.equal(DOCTOR_CASE_FLAG.name, "ak-doctor-case");
+  assert.equal(DOCTOR_CASE_FLAG.definition.type, "string");
   await withHermeticHome(
     { prefix: "ak-doctor-pack-" },
     async ({ home }) => {
@@ -80,7 +80,7 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
       for (const path of [
         "souls/doctor.md",
         "src/doctor-contracts.ts",
-        "src/stats-line.ts",
+        "src/doctor-evidence.ts",
         "src/canonical-json.ts",
       ]) {
         assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
