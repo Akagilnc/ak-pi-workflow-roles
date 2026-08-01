@@ -14,7 +14,10 @@ test("registration enrolls every role in stable named activation stages", () => 
   for (const entry of ROLE_REGISTRY) {
     assert.ok(entry.stages.length > 0);
     assert.equal(new Set(entry.stages.map(({ id }) => id)).size, entry.stages.length);
-    for (const stage of entry.stages) assert.match(stage.id, /^[a-z][a-z0-9-]*$/);
+    for (const stage of entry.stages) {
+      assert.match(stage.id, /^[a-z][a-z0-9-]*$/);
+      assert.equal(typeof stage.run, "function");
+    }
   }
 });
 
