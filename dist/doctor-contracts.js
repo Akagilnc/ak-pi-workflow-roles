@@ -3,7 +3,7 @@ import { Value } from "typebox/value";
 import { canonicalJson } from "./canonical-json.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
-export const DOCTOR_TARGET_KINDS = ["case", "law", "gate", "template", "station", "seat"];
+export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: false });
 const evidenceIds = Type.Array(nonblank, { minItems: 1 });
@@ -12,14 +12,14 @@ const lastRealBite = Type.Union([
     Type.Object({ kind: Type.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
     Type.Object({ kind: Type.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false }),
 ]);
-const assetKinds = DOCTOR_TARGET_KINDS.filter((kind) => kind !== "case");
+const assetKinds = DOCTOR_TARGET_KINDS;
 const findingBody = {
     evidenceIds, disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]),
     guardrails: Type.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: false }),
     prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }), lastRealBite,
 };
 const finding = Type.Union([
-    Type.Object({ targetKey: nonblank, targetKind: Type.Literal("case"), ...findingBody }, { additionalProperties: false }),
+    Type.Object({ targetKey: nonblank, ...findingBody }, { additionalProperties: false }),
     Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), assetEvidence: Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false }),
 ]);
 const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
@@ -76,7 +76,7 @@ export function validateDoctorOutput(value, patient, store) {
         if (!store.entries.has(id) || !store.hasRead(id))
             throw new Error(`${label} must cite admitted/read evidence: ${id}`); };
     for (const finding of output.findings) {
-        if (finding.targetKind === "case")
+        if (!("assetEvidence" in finding))
             assertTargets([finding.targetKey]);
         else {
             if (finding.assetEvidence.targetKey !== finding.targetKey || finding.assetEvidence.targetKind !== finding.targetKind)
