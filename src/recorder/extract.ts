@@ -13,7 +13,7 @@ import { RecorderError } from "./errors.ts";
 import { combineReports, scanJsonValue, type ScanReport } from "./scanner.ts";
 
 export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt | DoctorOutput; kind: "worker" | "reviewer" | "judge" | "collector" | "doctor" };
-export type AuditObservation = { toolName: "ak_judge_output" | "ak_reviewer_output" | "ak_doctor_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
+export type AuditObservation = { toolName: "ak_judge_output" | "ak_fixer_output" | "ak_reviewer_output" | "ak_doctor_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
 export type ExtractionResult = { receipt: AcceptedReceipt; auditObservation: AuditObservation | null; artifactKind: "acceptedReceipt" | "sanitizedDerivativeOfAcceptedReceipt"; report: ScanReport };
 
 type DirectIssuance = { index: number; rowId: unknown; toolCallId: string; toolName: TerminatingToolName; arguments: unknown };

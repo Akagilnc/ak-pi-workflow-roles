@@ -47,6 +47,19 @@ async function runCli(mode: "print" | "json") {
   );
 }
 
+async function runFixerAuditFailureCli(mode: "print" | "json") {
+  return withHermeticHome({ prefix: "ak-fixer-audit-fatal-cli-" }, async ({ home, agentDir }) => {
+    const packet = resolve(home, "packet.md");
+    await writeFile(packet, "# Assigned repair\n\nSettle Contract.\n");
+    const args = ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-session",
+      "-e", resolve(packageRoot, "extensions/role-runtime.ts"), "-e", resolve(packageRoot, "test/fixtures/fixer-audit-failure-provider.ts"),
+      "--ak-role", "fixer", "--ak-fixer-phase", "apply", "--ak-fix-packet", packet,
+      "--provider", "ak-fixer-audit-failure", "--model", "faux-1",
+      ...(mode === "print" ? ["-p", "Apply."] : ["--mode", "json", "Apply."])];
+    return runPiSubprocess(args, { cwd: packageRoot, env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" } });
+  });
+}
+
 type ReviewerFailureStage =
   | "preflight-git"
   | "preflight-skill"
@@ -209,6 +222,17 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
       );
       assert.match(result.stdout, /"stopReason":"aborted"/);
     }
+  }
+});
+
+test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {
+  for (const mode of ["print", "json"] as const) {
+    const result = await runFixerAuditFailureCli(mode);
+    const combined = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.code, 1, combined);
+    assert.match(combined, /invalid fixer audit decision|Request was aborted/);
+    assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=3/);
+    assert.doesNotMatch(result.stdout, /Fixer report accepted|FORBIDDEN LATER SUCCESS PROSE/);
   }
 });
 

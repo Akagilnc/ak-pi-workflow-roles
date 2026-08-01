@@ -382,15 +382,15 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       name: FIXER_OUTPUT_TOOL_NAME,
       metadata: {
         label: "Fixer Output",
-        description: "Submit a plan, completion, or refusal for the active fixer phase. commitSha is advisory evidence for the caller.",
+        description: "Submit the exact plan refusal or per-finding apply settlement for compliance audit.",
         promptSnippet: "Submit the final fixer report",
         promptGuidelines: [
           `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
-          `${FIXER_OUTPUT_TOOL_NAME} never escalates; explain any requested owner decision in report for the caller to dispose.`,
-          "plan permits planned|refused; apply permits completed|refused.",
+          `${FIXER_OUTPUT_TOOL_NAME} reports only lawful assignment blockers; infrastructure failures abort.`,
+          "plan permits planned|refused; apply permits completed|refused|partially_completed.",
         ],
       },
-      output: { status: "completed", report: "done", commitSha: "abc" },
+      output: { status: "completed", report: "done", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] },
       acceptedText: "Fixer report accepted",
     },
     {
@@ -423,6 +423,7 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
     createRoleRuntimeExtension({
       transcriptFromContext: () => "record",
       auditSoulCompliance: async () => ({ status: "pass", usage }),
+      auditFixerCompliance: async () => ({ status: "pass", usage }),
       ...fixture.dependencies,
     })(harness.pi as ExtensionAPI);
     await harness.handlers.get("session_start")?.({}, {});
@@ -435,15 +436,16 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       promptSnippet: tool.promptSnippet,
       promptGuidelines: tool.promptGuidelines,
     }, fixture.metadata);
-    assert.equal(tool.parameters.additionalProperties, false);
-    assert.deepEqual(
-      Object.keys(tool.parameters.properties),
-      fixture.role === "judge"
-        ? ["judgeStatus", "fix", "classes", "note", "decisionGate"]
-        : fixture.role === "fixer"
-          ? ["status", "report", "commitSha", "classesRepaired"]
+    if (fixture.role === "fixer") assert.ok(Array.isArray(tool.parameters.anyOf));
+    else {
+      assert.equal(tool.parameters.additionalProperties, false);
+      assert.deepEqual(
+        Object.keys(tool.parameters.properties),
+        fixture.role === "judge"
+          ? ["judgeStatus", "fix", "classes", "note", "decisionGate"]
           : ["status", "report", "commitSha"],
-    );
+      );
+    }
     const result = await tool.execute(
       "receipt",
       fixture.output,
@@ -456,7 +458,7 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
     assert.equal(result.terminate, true);
     assert.deepEqual(
       result.usage,
-      fixture.role === "judge" ? usage : undefined,
+      fixture.role === "judge" || fixture.role === "fixer" ? usage : undefined,
     );
   }
 });
@@ -934,8 +936,9 @@ test("fixer role loads its Markdown packet and returns a thin report envelope", 
       loadedPaths.push(path);
       return "REPAIR PACKET\nFix the live findings.";
     },
-    transcriptFromContext: () => "",
+    transcriptFromContext: () => "invocation record",
     auditSoulCompliance: async () => ({ status: "pass" }),
+    auditFixerCompliance: async () => ({ status: "pass" }),
   });
 
   extension(harness.pi as ExtensionAPI);
@@ -959,7 +962,7 @@ test("fixer role loads its Markdown packet and returns a thin report envelope", 
       {
         status: "refused",
         report: "The requested guard contradicts the authority.",
-        commitSha: "abc123",
+        classResults: [{ name: "Guard", disposition: "refused", remainingScope: "requested guard", blocker: { cause: "authority_violation", evidence: "contradicts controlling authority" } }],
       },
       undefined,
       undefined,
@@ -970,8 +973,8 @@ test("fixer role loads its Markdown packet and returns a thin report envelope", 
     {
       status: "refused",
       report: "The requested guard contradicts the authority.",
-      commitSha: "abc123",
-    },
+      classResults: [{ name: "Guard", disposition: "refused", remainingScope: "requested guard", blocker: { cause: "authority_violation", evidence: "contradicts controlling authority" } }],
+    }
   );
 });
 
@@ -984,8 +987,9 @@ test("fixer plan phase accepts plans but rejects construction receipts", async (
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
     loadFixPacket: async () => "REPAIR PACKET",
-    transcriptFromContext: () => "",
+    transcriptFromContext: () => "record",
     auditSoulCompliance: async () => ({ status: "pass" }),
+    auditFixerCompliance: async () => ({ status: "pass" }),
   });
 
   extension(harness.pi as ExtensionAPI);
@@ -1011,7 +1015,7 @@ test("fixer plan phase accepts plans but rejects construction receipts", async (
       undefined,
       toolCallContext([{ id: "completed-call", name: FIXER_OUTPUT_TOOL_NAME }]),
     ),
-    /plan phase.*planned|refused/i,
+    /Fixer output/i,
   );
   await assert.rejects(
     tool.execute(
@@ -1021,50 +1025,26 @@ test("fixer plan phase accepts plans but rejects construction receipts", async (
       undefined,
       toolCallContext([{ id: "commit-call", name: FIXER_OUTPUT_TOOL_NAME }]),
     ),
-    /planned.*commitSha/i,
+    /Fixer output/i,
   );
 });
 
-test("worker receipt legality covers the complete phase, status, and commitSha matrix", async () => {
-  for (const phase of ["plan", "apply"] as const) {
-    const harness = extensionHarness("fixer", {
-      "ak-fix-packet": "/packet",
-      "ak-fixer-phase": phase,
-    });
-    createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "judge",
-      loadFixerSoul: async () => "fixer",
-      loadFixPacket: async () => "packet",
-      transcriptFromContext: () => "",
-      auditSoulCompliance: async () => ({ status: "pass" }),
-    })(harness.pi as ExtensionAPI);
-    await harness.handlers.get("session_start")?.({}, {});
-    const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
-    assert.ok(tool);
-
-    for (const status of ["planned", "completed", "refused"] as const) {
-      for (const withCommit of [false, true]) {
-        const id = `${phase}-${status}-${withCommit}`;
-        const output = {
-          status,
-          report: `${status} report`,
-          ...(withCommit ? { commitSha: "abc123" } : {}),
-        };
-        const legal = phase === "plan"
-          ? status === "refused" || (status === "planned" && !withCommit)
-          : status === "completed" || status === "refused";
-        const execution = tool.execute(
-          id,
-          output,
-          undefined,
-          undefined,
-          toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]),
-        );
-        if (legal) assert.deepEqual((await execution).details, output);
-        else await assert.rejects(execution, /phase permits|planned output forbids/);
-      }
-    }
-  }
+test("Fixer audits every structurally valid attempt freshly and revise permits corrected resubmission", async () => {
+  const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" });
+  const seen: unknown[] = [];
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async () => "packet",
+    transcriptFromContext: () => "current invocation transcript", auditSoulCompliance: async () => ({ status: "pass" }),
+    auditFixerCompliance: async (input) => { seen.push(input); return seen.length === 1 ? { status: "revise", violations: ["dishonest incomplete label"] } : { status: "pass" }; },
+  })(harness.pi as ExtensionAPI);
+  await harness.handlers.get("session_start")?.({}, {});
+  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
+  const candidate = { status: "completed", report: "settled", classResults: [{ name: "Parser", disposition: "completed", searchScope: "all parsers", exceptions: [], commitSha: "a".repeat(40) }] };
+  await assert.rejects(tool.execute("first", candidate, undefined, undefined, toolCallContext([{ id: "first", name: FIXER_OUTPUT_TOOL_NAME }])), /violates its law/);
+  const accepted = await tool.execute("second", candidate, undefined, undefined, toolCallContext([{ id: "second", name: FIXER_OUTPUT_TOOL_NAME }]));
+  assert.equal(seen.length, 2);
+  assert.deepEqual(accepted.details, candidate);
+  assert.notEqual(seen[0], seen[1]);
 });
 
 test("worker output rejects malformed, unknown, blank, and non-object values", async () => {
@@ -1115,13 +1095,14 @@ test("fixer output must be the sole call in its assistant batch", async () => {
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
     loadFixPacket: async () => "REPAIR PACKET",
-    transcriptFromContext: () => "",
+    transcriptFromContext: () => "record",
     auditSoulCompliance: async () => ({ status: "pass" }),
+    auditFixerCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
   await harness.handlers.get("session_start")?.({}, {});
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
-  const output = { status: "completed", report: "Repaired and verified." };
+  const output = { status: "completed", report: "Repaired and verified.", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
   const sibling = { id: "sibling", name: "read" };
 
   for (const calls of [
