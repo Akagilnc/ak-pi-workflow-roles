@@ -135,6 +135,17 @@ export function validateAcceptedDetails(
   }
 }
 
+export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): { status?: string; commit?: string } {
+  switch (toolName) {
+    case CODER_OUTPUT_TOOL_NAME:
+    case FIXER_OUTPUT_TOOL_NAME: { const output = details as WorkerOutput; return { status: output.status, ...(output.commitSha ? { commit: output.commitSha } : {}) }; }
+    case REVIEWER_OUTPUT_TOOL_NAME: return { status: (details as RuntimeReviewerReceiptV2).status };
+    case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as JudgeVerdict).judgeStatus };
+    case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as DoctorOutput).status };
+    case COLLECTOR_OUTPUT_TOOL: return {};
+  }
+}
+
 export function carriesPackageAuditObservation(
   toolName: TerminatingToolName,
 ): boolean {

@@ -7,7 +7,9 @@ export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"] as const;
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];
 export type DoctorCaseIdentity = { issueNumber: number; runsPath: string };
-export type DoctorSessionCost = { source: string; startedAt: string; endedAt: string; wallMilliseconds: number; completion: "accepted" | "incomplete" };
+export type DoctorSessionCost =
+  | { source: string; startedAt: string; endedAt: string; wallMilliseconds: number; completion: "accepted" }
+  | { source: string; startedAt?: string; endedAt?: string; wallMilliseconds?: number; completion: "incomplete"; degradationReason?: string };
 export type DoctorCount = { count: number; sources: string[] };
 export type DoctorCaseCost = {
   invocations: DoctorCount; legs: DoctorCount; modelApiTurns: DoctorCount; outputTokens: DoctorCount; toolCalls: DoctorCount;
@@ -61,7 +63,10 @@ const cost = Type.Object({
   retries: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), evidence: Type.Literal("literal run-dir naming") }, { additionalProperties: false }),
   statuses: Type.Array(Type.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
   commits: Type.Array(Type.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
-  sessions: Type.Array(Type.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type.Number({ minimum: 0 }), completion: Type.Union([Type.Literal("accepted"), Type.Literal("incomplete")]) }, { additionalProperties: false })),
+  sessions: Type.Array(Type.Union([
+    Type.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type.Number({ minimum: 0 }), completion: Type.Literal("accepted") }, { additionalProperties: false }),
+    Type.Object({ source: nonblank, startedAt: Type.Optional(nonblank), endedAt: Type.Optional(nonblank), wallMilliseconds: Type.Optional(Type.Number({ minimum: 0 })), completion: Type.Literal("incomplete"), degradationReason: Type.Optional(nonblank) }, { additionalProperties: false }),
+  ])),
   outputBytes: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), payload: Type.Literal("raw JSONL bytes"), providerWireBytes: Type.Literal("unavailable") }, { additionalProperties: false }),
 }, { additionalProperties: false });
 export const doctorOutputSchema = Type.Union([
