@@ -5,7 +5,7 @@ import type { DoctorCase, DoctorCaseCost, DoctorEvidenceEntry } from "./doctor-c
 import { AcceptedDetailsContractError, isTerminatingToolName, validateAcceptedDetails } from "./package-contracts/terminating-tools.ts";
 
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-async function files(root: string): Promise<string[]> { const found: string[] = []; async function walk(dir: string) { for (const item of await readdir(dir, { withFileTypes: true })) { const path = resolve(dir, item.name); if (item.isDirectory()) await walk(path); else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log")) found.push(path); } } await walk(root); return found.sort(); }
+async function files(root: string): Promise<string[]> { const found: string[] = []; async function walk(dir: string, depth: number) { for (const item of await readdir(dir, { withFileTypes: true })) { const path = resolve(dir, item.name); if (item.isDirectory()) await walk(path, depth + 1); else if (item.isFile() && (item.name.endsWith(".jsonl") || (item.name === "stderr.log" && depth === 1))) found.push(path); } } await walk(root, 0); return found.sort(); }
 function sourceList(count: number, sources: string[]) { return { count, sources: [...new Set(sources)].sort() }; }
 function timestamp(row: Record<string, unknown>) { return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : undefined; }
 function observedCommits(row: Record<string, unknown>): string[] {
