@@ -1,0 +1,32 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_eI2XV6lEAfMbQK0G93wdQgeY|fc_03b63daf1772e6d2016a6dc10ffb78819186ed0b22ce4d1618",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "Direct Fixer apply is authorized for exactly the three accepted classes below. Do not add compatibility, orchestration, new policy fields, or any TypeBox whitespace-pattern repair."
+    },
+    "classes": [
+      {
+        "name": "Issue44FixerSubprocessSessionEvidence",
+        "owner": "Issue #44 Fixer subprocess test invocation seam",
+        "boundary": "test/audit-failure-subprocess.test.ts::runFixerAuditFailureCli only",
+        "disposition": "Accepted Standards finding. The helper invokes the real Fixer role with --no-session, directly contradicting CLAUDE.md's mandatory role-invocation evidence rule. Replace that flag with the prescribed .ak/work/issues/44/runs/<invocation>/session arrangement and retain stderr.log plus invocation.json in the same run directory. Preserve the production-seam nonzero/no-receipt assertions; do not widen this repair to unrelated pre-Issue-44 subprocess fixtures."
+      },
+      {
+        "name": "Issue44FreeTextTestAnchors",
+        "owner": "Issue #44 Fixer audit/runtime regression tests",
+        "boundary": "The cited Fixer policy-prose assertions in test/fixer-auditor.test.ts and the changed Fixer description/prompt-guideline assertions in test/judge-role.test.ts",
+        "disposition": "Accepted Standards finding. These assertions mechanically freeze natural-language presentation by regex or exact prose, violating the anchoring constitution. Replace them with typed/tool-surface or observable behavioral assertions: active-model dispatch, exact supplied audit inputs, sole decision tool/schema, revise/pass/failure behavior, unchanged candidate projection, and lawful runtime outcomes. Do not remove authority-required byte-delivery checks for Soul/packet/invocation inputs, and do not introduce a test-only production hook or duplicate policy mechanism."
+      },
+      {
+        "name": "FixerAuditProvenanceAtRecorder",
+        "owner": "Recorder direct package-lifecycle acceptance",
+        "boundary": "src/recorder/extract.ts Fixer finalization, its generated dist artifact, and test/fixer-recorder.test.ts",
+        "disposition": "Accepted Spec finding. Recorder currently sets auditPassed:true for any structurally accepted current Fixer result even when toolResult.usage is absent. For ak_fixer_output only, require the complete valid typed Pi tool-result usage that the current Fixer auditor returns before accepting the lifecycle or emitting auditPassed:true; reject a current-shape success with that evidence removed, while retaining the positive audited lifecycle and legacy-leaf red. Leave other roles' existing compatibility behavior unchanged."
+      }
+    ],
+    "note": "Adjudication at current HEAD 0dead5c6837b749ec6f5b713783b45759ab2e49e (post-target changes are docket-only):\n\n1. Session finding accepted. test/audit-failure-subprocess.test.ts visibly passes --no-session together with --ak-role fixer. CLAUDE.md contains no test exception and explicitly says role calls use --session-dir rather than --no-session.\n\n2. Anchoring finding accepted in the narrow cited Issue #44 surface. test/fixer-auditor.test.ts regex-matches auditor policy wording, and test/judge-role.test.ts freezes Fixer description/guideline prose. Those are presentation assertions, unlike checks of typed schema, tool identity, model selection, exact supplied inputs, or observable pass/revise/failure behavior.\n\n3. Recorder finding accepted. carriesPackageAuditObservation merely classifies the tool; finalizeAcceptedPair makes usage optional and synthesizes auditPassed:true regardless. test/fixer-recorder.test.ts supplies usage for its green and rejects only a legacy leaf, so it has no unaudited-current red. Authentic Pi evidence is the tool-result usage row: Pi core copies result.usage into the persisted toolResult; current successful audited Judge/Reviewer rows under .ak/work/issues/44/runs contain complete usage, failed pre-audit rows and the unaudited Coder success do not. worker-role.ts likewise projects the successful Fixer audit's usage onto the tool result. This gives Recorder a typed discriminator without parsing acceptance prose.\n\n4. Spec whitespace finding rejected as a false positive. The authority requires nonblank strings to be trim-checked and legal greens to cross both the real TypeBox schema and production validator; it does not require TypeBox alone to reject whitespace. Current Value.Check accepts a whitespace report, but validateFixerOutput rejects it via trim(), so the real submission pipeline rejects before audit/acceptance. Validator-only trim rejection satisfies the stated contract. No TypeBox pattern/format repair is authorized.\n\nMechanical spot checks passed for fixer-contract, fixer-auditor, and fixer-recorder tests; their passing state does not dispose the accepted missing reds above."
+  },
+  "artifactKind": "acceptedReceipt"
+}

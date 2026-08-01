@@ -15,6 +15,7 @@ import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
 import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiReviewerAuditor } from "../src/reviewer-auditor.ts";
+import { createPiFixerAuditor } from "../src/fixer-auditor.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createRoleRuntimeExtension } from "../src/role-runtime.ts";
@@ -61,6 +62,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext,
     auditSoulCompliance: createPiSoulAuditor(),
+    auditFixerCompliance: createPiFixerAuditor(),
     auditReviewerCompliance: createPiReviewerAuditor(),
   })(pi);
 }

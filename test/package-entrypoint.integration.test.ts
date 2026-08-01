@@ -19,6 +19,7 @@ import { Type } from "typebox";
 
 import {
   CODER_OUTPUT_TOOL_NAME,
+  FIXER_AUDIT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
   ROLE_FLAG,
@@ -702,7 +703,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
 
           const output = phase === "plan"
             ? { status: "planned", report: "Repair plan ready." }
-            : { status: "completed", report: "Repaired and verified." };
+            : { status: "completed", report: "Repaired and verified.", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
           faux.setResponses([
             fauxAssistantMessage(
               [
@@ -737,6 +738,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               }),
               { stopReason: "toolUse" },
             ),
+            fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [] }), { stopReason: "toolUse" }),
           ]);
           await session.prompt(`Accept a sole Fixer output in ${phase}.`);
           const accepted = sessionManager.getEntries().find(

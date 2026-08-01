@@ -1,0 +1,19 @@
+# Issue #44 fixed-target review — exact mechanical proposal
+
+Review target `dd418124fbfe3db09f752972c89ea6766560cc08` against base `9247ab883f07adf5eabb75abf60777b626a58d17`. Production implementation commit: `7db2be8aefa90715ce521c7d797330fcb552792b`.
+
+Construct exactly one proposal with:
+
+- `base.revision`: `9247ab883f07adf5eabb75abf60777b626a58d17`
+- materials:
+  - `{ "id": "fixer-authority", "repositoryPath": ".ak/dockets/issues/44/authority/final-owner-correction-001/receipt.json" }`
+  - `{ "id": "repository-law", "repositoryPath": "CLAUDE.md" }`
+  - `{ "id": "fixer-soul", "repositoryPath": "souls/fixer.md" }`
+- `relevanceHints.standards`: `["repository-law", "fixer-soul"]`
+- `relevanceHints.spec`: `["fixer-authority"]`
+- `spec.state`: `established`
+- both Standards and Spec `required.tools`: `["read", "grep", "find", "ls", "bash"]`
+- both `required.bashCommands`: `["git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08"]`
+- both `required.prerequisiteOperations`: exactly all eight supplied operations, unchanged.
+
+Review both Standards and Spec. Inspect all clone material needed. Focus on the closed two-cause refusal domain, exact apply combination laws, plan shape, per-class identity/accountability, Coder compatibility, fresh Fixer audit ordering/input/isolation/revise/failure honesty, Recorder audit observation and current-leaf hard cut, public exports/docs/generated/packed artifacts, no orchestration, and production-seam tests. Report concrete findings only; do not repair.

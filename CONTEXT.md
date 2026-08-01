@@ -7,7 +7,7 @@
 - **角色门禁(Role gating)**:车间内的机械限制——工具集收窄、工具调用拦截。区别于 soul 的文本约束:门禁是拦得住的,不靠自觉。
 - **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其 typed 产物,是角色劳动成果的唯一法定出口;散文不构成交卷。并非每个角色都有交卷工具。
 - **Judge(判官)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。
-- **Fixer(修复工)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包的角色。经具名交卷工具报告 `planned`/`completed`/`refused`;git commit 是供调用方查证的客观证据,不是完整回执。
+- **Fixer(修复工)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`，不是未完进度。
 - **Coder(实现者)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 经 Pi 原生 `/skill:tdd` 调用 canonical Matt TDD;自查三连证据留在 report 供调用方处置,两者都不进入 Soul。Coder 回执不以新 commit 为无条件前提,拒绝可零 commit 直接交调用方处置。
 - **Reviewer(评审者)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。

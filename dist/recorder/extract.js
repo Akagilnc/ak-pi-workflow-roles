@@ -158,6 +158,8 @@ export class AcceptanceCollector {
 }
 function finalizeAcceptedPair(pair) {
     const { issuance, resultMessage } = pair;
+    if (issuance.toolName === "ak_fixer_output" && !validUsage(resultMessage.usage))
+        invalid();
     const content = resultMessage.content;
     if (!Array.isArray(content) || content.length !== 1 || !isRecord(content[0]) ||
         !hasExactKeys(content[0], ["type", "text"]) || content[0].type !== "text" || typeof content[0].text !== "string")

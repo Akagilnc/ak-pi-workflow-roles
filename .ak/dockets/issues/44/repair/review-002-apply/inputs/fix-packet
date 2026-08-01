@@ -1,0 +1,11 @@
+# Issue #44 Review-002 Fixer apply
+
+Repair all three authorized classes from `.ak/dockets/issues/44/judgment/review-002/receipt.json` in this one invocation:
+
+1. `Issue44FixerSubprocessSessionEvidence`
+2. `Issue44FreeTextTestAnchors`
+3. `FixerAuditProvenanceAtRecorder`
+
+Honor each exact owner, boundary, and disposition. Work test-first. Make one forward commit per class so every completed `classResults[]` entry has its own unique full commit ID. Do not repair the rejected TypeBox whitespace finding. Do not add compatibility, orchestration, policy fields, prose anchoring, test-only hooks, or broaden unrelated subprocess/role behavior.
+
+Run affected tests while constructing, then typecheck, isolated-HOME full tests, build:recorder, npm pack --dry-run, and git diff checks. Complete all executable authorized work; submit the new typed Fixer `completed` settlement with exactly these three completed per-finding results.
