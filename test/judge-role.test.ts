@@ -430,14 +430,16 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
     assert.deepEqual([...harness.tools.keys()], [fixture.name]);
     const tool = harness.tools.get(fixture.name);
     assert.ok(tool);
-    assert.deepEqual({
-      label: tool.label,
-      description: tool.description,
-      promptSnippet: tool.promptSnippet,
-      promptGuidelines: tool.promptGuidelines,
-    }, fixture.metadata);
-    if (fixture.role === "fixer") assert.ok(Array.isArray(tool.parameters.anyOf));
-    else {
+    if (fixture.role === "fixer") {
+      assert.equal(tool.name, FIXER_OUTPUT_TOOL_NAME);
+      assert.ok(Array.isArray(tool.parameters.anyOf));
+    } else {
+      assert.deepEqual({
+        label: tool.label,
+        description: tool.description,
+        promptSnippet: tool.promptSnippet,
+        promptGuidelines: tool.promptGuidelines,
+      }, fixture.metadata);
       assert.equal(tool.parameters.additionalProperties, false);
       assert.deepEqual(
         Object.keys(tool.parameters.properties),

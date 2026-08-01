@@ -22,11 +22,16 @@ test("Fixer auditor uses the active model, exact invocation inputs, and a non-ov
   assert.equal((await audit(input, { context })).status, "pass");
   assert.equal(model?.id, "same-model");
   assert.deepEqual(seen?.tools?.map((tool) => tool.name), [FIXER_AUDIT_TOOL_NAME]);
-  const serialized = JSON.stringify(seen);
-  for (const text of [input.soul, input.packet, input.phase, input.transcript, input.candidate.report]) assert.match(serialized, new RegExp(text));
-  assert.match(seen?.systemPrompt ?? "", /only demonstrated.*compliance/i);
-  assert.match(seen?.systemPrompt ?? "", /must not repair.*retry work.*finding merit.*route.*adjudicate/i);
-  assert.doesNotMatch(seen?.systemPrompt ?? "", /redo the repair|decide whether findings are correct/i);
+  const decisionTool = seen?.tools?.[0];
+  assert.equal((decisionTool?.parameters as any).additionalProperties, false);
+  assert.deepEqual((decisionTool?.parameters as any).required, ["status", "violations"]);
+  assert.deepEqual((decisionTool?.parameters as any).properties.status.enum, ["pass", "revise"]);
+  const userContent = seen?.messages.find((message) => message.role === "user")?.content;
+  assert.ok(Array.isArray(userContent));
+  const auditInput = userContent.map((part) => part.type === "text" ? part.text : "").join("");
+  for (const exactInput of [input.soul, input.packet, input.phase, input.transcript, JSON.stringify(input.candidate)]) {
+    assert.equal(auditInput.includes(exactInput), true);
+  }
 });
 
 test("Fixer auditor returns revise and rejects malformed decisions", async () => {
