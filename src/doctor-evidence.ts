@@ -1,33 +1,26 @@
-import { canonicalJson } from "./canonical-json.ts";
+import { readdir, readFile, realpath } from "node:fs/promises";
+import { basename, relative, resolve, sep } from "node:path";
 import { sha256Hex } from "./sha256.ts";
-import { statsLineEvidenceBytes, validateDoctorEvidenceIndex, type DoctorEvidenceIndexV1 } from "./doctor-contracts.ts";
-
-export type DoctorCommittedEvidenceReader = { read(targetCommit: string, path: string): Promise<Uint8Array> };
+import type { DoctorCase, DoctorCaseCost, DoctorEvidenceEntry } from "./doctor-contracts.ts";
 
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-function canonicalDocketPath(path: unknown): path is string {
-  if (typeof path !== "string" || path.includes("\\") || path.includes("//") || path.startsWith("/") || path.split("/").some((part) => part === "." || part === "..")) return false;
-  return /^\.ak\/dockets\/issues\/[1-9]\d*\/(?:[^/]+\/)*[^/]+$/.test(path);
-}
+async function files(root: string): Promise<string[]> { const found: string[] = []; async function walk(dir: string) { for (const item of await readdir(dir, { withFileTypes: true })) { const path = resolve(dir, item.name); if (item.isDirectory()) await walk(path); else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log")) found.push(path); } } await walk(root); return found.sort(); }
+function sourceList(count: number, sources: string[]) { return { count, sources: [...new Set(sources)].sort() }; }
+function timestamp(row: Record<string, unknown>) { return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : undefined; }
 
-/** Resolve claim-chain entries from immutable target bytes before admitting any evidence to Doctor. */
-export async function resolveDoctorEvidenceIndex(value: unknown, reader: DoctorCommittedEvidenceReader): Promise<DoctorEvidenceIndexV1> {
-  if (!record(value) || !Array.isArray(value.evidence) || typeof value.targetCommit !== "string") throw new Error("Doctor evidence index is malformed");
-  const committed = new Set(["manifest", "receipt", "verdict", "disposition"]); const sources = new Set<string>();
-  const committedIdentities = new Map<string, { sha256: string; byteLength: number }>();
-  const evidence = await Promise.all(value.evidence.map(async (item) => {
-    if (!record(item) || !committed.has(String(item.kind))) return item;
-    if (!record(item.source) || item.source.commit !== value.targetCommit || !canonicalDocketPath(item.source.path)) throw new Error("Committed evidence source is not a canonical target-confined docket path");
-    const sourceCommit = item.source.commit as string; const sourcePath = item.source.path; const sourceKey = `${sourceCommit}:${sourcePath}`; if (sources.has(sourceKey)) throw new Error("Duplicate committed evidence source"); sources.add(sourceKey);
-    let bytes: Uint8Array; try { bytes = await reader.read(sourceCommit, sourcePath); } catch (error) { throw new Error(`Committed evidence is inaccessible: ${sourcePath}`, { cause: error }); }
-    let data: unknown; try { data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch (error) { throw new Error(`Committed evidence is malformed: ${sourcePath}`, { cause: error }); }
-    const sha256 = sha256Hex(bytes); const byteLength = bytes.byteLength;
-    if (canonicalJson(item.data) !== canonicalJson(data)) throw new Error(`Committed evidence target-byte mismatch: ${String(item.id)}`);
-    if (typeof item.id === "string") committedIdentities.set(item.id, { sha256, byteLength });
-    return { id: item.id, kind: item.kind, sha256: item.sha256, byteLength: item.byteLength, source: { commit: sourceCommit, path: sourcePath }, data };
-  }));
-  // The ordinary validator closes metadata/StatsLine contracts and freezes the resolver-derived store.
-  return validateDoctorEvidenceIndex({ ...value, evidence }, committedIdentities);
+/** Read Pi's retained session directory as the sole raw material for one case. */
+export async function loadDoctorCase(runsPath: string): Promise<DoctorCase> {
+  const root = await realpath(runsPath); const match = root.split(sep).join("/").match(/\/issues\/([1-9]\d*)\/runs$/); if (!match) throw new Error("Doctor case must be an .ak/work/issues/<n>/runs directory");
+  const paths = await files(root); const evidence: DoctorEvidenceEntry[] = []; const sessions: DoctorCaseCost["sessions"] = []; const turnSources: string[] = [], callSources: string[] = [], tokenSources: string[] = []; let turns = 0, calls = 0, tokens = 0; const statuses: DoctorCaseCost["statuses"] = [], commits: DoctorCaseCost["commits"] = [];
+  for (const path of paths) {
+    const id = relative(root, path).split(sep).join("/"); const bytes = await readFile(path); const content = bytes.toString("utf8"); const kind = id.endsWith(".jsonl") ? "session" : "stderr"; evidence.push({ id, kind, byteLength: bytes.byteLength, sha256: sha256Hex(bytes), content }); if (kind === "stderr") continue;
+    const rows: Record<string, unknown>[] = []; for (const line of content.split("\n")) if (line.trim()) { const row: unknown = JSON.parse(line); if (!record(row)) throw new Error(`Invalid Pi session row: ${id}`); rows.push(row); }
+    const started = rows.find((row) => row.type === "session"); const startedAt = started && timestamp(started); if (!startedAt) throw new Error(`Pi session header is missing: ${id}`);
+    let accepted: Record<string, unknown> | undefined;
+    for (const row of rows) { const message = record(row.message) ? row.message : undefined; if (message?.role === "assistant" && typeof message.responseId === "string") { turns++; turnSources.push(id); const usage = record(message.usage) ? message.usage : undefined; if (usage && typeof usage.output === "number") { tokens += usage.output; tokenSources.push(id); } const contentItems = Array.isArray(message.content) ? message.content : []; for (const part of contentItems) if (record(part) && part.type === "toolCall") { calls++; callSources.push(id); } } if (message?.role === "toolResult" && message.isError !== true && record(message.details)) { accepted = row; const details = message.details; const status = ["status", "judgeStatus"].map((key) => details[key]).find((item) => typeof item === "string"); if (typeof status === "string") statuses.push({ source: id, status }); const commit = ["commitSha", "commit", "commitSHA"].map((key) => details[key]).find((item) => typeof item === "string" && /^[0-9a-f]{7,40}$/i.test(item)); if (typeof commit === "string") commits.push({ source: id, commit }); } }
+    const final = accepted ?? rows.at(-1)!; const endedAt = timestamp(final) ?? startedAt; sessions.push({ source: id, startedAt, endedAt, wallMilliseconds: Date.parse(endedAt) - Date.parse(startedAt), completion: accepted ? "accepted" : "incomplete" });
+  }
+  const runDirs = (await readdir(root, { withFileTypes: true })).filter((item) => item.isDirectory()).map((item) => item.name).sort(); const legs = evidence.filter((entry) => entry.kind === "session").map((entry) => entry.id); const retryDirs = runDirs.filter((name) => /(?:^|[-_])retry(?:[-_]|$)/i.test(name)); const rawBytes = evidence.filter((entry) => entry.kind === "session").reduce((sum, entry) => sum + entry.byteLength, 0);
+  const cost: DoctorCaseCost = { invocations: sourceList(runDirs.length, runDirs), legs: sourceList(legs.length, legs), modelApiTurns: sourceList(turns, turnSources), outputTokens: sourceList(tokens, tokenSources), toolCalls: sourceList(calls, callSources), retries: { ...sourceList(retryDirs.length, retryDirs), evidence: "literal run-dir naming" }, statuses, commits, sessions, outputBytes: { ...sourceList(rawBytes, legs), payload: "raw JSONL bytes", providerWireBytes: "unavailable" } };
+  return { version: 1, identity: { issueNumber: Number(match[1]), runsPath: root }, evidence, cost };
 }
-
-export function evidenceAssertion(data: unknown) { const bytes = statsLineEvidenceBytes(data); return { sha256: sha256Hex(bytes), byteLength: bytes.byteLength }; }
