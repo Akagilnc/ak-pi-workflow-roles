@@ -1,0 +1,7 @@
+# Issue #22 Merger final convergence
+
+Independently verify current HEAD against `.ak/dockets/issues/22/authority/final-synthesis-001/receipt.json` and the Review-001 judgment/repair chain.
+
+Check the complete Merger v1 class: closed digest-bound input/output contracts; exact in-progress merge preflight and conflict set; immutable automatic merge result and permitted resolution scope; constrained tools and singleton settlement; completed exact two-parent/clean verification; honest escalation/failure; no merge initiation/abort/retry/publication/orchestration; public exports/registration/Recorder/docs/cold package; deterministic production Git tests; existing role meanings unchanged. Verify Review-001 is closed with corrected automatic-tree semantics.
+
+Run gates. Converge only if no authorized residual remains.
