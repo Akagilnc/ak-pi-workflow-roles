@@ -28,6 +28,7 @@ import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "./worker-role.ts";
+import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -58,6 +59,11 @@ export {
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
+export { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket } from "./package-contracts/fixer-output.ts";
+export type { FixerBlocker, FixerClassResult, FixerPhase } from "./package-contracts/fixer-output.ts";
+export { fixerPacketV1Schema, fixerPrerequisiteSchema, parseFixPacketV1, validateFixPacketV1 } from "./package-contracts/fixer-packet.ts";
+export type { FixPacketV1, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
+export { FIXER_AUDIT_TOOL_NAME, createPiFixerAuditor } from "./fixer-auditor.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
@@ -83,8 +89,14 @@ export * from "./assisted-acquisition.ts";
 export * from "./assisted-ledger.ts";
 export * from "./assisted-runner.ts";
 export { createRecorderAssistedTransportV1 } from "./assisted-recorder-transport.ts";
+export { MERGER_INPUT_FLAG, MERGER_ACTIVE_TOOLS, createMergerRoleRuntime } from "./merger-role.ts";
+export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
+export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";
+export { createProductionMergerGitState } from "./merger-git-state.ts";
+export type { MergerGitState, ActiveMergerGitState, CompletedMergerGitState } from "./merger-git-state.ts";
+export type { MergerRoleDependencies } from "./merger-role.ts";
 
-export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator"] as const;
+export const WORKFLOW_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator", "merger"] as const;
 export const ROLE_FLAG = {
   name: "ak-role",
   definition: {
@@ -108,6 +120,10 @@ export type RoleRuntimeDependencies = {
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
   loadDoctorEvidenceIndex?(path: string): Promise<unknown>;
+  loadMergerSoul?(): Promise<string>;
+  loadMergerInput?(path: string): Promise<unknown>;
+  mergerGitState?: MergerRoleDependencies["gitState"];
+  createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
   readDoctorCommittedEvidence?(targetCommit: string, path: string): Promise<Uint8Array>;
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
@@ -129,6 +145,10 @@ export type RoleRuntimeDependencies = {
     input: SoulAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
   ): Promise<SoulAuditResult>;
+  auditFixerCompliance?(
+    input: import("./worker-role.ts").FixerAuditInput,
+    options: { context: ExtensionContext; signal?: AbortSignal },
+  ): Promise<ComplianceDecision>;
   auditReviewerCompliance?(
     input: ReviewerAuditInput,
     options: { context: ExtensionContext; signal?: AbortSignal },
@@ -172,7 +192,13 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadFixPacket(path);
         },
+        transcriptFromContext: dependencies.transcriptFromContext,
+        async auditCompliance(input, options) {
+          if (dependencies.auditFixerCompliance === undefined) throw new Error("Fixer compliance auditor is not configured");
+          return dependencies.auditFixerCompliance(input, options);
+        },
       },
+      hostActions,
     );
     const coder = createCoderRoleRuntime(
       pi,
@@ -254,6 +280,15 @@ export function createRoleRuntimeExtension(
       async loadEvidence(snapshot) { if (!dependencies.loadNavigatorEvidence) throw new Error("Navigator runtime dependencies are not configured"); return dependencies.loadNavigatorEvidence(snapshot); },
       async auditCompliance(input, options) { if (!dependencies.auditNavigatorCompliance) throw new Error("Navigator runtime dependencies are not configured"); return dependencies.auditNavigatorCompliance(input, options); },
     }, hostActions);
+    let sessionMergerGitState = dependencies.mergerGitState;
+    const merger = createMergerRoleRuntime(pi, {
+      async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
+      async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
+      gitState: {
+        activeMerge() { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.activeMerge(); },
+        completedMerge(mergeCommitId, automaticMergeTreeId) { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.completedMerge(mergeCommitId, automaticMergeTreeId); },
+      },
+    }, hostActions);
     const collector = createCollectorRoleRuntime(
       pi,
       {
@@ -308,6 +343,13 @@ export function createRoleRuntimeExtension(
           return;
         case "navigator":
           await navigator.activate();
+          return;
+        case "merger":
+          sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
+          if (sessionMergerGitState === undefined) {
+            throw new Error("Merger runtime dependencies are not configured");
+          }
+          await merger.activate();
           return;
       }
     });

@@ -1,0 +1,12 @@
+# Issue #44 Review-002 finding adjudication
+
+Adjudicate every Standards and Spec finding in `.ak/dockets/issues/44/review/review-002/receipt.json` against `.ak/dockets/issues/44/authority/final-owner-correction-001/receipt.json`, repository law, and current HEAD.
+
+Determine concrete class repairs for accepted findings, including owner/boundary/disposition. Specifically verify rather than assume:
+
+- whether the subprocess Fixer invocation violates the mandatory session evidence rule;
+- whether tests mechanically bite natural-language presentation rather than typed/behavioral contracts;
+- whether Recorder can distinguish a current Fixer receipt that truly passed audit from a structurally valid but unaudited lifecycle, and what authentic evidence exists in Pi session rows;
+- whether TypeBox transport schema itself must trim-reject whitespace or whether validator-only rejection meets the authority's real-submission requirement.
+
+Reject false positives explicitly. If repair is needed, authorize direct Fixer apply with the exact class set. Do not repair code, invent compatibility, or broaden Issue #44.

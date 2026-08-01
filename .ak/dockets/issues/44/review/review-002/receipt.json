@@ -1,0 +1,390 @@
+{
+  "toolName": "ak_reviewer_output",
+  "toolCallId": "call_lYCgKAMKY4o9Z08w9xMUiLqz|fc_0efb8a1b28609682016a6dbffc6fb481919313102f099e7ca7",
+  "details": {
+    "version": 2,
+    "status": "completed",
+    "acceptedBatch": {
+      "identity": "3a1fc4f5eed6254da301647941e8492255a2b453ec493b4584621f15367e1a10",
+      "legs": [
+        {
+          "axis": "standards",
+          "prompt": {
+            "text": "Task-SHA256: 1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c\nTarget: dd418124fbfe3db09f752972c89ea6766560cc08\nBase: 9247ab883f07adf5eabb75abf60777b626a58d17\nDiff: git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\n<review_scope>full</review_scope>\nRecipe: reviewer-common-bundle@1\nBundle-Manifest-SHA256: 92da4805216637389081413f0ec9e11d12dd1e1dc761f2b91b30968ff6ea1d56\nBundle-Material: {\"id\":\"canonical-skill\",\"relativeClonePath\":\".ak-reviewer/materials/canonical-skill.md\",\"sha256\":\"6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f\"}\nBundle-Material: {\"id\":\"opaque-task\",\"relativeClonePath\":\".ak-reviewer/materials/task.md\",\"sha256\":\"1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c\"}\nBundle-Material: {\"id\":\"review-range\",\"relativeClonePath\":\".ak-reviewer/materials/range.json\",\"sha256\":\"97c24c84db613b646e535c827866c24921ecf2c177e02afc0e928bd8e7512f7b\"}\nBundle-Material: {\"id\":\"material-fixer-authority\",\"relativeClonePath\":\".ak-reviewer/materials/selected/fixer-authority.md\",\"sha256\":\"68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527\"}\nBundle-Material: {\"id\":\"material-repository-law\",\"relativeClonePath\":\".ak-reviewer/materials/selected/repository-law.md\",\"sha256\":\"e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228\"}\nBundle-Material: {\"id\":\"material-fixer-soul\",\"relativeClonePath\":\".ak-reviewer/materials/selected/fixer-soul.md\",\"sha256\":\"48ce77bc10d08a1ac73ee97a41f808de8bf07154134b410dc26cfa73b64cfd7a\"}\nGrant: {\"tools\":[\"read\",\"grep\",\"find\",\"ls\",\"bash\"],\"bashCommands\":[\"git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\"],\"prerequisiteOperations\":[\"preflight.git.pin-target\",\"preflight.git.resolve-base\",\"preflight.git.derive-range\",\"preflight.git.list-ordered-commits\",\"preflight.git.read-material\",\"runner.git.materialize-mirror\",\"runner.git.materialize-workspace\",\"runner.git.verify-snapshot\"]}\nAxis-Output-Adapter: reviewer-axis-output@1:standards\nThe complete canonical Skill snapshot in the common bundle remains authoritative semantic input.\nFor this already-isolated leg, this package adapter supersedes that Skill's dual-agent orchestration, dual-axis aggregation, and dual-section presentation mechanics.\nAnswer only the canonical Standards question, including its complete smell baseline and burden.\nEmit exactly one substantive Standards report. Do not emit a Spec assessment, Spec finding count, Spec conclusion, or second-axis section.\nYou may read and cite any supplied common material, including material relevant to the other axis; material access and citation do not change the assigned question.\nThe returned report is the complete output envelope and its UTF-8 bytes are preserved verbatim; no heading parser, sanitizer, section splitter, rewrite, aggregation, or replacement leg follows.\n",
+            "utf8Length": 2887,
+            "sha256": "8c6887863704a05046b85b5096483169f99a8104ab92412b56c2e82eec37a919"
+          }
+        },
+        {
+          "axis": "spec",
+          "prompt": {
+            "text": "Task-SHA256: 1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c\nTarget: dd418124fbfe3db09f752972c89ea6766560cc08\nBase: 9247ab883f07adf5eabb75abf60777b626a58d17\nDiff: git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\n<review_scope>full</review_scope>\nRecipe: reviewer-common-bundle@1\nBundle-Manifest-SHA256: 92da4805216637389081413f0ec9e11d12dd1e1dc761f2b91b30968ff6ea1d56\nBundle-Material: {\"id\":\"canonical-skill\",\"relativeClonePath\":\".ak-reviewer/materials/canonical-skill.md\",\"sha256\":\"6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f\"}\nBundle-Material: {\"id\":\"opaque-task\",\"relativeClonePath\":\".ak-reviewer/materials/task.md\",\"sha256\":\"1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c\"}\nBundle-Material: {\"id\":\"review-range\",\"relativeClonePath\":\".ak-reviewer/materials/range.json\",\"sha256\":\"97c24c84db613b646e535c827866c24921ecf2c177e02afc0e928bd8e7512f7b\"}\nBundle-Material: {\"id\":\"material-fixer-authority\",\"relativeClonePath\":\".ak-reviewer/materials/selected/fixer-authority.md\",\"sha256\":\"68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527\"}\nBundle-Material: {\"id\":\"material-repository-law\",\"relativeClonePath\":\".ak-reviewer/materials/selected/repository-law.md\",\"sha256\":\"e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228\"}\nBundle-Material: {\"id\":\"material-fixer-soul\",\"relativeClonePath\":\".ak-reviewer/materials/selected/fixer-soul.md\",\"sha256\":\"48ce77bc10d08a1ac73ee97a41f808de8bf07154134b410dc26cfa73b64cfd7a\"}\nGrant: {\"tools\":[\"read\",\"grep\",\"find\",\"ls\",\"bash\"],\"bashCommands\":[\"git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\"],\"prerequisiteOperations\":[\"preflight.git.pin-target\",\"preflight.git.resolve-base\",\"preflight.git.derive-range\",\"preflight.git.list-ordered-commits\",\"preflight.git.read-material\",\"runner.git.materialize-mirror\",\"runner.git.materialize-workspace\",\"runner.git.verify-snapshot\"]}\nAxis-Output-Adapter: reviewer-axis-output@1:spec\nThe complete canonical Skill snapshot in the common bundle remains authoritative semantic input.\nFor this already-isolated leg, this package adapter supersedes that Skill's dual-agent orchestration, dual-axis aggregation, and dual-section presentation mechanics.\nAnswer only the canonical Spec question.\nEmit exactly one substantive Spec report. Do not emit a Standards assessment, Standards finding count, Standards conclusion, or second-axis section.\nYou may read and cite any supplied common material, including material relevant to the other axis; material access and citation do not change the assigned question.\nThe returned report is the complete output envelope and its UTF-8 bytes are preserved verbatim; no heading parser, sanitizer, section splitter, rewrite, aggregation, or replacement leg follows.\n",
+            "utf8Length": 2837,
+            "sha256": "e5996df5e507ac3ab562d54bab85edacd1f4f9bdbb75e92e90f1d8d33db0ccc9"
+          }
+        }
+      ]
+    },
+    "reports": {
+      "standards": {
+        "text": "## Standards\n\n1. **Hard violation — role invocation evidence**  \n   `test/audit-failure-subprocess.test.ts` adds `runFixerAuditFailureCli()` with:\n   > `const args = [..., \"--no-session\", ..., \"--ak-role\", \"fixer\", ...]`\n\n   `CLAUDE.md` explicitly requires role invocations to use `pi --session-dir ...` and says not to use `--no-session`. This new production-seam test invokes Fixer contrary to that repository rule and leaves no invocation/session evidence. Replace the no-session invocation with an isolated session directory and retain the prescribed evidence.\n\n2. **Hard violation — anchoring constitution**  \n   `test/fixer-auditor.test.ts` mechanically tests free-text prompt wording:\n   > `assert.match(seen?.systemPrompt ?? \"\", /only demonstrated.*compliance/i);`  \n   > `assert.match(..., /must not repair.*retry work.*finding merit.*route.*adjudicate/i);`\n\n   `test/judge-role.test.ts` likewise asserts exact natural-language Fixer descriptions and prompt guidelines. `CLAUDE.md` forbids regex/wording dependencies on free text and requires machine-consumed information to use typed fields or schemas. These tests make auditor prose and presentation text contractual. Assert structured policy/tool configuration or observable audit behavior instead.\n\nNo additional Fowler-baseline smells were concrete enough to report; the contract/schema duplication is justified by the repository’s requirement that mechanical invariants live in runtime validation. Supplied Coder receipts report the already-run battery passing; it was not rerun during this review.\n\n**Standards conclusion: 2 findings; worst is the explicit `--no-session` role invocation, which violates the repository’s evidence rule.**",
+        "utf8Length": 1711,
+        "sha256": "f8e65046ec66873919a583e149fd913e5e3a8efee7721358dd2741abd3b5a294"
+      },
+      "spec": {
+        "text": "## Spec\n\n1. **High — Recorder accepts an unaudited current Fixer lifecycle as audited** (`src/recorder/extract.ts:194-196`, `src/package-contracts/terminating-tools.ts:128-136`).  \n   The authority explicitly requires a red for “Recorder accepting an unaudited … current Fixer lifecycle.” However, any successful current-shape Fixer tool result is assigned `{ auditPassed: true }`; audit usage is optional, and no audit evidence is required. Thus a lifecycle containing a valid Fixer issuance/result but no audit usage is accepted and falsely reported as audited. The added test only rejects a legacy leaf, not an unaudited current leaf.\n\n2. **Medium — The public TypeBox submission schema accepts whitespace-only contract strings** (`src/package-contracts/fixer-output.ts:7-8`).  \n   The authority says “Nonblank strings are trim-checked” and requires legal/illegal shapes to traverse the real submission schema. `nonblankTransportString` uses only `{ minLength: 1 }`, so `\" \"`, `\"\\t\"`, etc. pass the tool schema for reports, evidence, remaining scope, names, search scopes, and exception fields. The later production validator rejects them, but the public submission schema does not implement the specified nonblank contract.",
+        "utf8Length": 1241,
+        "sha256": "4dad070a4c2527b5afa594670b477107550acc740c796ce6f865628906fe7218"
+      }
+    },
+    "outcomes": {
+      "standards": {
+        "status": "successful",
+        "prompt": {
+          "text": "Task-SHA256: 1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c\nTarget: dd418124fbfe3db09f752972c89ea6766560cc08\nBase: 9247ab883f07adf5eabb75abf60777b626a58d17\nDiff: git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\n<review_scope>full</review_scope>\nRecipe: reviewer-common-bundle@1\nBundle-Manifest-SHA256: 92da4805216637389081413f0ec9e11d12dd1e1dc761f2b91b30968ff6ea1d56\nBundle-Material: {\"id\":\"canonical-skill\",\"relativeClonePath\":\".ak-reviewer/materials/canonical-skill.md\",\"sha256\":\"6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f\"}\nBundle-Material: {\"id\":\"opaque-task\",\"relativeClonePath\":\".ak-reviewer/materials/task.md\",\"sha256\":\"1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c\"}\nBundle-Material: {\"id\":\"review-range\",\"relativeClonePath\":\".ak-reviewer/materials/range.json\",\"sha256\":\"97c24c84db613b646e535c827866c24921ecf2c177e02afc0e928bd8e7512f7b\"}\nBundle-Material: {\"id\":\"material-fixer-authority\",\"relativeClonePath\":\".ak-reviewer/materials/selected/fixer-authority.md\",\"sha256\":\"68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527\"}\nBundle-Material: {\"id\":\"material-repository-law\",\"relativeClonePath\":\".ak-reviewer/materials/selected/repository-law.md\",\"sha256\":\"e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228\"}\nBundle-Material: {\"id\":\"material-fixer-soul\",\"relativeClonePath\":\".ak-reviewer/materials/selected/fixer-soul.md\",\"sha256\":\"48ce77bc10d08a1ac73ee97a41f808de8bf07154134b410dc26cfa73b64cfd7a\"}\nGrant: {\"tools\":[\"read\",\"grep\",\"find\",\"ls\",\"bash\"],\"bashCommands\":[\"git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\"],\"prerequisiteOperations\":[\"preflight.git.pin-target\",\"preflight.git.resolve-base\",\"preflight.git.derive-range\",\"preflight.git.list-ordered-commits\",\"preflight.git.read-material\",\"runner.git.materialize-mirror\",\"runner.git.materialize-workspace\",\"runner.git.verify-snapshot\"]}\nAxis-Output-Adapter: reviewer-axis-output@1:standards\nThe complete canonical Skill snapshot in the common bundle remains authoritative semantic input.\nFor this already-isolated leg, this package adapter supersedes that Skill's dual-agent orchestration, dual-axis aggregation, and dual-section presentation mechanics.\nAnswer only the canonical Standards question, including its complete smell baseline and burden.\nEmit exactly one substantive Standards report. Do not emit a Spec assessment, Spec finding count, Spec conclusion, or second-axis section.\nYou may read and cite any supplied common material, including material relevant to the other axis; material access and citation do not change the assigned question.\nThe returned report is the complete output envelope and its UTF-8 bytes are preserved verbatim; no heading parser, sanitizer, section splitter, rewrite, aggregation, or replacement leg follows.\n",
+          "utf8Length": 2887,
+          "sha256": "8c6887863704a05046b85b5096483169f99a8104ab92412b56c2e82eec37a919"
+        },
+        "workspaceDisposition": "deleted",
+        "runtimeConstructionEvidence": {
+          "leg": "standards",
+          "workspaceIdentity": "33954ee7228bee9cd26bc27782f22f0441af5dff0d8dba180052dfdf24cbfc8b",
+          "manifestSha256": "92da4805216637389081413f0ec9e11d12dd1e1dc761f2b91b30968ff6ea1d56",
+          "entries": [
+            {
+              "id": "canonical-skill",
+              "relativeClonePath": ".ak-reviewer/materials/canonical-skill.md",
+              "utf8Length": 6740,
+              "sha256": "6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f",
+              "verified": true
+            },
+            {
+              "id": "opaque-task",
+              "relativeClonePath": ".ak-reviewer/materials/task.md",
+              "utf8Length": 1546,
+              "sha256": "1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c",
+              "verified": true
+            },
+            {
+              "id": "review-range",
+              "relativeClonePath": ".ak-reviewer/materials/range.json",
+              "utf8Length": 617,
+              "sha256": "97c24c84db613b646e535c827866c24921ecf2c177e02afc0e928bd8e7512f7b",
+              "verified": true
+            },
+            {
+              "id": "material-fixer-authority",
+              "relativeClonePath": ".ak-reviewer/materials/selected/fixer-authority.md",
+              "utf8Length": 5663,
+              "sha256": "68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527",
+              "verified": true
+            },
+            {
+              "id": "material-repository-law",
+              "relativeClonePath": ".ak-reviewer/materials/selected/repository-law.md",
+              "utf8Length": 3380,
+              "sha256": "e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228",
+              "verified": true
+            },
+            {
+              "id": "material-fixer-soul",
+              "relativeClonePath": ".ak-reviewer/materials/selected/fixer-soul.md",
+              "utf8Length": 1054,
+              "sha256": "48ce77bc10d08a1ac73ee97a41f808de8bf07154134b410dc26cfa73b64cfd7a",
+              "verified": true
+            }
+          ]
+        }
+      },
+      "spec": {
+        "status": "successful",
+        "prompt": {
+          "text": "Task-SHA256: 1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c\nTarget: dd418124fbfe3db09f752972c89ea6766560cc08\nBase: 9247ab883f07adf5eabb75abf60777b626a58d17\nDiff: git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\n<review_scope>full</review_scope>\nRecipe: reviewer-common-bundle@1\nBundle-Manifest-SHA256: 92da4805216637389081413f0ec9e11d12dd1e1dc761f2b91b30968ff6ea1d56\nBundle-Material: {\"id\":\"canonical-skill\",\"relativeClonePath\":\".ak-reviewer/materials/canonical-skill.md\",\"sha256\":\"6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f\"}\nBundle-Material: {\"id\":\"opaque-task\",\"relativeClonePath\":\".ak-reviewer/materials/task.md\",\"sha256\":\"1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c\"}\nBundle-Material: {\"id\":\"review-range\",\"relativeClonePath\":\".ak-reviewer/materials/range.json\",\"sha256\":\"97c24c84db613b646e535c827866c24921ecf2c177e02afc0e928bd8e7512f7b\"}\nBundle-Material: {\"id\":\"material-fixer-authority\",\"relativeClonePath\":\".ak-reviewer/materials/selected/fixer-authority.md\",\"sha256\":\"68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527\"}\nBundle-Material: {\"id\":\"material-repository-law\",\"relativeClonePath\":\".ak-reviewer/materials/selected/repository-law.md\",\"sha256\":\"e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228\"}\nBundle-Material: {\"id\":\"material-fixer-soul\",\"relativeClonePath\":\".ak-reviewer/materials/selected/fixer-soul.md\",\"sha256\":\"48ce77bc10d08a1ac73ee97a41f808de8bf07154134b410dc26cfa73b64cfd7a\"}\nGrant: {\"tools\":[\"read\",\"grep\",\"find\",\"ls\",\"bash\"],\"bashCommands\":[\"git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\"],\"prerequisiteOperations\":[\"preflight.git.pin-target\",\"preflight.git.resolve-base\",\"preflight.git.derive-range\",\"preflight.git.list-ordered-commits\",\"preflight.git.read-material\",\"runner.git.materialize-mirror\",\"runner.git.materialize-workspace\",\"runner.git.verify-snapshot\"]}\nAxis-Output-Adapter: reviewer-axis-output@1:spec\nThe complete canonical Skill snapshot in the common bundle remains authoritative semantic input.\nFor this already-isolated leg, this package adapter supersedes that Skill's dual-agent orchestration, dual-axis aggregation, and dual-section presentation mechanics.\nAnswer only the canonical Spec question.\nEmit exactly one substantive Spec report. Do not emit a Standards assessment, Standards finding count, Standards conclusion, or second-axis section.\nYou may read and cite any supplied common material, including material relevant to the other axis; material access and citation do not change the assigned question.\nThe returned report is the complete output envelope and its UTF-8 bytes are preserved verbatim; no heading parser, sanitizer, section splitter, rewrite, aggregation, or replacement leg follows.\n",
+          "utf8Length": 2837,
+          "sha256": "e5996df5e507ac3ab562d54bab85edacd1f4f9bdbb75e92e90f1d8d33db0ccc9"
+        },
+        "workspaceDisposition": "deleted",
+        "runtimeConstructionEvidence": {
+          "leg": "spec",
+          "workspaceIdentity": "9db7f749bff76d1ab8a4f40dda0ed43da85d8904d539cc5b02faf3969dd9e241",
+          "manifestSha256": "92da4805216637389081413f0ec9e11d12dd1e1dc761f2b91b30968ff6ea1d56",
+          "entries": [
+            {
+              "id": "canonical-skill",
+              "relativeClonePath": ".ak-reviewer/materials/canonical-skill.md",
+              "utf8Length": 6740,
+              "sha256": "6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f",
+              "verified": true
+            },
+            {
+              "id": "opaque-task",
+              "relativeClonePath": ".ak-reviewer/materials/task.md",
+              "utf8Length": 1546,
+              "sha256": "1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c",
+              "verified": true
+            },
+            {
+              "id": "review-range",
+              "relativeClonePath": ".ak-reviewer/materials/range.json",
+              "utf8Length": 617,
+              "sha256": "97c24c84db613b646e535c827866c24921ecf2c177e02afc0e928bd8e7512f7b",
+              "verified": true
+            },
+            {
+              "id": "material-fixer-authority",
+              "relativeClonePath": ".ak-reviewer/materials/selected/fixer-authority.md",
+              "utf8Length": 5663,
+              "sha256": "68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527",
+              "verified": true
+            },
+            {
+              "id": "material-repository-law",
+              "relativeClonePath": ".ak-reviewer/materials/selected/repository-law.md",
+              "utf8Length": 3380,
+              "sha256": "e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228",
+              "verified": true
+            },
+            {
+              "id": "material-fixer-soul",
+              "relativeClonePath": ".ak-reviewer/materials/selected/fixer-soul.md",
+              "utf8Length": 1054,
+              "sha256": "48ce77bc10d08a1ac73ee97a41f808de8bf07154134b410dc26cfa73b64cfd7a",
+              "verified": true
+            }
+          ]
+        }
+      }
+    },
+    "identities": {
+      "canonicalSkill": {
+        "sha256": "6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f",
+        "utf8Length": 6740,
+        "snapshotIdentity": {
+          "text": "---\nname: code-review\ndescription: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\".\n---\n\nTwo-axis review of the diff between `HEAD` and a fixed point the user supplies:\n\n- **Standards** — does the code conform to this repo's documented coding standards?\n- **Spec** — does the code faithfully implement the originating issue / PRD / spec?\n\nBoth axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.\n\nThe issue tracker should have been provided to you — run `/setup-matt-pocock-skills` if `docs/agents/issue-tracker.md` is missing.\n\n## Process\n\n### 1. Pin the fixed point\n\nWhatever the user said is the fixed point — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. If they didn't specify one, ask for it.\n\nCapture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.\n\nBefore going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.\n\n### 2. Identify the spec source\n\nLook for the originating spec, in this order:\n\n1. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.) — fetch via the workflow in `docs/agents/issue-tracker.md`.\n2. A path the user passed as an argument.\n3. A PRD/spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.\n4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report \"no spec available\".\n\n### 3. Identify the standards sources\n\nAnything in the repo that documents how code should be written, such as `CODING_STANDARDS.md` or `CONTRIBUTING.md`.\n\nOn top of whatever the repo documents, the Standards axis always carries the **smell baseline** below — a fixed set of Fowler code smells (_Refactoring_, ch.3) that applies even when a repo documents nothing. Two rules bind it:\n\n- **The repo overrides.** A documented repo standard always wins; where it endorses something the baseline would flag, suppress the smell.\n- **Always a judgement call.** Each smell is a labelled heuristic (\"possible Feature Envy\"), never a hard violation — and, like any standard here, skip anything tooling already enforces.\n\nEach smell reads *what it is* → *how to fix*; match it against the diff:\n\n- **Mysterious Name** — a function, variable, or type whose name doesn't reveal what it does or holds. → rename it; if no honest name comes, the design's murky.\n- **Duplicated Code** — the same logic shape appears in more than one hunk or file in the change. → extract the shared shape, call it from both.\n- **Feature Envy** — a method that reaches into another object's data more than its own. → move the method onto the data it envies.\n- **Data Clumps** — the same few fields or params keep travelling together (a type wanting to be born). → bundle them into one type, pass that.\n- **Primitive Obsession** — a primitive or string standing in for a domain concept that deserves its own type. → give the concept its own small type.\n- **Repeated Switches** — the same `switch`/`if`-cascade on the same type recurs across the change. → replace with polymorphism, or one map both sites share.\n- **Shotgun Surgery** — one logical change forces scattered edits across many files in the diff. → gather what changes together into one module.\n- **Divergent Change** — one file or module is edited for several unrelated reasons. → split so each module changes for one reason.\n- **Speculative Generality** — abstraction, parameters, or hooks added for needs the spec doesn't have. → delete it; inline back until a real need shows.\n- **Message Chains** — long `a.b().c().d()` navigation the caller shouldn't depend on. → hide the walk behind one method on the first object.\n- **Middle Man** — a class or function that mostly just delegates onward. → cut it, call the real target direct.\n- **Refused Bequest** — a subclass or implementer that ignores or overrides most of what it inherits. → drop the inheritance, use composition.\n\n### 4. Spawn both sub-agents in parallel\n\nSend a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both.\n\n**Standards sub-agent prompt** — include:\n\n- The full diff command and commit list.\n- The list of standards-source files you found in step 3, **plus the smell baseline from step 3** pasted in full — the sub-agent has no other access to it.\n- The brief: \"Report — per file/hunk where relevant — (a) every place the diff violates a documented standard: cite the standard (file + the rule); and (b) any baseline smell you spot: name it and quote the hunk. Distinguish hard violations from judgement calls — documented-standard breaches can be hard, but baseline smells are always judgement calls, and a documented repo standard overrides the baseline. Skip anything tooling enforces. Under 400 words.\"\n\n**Spec sub-agent prompt** — include:\n\n- The diff command and commit list.\n- The path or fetched contents of the spec.\n- The brief: \"Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Under 400 words.\"\n\nIf the spec is missing, skip the Spec sub-agent and note this in the final report.\n\n### 5. Aggregate\n\nPresent the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings — the two axes are deliberately separate (see _Why two axes_).\n\nEnd with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.\n\n## Why two axes\n\nA change can pass one axis and fail the other:\n\n- Code that follows every standard but implements the wrong thing → **Standards pass, Spec fail.**\n- Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**\n\nReporting them separately stops one axis from masking the other.\n",
+          "utf8Length": 6740,
+          "sha256": "6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f"
+        }
+      },
+      "construction": {
+        "recipe": "reviewer-common-bundle-v1",
+        "bundle": {
+          "recipeIdentity": {
+            "recipeId": "reviewer-common-bundle",
+            "version": 1,
+            "runtimeVersion": "1",
+            "implementationSha256": "78680ada4642262082dd911b122739a2656d5110202e5248f7ce4526fa8f43eb"
+          },
+          "manifestSha256": "92da4805216637389081413f0ec9e11d12dd1e1dc761f2b91b30968ff6ea1d56",
+          "entries": [
+            {
+              "id": "canonical-skill",
+              "relativeClonePath": ".ak-reviewer/materials/canonical-skill.md",
+              "origin": "canonical-skill",
+              "sourceIdentity": "6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f",
+              "bytes": "---\nname: code-review\ndescription: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\".\n---\n\nTwo-axis review of the diff between `HEAD` and a fixed point the user supplies:\n\n- **Standards** — does the code conform to this repo's documented coding standards?\n- **Spec** — does the code faithfully implement the originating issue / PRD / spec?\n\nBoth axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.\n\nThe issue tracker should have been provided to you — run `/setup-matt-pocock-skills` if `docs/agents/issue-tracker.md` is missing.\n\n## Process\n\n### 1. Pin the fixed point\n\nWhatever the user said is the fixed point — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. If they didn't specify one, ask for it.\n\nCapture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.\n\nBefore going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.\n\n### 2. Identify the spec source\n\nLook for the originating spec, in this order:\n\n1. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.) — fetch via the workflow in `docs/agents/issue-tracker.md`.\n2. A path the user passed as an argument.\n3. A PRD/spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.\n4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report \"no spec available\".\n\n### 3. Identify the standards sources\n\nAnything in the repo that documents how code should be written, such as `CODING_STANDARDS.md` or `CONTRIBUTING.md`.\n\nOn top of whatever the repo documents, the Standards axis always carries the **smell baseline** below — a fixed set of Fowler code smells (_Refactoring_, ch.3) that applies even when a repo documents nothing. Two rules bind it:\n\n- **The repo overrides.** A documented repo standard always wins; where it endorses something the baseline would flag, suppress the smell.\n- **Always a judgement call.** Each smell is a labelled heuristic (\"possible Feature Envy\"), never a hard violation — and, like any standard here, skip anything tooling already enforces.\n\nEach smell reads *what it is* → *how to fix*; match it against the diff:\n\n- **Mysterious Name** — a function, variable, or type whose name doesn't reveal what it does or holds. → rename it; if no honest name comes, the design's murky.\n- **Duplicated Code** — the same logic shape appears in more than one hunk or file in the change. → extract the shared shape, call it from both.\n- **Feature Envy** — a method that reaches into another object's data more than its own. → move the method onto the data it envies.\n- **Data Clumps** — the same few fields or params keep travelling together (a type wanting to be born). → bundle them into one type, pass that.\n- **Primitive Obsession** — a primitive or string standing in for a domain concept that deserves its own type. → give the concept its own small type.\n- **Repeated Switches** — the same `switch`/`if`-cascade on the same type recurs across the change. → replace with polymorphism, or one map both sites share.\n- **Shotgun Surgery** — one logical change forces scattered edits across many files in the diff. → gather what changes together into one module.\n- **Divergent Change** — one file or module is edited for several unrelated reasons. → split so each module changes for one reason.\n- **Speculative Generality** — abstraction, parameters, or hooks added for needs the spec doesn't have. → delete it; inline back until a real need shows.\n- **Message Chains** — long `a.b().c().d()` navigation the caller shouldn't depend on. → hide the walk behind one method on the first object.\n- **Middle Man** — a class or function that mostly just delegates onward. → cut it, call the real target direct.\n- **Refused Bequest** — a subclass or implementer that ignores or overrides most of what it inherits. → drop the inheritance, use composition.\n\n### 4. Spawn both sub-agents in parallel\n\nSend a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both.\n\n**Standards sub-agent prompt** — include:\n\n- The full diff command and commit list.\n- The list of standards-source files you found in step 3, **plus the smell baseline from step 3** pasted in full — the sub-agent has no other access to it.\n- The brief: \"Report — per file/hunk where relevant — (a) every place the diff violates a documented standard: cite the standard (file + the rule); and (b) any baseline smell you spot: name it and quote the hunk. Distinguish hard violations from judgement calls — documented-standard breaches can be hard, but baseline smells are always judgement calls, and a documented repo standard overrides the baseline. Skip anything tooling enforces. Under 400 words.\"\n\n**Spec sub-agent prompt** — include:\n\n- The diff command and commit list.\n- The path or fetched contents of the spec.\n- The brief: \"Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Under 400 words.\"\n\nIf the spec is missing, skip the Spec sub-agent and note this in the final report.\n\n### 5. Aggregate\n\nPresent the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings — the two axes are deliberately separate (see _Why two axes_).\n\nEnd with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.\n\n## Why two axes\n\nA change can pass one axis and fail the other:\n\n- Code that follows every standard but implements the wrong thing → **Standards pass, Spec fail.**\n- Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**\n\nReporting them separately stops one axis from masking the other.\n",
+              "utf8Length": 6740,
+              "sha256": "6a65cc61114f96db07ec41e3920e67c9c5bf70dd6e0901eb9460ebcb2bdc209f"
+            },
+            {
+              "id": "opaque-task",
+              "relativeClonePath": ".ak-reviewer/materials/task.md",
+              "origin": "runtime-recipe",
+              "sourceIdentity": "1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c",
+              "bytes": "# Issue #44 fixed-target review — exact mechanical proposal\n\nReview target `dd418124fbfe3db09f752972c89ea6766560cc08` against base `9247ab883f07adf5eabb75abf60777b626a58d17`. Production implementation commit: `7db2be8aefa90715ce521c7d797330fcb552792b`.\n\nConstruct exactly one proposal with:\n\n- `base.revision`: `9247ab883f07adf5eabb75abf60777b626a58d17`\n- materials:\n  - `{ \"id\": \"fixer-authority\", \"repositoryPath\": \".ak/dockets/issues/44/authority/final-owner-correction-001/receipt.json\" }`\n  - `{ \"id\": \"repository-law\", \"repositoryPath\": \"CLAUDE.md\" }`\n  - `{ \"id\": \"fixer-soul\", \"repositoryPath\": \"souls/fixer.md\" }`\n- `relevanceHints.standards`: `[\"repository-law\", \"fixer-soul\"]`\n- `relevanceHints.spec`: `[\"fixer-authority\"]`\n- `spec.state`: `established`\n- both Standards and Spec `required.tools`: `[\"read\", \"grep\", \"find\", \"ls\", \"bash\"]`\n- both `required.bashCommands`: `[\"git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\"]`\n- both `required.prerequisiteOperations`: exactly all eight supplied operations, unchanged.\n\nReview both Standards and Spec. Inspect all clone material needed. Focus on the closed two-cause refusal domain, exact apply combination laws, plan shape, per-class identity/accountability, Coder compatibility, fresh Fixer audit ordering/input/isolation/revise/failure honesty, Recorder audit observation and current-leaf hard cut, public exports/docs/generated/packed artifacts, no orchestration, and production-seam tests. Report concrete findings only; do not repair.",
+              "utf8Length": 1546,
+              "sha256": "1956bd0c3f86ab39e842a9d7494973d39b8da2b888a7d252698e21809ec65d4c"
+            },
+            {
+              "id": "review-range",
+              "relativeClonePath": ".ak-reviewer/materials/range.json",
+              "origin": "derived-range",
+              "sourceIdentity": "da9c0bf1083a94256a48946b74c329b1e30bc4c96beb8febc8969cf18d84360c",
+              "bytes": "{\n  \"base\": \"9247ab883f07adf5eabb75abf60777b626a58d17\",\n  \"target\": \"dd418124fbfe3db09f752972c89ea6766560cc08\",\n  \"diffCommand\": \"git diff 9247ab883f07adf5eabb75abf60777b626a58d17...dd418124fbfe3db09f752972c89ea6766560cc08\",\n  \"diffSha256\": \"da9c0bf1083a94256a48946b74c329b1e30bc4c96beb8febc8969cf18d84360c\",\n  \"commits\": [\n    \"1bde4677da092487100fa2a15e1e001658b1448e\",\n    \"1f86560420bc21a553436a4cb81fdd9638fb4cfd\",\n    \"790cb761c488ccc476196bf499a6d29b29563e3a\",\n    \"7db2be8aefa90715ce521c7d797330fcb552792b\",\n    \"1c18d5e3487ab266064c82a0e3acb699bcb041ee\",\n    \"dd418124fbfe3db09f752972c89ea6766560cc08\"\n  ]\n}\n",
+              "utf8Length": 617,
+              "sha256": "97c24c84db613b646e535c827866c24921ecf2c177e02afc0e928bd8e7512f7b"
+            },
+            {
+              "id": "material-fixer-authority",
+              "relativeClonePath": ".ak-reviewer/materials/selected/fixer-authority.md",
+              "origin": "pinned-target",
+              "sourceIdentity": ".ak/dockets/issues/44/authority/final-owner-correction-001/receipt.json@dd418124fbfe3db09f752972c89ea6766560cc08:68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527",
+              "bytes": "{\n  \"toolName\": \"ak_judge_output\",\n  \"toolCallId\": \"call_THsBGPLVbLB5sKULKBmIxBVp|fc_019135c75dd59a5f016a6db8c0a5e48191a96cdddb2ac34729\",\n  \"details\": {\n    \"judgeStatus\": \"converged\",\n    \"note\": \"The sealed correction answers the former gate, supersedes its proposed four-cause options, and leaves no genuine interface choice. Direct test-first construction is authorized; no Plan is required.\\n\\nExact smallest contract: keep Coder unchanged and stop modeling Fixer as a Coder extension. Nonblank strings are trim-checked and objects reject additional properties. Plan is exactly `{status:\\\"planned\\\",report}` or `{status:\\\"refused\\\",report,remainingScope,blocker}`. Apply is exactly `{status:\\\"completed\\\"|\\\"refused\\\"|\\\"partially_completed\\\",report,classResults}`. `blocker` is `{cause:\\\"authority_violation\\\"|\\\"prerequisite_unmet\\\",evidence}`; no third cause or generic safety escape exists. `classResults` is nonempty, with unique comma-free names, and is a discriminated per-finding union: completed is `{name,disposition:\\\"completed\\\",searchScope,exceptions,commitSha}`; refused is `{name,disposition:\\\"refused\\\",remainingScope,blocker}`. `exceptions` remains an array of exact `{where,reason}` records and means inspected same-class locations requiring no repair, never executable unfinished work. Each completed result requires a full lowercase 40- or 64-hex Git object ID, unique among completed results, preserving per-class commit accountability. Remove Fixer's top-level `commitSha` and `classesRepaired` leaf.\\n\\nCombination law: plan has no apply result array or partial status. Apply `completed` contains only completed results, `refused` only refused results, and `partially_completed` at least one of each. Partial therefore means completed findings plus lawfully refused findings, not progress or unfinished workload. Every refused result carries its own cause, evidence, and remaining scope; plan refusal carries the assignment-level equivalent. `authority_violation` means executing assigned scope would contradict controlling authority. `prerequisite_unmet` means a concrete assignment-domain prerequisite needed for lawful execution is absent. Package/provider/authentication/auditor/tool transport or execution failures abort/nonzero and never become either blocker. While executable authorized work remains, Fixer continues; caller cancellation or nonzero execution exit are the only unfinished-work exits.\\n\\nRuntime/auditor boundary: after singleton and structural/phase validation, every candidate attempt gets a fresh `runComplianceAudit` call using `context.model` and credentials, with exact Fixer Soul, exact packet, phase, `transcriptFromContext(ctx)` invocation record, and candidate. It checks only demonstrated Soul/packet/invocation-record compliance, including honest coverage and lawful dispositions. It must not repair, retry work, decide finding merit, route the receipt, or adjudicate it. Pass returns the unchanged candidate and audit usage. Revise throws a specific nonterminating submission error, allowing corrected resubmission and a fresh audit. Malformed audit output or audit authentication/provider/transport failure crosses `failInfrastructure`, aborts, sets nonzero in print/json mode, and produces no receipt.\\n\\nSoul owner-direct correction: replace the old generic `无法安全完成` refusal sentence with exactly `只在当前指派无法合法执行时拒绝；只要仍有已授权、可执行的工作，就持续施工。` Add no enum/field/runtime prose and no blacklist of workload, time, context, safety, or other pseudo-refusals. This sentence remains an owner direct edit under CLAUDE.md; factory construction does not own Soul bytes.\\n\\nPackage/Recorder/docs boundary: split package validators/types as needed so Coder stays byte-compatible while Fixer hard-cuts. `terminating-tools` and Recorder validate only the new current Fixer union; successful Fixer acceptance carries the package audit observation/usage just like other audited roles. Update public exports, generated `dist`, package lock/lifecycle and packed artifact consistently. Update README Fixer/composition/Recorder sections, the contributor packet and development-closure stale non-claims, and forward-amend ADR 0015 terminology where it would contradict the new contract. Existing sealed dockets remain byte-unchanged even though their old Fixer leaves are not accepted at current head. Packet composition, compatibility grouping, dispatch, invocation budget, stopping, sequencing, contextual reconciliation, and next-hop acceptance remain caller-owned; no scheduler/orchestrator is authorized.\\n\\nRequired reds: old prose-only/top-level-commit/classesRepaired leaves; third/generic causes; blank evidence or remaining scope; duplicate names or completed commit IDs; malformed commit IDs; homogeneous arrays labeled partial; mixed arrays labeled completed/refused; partial-as-unfinished; plan/apply cross-shapes; workload/elapsed/incomplete labels and dishonest relabeling reaching audit revise rather than acceptance; auditor redo/adjudication overreach fixtures; malformed/auth/provider/transport audit failures; and Recorder accepting an unaudited or legacy current Fixer lifecycle. Required greens must traverse the real TypeBox submission schema and production validator for every legal plan/apply shape, prove multi-class and mixed settlements, fresh same-active-model ordering and resubmission, nonzero infrastructure exit, unchanged candidate projection, Fixer audit observation in Recorder, public exports, typecheck/full tests, `build:recorder`, and `npm pack` contents.\"\n  },\n  \"artifactKind\": \"acceptedReceipt\"\n}\n",
+              "utf8Length": 5663,
+              "sha256": "68ddfd3573749a32ce1431a49c80eae1fd9019e2dff058a9a9a6dd0285ac0527"
+            },
+            {
+              "id": "material-repository-law",
+              "relativeClonePath": ".ak-reviewer/materials/selected/repository-law.md",
+              "origin": "pinned-target",
+              "sourceIdentity": "CLAUDE.md@dd418124fbfe3db09f752972c89ea6766560cc08:e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228",
+              "bytes": "# ak-pi-workflow-roles\n\n## Soul 内容纪律\n\n**Soul 是角色的注意力预算，不是完整说明书。** 单个 Soul 越长，核心原则越容易被字段说明、运行机制和任务细节稀释。默认删减；只保留角色做专业判断时不可缺少、且无法由更低层可靠表达的内容。\n\n### 内容分层\n\n| 内容 | 真源 |\n| --- | --- |\n| 角色不可约的职责、判断方法与专业原则 | Soul |\n| 字段名称、类型、可选性和字段语义 | Tool / output schema |\n| 唯一调用、非空、状态组合、终止和其他机械不变式 | TypeScript runtime |\n| CLI 参数、安装方式和调用方使用说明 | README / CLI help |\n| 特定任务方法、仓库惯例或业务规则 | Skill / host overlay |\n\n不要在 Soul 中重复 schema、runtime、README 或宿主 overlay 已经拥有的内容。机械上能约束的规则优先机械化；只是 transport/API 说明的内容留在 schema；只对某个宿主成立的内容不得进入 bundled Soul。\n\n### Soul 准入检查\n\n向 Soul 增加一句话前，依次问：\n\n1. 没有它，角色是否会缺失一项不可约的专业判断能力？\n2. 它能否由 schema 或 runtime 更准确地表达或强制？\n3. 它是否只是字段、CLI、transport、阶段装配或错误处理说明？\n4. 它是否只属于某个任务、仓库或业务域？\n5. 能否删除、合并或缩成更短的原则而不损失角色能力？\n\n只有第 1 题为“是”，且第 2–4 题为“否”时，内容才应进入 bundled Soul。第 5 题始终优先选择更短版本。\n\n### 修改要求\n\n- 新增或修改角色能力时，同时审计 Soul 是否被实现细节污染。\n- 增加 schema 字段不自动意味着增加 Soul 条文。\n- 增加阶段或调用方式不自动意味着复制一套角色方法。\n- 发现同一规则跨 Soul/schema/runtime/README 重复时，保留在拥有该语义的最深层，其余删除或只留必要引用。\n- Soul review 必须检查两件事：必要原则是否缺失，以及非 Soul 内容是否混入。\n\n## Probe lifecycle\n\nA probe is temporary evidence. After its evidence purpose is disposed, either delete it or graduate its behavior exactly once into the regression suite owned by the affected seam, then delete the scratch copy. Only a bare-seam probe that ordinary tests cannot reach may remain under `test/adjudication/`. Do not keep duplicate permanent shapes of the same probe behavior.\n\n## 失败诚实宪法\n\n**接住可以，洗白不行**：未识别异常不得冒用具体标签；真因必须落痕；catch 后照常继续视同缺陷，除非「此失败下继续」是文档化契约。\n\n## Role invocation evidence\n\n调用角色时使用 `pi --session-dir .ak/work/<issue>/runs/<invocation>/session`（不用 `--no-session`），stdout 可丢到 `/dev/null`，`stderr.log` 和 `invocation.json` 留在同次 `runs/` 目录。\n\n## 锚定宪法\n\n**机器只咬契约，不咬呈现**：对自由文本的正则/措辞/表头机械依赖、对图像的像素机械依赖，视同缺陷；机器要消费的信息必须以键、typed 字段或 schema 提供。呈现为人服务，随时可重排。\n\n## 修订通道\n\nSoul 与本文件（CLAUDE.md）的修订走 owner 直改通道（全文过目直落主线），不走工厂流程，且负持续精进义务；工厂只供修订素材，不拥有动笔权。\n",
+              "utf8Length": 3380,
+              "sha256": "e5edcea774239c97dba082f54e5dcfbc15fb96275fb185e26ef07f41ef370228"
+            },
+            {
+              "id": "material-fixer-soul",
+              "relativeClonePath": ".ak-reviewer/materials/selected/fixer-soul.md",
+              "origin": "pinned-target",
+              "sourceIdentity": "souls/fixer.md@dd418124fbfe3db09f752972c89ea6766560cc08:48ce77bc10d08a1ac73ee97a41f808de8bf07154134b410dc26cfa73b64cfd7a",
+              "bytes": "# Fixer soul（修复工）\n\n你是修复工。plan 只调查与提案 ;apply 施工、自验、提交。\n\n* 修根因,不修症状;根因不明时先做证据驱动的最小诊断,不靠猜测堆护栏。\n* 修类不修点:被点名的缺陷只是样本——每修一处,必找同类,在本次 issue 与 authority 范围内穷尽,修在使该类不再发生的位置。说不清同类长什么样、去哪找,就还没理解根因。\n* 删压过加:能靠删除或简化消除根因,就不新增机制;新护栏须有真实失败证据。\n* 前科检查:动刀前查相关文件 git log,不再提交既往已失败的同族修法。\n* 测试是红线:不得放松断言、删失败路径或改验收换绿灯,除非 authority 明确授权。\n* 只在当前指派无法合法执行时拒绝；只要仍有已授权、可执行的工作，就持续施工。\n* 保护开工前已有改动;本轮只含授权内容,只建新 forward commit,不 amend。\n* 交卷说明修了什么根因、未采纳的 finding 及理由,使修复与验证可独立审计。\n",
+              "utf8Length": 1054,
+              "sha256": "48ce77bc10d08a1ac73ee97a41f808de8bf07154134b410dc26cfa73b64cfd7a"
+            }
+          ]
+        }
+      },
+      "target": {
+        "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue44",
+        "objectFormat": "sha1",
+        "targetHead": "dd418124fbfe3db09f752972c89ea6766560cc08",
+        "refs": {
+          "refs/heads/design/contract-doctrine": {
+            "objectId": "8f387959ca93dfecc3901973f36cf9f70b2f903c",
+            "peeledCommitId": "8f387959ca93dfecc3901973f36cf9f70b2f903c"
+          },
+          "refs/heads/design/doctor-role": {
+            "objectId": "f393cd6254139bdfb9b703961b6be3b24f8a9f07",
+            "peeledCommitId": "f393cd6254139bdfb9b703961b6be3b24f8a9f07"
+          },
+          "refs/heads/design/failure-honesty-constitution": {
+            "objectId": "e9eca07918d18f196de0a46e5e049ce30b993bf0",
+            "peeledCommitId": "e9eca07918d18f196de0a46e5e049ce30b993bf0"
+          },
+          "refs/heads/design/fixer-soul-slim": {
+            "objectId": "31fdf3f7d0a2a9bf916405fc318cd0fdbd3655dd",
+            "peeledCommitId": "31fdf3f7d0a2a9bf916405fc318cd0fdbd3655dd"
+          },
+          "refs/heads/design/revision-channel": {
+            "objectId": "e21c287be2ef08c1513784850a2798b585dfba85",
+            "peeledCommitId": "e21c287be2ef08c1513784850a2798b585dfba85"
+          },
+          "refs/heads/feature/durable-invocation-dockets": {
+            "objectId": "c464a2ed26fb049c2c3cb3f624817c4b78f19193",
+            "peeledCommitId": "c464a2ed26fb049c2c3cb3f624817c4b78f19193"
+          },
+          "refs/heads/feature/durable-invocation-dockets-v2": {
+            "objectId": "20b564de26f09d40fde97b7c14b3663b0383e95d",
+            "peeledCommitId": "20b564de26f09d40fde97b7c14b3663b0383e95d"
+          },
+          "refs/heads/feature/durable-invocation-dockets-v3": {
+            "objectId": "b6b9111a7967d60756bf943f7faabbc83cd75520",
+            "peeledCommitId": "b6b9111a7967d60756bf943f7faabbc83cd75520"
+          },
+          "refs/heads/feature/issue-12-doctor-role": {
+            "objectId": "5eefabe029a111946c64e48042d74b90bc55d98a",
+            "peeledCommitId": "5eefabe029a111946c64e48042d74b90bc55d98a"
+          },
+          "refs/heads/feature/issue-22-parallel-apply": {
+            "objectId": "ead63bebe1c4b6128f5fa1899cc727881688fb9a",
+            "peeledCommitId": "ead63bebe1c4b6128f5fa1899cc727881688fb9a"
+          },
+          "refs/heads/feature/issue-25-class-repair-doctrine": {
+            "objectId": "7fe7bb6f5bf41171b149f349b5d4734532951083",
+            "peeledCommitId": "7fe7bb6f5bf41171b149f349b5d4734532951083"
+          },
+          "refs/heads/feature/issue-28-navigator-role": {
+            "objectId": "32320f343afc997cf18acfc9e3396d63df6b4c42",
+            "peeledCommitId": "32320f343afc997cf18acfc9e3396d63df6b4c42"
+          },
+          "refs/heads/feature/issue-31-contract-doctrine": {
+            "objectId": "e24b592d12879c5c5ebdf7a04d37f694b988dad7",
+            "peeledCommitId": "e24b592d12879c5c5ebdf7a04d37f694b988dad7"
+          },
+          "refs/heads/feature/judge-role": {
+            "objectId": "9247ab883f07adf5eabb75abf60777b626a58d17",
+            "peeledCommitId": "9247ab883f07adf5eabb75abf60777b626a58d17"
+          },
+          "refs/heads/fix/issue-23-recorder-preflight": {
+            "objectId": "c32f620abcca76fd871be0d99f874a46f739ca5b",
+            "peeledCommitId": "c32f620abcca76fd871be0d99f874a46f739ca5b"
+          },
+          "refs/heads/fix/issue-33-native-session-sealer": {
+            "objectId": "7d9739b545884087d45b68cfb4b2558c0cc7019d",
+            "peeledCommitId": "7d9739b545884087d45b68cfb4b2558c0cc7019d"
+          },
+          "refs/heads/fix/issue-36-thinking-siblings": {
+            "objectId": "3cafe30399bd2ae371e2662a2bca9dbb9e81787d",
+            "peeledCommitId": "3cafe30399bd2ae371e2662a2bca9dbb9e81787d"
+          },
+          "refs/heads/fix/issue-40-doctor-reads-dockets": {
+            "objectId": "8910f74f29a5b2d6ea434ebff2c94835602ed0f2",
+            "peeledCommitId": "8910f74f29a5b2d6ea434ebff2c94835602ed0f2"
+          },
+          "refs/heads/fix/issue-44-batched-fixer-refusal": {
+            "objectId": "dd418124fbfe3db09f752972c89ea6766560cc08",
+            "peeledCommitId": "dd418124fbfe3db09f752972c89ea6766560cc08"
+          },
+          "refs/remotes/origin/design/contract-doctrine": {
+            "objectId": "8f387959ca93dfecc3901973f36cf9f70b2f903c",
+            "peeledCommitId": "8f387959ca93dfecc3901973f36cf9f70b2f903c"
+          },
+          "refs/remotes/origin/design/doctor-role": {
+            "objectId": "f393cd6254139bdfb9b703961b6be3b24f8a9f07",
+            "peeledCommitId": "f393cd6254139bdfb9b703961b6be3b24f8a9f07"
+          },
+          "refs/remotes/origin/design/failure-honesty-constitution": {
+            "objectId": "e9eca07918d18f196de0a46e5e049ce30b993bf0",
+            "peeledCommitId": "e9eca07918d18f196de0a46e5e049ce30b993bf0"
+          },
+          "refs/remotes/origin/design/fixer-soul-slim": {
+            "objectId": "31fdf3f7d0a2a9bf916405fc318cd0fdbd3655dd",
+            "peeledCommitId": "31fdf3f7d0a2a9bf916405fc318cd0fdbd3655dd"
+          },
+          "refs/remotes/origin/design/revision-channel": {
+            "objectId": "e21c287be2ef08c1513784850a2798b585dfba85",
+            "peeledCommitId": "e21c287be2ef08c1513784850a2798b585dfba85"
+          },
+          "refs/remotes/origin/feature/durable-invocation-dockets-v2": {
+            "objectId": "20b564de26f09d40fde97b7c14b3663b0383e95d",
+            "peeledCommitId": "20b564de26f09d40fde97b7c14b3663b0383e95d"
+          },
+          "refs/remotes/origin/feature/durable-invocation-dockets-v3": {
+            "objectId": "b6b9111a7967d60756bf943f7faabbc83cd75520",
+            "peeledCommitId": "b6b9111a7967d60756bf943f7faabbc83cd75520"
+          },
+          "refs/remotes/origin/feature/issue-12-doctor-role": {
+            "objectId": "5eefabe029a111946c64e48042d74b90bc55d98a",
+            "peeledCommitId": "5eefabe029a111946c64e48042d74b90bc55d98a"
+          },
+          "refs/remotes/origin/feature/issue-17-reviewer-preflight": {
+            "objectId": "ca980a6f74a1d4907ac4207fdcb97bec573a7e41",
+            "peeledCommitId": "ca980a6f74a1d4907ac4207fdcb97bec573a7e41"
+          },
+          "refs/remotes/origin/feature/issue-25-class-repair-doctrine": {
+            "objectId": "7fe7bb6f5bf41171b149f349b5d4734532951083",
+            "peeledCommitId": "7fe7bb6f5bf41171b149f349b5d4734532951083"
+          },
+          "refs/remotes/origin/feature/issue-28-navigator-role": {
+            "objectId": "63a0d3907840cf3389e75d39415a604534768d21",
+            "peeledCommitId": "63a0d3907840cf3389e75d39415a604534768d21"
+          },
+          "refs/remotes/origin/feature/issue-31-contract-doctrine": {
+            "objectId": "e24b592d12879c5c5ebdf7a04d37f694b988dad7",
+            "peeledCommitId": "e24b592d12879c5c5ebdf7a04d37f694b988dad7"
+          },
+          "refs/remotes/origin/feature/judge-role": {
+            "objectId": "9247ab883f07adf5eabb75abf60777b626a58d17",
+            "peeledCommitId": "9247ab883f07adf5eabb75abf60777b626a58d17"
+          },
+          "refs/remotes/origin/fix/issue-23-recorder-preflight": {
+            "objectId": "c32f620abcca76fd871be0d99f874a46f739ca5b",
+            "peeledCommitId": "c32f620abcca76fd871be0d99f874a46f739ca5b"
+          },
+          "refs/remotes/origin/fix/issue-33-native-session-sealer": {
+            "objectId": "7d9739b545884087d45b68cfb4b2558c0cc7019d",
+            "peeledCommitId": "7d9739b545884087d45b68cfb4b2558c0cc7019d"
+          },
+          "refs/remotes/origin/fix/issue-36-thinking-siblings": {
+            "objectId": "3cafe30399bd2ae371e2662a2bca9dbb9e81787d",
+            "peeledCommitId": "3cafe30399bd2ae371e2662a2bca9dbb9e81787d"
+          },
+          "refs/remotes/origin/HEAD": {
+            "objectId": "9247ab883f07adf5eabb75abf60777b626a58d17",
+            "peeledCommitId": "9247ab883f07adf5eabb75abf60777b626a58d17"
+          }
+        }
+      }
+    }
+  },
+  "artifactKind": "acceptedReceipt"
+}

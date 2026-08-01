@@ -1,0 +1,9 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_LweqBvhf83pjTx6Cb2WrTZT7|fc_05990140fd7fe667016a6dfe72c12481919d679a17aad0709d",
+  "details": {
+    "judgeStatus": "converged",
+    "note": "Apply proof converges at current clean HEAD 9d1b45b58c9d99657532e2c2d4953d12f9af62d4. I independently rechecked the repository after the accepted PR 47 settlement: merge commit 363eef3 and closing commits c8708a5 (session-cwd binding) and 4ac6c52 (AUTO_MERGE prerequisite documentation) are all ancestors of HEAD; the settlement receipt records both bounded repair classes completed with no exceptions. The complete current gate set passes: `npm run typecheck` exited successfully, and `npm test` reports 397 tests, 392 passed, 5 skipped, 0 failed. The working tree remains clean. Prior Merger closure evidence therefore remains valid: v1 scope, terminal transport, exact output instruction, session-cwd observation, capability documentation, typed Fixer prerequisites, and forward merge history are closed; the failed first real Merger invocation remains unaccepted rather than retroactively sealed; no forbidden merge/worktree orchestration, publication, fallback, or history rewriting was introduced. No residual defect, unhandled finding, or owner decision remains."
+  },
+  "artifactKind": "acceptedReceipt"
+}

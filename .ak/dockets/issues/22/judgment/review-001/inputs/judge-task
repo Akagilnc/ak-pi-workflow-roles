@@ -1,0 +1,5 @@
+# Issue #22 Review-001 adjudication
+
+Adjudicate the sole Spec finding in `.ak/dockets/issues/22/review/review-001/receipt.json` against final Merger authority and current implementation.
+
+Independently verify whether permitted resolution scope must mechanically bound all merge-commit changed paths, and define the correct Git comparison semantics without forbidding authorized source-only changes inherent in the two-parent merge. Distinguish files changed by conflict resolution relative to the automatic merge result from ordinary source changes relative to first parent if necessary. Determine exact owner, boundary, red counterexample, and direct Fixer class. Do not broaden into generic merge policy, initiation, queue, or publication.

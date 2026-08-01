@@ -1,0 +1,10 @@
+{
+  "toolName": "ak_coder_output",
+  "toolCallId": "call_I4UpKlIHKGIYV7k0fvlmtzJ0|fc_0c5aebb04c90f0eb016a6dcd8fe4c0819194f97fb1e4300ad5",
+  "details": {
+    "status": "completed",
+    "report": "Implemented and committed Merger v1 as `fa794e7` (`feat(merger): add conflict reconciliation runtime`).\n\nDelivered: deep immutable digest-bound input and exact terminal contracts; production Git preflight/completion adapter; constrained singleton role runtime with honest abort paths; public registration/exports/package wiring; Recorder census/extraction; README/help/census plus the labeled non-normative external exam; deterministic temporary-Git and package tests. `souls/merger.md` is byte-identical to its parent commit.\n\nTDD evidence: each new seam first failed on missing `merger-contracts.ts`, `merger-git-state.ts`, `merger-role.ts`, then missing Recorder/role registration; focused green is 46/46 assertions including real conflicted/non-conflicting temporary repositories, exact parent/conflict/cleanliness checks, both legal outcomes, singleton output, and no publication/next-role leaves.\n\nFinal gates after commit: isolated-HOME full suite 375 passed, 0 failed, 5 skipped; `npm run typecheck` passed; `npm run build:recorder` passed; `npm pack --dry-run` passed (119 files); `git diff --check HEAD^ HEAD` passed; worktree clean.\n\nSelf-checks: same-pattern census confirms role, package entrypoint, terminating registry, and Recorder branch use existing seams; introduced-regression check is the full green suite; behavior-fact check crosses production Git with deterministic two-parent merge/dirty-worktree/non-conflict facts; out-of-scope implementation scan found no scheduler, queue, candidate/CAS, next-role, merge initiation/abort, rebase/cherry-pick, or push mechanism.",
+    "commitSha": "fa794e7"
+  },
+  "artifactKind": "acceptedReceipt"
+}

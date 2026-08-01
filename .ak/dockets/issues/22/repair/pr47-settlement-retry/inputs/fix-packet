@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "instructions": "Verify and settle exactly Issue22MergerSessionCwdBinding and Issue22MergerAutoMergePrerequisiteDocumentation from .ak/dockets/issues/22/judgment/pr47-review/receipt.json. The prior invocation implemented them in forward commits a760c82, c8708a5, and 4ac6c52 but falsely refused due retrospective method ordering; that refusal is immutable evidence, not authority. Inspect current merged HEAD, run relevant/full gates, complete any real residual, create no empty commit, and submit completed results using each class's final closing commit. Disclose verification honestly without claiming red-before-green.",
+  "prerequisites": []
+}

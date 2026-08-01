@@ -19,8 +19,14 @@ import { Type } from "typebox";
 
 import {
   CODER_OUTPUT_TOOL_NAME,
+  FIXER_AUDIT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
+  fixerPacketV1Schema,
+  parseFixPacketV1,
+  validateFixerOutputForPacket,
   JUDGE_OUTPUT_TOOL_NAME,
+  MERGER_INPUT_FLAG,
+  MERGER_OUTPUT_TOOL_NAME,
   ROLE_FLAG,
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
@@ -69,10 +75,15 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   const manifest = await loadRawPackageManifest();
   packageEntrypoint(manifest);
   assert.equal(manifest.bin?.["ak-assisted-run"], "./bin/ak-assisted-run.js");
-  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator"]);
+  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator", "merger"]);
   assert.equal(ROLE_FLAG.name, "ak-role");
   assert.equal(DOCTOR_EVIDENCE_FLAG.name, "ak-doctor-evidence");
   assert.equal(DOCTOR_EVIDENCE_FLAG.definition.type, "string");
+  assert.equal(MERGER_INPUT_FLAG.name, "ak-merger-input");
+  assert.equal(MERGER_OUTPUT_TOOL_NAME, "ak_merger_output");
+  const packet = parseFixPacketV1(JSON.stringify({ version: 1, instructions: "repair", prerequisites: [] }));
+  assert.equal((fixerPacketV1Schema as any).additionalProperties, false);
+  assert.deepEqual(validateFixerOutputForPacket({ status: "planned", report: "plan" }, "plan", packet), { status: "planned", report: "plan" });
   await withHermeticHome(
     { prefix: "ak-doctor-pack-" },
     async ({ home }) => {
@@ -88,6 +99,13 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
         "src/assisted-runner.ts",
         "schemas/assisted-call-v1.schema.json",
         "bin/ak-assisted-run.js",
+        "souls/merger.md",
+        "src/merger-contracts.ts",
+        "src/merger-git-state.ts",
+        "src/merger-role.ts",
+        "src/package-contracts/fixer-packet.ts",
+        "dist/package-contracts/fixer-packet.js",
+        "packets/fixer-repair.json",
       ]) {
         assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
       }
@@ -113,6 +131,7 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
     /Extension CLI Flags:\n([\s\S]*?)\n\nExamples:/,
   )?.[1];
 
+  assert.match(extensionHelp ?? "", /--ak-fix-packet <value>\s+Path to a closed FixPacketV1 JSON repair packet/);
   assert.match(extensionHelp ?? "", /--ak-fixer-phase <value>\s+Fixer phase: plan .* or apply/);
   assert.match(extensionHelp ?? "", /--ak-review-capabilities <value>\s*Closed Reviewer capability grant/);
   assert.match(extensionHelp ?? "", /--ak-review-scope-keys <value>\s*Optional comma-separated exact class keys/);
@@ -582,8 +601,8 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
   await withHermeticHome(
     { prefix: "ak-fixer-integration-" },
     async ({ home, agentDir }) => {
-      const packetPath = resolve(home, "fix-packet.md");
-      await writeFile(packetPath, "# Approved repair\n\nApply it.");
+      const packetPath = resolve(home, "fix-packet.json");
+      await writeFile(packetPath, JSON.stringify({ version: 1, instructions: "# Approved repair\n\nApply it.", prerequisites: [] }));
       for (const phase of ["plan", "apply"] as const) {
         const faux = fauxProvider({
           api: `ak-fixer-offline-${phase}`,
@@ -708,7 +727,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
 
           const output = phase === "plan"
             ? { status: "planned", report: "Repair plan ready." }
-            : { status: "completed", report: "Repaired and verified." };
+            : { status: "completed", report: "Repaired and verified.", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
           faux.setResponses([
             fauxAssistantMessage(
               [
@@ -743,6 +762,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               }),
               { stopReason: "toolUse" },
             ),
+            fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [] }), { stopReason: "toolUse" }),
           ]);
           await session.prompt(`Accept a sole Fixer output in ${phase}.`);
           const accepted = sessionManager.getEntries().find(

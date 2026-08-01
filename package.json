@@ -18,6 +18,7 @@
     "src",
     "souls",
     "schemas",
+    "packets",
     "README.md"
   ],
   "os": ["darwin", "linux"],

@@ -17,11 +17,12 @@ import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
 import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiReviewerAuditor } from "../src/reviewer-auditor.ts";
+import { createPiFixerAuditor } from "../src/fixer-auditor.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import { createPiNavigatorAuditor } from "../src/navigator-auditor.ts";
 import type { CurrentPositionSnapshotV1 } from "../src/navigator-contracts.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
-import { createRoleRuntimeExtension } from "../src/role-runtime.ts";
+import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { createPiSoulAuditor } from "../src/soul-auditor.ts";
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +34,7 @@ const reviewerSoulPath = fileURLToPath(new URL("../souls/reviewer.md", import.me
 const collectorSoulPath = fileURLToPath(new URL("../souls/collector.md", import.meta.url));
 const doctorSoulPath = fileURLToPath(new URL("../souls/doctor.md", import.meta.url));
 const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.meta.url));
+const mergerSoulPath = fileURLToPath(new URL("../souls/merger.md", import.meta.url));
 
 function transcriptFromContext(ctx: ExtensionContext): string {
   const context = buildSessionContext(
@@ -64,12 +66,17 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadNavigatorSnapshot: async (path) => JSON.parse(await readFile(path, "utf8")),
     loadNavigatorEvidence: async (snapshot: CurrentPositionSnapshotV1) => { const root=await realpath(join(snapshot.subject.repositoryRoot,".ak","work","issues",String(snapshot.subject.parent.number),"assisted",snapshot.runId,"evidence")); return new Map(await Promise.all(snapshot.evidence.map(async item=>{const path=await realpath(item.handle),rel=relative(root,path);if(rel.startsWith("..")||rel===""||rel.includes("/../"))throw new Error("evidence handle escapes admitted capability");const fd=await open(path,constants.O_RDONLY|("O_NOFOLLOW" in constants?constants.O_NOFOLLOW:0));try{const stat=await fd.stat();if(!stat.isFile()||stat.size>8*1024*1024)throw new Error("invalid bounded evidence handle");const bytes=new Uint8Array(stat.size);let offset=0;while(offset<bytes.length){const r=await fd.read(bytes,offset,bytes.length-offset,offset);if(!r.bytesRead)throw new Error("evidence changed while loading");offset+=r.bytesRead}return[item.handle,bytes]as const}finally{await fd.close()}})))},
     auditNavigatorCompliance: createPiNavigatorAuditor(),
+    loadMergerSoul: () => readFile(mergerSoulPath, "utf8"),
+    loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
+    createMergerGitState: (repositoryRoot) =>
+      createProductionMergerGitState(repositoryRoot),
     collectorPackageExtensionPath: extensionPath,
     loadCanonicalSkillBinding,
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext,
     auditSoulCompliance: createPiSoulAuditor(),
+    auditFixerCompliance: createPiFixerAuditor(),
     auditReviewerCompliance: createPiReviewerAuditor(),
   })(pi);
 }
