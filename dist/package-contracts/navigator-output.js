@@ -3,7 +3,7 @@ export const NAVIGATOR_OUTPUT_TOOL_NAME = "ak_navigator_output";
 const SHA256 = /^[0-9a-f]{64}$/;
 const OID = /^[0-9a-f]{40,64}$/;
 const ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor"];
-function fail() { throw new Error("invalid Navigator receipt"); }
+function fail(reason = "invalid Navigator receipt") { throw new Error(reason); }
 function rec(v, keys) { if (!v || typeof v !== "object" || Array.isArray(v) || Object.keys(v).length !== keys.length || !keys.every(k => Object.hasOwn(v, k)))
     fail(); return v; }
 function text(v) { if (typeof v !== "string" || v.length === 0)
@@ -15,7 +15,7 @@ function subject(v) { const s = rec(v, ["repositoryRoot", "github", "parent"]), 
 function attempt(v) { if (v === null)
     return; const a = rec(v, ["invocationId", "role", "phase", "beforeTarget", "afterTarget", "terminalClass", "reference"]), r = rec(a.reference, ["id", "sha256"]); if (!isUuidV7(a.invocationId) || !ROLES.includes(String(a.role)) || ((a.role === "coder" || a.role === "fixer") ? (a.phase !== "plan" && a.phase !== "apply") : a.phase !== null) || !OID.test(String(a.beforeTarget)) || !OID.test(String(a.afterTarget)) || !["accepted_receipt", "role_refusal", "role_escalation", "infrastructure_failure", "cancellation", "outcome_unavailable_after_runner_loss"].includes(String(a.terminalClass)) || !SHA256.test(String(r.sha256)))
     fail(); text(r.id); }
-function primary(v, status) { const p = v; if (!p || typeof p !== "object" || Array.isArray(p))
+function primary(v, status, reads) { const p = v; if (!p || typeof p !== "object" || Array.isArray(p))
     fail(); const kind = p.kind; if (status === "ordinary" && !['package_role', 'caller_action', 'stop'].includes(String(kind)))
     fail(); if (status === "insufficient" && kind !== "obtain_evidence_and_reconsult")
     fail(); if (status === "refused" && kind !== "return_scope_or_authority_defect")
@@ -57,6 +57,8 @@ else if (kind === "return_scope_or_authority_defect") {
     if (!["contradictory_subject", "out_of_scope", "authority_conflict"].includes(String(d.category)))
         fail();
     text(d.evidenceId);
+    if (!Array.isArray(p.evidenceIds) || !p.evidenceIds.includes(d.evidenceId) || reads.get(String(d.evidenceId)) !== true)
+        fail("defect evidence citation invalid Navigator receipt");
 }
 else if (kind === "seek_owner_decision") {
     rec(p, ["kind", "decision", "evidenceIds"]);
@@ -74,4 +76,4 @@ export function validateRecordedNavigatorReceiptV1(value) { const r = rec(value,
     if (typeof x.fullyRead !== "boolean")
         fail();
 } if (new Set(r.evidenceRead.map(x => x.evidenceId)).size !== r.evidenceRead.length)
-    fail(); primary(r.primary, String(r.status)); text(r.explanation); return r; }
+    fail(); primary(r.primary, String(r.status), new Map(r.evidenceRead.map(x => [String(x.evidenceId), Boolean(x.fullyRead)]))); text(r.explanation); return r; }
