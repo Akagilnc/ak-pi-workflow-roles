@@ -59,7 +59,8 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadMergerSoul: () => readFile(mergerSoulPath, "utf8"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    mergerGitState: createProductionMergerGitState(),
+    createMergerGitState: (repositoryRoot) =>
+      createProductionMergerGitState(repositoryRoot),
     collectorPackageExtensionPath: extensionPath,
     loadCanonicalSkillBinding,
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),

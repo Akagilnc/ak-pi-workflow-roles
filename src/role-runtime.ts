@@ -112,6 +112,7 @@ export type RoleRuntimeDependencies = {
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
   mergerGitState?: MergerRoleDependencies["gitState"];
+  createMergerGitState?(repositoryRoot: string): MergerRoleDependencies["gitState"];
   readDoctorCommittedEvidence?(targetCommit: string, path: string): Promise<Uint8Array>;
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
@@ -258,10 +259,14 @@ export function createRoleRuntimeExtension(
       committedEvidenceReader: { async read(targetCommit, path) { if (!dependencies.readDoctorCommittedEvidence) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.readDoctorCommittedEvidence(targetCommit, path); } },
       async auditCompliance(input, options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(input, options); },
     }, hostActions);
+    let sessionMergerGitState = dependencies.mergerGitState;
     const merger = createMergerRoleRuntime(pi, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
-      get gitState() { if (!dependencies.mergerGitState) throw new Error("Merger runtime dependencies are not configured"); return dependencies.mergerGitState; },
+      gitState: {
+        activeMerge() { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.activeMerge(); },
+        completedMerge(mergeCommitId, automaticMergeTreeId) { if (!sessionMergerGitState) throw new Error("Merger runtime dependencies are not configured"); return sessionMergerGitState.completedMerge(mergeCommitId, automaticMergeTreeId); },
+      },
     }, hostActions);
     const collector = createCollectorRoleRuntime(
       pi,
@@ -316,6 +321,10 @@ export function createRoleRuntimeExtension(
           await doctor.activate();
           return;
         case "merger":
+          sessionMergerGitState ??= dependencies.createMergerGitState?.(ctx.cwd);
+          if (sessionMergerGitState === undefined) {
+            throw new Error("Merger runtime dependencies are not configured");
+          }
           await merger.activate();
           return;
       }
