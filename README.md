@@ -1,6 +1,6 @@
 # @ak/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, and `doctor`.
+Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
 
 ## Judge
 
@@ -189,6 +189,33 @@ pi --no-extensions -e /path/to/extensions/role-runtime.ts \
 The input is validated and digest-bound before activation. During the invocation, `ak_doctor_evidence` reads admitted evidence IDs in pages of at most 4096 units; arbitrary filesystem, shell, network, write, and Agent tools are inactive. The sole final `ak_doctor_output` result undergoes a fresh same-active-model compliance audit. A revise decision permits model resubmission; audit or transport failure aborts without manufacturing a refusal.
 
 Public TypeScript exports from `src/role-runtime.ts` include the Doctor index/output types, validators, evidence store, tool names, and runtime dependencies. Use those exports to construct input and consume output rather than parsing this guide.
+
+## Merger
+
+Merger resolves exactly one caller-assigned merge that is already in conflict. It has no phase and does not select branches, start/abort/retry a merge, publish a result, or route another role.
+
+```bash
+pi --no-extensions -e /path/to/extensions/role-runtime.ts \
+  --ak-role merger --ak-merger-input /path/to/merger-input-v1.json \
+  --mode json -p "Resolve the admitted in-progress merge or escalate the required decision."
+```
+
+The authoritative exported TypeScript contract is `mergerInputSchema` plus `validateMergerInput`. It binds `attemptId`, exact target/source full object IDs, digest-bound UTF-8 task/authority/target-intent/source-intent bytes, the byte-sorted complete conflict set, permitted resolution scope, and named authorized check argv. Repository location is caller transport and is intentionally absent from portable identity.
+
+Activation compares the contract with production Git facts for the assigned working directory: `HEAD`, the sole `MERGE_HEAD`, and the complete unmerged path set. A missing/non-conflicting merge, malformed input, or any identity drift aborts without a role outcome. Active tools are exactly `read`, `grep`, `find`, `ls`, `bash`, `write`, `edit`, and `ak_merger_output`. This gating prevents role drift; it is not filesystem or Git security. The caller must isolate the assigned worktree and credentials appropriately.
+
+`ak_merger_output` is singleton and terminating. Its exact leaves are:
+
+```json
+{"status":"completed","attemptId":"opaque attempt","report":"nonblank report","mergeCommitId":"full lowercase 40- or 64-hex object ID"}
+{"status":"escalate","attemptId":"opaque attempt","diagnosis":"required intent/authority decision","report":"nonblank report"}
+```
+
+Before accepting `completed`, the runtime establishes that `mergeCommitId` is current `HEAD`, has exactly the frozen target then source as its two parents, has no unmerged entries, and leaves a clean worktree. This proves only the candidate merge commit, not caller publication. `escalate` is only for a genuine new intent or authority decision. Malformed output and Git/tool/runtime failures abort nonzero rather than being relabeled.
+
+### Non-normative external capability exam
+
+The following is only a feasibility example, not a package recipe or executable/default/required workflow. An external caller may run independent tasks in caller-provided worktrees, integrate completed tasks in completion order, invoke Merger only for a real Git conflict, and perform a final pre-PR review/fix closure. A caller may instead provide a parent and children with a family integration base, start each child from a stable family tip selected by that caller, integrate completed children one at a time, optionally perform a bounded review/adjudication/fix closure after each integration, and perform a final family-wide closure. Every ordering choice, loop, stopping condition, and resource policy belongs to the caller; other compositions are equally lawful. No role knows a predecessor or successor.
 
 ## StatsLine producer
 

@@ -6,8 +6,9 @@ import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollect
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, } from "./reviewer-output.js";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateRecordedDoctorOutput } from "../doctor-contracts.js";
+import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
-export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, validateRecordedDoctorOutput, };
+export { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateAcceptedCollectorReceipt, validateAcceptedJudgeDetails, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, validateAcceptedWorkerDetails, validateRecordedDoctorOutput, validateMergerOutput, };
 export const TERMINATING_TOOL_NAMES = [
     CODER_OUTPUT_TOOL_NAME,
     FIXER_OUTPUT_TOOL_NAME,
@@ -15,6 +16,7 @@ export const TERMINATING_TOOL_NAMES = [
     JUDGE_OUTPUT_TOOL_NAME,
     COLLECTOR_OUTPUT_TOOL,
     DOCTOR_OUTPUT_TOOL_NAME,
+    MERGER_OUTPUT_TOOL_NAME,
 ];
 export function isTerminatingToolName(name) {
     return TERMINATING_TOOL_NAMES.includes(name);
@@ -33,6 +35,8 @@ export function acceptedTextFor(toolName) {
             return COLLECTOR_ACCEPTED_TEXT;
         case DOCTOR_OUTPUT_TOOL_NAME:
             return "Doctor output accepted";
+        case MERGER_OUTPUT_TOOL_NAME:
+            return MERGER_ACCEPTED_TEXT;
     }
 }
 export function validateAcceptedDetails(toolName, details) {
@@ -49,6 +53,8 @@ export function validateAcceptedDetails(toolName, details) {
             return validateAcceptedCollectorReceipt(details);
         case DOCTOR_OUTPUT_TOOL_NAME:
             return validateRecordedDoctorOutput(details);
+        case MERGER_OUTPUT_TOOL_NAME:
+            return validateMergerOutput(details);
     }
 }
 export function carriesPackageAuditObservation(toolName) {
