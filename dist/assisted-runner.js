@@ -215,7 +215,10 @@ async function endAssistedRunV1(repositoryRoot, runId) {
 async function recoverAssistedInvocationInternalV1(repositoryRoot, runId, invocationId, confirmedStopped, deps) {
   if (!confirmedStopped) throw new Error("recovery requires confirmed-stopped attestation");
   const parentIssue = await runIndex(repositoryRoot, runId), dir = assistedRunDirectory(repositoryRoot, parentIssue, runId), rows = await readAssistedLedgerV1(dir);
-  if (unresolved(rows) !== invocationId) throw new Error("invocation is not the unresolved head");
+  if (unresolved(rows) !== invocationId) {
+    if (rows.some((r) => r.type === "recovered" && r.invocationId === invocationId)) return readAssistedRunV1(repositoryRoot, runId, parentIssue);
+    throw new Error("invocation is not the unresolved head");
+  }
   const started = rows.find((r) => r.invocationId === invocationId && (r.type === "role_started" || r.type === "navigator_started")), call = rows.filter((r) => r.type === "call_started" && r.callId === started.callId).at(-1);
   if (!call) throw new Error("recovery call declaration missing");
   const redacted = validateAssistedCallConfigV1(call.payload.recoveryConfig), reference = call.payload.environmentReference;
@@ -240,7 +243,7 @@ async function recoverAssistedInvocationV1(repositoryRoot, runId, invocationId, 
   try {
     return await recoverAssistedInvocationInternalV1(repositoryRoot, runId, invocationId, confirmedStopped, deps);
   } catch (error) {
-    if (error instanceof CanonicalLifecycleResult) return readAssistedRunV1(repositoryRoot, runId);
+    if (error instanceof CanonicalLifecycleResult || error instanceof Error && error.message === "compatible assisted lifecycle transition already owned for recovered") return readAssistedRunV1(repositoryRoot, runId);
     throw error;
   }
 }
