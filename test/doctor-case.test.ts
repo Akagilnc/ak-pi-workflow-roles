@@ -59,6 +59,13 @@ test("runtime-derived metrics permit completion when a case exceeds evidence pag
   const patient = await loadDoctorCase(runs);
   assert.ok(patient.evidence[0]!.content.length > 4096);
   const store = new DoctorEvidenceStore(patient);
+  const evidenceId = patient.evidence[0]!.id;
+  store.read(evidenceId, 0, 1);
+  assert.equal(store.hasRead(evidenceId), false);
+  assert.deepEqual(store.readRecord(), [{ evidenceId, fullyRead: false }]);
+  for (let offset = 1; offset < patient.evidence[0]!.content.length; offset += 4096) store.read(evidenceId, offset, 4096);
+  assert.equal(store.hasRead(evidenceId), true);
+  assert.deepEqual(store.readRecord(), [{ evidenceId, fullyRead: true }]);
   const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
   assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, outputTokens: { ...patient.cost.outputTokens, count: 8 } } }, patient, store), /re-derived/);
