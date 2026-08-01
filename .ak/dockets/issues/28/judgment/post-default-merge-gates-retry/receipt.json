@@ -1,0 +1,20 @@
+{
+  "toolName": "ak_judge_output",
+  "toolCallId": "call_TFNP9A9dnz7u3xvcBZeALyYN|fc_0a55a515e6037f9d016a6e1497a2a08191a7a96c9efe45a6be",
+  "details": {
+    "judgeStatus": "continue",
+    "fix": {
+      "summary": "At clean HEAD 22dd83f, authorize only a test-fixture repair in `test/assisted-settlement-truth.test.ts`: replace the three stale Fixer apply receipt payloads with current lawful exact leaves—one `refused` output with a refused `classResults` leaf, and the two `completed` outputs with completed `classResults` leaves carrying the required search scope, exceptions, and full commit SHA. Make no production, schema, generated-artifact, Soul, or unrelated fixture changes."
+    },
+    "classes": [
+      {
+        "name": "StaleFixerApplyReceiptFixtures",
+        "owner": "The Recorder-assisted settlement integration fixture in `test/assisted-settlement-truth.test.ts`.",
+        "boundary": "Only the three Fixer apply `details` literals used by the refusal, child-failure, and verified-docket cases; Judge fixtures and production Fixer/Recorder contracts remain outside this repair.",
+        "disposition": "Repair the stale literals in place to satisfy the current closed Fixer apply union, preserving each case's existing terminal and recovery assertions. Do not add compatibility handling or weaken validation."
+      }
+    ],
+    "note": "Current evidence is bounded: `npm run typecheck` passes; the focused settlement/native/stats run and unified `npm test` both fail exactly four assertions because those three old thin Fixer payloads are rejected as `acceptance-invalid` (the unified gate reports 465 pass, 4 fail, 5 skip). Preserve all production contracts. After the fixture-only repair, require the focused `test/assisted-settlement-truth.test.ts` gate and the unified `npm test` gate to pass on the new HEAD; also retain clean typecheck and diff checks."
+  },
+  "artifactKind": "acceptedReceipt"
+}
