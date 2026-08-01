@@ -35,7 +35,7 @@
 - 增加阶段或调用方式不自动意味着复制一套角色方法。
 - 发现同一规则跨 Soul/schema/runtime/README 重复时，保留在拥有该语义的最深层，其余删除或只留必要引用。
 - Soul review 必须检查两件事：必要原则是否缺失，以及非 Soul 内容是否混入。
-- Lifecycle code in a role module is a defect — the envelope owns activation (ADR 0018).
+- 角色模块内出现生命周期代码即缺陷——激活归共享信封独家拥有（ADR 0018）。
 
 ## Probe lifecycle
 
