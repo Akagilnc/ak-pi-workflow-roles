@@ -2,6 +2,8 @@
 
 Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
 
+An ignition that cannot activate its role exits nonzero; nothing falls back to uncaged pi (ADR 0018).
+
 ## Judge
 
 The judge role:
