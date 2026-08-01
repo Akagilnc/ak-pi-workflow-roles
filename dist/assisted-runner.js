@@ -183,6 +183,7 @@ async function run(mode, raw, argv, deps) {
     await fenceLaunch(dir, config, "role", cursor);
     selectedId = id();
     await appendAssistedGenerationV1(dir, { type: "action_reserved", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: { comparison, selected: { role: config.execution.role, phase: config.execution.phase } } }, now);
+    await deps.afterLedgerEvent?.("action_reserved");
   }
   await appendAssistedGenerationV1(dir, { type: "role_started", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: {} }, now);
   const settlement = await deps.recorder.invokeRole({ config, invocationId: selectedId, piArgv, beforeTarget: position.snapshot.workspaces.find((w) => w.id === config.execution.workspaceId).target });
@@ -192,6 +193,7 @@ async function run(mode, raw, argv, deps) {
   position = await acquireCurrentPositionV1(config, cursor, latest, { git: deps.git, github: deps.github });
   await appendAssistedGenerationV1(dir, { type: "acquisition", runId: config.runId, callId: config.callId, positionCursor: cursor, payload: { snapshot: position.snapshot, reason: "post_settlement" } }, now);
   const post = await consult(config, position, piArgv, dir, deps, now, id);
+  await deps.afterLedgerEvent?.("navigator_settled");
   const status = post.receipt ? post.receipt.status === "ordinary" ? "completed" : "navigation_halted" : "infrastructure_failure";
   return publishResult(dir, { version: 1, runId: config.runId, callId: config.callId, status, positionCursor: cursor, selectedInvocationId: selectedId, preNavigation: pre.receipt, settlement: { terminalClass: settlement.terminalClass, reference: settlement.reference }, postNavigation: post.receipt, actionComparison: comparison }, now);
 }
@@ -250,6 +252,7 @@ async function recoverAssistedInvocationInternalV1(repositoryRoot, runId, invoca
     latest = { invocationId, role: config.execution.role, phase: config.execution.phase, beforeTarget: workspace.target, afterTarget: workspace.target, terminalClass: "outcome_unavailable_after_runner_loss", reference: { id: `failure:${invocationId}`, sha256: sha256Hex(recoveryBytes) } };
     await appendAssistedGenerationV1(dir, { type: "recovered", runId, callId: started.callId, invocationId, positionCursor: cursor, payload: { attestation: "confirmed_stopped", terminalClass: "outcome_unavailable_after_runner_loss", latestAttempt: latest } });
   } else await appendAssistedGenerationV1(dir, { type: "recovered", runId, callId: started.callId, invocationId, positionCursor: cursor, payload: { attestation: "confirmed_stopped", terminalClass: "outcome_unavailable_after_runner_loss" } });
+  await deps.afterLedgerEvent?.("recovered");
   const position = await acquireCurrentPositionV1(config, cursor, latest, { git: deps.git, github: deps.github });
   await appendAssistedGenerationV1(dir, { type: "acquisition", runId, callId: started.callId, positionCursor: cursor, payload: { snapshot: position.snapshot, reason: "recovery" } });
   await consult(config, position, piArgv, dir, deps, deps.now ?? (() => (/* @__PURE__ */ new Date()).toISOString()), deps.uuid ?? uuidv7);
