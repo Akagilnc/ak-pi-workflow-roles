@@ -29,7 +29,9 @@ test("one retained runs directory yields an independently cited single-case cost
   const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
   await writeFile(join(runs, "review-004/session/real.jsonl"), body);
   await writeFile(join(runs, "review-004-retry/stderr.log"), "failed before session\n");
+  await writeFile(join(runs, "review-004/session/stderr.log"), "nested diagnostic, not pre-header invocation evidence\n");
   const patient = await loadDoctorCase(runs);
+  assert.deepEqual(patient.evidence.filter((entry) => entry.kind === "stderr").map((entry) => entry.id), ["review-004-retry/stderr.log"]);
   assert.equal(patient.identity.issueNumber, 28);
   assert.deepEqual(patient.cost.invocations, { count: 2, sources: ["review-004", "review-004-retry"] });
   assert.deepEqual(patient.cost.legs, { count: 1, sources: ["review-004/session/real.jsonl"] });
