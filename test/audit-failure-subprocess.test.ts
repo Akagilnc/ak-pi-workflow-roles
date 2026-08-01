@@ -49,11 +49,11 @@ async function runCli(mode: "print" | "json") {
 
 async function runFixerAuditFailureCli(mode: "print" | "json") {
   return withHermeticHome({ prefix: "ak-fixer-audit-fatal-cli-" }, async ({ home, agentDir }) => {
-    const packet = resolve(home, "packet.md");
+    const packet = resolve(home, "packet.json");
     const runDirectory = resolve(packageRoot, `.ak/work/issues/44/runs/audit-failure-subprocess-${mode}`);
     const sessionDirectory = resolve(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
-    await writeFile(packet, "# Assigned repair\n\nSettle Contract.\n");
+    await writeFile(packet, JSON.stringify({ version: 1, instructions: "Settle Contract.", prerequisites: [] }));
     await writeFile(resolve(runDirectory, "invocation.json"), JSON.stringify({
       role: "fixer",
       phase: "apply",

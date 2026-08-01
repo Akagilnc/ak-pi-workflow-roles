@@ -21,6 +21,9 @@ import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_AUDIT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
+  fixerPacketV1Schema,
+  parseFixPacketV1,
+  validateFixerOutputForPacket,
   JUDGE_OUTPUT_TOOL_NAME,
   ROLE_FLAG,
   WORKFLOW_ROLES,
@@ -73,6 +76,9 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   assert.equal(ROLE_FLAG.name, "ak-role");
   assert.equal(DOCTOR_EVIDENCE_FLAG.name, "ak-doctor-evidence");
   assert.equal(DOCTOR_EVIDENCE_FLAG.definition.type, "string");
+  const packet = parseFixPacketV1(JSON.stringify({ version: 1, instructions: "repair", prerequisites: [] }));
+  assert.equal((fixerPacketV1Schema as any).additionalProperties, false);
+  assert.deepEqual(validateFixerOutputForPacket({ status: "planned", report: "plan" }, "plan", packet), { status: "planned", report: "plan" });
   await withHermeticHome(
     { prefix: "ak-doctor-pack-" },
     async ({ home }) => {
@@ -83,6 +89,9 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
         "src/doctor-contracts.ts",
         "src/stats-line.ts",
         "src/canonical-json.ts",
+        "src/package-contracts/fixer-packet.ts",
+        "dist/package-contracts/fixer-packet.js",
+        "packets/fixer-repair.json",
       ]) {
         assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
       }
@@ -108,6 +117,7 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
     /Extension CLI Flags:\n([\s\S]*?)\n\nExamples:/,
   )?.[1];
 
+  assert.match(extensionHelp ?? "", /--ak-fix-packet <value>\s+Path to a closed FixPacketV1 JSON repair packet/);
   assert.match(extensionHelp ?? "", /--ak-fixer-phase <value>\s+Fixer phase: plan .* or apply/);
   assert.match(extensionHelp ?? "", /--ak-review-capabilities <value>\s*Closed Reviewer capability grant/);
   assert.match(extensionHelp ?? "", /--ak-review-scope-keys <value>\s*Optional comma-separated exact class keys/);
@@ -577,8 +587,8 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
   await withHermeticHome(
     { prefix: "ak-fixer-integration-" },
     async ({ home, agentDir }) => {
-      const packetPath = resolve(home, "fix-packet.md");
-      await writeFile(packetPath, "# Approved repair\n\nApply it.");
+      const packetPath = resolve(home, "fix-packet.json");
+      await writeFile(packetPath, JSON.stringify({ version: 1, instructions: "# Approved repair\n\nApply it.", prerequisites: [] }));
       for (const phase of ["plan", "apply"] as const) {
         const faux = fauxProvider({
           api: `ak-fixer-offline-${phase}`,

@@ -19,7 +19,8 @@ import {
   type WorkerOutput,
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
-import { fixerOutputSchema, validateFixerOutput, type FixerPhase } from "./package-contracts/fixer-output.ts";
+import { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket, type FixerPhase } from "./package-contracts/fixer-output.ts";
+import { parseFixPacketV1, type FixPacketV1 } from "./package-contracts/fixer-packet.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -58,7 +59,7 @@ export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext): never;
 };
 
-export type FixerAuditInput = { soul: string; packet: string; phase: FixerPhase; transcript: string; candidate: FixerOutput };
+export type FixerAuditInput = Readonly<{ soul: string; packet: FixPacketV1; phase: FixerPhase; transcript: string; candidate: FixerOutput }>;
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadPacket(path: string): Promise<string>;
@@ -76,6 +77,12 @@ export type CoderRoleDependencies = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
 }
 
 function hasExactKeys(
@@ -129,12 +136,12 @@ export function createFixerRoleRuntime(
   hostActions?: WorkerRoleHostActions,
 ): { activate(): Promise<void> } {
   let soul: string | undefined;
-  let packet: string | undefined;
+  let packet: FixPacketV1 | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
 
   pi.registerFlag("ak-fix-packet", {
-    description: "Markdown repair packet assigned to the fixer role",
+    description: "Path to a closed FixPacketV1 JSON repair packet",
     type: "string",
   });
   pi.registerFlag("ak-fixer-phase", {
@@ -158,8 +165,7 @@ export function createFixerRoleRuntime(
       if (typeof packetPath !== "string" || packetPath.trim().length === 0) {
         throw new Error("Fixer role requires --ak-fix-packet");
       }
-      packet = (await dependencies.loadPacket(packetPath)).trim();
-      if (packet.length === 0) throw new Error("Fixer repair packet is empty");
+      packet = parseFixPacketV1(await dependencies.loadPacket(packetPath));
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
@@ -185,7 +191,7 @@ export function createFixerRoleRuntime(
               "Fixer",
               ctx,
             );
-            const output = validateFixerOutput(parameters, phase);
+            const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
             if (dependencies.transcriptFromContext === undefined || dependencies.auditCompliance === undefined) {
               const error = new Error("Fixer compliance auditor is not configured");
               if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx);
@@ -193,7 +199,8 @@ export function createFixerRoleRuntime(
             }
             let audit: ComplianceDecision;
             try {
-              audit = await dependencies.auditCompliance({ soul: soul!, packet, phase, transcript: dependencies.transcriptFromContext(ctx), candidate: output }, { context: ctx, ...(_signal === undefined ? {} : { signal: _signal }) });
+              const auditInput = Object.freeze({ soul: soul!, packet, phase, transcript: dependencies.transcriptFromContext(ctx), candidate: output });
+              audit = await dependencies.auditCompliance(auditInput, { context: ctx, ...(_signal === undefined ? {} : { signal: _signal }) });
             } catch (error) {
               if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx);
               throw error;
@@ -223,7 +230,7 @@ export function createFixerRoleRuntime(
           if (soul === undefined) throw new Error("Fixer soul was not loaded");
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet ?? ""}\n</fix_packet>`,
+              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet === undefined ? "" : JSON.stringify(packet)}\n</fix_packet>`,
           };
         });
       }
