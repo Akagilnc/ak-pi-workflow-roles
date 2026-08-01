@@ -40,3 +40,25 @@ test("one retained runs directory yields an independently cited single-case cost
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
   assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, toolCalls: { ...patient.cost.toolCalls, count: 2 } } }, patient, store), /re-derived/);
 });
+
+test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-finding-"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(join(runs, "judge/session"), { recursive: true });
+  await writeFile(join(runs, "judge/session/session.jsonl"), rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const patient = await loadDoctorCase(runs);
+  const evidenceId = "judge/session/session.jsonl";
+  const store = new DoctorEvidenceStore(patient);
+  store.read(evidenceId);
+  const guardrail = { answer: true, evidenceIds: [evidenceId], explanation: "Observed in the retained case" };
+  const finding = {
+    targetKey: "judge-output", targetKind: "gate", evidenceIds: [evidenceId], disposition: "keep",
+    guardrails: { reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: { ...guardrail, answer: false } },
+    prescription: { kind: "retain", recommendation: "Retain the gate" },
+    lastRealBite: { kind: "actual", targetKey: "judge-output", evidenceId },
+  } as const;
+  const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [finding] } as const;
+  assert.deepEqual(validateDoctorOutput(output, patient, store), output);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "keep", lastRealBite: { kind: "noRealBite", targetKey: "judge-output", eligibleEvidenceIds: [evidenceId] } }] }, patient, store), /noRealBite permits only thin or delete/);
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, prescription: { kind: "patch", recommendation: "Patch it" } }] }, patient, store), /necessity explanation/);
+});
