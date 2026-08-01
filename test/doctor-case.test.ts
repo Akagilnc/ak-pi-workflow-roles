@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
-import { DoctorEvidenceStore, validateDoctorOutput } from "../src/doctor-contracts.ts";
+import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, validateDoctorOutput } from "../src/doctor-contracts.ts";
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
@@ -113,6 +113,7 @@ test("intermediate object details neither terminate nor manufacture session stat
 });
 
 test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
+  assert.deepEqual(DOCTOR_TARGET_KINDS, ["law", "gate", "template", "station", "seat"]);
   const root = await mkdtemp(join(tmpdir(), "doctor-finding-"));
   const runs = join(root, ".ak/work/issues/40/runs");
   await mkdir(join(runs, "judge/session"), { recursive: true });
@@ -123,7 +124,7 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   store.read(evidenceId);
   const guardrail = { answer: true, evidenceIds: [evidenceId], explanation: "Observed in the retained case" };
   const finding = {
-    targetKey: "case", targetKind: "case", evidenceIds: [evidenceId], disposition: "keep",
+    targetKey: "case", evidenceIds: [evidenceId], disposition: "keep",
     guardrails: { reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: { ...guardrail, answer: false } },
     prescription: { kind: "retain", recommendation: "Retain the gate" },
     lastRealBite: { kind: "actual", targetKey: "case", evidenceId },
