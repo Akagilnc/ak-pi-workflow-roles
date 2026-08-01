@@ -1,6 +1,5 @@
-# 0018: Activation fails closed
+# 0018 — 激活要么合法完成，要么响亮终结
 
-A role activation either completes lawfully or loudly terminates the whole
-invocation — never an uncaged run; the shared registry envelope owns this,
-roles never do. (Pi treats session_start errors as non-fatal, so without the
-envelope every role reinvents its own latch.)
+Status: accepted（owner 拍定，2026-08-02）
+
+角色激活要么合法完成，要么响亮终结整次调用——脱笼续跑不是可达状态；此事由注册席的共享信封独家拥有，角色永不自带生命周期代码。（Pi 把 session_start 错误当非致命，没有信封，每个角色都会自造私门闩。）
