@@ -1,0 +1,7 @@
+# PR #47 external review adjudication
+
+Adjudicate every finding in the sealed PR review input against Issue #22 final authority, current implementation, Pi runtime facts, and repository standards.
+
+Verify concrete counterexamples for session cwd binding and active-tool accessor absence; determine whether each is a real class defect or host-interface misunderstanding. For AUTO_MERGE, distinguish required package preflight/docs from unsupported speculative compatibility and verify the exact minimum/strategy claims before accepting wording. Reject the generic docstring warning unless repository law supports it.
+
+If repair is required, classify exact owner/boundary/disposition for one direct Fixer invocation. Do not broaden Merger into worktree ownership, strategy selection, merge initiation, orchestration, or generic Git version policy.
