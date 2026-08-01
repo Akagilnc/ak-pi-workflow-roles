@@ -1,6 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
+import { isUuidV7 } from "./uuidv7.js";
+import { scanJsonValue } from "./recorder/scanner.js";
 import { PACKAGED_ROLES } from "./navigator-contracts.js";
-const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 function rec(v, keys, w) {
   if (!v || typeof v !== "object" || Array.isArray(v) || Object.keys(v).length !== keys.length || !keys.every((k) => Object.hasOwn(v, k))) throw new Error(`invalid ${w}`);
   return v;
@@ -11,7 +12,7 @@ function str(v, w) {
 }
 function validateAssistedCallConfigV1(value) {
   const r = rec(value, ["version", "runId", "callId", "subject", "acquisition", "execution"], "assisted config");
-  if (r.version !== 1 || !UUID7.test(String(r.runId)) || !UUID7.test(String(r.callId))) throw new Error("invalid assisted identity");
+  if (r.version !== 1 || !isUuidV7(r.runId) || !isUuidV7(r.callId)) throw new Error("invalid assisted identity");
   const s = rec(r.subject, ["repositoryRoot", "github", "parentIssue", "children"], "subject"), g = rec(s.github, ["owner", "name"], "github"), a = rec(r.acquisition, ["workspaces", "evidence", "labelPolicy"], "acquisition"), e = rec(r.execution, ["workspaceId", "cwd", "role", "phase", "environment", "stdin"], "execution"), env = rec(e.environment, ["inherit", "overrides", "unset"], "environment");
   for (const p of [s.repositoryRoot, e.cwd]) if (typeof p !== "string" || !isAbsolute(p) || resolve(p) !== p) throw new Error("paths must be canonical absolute");
   if (!Number.isSafeInteger(s.parentIssue) || s.parentIssue < 1 || !Array.isArray(s.children) || !Array.isArray(a.workspaces) || !Array.isArray(a.evidence) || !Array.isArray(a.labelPolicy)) throw new Error("invalid subject/acquisition");
@@ -61,7 +62,7 @@ function values(argv, flag) {
 }
 function validateSelectedPiArgvV1(argv, execution) {
   if (argv.length < 2 || !/(^|\/)pi$/.test(argv[0])) throw new Error("selected command must be Pi argv");
-  if (argv.some((x) => /token|secret|password|api[-_]?key/i.test(x))) throw new Error("credentials are forbidden in promoted argv");
+  if (scanJsonValue(argv, "promotedPiArgv").report.redacted) throw new Error("credentials are forbidden in promoted argv");
   if (argv.some((x, i) => i > 0 && OWNED.has(x.split("=", 1)[0]))) throw new Error("session flag is Runner-owned");
   const roles = values(argv, "--ak-role");
   if (roles.length !== 1 || roles[0] !== execution.role) throw new Error("selected role conflict");
