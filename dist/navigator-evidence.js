@@ -10,24 +10,31 @@ function credit(intervals, start, end) {
   }
   intervals.splice(i, 0, [start, end]);
 }
-function utf8End(bytes, start, target) {
-  let end = target;
-  while (end > start) {
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end));
-      return end;
-    } catch {
-      end--;
-    }
+function continuation(byte) {
+  return byte !== void 0 && (byte & 192) === 128;
+}
+function sequenceEnd(bytes, index) {
+  const first = bytes[index];
+  if (first === void 0) return -1;
+  if (first <= 127) return index + 1;
+  if (first >= 194 && first <= 223) return continuation(bytes[index + 1]) ? index + 2 : -1;
+  if (first >= 224 && first <= 239) {
+    const second = bytes[index + 1], validSecond = first === 224 ? second !== void 0 && second >= 160 && second <= 191 : first === 237 ? second !== void 0 && second >= 128 && second <= 159 : continuation(second);
+    return validSecond && continuation(bytes[index + 2]) ? index + 3 : -1;
   }
-  if (start < bytes.length) {
-    for (end = target + 1; end <= Math.min(bytes.length, target + 3); end++) {
-      try {
-        new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end));
-        return end;
-      } catch {
-      }
-    }
+  if (first >= 240 && first <= 244) {
+    const second = bytes[index + 1], validSecond = first === 240 ? second !== void 0 && second >= 144 && second <= 191 : first === 244 ? second !== void 0 && second >= 128 && second <= 143 : continuation(second);
+    return validSecond && continuation(bytes[index + 2]) && continuation(bytes[index + 3]) ? index + 4 : -1;
+  }
+  return -1;
+}
+function utf8End(bytes, start, target) {
+  let index = start;
+  while (index < target) {
+    const end = sequenceEnd(bytes, index);
+    if (end < 0) return index > start ? index : target;
+    if (end > target) return index > start ? index : end;
+    index = end;
   }
   return target;
 }
