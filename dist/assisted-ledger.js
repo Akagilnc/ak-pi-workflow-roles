@@ -31,7 +31,7 @@ async function readAssistedLedgerV1(runDirectory) {
   }
   return rows;
 }
-async function appendAssistedGenerationV1(runDirectory, event, now = () => (/* @__PURE__ */ new Date()).toISOString(), io = {}) {
+async function appendAssistedGenerationV1(runDirectory, event, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
   const dir = join(runDirectory, "ledger");
   await mkdir(dir, { recursive: true });
   const rows = await readAssistedLedgerV1(runDirectory), sequence = rows.length + 1;
@@ -46,10 +46,10 @@ async function appendAssistedGenerationV1(runDirectory, event, now = () => (/* @
     await handle.sync();
     await handle.close();
     handle = void 0;
-    (io.rename ?? renameNoReplace)(tempPath, finalPath);
+    renameNoReplace(tempPath, finalPath);
   } catch (e) {
     try {
-      await (io.cleanup ?? unlink)(tempPath);
+      await unlink(tempPath);
     } catch (cleanup) {
       if (cleanup.code !== "ENOENT") throw new AggregateError([e, cleanup], "assisted ledger publication and cleanup failed", { cause: e });
     }
