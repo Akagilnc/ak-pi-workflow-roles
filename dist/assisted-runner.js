@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { canonicalJson } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
-import { uuidv7 } from "./uuidv7.js";
+import { isUuidV7, uuidv7 } from "./uuidv7.js";
 import { validateAssistedCallConfigV1, validateSelectedPiArgvV1 } from "./assisted-contracts.js";
 import { acquireCurrentPositionV1 } from "./assisted-acquisition.js";
 import { appendAssistedGenerationV1 as publishAssistedGenerationV1, AssistedLedgerConflictError, assistedRunDirectory, readAssistedLedgerV1 } from "./assisted-ledger.js";
@@ -21,7 +21,7 @@ async function appendAssistedGenerationV1(runDirectory, event, now) {
   }
 }
 async function runIndex(root, runId, parentIssue) {
-  if (!isAbsolute(root) || resolve(root) !== root || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(runId)) throw new Error("invalid assisted run locator");
+  if (!isAbsolute(root) || resolve(root) !== root || !isUuidV7(runId)) throw new Error("invalid assisted run locator");
   const path = join(root, ".ak", "work", "assisted-runs", `${runId}.json`);
   if (parentIssue !== void 0) {
     await mkdir(join(root, ".ak", "work", "assisted-runs"), { recursive: true });

@@ -11,42 +11,42 @@ function str(v, w) {
   return v;
 }
 function validateAssistedCallConfigV1(value) {
-  const r = rec(value, ["version", "runId", "callId", "subject", "acquisition", "execution"], "assisted config");
-  if (r.version !== 1 || !isUuidV7(r.runId) || !isUuidV7(r.callId)) throw new Error("invalid assisted identity");
-  const s = rec(r.subject, ["repositoryRoot", "github", "parentIssue", "children"], "subject"), g = rec(s.github, ["owner", "name"], "github"), a = rec(r.acquisition, ["workspaces", "evidence", "labelPolicy"], "acquisition"), e = rec(r.execution, ["workspaceId", "cwd", "role", "phase", "environment", "stdin"], "execution"), env = rec(e.environment, ["inherit", "overrides", "unset"], "environment");
-  for (const p of [s.repositoryRoot, e.cwd]) if (typeof p !== "string" || !isAbsolute(p) || resolve(p) !== p) throw new Error("paths must be canonical absolute");
-  if (!Number.isSafeInteger(s.parentIssue) || s.parentIssue < 1 || !Array.isArray(s.children) || !Array.isArray(a.workspaces) || !Array.isArray(a.evidence) || !Array.isArray(a.labelPolicy)) throw new Error("invalid subject/acquisition");
-  if (!PACKAGED_ROLES.includes(e.role) || e.role === "navigator") throw new Error("invalid selected role");
-  if (e.role === "coder" || e.role === "fixer" ? e.phase !== "plan" && e.phase !== "apply" : e.phase !== null) throw new Error("invalid selected phase");
-  if (e.stdin !== "inherit" || typeof env.inherit !== "boolean" || !env.overrides || typeof env.overrides !== "object" || !Array.isArray(env.unset)) throw new Error("invalid execution policy");
-  str(g.owner, "github owner");
-  str(g.name, "github name");
-  const ws = a.workspaces.map((x, i) => {
+  const configRecord = rec(value, ["version", "runId", "callId", "subject", "acquisition", "execution"], "assisted config");
+  if (configRecord.version !== 1 || !isUuidV7(configRecord.runId) || !isUuidV7(configRecord.callId)) throw new Error("invalid assisted identity");
+  const subjectRecord = rec(configRecord.subject, ["repositoryRoot", "github", "parentIssue", "children"], "subject"), githubRecord = rec(subjectRecord.github, ["owner", "name"], "github"), acquisitionRecord = rec(configRecord.acquisition, ["workspaces", "evidence", "labelPolicy"], "acquisition"), executionRecord = rec(configRecord.execution, ["workspaceId", "cwd", "role", "phase", "environment", "stdin"], "execution"), environmentRecord = rec(executionRecord.environment, ["inherit", "overrides", "unset"], "environment");
+  for (const pathValue of [subjectRecord.repositoryRoot, executionRecord.cwd]) if (typeof pathValue !== "string" || !isAbsolute(pathValue) || resolve(pathValue) !== pathValue) throw new Error("paths must be canonical absolute");
+  if (!Number.isSafeInteger(subjectRecord.parentIssue) || subjectRecord.parentIssue < 1 || !Array.isArray(subjectRecord.children) || !Array.isArray(acquisitionRecord.workspaces) || !Array.isArray(acquisitionRecord.evidence) || !Array.isArray(acquisitionRecord.labelPolicy)) throw new Error("invalid subject/acquisition");
+  if (!PACKAGED_ROLES.includes(executionRecord.role) || executionRecord.role === "navigator") throw new Error("invalid selected role");
+  if (executionRecord.role === "coder" || executionRecord.role === "fixer" ? executionRecord.phase !== "plan" && executionRecord.phase !== "apply" : executionRecord.phase !== null) throw new Error("invalid selected phase");
+  if (executionRecord.stdin !== "inherit" || typeof environmentRecord.inherit !== "boolean" || !environmentRecord.overrides || typeof environmentRecord.overrides !== "object" || !Array.isArray(environmentRecord.unset)) throw new Error("invalid execution policy");
+  str(githubRecord.owner, "github owner");
+  str(githubRecord.name, "github name");
+  const workspaces = acquisitionRecord.workspaces.map((x, i) => {
     const w = rec(x, ["id", "root", "relation"], `workspace/${i}`);
     str(w.id, "workspace id");
     if (!isAbsolute(String(w.root)) || w.relation !== "repository" && w.relation !== "worktree") throw new Error("invalid workspace");
     return w;
   });
-  if (new Set(ws.map((w) => w.id)).size !== ws.length || !ws.some((w) => w.id === e.workspaceId && w.root === e.cwd)) throw new Error("selected workspace mismatch");
-  const evidence = a.evidence.map((x, i) => {
-    const d = rec(x, ["id", "kind", "path", "provenance"], `evidence/${i}`), p = rec(d.provenance, ["kind", "reference"], "evidence provenance");
-    str(d.id, "evidence id");
-    str(p.kind, "evidence provenance kind");
-    str(p.reference, "evidence provenance reference");
-    if (!["authority", "acceptance", "task", "input"].includes(String(d.kind)) || !isAbsolute(String(d.path))) throw new Error("invalid evidence declaration");
-    return d;
+  if (new Set(workspaces.map((w) => w.id)).size !== workspaces.length || !workspaces.some((w) => w.id === executionRecord.workspaceId && w.root === executionRecord.cwd)) throw new Error("selected workspace mismatch");
+  const evidence = acquisitionRecord.evidence.map((x, i) => {
+    const declaration = rec(x, ["id", "kind", "path", "provenance"], `evidence/${i}`), provenanceRecord = rec(declaration.provenance, ["kind", "reference"], "evidence provenance");
+    str(declaration.id, "evidence id");
+    str(provenanceRecord.kind, "evidence provenance kind");
+    str(provenanceRecord.reference, "evidence provenance reference");
+    if (!["authority", "acceptance", "task", "input"].includes(String(declaration.kind)) || !isAbsolute(String(declaration.path))) throw new Error("invalid evidence declaration");
+    return declaration;
   });
-  if (new Set(evidence.map((d) => d.id)).size !== evidence.length) throw new Error("duplicate evidence id");
-  for (const [i, x] of a.labelPolicy.entries()) {
-    const p = rec(x, ["labelId", "meaning"], `labelPolicy/${i}`);
-    str(p.labelId, "label id");
-    str(p.meaning, "label meaning");
+  if (new Set(evidence.map((declaration) => declaration.id)).size !== evidence.length) throw new Error("duplicate evidence id");
+  for (const [i, x] of acquisitionRecord.labelPolicy.entries()) {
+    const labelRecord = rec(x, ["labelId", "meaning"], `labelPolicy/${i}`);
+    str(labelRecord.labelId, "label id");
+    str(labelRecord.meaning, "label meaning");
   }
-  if (typeof env.overrides !== "object" || Array.isArray(env.overrides) || Object.entries(env.overrides).some(([k, v]) => !k || k.includes("\0") || k.includes("=") || typeof v !== "string" || v.includes("\0")) || env.unset.some((x) => typeof x !== "string" || !x)) throw new Error("invalid environment policy");
-  const children = s.children;
+  if (typeof environmentRecord.overrides !== "object" || Array.isArray(environmentRecord.overrides) || Object.entries(environmentRecord.overrides).some(([k, v]) => !k || k.includes("\0") || k.includes("=") || typeof v !== "string" || v.includes("\0")) || environmentRecord.unset.some((x) => typeof x !== "string" || !x)) throw new Error("invalid environment policy");
+  const children = subjectRecord.children;
   for (let i = 0; i < children.length; i++) {
-    const c = rec(children[i], ["number", "relation", "provenance"], "child"), p = rec(c.provenance, ["kind", "reference"], "provenance");
-    if (c.relation !== "sub_issue" || !Number.isSafeInteger(c.number) || i > 0 && c.number <= children[i - 1].number || p.kind !== "caller" && p.kind !== "tracker" || typeof p.reference !== "string" || !p.reference) throw new Error("invalid exact child set");
+    const childRecord = rec(children[i], ["number", "relation", "provenance"], "child"), childProvenance = rec(childRecord.provenance, ["kind", "reference"], "provenance");
+    if (childRecord.relation !== "sub_issue" || !Number.isSafeInteger(childRecord.number) || i > 0 && childRecord.number <= children[i - 1].number || childProvenance.kind !== "caller" && childProvenance.kind !== "tracker" || typeof childProvenance.reference !== "string" || !childProvenance.reference) throw new Error("invalid exact child set");
   }
   ;
   return value;
