@@ -2653,3 +2653,33 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
     void unitLedger;
   });
 });
+
+test("Collector success followed by failed reactivation cannot dispatch stale state", async () => {
+  await withHermeticHome({ prefix: "ak-collector-reactivation-" }, async ({ home }) => {
+    const legs = await writeLegs(home);
+    const flags = new Map<string, unknown>([
+      ["ak-collector-repo", "acme/widgets"], ["ak-collector-pr", "1"], ["ak-collector-legs", legs],
+    ]);
+    const tools = new Map<string, any>();
+    let active: string[] = [];
+    const pi = {
+      registerFlag() {}, getFlag: (name: string) => flags.get(name), getCommands: () => [],
+      getAllTools: () => [...tools.values()], registerTool: (tool: any) => tools.set(tool.name, tool),
+      setActiveTools: (names: string[]) => { active = names; }, getActiveTools: () => active,
+      on() {},
+    };
+    const runtime = createCollectorRoleRuntime(pi as any, {
+      loadSoul: async () => COLLECTOR_SOUL,
+      createTransport: () => createFakeGitHubTransport({ user: sampleUser(), pullRequest: samplePull(), reviews: [], issueComments: [], reviewComments: [] }),
+      createClock: () => clockAt("2024-01-01T00:00:00Z"),
+    }, { failInfrastructure(error: unknown): never { throw error; } });
+    const ctx = { mode: "print" } as any;
+    await runtime.activate(ctx, { reason: "new" });
+    flags.delete("ak-collector-repo");
+    await assert.rejects(() => runtime.activate(ctx, { reason: "new" }), /requires --ak-collector-repo/);
+    await assert.rejects(
+      () => tools.get(COLLECTOR_OBSERVE_TOOL).execute("call", {}, undefined, undefined),
+      /not activated/,
+    );
+  });
+});
