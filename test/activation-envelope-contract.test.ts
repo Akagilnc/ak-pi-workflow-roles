@@ -44,6 +44,7 @@ function runtimeHarness(options: {
   activate?: () => Promise<string>;
   clock?: () => string;
   writeTrace?: (record: ActivationTraceRecord) => void | Promise<void>;
+  mode?: ExtensionContext["mode"];
 } = {}) {
   type Handler = (event: { reason?: string; systemPrompt?: string }, ctx: ExtensionContext) => unknown;
   const handlers = new Map<string, Handler[]>();
@@ -60,7 +61,7 @@ function runtimeHarness(options: {
     activationClock: options.clock ?? (() => "2025-01-01T00:00:00.000Z"),
     activationTraceWriter: options.writeTrace ?? ((record) => { traces.push(record); }),
   })(pi);
-  const ctx = { mode: "print", abort() { aborts++; } } as unknown as ExtensionContext;
+  const ctx = { mode: options.mode ?? "print", abort() { aborts++; } } as unknown as ExtensionContext;
   const handler = (name: string): Handler => {
     const found = handlers.get(name)?.[0];
     assert.ok(found, `missing ${name} handler`);
@@ -155,3 +156,13 @@ test("executor rejects schema-invalid dependency output without emitting it", as
   }), /closed contract/);
   assert.deepEqual(traces, []);
 });
+
+
+for (const [mode, expected] of [["print", 1], ["json", 1], ["tui", undefined], ["rpc", undefined]] as const) {
+  test(`activation failure applies ${mode} exit-code policy`, async () => {
+    process.exitCode = undefined;
+    const h = runtimeHarness({ mode });
+    await assert.rejects(async () => h.handler("session_start")({}, h.ctx));
+    assert.equal(process.exitCode, expected);
+  });
+}
