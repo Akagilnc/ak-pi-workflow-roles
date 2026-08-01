@@ -11,7 +11,14 @@ export const MERGER_ACTIVE_TOOLS = ["read", "grep", "find", "ls", "bash", "write
 export type MergerRoleDependencies = { loadSoul(): Promise<string>; loadInput(path: string): Promise<unknown>; gitState: MergerGitState };
 export type MergerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext): never };
 
-const mergerCandidateTransportSchema = Type.Object({}, { additionalProperties: true });
+const mergerCandidateTransportSchema = Type.Object({}, {
+  additionalProperties: true,
+  description: "Arguments must have exactly one of the following completed or escalate shapes, with no extra keys.",
+  examples: [
+    { status: "completed", attemptId: "<assignment attemptId>", report: "<non-blank report>", mergeCommitId: "<full Git object ID>" },
+    { status: "escalate", attemptId: "<assignment attemptId>", diagnosis: "<non-blank intent or authority diagnosis>", report: "<non-blank report>" },
+  ],
+});
 
 function same(a: readonly string[], b: readonly string[]): boolean { return a.length === b.length && a.every((value, i) => value === b[i]); }
 function singleton(id: string, ctx: ExtensionContext): void { const leaf = ctx.sessionManager.getLeafEntry(); if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Merger output must be the sole final tool call"); const calls = leaf.message.content.filter(part => part.type === "toolCall"); if (calls.length !== 1 || calls[0]?.id !== id || calls[0]?.name !== MERGER_OUTPUT_TOOL_NAME) throw new Error("Merger output must be the sole final tool call"); }

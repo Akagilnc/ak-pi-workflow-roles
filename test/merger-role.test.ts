@@ -78,6 +78,17 @@ test("Merger activation preflights frozen identity and narrows to the exact reso
   assert.match(prompt.systemPrompt, /MERGER LAW/); assert.match(prompt.systemPrompt, /target intent/); assert.match(prompt.systemPrompt, /npm/); assert.doesNotMatch(prompt.systemPrompt, /\/input\.json/);
 });
 
+test("Merger registration exposes both exact terminal leaf shapes without narrowing transport", async () => {
+  const h = setup(); await h.runtime.activate();
+  const parameters = h.tools.get(MERGER_OUTPUT_TOOL_NAME).parameters;
+  assert.deepEqual(parameters.properties, {});
+  assert.equal(parameters.additionalProperties, true);
+  assert.deepEqual(parameters.examples, [
+    { status: "completed", attemptId: "<assignment attemptId>", report: "<non-blank report>", mergeCommitId: "<full Git object ID>" },
+    { status: "escalate", attemptId: "<assignment attemptId>", diagnosis: "<non-blank intent or authority diagnosis>", report: "<non-blank report>" },
+  ]);
+});
+
 test("Merger activation rejects non-conflicts, incomplete conflict sets, and parent drift", async () => {
   for (const state of [
     { targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: [], automaticMergeTreeId: oid("d") },
