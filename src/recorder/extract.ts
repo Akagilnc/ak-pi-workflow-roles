@@ -13,7 +13,7 @@ import { RecorderError } from "./errors.ts";
 import { combineReports, scanJsonValue, type ScanReport } from "./scanner.ts";
 
 export type AcceptedReceipt = { toolName: TerminatingToolName; toolCallId: string; details: WorkerOutput | RuntimeReviewerReceiptV2 | JudgeVerdict | CollectorReceipt | DoctorOutput; kind: "worker" | "reviewer" | "judge" | "collector" | "doctor" };
-export type AuditObservation = { toolName: "ak_judge_output" | "ak_reviewer_output" | "ak_doctor_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
+export type AuditObservation = { toolName: "ak_judge_output" | "ak_fixer_output" | "ak_reviewer_output" | "ak_doctor_output"; toolCallId: string; auditPassed: true; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } };
 export type ExtractionResult = { receipt: AcceptedReceipt; auditObservation: AuditObservation | null; artifactKind: "acceptedReceipt" | "sanitizedDerivativeOfAcceptedReceipt"; report: ScanReport };
 
 type DirectIssuance = { index: number; rowId: unknown; toolCallId: string; toolName: TerminatingToolName; arguments: unknown };
@@ -159,6 +159,7 @@ export class AcceptanceCollector {
 
 function finalizeAcceptedPair(pair: AcceptedPair): ExtractionResult {
   const { issuance, resultMessage } = pair;
+  if (issuance.toolName === "ak_fixer_output" && !validUsage(resultMessage.usage)) invalid();
   const content = resultMessage.content;
   if (!Array.isArray(content) || content.length !== 1 || !isRecord(content[0]) ||
       !hasExactKeys(content[0], ["type", "text"]) || content[0].type !== "text" || typeof content[0].text !== "string") invalid();

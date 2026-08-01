@@ -40,12 +40,10 @@ be omitted only with an **explicit disposition** recorded in the trail.
    and target SHAs), and current facts (see `packets/judge-review.md`).
 7. **Issue a forward repair artifact when needed** — open a new repair request
    with unique `R1..Rn` items (`packets/fixer-repair.md`) without overwriting
-   prior artifacts. Before accepting a repair response into this trail,
-   **manually** reconcile by exact key-set equality: each packet `R#` occurs
-   exactly once at the start of a keyed data line with a nonblank disposition;
-   missing, duplicate, or extra keys fail. Headings and header spelling are not
-   evidence. Do not claim mechanical Fixer/Soul-audit enforcement unless
-   separate authority changes the public Fixer contract.
+   prior artifacts. Preserve the accepted current Fixer receipt and its audit
+   observation. Its typed `classResults` records completed or lawfully refused
+   findings; any repository-specific mapping between packet IDs and class names
+   remains a manual caller-owned reconciliation.
 
 ## Artifact preservation rules
 
