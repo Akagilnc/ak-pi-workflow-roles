@@ -1,0 +1,27 @@
+{
+  "toolName": "ak_fixer_output",
+  "toolCallId": "call_AHWLJOtnccHaBu7LhpCqLOwv|fc_0fcb7fb66b696934016a6d8c31e51c8191847fb196454f6973",
+  "details": {
+    "status": "completed",
+    "report": "Committed forward as 985e0bd. Corrected the TS2554 bound GitHub issue harness call; added production createRecorderAssistedTransportV1 live/readSealed proofs for out-of-catalog partial/complete reads and forged, omitted, duplicate, unknown, and malformed authoritative rejection; fixed the missing Recorder session parent; and made concurrent recovery losers return canonical status without duplicate recovery consultation. Added deterministic overlapping identical-resume, pending fail-closed, concurrent recovery barrier/count, single recovery fact, incompatible invocation, and hash-corrupt ledger tests. No findings were left unaccepted. Real gates passed: npm run typecheck; focused assisted tests; isolated-HOME npm test (382 pass, 0 fail, 5 skipped); npm pack --dry-run; final commit diff check. Worktree was clean after commit.",
+    "commitSha": "985e0bd3b5c7e443004a1cac1b310fd30486f1b5",
+    "classesRepaired": [
+      {
+        "name": "NavigatorEvidenceReadTruthResidual",
+        "searchScope": "Recorder-assisted transport live invocation and readSealed recovery, native evidence coverage extraction, and Navigator receipt validation tests",
+        "exceptions": []
+      },
+      {
+        "name": "LedgerLoserRereadResidual",
+        "searchScope": "Assisted enter/resume replay and concurrent recovery lifecycle seams, including pending, incompatible, and hash-corrupt truth",
+        "exceptions": []
+      },
+      {
+        "name": "CurrentHeadExecutableGate",
+        "searchScope": "TypeScript test harness and repository mechanical gates on committed final HEAD",
+        "exceptions": []
+      }
+    ]
+  },
+  "artifactKind": "acceptedReceipt"
+}
