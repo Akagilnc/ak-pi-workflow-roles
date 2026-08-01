@@ -1,0 +1,14 @@
+# Issue #28 Fixer apply — Review-004 residual classes
+
+Apply exactly the four classes authorized by `.ak/dockets/issues/28/judgment/review-004/receipt.json`, directly without Plan:
+
+1. `NavigatorEvidenceReadTruthResidual`
+2. `RecoveryEnvironmentIdentity`
+3. `LedgerLoserRereadResidual`
+4. `ResolvedSubjectIdentityOnResume`
+
+Follow each Judge owner, boundary, disposition, and production-seam verification burden. Repair residual classes at their existing owners; do not point-patch. Preserve raw credential/environment secrecy, Recorder's one-invocation contract, caller autonomy, and existing role behavior.
+
+Do not add a second evidence tracker, package credential vault, raw environment persistence, parallel lock ledger, child-ID immutability, lifecycle decomposition, naming churn, scheduling, or worktree management.
+
+Write tests first for distinct logic, including real lifecycle concurrency/barriers, real sealed Navigator evidence reads and recovery, fresh-process environment-reference recovery, and resolved repository/parent identity drift. Run unified gates, commit forward, and submit `completed` with `classesRepaired` containing exactly the four keys and honest search scopes/exceptions.
