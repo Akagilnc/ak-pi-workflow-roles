@@ -76,7 +76,16 @@ async function publishResult(dir, result, now) {
   await appendAssistedGenerationV1(dir, { type: "call_completed", runId: result.runId, callId: result.callId, positionCursor: result.positionCursor, payload: { result } }, now);
   return result;
 }
+async function fenceLaunch(dir, config, kind, cursor, snapshotDigest) {
+  const rows = await readAssistedLedgerV1(dir), same = rows.find((r) => r.type === "call_started" && r.callId === config.callId);
+  if (!same || same.payload.configDigest !== configDigest(config)) throw new Error("incompatible assisted lifecycle truth before launch");
+  const completed = rows.find((r) => r.type === "call_completed" && r.callId === config.callId);
+  if (completed) throw new CanonicalLifecycleResult(completed.payload.result);
+  if (unresolved(rows)) throw new Error("compatible assisted lifecycle is pending");
+  if (kind === "navigator" && rows.some((r) => r.type === "navigator_settled" && r.callId === config.callId && r.positionCursor === cursor && r.payload.receipt?.snapshotDigest === snapshotDigest) || kind === "role" && rows.some((r) => (r.type === "action_reserved" || r.type === "role_started" || r.type === "role_settled") && r.callId === config.callId)) throw new Error(`compatible assisted ${kind} lifecycle already advanced`);
+}
 async function consult(config, position, piArgv, dir, deps, now, id) {
+  await fenceLaunch(dir, config, "navigator", position.snapshot.positionCursor, position.snapshot.digest);
   const invocationId = id();
   await appendAssistedGenerationV1(dir, { type: "navigator_started", runId: config.runId, callId: config.callId, invocationId, positionCursor: position.snapshot.positionCursor, payload: { snapshotDigest: position.snapshot.digest } }, now);
   const settled = await deps.recorder.invokeNavigator({ config, position, invocationId, piArgv });
@@ -165,6 +174,7 @@ async function run(mode, raw, argv, deps) {
     if (!pre.receipt || pre.receipt.status !== "ordinary") return publishResult(dir, { version: 1, runId: config.runId, callId: config.callId, status: pre.receipt ? "navigation_halted" : "infrastructure_failure", positionCursor: cursor, selectedInvocationId: null, preNavigation: pre.receipt, settlement: null, postNavigation: null, actionComparison: null }, now);
   }
   const primary = pre.receipt.primary, comparison = primary.kind === "package_role" && primary.role === config.execution.role && primary.phase === config.execution.phase ? "followed" : "deviated";
+  await fenceLaunch(dir, config, "role", cursor);
   const selectedId = id();
   await appendAssistedGenerationV1(dir, { type: "action_reserved", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: { comparison, selected: { role: config.execution.role, phase: config.execution.phase } } }, now);
   await appendAssistedGenerationV1(dir, { type: "role_started", runId: config.runId, callId: config.callId, invocationId: selectedId, positionCursor: cursor, payload: {} }, now);

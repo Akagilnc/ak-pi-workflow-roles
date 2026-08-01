@@ -145,11 +145,13 @@ function validateNavigatorReceiptV1(value, snapshot, actualReads) {
     const q = record(x, ["evidenceId", "fullyRead"], "evidence read");
     if (typeof q.evidenceId !== "string" || typeof q.fullyRead !== "boolean") fail("evidence read record");
     return { evidenceId: q.evidenceId, fullyRead: q.fullyRead };
-  });
-  if (new Set(reads.map((x) => x.evidenceId)).size !== reads.length || canonicalJson(reads) !== canonicalJson(actualReads)) fail("evidence read record");
+  }), actualById = new Map(actualReads.map((x) => [x.evidenceId, x]));
+  if (new Set(reads.map((x) => x.evidenceId)).size !== reads.length || actualById.size !== actualReads.length || actualReads.some((x) => typeof x.evidenceId !== "string" || typeof x.fullyRead !== "boolean" || !snapshot.evidence.some((e) => e.id === x.evidenceId))) fail("evidence read record");
+  const canonicalActual = snapshot.evidence.flatMap((e) => actualById.has(e.id) ? [actualById.get(e.id)] : []);
+  if (canonicalJson(reads) !== canonicalJson(canonicalActual)) fail("evidence read record");
   const receipt = r;
   if (!navigatorBindingMatchesV1(snapshot, receipt) || canonicalJson(subject(r.subject)) !== canonicalJson(snapshot.subject) || canonicalJson(receipt.latestAttempt) !== canonicalJson(snapshot.latestAttempt)) fail("receipt binding");
-  if (cited.some((x) => !snapshot.evidence.some((e) => e.id === x) || !actualReads.some((read) => read.evidenceId === x))) fail("evidence citation");
+  if (cited.some((x) => !snapshot.evidence.some((e) => e.id === x) || !actualById.has(x))) fail("evidence citation");
   return receipt;
 }
 function navigatorBindingMatchesV1(snapshot, receipt) {
