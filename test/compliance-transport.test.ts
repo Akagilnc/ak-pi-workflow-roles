@@ -223,6 +223,28 @@ test("status-dependent decision combinations are validated at the shared parser 
 test("malformed nested decisions retain raw responses and report typed facts", async () => {
   const cases = [
     {
+      id: "terminal-error-with-valid-call",
+      content: [
+        fauxToolCall(decisionToolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+      ],
+      stopReason: "error" as const,
+      errorMessage: "provider rejected the decision",
+      expectedCount: 1,
+      expectedNames: [decisionToolName],
+      errorPresent: true,
+    },
+    {
+      id: "terminal-aborted-with-valid-call",
+      content: [
+        fauxToolCall(decisionToolName, { status: "revise", violations: ["native abort"], conflicts: [], decisionGate: null }),
+      ],
+      stopReason: "aborted" as const,
+      errorMessage: "provider aborted the decision",
+      expectedCount: 1,
+      expectedNames: [decisionToolName],
+      errorPresent: true,
+    },
+    {
       id: "zero-calls",
       content: [{ type: "text" as const, text: "no decision" }],
       stopReason: "error" as const,
@@ -293,6 +315,7 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       }
       assert.ok(thrown instanceof Error);
       assert.match(thrown.message, /invalid compliance decision/);
+      assert.match(thrown.message, /stopReason|expected exactly one/);
       assert.deepEqual(diagnosticFacts(thrown), {
         expectedDecisionToolName: decisionToolName,
         observedToolCallCount: candidate.expectedCount,

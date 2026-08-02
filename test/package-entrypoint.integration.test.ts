@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,6 +17,7 @@ import {
 import {
   defineTool,
   parseSkillBlock,
+  SessionManager,
   stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -159,13 +161,11 @@ test("cold-installed package audits all four roles from editable Souls", async (
       const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");
       const installed = (relativePath: string) =>
         import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-      const [judge, fixer, reviewer, doctor, escalation, terminating] = await Promise.all([
+      const [judge, fixer, reviewer, doctor] = await Promise.all([
         installed("src/judge-auditor.ts"),
         installed("src/fixer-auditor.ts"),
         installed("src/reviewer-auditor.ts"),
         installed("src/doctor-auditor.ts"),
-        installed("src/audit-escalation.ts"),
-        installed("src/package-contracts/terminating-tools.ts"),
       ]);
 
       const context = {
@@ -182,71 +182,38 @@ test("cold-installed package audits all four roles from editable Souls", async (
         doctor: { soul: "caller doctor soul", patient: { version: 1, identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" }, evidence: [], cost: { invocations: { total: 0, sources: [] }, bytes: 0 } }, readRecord: [], testimony: { status: "refused", reason: "missing", missingEvidence: [] } },
       } as const;
       const roles = [
-        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, acceptedTool: "ak_judge_output", soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)(inputs.judge as never, { context }) },
-        { name: "fixer", toolName: fixer.FIXER_AUDIT_TOOL_NAME, acceptedTool: "ak_fixer_output", soulPath: resolve(installedRoot, "souls/fixer-auditor.md"), run: (completion: ComplianceCompletion) => fixer.createPiFixerAuditor(completion)(inputs.fixer as never, { context }) },
-        { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, acceptedTool: "ak_reviewer_output", soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)(inputs.reviewer as never, { context }) },
-        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, acceptedTool: "ak_doctor_output", soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)(inputs.doctor as never, { context }) },
+        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)(inputs.judge as never, { context }) },
+        { name: "fixer", toolName: fixer.FIXER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/fixer-auditor.md"), run: (completion: ComplianceCompletion) => fixer.createPiFixerAuditor(completion)(inputs.fixer as never, { context }) },
+        { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)(inputs.reviewer as never, { context }) },
+        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)(inputs.doctor as never, { context }) },
       ] as const;
-      const decisions = {
-        pass: { status: "pass", violations: [], conflicts: [], decisionGate: null },
-        revise: { status: "revise", violations: ["one concrete violation"], conflicts: [], decisionGate: null },
-        escalate: { status: "escalate", violations: [], conflicts: ["one controlling-authority conflict"], decisionGate: { question: "Which authority governs this submission?", options: ["Soul", "Controlling authority"] } },
-      } as const;
-      const run = async (role: (typeof roles)[number], decision: (typeof decisions)[keyof typeof decisions]) => {
+      const run = async (role: (typeof roles)[number]) => {
         let calls = 0;
         let prompt = "";
         const completion: ComplianceCompletion = async (_model, request) => {
           calls += 1;
           prompt = request.systemPrompt ?? "";
-          return fauxAssistantMessage(fauxToolCall(role.toolName, decision), { stopReason: "toolUse" });
+          return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
         };
-        const result = await role.run(completion);
+        await role.run(completion);
         assert.equal(calls, 1, `${role.name} audit must make one decision call`);
         assert.equal(prompt, await readFile(role.soulPath, "utf8"), `${role.name} must load its installed Soul on this call`);
-        return { result, prompt };
+        return prompt;
       };
 
-      for (const role of roles) {
-        const passed = await run(role, decisions.pass);
-        assert.equal(passed.result.status, "pass");
-        const revised = await run(role, decisions.revise);
-        assert.equal(revised.result.status, "revise");
-        if (revised.result.status === "revise") assert.deepEqual(revised.result.violations, decisions.revise.violations);
-      }
+      for (const role of roles) await run(role);
 
       const editedSoul = "EDITED JUDGE SOUL\n";
       const judgeSoul = roles[0].soulPath;
       const originalJudgeSoul = await readFile(judgeSoul, "utf8");
       await writeFile(judgeSoul, editedSoul, "utf8");
       try {
-        const edited = await run(roles[0], decisions.pass);
-        assert.equal(edited.prompt, editedSoul);
+        const edited = await run(roles[0]);
+        assert.equal(edited, editedSoul);
         for (const role of roles.slice(1)) {
-          const unchanged = await run(role, decisions.pass);
-          assert.equal(unchanged.prompt, await readFile(role.soulPath, "utf8"));
-          assert.notEqual(unchanged.prompt, editedSoul);
-        }
-
-        for (const role of roles) {
-          const escalated = await run(role, decisions.escalate);
-          assert.equal(escalated.result.status, "escalate");
-          if (escalated.result.status !== "escalate") continue;
-          const terminated = await escalation.disposeComplianceDecision(escalated.result, {
-            pass: () => { throw new Error("escalation used pass"); },
-            revise: () => { throw new Error("escalation used revise"); },
-            escalate: (value: any) => value,
-          });
-          assert.equal(terminated.terminate, true);
-          assert.equal(terminated.details.kind, "audit_escalation");
-          assert.deepEqual(terminated.details.conflicts, decisions.escalate.conflicts);
-          assert.deepEqual(terminated.details.decisionGate, decisions.escalate.decisionGate);
-          assert.equal("status" in terminated.details, false);
-          assert.equal("Receipt" in terminated.details, false);
-          assert.equal("carriesPackageAuditObservation" in terminating, false);
-          assert.throws(
-            () => terminating.validateAcceptedDetails(role.acceptedTool as never, terminated.details),
-            /not an accepted role receipt/,
-          );
+          const unchanged = await run(role);
+          assert.equal(unchanged, await readFile(role.soulPath, "utf8"));
+          assert.notEqual(unchanged, editedSoul);
         }
       } finally {
         await writeFile(judgeSoul, originalJudgeSoul, "utf8");
@@ -272,6 +239,233 @@ test("cold-installed package audits all four roles from editable Souls", async (
           await rm(role.soulPath, { recursive: true, force: true });
           await writeFile(role.soulPath, original, "utf8");
         }
+      }
+    },
+  );
+});
+
+test("cold-installed role outputs run nested audits through pass, revise, and escalation", async () => {
+  await withHermeticHome(
+    { prefix: "ak-auditor-role-lifecycle-" },
+    async ({ home }) => {
+      const fixture = resolve(home, "consumer");
+      await mkdir(fixture, { recursive: true });
+      const pack = await packIsolatedPackage(home);
+      await writeFile(
+        resolve(fixture, "package.json"),
+        JSON.stringify({
+          private: true,
+          type: "module",
+          dependencies: {
+            "@ak/pi-workflow-roles": `file:${pack.tarball}`,
+            "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
+            "@earendil-works/pi-coding-agent": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")}`,
+            typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
+          },
+        }),
+      );
+      await exec("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: fixture });
+
+      const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");
+      const installed = (relativePath: string) =>
+        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
+      const [judge, fixer, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, promptIdentity, terminating] = await Promise.all([
+        installed("src/judge-auditor.ts"),
+        installed("src/fixer-auditor.ts"),
+        installed("src/reviewer-auditor.ts"),
+        installed("src/doctor-auditor.ts"),
+        installed("src/judge-role.ts"),
+        installed("src/worker-role.ts"),
+        installed("src/reviewer-role.ts"),
+        installed("src/doctor-role.ts"),
+        installed("src/reviewer-prompt-identity.ts"),
+        installed("src/package-contracts/terminating-tools.ts"),
+      ]);
+
+      const patient = {
+        version: 1,
+        identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" },
+        evidence: [],
+        cost: { invocations: { total: 0, sources: [] }, bytes: 0 },
+      };
+      const taskBytes = new TextEncoder().encode("review task\n");
+      const capabilities = new TextEncoder().encode(JSON.stringify({
+        version: 1,
+        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
+        tools: ["read"],
+        prerequisiteOperations: ["preflight.git.pin-target"],
+      }));
+      const skill = "canonical review skill";
+      const escalation = {
+        status: "escalate" as const,
+        violations: [],
+        conflicts: ["Soul conflicts with controlling authority"],
+        decisionGate: {
+          question: "Which authority governs this submission?",
+          options: ["Soul", "Controlling authority"],
+        },
+      };
+      const revise = {
+        status: "revise" as const,
+        violations: ["one concrete procedural violation"],
+        conflicts: [],
+        decisionGate: null,
+      };
+      const pass = {
+        status: "pass" as const,
+        violations: [],
+        conflicts: [],
+        decisionGate: null,
+      };
+      const outputs = {
+        judge: { judgeStatus: "converged" },
+        fixer: { status: "completed", report: "done", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] },
+        reviewer: { status: "refused", diagnostic: "no accepted dispatch" },
+        doctor: { status: "refused", reason: "missing", missingEvidence: [{ need: "case evidence", targetKeys: ["case"] }] },
+      } as const;
+      const toolNames = {
+        judge: judge.JUDGE_AUDIT_TOOL_NAME,
+        fixer: fixer.FIXER_AUDIT_TOOL_NAME,
+        reviewer: reviewer.REVIEWER_AUDIT_TOOL_NAME,
+        doctor: doctor.DOCTOR_AUDIT_TOOL_NAME,
+      } as const;
+      const acceptedNames = {
+        judge: "ak_judge_output",
+        fixer: "ak_fixer_output",
+        reviewer: "ak_reviewer_output",
+        doctor: "ak_doctor_output",
+      } as const;
+
+      const makeHarness = (flags: Record<string, string> = {}) => {
+        const tools = new Map<string, any>();
+        const handlers = new Map<string, any>();
+        let activeTools: string[] = [];
+        const pi = {
+          registerFlag() {},
+          getFlag(name: string) { return flags[name]; },
+          registerTool(tool: any) { tools.set(tool.name, tool); },
+          getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
+          setActiveTools(names: string[]) { activeTools = [...names]; },
+          getActiveTools() { return activeTools; },
+          on(name: string, handler: any) { handlers.set(name, handler); },
+        };
+        return { pi, tools, handlers };
+      };
+      const outputContext = (name: string, id: string) => {
+        const sessionManager = SessionManager.inMemory();
+        sessionManager.appendMessage({
+          role: "assistant",
+          content: [{ type: "toolCall", id, name, arguments: {} }],
+          api: "openai-responses",
+          provider: "installed-role",
+          model: "installed-role",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        });
+        return {
+          sessionManager,
+          model: { api: "openai-responses", provider: "installed-auditor", id: "installed-auditor" },
+          modelRegistry: {
+            async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
+            async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+          },
+        } as any;
+      };
+
+      const createRole = (role: keyof typeof outputs, decision: typeof pass | typeof revise | typeof escalation) => {
+        const harness = role === "fixer"
+          ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
+          : role === "reviewer"
+            ? makeHarness({ "ak-review-task": "/task", "ak-review-capabilities": "/capabilities" })
+            : role === "doctor"
+              ? makeHarness({ "ak-doctor-case": "/case" })
+              : makeHarness();
+        let auditCalls = 0;
+        let selectedDecision = decision;
+        const complete = async (_model: unknown, _request: Context) => {
+          auditCalls += 1;
+          return fauxAssistantMessage(fauxToolCall(toolNames[role], selectedDecision), { stopReason: "toolUse" });
+        };
+        const auditCompliance = (input: any, options: any) => {
+          if (role === "judge") return judge.createPiJudgeAuditor(complete)(input, options);
+          if (role === "fixer") return fixer.createPiFixerAuditor(complete)(input, options);
+          if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(input, options);
+          return doctor.createPiDoctorAuditor(complete)(input, options);
+        };
+        let runtime: any;
+        if (role === "judge") {
+          runtime = judgeRole.createJudgeRoleRuntime(harness.pi, {
+            loadSoul: async () => "judge law",
+            transcriptFromContext: () => "judge transcript",
+            auditSoulCompliance: auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else if (role === "fixer") {
+          runtime = workerRole.createFixerRoleRuntime(harness.pi, {
+            loadSoul: async () => "fixer law",
+            loadPacket: async () => "repair packet",
+            transcriptFromContext: () => "fixer transcript",
+            auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else if (role === "doctor") {
+          runtime = doctorRole.createDoctorRoleRuntime(harness.pi, {
+            loadSoul: async () => "doctor law",
+            loadCase: async () => patient,
+            auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else {
+          const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
+          runtime = reviewerRole.createReviewerRoleRuntime(harness.pi, {
+            loadSoul: async () => "reviewer law",
+            loadTask: async () => taskBytes,
+            loadCapabilities: async () => capabilities,
+            loadCanonicalSkillBinding: async () => ({
+              name: "code-review",
+              snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: promptIdentity.reviewerPromptIdentity(skill) },
+              invocation: (request: string) => request,
+              captureExpansion: () => undefined,
+            }),
+            createPinnedGitReader: async () => ({ pin, snapshot: async () => pin, resolve: async () => "base", range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }), material: async () => new TextEncoder().encode("material") }),
+            hostTools: () => ["read"],
+            runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
+            auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        }
+        return {
+          harness,
+          runtime,
+          setDecision(next: typeof pass | typeof revise | typeof escalation) { selectedDecision = next; },
+          get auditCalls() { return auditCalls; },
+        };
+      };
+
+      for (const role of ["judge", "fixer", "reviewer", "doctor"] as const) {
+        const retriable = createRole(role, revise);
+        await retriable.runtime.activate();
+        const tool = retriable.harness.tools.get(role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME);
+        assert.ok(tool);
+        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`)), /violation|violates its|closed contract/);
+        retriable.setDecision(pass);
+        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`));
+        assert.equal(accepted.terminate, true);
+        if (role === "judge") assert.equal(accepted.details.judgeStatus, outputs[role].judgeStatus);
+        else assert.equal(accepted.details.status, outputs[role].status);
+        if (role !== "reviewer") assert.deepEqual(accepted.details, outputs[role]);
+        assert.equal(retriable.auditCalls, 2, `${role} must audit the rejected submission and its resubmission`);
+
+        const escalated = createRole(role, escalation);
+        await escalated.runtime.activate();
+        const escalationTool = escalated.harness.tools.get(tool.name);
+        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`));
+        assert.equal(result.terminate, true);
+        assert.deepEqual(result.details, {
+          kind: "audit_escalation",
+          conflicts: escalation.conflicts,
+          decisionGate: escalation.decisionGate,
+        });
+        assert.doesNotMatch(result.content[0].text, /accepted|receipt|status/i);
+        assert.throws(() => terminating.validateAcceptedDetails(acceptedNames[role], result.details), /not an accepted role receipt/);
+        assert.equal(escalated.auditCalls, 1);
       }
     },
   );
