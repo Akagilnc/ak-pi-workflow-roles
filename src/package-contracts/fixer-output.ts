@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import { FIXER_PREREQUISITE_ID_PATTERN, type FixPacketV1 } from "./fixer-packet.ts";
+import { FIXER_PREREQUISITE_ID_PATTERN, type FixerInvocationInput } from "./fixer-packet.ts";
 
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
 export const FIXER_ACCEPTED_TEXT = "Fixer report accepted";
@@ -103,10 +103,17 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
   return { status: value.status, report: value.report, classResults } as FixerOutput;
 }
 
-export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, packet: FixPacketV1): FixerOutput {
+/** Prerequisite-aware admission used after structural/phase validation and before audit. */
+export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, packet: FixerInvocationInput): FixerOutput {
   const output = validateFixerOutput(value, phase);
   const declaredIds = new Set(packet.prerequisites.map((entry) => entry.id));
-  const blockers: FixerBlocker[] = "blocker" in output ? [output.blocker] : "classResults" in output ? output.classResults.filter((entry) => entry.disposition === "refused").map((entry) => entry.blocker) : [];
-  if (blockers.some((entry) => entry.cause === "prerequisite_unmet" && !declaredIds.has(entry.prerequisiteId))) fail("blocker.prerequisiteId declared-in-packet constraint");
+  const blockers: FixerBlocker[] = "blocker" in output
+    ? [output.blocker]
+    : "classResults" in output
+      ? output.classResults.filter((entry) => entry.disposition === "refused").map((entry) => entry.blocker)
+      : [];
+  if (blockers.some((entry) => entry.cause === "prerequisite_unmet" && !declaredIds.has(entry.prerequisiteId))) {
+    fail("blocker.prerequisiteId declared-prerequisite constraint");
+  }
   return output;
 }

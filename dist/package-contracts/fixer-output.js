@@ -120,11 +120,17 @@ export function validateFixerOutput(value, phase) {
         fail("status partially_completed disposition combination constraint");
     return { status: value.status, report: value.report, classResults };
 }
+/** Prerequisite-aware admission used after structural/phase validation and before audit. */
 export function validateFixerOutputForPacket(value, phase, packet) {
     const output = validateFixerOutput(value, phase);
     const declaredIds = new Set(packet.prerequisites.map((entry) => entry.id));
-    const blockers = "blocker" in output ? [output.blocker] : "classResults" in output ? output.classResults.filter((entry) => entry.disposition === "refused").map((entry) => entry.blocker) : [];
-    if (blockers.some((entry) => entry.cause === "prerequisite_unmet" && !declaredIds.has(entry.prerequisiteId)))
-        fail("blocker.prerequisiteId declared-in-packet constraint");
+    const blockers = "blocker" in output
+        ? [output.blocker]
+        : "classResults" in output
+            ? output.classResults.filter((entry) => entry.disposition === "refused").map((entry) => entry.blocker)
+            : [];
+    if (blockers.some((entry) => entry.cause === "prerequisite_unmet" && !declaredIds.has(entry.prerequisiteId))) {
+        fail("blocker.prerequisiteId declared-prerequisite constraint");
+    }
     return output;
 }

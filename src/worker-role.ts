@@ -20,7 +20,7 @@ import {
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
 import { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket, type FixerPhase } from "./package-contracts/fixer-output.ts";
-import { parseFixPacketV1, type FixPacketV1 } from "./package-contracts/fixer-packet.ts";
+import { parseFixerPrerequisites, type FixerInvocationInput } from "./package-contracts/fixer-packet.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -59,7 +59,7 @@ export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext): never;
 };
 
-export type FixerAuditInput = Readonly<{ soul: string; packet: FixPacketV1; phase: FixerPhase; transcript: string; candidate: FixerOutput }>;
+export type FixerAuditInput = Readonly<{ soul: string; packet: FixerInvocationInput; phase: FixerPhase; transcript: string; candidate: FixerOutput }>;
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadPacket(path: string): Promise<string>;
@@ -136,12 +136,16 @@ export function createFixerRoleRuntime(
   hostActions?: WorkerRoleHostActions,
 ): { activate(): Promise<void> } {
   let soul: string | undefined;
-  let packet: FixPacketV1 | undefined;
+  let packet: FixerInvocationInput | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
 
   pi.registerFlag("ak-fix-packet", {
-    description: "Path to a closed FixPacketV1 JSON repair packet",
+    description: "Path to opaque prose instructions for the Fixer",
+    type: "string",
+  });
+  pi.registerFlag("ak-fixer-prerequisites", {
+    description: "Optional path to a JSON array of typed Fixer prerequisites",
     type: "string",
   });
   pi.registerFlag("ak-fixer-phase", {
@@ -165,7 +169,15 @@ export function createFixerRoleRuntime(
       if (typeof packetPath !== "string" || packetPath.trim().length === 0) {
         throw new Error("Fixer role requires --ak-fix-packet");
       }
-      packet = parseFixPacketV1(await dependencies.loadPacket(packetPath));
+      const instructions = await dependencies.loadPacket(packetPath);
+      const prerequisitesPath = pi.getFlag("ak-fixer-prerequisites");
+      if (prerequisitesPath !== undefined && (typeof prerequisitesPath !== "string" || prerequisitesPath.trim().length === 0)) {
+        throw new Error("Fixer --ak-fixer-prerequisites path must be nonblank when supplied");
+      }
+      const prerequisites = typeof prerequisitesPath === "string"
+        ? parseFixerPrerequisites(await dependencies.loadPacket(prerequisitesPath))
+        : Object.freeze([]);
+      packet = Object.freeze({ instructions, prerequisites });
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
@@ -230,7 +242,7 @@ export function createFixerRoleRuntime(
           if (soul === undefined) throw new Error("Fixer soul was not loaded");
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet === undefined ? "" : JSON.stringify(packet)}\n</fix_packet>`,
+              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet?.instructions ?? ""}\n</fix_packet>\n\n<fixer_prerequisites>\n${JSON.stringify(packet?.prerequisites ?? [])}\n</fixer_prerequisites>`,
           };
         });
       }
