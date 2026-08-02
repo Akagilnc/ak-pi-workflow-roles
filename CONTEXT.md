@@ -9,9 +9,9 @@
 - **格式契约(Format contract)**:在一个具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,并且有明确 owner 与 consumer 的格式不变式。同一契约的多种表达不是多个契约;重复真源、校验缺口、已删除或不可达的格式也不是契约。
 - **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的;除此之外一概不管。
 - **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围扫描全仓;清单 ID 与已知文件只是不完全实例和证据索引,不是施工白名单。施工后按同一类别重新扫描残余,保留项逐类说明特别理由。
-- **语义 JSON 校验(Semantic JSON validation)**:先由标准 JSON parser 得到值,再只校验会改变生产行为的类型、字段、关系和边界；不因 `1`/`1.0`/`1e0` 等等价字面形式建立额外契约,也不维护第二套词法 parser。
-- **发布 Schema(Published schema)**:供包外机器在调用生产入口前消费的机器可读契约投影。没有真实包外消费者、且生产入口不消费的 schema 文件不是独立真源，应删除而不是用 parity 测试维持副本。
-- **边界 Schema 真源(Boundary schema owner)**:一个工具输入或输出边界的字段、类型和 union 叶只由注册给该工具的 Schema 定义。runtime 可在其后校验跨字段关系、实时状态和专业语义,不得再手写第二份 shape validator。
+- **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。规范见 [ADR 0021](docs/adr/0021-collector-manifest-validates-semantics-not-json-spelling.md)。
+- **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。规范见 [ADR 0022](docs/adr/0022-delete-unconsumed-collector-manifest-schema.md)。
+- **边界 Schema 真源(Boundary schema owner)**:定义单个工具输入或输出形状的唯一 Schema。规范见 [ADR 0023](docs/adr/0023-judge-and-merger-use-one-output-schema-owner.md)。
 - **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。自报可留在叙事报告供人参考,不得伪装成 commit、Git 状态、计时等机械事实或进入统计真源。
 - **Judge(判官)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。
 - **Fixer(修复工)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`，不是未完进度。
