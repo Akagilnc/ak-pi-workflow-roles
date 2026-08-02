@@ -3,7 +3,7 @@ import { Value } from "typebox/value";
 import { canonicalJson } from "./canonical-json.js";
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
-export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "Submit the sole final typed single-case diagnosis. Use completed for a byte-rederivable cost diagnosis, including when findings is empty or contains only non-prescriptive case observations. Refuse only when the evidence cannot support even a truthful cost diagnosis or case observation; unavailable reusable-asset or bounded-bite evidence blocks only the corresponding asset prescription.";
+export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "Submit the sole final typed single-case testimony. Use completed when findings is empty or contains only non-prescriptive case observations. The runtime adds its derived case cost to the accepted receipt. Refuse only when the evidence cannot support even truthful case testimony; unavailable reusable-asset or bounded-bite evidence blocks only the corresponding asset prescription.";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: false });
@@ -35,20 +35,28 @@ const cost = Type.Object({
     ])),
     outputBytes: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), payload: Type.Literal("raw JSONL bytes"), providerWireBytes: Type.Literal("unavailable") }, { additionalProperties: false }),
 }, { additionalProperties: false });
-export const doctorOutputSchema = Type.Union([
+export const doctorSubmissionSchema = Type.Union([
     Type.Object({
-        status: Type.Literal("completed", { description: "A truthful single-case diagnosis was completed; an unavailable prescription axis does not prevent completion." }),
+        status: Type.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
         case: caseIdentity,
-        cost,
         findings: Type.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." }),
-    }, { additionalProperties: false, description: "A byte-rederivable single-case cost diagnosis is a first-class completed output, without requiring any prescription or reusable finding." }),
+    }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
     Type.Object({
-        status: Type.Literal("refused", { description: "Reserved for inability to support even a truthful cost diagnosis or case observation, not for an unavailable prescription axis." }),
+        status: Type.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
         reason: nonblank,
         missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 }),
-    }, { additionalProperties: false, description: "Evidence is insufficient for even a truthful cost diagnosis or case observation." }),
+    }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." }),
+]);
+export const doctorOutputSchema = Type.Union([
+    Type.Object({ status: Type.Literal("completed"), case: caseIdentity, findings: Type.Array(finding), cost }, { additionalProperties: false }),
+    doctorSubmissionSchema.anyOf[1],
 ]);
 export const doctorEvidenceReadSchema = Type.Object({ evidenceId: nonblank, offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
+export class DoctorSubmissionContractError extends Error {
+    name = "DoctorSubmissionContractError";
+}
+export function validateDoctorSubmissionShape(value) { if (!Value.Check(doctorSubmissionSchema, value))
+    throw new DoctorSubmissionContractError("Doctor submission does not match its closed contract"); return value; }
 export function validateRecordedDoctorOutput(value) { if (!Value.Check(doctorOutputSchema, value))
     throw new Error("Doctor output does not match its closed contract"); return value; }
 export class DoctorEvidenceStore {
@@ -73,7 +81,7 @@ export class DoctorEvidenceStore {
     readRecord() { return [...this.coverage.keys()].sort().map((evidenceId) => ({ evidenceId, fullyRead: this.hasRead(evidenceId) })); }
 }
 export function validateDoctorOutput(value, patient, store) {
-    const output = validateRecordedDoctorOutput(value);
+    const output = validateDoctorSubmissionShape(value);
     const lawfulTargets = new Set(["case", ...patient.cost.invocations.sources]);
     const assertTargets = (targetKeys) => { for (const targetKey of targetKeys)
         if (!lawfulTargets.has(targetKey))
@@ -83,8 +91,8 @@ export function validateDoctorOutput(value, patient, store) {
             assertTargets(missing.targetKeys);
         return output;
     }
-    if (canonicalJson(output.case) !== canonicalJson(patient.identity) || canonicalJson(output.cost) !== canonicalJson(patient.cost))
-        throw new Error("Every reported number must equal the re-derived session-byte cost");
+    if (canonicalJson(output.case) !== canonicalJson(patient.identity))
+        throw new Error("Doctor submission case must equal the activated case identity");
     const readCitations = (ids, label) => { for (const id of ids)
         if (!store.entries.has(id) || !store.hasRead(id))
             throw new Error(`${label} must cite admitted/read evidence: ${id}`); };

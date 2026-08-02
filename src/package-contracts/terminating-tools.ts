@@ -24,7 +24,7 @@ import {
   type ReviewerIntent,
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME, validateRecordedDoctorOutput, type DoctorOutput } from "../doctor-contracts.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorReceiptV1, type RecordedNavigatorReceiptV1 } from "./navigator-output.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import {
@@ -55,6 +55,7 @@ export {
   validateReviewerIntent,
   validateRuntimeReviewerReceipt,
   validateAcceptedWorkerDetails,
+  validateDoctorSubmissionShape,
   validateRecordedDoctorOutput,
   validateMergerOutput,
 };
@@ -65,6 +66,7 @@ export type {
   RuntimeReviewerReceiptV2,
   WorkerOutput,
   DoctorOutput,
+  DoctorSubmission,
   RecordedNavigatorReceiptV1,
   MergerOutput,
 };
