@@ -9,6 +9,7 @@ import {
   fauxToolCall,
   type AssistantMessage,
   type Context,
+  type ProviderStreamOptions,
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -33,7 +34,7 @@ import {
 } from "../src/package-contracts/terminating-tools.ts";
 
 const context = {
-  model: { provider: "audit-test", id: "same-model" },
+  model: { provider: "audit-test", id: "same-model", api: "openai-responses" },
   modelRegistry: {
     async getProviderAuth() {
       return { auth: { apiKey: "secret" } };
@@ -102,22 +103,22 @@ const auditorCases = [
   {
     role: "judge" as const,
     toolName: JUDGE_AUDIT_TOOL_NAME,
-    run: (complete: any) => createPiJudgeAuditor(complete)(judgeInput, { context }),
+    run: (complete: any, auditContext: ExtensionContext = context) => createPiJudgeAuditor(complete)(judgeInput, { context: auditContext }),
   },
   {
     role: "fixer" as const,
     toolName: FIXER_AUDIT_TOOL_NAME,
-    run: (complete: any) => createPiFixerAuditor(complete)(fixerInput, { context }),
+    run: (complete: any, auditContext: ExtensionContext = context) => createPiFixerAuditor(complete)(fixerInput, { context: auditContext }),
   },
   {
     role: "reviewer" as const,
     toolName: REVIEWER_AUDIT_TOOL_NAME,
-    run: (complete: any) => createPiReviewerAuditor(complete)(reviewerInput, { context }),
+    run: (complete: any, auditContext: ExtensionContext = context) => createPiReviewerAuditor(complete)(reviewerInput, { context: auditContext }),
   },
   {
     role: "doctor" as const,
     toolName: DOCTOR_AUDIT_TOOL_NAME,
-    run: (complete: any) => createPiDoctorAuditor(complete)(doctorInput, { context }),
+    run: (complete: any, auditContext: ExtensionContext = context) => createPiDoctorAuditor(complete)(doctorInput, { context: auditContext }),
   },
 ] as const;
 
@@ -134,6 +135,46 @@ test("all retained auditors load their exact Soul and share typed escalation", a
       await readFile(AUDITOR_SOUL_PATHS[entry.role], "utf8"),
       `${entry.role} audit prompt must be exactly its Soul file`,
     );
+  }
+});
+
+test("shared compliance transport forces the active decision tool and one call", async () => {
+  for (const api of ["openai-responses", "openai-codex-responses"] as const) {
+    const auditContext = {
+      ...context,
+      model: { provider: "audit-test", id: "same-model", api },
+    } as unknown as ExtensionContext;
+    for (const entry of auditorCases) {
+      let seen: { context: Context; options: ProviderStreamOptions } | undefined;
+      await entry.run(async (_model: unknown, request: Context, options: ProviderStreamOptions) => {
+        seen = { context: request, options };
+        return response(entry.toolName);
+      }, auditContext);
+      assert.deepEqual(
+        seen?.context.tools?.map((tool) => tool.name),
+        [entry.toolName],
+        `${entry.role} must expose only its active decision tool`,
+      );
+      assert.deepEqual(
+        seen?.options.toolChoice,
+        api === "openai-responses"
+          ? { type: "function", name: entry.toolName }
+          : "required",
+        `${entry.role} must force its active decision tool for ${api}`,
+      );
+      const payload = await seen?.options.onPayload?.(
+        { tool_choice: "auto", parallel_tool_calls: true },
+        auditContext.model!,
+      );
+      if (api === "openai-responses" || api === "openai-codex-responses") {
+        assert.deepEqual(payload, {
+          tool_choice: api === "openai-responses"
+            ? { type: "function", name: entry.toolName }
+            : "required",
+          parallel_tool_calls: false,
+        });
+      }
+    }
   }
 });
 
