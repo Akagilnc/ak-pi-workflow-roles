@@ -40,8 +40,10 @@ export function validateAcceptedJudgeDetails(verdict) {
         });
     };
     if (verdict.judgeStatus === "converged") {
-        if (!hasExactKeys(verdict, withOptionalNote(["judgeStatus"]))) {
-            throw new Error("Judge converged forbids fix and decisionGate");
+        const expectedKeys = withOptionalNote(["judgeStatus"]);
+        if (!hasExactKeys(verdict, expectedKeys)) {
+            const extraKeys = Object.keys(verdict).filter((key) => !expectedKeys.includes(key));
+            throw new Error(`Judge converged forbids extra keys: ${extraKeys.join(", ")}`);
         }
         return { judgeStatus: "converged", ...note };
     }
