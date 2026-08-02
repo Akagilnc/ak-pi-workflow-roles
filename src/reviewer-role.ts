@@ -186,7 +186,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
             pi.setActiveTools(available.has(REVIEWER_OUTPUT_TOOL_NAME) ? [REVIEWER_OUTPUT_TOOL_NAME] : []);
           }
           const text = result.status === "rejected"
-            ? `Reviewer proposal rejected: ${result.violations.join("; ")}`
+            ? `Reviewer proposal rejected: ${result.violations.join("; ")} — ${result.diagnostic}`
             : result.status === "closed"
               ? "Reviewer dispatch is already closed"
               : "Reviewer dispatch accepted";

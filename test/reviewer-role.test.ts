@@ -64,6 +64,22 @@ test("preflight rejection can be corrected, starts no rejected runner, and accep
   const closed=await tool.execute("later",proposal(true),undefined,undefined,extensionContext); assert.equal(closed.details.status,"closed"); assert.equal(reviewerHarness.starts,1);
 });
 
+test("registered Agent rejection text names the violated proposal or pinned-evidence constraint", async()=>{
+  const cases: Array<{ expected: RegExp; candidate?: ReviewerProposalV1; overrides?: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> }> = [
+    { expected: /base\.revision must be a nonempty string/, candidate: { ...proposal(), base: { revision: "" } } },
+    { expected: /materials entry requires a safe id/, candidate: { ...proposal(), materials: [{ id: "bad id", repositoryPath: "RULES.md" }] } },
+    { expected: /required\.tools\/prerequisiteOperations/, candidate: { ...proposal(), required: { standards: { tools: ["write"], prerequisiteOperations: operations } } as any } },
+    { expected: /missing preflight\.git\.derive-range/, overrides: { loadCapabilities: async()=>new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash"],prerequisiteOperations:operations.filter(x=>x!=="preflight.git.derive-range")})) } },
+    { expected: /derived range must match the resolved base and pinned target/, overrides: { createPinnedGitReader: async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"wrong",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}) } },
+    { expected: /pinned target snapshot changed before child execution/, overrides: { createPinnedGitReader: async()=>{let observations=0;return {pin,snapshot:async()=>++observations===1?{...pin,targetHead:"other"}:pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}} } },
+  ];
+  for (const row of cases) {
+    const reviewerHarness=setup(row.overrides); await reviewerHarness.runtime.activate();
+    const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("bad",row.candidate??proposal(),undefined,undefined,{} as ExtensionContext);
+    assert.equal(result.details.status,"rejected"); assert.match(result.content[0].text,row.expected); assert.equal(reviewerHarness.starts,0);
+  }
+});
+
 test("final-review proposal accepts durable hidden authority material after typed path correction", async()=>{
   const authorityPath="test/fixtures/reviewer-authority-receipt.json";
   const reviewerHarness=setup(); await reviewerHarness.runtime.activate(); const tool=reviewerHarness.tools.get(AGENT_TOOL_NAME); const extensionContext={} as ExtensionContext;

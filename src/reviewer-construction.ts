@@ -89,7 +89,14 @@ export function constructReviewerDispatch(input:{identity:string;taskText:string
   for(let i=0;i<first.length;i++){if(!isReviewerPromptIdentity(first[i]!)||!isReviewerPromptIdentity(second[i]!))throw new ReviewerConstructionError("prompt-identity-invalid");if(!sameReviewerPromptIdentity(first[i]!,second[i]!))throw new ReviewerConstructionError("prompt-identity-mismatch");}
   return Object.freeze({identity:input.identity,recipe:"reviewer-common-bundle-v1",input:Object.freeze({task,canonicalSkill:compiled.canonicalSkill,construction:compiled.construction,capabilityDocument:input.capabilityDocument}),targetSnapshot:input.target,prerequisiteOperations:input.admitted.prerequisiteOperations,range:input.evidence.range,materials:input.evidence.materials,...(input.admitted.relevanceHints===undefined?{}:{relevanceHints:input.admitted.relevanceHints}),bundle:compiled.bundle,legs:Object.freeze(axes.map((x,i)=>Object.freeze({...x,prompt:first[i]!}))) });
 }
-export class ReviewerConstructionError extends Error { constructor(readonly code:"prompt-identity-invalid"|"prompt-identity-mismatch"){super(code);} }
+export class ReviewerConstructionError extends Error {
+  constructor(
+    readonly code:"prompt-identity-invalid"|"prompt-identity-mismatch",
+    readonly diagnostic = code === "prompt-identity-invalid"
+      ? "compiled prompt identity must contain canonical text, UTF-8 length, and SHA-256"
+      : "repeated prompt compilation must produce the same prompt identity",
+  ){super(`${code}: ${diagnostic}`);}
+}
 
 export function bundlePromptReferences(bundle: PinnedMechanicalBundleV1): string {
   return bundle.entries.map(({ id, relativeClonePath, sha256 }) => `Bundle-Material: ${JSON.stringify({ id, relativeClonePath, sha256 })}`).join("\n");
