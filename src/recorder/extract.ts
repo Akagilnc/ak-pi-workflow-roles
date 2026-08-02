@@ -5,6 +5,7 @@ import {
   isTerminatingToolName,
   projectReviewerIntentToReceipt,
   validateAcceptedDetails,
+  validateDoctorSubmissionShape,
   type AcceptedDetails,
   type TerminatingToolName,
 } from "../package-contracts/terminating-tools.ts";
@@ -32,6 +33,19 @@ function collectorProjection(argumentsValue: unknown, details: unknown): boolean
     return rest;
   });
   return deepEqual(argumentsValue.legs, projected);
+}
+
+function doctorProjection(argumentsValue: unknown, details: unknown): boolean {
+  try {
+    const testimony = validateDoctorSubmissionShape(argumentsValue);
+    const receipt = validateAcceptedDetails("ak_doctor_output", details) as DoctorOutput;
+    if (testimony.status === "refused") return deepEqual(testimony, receipt);
+    if (receipt.status !== "completed") return false;
+    const { cost: _runtimeCost, ...projected } = receipt;
+    return deepEqual(testimony, projected);
+  } catch {
+    return false;
+  }
 }
 
 function usageOf(value: unknown): AuditObservation["usage"] | undefined {
@@ -170,7 +184,9 @@ function finalizeAcceptedPair(pair: AcceptedPair): ExtractionResult {
     ? collectorProjection(issuance.arguments, resultMessage.details)
     : issuance.toolName === "ak_reviewer_output"
       ? true
-      : deepEqual(issuance.arguments, resultMessage.details);
+      : issuance.toolName === "ak_doctor_output"
+        ? doctorProjection(issuance.arguments, resultMessage.details)
+        : deepEqual(issuance.arguments, resultMessage.details);
   if (!detailsMatch) invalid();
 
   let details: AcceptedDetails;

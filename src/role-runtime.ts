@@ -51,8 +51,8 @@ export {
   DOCTOR_OUTPUT_TOOL_NAME,
   type DoctorAuditInput,
 } from "./doctor-role.ts";
-export type { DoctorCase, DoctorCaseCost, DoctorOutput, DoctorFinding } from "./doctor-contracts.ts";
-export { validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
+export type { DoctorCase, DoctorCaseCost, DoctorSubmission, DoctorOutput, DoctorFinding } from "./doctor-contracts.ts";
+export { validateDoctorSubmissionShape, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
 export { loadDoctorCase } from "./doctor-evidence.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
