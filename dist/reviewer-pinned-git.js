@@ -20,7 +20,7 @@ const evidenceViolation = (code) => {
 const classifyEvidenceRead = (error) => { if (error instanceof ReviewerCorrectablePreflightError)
     throw error; throw error; };
 /** Acquires and normalizes all proposal-dependent bytes against the immutable pin. */
-export async function acquireReviewerPinnedEvidence(reader, target, admitted, ceiling) {
+export async function acquireReviewerPinnedEvidence(reader, target, admitted) {
     let base;
     let readRange;
     try {
