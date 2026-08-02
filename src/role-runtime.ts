@@ -84,7 +84,7 @@ export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisi
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export { AUDIT_ESCALATION_KIND, buildAuditEscalationResult, disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "./audit-escalation.ts";
 export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisionHandlers } from "./audit-escalation.ts";
-export { AUDITOR_SOUL_PATHS, AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
+export { AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
 export type { AuditorSoulRole } from "./auditor-soul.ts";
 export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME, createPiJudgeAuditor } from "./judge-auditor.ts";
 export { FIXER_AUDIT_TOOL_NAME, createPiFixerAuditor } from "./fixer-auditor.ts";

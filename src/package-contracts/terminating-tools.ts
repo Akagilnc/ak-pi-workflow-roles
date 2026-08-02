@@ -199,18 +199,6 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
   }
 }
 
-export function carriesPackageAuditObservation(
-  toolName: TerminatingToolName,
-): boolean {
-  return (
-    toolName === JUDGE_OUTPUT_TOOL_NAME ||
-    toolName === FIXER_OUTPUT_TOOL_NAME ||
-    toolName === REVIEWER_OUTPUT_TOOL_NAME ||
-    toolName === DOCTOR_OUTPUT_TOOL_NAME ||
-    toolName === NAVIGATOR_OUTPUT_TOOL_NAME
-  );
-}
-
 /** Deep structural equality for lifecycle agreement checks. */
 export function deepEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
