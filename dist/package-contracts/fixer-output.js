@@ -36,8 +36,11 @@ function blocker(value, path) {
         fail(`${path} object constraint`);
     if (!nonblank(value.evidence))
         fail(`${path}.evidence nonblank constraint`);
-    if (value.cause === "authority_violation")
+    if (value.cause === "authority_violation") {
+        if (Object.hasOwn(value, "prerequisiteId"))
+            fail(`${path} authority_violation prerequisiteId semantic-field constraint`);
         return { cause: "authority_violation", evidence: value.evidence };
+    }
     if (value.cause === "prerequisite_unmet") {
         if (typeof value.prerequisiteId !== "string" || !new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(value.prerequisiteId))
             fail(`${path}.prerequisiteId pattern constraint`);
@@ -50,6 +53,8 @@ export function validateFixerOutput(value, phase) {
         fail("root object constraint");
     if (!nonblank(value.report))
         fail("report nonblank constraint");
+    if (Object.hasOwn(value, "commitSha") || Object.hasOwn(value, "classesRepaired"))
+        fail("removed top-level commit semantic-field constraint");
     if (value.status === "planned") {
         if (phase === "apply")
             fail("status phase constraint: apply forbids planned");
@@ -58,6 +63,8 @@ export function validateFixerOutput(value, phase) {
         return { status: "planned", report: value.report };
     }
     if (value.status === "refused" && Object.hasOwn(value, "remainingScope")) {
+        if (Object.hasOwn(value, "classResults"))
+            fail("status refused plan/apply semantic-field combination constraint");
         if (phase === "apply")
             fail("status phase constraint: apply refusal requires classResults");
         if (!nonblank(value.remainingScope))
@@ -82,6 +89,8 @@ export function validateFixerOutput(value, phase) {
             fail("classResults name unique constraint");
         names.add(item.name);
         if (item.disposition === "completed") {
+            if (Object.hasOwn(item, "remainingScope") || Object.hasOwn(item, "blocker"))
+                fail(`${path} completed/refused semantic-field combination constraint`);
             if (!nonblank(item.searchScope))
                 fail(`${path}.searchScope nonblank constraint`);
             if (!Array.isArray(item.exceptions))
@@ -105,6 +114,8 @@ export function validateFixerOutput(value, phase) {
             return { name: item.name, disposition: "completed", searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
         }
         if (item.disposition === "refused") {
+            if (Object.hasOwn(item, "searchScope") || Object.hasOwn(item, "exceptions") || Object.hasOwn(item, "commitSha"))
+                fail(`${path} refused/completed semantic-field combination constraint`);
             if (!nonblank(item.remainingScope))
                 fail(`${path}.remainingScope nonblank constraint`);
             refused++;

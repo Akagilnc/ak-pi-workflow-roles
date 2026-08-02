@@ -70,9 +70,13 @@ export function constructReviewerDispatch(input) {
 }
 export class ReviewerConstructionError extends Error {
     code;
-    constructor(code) {
-        super(code);
+    diagnostic;
+    constructor(code, diagnostic = code === "prompt-identity-invalid"
+        ? "compiled prompt identity must contain canonical text, UTF-8 length, and SHA-256"
+        : "repeated prompt compilation must produce the same prompt identity") {
+        super(`${code}: ${diagnostic}`);
         this.code = code;
+        this.diagnostic = diagnostic;
     }
 }
 export function bundlePromptReferences(bundle) {

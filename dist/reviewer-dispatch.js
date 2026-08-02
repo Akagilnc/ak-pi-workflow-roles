@@ -13,9 +13,11 @@ export { isReviewerPromptIdentity, reviewerPromptIdentity, sameReviewerPromptIde
 export const REVIEWER_PREFLIGHT_VIOLATIONS = ["proposal-invalid", "base-invalid", "material-invalid", "spec-invalid", "capability-invalid", "prerequisite-missing", "range-invalid", "prompt-identity-invalid", "prompt-identity-mismatch", "target-drift"];
 export class ReviewerPreflightError extends Error {
     code;
-    constructor(code) {
-        super(code);
+    diagnostic;
+    constructor(code, diagnostic = `${code} constraint failed`) {
+        super(`${code}: ${diagnostic}`);
         this.code = code;
+        this.diagnostic = diagnostic;
     }
 }
 const frozen = (xs) => Object.freeze([...xs]);
@@ -38,13 +40,13 @@ const identity = (proposal) => { try {
 catch {
     return sha256Hex("[unserializable proposal]");
 } };
-const preflight = (error) => error instanceof ReviewerPreflightError ? error : error instanceof ReviewerAdmissionError || error instanceof ReviewerConstructionError || error instanceof ReviewerCorrectablePreflightError ? new ReviewerPreflightError(error.code) : undefined;
+const preflight = (error) => error instanceof ReviewerPreflightError ? error : error instanceof ReviewerAdmissionError || error instanceof ReviewerConstructionError || error instanceof ReviewerCorrectablePreflightError ? new ReviewerPreflightError(error.code, error.diagnostic) : undefined;
 export function createReviewerDispatcher(d) {
     const task = Uint8Array.from(d.task), target = immutableReviewerPin(d.reader.pin), host = frozen(d.hostTools);
     let accepted, fatal, accepting = false;
     const rejections = [], closedAttempts = [];
     const close = (id) => { const e = Object.freeze({ identity: id, reason: "acceptance-closed", started: false }); d.decisionEvidence?.(Object.freeze({ disposition: "closed", ...e })); closedAttempts.push(e); return Object.freeze({ status: "closed", ...e }); };
-    const reject = (id, e) => { const evidence = Object.freeze({ identity: id, violations: Object.freeze([e.code]), started: false }); d.decisionEvidence?.(Object.freeze({ disposition: "rejected", ...evidence })); rejections.push(evidence); return Object.freeze({ status: "rejected", identity: id, violations: evidence.violations }); };
+    const reject = (id, e) => { const evidence = Object.freeze({ identity: id, violations: Object.freeze([e.code]), started: false }); d.decisionEvidence?.(Object.freeze({ disposition: "rejected", ...evidence })); rejections.push(evidence); return Object.freeze({ status: "rejected", identity: id, violations: evidence.violations, diagnostic: e.diagnostic }); };
     return Object.freeze({ get rejections() { return Object.freeze([...rejections]); }, get acceptance() { return accepted; }, get closedAttempts() { return Object.freeze([...closedAttempts]); }, async propose(proposal, invocation) { const id = identity(proposal); if (fatal !== undefined)
             throw fatal; if (accepted || accepting)
             return close(id); let dispatch; try {
@@ -55,7 +57,7 @@ export function createReviewerDispatcher(d) {
                 taskText = exactUtf8(task, "Reviewer task");
             }
             catch {
-                throw new ReviewerPreflightError("prompt-identity-invalid");
+                throw new ReviewerPreflightError("prompt-identity-invalid", "Reviewer task must be valid UTF-8 before prompt identity compilation");
             }
             dispatch = constructReviewerDispatch({ identity: id, taskText, canonicalSkill: d.canonicalSkill, capabilityDocument: d.capabilities.document, target, admitted, evidence, ...(d.reviewScopeKeys === undefined ? {} : { reviewScopeKeys: d.reviewScopeKeys }), ...(d.compilePrompt === undefined ? {} : { compilePrompt: d.compilePrompt }) });
         }
@@ -70,7 +72,7 @@ export function createReviewerDispatcher(d) {
         } if (accepted || accepting)
             return close(id); try {
             if (!sameReviewerPinnedTarget(await d.reader.snapshot(), target))
-                throw new ReviewerPreflightError("target-drift");
+                throw new ReviewerPreflightError("target-drift", "pinned target snapshot changed before child execution");
         }
         catch (error) {
             if (accepted || accepting)

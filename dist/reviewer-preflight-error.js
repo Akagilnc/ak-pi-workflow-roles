@@ -6,9 +6,11 @@ export const REVIEWER_CORRECTABLE_PREFLIGHT_CODES = [
 /** Closed policy error shared by concrete Git reads and dispatch compilation. */
 export class ReviewerCorrectablePreflightError extends Error {
     code;
-    constructor(code) {
-        super(code);
+    diagnostic;
+    constructor(code, diagnostic = `${code} constraint failed`) {
+        super(`${code}: ${diagnostic}`);
         this.code = code;
+        this.diagnostic = diagnostic;
         this.name = "ReviewerCorrectablePreflightError";
     }
 }
