@@ -10,6 +10,7 @@ import {
 
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
+import { createPiSoulAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
@@ -21,6 +22,7 @@ import {
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
   createRoleRuntimeExtension,
+  type JudgeAdjudicativeVerdict,
   type JudgeVerdict,
   type SoulAuditInput,
 } from "../src/role-runtime.ts";
@@ -511,8 +513,8 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   assert.deepEqual(result.details, verdict);
 });
 
-test("judge role accepts valid examples of all three verdict shapes", async () => {
-  const audited: JudgeVerdict[] = [];
+test("judge role audits only adjudicative fields while retaining evidence in receipts", async () => {
+  const audited: JudgeAdjudicativeVerdict[] = [];
   const { tool } = await startJudge(async ({ verdict }) => {
     audited.push(verdict);
     return { status: "pass" };
@@ -548,7 +550,86 @@ test("judge role accepts valid examples of all three verdict shapes", async () =
     );
     assert.deepEqual(result.details, verdict);
   }
-  assert.deepEqual(audited, verdicts);
+  assert.deepEqual(audited, [
+    { judgeStatus: "converged" },
+    {
+      judgeStatus: "continue",
+      fix: { summary: "Repair the parser" },
+      classes: [{
+        name: "parser-contract",
+        owner: "parser",
+        boundary: "input parsing",
+        disposition: "repair malformed input handling",
+      }],
+    },
+    {
+      judgeStatus: "escalate",
+      decisionGate: { question: "Which API?", options: ["A", "B"] },
+    },
+  ]);
+});
+
+test("production Judge-to-Soul audit projection ignores opaque evidence and preserves receipt details", async () => {
+  const auditRequests: Context[] = [];
+  const auditor = createPiSoulAuditor(async (_model, request) => {
+    auditRequests.push(request);
+    return fauxAssistantMessage(
+      fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [] }),
+      { stopReason: "toolUse" },
+    );
+  });
+  const { tool } = await startJudge(auditor);
+  const auditedContext = (id: string, verdict: JudgeVerdict) => Object.assign(
+    toolCallContext([{ id, arguments: verdict }]),
+    {
+      model: { provider: "active", id: "judge" },
+      modelRegistry: {
+        async getProviderAuth() {
+          return { auth: { apiKey: "secret" } };
+        },
+        async getApiKeyAndHeaders() {
+          return { ok: true, apiKey: "secret" };
+        },
+      },
+    },
+  ) as ExtensionContext;
+  const withoutEvidence: JudgeVerdict = { judgeStatus: "converged" };
+  const evidence = { opaqueOnly: "must not reach the auditor" } as const;
+  const withEvidence: JudgeVerdict = { judgeStatus: "converged", evidence };
+
+  const withoutReceipt = await tool.execute(
+    "without-evidence",
+    withoutEvidence,
+    undefined,
+    undefined,
+    auditedContext("without-evidence", withoutEvidence),
+  );
+  const withReceipt = await tool.execute(
+    "with-evidence",
+    withEvidence,
+    undefined,
+    undefined,
+    auditedContext("with-evidence", withEvidence),
+  );
+
+  assert.equal(auditRequests.length, 2);
+  const auditText = (request: Context): string => {
+    const user = request.messages.find((message) => message.role === "user");
+    assert.ok(user?.role === "user");
+    assert.ok(Array.isArray(user.content));
+    return user.content
+      .map((part) => part.type === "text" ? part.text : "")
+      .join("");
+  };
+  const firstAuditText = auditText(auditRequests[0]!);
+  const secondAuditText = auditText(auditRequests[1]!);
+  assert.equal(firstAuditText, secondAuditText);
+  assert.doesNotMatch(firstAuditText, /opaqueOnly/);
+  assert.equal(withoutReceipt.terminate, true);
+  assert.equal(withReceipt.terminate, true);
+  assert.deepEqual(withoutReceipt.details, withoutEvidence);
+  assert.deepEqual(withReceipt.details, withEvidence);
+  assert.equal(withReceipt.details.evidence, evidence);
 });
 
 test("judge preserves an optional advisory note on every verdict", async () => {

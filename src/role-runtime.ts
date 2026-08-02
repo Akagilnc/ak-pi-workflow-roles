@@ -28,6 +28,7 @@ import { validateCurrentPositionSnapshotV1, type CurrentPositionSnapshotV1 } fro
 import { NavigatorEvidenceStore } from "./navigator-evidence.ts";
 import {
   createJudgeRoleRuntime,
+  type JudgeAdjudicativeVerdict,
   type SoulAuditInput,
   type SoulAuditResult,
 } from "./judge-role.ts";
@@ -56,6 +57,7 @@ export { validateDoctorSubmissionShape, validateDoctorOutput, DoctorEvidenceStor
 export { loadDoctorCase } from "./doctor-evidence.ts";
 export {
   JUDGE_OUTPUT_TOOL_NAME,
+  type JudgeAdjudicativeVerdict,
   type JudgeVerdict,
   type SoulAuditInput,
   type SoulAuditResult,
