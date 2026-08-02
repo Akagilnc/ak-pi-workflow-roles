@@ -1,6 +1,6 @@
 /**
  * Package-owned terminating tool registry.
- * Recorder and roles share these leaves; Recorder must not load role registration.
+ * Package roles share these terminating leaves.
  */
 import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollectorReceipt, } from "./collector-output.js";
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";

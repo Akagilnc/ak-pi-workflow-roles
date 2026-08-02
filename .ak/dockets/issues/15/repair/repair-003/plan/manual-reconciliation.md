@@ -1,1 +1,0 @@
-Packet key set `{R1,R2,R3,R4}` exactly equals the Plan Receipt key set. Each key begins one keyed data section, occurs once, and has a nonblank disposition. No missing, duplicate, or extra R key exists. The response has no table header; header presence or spelling was not inspected as a conformance condition.

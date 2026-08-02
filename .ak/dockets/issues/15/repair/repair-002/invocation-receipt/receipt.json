@@ -1,5 +1,0 @@
-{
-  "status": "completed",
-  "report": "| R# | Disposition |\n| --- | --- |\n| R1 | implemented(test: fixed-target Git construction walk seals 597 identities, predicates, and post-cutoff partition; repair-002 recorder successor preserves executable corroboration implementation and 277-source scan result — r1 matched=597 missing=0 changed=0 postCutoff=coder.ts) |\n| R2 | implemented(test: repair-002 recorder successor preserves executable corroboration implementation and 277-source scan result — r2 admittedScanned=277 allMatched including 42a9fc and af289a; real scanBytes source/derivative/hit compare) |\n| R3 | implemented(test: structured issue/PR/commit associations exhaustive from frozen metadata and admitted non-generic bytes — exact-set plus 33454566 red mutation; local IssuePrCommitAssociations; pr5Disposition/pr5RecoveredItem; gitIsAncestor HEAD-only) |\n| R4 | implemented(test: historical nonconformance closure seals original and 49807d4 successor identities; append-only record; historical apply Receipt/manifest byte-unchanged) |",
-  "commitSha": "da250445d09ef2b9105a99590f2ccda0a8db29c4"
-}

@@ -1,1 +1,0 @@
-Plan content is retained but cannot authorize Apply: response used `Key | Plan`, not packet-required `R# | Disposition`. No historical bytes are rewritten; successor Plan must return the exact columns and key set.

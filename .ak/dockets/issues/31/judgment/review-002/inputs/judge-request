@@ -1,8 +1,0 @@
-# Issue #31 Review-002 finding adjudication
-
-Adjudicate both Review-002 Should findings before repair. Treat examples as class evidence.
-
-1. Scope-key prompt embedding: owner-ratified grammar intentionally permits every exact comma-free nonblank key and forbids normalization. Decide whether directly interpolating those exact keys into XML-like parent/child prompt delimiters violates anchoring/instruction integrity, and authorize a bounded shared encoding/construction fix if sustained without narrowing the owner grammar or changing exact key identity.
-2. README examples: decide whether stale canonical Judge/Fixer examples contradict the delivered status-dependent typed contracts and cold-start caller story; authorize usage-only synchronization without prescribing topology if sustained.
-
-Preserve opaque tasks, pure capabilities, one sibling-parallel Reviewer batch, exact key comparison, no Coder/Collector change, no Fixer audit, and issue #12/#26 boundaries. If sustained, return one class-oriented direct Fixer Apply packet; there is no Plan phase. Submit only through `ak_judge_output`.

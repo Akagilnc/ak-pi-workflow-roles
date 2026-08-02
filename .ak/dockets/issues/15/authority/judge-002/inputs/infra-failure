@@ -1,9 +1,0 @@
-{
-  "invocation": "issue-15 authority judge attempt 001",
-  "recorderOutcome": "failed",
-  "code": "promotion-failed",
-  "outwardStatus": 125,
-  "childOutcome": "exited 0",
-  "lawfulReceipt": null,
-  "disposition": "native rename binding was absent in the default checkout; npm run build:recorder rebuilt the ignored host binding. No child result is claimed or preserved as a Receipt; retry is a new invocation."
-}

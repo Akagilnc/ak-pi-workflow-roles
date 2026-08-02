@@ -1,5 +1,0 @@
-# Issue #28 final convergence retry 003
-
-Adjudicate current HEAD `c45ffbe2963b6176ef00fa5a7dfafeabb7d748db` after `.ak/dockets/issues/28/repair/convergence-proof-apply/receipt.json` closed the three proof classes from the prior judgment.
-
-Independently verify the production Recorder live/readSealed evidence-read oracles, overlapping identical enter/resume, pending fail-closed, concurrent recovery count/status, incompatible and hash-corrupt truth, current typecheck, and all previously closed classes. Converge only on executable current-HEAD proof. Submit exactly one verdict.

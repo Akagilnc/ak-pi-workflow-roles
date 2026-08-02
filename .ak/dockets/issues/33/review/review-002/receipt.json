@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_9d2C3000yb32Jjgqqdec0icA|fc_0131939fcbdfc1b9016a6cc3fbeec081918390fc81cd35a189",
-  "details": {
-    "status": "refused",
-    "report": "Method-compliant review cannot be completed from this invocation. The required single sibling-parallel batch was already consumed, and its Standards prompt omitted the captured commit list and did not paste the mandated smell baseline verbatim with remediation text. The task forbids corrective reruns or additional sub-agents, so rerunning would violate the method. No product files or probes were created or modified."
-  },
-  "artifactKind": "acceptedReceipt"
-}

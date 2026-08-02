@@ -1,3 +1,0 @@
-# Collector cancellation precedence residual
-
-Make AbortSignal state authoritative before transport-failure tagging in `src/collector-github.ts`. In `createIssueComment`'s catch, check `input.signal?.aborted` and rethrow the exact caught value before testing `ambiguousGhFailure`; retain ambiguous-loss classification only for non-aborted failures. Current HEAD reproducibly returns `{kind:"ambiguous_loss"}` when an in-flight request is aborted with `Object.assign(new Error("deadline exceeded"), {ambiguousGhFailure:true})`, violating the packet's arbitrary-reason/original-reason cancellation rule. Extend the hung-POST test with such a reason and assert strict reason identity, child death, non-terminal `started` attempt, and retained one-shot behavior.

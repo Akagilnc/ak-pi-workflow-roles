@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_YEWlgKsLS1jnrz3G8e9aytjM|fc_084d2a02602ac43d016a6b7c966ad8819191c787f6fbd72043",
-  "details": {
-    "status": "refused",
-    "report": "Unable to issue a method-compliant final two-axis review for `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...1860795ebc97189b5d334ac1119c85fb310ee1cb`. The atomic dispatch granted `bash` with no authorized commands, used a two-dot rather than the required three-dot fixed-range diff, and did not establish the required pre-dispatch non-empty-diff check. Its outputs also failed axis isolation: the Standards leg included a Spec-oriented capability claim, while the Spec leg emitted a Standards section and combined cross-axis summary. Consequently semantic post-audit cannot faithfully aggregate the child reports. The partial record indicates 2 Standards judgment-call findings and 3 P1 Spec findings, but reporting completion or reconstructing their details would be misleading."
-  },
-  "artifactKind": "acceptedReceipt"
-}

@@ -1,4 +1,0 @@
-{
-  "status": "refused",
-  "report": "# Reviewer Receipt — Refused\n\nThe immutable target and authority resolved, and the required single Standards/Spec sibling batch ran. However, I cannot issue a method-compliant completed review from this session: an over-broad `npm test` command exercised repository JSONL/session fixture tests, crossing the task’s explicit prohibition on reading generic JSONL/session payloads. Excluding that command’s results or rerunning narrower gates cannot remove the prohibited access from this review execution record, and running another sibling batch would violate the exactly-once batch requirement.\n\nA fresh Reviewer session is required, pinned to the same base/target, using only the Case-A seam verifier, typecheck, and metadata-only `/tmp` predicates."
-}

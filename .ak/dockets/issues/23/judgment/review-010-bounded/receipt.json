@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_judge_output",
-  "toolCallId": "call_mvIGZHDN5Uzd6ll3xxgxBJvX|fc_049fceb034f4d22a016a6c6f0b2ff481919b1df71ab0c7fd9c",
-  "details": {
-    "judgeStatus": "converged",
-    "note": "Review-010’s sole Scope-B finding is dismissed as unsupported; no Fixer is authorized. Scope B requires the package-owned no-rerun/evidence-verification instruction to reach the Reviewer parent and both child prompt boundaries, and requires the Reviewer invocation to mechanically verify admitted evidence. It does not require each isolated child clone to contain a duplicate clone-relative raw session. The Spec child proved only that the gitignored relative `.ak/work/...` path was absent from its detached clone; it did not disprove the supplied absolute artifact. The accepted parent report—and independent current inspection—mechanically establishes that exact absolute session, SHA-256 `fdd7cde713f6287da9120e98c94279b53c3b654088aea3857c006de29f118fc8`, adjacent exit `0`/duration `114`, and transcript corroboration of focused 26/26, typecheck, diff-check, no-full-station, commit, and accepted receipt evidence. The committed receipt at `.ak/dockets/issues/23/apply/reviewer-verification-policy/receipt.json` supplies the durable review fact. Requiring or committing a raw generic session merely to enter every review clone would add an ungoverned retention/copy mechanism contrary to `.gitignore`’s `.ak/work/` boundary and README’s exclusion of generic raw-session retention. K1–K7 remain finding-free; issue-26 residuals and full Recorder debt are not reopened."
-  },
-  "artifactKind": "acceptedReceipt"
-}

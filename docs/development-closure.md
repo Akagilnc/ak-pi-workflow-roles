@@ -11,32 +11,31 @@ Each role verdict/judgment exists only in that role’s typed submission-tool
 Receipt. A development-trail entry may preserve or cite the Receipt but is not
 itself a verdict and cannot replace the Receipt. Filenames never carry
 verdicts. Restart or compaction recovery is manual rereading of that trail; no
-package resume semantics arise. Timeout guidance remains docket-dependent and
-creates no runtime budget.
+package resume semantics arise. Timeout guidance remains caller-owned and creates no runtime budget.
 
 ## Canonical manual record sequence
 
 Maintainers walk these beats in order when they apply. An inapplicable beat may
 be omitted only with an **explicit disposition** recorded in the trail.
 
-1. **Seal authority inputs** — instantiate or cite authority materials with
+1. **Identify authority inputs** — instantiate or cite authority materials with
    repository-relative path + SHA-256 of exact bytes (see
    `packets/judge-authority.md`).
 2. **Record any authority judgment** — preserve/cite the Authority typed Receipt
-   in the trail against the sealed inputs. The trail entry is not the verdict
+   in the trail against the identified inputs. The trail entry is not the verdict
    and cannot replace the Receipt. Filename is not the verdict.
-3. **Seal a construction plan** — bind sealed authority identity and record
+3. **Record a construction plan** — bind authority identity and record
    Behavior / Owner / Red / Green / Scope for each proposed change (see
    `packets/judge-plan.md`).
 4. **Preserve construction receipt / commit / test evidence** — keep the worker
    report, full target commit SHA, and test evidence that the construction
    actually produced.
 5. **Record Apply judgment** — preserve/cite the Apply typed Receipt in the
-   trail against sealed authority/plan identities and the committed target (see
+   trail against authority/plan identities and the committed target (see
    `packets/judge-apply.md`). The trail entry is not the verdict and cannot
    replace the Receipt.
 6. **Preserve independent review and per-finding adjudication** — bind each
-   finding/disposition to sealed authority, a fixed reviewed range (full base
+   finding/disposition to authority, a fixed reviewed range (full base
    and target SHAs), and current facts (see `packets/judge-review.md`).
 7. **Issue a forward repair artifact when needed** — open a new `FixPacketV1`
    repair request using its current typed contract (see the

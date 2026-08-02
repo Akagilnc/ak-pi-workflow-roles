@@ -1,8 +1,0 @@
-# Issue #17 Review-037 adjudication
-
-Adjudicate lawful refused receipt `.ak/dockets/issues/17/review/review-037-final/receipt.json` and its preserved reports/current HEAD.
-
-1. Standards finds `test/reviewer-runtime-receipt.test.ts` exhaustively tests primitive Git ID format permutations (39/41 chars, uppercase, nonhex, undefined/empty/number), contrary to ADR 0016 tests-follow-logic. Decide the minimal authored cross-field tracer that remains justified and remove format matrices.
-2. Reviewer semantic audit twice rejected completed intent because the runtime V2 receipt omits each settled leg’s structured `runtimeConstructionEvidence`—workspace identity, bundle manifest identity, and read-back-verified material entries—even though execution results/ledger retain it. Pre-acceptance `identities.construction` proves intended bundle but not per-clone installation/readback before provider execution. Decide whether runtime receipt must carry exact typed per-leg materialization evidence, how it binds to accepted legs/bundle, and how clone-local paths remain identified as runtime/scratch rather than target facts. Preserve thin driver result, verbatim reports, exact accepted-leg/outcome laws, and no prose parsing.
-
-No Plan unless a genuine unresolved interface decision exists. Return direct Fixer classes or convergence. Do not edit code; submit via `ak_judge_output`.

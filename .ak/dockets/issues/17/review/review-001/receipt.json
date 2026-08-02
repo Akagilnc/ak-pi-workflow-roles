@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_ptb1C03UlcS2rdMZ14jDESJJ|fc_06d4606878818add016a6b76dab1cc8191bbc2637cbd15ff67",
-  "details": {
-    "status": "refused",
-    "report": "Unable to run the atomic two-axis review. The Reviewer validator rejected the dispatch because the supplied canonical code-review skill lacks a literal `## Standards` baseline section. No child review effects ran, so a complete fixed-target report cannot be produced without a corrected canonical skill."
-  },
-  "artifactKind": "acceptedReceipt"
-}

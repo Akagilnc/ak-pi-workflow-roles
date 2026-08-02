@@ -12,7 +12,6 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import {
-  GENERATED_NATIVE_BINDING,
   packageRoot,
   packIsolatedPackage,
   withHermeticHome,
@@ -75,13 +74,8 @@ function walkFiles(root: string): string[] {
 
 async function snapshotDistTree(distRoot: string): Promise<DistSnapshot> {
   const snapshot: DistSnapshot = new Map();
-  // Exclude the generated native binding: concurrent native-build lifecycle
-  // tests legitimately republish it under packageRoot. The prepack race class
-  // is cross-file TypeScript emission of shared JS modules.
-  const nativeRel = GENERATED_NATIVE_BINDING.replace(/^dist\//, "");
   for (const full of walkFiles(distRoot)) {
     const rel = relative(distRoot, full).split("\\").join("/");
-    if (rel === nativeRel) continue;
     const st = statSync(full);
     const body = await readFile(full);
     snapshot.set(rel, {
@@ -163,8 +157,8 @@ test("isolated packs leave shared dist identity stable under concurrent contract
         const paths = packed.files.map((file) => file.path);
         assert.ok(paths.includes("dist/package-contracts/terminating-tools.js"));
         assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
-        assert.ok(paths.includes("dist/recorder/rename_no_replace.node"));
-        assert.ok(paths.includes("bin/ak-docket-record.js"));
+        assert.ok(paths.includes("bin/ak-assisted-run.js"));
+        assert.ok(!paths.some((path) => path.includes("recorder")));
         return packed;
       });
 

@@ -1,7 +1,0 @@
-# Owner choice — typed prerequisite identity
-
-Choose option 1 from `.ak/dockets/issues/44/judgment/prerequisite-followup-review/receipt.json`.
-
-Preserve the two-cause refusal enum. Repair packets declare prerequisites with stable typed IDs. Every `prerequisite_unmet` blocker must reference one declared prerequisite ID, and runtime validates the packet-to-receipt reference. Prose evidence remains human-facing evidence of current absence/unlawfulness; the fresh auditor checks semantic truthfulness but is not represented as deterministic model enforcement.
-
-Use the smallest closed contract. Do not add another refusal reason, scheduler, prerequisite executor, dependency inference, routing, retry, or workflow topology.
