@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_8D4KNatEh7rnnkgj72T2PpXB|fc_0e81478b4a5fc497016a6ccc6fd31c8191b4c584daa823b2a4",
-  "details": {
-    "status": "refused",
-    "report": "Method-compliant completion is no longer possible. The required single sibling-parallel Agent batch was run with the supplied prompts, but the mandated fail-fast preflight (`git rev-parse` of the fixed point and confirmation that the three-dot diff is non-empty) was not performed before those Agent calls. Running it now would not establish the required ordering, and the task forbids any later Agent batch. I therefore refuse rather than misrepresent method compliance."
-  },
-  "artifactKind": "acceptedReceipt"
-}

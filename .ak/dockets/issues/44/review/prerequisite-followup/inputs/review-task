@@ -1,7 +1,0 @@
-# Issue #44 prerequisite semantics fixed-target review
-
-Review target `59ace73b2f6e064d0e859b23ef5f1927ce16dcd9` against base `18ae4b8942294076a31df33b8b1982d28b212264`.
-
-Construct one proposal: base that exact revision; materials `prerequisite-authority` at `.ak/dockets/issues/44/authority/prerequisite-semantics-followup/receipt.json`, `repository-law` at `CLAUDE.md`, `fixer-soul` at `souls/fixer.md`; Standards hints repository-law/fixer-soul; Spec hint prerequisite-authority; established Spec. Both axes require tools `["read","grep","find","ls","bash"]`, bash command `git diff 18ae4b8942294076a31df33b8b1982d28b212264...59ace73b2f6e064d0e859b23ef5f1927ce16dcd9`, and all eight supplied prerequisite operations.
-
-Review both axes. Focus on whether the semantic audit change actually prevents retrospective prerequisite laundering through production boundaries without prose-machine anchoring, still accepts true prospective prerequisites, handles completed method noncompliance honestly, and preserves the closed public contract/Soul. Report findings only.

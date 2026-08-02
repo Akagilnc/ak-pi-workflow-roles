@@ -1,3 +1,0 @@
-# Repair packet: Receipt derivative classification
-
-At current committed HEAD, repair the existing extraction/storage seam so scanner mutation of any stored Receipt member, including bound toolCallId outside accepted details, classifies it as `sanitizedDerivativeOfAcceptedReceipt` rather than `acceptedReceipt`. Preserve the sanitized Receipt/audit call-identity join and coherent manifest artifactKind/redactionStatus. Extend the existing Judge/Reviewer credential lifecycle regression to assert receipt.json and manifest semantics. No new scanner, hook, parser, or Receipt builder; preserve all unrelated behavior. Focused/full/typecheck/pack-clean proof, one forward commit, exact Receipt. Do not inspect sessions.

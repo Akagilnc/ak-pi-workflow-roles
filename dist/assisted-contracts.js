@@ -1,7 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
-import publishedAssistedCallV1Schema from "../schemas/assisted-call-v1.schema.json";
+import publishedAssistedCallV1Schema from "../schemas/assisted-call-v1.schema.json" with { type: "json" };
 import { isUuidV7 } from "./uuidv7.js";
-import { scanJsonValue } from "./recorder/scanner.js";
 import { PACKAGED_ROLES } from "./navigator-contracts.js";
 function rec(v, keys, w) {
   if (!v || typeof v !== "object" || Array.isArray(v) || Object.keys(v).length !== keys.length || !keys.every((k) => Object.hasOwn(v, k))) throw new Error(`invalid ${w}`);
@@ -71,7 +70,6 @@ function values(argv, flag) {
 }
 function validateSelectedPiArgvV1(argv, execution) {
   if (argv.length < 2 || !/(^|\/)pi$/.test(argv[0])) throw new Error("selected command must be Pi argv");
-  if (scanJsonValue(argv, "promotedPiArgv").report.redacted) throw new Error("credentials are forbidden in promoted argv");
   if (argv.some((x, i) => i > 0 && OWNED.has(x.split("=", 1)[0]))) throw new Error("session flag is Runner-owned");
   const roles = values(argv, "--ak-role");
   if (roles.length !== 1 || roles[0] !== execution.role) throw new Error("selected role conflict");

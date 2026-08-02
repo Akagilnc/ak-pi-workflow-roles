@@ -1,3 +1,0 @@
-# Repair packet: CI and native staging documentation standards
-
-At current HEAD, remove only the two Recorder-specific ad-hoc CI shell gate blocks; retain checkout/setup, npm ci, npm run typecheck, npm test, because package lifecycle proof already runs inside npm test per ADR 0009. Change only README's inaccurate “beside destination” statement to say native staging is outside dist and atomic publication requires a shared filesystem. Preserve native publisher/tests/package behavior. Focused diff/typecheck/full proof, one forward commit, Receipt. Do not touch excluded Fowler observations or inspect sessions.

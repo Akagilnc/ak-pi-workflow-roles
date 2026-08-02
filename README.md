@@ -4,9 +4,9 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 
 ## Navigator and Assisted Runner
 
-Navigator advises the least-cost safe **single next process** from a frozen, digest-bound current-position snapshot. It has exactly two active tools: a bounded admitted-evidence reader and terminating `ak_navigator_output`. A fresh same-active-model compliance call audits the typed output. Navigator never invokes roles, Agent, shell, Git/GitHub, filesystems, Runner, or Recorder; its ordinary advice is not authorization and callers may deviate.
+Navigator advises the least-cost safe **single next process** from a frozen, digest-bound current-position snapshot. It has exactly two active tools: a bounded admitted-evidence reader and terminating `ak_navigator_output`. A fresh same-active-model compliance call audits the typed output. Navigator never invokes roles, Agent, shell, Git/GitHub, filesystems, or Runner; its ordinary advice is not authorization and callers may deviate.
 
-Assisted Runner is a separate package capability. It persistently wraps exactly one caller-selected packaged non-Navigator role, automatically consulting Navigator before launch and again after settlement. It never selects or automatically dispatches the recommended role, manages worktrees, or continues a workflow. Recorder remains the one-physical-invocation evidence sealer; the caller still owns role/phase/argv/cwd, evidence declarations, retries, budgets, worktrees, and whether to end assisted mode.
+Assisted Runner is a separate package capability. It persistently wraps exactly one caller-selected packaged non-Navigator role, automatically consulting Navigator before launch and again after settlement. It never selects or automatically dispatches the recommended role, manages worktrees, or continues a workflow. Its private direct child/session adapter keeps settlement evidence only inside the Assisted run; the caller still owns role/phase/argv/cwd, evidence declarations, retries, budgets, worktrees, and whether to end assisted mode.
 
 ```bash
 ak-assisted-run enter --config assisted-call-v1.json -- pi --ak-role coder --ak-coder-phase apply --ak-coder-task task.md --print "Apply it."
@@ -249,21 +249,6 @@ Before accepting `completed`, the runtime establishes that `mergeCommitId` is cu
 
 The following is only a feasibility example, not a package recipe or executable/default/required workflow. An external caller may run independent tasks in caller-provided worktrees, integrate completed tasks in completion order, invoke Merger only for a real Git conflict, and perform a final pre-PR review/fix closure. A caller may instead provide a parent and children with a family integration base, start each child from a stable family tip selected by that caller, integrate completed children one at a time, optionally perform a bounded review/adjudication/fix closure after each integration, and perform a final family-wide closure. Every ordering choice, loop, stopping condition, and resource policy belongs to the caller; other compositions are equally lawful. No role knows a predecessor or successor.
 
-## StatsLine producer
-
-Call `produceStatsLineV1` with a package `CommittedSnapshot`, issue number, and optional normalized tracker metadata. `createGitCommittedSnapshot` supplies the production reader for an exact full commit:
-
-```ts
-const snapshot = createGitCommittedSnapshot({
-  repositoryRoot: "/absolute/repository",
-  repository: "owner/name",
-  targetCommit: "<40-hex-commit>",
-});
-const line = await produceStatsLineV1({ snapshot, issueNumber: 12, tracker });
-```
-
-The caller invokes this at closure and preserves the returned line in the same issue docket. The package does not schedule closure or query a tracker.
-
 ## Verdict contract
 
 Judge's legal status-dependent shapes are:
@@ -287,17 +272,3 @@ Workflow ordering and routing are caller-owned. A separate orchestrator is optio
 ## Composing class-repair contracts
 
 Callers may use the typed contracts together without parsing prose: a `continue` Judge receipt identifies non-empty `classes[]`; a caller composes a `FixPacketV1`; an apply Fixer receipt settles findings in `classResults[]`; and `--ak-review-scope-keys <comma-separated keys>` limits Reviewer to exact class keys (omit it for a full review). Fixer prerequisite declarations and blocker references are typed IDs, but the package does not infer, execute, graph, route, retry, or schedule dependencies. Packet composition, compatibility grouping, contextual reconciliation, sequencing, stopping, invocation budgets, routing, and next-hop acceptance remain caller-owned; these contracts create no orchestration topology.
-
-## Recorder (`ak-docket-record`)
-
-Recorder v2 seals one fresh persisted Pi v3 package-role session; it is not a generic child wrapper.
-
-```bash
-ak-docket-record --config recorder-v2.json -- pi --ak-role coder -p "Do the task"
-```
-
-The closed config has `version: 2` and adds `session: { directory, id }`. `directory` is a repository-relative path strictly below `.ak/work/`; `id` is a lowercase UUIDv7. Recorder exclusively creates the 0700 leaf and injects its absolute `--session-dir` and `--session-id`. Session/history/JSON/RPC flags are rejected. Exactly one `-p|--print` is required. See [`schemas/recorder-config-v2.schema.json`](schemas/recorder-config-v2.schema.json).
-
-Recorder forwards stdout and stderr byte-for-byte with backpressure and retains only a 4096-byte tail per stream for bounded failure diagnostics. Pass-through bytes and raw main/Reviewer-leg sessions are **not credential-scanned** and are never promoted, copied, or deleted. Callers own sink security and raw-session access, retention, and cleanup. Only admitted declarations and promoted derivatives are scanned.
-
-A successful docket contains the non-null accepted package Receipt, optional Judge/Fixer/Reviewer/Doctor audit observation, and [`recorder-manifest-v2`](schemas/recorder-manifest-v2.schema.json). For current Fixer leaves, Recorder preserves the typed `prerequisiteId` and audit usage exactly; it validates the current leaf shape but does not infer prerequisite truth or execute dependencies. Failures use [`recorder-failure-v2`](schemas/recorder-failure-v2.schema.json), exit 125, preserve known child exit/signal truth, and publish no partial docket. Publication is an atomic same-filesystem create-if-absent rename.

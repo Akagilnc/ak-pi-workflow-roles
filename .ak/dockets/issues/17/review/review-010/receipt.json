@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_h91l2pOsitiluIhnLsV6JIuv|fc_04dec848e79b7b56016a6ba4c85d3c81918a1f11286c5e03da",
-  "details": {
-    "status": "refused",
-    "report": "Fixed review target: base `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5`, target `369fb4533333782e56f51fe8e69925db1ea8151a`, range `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...369fb4533333782e56f51fe8e69925db1ea8151a`. Both children verified the pinned target and snapshot, and compiled-prompt/actual-prompt identity evidence matches. Both attempted `npm run typecheck`, but it could not run successfully because `tsc`/package prerequisites were unavailable.\n\n## Standards\n**P1 — Cross-axis prompt contamination.** The compiled and actual Standards prompt includes the complete opaque parent `Task-Bytes`, exposing Spec instructions and material references. The method requires an axis-specific Standards prompt containing only its instructions/materials plus task identity or digest.\n\n## Spec\n**P1 — Cross-axis prompt contamination.** The compiled and actual Spec prompt includes the complete opaque parent `Task-Bytes`, exposing Standards instructions and material references. The method and issue authority require an axis-specific Spec prompt containing only its instructions/materials plus task identity or digest.\n\nSemantic post-audit: although the child findings are preserved separately, the dispatch itself did not maintain the required Standards/Spec isolation. Because both review contexts were contaminated by the other axis, I cannot represent this run as a method-compliant completed two-axis review.\n\nSummary: Standards — 1 P1 finding, cross-axis prompt contamination. Spec — 1 P1 finding, cross-axis prompt contamination. Receipt refused because the review method’s independence precondition failed."
-  },
-  "artifactKind": "acceptedReceipt"
-}

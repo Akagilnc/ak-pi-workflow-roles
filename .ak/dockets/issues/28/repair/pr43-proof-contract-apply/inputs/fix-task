@@ -1,9 +1,0 @@
-# PR #43 Fixer apply — input/schema/activation proof completion
-
-Close exactly:
-
-- `AssistedInputContractClosure`
-- `SchemaContractParity`
-- `NavigatorActivationAtomicity`
-
-Use `.ak/dockets/issues/28/judgment/pr43-final/receipt.json` and preserve the partial optional-callId repair. Add the full TS/CLI no-side-effect input matrix, actual schema-consumer plus cold-package variant parity, and complete activation failure-state/corrected-activation matrix. No new public taxonomy or mechanism. Run gates, commit, report exactly these keys.

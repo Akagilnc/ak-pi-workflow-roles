@@ -1,7 +1,0 @@
-# Repair final package gate regression
-
-The unified final gate failed exactly one test: `installed npm tarball runs native Reviewer expansion in an independent consumer repository`. The actual package correctly includes newly introduced `src/reviewer-verification-policy.ts`, but the exact expected package-file inventory in `test/reviewer-package-lifecycle.test.ts` was not updated.
-
-Make the smallest forward repair: update the expected inventory to include the intentional policy source exactly once. Do not change production behavior, package contents, issue #23 scope, or any Recorder residual transferred to #26.
-
-Run the focused failing package-lifecycle test, then the unified gates (`npm run typecheck`; isolated-HOME `npm test`; `npm pack --dry-run`; `git diff --check`). Commit forward and submit through `ak_coder_output` with exact results.

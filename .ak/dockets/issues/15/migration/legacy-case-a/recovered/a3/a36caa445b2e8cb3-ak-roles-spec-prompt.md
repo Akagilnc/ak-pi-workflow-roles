@@ -1,5 +1,0 @@
-Review the pinned repository snapshot 18c57b033ab7e3eac1b276c8c0524f0c38fdcfcc for Spec correctness/completeness only. Do not modify files. Comparison: `git diff c822717...18c57b033ab7e3eac1b276c8c0524f0c38fdcfcc`; commits: `/tmp/ak-roles-e2e-commits.txt`. Inspect the full current files where necessary, not only hunks.
-
-The governing spec is `/tmp/ak-roles-e2e-authority.md`. The latest owner requirements in that file override conflicting proposed ADR text; committed README, CONTEXT, and non-conflicting ADRs are also product authority.
-
-Report only actionable findings: missing/partial requirements, wrong behavior, scope creep, or authority/documentation contradictions that make the independently installed package misleading. Each finding needs severity P0-P2, exact file/line evidence, quoted requirement, concrete consequence, and concise repair. Under 500 words. If no finding, say PASS.
