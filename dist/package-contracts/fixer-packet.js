@@ -13,22 +13,29 @@ export const fixerPacketV1Schema = Type.Object({
 }, { additionalProperties: false });
 export class FixPacketValidationError extends Error {
     code = "AK_INVALID_FIX_PACKET";
-    constructor() {
-        super("FixPacketV1 violates the exact packet contract");
+    constructor(cause) {
+        super("FixPacketV1 violates the exact packet contract", cause === undefined ? undefined : { cause });
         this.name = "FixPacketValidationError";
     }
 }
-function fail() {
-    throw new FixPacketValidationError();
+function fail(cause) {
+    throw new FixPacketValidationError(cause);
+}
+function schemaValidationCause(value) {
+    const details = Value.Errors(fixerPacketV1Schema, value)
+        .map(({ instancePath, message }) => `${instancePath || "/"}: ${message}`)
+        .join("; ");
+    return new Error(`FixPacketV1 schema validation failed${details.length === 0 ? "" : `: ${details}`}`);
 }
 export function validateFixPacketV1(value) {
     if (!Value.Check(fixerPacketV1Schema, value))
-        fail();
+        fail(schemaValidationCause(value));
     const parsed = value;
     const ids = new Set();
     const prerequisites = parsed.prerequisites.map((entry) => {
-        if (ids.has(entry.id))
-            fail();
+        if (ids.has(entry.id)) {
+            fail(new Error(`FixPacketV1 contains duplicate prerequisite id: ${entry.id}`));
+        }
         ids.add(entry.id);
         return Object.freeze({ id: entry.id, requirement: entry.requirement });
     });
@@ -43,8 +50,8 @@ export function parseFixPacketV1(source) {
     try {
         decoded = JSON.parse(source);
     }
-    catch {
-        fail();
+    catch (error) {
+        fail(error);
     }
     return validateFixPacketV1(decoded);
 }

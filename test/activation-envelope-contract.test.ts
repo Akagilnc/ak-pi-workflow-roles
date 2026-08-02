@@ -201,6 +201,7 @@ test("incident 2026-08-02: malformed FixPacketV1 fails the real Pi subprocess be
       "--ak-role", "fixer", "--ak-fixer-phase", "apply", "--ak-fix-packet", packet,
       "--provider", "ak-fixer-audit-failure", "--model", "faux-1", "-p", "Apply.",
     ], { cwd: packageRoot, timeoutMs: 15_000, env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" } });
+    assert.equal(result.timedOut, false, "malformed packet subprocess did not time out");
     assert.equal(result.code, 1);
     assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=0/);
     const traces = result.stderr.split("\n").flatMap((line) => {
