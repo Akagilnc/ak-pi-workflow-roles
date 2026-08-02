@@ -169,6 +169,35 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
   }
 });
 
+test("status-dependent decision combinations are validated at the shared parser seam", async () => {
+  const invalidArguments = [
+    { status: "pass" },
+    { status: "pass", violations: ["unexpected"] },
+    { status: "pass", violations: [], conflicts: ["unexpected"] },
+    { status: "pass", violations: [], decisionGate: { question: "Choose", options: ["A"] } },
+    { status: "revise" },
+    { status: "revise", violations: [] },
+    { status: "revise", violations: ["real"], decisionGate: { question: "Choose", options: ["A"] } },
+    { status: "escalate", conflicts: ["conflict"] },
+    { status: "escalate", conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
+    { status: "escalate", conflicts: ["conflict"], decisionGate: { question: "Choose", options: ["A"] }, violations: [] },
+  ];
+
+  for (const [index, arguments_] of invalidArguments.entries()) {
+    await withPersistedSession(async (sessionManager) => {
+      await assert.rejects(
+        audit(
+          response(`invalid-status-${index}`, [
+            fauxToolCall(decisionToolName, arguments_),
+          ]),
+          sessionManager,
+        ),
+        /invalid compliance decision: arguments do not match/,
+      );
+    });
+  }
+});
+
 test("malformed nested decisions retain raw responses and report typed facts", async () => {
   const cases = [
     {

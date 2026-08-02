@@ -23,10 +23,11 @@ test("Fixer auditor uses the active model, exact invocation inputs, and a non-ov
   assert.equal(model?.id, "same-model");
   assert.deepEqual(seen?.tools?.map((tool) => tool.name), [FIXER_AUDIT_TOOL_NAME]);
   const decisionTool = seen?.tools?.[0];
-  const leaves = (decisionTool?.parameters as any).anyOf;
-  assert.equal(Array.isArray(leaves), true);
-  assert.deepEqual(leaves.map((leaf: any) => leaf.properties.status.const), ["pass", "revise", "escalate"]);
-  assert.equal(leaves.every((leaf: any) => leaf.additionalProperties === false), true);
+  const parameters = decisionTool?.parameters as any;
+  assert.equal(parameters.type, "object");
+  assert.equal(parameters.anyOf, undefined);
+  assert.deepEqual(parameters.properties.status.anyOf.map((status: any) => status.const), ["pass", "revise", "escalate"]);
+  assert.equal(parameters.additionalProperties, false);
   const userContent = seen?.messages.find((message) => message.role === "user")?.content;
   assert.ok(Array.isArray(userContent));
   const auditInput = userContent.map((part) => part.type === "text" ? part.text : "").join("");

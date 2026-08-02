@@ -155,6 +155,9 @@ test("shared compliance transport forces the active decision tool and one call",
         [entry.toolName],
         `${entry.role} must expose only its active decision tool`,
       );
+      const parameters = seen?.context.tools?.[0]?.parameters as Record<string, unknown> | undefined;
+      assert.equal(parameters?.type, "object", `${entry.role} audit schema must have an object root`);
+      assert.equal(parameters?.anyOf, undefined, `${entry.role} audit schema must not have a root union`);
       assert.deepEqual(
         seen?.options.toolChoice,
         api === "openai-responses"
