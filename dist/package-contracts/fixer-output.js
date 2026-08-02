@@ -116,7 +116,8 @@ export function validateFixerOutputForPacket(value, phase, packet) {
         : "classResults" in output
             ? output.classResults.filter((entry) => entry.disposition === "refused").map((entry) => entry.blocker)
             : [];
-    if (blockers.some((blocker) => blocker.cause === "prerequisite_unmet" && !declaredIds.has(blocker.prerequisiteId)))
-        fail();
+    if (blockers.some((blocker) => blocker.cause === "prerequisite_unmet" && !declaredIds.has(blocker.prerequisiteId))) {
+        throw new Error("Fixer output prerequisiteId must name a declared prerequisite id");
+    }
     return output;
 }

@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import { FIXER_PREREQUISITE_ID_PATTERN, type FixPacketV1 } from "./fixer-packet.ts";
+import { FIXER_PREREQUISITE_ID_PATTERN, type FixerInvocationInput } from "./fixer-packet.ts";
 
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
 export const FIXER_ACCEPTED_TEXT = "Fixer report accepted";
@@ -112,7 +112,7 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
 }
 
 /** Packet-aware admission used after structural/phase validation and before audit. */
-export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, packet: FixPacketV1): FixerOutput {
+export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, packet: FixerInvocationInput): FixerOutput {
   const output = validateFixerOutput(value, phase);
   const declaredIds = new Set(packet.prerequisites.map((entry) => entry.id));
   const blockers: FixerBlocker[] = "blocker" in output
@@ -120,6 +120,8 @@ export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, 
     : "classResults" in output
       ? output.classResults.filter((entry) => entry.disposition === "refused").map((entry) => entry.blocker)
       : [];
-  if (blockers.some((blocker) => blocker.cause === "prerequisite_unmet" && !declaredIds.has(blocker.prerequisiteId))) fail();
+  if (blockers.some((blocker) => blocker.cause === "prerequisite_unmet" && !declaredIds.has(blocker.prerequisiteId))) {
+    throw new Error("Fixer output prerequisiteId must name a declared prerequisite id");
+  }
   return output;
 }
