@@ -165,10 +165,13 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
 
     const noSpecFaux = fauxProvider({ api: "package-reviewer-no-spec", provider: "package-reviewer-no-spec", tokenSize: { min: 1000, max: 1000 } });
     const noSpecProposal = { version: 1, base: { revision: "review-base" }, materials: [{ id: "no-spec", repositoryPath: "SPEC.md" }], spec: { state: "not-established" }, required: { standards: standardsRequest } };
-    const noSpecChildren: Context[] = []; const noSpecAudits: Context[] = [];
+    const noSpecChildren: Context[] = []; const noSpecCommandContexts: Context[] = []; const noSpecAudits: Context[] = [];
     noSpecFaux.setResponses([
       fauxAssistantMessage(fauxToolCall(Agent, noSpecProposal, { id: "no-spec-accepted" }), { stopReason: "toolUse" }),
-      (ctx) => { noSpecChildren.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
+      fauxAssistantMessage(fauxToolCall("bash", { command: "git status" }, { id: "arbitrary-command" }), { stopReason: "toolUse" }),
+      (ctx) => { noSpecCommandContexts.push(ctx); return fauxAssistantMessage(fauxToolCall("bash", { command: `${diffCommand} ` }, { id: "near-match-command" }), { stopReason: "toolUse" }); },
+      (ctx) => { noSpecCommandContexts.push(ctx); return fauxAssistantMessage(fauxToolCall("bash", { command: diffCommand }, { id: "canonical-command" }), { stopReason: "toolUse" }); },
+      (ctx) => { noSpecCommandContexts.push(ctx); noSpecChildren.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
       fauxAssistantMessage(fauxToolCall(Output, { status: "completed" }, { id: "no-spec-output" }), { stopReason: "toolUse" }),
       (ctx) => { noSpecAudits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }); },
     ]);
@@ -182,6 +185,11 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.deepEqual(output.message.details.acceptedBatch.legs.map((leg: any) => leg.axis), ["standards"]);
       assert.equal(output.message.details.identities.target.objectFormat, "sha1");
       assert.equal(noSpecChildren.length, 1); assert.equal(noSpecAudits.length, 1);
+      const commandResults = noSpecCommandContexts.map((ctx) => ctx.messages.filter((message) => message.role === "toolResult").at(-1));
+      assert.equal((commandResults[0] as any)?.isError, true); assert.match(JSON.stringify(commandResults[0]), /exact accepted member/);
+      assert.equal((commandResults[1] as any)?.isError, true); assert.match(JSON.stringify(commandResults[1]), /exact accepted member/);
+      assert.equal((commandResults[2] as any)?.isError, false); assert.match(JSON.stringify(commandResults[2]), /consumer\.txt/);
+      assert.equal(JSON.stringify(noSpecProposal).includes(diffCommand), false); assert.equal(capabilityText.includes(diffCommand), false);
       assert.doesNotMatch(userText(noSpecChildren[0]!), /Quote the spec line for each finding/);
       assert.doesNotMatch(userText(noSpecAudits[0]!), /\"axis\":\"spec\"/);
       assert.equal(output.message.isError, false); assert.equal(output.message.details.status, "completed");
