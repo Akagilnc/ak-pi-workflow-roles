@@ -56,6 +56,7 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
   if (!nonblank(value.report)) fail("report nonblank constraint");
   if (value.status === "planned") {
     if (phase === "apply") fail("status phase constraint: apply forbids planned");
+    if (Object.hasOwn(value, "classResults") || Object.hasOwn(value, "remainingScope") || Object.hasOwn(value, "blocker") || Object.hasOwn(value, "commitSha")) fail("status planned semantic-field combination constraint");
     return { status: "planned", report: value.report };
   }
   if (value.status === "refused" && Object.hasOwn(value, "remainingScope")) {
