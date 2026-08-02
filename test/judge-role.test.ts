@@ -1007,7 +1007,30 @@ test("declared plan refusal, apply refusal, and partial apply each reach exactly
   assert.equal(new Set(auditInputs).size, 3);
 });
 
-test("fixer role loads its typed JSON packet and returns a thin report envelope", async () => {
+test("Fixer apply accepts one multi-class settlement once on first attempt and rejects duplicate commits", async () => {
+  const harness = extensionHarness("fixer", { "ak-fix-packet": "/repair.md", "ak-fixer-phase": "apply" });
+  let audits = 0;
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async () => "Repair both admitted classes.",
+    transcriptFromContext: () => "single submission", auditSoulCompliance: async () => ({ status: "pass" }),
+    auditFixerCompliance: async () => { audits++; return { status: "pass" }; },
+  })(harness.pi as ExtensionAPI);
+  await harness.handlers.get("session_start")?.({}, {});
+  const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
+  const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: "reviewer-commit" };
+  const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: "fixer-commit" };
+  const accepted = await tool.execute("single", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, toolCallContext([{ id: "single", name: FIXER_OUTPUT_TOOL_NAME }]));
+  assert.equal(accepted.terminate, true); assert.deepEqual(accepted.details.classResults, [classA, classB]); assert.equal(audits, 1);
+
+  const duplicateHarness = extensionHarness("fixer", { "ak-fix-packet": "/repair.md", "ak-fixer-phase": "apply" });
+  let duplicateAudits = 0;
+  createRoleRuntimeExtension({ loadJudgeSoul: async()=>"judge", loadFixerSoul: async()=>"fixer", loadFixPacket: async()=>"Repair both admitted classes.", transcriptFromContext:()=>"duplicate", auditSoulCompliance:async()=>({status:"pass"}), auditFixerCompliance:async()=>{duplicateAudits++;return {status:"pass"};} })(duplicateHarness.pi as ExtensionAPI);
+  await duplicateHarness.handlers.get("session_start")?.({}, {}); const duplicateTool=duplicateHarness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(duplicateTool);
+  await assert.rejects(duplicateTool.execute("duplicate", { status:"completed", report:"invalid", classResults:[classA,{...classB,commitSha:classA.commitSha}] }, undefined, undefined, toolCallContext([{id:"duplicate",name:FIXER_OUTPUT_TOOL_NAME}])), /commitSha distinct constraint/);
+  assert.equal(duplicateAudits,0);
+});
+
+test("fixer role loads opaque instructions and returns a thin report envelope", async () => {
   const loadedPaths: string[] = [];
   const harness = extensionHarness("fixer", {
     "ak-fix-packet": "/materials/fix.md",
@@ -1018,7 +1041,7 @@ test("fixer role loads its typed JSON packet and returns a thin report envelope"
     loadFixerSoul: async () => "FIXER LAW\nCreate one forward commit.",
     loadFixPacket: async (path) => {
       loadedPaths.push(path);
-      return JSON.stringify({ version: 1, instructions: "REPAIR PACKET\nFix the live findings.", prerequisites: [] });
+      return "REPAIR INSTRUCTIONS\nFix the live findings.";
     },
     transcriptFromContext: () => "invocation record",
     auditSoulCompliance: async () => ({ status: "pass" }),
@@ -1035,7 +1058,7 @@ test("fixer role loads its typed JSON packet and returns a thin report envelope"
   assert.deepEqual(loadedPaths, ["/materials/fix.md"]);
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
   assert.match(prompt, /FIXER LAW/);
-  assert.match(prompt, /REPAIR PACKET/);
+  assert.match(prompt, /REPAIR INSTRUCTIONS/);
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
