@@ -144,11 +144,12 @@ async function existing(config: AssistedCallConfigV1, invocationId: string): Pro
   }
   const text = await sessionText(join(runDirectory, "sessions", invocationId, "session"), invocationId);
   const extracted = acceptedReceipt(text);
+  const evidenceRead = nativeSessionEvidenceReads(text);
   const receiptText = await readFile(join(invocationDirectory, "receipt.json"), "utf8");
   const receipt = JSON.parse(receiptText) as LocalReceipt;
   if (!isTerminatingToolName(receipt.toolName) || canonicalJson(receipt) !== canonicalJson(extracted)) throw new Error("private invocation receipt mismatch");
   validateAcceptedDetails(receipt.toolName, receipt.details);
-  return { receipt, child, evidenceRead: nativeSessionEvidenceReads(text), reference: { id: `receipt:${invocationId}`, sha256: sha256Hex(receiptText) } };
+  return { receipt, child, evidenceRead, reference: { id: `receipt:${invocationId}`, sha256: sha256Hex(receiptText) } };
 }
 
 function classifyRole(config: AssistedCallConfigV1, value: LocalInvocation, beforeTarget: string, afterTarget: string): RoleInvocationSettlementV1 {
