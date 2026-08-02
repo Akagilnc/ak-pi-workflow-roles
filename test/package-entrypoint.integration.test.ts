@@ -33,7 +33,7 @@ import {
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
 import { DOCTOR_CASE_FLAG } from "../src/doctor-role.ts";
-import { SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
+import { SOUL_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
 import {
   loadRawPackageManifest,
   packIsolatedPackage,
@@ -348,6 +348,96 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
             ).length,
           1,
           "terminate ends the real Pi lifecycle without a follow-up provider turn",
+        );
+      });
+    },
+  );
+});
+
+test("packaged judge escalation terminates with one typed human decision and no follow-up turn", async () => {
+  const manifest = await loadRawPackageManifest();
+  await withHermeticHome(
+    { prefix: "ak-judge-escalation-integration-" },
+    async ({ agentDir }) => {
+      const faux = fauxProvider({
+        api: "ak-judge-escalation-offline",
+        provider: "ak-judge-escalation-offline",
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      await withInProcessPi({
+        cwd: packageRoot,
+        agentDir,
+        faux,
+        additionalExtensionPaths: [packageEntrypoint(manifest)],
+        systemPrompt: "JUDGE ESCALATION INTEGRATION PROMPT",
+        mode: "print",
+        flags: { "ak-role": "judge" },
+        noTools: "builtin",
+      }, async ({ session, sessionManager }) => {
+        faux.setResponses([
+          fauxAssistantMessage(
+            fauxToolCall(
+              JUDGE_OUTPUT_TOOL_NAME,
+              { judgeStatus: "converged" },
+              { id: "escalating-judge" },
+            ),
+            { stopReason: "toolUse" },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall(
+              SOUL_AUDIT_TOOL_NAME,
+              {
+                status: "escalate",
+                conflicts: ["Soul authority conflicts with controlling authority"],
+                decisionGate: {
+                  question: "Which authority governs this verdict?",
+                  options: ["Soul", "Controlling authority"],
+                },
+              },
+              { id: "audit-escalation" },
+            ),
+            { stopReason: "toolUse" },
+          ),
+        ]);
+        await session.prompt("Exercise packaged audit escalation.");
+
+        const result = sessionManager
+          .getEntries()
+          .find(
+            (entry) =>
+              entry.type === "message" &&
+              entry.message.role === "toolResult" &&
+              entry.message.toolCallId === "escalating-judge",
+          );
+        assert.ok(
+          result?.type === "message" && result.message.role === "toolResult",
+        );
+        assert.equal(result.message.isError, false);
+        assert.deepEqual(result.message.details, {
+          kind: "audit_escalation",
+          conflicts: ["Soul authority conflicts with controlling authority"],
+          decisionGate: {
+            question: "Which authority governs this verdict?",
+            options: ["Soul", "Controlling authority"],
+          },
+        });
+        assert.match(textOf(result.message), /Human decision required/);
+        assert.doesNotMatch(textOf(result.message), /Judge verdict accepted/i);
+        assert.equal(faux.state.callCount, 2);
+        assert.equal(faux.getPendingResponseCount(), 0);
+        assert.equal(
+          sessionManager
+            .getEntries()
+            .filter(
+              (entry) =>
+                entry.type === "message" &&
+                entry.message.role === "assistant" &&
+                entry.message.content.some(
+                  (part) =>
+                    part.type === "toolCall" && part.id === "escalating-judge",
+                ),
+            ).length,
+          1,
         );
       });
     },

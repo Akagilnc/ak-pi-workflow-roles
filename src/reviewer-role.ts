@@ -1,8 +1,9 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
+import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { reviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
@@ -199,7 +200,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           return { content: [{ type: "text" as const, text }], details };
         } });
       pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "Reviewer Output", description: "Submit the thin Reviewer receipt after semantic compliance audit.", promptSnippet: "Submit the final Reviewer receipt", promptGuidelines: [`Use ${REVIEWER_OUTPUT_TOOL_NAME} as the sole final action.`], parameters: reviewerOutputSchema,
-        async execute(id, parameters, signal, _update, toolCtx) {
+        async execute(id, parameters, signal, _update, toolCtx): Promise<AgentToolResult<unknown>> {
           if (!soul || task === undefined || !binding) throw new Error("Reviewer inputs were not loaded");
           requireSoleReviewerOutputCall(id, toolCtx);
           const output = validateReviewerIntent(parameters);
@@ -214,9 +215,19 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           let audit: ComplianceDecision;
           try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
           catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
-          if (audit.status === "revise") throw new Error(`Reviewer receipt violates its method: ${audit.violations.join("; ")}`);
-          try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
-          return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(audit.usage === undefined ? {} : { usage: audit.usage }) };
+          return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
+            pass: async (usage) => {
+              try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
+              return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
+            },
+            revise: (violations) => {
+              throw new Error(`Reviewer receipt violates its method: ${violations.join("; ")}`);
+            },
+            escalate: async (result) => {
+              try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
+              return result;
+            },
+          });
         } });
       pi.on("tool_execution_start", (event) => {
         if (event.toolName !== AGENT_TOOL_NAME) return;
