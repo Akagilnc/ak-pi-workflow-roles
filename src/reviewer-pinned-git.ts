@@ -6,7 +6,7 @@ import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArg
 import { sha256Hex } from "./sha256.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
-import { ReviewerAdmissionError, type AdmittedReviewerProposal, type ReviewerCapabilitiesV1, type ReviewerCapabilityRequest } from "./reviewer-admission.ts";
+import { ReviewerAdmissionError, type AdmittedReviewerProposal, type ReviewerCapabilitiesV1 } from "./reviewer-admission.ts";
 
 export type ReviewerObjectFormat = "sha1" | "sha256";
 export type ReviewerPinnedTarget = Readonly<{
@@ -43,8 +43,6 @@ export async function acquireReviewerPinnedEvidence(reader: ReviewerPinnedGitRea
   try { base=await reader.resolve(admitted.baseRevision); readRange=await reader.range(base); } catch(error){ classifyEvidenceRead(error); }
   if(readRange!.base!==base!||readRange!.target!==target.targetHead||readRange!.diffCommand!==`git diff ${base!}...${target.targetHead}`||!/^[0-9a-f]{64}$/.test(readRange!.diffSha256)||readRange!.diffSha256===sha256Hex("")||!Array.isArray(readRange!.commits)||!readRange!.commits.every(x=>typeof x==="string")||new Set(readRange!.commits).size!==readRange!.commits.length)evidenceViolation("range-invalid");
   const range=Object.freeze({...readRange!,commits:Object.freeze([...readRange!.commits])});
-  const grants: ReviewerCapabilityRequest[]=[admitted.standardsGrant,...(admitted.specGrant?[admitted.specGrant]:[])];
-  if(!ceiling.tools.includes("bash")||!ceiling.bashCommands.includes(range.diffCommand)||grants.some(g=>!g.tools.includes("bash")||!g.bashCommands.includes(range.diffCommand)||g.bashCommands.some(c=>!ceiling.bashCommands.includes(c))))evidenceViolation("capability-invalid");
   const materials: ReviewerMaterialEvidence[]=[];
   for(const item of admitted.materials){let bytes:Uint8Array;try{bytes=await reader.material(item.repositoryPath,target.targetHead);}catch(error){classifyEvidenceRead(error);}let text:string;try{text=exactUtf8(bytes!,"Reviewer material");}catch{evidenceViolation("material-invalid");}materials.push(Object.freeze({...item,text:text!,utf8Length:bytes!.byteLength,sha256:sha256Hex(bytes!)}));}
   return Object.freeze({range,materials:Object.freeze(materials)});
