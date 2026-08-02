@@ -1,5 +1,5 @@
 # Reviewer 文本不再携带身份壳
 
-Status: accepted（owner 大扫除裁决，2026-08-02）
+Status: accepted（authority/provenance: ADR 0019）
 
 删除 F014 的 Reviewer `{text, utf8Length, sha256}` 文本身份格式。输入输出只保留必需的文本；需要确认两段文本一致时直接比较文本，不再携带并反复重算同一文本的长度和摘要。此项不属于 #59 限定的四道门，由 #58 清理。

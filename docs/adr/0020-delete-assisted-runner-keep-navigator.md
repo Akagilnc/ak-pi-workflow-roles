@@ -1,6 +1,8 @@
 # 删除 Assisted Runner，保留 Navigator
 
-Status: accepted（owner 大扫除裁决，2026-08-02；取代 ADR 0017 中 Assisted Runner 的决定）
+Status: accepted（authority/provenance: ADR 0019）
+
+本 ADR 取代 ADR 0017 的 Assisted Runner 决定，并且只取代 ADR 0010 窄修订中的 Assisted Runner 句；ADR 0017 的 Navigator 决定、ADR 0010 的 Navigator 建议，以及调用者拥有组合、顺序、重复、预算与停止条件的规则均继续有效。
 
 Navigator 作为持续导航席保留：票面与 authority 给出目的地，Navigator 根据每次角色调用前后的真实位置建议下一站；调用者仍可偏离，建议与实际动作仍应可审计。删除 Assisted Runner 整个实现及其专属公开面，包括 `ak-assisted-run` CLI、Assisted 配置与结果契约、`runId`/`callId` 旅程身份、acquisition wrapper、账本与 hash chain、并发仲裁、恢复协议、发布 Schema、专属测试和使用文档。只被 Assisted 消费的适配与辅助代码随同删除。
 

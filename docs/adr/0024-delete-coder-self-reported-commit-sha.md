@@ -1,6 +1,6 @@
 # 删除 Coder 自报 commitSha
 
-Status: accepted（owner 大扫除裁决，2026-08-02）
+Status: accepted（authority/provenance: ADR 0019）
 
 从 Coder 工具 Schema、accepted details、README 示例、测试和 Doctor 的 Coder commit 投影中删除可选 `commitSha`。Coder 的合法终态仍是 `planned | completed | refused` 加报告；apply 完成不以 commit 为无条件前提。
 

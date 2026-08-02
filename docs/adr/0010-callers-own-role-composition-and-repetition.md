@@ -22,4 +22,8 @@ Date: 2026-07-28
 
 ## Narrow amendment — Navigator / Assisted Runner（Issue #28）
 
-Navigator 是唯一可在回执中给出单一下一过程建议的角色；该建议没有执行或授权效力。Assisted Runner 可在一次调用者指定的非 Navigator 角色调用前后自动咨询 Navigator，并记录调用者动作是 followed 或 deviated。它不得选择该角色、自动派发推荐角色或继续工作流。除此窄例外外，本 ADR 的调用者所有权与现有角色语义不变。
+Navigator 是唯一可在回执中给出单一下一过程建议的角色；该建议没有执行或授权效力。
+
+**Assisted Runner sentence（由 ADR 0020 取代）：** Assisted Runner 可在一次调用者指定的非 Navigator 角色调用前后自动咨询 Navigator，并记录调用者动作是 followed 或 deviated。它不得选择该角色、自动派发推荐角色或继续工作流。
+
+除上述已取代的 Assisted Runner 句外，本 ADR 的 Navigator 建议与调用者所有权继续有效，包括调用者拥有角色组合、顺序、重复次数、预算和停止条件。

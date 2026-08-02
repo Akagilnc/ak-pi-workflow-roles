@@ -1,6 +1,6 @@
 # 保留 Coder 与 Fixer 的必需 phase 输入
 
-Status: accepted（owner 大扫除裁决，2026-08-02）
+Status: accepted（authority/provenance: ADR 0019）
 
 保留 F020/F023 的 `plan | apply`：它们决定本次 Coder/Fixer 调用是规划还是施工，属于必需输入。只验证值为二者之一，其他内容按 ADR 0025 不管。
 
