@@ -81,7 +81,11 @@ async function invokeDoctor(argumentsValue: unknown, details: unknown) {
 }
 
 test("Doctor native lifecycle admits only exact runtime cost augmentation and unchanged refusal", async () => {
-  assert.equal((await invokeDoctor(testimony, doctorReceipt)).terminalClass, "accepted_receipt");
+  const accepted = await doctorFixture(testimony, doctorReceipt);
+  const transport = createAssistedInvocationTransportV1();
+  const live = await transport.invokeRole({ config: accepted.config, invocationId, piArgv: [accepted.child], beforeTarget: accepted.head });
+  assert.equal(live.terminalClass, "accepted_receipt");
+  assert.deepEqual(await transport.readCompleted!({ config: accepted.config, invocationId, kind: "role", beforeTarget: accepted.head }), live);
   const refusal = { status: "refused", reason: "missing", missingEvidence: [{ need: "bytes", targetKeys: ["case"] }] };
   assert.equal((await invokeDoctor(refusal, refusal)).terminalClass, "role_refusal");
   for (const [argumentsValue, details] of [
