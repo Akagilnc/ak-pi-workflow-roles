@@ -14,6 +14,20 @@ import {
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
 
+export type JudgeAdjudicativeVerdict =
+  | { judgeStatus: "converged"; note?: string }
+  | {
+    judgeStatus: "continue";
+    fix: { summary: string };
+    classes: Extract<JudgeVerdict, { judgeStatus: "continue" }>["classes"];
+    note?: string;
+  }
+  | {
+    judgeStatus: "escalate";
+    decisionGate: { question: string; options: string[] };
+    note?: string;
+  };
+
 const judgeVerdictSchema = Type.Object(
   {
     judgeStatus: StringEnum(["converged", "continue", "escalate"] as const),
@@ -30,6 +44,7 @@ const judgeVerdictSchema = Type.Object(
       disposition: Type.String({ minLength: 1 }),
     }, { additionalProperties: false }), { minItems: 1 })),
     note: Type.Optional(Type.String({ minLength: 1 })),
+    evidence: Type.Optional(Type.Unknown()),
     decisionGate: Type.Optional(
       Type.Object(
         {
@@ -48,7 +63,7 @@ type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
 export type SoulAuditInput = {
   soul: string;
   transcript: string;
-  verdict: JudgeVerdict;
+  verdict: JudgeAdjudicativeVerdict;
 };
 
 export type SoulAuditResult =
@@ -83,6 +98,30 @@ function hasExactKeys(
 
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
+}
+
+export function projectJudgeVerdictForAudit(
+  verdict: JudgeVerdict,
+): JudgeAdjudicativeVerdict {
+  if (verdict.judgeStatus === "converged") {
+    return {
+      judgeStatus: "converged",
+      ...(verdict.note === undefined ? {} : { note: verdict.note }),
+    };
+  }
+  if (verdict.judgeStatus === "continue") {
+    return {
+      judgeStatus: "continue",
+      fix: verdict.fix,
+      classes: verdict.classes,
+      ...(verdict.note === undefined ? {} : { note: verdict.note }),
+    };
+  }
+  return {
+    judgeStatus: "escalate",
+    decisionGate: verdict.decisionGate,
+    ...(verdict.note === undefined ? {} : { note: verdict.note }),
+  };
 }
 
 function requireSingletonSubmissionCall(
@@ -137,7 +176,7 @@ export function createJudgeRoleRuntime(
                 {
                   soul,
                   transcript: dependencies.transcriptFromContext(ctx),
-                  verdict,
+                  verdict: projectJudgeVerdictForAudit(verdict),
                 },
                 signal === undefined
                   ? { context: ctx }

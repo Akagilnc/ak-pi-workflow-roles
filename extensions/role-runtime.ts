@@ -12,6 +12,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import type { Message } from "@earendil-works/pi-ai";
 
 import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
@@ -22,6 +23,7 @@ import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import { createPiNavigatorAuditor } from "../src/navigator-auditor.ts";
 import type { CurrentPositionSnapshotV1 } from "../src/navigator-contracts.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { createPiSoulAuditor } from "../src/soul-auditor.ts";
 
@@ -35,12 +37,30 @@ const doctorSoulPath = fileURLToPath(new URL("../souls/doctor.md", import.meta.u
 const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.meta.url));
 const mergerSoulPath = fileURLToPath(new URL("../souls/merger.md", import.meta.url));
 
-function transcriptFromContext(ctx: ExtensionContext): string {
+function projectJudgeTranscriptForAudit(messages: Message[]): Message[] {
+  return messages.map((message) => {
+    if (message.role !== "assistant") return message;
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (part.type !== "toolCall" || part.name !== JUDGE_OUTPUT_TOOL_NAME) {
+          return part;
+        }
+        const { evidence: _evidence, ...adjudicativeArguments } = part.arguments;
+        return { ...part, arguments: adjudicativeArguments };
+      }),
+    };
+  });
+}
+
+export function transcriptFromContext(ctx: ExtensionContext): string {
   const context = buildSessionContext(
     [...ctx.sessionManager.getEntries()],
     ctx.sessionManager.getLeafId(),
   );
-  return serializeConversation(convertToLlm(context.messages));
+  return serializeConversation(
+    projectJudgeTranscriptForAudit(convertToLlm(context.messages)),
+  );
 }
 
 export const MAX_NAVIGATOR_EVIDENCE_ITEMS = 256;

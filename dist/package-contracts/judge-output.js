@@ -16,8 +16,15 @@ export function validateAcceptedJudgeDetails(verdict) {
         (typeof verdict.note !== "string" || verdict.note.trim().length === 0)) {
         throw new Error("Judge note must be a non-blank string when provided");
     }
-    const withOptionalNote = (keys) => verdict.note === undefined ? keys : [...keys, "note"];
+    const withOptionalFields = (keys) => [
+        ...keys,
+        ...(verdict.note === undefined ? [] : ["note"]),
+        ...(verdict.evidence === undefined ? [] : ["evidence"]),
+    ];
     const note = verdict.note === undefined ? {} : { note: verdict.note };
+    const evidence = verdict.evidence === undefined
+        ? {}
+        : { evidence: verdict.evidence };
     const validClasses = (value) => {
         if (!Array.isArray(value) || value.length === 0)
             return false;
@@ -40,13 +47,15 @@ export function validateAcceptedJudgeDetails(verdict) {
         });
     };
     if (verdict.judgeStatus === "converged") {
-        if (!hasExactKeys(verdict, withOptionalNote(["judgeStatus"]))) {
-            throw new Error("Judge converged forbids fix and decisionGate");
+        const expectedKeys = withOptionalFields(["judgeStatus"]);
+        if (!hasExactKeys(verdict, expectedKeys)) {
+            const extraKeys = Object.keys(verdict).filter((key) => !expectedKeys.includes(key));
+            throw new Error(`Judge converged forbids extra keys: ${extraKeys.join(", ")}`);
         }
-        return { judgeStatus: "converged", ...note };
+        return { judgeStatus: "converged", ...note, ...evidence };
     }
     if (verdict.judgeStatus === "continue") {
-        if (!hasExactKeys(verdict, withOptionalNote(["judgeStatus", "fix", "classes"])) ||
+        if (!hasExactKeys(verdict, withOptionalFields(["judgeStatus", "fix", "classes"])) ||
             !isRecord(verdict.fix) ||
             !hasExactKeys(verdict.fix, ["summary"]) ||
             typeof verdict.fix.summary !== "string" ||
@@ -59,11 +68,12 @@ export function validateAcceptedJudgeDetails(verdict) {
             fix: { summary: verdict.fix.summary },
             classes: verdict.classes.map((entry) => ({ ...entry })),
             ...note,
+            ...evidence,
         };
     }
     if (verdict.judgeStatus === "escalate") {
         const gate = verdict.decisionGate;
-        if (!hasExactKeys(verdict, withOptionalNote(["judgeStatus", "decisionGate"])) ||
+        if (!hasExactKeys(verdict, withOptionalFields(["judgeStatus", "decisionGate"])) ||
             !isRecord(gate) ||
             !hasExactKeys(gate, ["question", "options"]) ||
             typeof gate.question !== "string" ||
@@ -77,6 +87,7 @@ export function validateAcceptedJudgeDetails(verdict) {
             judgeStatus: "escalate",
             decisionGate: { question: gate.question, options: [...gate.options] },
             ...note,
+            ...evidence,
         };
     }
     throw new Error("Judge verdict has an invalid status");
