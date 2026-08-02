@@ -11,8 +11,15 @@ export const fixerPacketV1Schema = Type.Object({
     instructions: trimNonblankString,
     prerequisites: Type.Array(fixerPrerequisiteSchema),
 }, { additionalProperties: false });
+export class FixPacketValidationError extends Error {
+    code = "AK_INVALID_FIX_PACKET";
+    constructor() {
+        super("FixPacketV1 violates the exact packet contract");
+        this.name = "FixPacketValidationError";
+    }
+}
 function fail() {
-    throw new Error("FixPacketV1 violates the exact packet contract");
+    throw new FixPacketValidationError();
 }
 export function validateFixPacketV1(value) {
     if (!Value.Check(fixerPacketV1Schema, value))
