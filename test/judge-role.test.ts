@@ -233,7 +233,7 @@ test("stable factory registers all role flags in exact help order and stays iner
     }],
     ["ak-collector-legs", {
       description:
-        "Path to the Collector v1 leg manifest JSON file. Pi 0.82.1 late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
+        "Path to the Collector v1 leg manifest JSON file. Pi 0.83.0 late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
       type: "string",
     }],
   ]);
