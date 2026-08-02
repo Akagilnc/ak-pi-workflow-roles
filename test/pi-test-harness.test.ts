@@ -14,8 +14,18 @@ import test from "node:test";
 import {
   packageRoot,
   packIsolatedPackage,
+  runPiSubprocess,
   withHermeticHome,
 } from "./helpers/pi-test-harness.ts";
+
+test("subprocess timeouts are explicit instead of looking like natural no-code closes", async () => {
+  const result = await runPiSubprocess(["--help"], {
+    cwd: packageRoot,
+    timeoutMs: 0,
+  });
+  assert.equal(result.timedOut, true);
+  assert.equal(result.code, null);
+});
 
 test("hermetic HOME restores the exact prior value and recursively cleans up after a throw", async () => {
   const originalHome = process.env.HOME;
