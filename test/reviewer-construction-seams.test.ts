@@ -7,8 +7,8 @@ import { parseReviewerCapabilities } from "../src/reviewer-dispatch.ts";
 import { sha256Hex } from "../src/sha256.ts";
 
 const task=Buffer.from("task"); const command="git diff A...B";
-const capabilities=parseReviewerCapabilities(Buffer.from(JSON.stringify({version:1,taskSha256:sha256Hex(task),tools:[...REVIEWER_CHILD_TOOLS],bashCommands:[command],prerequisiteOperations:[...REVIEWER_PREREQUISITES]})),task);
-const grant={tools:["read","bash"] as const,bashCommands:[command],prerequisiteOperations:[...REVIEWER_PREREQUISITES]};
+const capabilities=parseReviewerCapabilities(Buffer.from(JSON.stringify({version:1,taskSha256:sha256Hex(task),tools:[...REVIEWER_CHILD_TOOLS],prerequisiteOperations:[...REVIEWER_PREREQUISITES]})),task);
+const grant={tools:["read","bash"] as const,prerequisiteOperations:[...REVIEWER_PREREQUISITES]};
 const proposal={version:1 as const,base:{revision:"A"},materials:[{id:"rules",repositoryPath:"RULES.md"}],relevanceHints:{standards:["rules"]},spec:{state:"not-established" as const},required:{standards:grant}};
 
 test("mechanical admission accepts presentation extras and advisory dangling hints while preserving identity constraints",()=>{const presented={...proposal,presentation:"ignored",base:{revision:"A",label:"base"},materials:[{id:"rules",repositoryPath:"RULES.md",label:"rules"}],relevanceHints:{standards:["not-a-material-id"],note:"advisory"},spec:{state:"not-established" as const,note:"known"},required:{standards:{...grant,note:"grant"}},};const admitted=admitReviewerProposal(presented,capabilities,REVIEWER_CHILD_TOOLS);assert.equal(admitted.baseRevision,"A");assert.deepEqual(admitted.relevanceHints?.standards,["not-a-material-id"]);assert.ok(Object.isFrozen(admitted));assert.ok(Object.isFrozen(admitted.materials));assert.throws(()=>admitReviewerProposal({...proposal,materials:[proposal.materials[0]!,proposal.materials[0]!]},capabilities,REVIEWER_CHILD_TOOLS),/material-invalid/);});

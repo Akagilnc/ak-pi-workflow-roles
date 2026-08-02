@@ -28,7 +28,6 @@ export const AGENT_TOOL_NAME = "Agent";
 
 const requestSchema = Type.Object({
   tools: Type.Array(StringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
-  bashCommands: Type.Array(Type.String(), { uniqueItems: true }),
   prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
 }, { additionalProperties: true });
 const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }) }, { additionalProperties: true });

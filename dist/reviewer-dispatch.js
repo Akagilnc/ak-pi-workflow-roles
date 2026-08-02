@@ -27,11 +27,11 @@ export function parseReviewerCapabilities(raw, task) { let value, text; try {
 }
 catch {
     throw new Error("Invalid Reviewer capabilities UTF-8 JSON");
-} if (!exact(value, ["version", "taskSha256", "tools", "bashCommands", "prerequisiteOperations"]))
-    throw new Error("Invalid Reviewer capabilities keys"); const v = value; if (v.version !== 1 || typeof v.taskSha256 !== "string" || !Array.isArray(v.tools) || !Array.isArray(v.bashCommands) || !Array.isArray(v.prerequisiteOperations))
+} if (!exact(value, ["version", "taskSha256", "tools", "prerequisiteOperations"]))
+    throw new Error("Invalid Reviewer capabilities keys"); const v = value; if (v.version !== 1 || typeof v.taskSha256 !== "string" || !Array.isArray(v.tools) || !Array.isArray(v.prerequisiteOperations))
     throw new Error("Invalid Reviewer capabilities schema"); if (!/^[0-9a-f]{64}$/.test(v.taskSha256) || v.taskSha256 !== sha256Hex(task))
-    throw new Error("Reviewer capabilities task digest mismatch"); if (!v.tools.every((x) => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !v.bashCommands.every((x) => typeof x === "string") || !v.prerequisiteOperations.every((x) => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || new Set(v.tools).size !== v.tools.length || new Set(v.bashCommands).size !== v.bashCommands.length || new Set(v.prerequisiteOperations).size !== v.prerequisiteOperations.length || (v.bashCommands.length && !v.tools.includes("bash")))
-    throw new Error("Reviewer capabilities contain unknown or duplicate values"); return Object.freeze({ version: 1, taskSha256: v.taskSha256, document: reviewerPromptIdentity(text), tools: frozen(v.tools), bashCommands: frozen(v.bashCommands), prerequisiteOperations: frozen(v.prerequisiteOperations) }); }
+    throw new Error("Reviewer capabilities task digest mismatch"); if (!v.tools.every((x) => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !v.prerequisiteOperations.every((x) => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || new Set(v.tools).size !== v.tools.length || new Set(v.prerequisiteOperations).size !== v.prerequisiteOperations.length)
+    throw new Error("Reviewer capabilities contain unknown or duplicate values"); return Object.freeze({ version: 1, taskSha256: v.taskSha256, document: reviewerPromptIdentity(text), tools: frozen(v.tools), prerequisiteOperations: frozen(v.prerequisiteOperations) }); }
 const identity = (proposal) => { try {
     return sha256Hex(JSON.stringify(proposal));
 }
