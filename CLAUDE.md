@@ -55,6 +55,8 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 **票面先过判官庭再开工；决策问题上呈 owner。**
 
+没有绑定直接 owner 原话与明确 decision keys，不得标作 owner authority。
+
 ## 修订通道
 
 Soul 与本文件（CLAUDE.md）的修订走 owner 直改通道（全文过目直落主线），不走工厂流程，且负持续精进义务；工厂只供修订素材，不拥有动笔权。
