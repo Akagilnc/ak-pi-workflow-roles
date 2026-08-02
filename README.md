@@ -22,6 +22,8 @@ Authoritative runtime validation and public types are exported from `src/navigat
 
 An ignition that cannot activate its role exits nonzero; nothing falls back to uncaged pi (ADR 0018).
 
+Ignition discipline: close stdin on every non-interactive ignition (append `</dev/null`). pi drains a non-TTY stdin to EOF before doing any work, so a background pipe that never closes parks the invocation forever, before the session header (upstream: earendil-works/pi#2078).
+
 ## Judge
 
 The judge role:
