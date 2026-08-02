@@ -38,6 +38,15 @@ test("converged rejection names exactly the submitted extra keys", () => {
       verdict: { judgeStatus: "converged", unexpected: true },
       extraKeys: ["unexpected"],
     },
+    {
+      name: "foreign key beside retained evidence",
+      verdict: {
+        judgeStatus: "converged",
+        evidence: { checks: [{ name: "settled-audit", passed: true }] },
+        unexpected: true,
+      },
+      extraKeys: ["unexpected"],
+    },
   ] as const;
 
   for (const testCase of cases) {
@@ -63,10 +72,38 @@ test("converged rejection names exactly the submitted extra keys", () => {
 });
 
 test("converged exact keys remain accepted and returned unchanged", () => {
+  const evidence = {
+    checks: [{ name: "settled-audit", passed: true }],
+    empty: {},
+  } as const;
   const verdict = {
     judgeStatus: "converged",
     note: "archive the accepted evidence",
+    evidence,
   } as const;
 
-  assert.deepEqual(validateAcceptedJudgeDetails(verdict), verdict);
+  const accepted = validateAcceptedJudgeDetails(verdict);
+  assert.deepEqual(accepted, verdict);
+  assert.equal(accepted.evidence, evidence);
+});
+
+test("retained evidence is optional, opaque, and lawful on every judge status", () => {
+  const verdicts = [
+    { judgeStatus: "converged", evidence: {} },
+    {
+      judgeStatus: "continue",
+      fix: { summary: "repair" },
+      classes: [{ name: "Contract", owner: "runtime", boundary: "judge output", disposition: "repair" }],
+      evidence: [],
+    },
+    {
+      judgeStatus: "escalate",
+      decisionGate: { question: "Choose", options: ["A"] },
+      evidence: null,
+    },
+  ] as const;
+
+  for (const verdict of verdicts) {
+    assert.deepEqual(validateAcceptedJudgeDetails(verdict), verdict);
+  }
 });

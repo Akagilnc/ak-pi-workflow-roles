@@ -380,7 +380,7 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
         promptSnippet: "Submit the final judge verdict after adjudication",
         promptGuidelines: [`Use ${JUDGE_OUTPUT_TOOL_NAME} as the final action for the judge role.`],
       },
-      output: { judgeStatus: "converged" },
+      output: { judgeStatus: "converged", evidence: { checks: [{ name: "receipt", passed: true }] } },
       acceptedText: "Judge verdict accepted",
     },
     {
@@ -456,7 +456,7 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       assert.deepEqual(
         Object.keys(tool.parameters.properties),
         fixture.role === "judge"
-          ? ["judgeStatus", "fix", "classes", "note", "decisionGate"]
+          ? ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"]
           : ["status", "report", "commitSha"],
       );
     }
@@ -518,7 +518,7 @@ test("judge role accepts valid examples of all three verdict shapes", async () =
     return { status: "pass" };
   });
   const verdicts: JudgeVerdict[] = [
-    { judgeStatus: "converged" },
+    { judgeStatus: "converged", evidence: { checks: ["converged"] } },
     {
       judgeStatus: "continue",
       fix: { summary: "Repair the parser" },
@@ -528,10 +528,12 @@ test("judge role accepts valid examples of all three verdict shapes", async () =
         boundary: "input parsing",
         disposition: "repair malformed input handling",
       }],
+      evidence: [],
     },
     {
       judgeStatus: "escalate",
       decisionGate: { question: "Which API?", options: ["A", "B"] },
+      evidence: null,
     },
   ];
 
