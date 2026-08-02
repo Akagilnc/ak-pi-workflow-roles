@@ -6,7 +6,7 @@ import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArg
 import { sha256Hex } from "./sha256.ts";
 import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
-import { ReviewerAdmissionError, type AdmittedReviewerProposal, type ReviewerCapabilitiesV1 } from "./reviewer-admission.ts";
+import { ReviewerAdmissionError, type AdmittedReviewerProposal } from "./reviewer-admission.ts";
 
 export type ReviewerObjectFormat = "sha1" | "sha256";
 export type ReviewerPinnedTarget = Readonly<{
@@ -46,7 +46,7 @@ const evidenceViolation = (code: "range-invalid"|"material-invalid"|"capability-
 const classifyEvidenceRead = (error: unknown): never => { if (error instanceof ReviewerCorrectablePreflightError) throw error; throw error; };
 
 /** Acquires and normalizes all proposal-dependent bytes against the immutable pin. */
-export async function acquireReviewerPinnedEvidence(reader: ReviewerPinnedGitReader, target: ReviewerPinnedTarget, admitted: AdmittedReviewerProposal, ceiling: ReviewerCapabilitiesV1): Promise<ReviewerFrozenEvidence> {
+export async function acquireReviewerPinnedEvidence(reader: ReviewerPinnedGitReader, target: ReviewerPinnedTarget, admitted: AdmittedReviewerProposal): Promise<ReviewerFrozenEvidence> {
   let base: string; let readRange: ReviewerRange;
   try { base=await reader.resolve(admitted.baseRevision); readRange=await reader.range(base); } catch(error){ classifyEvidenceRead(error); }
   if(readRange!.base!==base!||readRange!.target!==target.targetHead||readRange!.diffCommand!==`git diff ${base!}...${target.targetHead}`||!/^[0-9a-f]{64}$/.test(readRange!.diffSha256)||readRange!.diffSha256===sha256Hex("")||!Array.isArray(readRange!.commits)||!readRange!.commits.every(x=>typeof x==="string")||new Set(readRange!.commits).size!==readRange!.commits.length)evidenceViolation("range-invalid");
