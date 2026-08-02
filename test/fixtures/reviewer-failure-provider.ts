@@ -33,7 +33,6 @@ export default function reviewerFailureProvider(pi: ExtensionAPI): void {
   const target = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const request = {
     tools: ["bash"],
-    bashCommands: [`git diff ${base}...${target}`],
     prerequisiteOperations: [
       "preflight.git.resolve-base", "preflight.git.derive-range",
       "preflight.git.list-ordered-commits", "preflight.git.read-material",

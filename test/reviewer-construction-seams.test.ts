@@ -7,8 +7,8 @@ import { parseReviewerCapabilities } from "../src/reviewer-dispatch.ts";
 import { sha256Hex } from "../src/sha256.ts";
 
 const task=Buffer.from("task"); const command="git diff A...B";
-const capabilities=parseReviewerCapabilities(Buffer.from(JSON.stringify({version:1,taskSha256:sha256Hex(task),tools:[...REVIEWER_CHILD_TOOLS],bashCommands:[command],prerequisiteOperations:[...REVIEWER_PREREQUISITES]})),task);
-const grant={tools:["read","bash"] as const,bashCommands:[command],prerequisiteOperations:[...REVIEWER_PREREQUISITES]};
+const capabilities=parseReviewerCapabilities(Buffer.from(JSON.stringify({version:1,taskSha256:sha256Hex(task),tools:[...REVIEWER_CHILD_TOOLS],prerequisiteOperations:[...REVIEWER_PREREQUISITES]})),task);
+const grant={tools:["read","bash"] as const,prerequisiteOperations:[...REVIEWER_PREREQUISITES]};
 const proposal={version:1 as const,base:{revision:"A"},materials:[{id:"rules",repositoryPath:"RULES.md"}],relevanceHints:{standards:["rules"]},spec:{state:"not-established" as const},required:{standards:grant}};
 
 test("mechanical admission validates and freezes policy without repository access",()=>{const admitted=admitReviewerProposal(proposal,capabilities,REVIEWER_CHILD_TOOLS);assert.equal(admitted.baseRevision,"A");assert.ok(Object.isFrozen(admitted));assert.ok(Object.isFrozen(admitted.materials));assert.throws(()=>admitReviewerProposal({...proposal,materials:[{id:"x",repositoryPath:"../x"}]},capabilities,REVIEWER_CHILD_TOOLS));});
