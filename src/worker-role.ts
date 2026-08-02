@@ -57,7 +57,37 @@ const workerOutputFields = {
 const coderOutputSchema = Type.Object(workerOutputFields, { additionalProperties: false });
 type WorkerOutputParameters = Static<typeof coderOutputSchema> | FixerOutput;
 export type { FixerOutput, CoderOutput };
-type WorkerPhase = "plan" | "apply";
+export const FIXER_FLAG_DEFINITIONS = {
+  packet: {
+    name: "ak-fix-packet",
+    definition: {
+      description: "Path to opaque prose instructions for the Fixer",
+      type: "string" as const,
+    },
+  },
+  prerequisites: {
+    name: "ak-fixer-prerequisites",
+    definition: {
+      description: "Optional path to a JSON array of typed Fixer prerequisites",
+      type: "string" as const,
+    },
+  },
+  phase: {
+    name: "ak-fixer-phase",
+    definition: {
+      description:
+        "Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
+      type: "string" as const,
+    },
+  },
+} as const;
+
+export const FIXER_PHASES = ["plan", "apply"] as const satisfies readonly FixerPhase[];
+type WorkerPhase = (typeof FIXER_PHASES)[number];
+
+function isWorkerPhase(value: unknown): value is WorkerPhase {
+  return typeof value === "string" && (FIXER_PHASES as readonly string[]).includes(value);
+}
 
 export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext): never;
@@ -144,32 +174,31 @@ export function createFixerRoleRuntime(
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
 
-  pi.registerFlag("ak-fix-packet", {
-    description: "Path to opaque prose instructions for the Fixer",
-    type: "string",
-  });
-  pi.registerFlag("ak-fixer-prerequisites", {
-    description: "Optional path to a JSON array of typed Fixer prerequisites",
-    type: "string",
-  });
-  pi.registerFlag("ak-fixer-phase", {
-    description:
-      "Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
-    type: "string",
-  });
+  pi.registerFlag(
+    FIXER_FLAG_DEFINITIONS.packet.name,
+    FIXER_FLAG_DEFINITIONS.packet.definition,
+  );
+  pi.registerFlag(
+    FIXER_FLAG_DEFINITIONS.prerequisites.name,
+    FIXER_FLAG_DEFINITIONS.prerequisites.definition,
+  );
+  pi.registerFlag(
+    FIXER_FLAG_DEFINITIONS.phase.name,
+    FIXER_FLAG_DEFINITIONS.phase.definition,
+  );
 
   return {
     async activate() {
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Fixer soul is empty");
-      const selectedPhase = pi.getFlag("ak-fixer-phase");
-      if (selectedPhase !== "plan" && selectedPhase !== "apply") {
+      const selectedPhase = pi.getFlag(FIXER_FLAG_DEFINITIONS.phase.name);
+      if (!isWorkerPhase(selectedPhase)) {
         throw new Error(
           "Fixer role requires --ak-fixer-phase plan|apply; no other phase is supported",
         );
       }
       phase = selectedPhase;
-      const packetPath = pi.getFlag("ak-fix-packet");
+      const packetPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.packet.name);
       if (typeof packetPath !== "string" || packetPath.trim().length === 0) {
         throw new Error("Fixer role requires --ak-fix-packet");
       }
@@ -179,7 +208,7 @@ export function createFixerRoleRuntime(
           new Error("Fixer instructions must be nonblank"),
         );
       }
-      const prerequisitesPath = pi.getFlag("ak-fixer-prerequisites");
+      const prerequisitesPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.prerequisites.name);
       if (prerequisitesPath !== undefined && (typeof prerequisitesPath !== "string" || prerequisitesPath.trim().length === 0)) {
         throw new Error("Fixer --ak-fixer-prerequisites path must be nonblank when supplied");
       }

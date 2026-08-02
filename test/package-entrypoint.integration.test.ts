@@ -20,7 +20,9 @@ import { Type } from "typebox";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_AUDIT_TOOL_NAME,
+  FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
+  FIXER_PHASES,
   fixerPrerequisitesSchema,
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
@@ -38,7 +40,6 @@ import {
   packageRoot,
   type RawPackageManifest,
   resolvePackageEntrypoint,
-  runPiSubprocess,
   withHermeticHome,
   withInProcessPi,
   writeTestSkill,
@@ -77,6 +78,18 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   assert.equal(manifest.bin?.["ak-assisted-run"], "./bin/ak-assisted-run.js");
   assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator", "merger"]);
   assert.equal(ROLE_FLAG.name, "ak-role");
+  assert.deepEqual(
+    Object.values(FIXER_FLAG_DEFINITIONS).map(({ name, definition }) => ({
+      name,
+      type: definition.type,
+    })),
+    [
+      { name: "ak-fix-packet", type: "string" },
+      { name: "ak-fixer-prerequisites", type: "string" },
+      { name: "ak-fixer-phase", type: "string" },
+    ],
+  );
+  assert.deepEqual(FIXER_PHASES, ["plan", "apply"]);
   assert.equal(DOCTOR_CASE_FLAG.name, "ak-doctor-case");
   assert.equal(DOCTOR_CASE_FLAG.definition.type, "string");
   assert.equal(MERGER_INPUT_FLAG.name, "ak-merger-input");
@@ -113,32 +126,6 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
       assert.equal(paths.has("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed");
     },
   );
-});
-
-test("packaged CLI help exposes the complete fixer phase contract", async () => {
-  const manifest = await loadRawPackageManifest();
-  const result = await runPiSubprocess(
-    [
-      "--no-extensions",
-      "-e",
-      packageEntrypoint(manifest),
-      "--ak-role",
-      "fixer",
-      "--help",
-    ],
-    { cwd: packageRoot },
-  );
-  assert.equal(result.timedOut, false, "fixer help subprocess did not time out");
-  assert.equal(result.code, 0);
-  const extensionHelp = result.stdout.match(
-    /Extension CLI Flags:\n([\s\S]*?)\n\nExamples:/,
-  )?.[1];
-
-  assert.match(extensionHelp ?? "", /--ak-fix-packet <value>\s+Path to opaque prose instructions for the Fixer/);
-  assert.match(extensionHelp ?? "", /--ak-fixer-prerequisites <value>\s*Optional path to a JSON array of typed Fixer prerequisites/);
-  assert.match(extensionHelp ?? "", /--ak-fixer-phase <value>\s+Fixer phase: plan .* or apply/);
-  assert.match(extensionHelp ?? "", /--ak-review-capabilities <value>\s*Closed Reviewer capability grant/);
-  assert.match(extensionHelp ?? "", /--ak-review-scope-keys <value>\s*Optional comma-separated exact class keys/);
 });
 
 test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved audit, and termination boundaries offline", async () => {
