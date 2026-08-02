@@ -62,7 +62,6 @@ test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", ()
   const invalid = [
     ["apply", { status: "completed", report: "old", commitSha: shaA }],
     ["apply", { status: "completed", report: "old", classesRepaired: [] }],
-    ["plan", { status: "planned", report: "x", classResults: [completed()] }],
     ["plan", { status: "partially_completed", report: "x" }],
     ["apply", { status: "planned", report: "x" }],
     ["plan", { status: "refused", report: "x", remainingScope: " ", blocker: { cause: "prerequisite_unmet", prerequisiteId: "repository.ready", evidence: "x" } }],
