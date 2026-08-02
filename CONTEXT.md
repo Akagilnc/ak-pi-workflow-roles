@@ -6,6 +6,13 @@
 - **Soul**:角色的法典,经系统提示注入。分两层:**通用法**(本包内,零业务词)与**业务法**(宿主项目 overlay,随调用附加)。
 - **角色门禁(Role gating)**:车间内的机械限制——工具集收窄、工具调用拦截。区别于 soul 的文本约束:门禁是拦得住的,不靠自觉。
 - **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其 typed 产物,是角色劳动成果的唯一法定出口;散文不构成交卷。并非每个角色都有交卷工具。
+- **格式契约(Format contract)**:在一个具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,并且有明确 owner 与 consumer 的格式不变式。同一契约的多种表达不是多个契约;重复真源、校验缺口、已删除或不可达的格式也不是契约。
+- **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的;除此之外一概不管。
+- **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围扫描全仓;清单 ID 与已知文件只是不完全实例和证据索引,不是施工白名单。施工后按同一类别重新扫描残余,保留项逐类说明特别理由。
+- **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。规范见 [ADR 0021](docs/adr/0021-collector-manifest-validates-semantics-not-json-spelling.md)。
+- **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。规范见 [ADR 0022](docs/adr/0022-delete-unconsumed-collector-manifest-schema.md)。
+- **边界 Schema 真源(Boundary schema owner)**:定义单个工具输入或输出形状的唯一 Schema。规范见 [ADR 0023](docs/adr/0023-judge-and-merger-use-one-output-schema-owner.md)。
+- **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。自报可留在叙事报告供人参考,不得伪装成 commit、Git 状态、计时等机械事实或进入统计真源。
 - **Judge(判官)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。
 - **Fixer(修复工)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`，不是未完进度。
 - **Coder(实现者)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 经 Pi 原生 `/skill:tdd` 调用 canonical Matt TDD;自查三连证据留在 report 供调用方处置,两者都不进入 Soul。Coder 回执不以新 commit 为无条件前提,拒绝可零 commit 直接交调用方处置。
@@ -16,7 +23,7 @@
 - **Soul 合规审计(Soul-compliance audit)**:交卷被接受前的第二次模型调用,只审「判官是否可证地按 soul 办了案」,不得替换判官的实质裁决。
 - **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。
 - **Navigator(导航员)**:从一个父议题完整开发的冻结当前位置，建议成本最低且安全的单一下一过程；不裁决、不授权、不执行，普通建议允许调用者偏离。
-- **Assisted Runner(辅助运行器)**:包内持久 wrapper；每次包裹一个调用者指定的非 Navigator 包角色，并在前后自动咨询 Navigator。它不选角色、不续跑流程、不管 worktree。
+- **Assisted Runner(辅助运行器)**:当前仍已实现并导出的包内持久 wrapper，以 `runId` 串联调用者指定的角色，并在前后自动咨询 Navigator；#58 已接受删除该实现及其专属公开面，但须到 #58 apply 才落地。Navigator 的持续导航职责不因该删除决定而撤销。
 - **角色调用(Role invocation)**:一个角色从输入到回执的单次独立劳动。角色只拥有该次调用的内政;调用者拥有角色组合、顺序、重复次数、预算和停止条件。
 - **编排器(Orchestrator)**:包外的交通系统——起各角色 Pi 进程、递材料、按三态判词走边。它只读回执,不定义交卷形状。
 - **三态判词**:`converged` / `continue` / `escalate`。环境/工具链故障不是判词,以非零退出走故障通道。
@@ -24,6 +31,13 @@
 - **Merger（合并员）**：只调和调用方指定、已开始的一次 Git merge 的完整冲突集，创建该次普通双亲候选 commit 或在需要新意图/权力决定时升级；不发起、不发布、不编排 merge。
 - **Doctor(医生)**:从一个保留的 Pi 原生 session-dir 案例读取工厂症状，产出单案过程成本诊断并开方的举证角色;不施工、不裁决、不改法。病人仍是工厂,方子走正常法链。
 - **工厂(Factory)**:车间整体——角色、闸、法、包模板、流程站点。医生的唯一病人;案子只是症状载体,永远不是病人。
+- **大扫除(Factory cleanup)**:当工厂机制的复杂度成本已经增加,但交付速度、质量与可靠性没有可观察提升时,按最小完整责任边界删除这些无收益机制及其专属格式、适配、测试和文档。大扫除允许扩大现有接受范围或删除整个机制,不是以行为等价为目标的整理或重构。
+- **增量收益(Incremental benefit)**:某项工厂机制相对于更简单的下游兜底,在真实运行中额外产生的速度、质量或可靠性提升。设计理由、单元测试和历史 ADR 只说明意图,不构成增量收益证据。
+- **效率基线(Efficiency baseline)**:2026-07-27 时期一张 issue 从开工到 merge 落地的实际交付节奏。它只用于比较端到端效率,不是代码、角色集合或功能范围的回退边界。
+- **落地周期(Issue-to-merge lead time)**:从第一个获授权处理 issue 的角色调用开始,通常是 Coder 或先审票面的 Judge,到 merge commit 进入目标分支为止。期间的裁决、施工、评审、返修、CI、格式拒绝重试和工厂故障均计入。
+- **两层裁决(Two-level cleanup adjudication)**:大扫除先判断一项机制是否产生足以支持其存在的增量收益;机制若存活,其内部每道护栏、格式和流程仍须分别通过现行三问。局部枷锁不因机制必要而自动存活,局部违宪也不自动判整个角色死亡。
+- **一次性大扫除(One-shot factory cleanup)**:在一个裁决包内一次列全并处置工厂机制及内部枷锁,在同一施工批次中以独立 commit 完成,最终只通过一个 PR 和一次 merge 落地。内部可按落地周期影响排序,但不把清理范围拆成后续票或让半新半旧的工厂分批进入主线。
+- **免疫(Immunity)**:防止工厂复杂度再次无收益增长的独立治理线,通过现行宪法、Judge 和独立议题约束后续新增。免疫不属于大扫除范围,也不得成为清理中保留或新建机制的理由;两条线只能在排期上暂停或等待,不能互相吞并。
 - **方子(Prescription)**:医生的 finding 加处置建议(`keep|thin|delete`);治系统不治症状,同任何提案一样走法链。
 - **真咬人(Real bite)**:某道闸最近真拦下东西的证据——保留 session 中实际被接受的 typed terminating tool result;回声与散文不构成证据。完整有界检索得到的 `noRealBite` 是无咬人证明,不是一次咬人。
 - **过程成本报告(Process-cost report)**:由保留 runs 路径中的 Pi session 字节可重算的单案调用数、腿数、墙钟、turn/token、工具调用、命名重试、typed 状态、commit 观察和具名 payload 字节账。趋势是读取多案后才有的独立输出类型。
