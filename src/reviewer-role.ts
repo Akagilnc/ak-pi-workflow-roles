@@ -30,16 +30,16 @@ const requestSchema = Type.Object({
   tools: Type.Array(StringEnum(REVIEWER_CHILD_TOOLS), { uniqueItems: true }),
   bashCommands: Type.Array(Type.String(), { uniqueItems: true }),
   prerequisiteOperations: Type.Array(StringEnum(REVIEWER_PREREQUISITES), { uniqueItems: true }),
-}, { additionalProperties: false });
-const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }) }, { additionalProperties: false });
+}, { additionalProperties: true });
+const materialSchema = Type.Object({ id: Type.String({ minLength: 1 }), repositoryPath: Type.String({ minLength: 1 }) }, { additionalProperties: true });
 export const reviewerProposalSchema = Type.Object({
   version: Type.Literal(1),
-  base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+  base: Type.Object({ revision: Type.String({ minLength: 1 }) }, { additionalProperties: true }),
   materials: Type.Array(materialSchema),
-  relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: false })),
-  spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: false }),
-  required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: false }),
-}, { additionalProperties: false });
+  relevanceHints: Type.Optional(Type.Object({ standards: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })), spec: Type.Optional(Type.Array(Type.String(), { uniqueItems: true })) }, { additionalProperties: true })),
+  spec: Type.Object({ state: StringEnum(["established", "not-established"] as const) }, { additionalProperties: true }),
+  required: Type.Object({ standards: requestSchema, spec: Type.Optional(requestSchema) }, { additionalProperties: true }),
+}, { additionalProperties: true });
 const reviewerOutputSchema = Type.Union([
   Type.Object({ status: Type.Literal("completed") }, { additionalProperties: false }),
   Type.Object({ status: Type.Literal("refused"), diagnostic: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
