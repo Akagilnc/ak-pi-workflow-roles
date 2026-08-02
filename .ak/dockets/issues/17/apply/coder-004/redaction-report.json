@@ -1,9 +1,0 @@
-{
-  "hits": [
-    {
-      "ruleId": "token-assignment",
-      "location": "child.stdout",
-      "count": 837
-    }
-  ]
-}

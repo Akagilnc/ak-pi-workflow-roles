@@ -1,5 +1,0 @@
-# Issue #36 PR #37 direct Fixer Apply
-
-Sole authority: `.ak/dockets/issues/36/judgment/pr37-review/receipt.json`. No Plan.
-
-Repair exactly `Recorder diagnostic optional-field nullish admission` at its complete owner/boundary/disposition. Use explicit own-property presence checks for `details` and `error`; preserve absent and record-valued forms, reject present null/undefined and other non-record values. Add only the bounded independent mutations, rebuild Recorder dist, run focused tests, typecheck, isolated-HOME full tests as proportional, package/generated checks, pack dry-run, and diff check. Commit forward and submit the exact class in `classesRepaired` through `ak_fixer_output`.

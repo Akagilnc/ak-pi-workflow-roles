@@ -1,3 +1,0 @@
-# Issue #3 recording provenance residual
-
-The recording provenance is false and the offline oracle does not detect it. In both `test/fixtures/judge-postures/r-block/meta.json` and `r-ready/meta.json`, `provider`/`model` claim `xai`/`grok-4.5`, while the corresponding raw JSONL completed assistant messages consistently record `provider:"openai-codex"` and `model:"gpt-5.6-sol"`. This violates the approved plan’s required model/provider provenance and Apply’s fact-matching burden. Correct both sidecars from the existing transcripts and extend `test/judge-posture-recordings.test.ts` to derive the unique provider/model from JSONL and cross-check `meta.json`; no Soul change or re-record is needed.

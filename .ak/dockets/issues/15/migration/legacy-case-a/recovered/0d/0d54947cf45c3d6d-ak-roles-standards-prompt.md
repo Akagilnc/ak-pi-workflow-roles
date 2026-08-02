@@ -1,5 +1,0 @@
-Review the pinned repository snapshot 18c57b033ab7e3eac1b276c8c0524f0c38fdcfcc for Standards only. Do not modify files. Comparison: `git diff c822717...18c57b033ab7e3eac1b276c8c0524f0c38fdcfcc`; commits: `/tmp/ak-roles-e2e-commits.txt`. Inspect the full current files where necessary, not only hunks.
-
-Documented standards/architecture sources: README.md, CONTEXT.md, docs/adr/*.md, and package.json/tsconfig.json conventions. The latest owner authority is `/tmp/ak-roles-e2e-authority.md`; it overrides conflicting proposed ADR text.
-
-Report only actionable findings, each with severity P0-P2, exact file/line evidence, consequence, and concise repair. Check documented-standard breaches. Also use this smell baseline as judgement-call heuristics only, suppressed when repo docs endorse it: Mysterious Name, Duplicated Code, Feature Envy, Data Clumps, Primitive Obsession, Repeated Switches, Shotgun Surgery, Divergent Change, Speculative Generality, Message Chains, Middle Man, Refused Bequest. Skip formatting/type issues tooling enforces. Under 500 words. If no finding, say PASS.

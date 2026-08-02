@@ -1,3 +1,0 @@
-# Repair packet: promotable metadata credential boundary
-
-At current committed HEAD, ensure every promotable metadata value is scanner-validated or fails closed before it can name or enter stage, final core, report locations, manifest, or failure diagnostics. A credential-shaped but otherwise syntactically valid artifact id must never create a raw stage/final path. Prove every required category × representative credential form through stage, final, report and failure boundaries, including archive/reference/config/provenance, Receipt/audit, copied bytes, argv/context, manifest/report. Use only existing scanner/admission seams; preserve all other behavior. Add focused red/green tests, one forward commit, exact Receipt. Do not inspect sessions.

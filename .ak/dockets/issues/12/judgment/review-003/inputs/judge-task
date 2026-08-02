@@ -1,8 +1,0 @@
-# Issue #12 Review-003 adjudication
-
-Adjudicate accepted `.ak/dockets/issues/12/review/review-003/receipt.json`.
-
-1. Standards: `doctor-contracts.ts` and `doctor-evidence.ts` duplicate the same recursive canonical JSON serializer directly at the raw/normalized identity seam. Decide one package owner/reuse boundary.
-2. Spec: StatsLine paper/apply classification adds Coder/Fixer bytes only for exact `apply` or `plan`; missing/duplicate/unknown phases can fall through neither bucket without setting unclassifiable, so bytes disappear while ratio remains measured. Authority says all verified accepted receipts except unambiguous apply are paper, while genuinely unclassifiable receipts make ratio unavailable. Define exact classification across non-worker roles, Coder/Fixer phase ambiguity, and missing/unknown flags.
-
-Preserve closed metrics, committed evidence identity, deterministic ordering and package behavior. No Plan unless a real major choice remains; otherwise direct Fixer classes. No edits; submit via `ak_judge_output`.

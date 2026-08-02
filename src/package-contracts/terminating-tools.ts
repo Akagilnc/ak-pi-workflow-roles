@@ -1,6 +1,6 @@
 /**
  * Package-owned terminating tool registry.
- * Recorder and roles share these leaves; Recorder must not load role registration.
+ * Package roles share these terminating leaves.
  */
 
 import {

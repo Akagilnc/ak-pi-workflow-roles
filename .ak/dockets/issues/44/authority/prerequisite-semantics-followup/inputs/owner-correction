@@ -1,7 +1,0 @@
-# Owner correction — prerequisite is prospective, not retrospective laundering
-
-The only Fixer refusal purpose remains an assignment not presently lawfully executable.
-
-`prerequisite_unmet` means a concrete predecessor decision, artifact, or state required before the assigned finding can presently be executed, and which is currently absent. It does not include a method/process mistake already made, commit ordering, inability to rewrite history, missing retrospective proof, dissatisfaction with how completed work was produced, or any condition that does not prevent continuing or completing the actual repair.
-
-If executable repair work is complete but its method was noncompliant, Fixer settles the actual finding result honestly and reports method noncompliance for caller review. It may not convert completed work into refusal. Fixer compliance audit must reject retrospective pseudo-prerequisites and require correction/resubmission. Keep the two-cause enum unchanged and use subtraction; do not add a third cause or anti-refusal blacklist to Soul.

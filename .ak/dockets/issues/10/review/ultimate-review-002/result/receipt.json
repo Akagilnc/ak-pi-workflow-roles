@@ -1,4 +1,0 @@
-{
-  "status": "refused",
-  "report": "Unable to issue a compliant completed review from the sole permitted sibling batch.\n\nEvidence: the batch prompts identified `.ak/dockets/issues/10/review/ultimate-review-002/task.md` as present at target `0ed63de6e8079080288b636c588695e2e384a622`, but `git cat-file -e 0ed63de6e8079080288b636c588695e2e384a622:.ak/dockets/issues/10/review/ultimate-review-002/task.md` fails. That path exists only at workspace HEAD `cc9b0b3cc710d5be8a6a54e0e20608e21b21c911`; the target contains `.ak/dockets/issues/10/review/ultimate-review/task.md`. The Standards sibling also assessed R1 reconciliation facts assigned to the Spec axis, so axis isolation was not preserved. Because the task permits exactly one Standards/Spec batch and that batch has already run, it cannot be rerun lawfully. No review findings or closure claim are submitted."
-}

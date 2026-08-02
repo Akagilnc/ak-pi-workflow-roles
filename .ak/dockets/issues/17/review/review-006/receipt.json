@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_W7N8i7BYq1OrO1l7mJoonXDT|fc_063198145e074fc3016a6b8c257c208191a94085b830448b73",
-  "details": {
-    "status": "refused",
-    "report": "The atomic Reviewer proposal failed validation with: “Invalid material selection identity or repository-relative path.” The execution record does not identify the invalid selection or path. No child review ran, so there is no evidence-backed Standards or Spec report to submit."
-  },
-  "artifactKind": "acceptedReceipt"
-}

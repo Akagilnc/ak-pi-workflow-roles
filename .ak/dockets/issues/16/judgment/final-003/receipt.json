@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_judge_output",
-  "toolCallId": "call_L5ovVEJmfLKHXzpd6AwU36UB|fc_0c1bb6cf3230ad0c016a6b4ad715d0819988660174a245d571",
-  "details": {
-    "judgeStatus": "converged",
-    "note": "Issue #16 is closed at immutable construction target 0a07c12195e4376acf2234c378d04c5079ad7a0e. Independent target-clone verification passed the affected Recorder extraction suite 22/22, typecheck, build, checked-in/generated dist identity, package dry-run, and diff check. A full target invocation passed 348/349; its sole failure was caused by the verification clone’s root node_modules symlink appearing untracked, and that exact remaining clean-checkout test passed independently when dependencies were placed under an ignored node_modules directory. The post-judgment repair copies the retained toolResult only when propagating tee-only usage, leaves caller-owned lifecycle events unchanged, preserves unaffected event identity, and proves exact Judge/Reviewer Receipt and audit usage. Prior closure remains intact: canonicalization is confined to one envelope and strict issuance → genuinely matching start → tool_execution_end → equivalent message_end/toolResult order; raw cross-representation identity is checked before collapse; retained trust/provenance remains message_end/role:toolResult; replay, conflict, mismatch, reversed/early order, split input, orphan, generic message, and extra-terminal cases fail closed; typed Receipt/audit promotion and lawful absence are exercised. Source/dist align, the mismatch helper remains private, excluded product surfaces are unchanged, historical absolute manifest paths remain closed-schema execution/provenance facts, and final independent review reported Standards 0 / Spec 0."
-  },
-  "artifactKind": "acceptedReceipt"
-}

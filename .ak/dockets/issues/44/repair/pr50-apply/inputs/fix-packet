@@ -1,5 +1,0 @@
-{
-  "version": 1,
-  "instructions": "Repair exactly DevelopmentClosureFixPacketConsistency under .ak/dockets/issues/44/judgment/pr50-review/receipt.json. Edit only step 7 of docs/development-closure.md as authorized: replace deleted Markdown/R-key reconciliation with the current packets/fixer-repair.json FixPacketV1 reference, preserve receipt/audit/classResults statements, verify no stale reference remains, run appropriate gates, commit forward, and settle exactly this class.",
-  "prerequisites": []
-}

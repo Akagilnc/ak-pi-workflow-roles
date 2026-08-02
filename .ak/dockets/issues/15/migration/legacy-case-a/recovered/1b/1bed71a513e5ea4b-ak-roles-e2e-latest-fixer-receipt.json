@@ -1,5 +1,0 @@
-{
-  "status": "completed",
-  "report": "## Repair completed\n\n- Expanded the owning `ak-fixer-phase` flag description in `src/role-runtime.ts`: `plan` remains plan-only with no edits or commits; `apply` now explicitly requires executing the approved plan, verifying, and committing when repaired.\n- Added a focused package-entrypoint regression in `test/package-entrypoint.integration.test.ts` that invokes Pi’s CLI/help path with the explicit extension and asserts the rendered caller-facing contract.\n- Left README, ADRs, runtime behavior, phases, and targetHead handling unchanged.\n\n## Verification\n\n- Initial HEAD exactly matched `a7ec90af3c65a30bca4bab652a734b45b2fdb8d9`; worktree was clean.\n- `npm test`: passed (44 tests).\n- `npm run typecheck`: passed.\n- Checkout-local help command exited 0 and rendered the complete plan/apply meanings, including execute, verify, and commit when repaired.\n- Final commit contains only `src/role-runtime.ts` and `test/package-entrypoint.integration.test.ts`; worktree is clean.\n- New HEAD is a strict forward descendant of the pinned HEAD.",
-  "commitSha": "2357b36608dc70b397212c3a046149cf9d325895"
-}

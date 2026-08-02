@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_pLqVhMvxr6tZmn5YXpq1lnSM|fc_0f20925c8e2b2e40016a6bd028946c819195bbdaa29ec41ff0",
-  "details": {
-    "status": "refused",
-    "report": "# Refusal: isolated two-axis review could not be completed\n\nThe fixed target and authority were established, and the sole atomic dispatch was accepted. However, the accepted Spec child exceeded its axis-only brief by adding a Standards conclusion and its own combined two-axis summary. The semantic audit therefore found that Standards/Spec isolation was not demonstrated.\n\nBecause acceptance is irreversible and permits exactly one dispatch, no second Agent proposal or replacement Spec child can lawfully be started in this invocation. Editing the aggregation cannot repair the accepted child evidence. I therefore cannot truthfully submit a completed two-axis report from this invocation."
-  },
-  "artifactKind": "acceptedReceipt"
-}

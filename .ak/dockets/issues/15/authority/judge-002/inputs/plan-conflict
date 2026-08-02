@@ -1,7 +1,0 @@
-{
-  "sourcePath": ".ak/dockets/issues/10/plan/plan-002/receipt.json",
-  "sourceSha256": "ba4646aacad2c629875318559a57876609a034f2c923b0ff65aec2cb64bdc602",
-  "sourceByteLength": 21472,
-  "authorityConflictExcerpt": "Legacy dispositions are limited to `recovered`, `known missing`, `reference`, `excluded execution exhaust`, or `superseded`. Existing manifests remain byte-identical. Generic session/tool-event exhaust is excluded without content inspection; no new `/tmp` archaeology occurs.",
-  "disposition": "evidence of lower-level narrowing only; full Plan implementation prose is excluded from this Authority adjudication"
-}

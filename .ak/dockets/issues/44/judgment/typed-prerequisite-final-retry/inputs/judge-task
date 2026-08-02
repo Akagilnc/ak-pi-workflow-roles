@@ -1,3 +1,0 @@
-# Issue #44 typed prerequisite final retry
-
-Verify the append-only correction at `.ak/dockets/issues/44/apply/typed-prerequisites/correction-001.json` closes the sole class in the prior final judgment without modifying historical bytes. Reconfirm current implementation/gates and exact Git/session identities. Converge only if no residual.

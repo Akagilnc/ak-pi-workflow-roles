@@ -1,7 +1,0 @@
-# Issue #23 Review-004 finding adjudication
-
-Construction target: `8db808d23889de2d995639ad7385738162229551`; product repair commits `6b71d0c` and `3941a32`.
-
-Adjudicate every Review-004 Must, Should, and Nit before repair. Address real-cause retention in manifest schema loading, external input reads, and path/Git validation; manifest invariant construction duplication; leaked tee-test scratch; actual bin-emitted failure validation against the shipped schema; and remaining opaque parser names. Preserve fixed safe public messages, scanner boundaries, structural/stateful ordering, exact child truth, the historical-root non-claim, and issue #13 exclusion.
-
-If sustained, return one bounded forward-only packet. Submit only through `ak_judge_output`.

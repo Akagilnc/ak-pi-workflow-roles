@@ -1,9 +1,0 @@
-# PR #43 Fixer apply — deep contract and cold-package proof
-
-Close exactly:
-
-- `NavigatorReceiptContract`
-- `AssistedInputContractClosure`
-- `SchemaContractParity`
-
-Use `.ak/dockets/issues/28/judgment/pr43-final-retry/receipt.json`. Complete every exact malformed extraction/recovery receipt variant; validate recovery invocationId before I/O and add the full TS/CLI no-side-effect input matrix; exercise schemas through a truly packed, cold-installed npm consumer with all missing nested/cross-variant cases. Do not invent public taxonomies or mechanisms. Run gates, commit, report exact keys.

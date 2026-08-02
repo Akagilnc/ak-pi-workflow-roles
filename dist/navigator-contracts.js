@@ -3,7 +3,7 @@ import { sha256Hex } from "./sha256.js";
 import { isUuidV7 } from "./uuidv7.js";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./package-contracts/navigator-output.js";
 import { validateRecordedNavigatorReceiptV1 } from "./package-contracts/navigator-output.js";
-import publishedNavigatorReceiptV1Schema from "../schemas/navigator-receipt-v1.schema.json";
+import publishedNavigatorReceiptV1Schema from "../schemas/navigator-receipt-v1.schema.json" with { type: "json" };
 const PACKAGED_ROLES = ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator"];
 const SHA256 = /^[0-9a-f]{64}$/;
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

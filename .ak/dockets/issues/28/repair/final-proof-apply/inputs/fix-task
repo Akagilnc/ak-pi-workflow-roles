@@ -1,7 +1,0 @@
-# Issue #28 Fixer apply — final Recorder proof
-
-Close the sole open `NavigatorEvidenceReadTruthResidual` proof class from `.ak/dockets/issues/28/judgment/final-convergence-retry-003/receipt.json`.
-
-Keep production behavior unchanged unless the real seam exposes a defect. Add malformed native-session counterexamples that traverse `createRecorderAssistedTransportV1` live `invokeNavigator` and recovered `readSealed`, covering the Judge-required malformed/forged/omitted/duplicate/unknown/unread authoritative records and asserting fail-closed. Do not substitute direct helper calls or mutate arrays after extraction.
-
-Run typecheck, focused tests, isolated full suite, pack dry-run, and diff check; commit forward and report the exact class key.
