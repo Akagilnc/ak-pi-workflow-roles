@@ -173,7 +173,7 @@ export function createFixerRoleRuntime(
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "Fixer Output",
           description:
-            "Submit the exact plan refusal or per-finding apply settlement for compliance audit.",
+            "Submit the plan refusal or per-finding apply settlement for compliance audit.",
           promptSnippet: "Submit the final fixer report",
           promptGuidelines: [
             `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,

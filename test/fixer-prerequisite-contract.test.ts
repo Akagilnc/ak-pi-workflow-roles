@@ -81,13 +81,12 @@ test("typed prerequisite blockers cross the public TypeBox schema and packet-awa
   }
 });
 
-test("current leaves reject old, malformed, extra, and undeclared prerequisite references in plan and apply", () => {
+test("current leaves reject old, malformed, and undeclared prerequisite references in plan and apply", () => {
   const packet = mutablePacket();
   const blockers = [
     { cause: "prerequisite_unmet", evidence: "old missing-ID leaf" },
     { cause: "prerequisite_unmet", prerequisiteId: "bad/id", evidence: "malformed" },
     { cause: "prerequisite_unmet", prerequisiteId: "undeclared", evidence: "not declared" },
-    { cause: "prerequisite_unmet", prerequisiteId: "owner.choice-1", evidence: "x", extra: true },
   ];
   for (const [index, blocker] of blockers.entries()) {
     const plan = { ...planRefusal, blocker };
@@ -100,6 +99,9 @@ test("current leaves reject old, malformed, extra, and undeclared prerequisite r
     assert.throws(() => validateFixerOutputForPacket(apply, "apply", packet), /Fixer output/);
     assert.throws(() => validateFixerOutputForPacket(mixed, "apply", packet), /Fixer output/);
   }
+  const decorated = { ...planRefusal, blocker: { ...planRefusal.blocker, presentation: true } };
+  assert.equal(Value.Check(fixerOutputSchema, decorated), true);
+  assert.deepEqual(validateFixerOutputForPacket(decorated, "plan", packet), planRefusal);
   const empty = { version: 1, instructions: "repair", prerequisites: [] } satisfies FixPacketV1;
   assert.throws(() => validateFixerOutputForPacket(planRefusal, "plan", empty), /Fixer output/);
   assert.throws(() => validateFixerOutputForPacket(applyRefusal, "apply", empty), /Fixer output/);
