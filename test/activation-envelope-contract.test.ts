@@ -27,6 +27,34 @@ test("registration enrolls every role in stable named activation stages", () => 
   }
 });
 
+test("every registered whole activation leaves structured start and completion traces", async () => {
+  for (const entry of ROLE_REGISTRY) {
+    const traces: ActivationTraceRecord[] = [];
+    const runtime = new Proxy({
+      context: {} as ExtensionContext,
+      event: { reason: "startup" },
+      navigator: async () => {},
+      merger: async () => {},
+    } as Record<string, unknown>, {
+      get(target, property) {
+        return Reflect.get(target, property) ?? { activate: async () => {} };
+      },
+    });
+
+    await executeActivationStages(
+      entry.role,
+      entry.stages.map((stage) => ({ id: stage.id, run: () => stage.run(runtime as never) })),
+      { clock: () => "2025-01-01T00:00:00.000Z", writeTrace: (record) => { traces.push(record); } },
+    );
+
+    assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
+      { role: entry.role, stageId: entry.stages[0]!.id, status: "started" },
+      { role: entry.role, stageId: entry.stages[0]!.id, status: "completed" },
+    ]);
+    for (const trace of traces) assert.equal(Value.Check(activationTraceRecordSchema, trace), true);
+  }
+});
+
 test("the shared executor runs every declared stage in order", async () => {
   const calls: string[] = [];
   const stages: ActivationStage[] = [
@@ -69,6 +97,106 @@ function runtimeHarness(options: {
   };
   return { handler, traces, ctx, aborts: () => aborts };
 }
+
+test("every registered whole-activation rejection terminates nonzero with a named cause before a model turn", async () => {
+  for (const entry of ROLE_REGISTRY) {
+    process.exitCode = undefined;
+    const handlers = new Map<string, Array<(event: { reason?: string }, ctx: ExtensionContext) => unknown>>();
+    const traces: ActivationTraceRecord[] = [];
+    let aborts = 0;
+    let providerTurns = 0;
+    const flags: Record<string, unknown> = {
+      "ak-role": entry.role,
+      "ak-navigator-snapshot": "/lawful/snapshot.json",
+      "ak-doctor-case": "/lawful/case",
+      "ak-merger-input": "/lawful/merger.json",
+    };
+    const rejection = new TypeError(`${entry.role} activation rejected`);
+    const reject = async (): Promise<never> => { throw rejection; };
+    const pi = {
+      registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
+      getFlag(name: string) { return flags[name]; },
+      on(name: string, handler: (event: { reason?: string }, ctx: ExtensionContext) => unknown) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    } as unknown as ExtensionAPI;
+    createRoleRuntimeExtension({
+      loadJudgeSoul: reject,
+      loadFixerSoul: reject,
+      loadCoderSoul: reject,
+      loadReviewerSoul: reject,
+      loadCollectorSoul: reject,
+      loadDoctorSoul: reject,
+      loadNavigatorSoul: reject,
+      loadNavigatorSnapshot: reject,
+      loadNavigatorEvidence: reject,
+      loadMergerSoul: reject,
+      createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      activationClock: () => "2025-01-01T00:00:00.000Z",
+      activationTraceWriter: (record) => { traces.push(record); },
+    })(pi);
+    const ctx = { mode: "print", cwd: "/repository", abort() { aborts++; } } as unknown as ExtensionContext;
+    const start = handlers.get("session_start")?.[0];
+    assert.ok(start);
+    await assert.rejects(async () => start({ reason: "startup" }, ctx), rejection);
+
+    // Pi reaches its provider only after all before_agent_start handlers admit dispatch.
+    await assert.rejects(async () => {
+      for (const before of handlers.get("before_agent_start") ?? []) await before({}, ctx);
+      providerTurns++;
+    }, (error: unknown) => error instanceof ActivationBarrierError);
+    assert.equal(providerTurns, 0, `${entry.role} reached the provider`);
+    assert.equal(aborts, 2);
+    assert.equal(process.exitCode, 1);
+    const failed = traces.find((trace) => trace.status === "failed");
+    assert.ok(failed && failed.status === "failed");
+    assert.deepEqual(failed.cause, { name: "TypeError", message: `${entry.role} activation rejected` });
+  }
+});
+
+test("incident 2026-08-02: a FixPacketV1-violating fixer ignition never continues uncaged", async () => {
+  process.exitCode = undefined;
+  type Handler = (event: { reason?: string }, ctx: ExtensionContext) => unknown;
+  const handlers = new Map<string, Handler[]>();
+  const traces: ActivationTraceRecord[] = [];
+  let providerTurns = 0;
+  const flags: Record<string, unknown> = {
+    "ak-role": "fixer",
+    "ak-fixer-phase": "apply",
+    "ak-fix-packet": "/lawful/malformed-fix-packet.json",
+  };
+  const pi = {
+    registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
+    getFlag(name: string) { return flags[name]; },
+    on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+  } as unknown as ExtensionAPI;
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "unused",
+    loadFixerSoul: async () => "FIXER LAW",
+    loadFixPacket: async () => JSON.stringify({ version: "not-FixPacketV1" }),
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+    activationClock: () => "2026-08-02T00:00:00.000Z",
+    activationTraceWriter: (record) => { traces.push(record); },
+  })(pi);
+  const ctx = { mode: "print", cwd: "/repository", abort() {} } as unknown as ExtensionContext;
+  const start = handlers.get("session_start")?.[0];
+  assert.ok(start);
+  await assert.rejects(async () => start({ reason: "startup" }, ctx), /FixPacketV1/);
+  await assert.rejects(async () => {
+    for (const before of handlers.get("before_agent_start") ?? []) await before({}, ctx);
+    providerTurns++;
+  }, (error: unknown) => error instanceof ActivationBarrierError);
+
+  assert.equal(process.exitCode, 1);
+  assert.equal(providerTurns, 0);
+  const failed = traces.find((trace) => trace.status === "failed");
+  assert.ok(failed && failed.status === "failed");
+  assert.equal(failed.cause.name.length > 0, true);
+  assert.match(failed.cause.message, /FixPacketV1/);
+});
 
 test("a rejected registered activation fails closed with a structured named cause and dispatch barrier", async () => {
   const h = runtimeHarness();
