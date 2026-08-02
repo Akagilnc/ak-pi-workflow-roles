@@ -14,37 +14,42 @@ export type MaterialSelection = Readonly<{ id: string; repositoryPath: string }>
 export type ReviewerProposalV1 = Readonly<{ version: 1; base: Readonly<{ revision: string }>; materials: readonly MaterialSelection[]; relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>; spec: Readonly<{ state: "established" | "not-established" }>; required: Readonly<{ standards: ReviewerCapabilityRequest; spec?: ReviewerCapabilityRequest }> }>;
 export type AdmittedReviewerProposal = Readonly<{ baseRevision: string; materials: readonly MaterialSelection[]; relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>; standardsGrant: ReviewerCapabilityRequest; specGrant?: ReviewerCapabilityRequest; prerequisiteOperations: readonly ReviewerPrerequisiteOperation[] }>;
 
-export class ReviewerAdmissionError extends Error { constructor(readonly code: "proposal-invalid"|"base-invalid"|"material-invalid"|"spec-invalid"|"capability-invalid"|"prerequisite-missing") { super(code); } }
-const fail = (code: ReviewerAdmissionError["code"]): never => { throw new ReviewerAdmissionError(code); };
+export class ReviewerAdmissionError extends Error {
+  constructor(
+    readonly code: "proposal-invalid"|"base-invalid"|"material-invalid"|"spec-invalid"|"capability-invalid"|"prerequisite-missing",
+    readonly diagnostic: string,
+  ) { super(`${code}: ${diagnostic}`); }
+}
+const fail = (code: ReviewerAdmissionError["code"], diagnostic: string): never => { throw new ReviewerAdmissionError(code, diagnostic); };
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const unique = (xs: readonly unknown[]) => new Set(xs).size === xs.length;
 const frozen = <T extends string>(xs: readonly T[]): readonly T[] => Object.freeze([...xs]);
 const immutableRequest = (r: ReviewerCapabilityRequest): ReviewerCapabilityRequest => Object.freeze({ tools:frozen(r.tools), prerequisiteOperations:frozen(r.prerequisiteOperations) });
 function request(value: unknown, ceiling: ReviewerCapabilitiesV1, hostTools: readonly string[]): ReviewerCapabilityRequest {
-  if (!record(value)) fail("capability-invalid");
+  if (!record(value)) fail("capability-invalid", "required capability request must be an object");
   const {tools,prerequisiteOperations}=value as Record<string, unknown>;
-  if (!Array.isArray(tools)||!Array.isArray(prerequisiteOperations)||!tools.every(x=>typeof x==="string"&&(REVIEWER_CHILD_TOOLS as readonly string[]).includes(x))||!prerequisiteOperations.every(x=>typeof x==="string"&&(REVIEWER_PREREQUISITES as readonly string[]).includes(x))||!unique(tools)||!unique(prerequisiteOperations)||tools.some(x=>!ceiling.tools.includes(x as ReviewerChildToolName)||!hostTools.includes(x))||prerequisiteOperations.some(x=>!ceiling.prerequisiteOperations.includes(x as ReviewerPrerequisiteOperation))) fail("capability-invalid");
+  if (!Array.isArray(tools)||!Array.isArray(prerequisiteOperations)||!tools.every(x=>typeof x==="string"&&(REVIEWER_CHILD_TOOLS as readonly string[]).includes(x))||!prerequisiteOperations.every(x=>typeof x==="string"&&(REVIEWER_PREREQUISITES as readonly string[]).includes(x))||!unique(tools)||!unique(prerequisiteOperations)||tools.some(x=>!ceiling.tools.includes(x as ReviewerChildToolName)||!hostTools.includes(x))||prerequisiteOperations.some(x=>!ceiling.prerequisiteOperations.includes(x as ReviewerPrerequisiteOperation))) fail("capability-invalid", "required.tools/prerequisiteOperations must be unique, known, and within the capability and host ceilings");
   return immutableRequest({tools:tools as ReviewerChildToolName[],prerequisiteOperations:prerequisiteOperations as ReviewerPrerequisiteOperation[]});
 }
 const SAFE_ID=/^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export function admitReviewerProposal(proposal: unknown, ceiling: ReviewerCapabilitiesV1, hostTools: readonly string[]): AdmittedReviewerProposal {
-  if(!record(proposal)||proposal.version!==1) fail("proposal-invalid");
+  if(!record(proposal)||proposal.version!==1) fail("proposal-invalid", "proposal.version must equal 1");
   const p=proposal as Record<string, unknown>;
-  if(!record(p.base)||typeof p.base.revision!=="string"||!p.base.revision) fail("base-invalid");
+  if(!record(p.base)||typeof p.base.revision!=="string"||!p.base.revision) fail("base-invalid", "base.revision must be a nonempty string");
   const base=p.base as Record<string, unknown>;
-  if(!Array.isArray(p.materials)) fail("material-invalid");
+  if(!Array.isArray(p.materials)) fail("material-invalid", "materials must be an array");
   const materialValues=p.materials as unknown[];
   const materials: MaterialSelection[]=[];
-  for(const value of materialValues){if(!record(value)||typeof value.id!=="string"||!SAFE_ID.test(value.id)||typeof value.repositoryPath!=="string"||!value.repositoryPath) fail("material-invalid");const material=value as Record<string, unknown>;materials.push(Object.freeze({id:material.id as string,repositoryPath:material.repositoryPath as string}));}
-  if(!unique(materials.map(x=>x.id))||!unique(materials.map(x=>x.repositoryPath.normalize("NFC")))) fail("material-invalid");
-  if(!record(p.spec)||(p.spec.state!=="established"&&p.spec.state!=="not-established")) fail("spec-invalid");
+  for(const value of materialValues){if(!record(value)||typeof value.id!=="string"||!SAFE_ID.test(value.id)||typeof value.repositoryPath!=="string"||!value.repositoryPath) fail("material-invalid", "each materials entry requires a safe id and nonempty repositoryPath");const material=value as Record<string, unknown>;materials.push(Object.freeze({id:material.id as string,repositoryPath:material.repositoryPath as string}));}
+  if(!unique(materials.map(x=>x.id))||!unique(materials.map(x=>x.repositoryPath.normalize("NFC")))) fail("material-invalid", "materials ids and normalized repositoryPath values must be unique");
+  if(!record(p.spec)||(p.spec.state!=="established"&&p.spec.state!=="not-established")) fail("spec-invalid", "spec.state must be established or not-established");
   const spec=p.spec as Record<string, unknown>;
-  if(!record(p.required)||p.required.standards===undefined||(spec.state==="established"&&p.required.spec===undefined)) fail("capability-invalid");
+  if(!record(p.required)||p.required.standards===undefined||(spec.state==="established"&&p.required.spec===undefined)) fail("capability-invalid", "required.standards is mandatory and required.spec is mandatory when spec.state is established");
   const required=p.required as Record<string, unknown>;
   let relevanceHints: AdmittedReviewerProposal["relevanceHints"];
-  if(p.relevanceHints!==undefined){if(!record(p.relevanceHints))fail("material-invalid");const hints=p.relevanceHints as Record<string, unknown>;for(const hs of [hints.standards,hints.spec])if(hs!==undefined&&(!Array.isArray(hs)||!hs.every(x=>typeof x==="string")||!unique(hs)))fail("material-invalid");relevanceHints=Object.freeze({...(hints.standards===undefined?{}:{standards:frozen(hints.standards as string[])}),...(hints.spec===undefined?{}:{spec:frozen(hints.spec as string[])})});}
-  for(const op of REVIEWER_PREREQUISITES.filter(x=>x.startsWith("preflight."))) if(!ceiling.prerequisiteOperations.includes(op)) fail("prerequisite-missing");
+  if(p.relevanceHints!==undefined){if(!record(p.relevanceHints))fail("material-invalid", "relevanceHints must be an object");const hints=p.relevanceHints as Record<string, unknown>;for(const hs of [hints.standards,hints.spec])if(hs!==undefined&&(!Array.isArray(hs)||!hs.every(x=>typeof x==="string")||!unique(hs)))fail("material-invalid", "relevanceHints axes must contain unique strings");relevanceHints=Object.freeze({...(hints.standards===undefined?{}:{standards:frozen(hints.standards as string[])}),...(hints.spec===undefined?{}:{spec:frozen(hints.spec as string[])})});}
+  for(const op of REVIEWER_PREREQUISITES.filter(x=>x.startsWith("preflight."))) if(!ceiling.prerequisiteOperations.includes(op)) fail("prerequisite-missing", `capability prerequisiteOperations is missing ${op}`);
   const standardsGrant=request(required.standards,ceiling,hostTools); const specGrant=spec.state==="established"?request(required.spec,ceiling,hostTools):undefined;
-  const runner=REVIEWER_PREREQUISITES.filter(x=>x.startsWith("runner.")); for(const op of runner)if(!ceiling.prerequisiteOperations.includes(op))fail("prerequisite-missing");
+  const runner=REVIEWER_PREREQUISITES.filter(x=>x.startsWith("runner.")); for(const op of runner)if(!ceiling.prerequisiteOperations.includes(op))fail("prerequisite-missing", `capability prerequisiteOperations is missing ${op}`);
   return Object.freeze({baseRevision:base.revision as string,materials:Object.freeze(materials),...(relevanceHints===undefined?{}:{relevanceHints}),standardsGrant,...(specGrant?{specGrant}:{}),prerequisiteOperations:frozen([...new Set([...standardsGrant.prerequisiteOperations,...(specGrant?.prerequisiteOperations??[]),...runner])])});
 }
