@@ -40,6 +40,8 @@ import type { ReviewerDispatchRunResult } from "./reviewer-agent.ts";
 import {
   createCoderRoleRuntime,
   createFixerRoleRuntime,
+  FIXER_FLAG_DEFINITIONS,
+  FIXER_PHASES,
 } from "./worker-role.ts";
 import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
 
@@ -68,7 +70,9 @@ export {
 } from "./reviewer-role.ts";
 export {
   CODER_OUTPUT_TOOL_NAME,
+  FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
+  FIXER_PHASES,
   type CoderOutput,
   type FixerOutput,
   type WorkerOutput,
