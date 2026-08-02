@@ -1,4 +1,4 @@
-import { carriesPackageAuditObservation, COLLECTOR_OUTPUT_TOOL, deepEqual, isTerminatingToolName, projectReviewerIntentToReceipt, validateAcceptedDetails, } from "../package-contracts/terminating-tools.js";
+import { carriesPackageAuditObservation, COLLECTOR_OUTPUT_TOOL, deepEqual, isTerminatingToolName, projectReviewerIntentToReceipt, validateAcceptedDetails, validateDoctorSubmissionShape, } from "../package-contracts/terminating-tools.js";
 import { RecorderError } from "./errors.js";
 import { combineReports, scanJsonValue } from "./scanner.js";
 const emptyReport = { hits: [], redacted: false };
@@ -15,6 +15,21 @@ function collectorProjection(argumentsValue, details) {
         return rest;
     });
     return deepEqual(argumentsValue.legs, projected);
+}
+function doctorProjection(argumentsValue, details) {
+    try {
+        const testimony = validateDoctorSubmissionShape(argumentsValue);
+        const receipt = validateAcceptedDetails("ak_doctor_output", details);
+        if (testimony.status === "refused")
+            return deepEqual(testimony, receipt);
+        if (receipt.status !== "completed")
+            return false;
+        const { cost: _runtimeCost, ...projected } = receipt;
+        return deepEqual(testimony, projected);
+    }
+    catch {
+        return false;
+    }
 }
 function usageOf(value) {
     if (!isRecord(value))
@@ -172,7 +187,9 @@ function finalizeAcceptedPair(pair) {
         ? collectorProjection(issuance.arguments, resultMessage.details)
         : issuance.toolName === "ak_reviewer_output"
             ? true
-            : deepEqual(issuance.arguments, resultMessage.details);
+            : issuance.toolName === "ak_doctor_output"
+                ? doctorProjection(issuance.arguments, resultMessage.details)
+                : deepEqual(issuance.arguments, resultMessage.details);
     if (!detailsMatch)
         invalid();
     let details;

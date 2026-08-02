@@ -48,12 +48,13 @@ test("one retained runs directory yields an independently cited single-case cost
 
   const store = new DoctorEvidenceStore(patient);
   store.read("review-004/session/real.jsonl");
-  const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [] } as const;
+  const output = { status: "completed", case: patient.identity, findings: [] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-  assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, toolCalls: { ...patient.cost.toolCalls, count: 3 } } }, patient, store), /re-derived/);
+  assert.throws(() => validateDoctorOutput({ ...output, cost: patient.cost }, patient, store), /closed contract/);
+  assert.throws(() => validateDoctorOutput({ ...output, case: { ...patient.identity, issueNumber: 29 } }, patient, store), /activated case identity/);
 });
 
-test("runtime-derived metrics permit completion when a case exceeds evidence pagination, but unequal metrics fail", async () => {
+test("runtime-derived metrics permit testimony when a case exceeds evidence pagination", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-large-case-"));
   const runs = join(root, ".ak/work/issues/40/runs");
   await mkdir(join(runs, "coder/session"), { recursive: true });
@@ -74,9 +75,8 @@ test("runtime-derived metrics permit completion when a case exceeds evidence pag
   assert.equal(store.hasRead(evidenceId), true);
   assert.deepEqual(store.readRecord(), [{ evidenceId, fullyRead: true }]);
   const finding = { targetKey: "case", observation: "Non-ASCII retained evidence was fully read", evidenceIds: [evidenceId] } as const;
-  const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [finding] } as const;
+  const output = { status: "completed", case: patient.identity, findings: [finding] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-  assert.throws(() => validateDoctorOutput({ ...output, cost: { ...patient.cost, outputTokens: { ...patient.cost.outputTokens, count: 8 } } }, patient, store), /re-derived/);
 });
 
 test("commit accounting admits only typed commit SHAs from accepted terminating results", async () => {
@@ -196,7 +196,7 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   store.read(evidenceId);
   const guardrail = { answer: true, evidenceIds: [evidenceId], explanation: "Observed in the retained case" };
   const finding = { targetKey: "case", observation: "The retained case used two tool calls", evidenceIds: [evidenceId] } as const;
-  const output = { status: "completed", case: patient.identity, cost: patient.cost, findings: [finding] } as const;
+  const output = { status: "completed", case: patient.identity, findings: [finding] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ targetKey: "case", evidenceIds: [evidenceId] }] }, patient, store), /closed contract/);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, observation: "" }] }, patient, store), /closed contract/);
