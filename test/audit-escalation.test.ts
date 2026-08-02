@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -19,19 +16,25 @@ import {
   isAuditEscalationResult,
   projectAuditEscalation,
 } from "../src/audit-escalation.ts";
-import {
-  AUDITOR_SOUL_PATHS,
-  AUDITOR_SOUL_ROLES,
-  loadAuditorSoul,
-} from "../src/auditor-soul.ts";
+import { AUDITOR_SOUL_ROLES } from "../src/auditor-soul.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME } from "../src/doctor-contracts.ts";
 import { createPiDoctorAuditor, DOCTOR_AUDIT_TOOL_NAME } from "../src/doctor-auditor.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
 import { createPiReviewerAuditor, REVIEWER_AUDIT_TOOL_NAME } from "../src/reviewer-auditor.ts";
 import {
+  FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
+  REVIEWER_OUTPUT_TOOL_NAME,
   validateAcceptedDetails,
 } from "../src/package-contracts/terminating-tools.ts";
+
+const auditedRoleToolNames = [
+  JUDGE_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
+  REVIEWER_OUTPUT_TOOL_NAME,
+  DOCTOR_OUTPUT_TOOL_NAME,
+] as const;
 
 const context = {
   model: { provider: "audit-test", id: "same-model", api: "openai-responses" },
@@ -123,19 +126,26 @@ const auditorCases = [
   },
 ] as const;
 
-test("all retained auditors load their exact Soul and share typed escalation", async () => {
+test("the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor", async () => {
   assert.deepEqual(AUDITOR_SOUL_ROLES, ["judge", "fixer", "reviewer", "doctor"]);
+  assert.deepEqual(auditedRoleToolNames, [
+    JUDGE_OUTPUT_TOOL_NAME,
+    FIXER_OUTPUT_TOOL_NAME,
+    REVIEWER_OUTPUT_TOOL_NAME,
+    DOCTOR_OUTPUT_TOOL_NAME,
+  ]);
+  const terminatingTools = await import("../src/package-contracts/terminating-tools.ts");
+  assert.equal("carriesPackageAuditObservation" in terminatingTools, false);
+});
+
+test("all retained auditors share typed escalation", async () => {
   for (const entry of auditorCases) {
     const prompt = { value: undefined as string | undefined };
     const result = await entry.run(captureSystemPrompt(entry.toolName, prompt));
     assert.equal(result.status, "escalate");
     assert.deepEqual(result.conflicts, escalationArguments.conflicts);
     assert.deepEqual(result.decisionGate, escalationArguments.decisionGate);
-    assert.equal(
-      prompt.value,
-      await readFile(AUDITOR_SOUL_PATHS[entry.role], "utf8"),
-      `${entry.role} audit prompt must be exactly its Soul file`,
-    );
+    assert.match(prompt.value ?? "", /./, `${entry.role} audit must load a nonblank Soul`);
   }
 });
 
@@ -179,51 +189,6 @@ test("shared compliance transport forces the active decision tool and one call",
         });
       }
     }
-  }
-});
-
-test("changing one loader source affects only that role's next audit", async () => {
-  const directory = await mkdtemp(resolve(tmpdir(), "ak-auditor-soul-"));
-  const replacement = resolve(directory, "judge.md");
-  const originalPath = AUDITOR_SOUL_PATHS.judge;
-  const originalMap = AUDITOR_SOUL_PATHS as Record<string, string>;
-  await writeFile(replacement, "JUDGE SOUL EDIT\n", "utf8");
-  originalMap.judge = replacement;
-  try {
-    const judgePrompt = { value: undefined as string | undefined };
-    const reviewerPrompt = { value: undefined as string | undefined };
-    await createPiJudgeAuditor(captureSystemPrompt(JUDGE_AUDIT_TOOL_NAME, judgePrompt))(
-      judgeInput,
-      { context },
-    );
-    await createPiReviewerAuditor(captureSystemPrompt(REVIEWER_AUDIT_TOOL_NAME, reviewerPrompt))(
-      reviewerInput,
-      { context },
-    );
-    assert.equal(judgePrompt.value, "JUDGE SOUL EDIT\n");
-    assert.equal(reviewerPrompt.value, await readFile(AUDITOR_SOUL_PATHS.reviewer, "utf8"));
-  } finally {
-    originalMap.judge = originalPath;
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("Soul load failures preserve missing causes and reject blank files", async () => {
-  const directory = await mkdtemp(resolve(tmpdir(), "ak-auditor-soul-failure-"));
-  const originalPath = AUDITOR_SOUL_PATHS.judge;
-  const originalMap = AUDITOR_SOUL_PATHS as Record<string, string>;
-  try {
-    originalMap.judge = resolve(directory, "missing.md");
-    await assert.rejects(loadAuditorSoul("judge"), (error: unknown) =>
-      (error as NodeJS.ErrnoException).code === "ENOENT",
-    );
-    const blank = resolve(directory, "blank.md");
-    await writeFile(blank, "  \n", "utf8");
-    originalMap.judge = blank;
-    await assert.rejects(loadAuditorSoul("judge"), /judge auditor Soul is blank/);
-  } finally {
-    originalMap.judge = originalPath;
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
