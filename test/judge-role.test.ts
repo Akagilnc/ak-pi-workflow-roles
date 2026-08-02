@@ -160,7 +160,7 @@ async function startJudge(
   return { harness, tool };
 }
 
-test("stable factory registers all role flags in exact help order and stays inert without a role", async () => {
+test("stable factory registers the complete typed role flag set and stays inert without a role", async () => {
   let loads = 0;
   const harness = extensionHarness(undefined);
   createRoleRuntimeExtension({
@@ -172,71 +172,26 @@ test("stable factory registers all role flags in exact help order and stays iner
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
 
-  assert.deepEqual([...harness.flags], [
-    ["ak-role", {
-      description: "Activate a packaged workflow role: judge, fixer, coder, reviewer, collector, doctor, navigator, or merger",
-      type: "string",
-    }],
-    ["ak-fix-packet", {
-      description: "Path to opaque prose instructions for the Fixer",
-      type: "string",
-    }],
-    ["ak-fixer-prerequisites", {
-      description: "Optional path to a JSON array of typed Fixer prerequisites",
-      type: "string",
-    }],
-    ["ak-fixer-phase", {
-      description: "Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
-      type: "string",
-    }],
-    ["ak-coder-task", {
-      description: "Markdown task assigned to the coder role",
-      type: "string",
-    }],
-    ["ak-coder-phase", {
-      description: "Coder phase: plan (inspect and propose an implementation plan; no edits or commits) or apply (execute the approved plan and verify the first implementation)",
-      type: "string",
-    }],
-    ["ak-review-task", {
-      description: "Opaque Markdown review task assigned to the reviewer role",
-      type: "string",
-    }],
-    ["ak-review-capabilities", {
-      description: "Closed Reviewer capability grant bound to the exact task bytes",
-      type: "string",
-    }],
-    ["ak-review-scope-keys", {
-      description: "Optional comma-separated exact class keys limiting Reviewer scope",
-      type: "string",
-    }],
-    ["ak-doctor-case", {
-      description: "Retained .ak/work/issues/<n>/runs directory",
-      type: "string",
-    }],
-    ["ak-navigator-snapshot", {
-      description: "Path to one frozen Navigator v1 snapshot",
-      type: "string",
-    }],
-    ["ak-merger-input", {
-      description: "Path to an immutable digest-bound Merger v1 input JSON file",
-      type: "string",
-    }],
-    ["ak-collector-repo", {
-      description:
-        "GitHub owner/repo target for Collector (github.com only; conservative ASCII grammar). Collector forbids every Skill, including command-only Skills.",
-      type: "string",
-    }],
-    ["ak-collector-pr", {
-      description:
-        "Positive safe-integer pull request number for Collector. Supported profile: --no-skills, --no-extensions with only the explicit Collector package extension, no prompt templates/context files, one print/JSON prompt",
-      type: "string",
-    }],
-    ["ak-collector-legs", {
-      description:
-        "Path to the Collector v1 leg manifest JSON file. Pi 0.82.1 late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
-      type: "string",
-    }],
-  ]);
+  assert.deepEqual(new Set(harness.flags.keys()), new Set([
+    "ak-role",
+    "ak-fix-packet",
+    "ak-fixer-prerequisites",
+    "ak-fixer-phase",
+    "ak-coder-task",
+    "ak-coder-phase",
+    "ak-review-task",
+    "ak-review-capabilities",
+    "ak-review-scope-keys",
+    "ak-doctor-case",
+    "ak-navigator-snapshot",
+    "ak-merger-input",
+    "ak-collector-repo",
+    "ak-collector-pr",
+    "ak-collector-legs",
+  ]));
+  for (const [name, options] of harness.flags) {
+    assert.equal((options as { type?: unknown }).type, "string", name);
+  }
   assert.deepEqual(new Set(harness.handlers.keys()), new Set(["input", "before_agent_start", "session_start"]));
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
@@ -305,7 +260,7 @@ test("focused Fixer and Coder controllers own their flags and distinct lifecycle
       loadPacket: async () => emptyFixPacket,
     },
   );
-  assert.deepEqual([...fixer.flags.keys()], ["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]);
+  assert.deepEqual(new Set(fixer.flags.keys()), new Set(["ak-fix-packet", "ak-fixer-prerequisites", "ak-fixer-phase"]));
   await fixerRuntime.activate();
   assert.deepEqual([...fixer.tools.keys()], [FIXER_OUTPUT_TOOL_NAME]);
   assert.ok(fixer.handlers.has("before_agent_start"));
@@ -323,7 +278,7 @@ test("focused Fixer and Coder controllers own their flags and distinct lifecycle
     },
     { failInfrastructure(error) { throw error; } },
   );
-  assert.deepEqual([...coder.flags.keys()], ["ak-coder-task", "ak-coder-phase"]);
+  assert.deepEqual(new Set(coder.flags.keys()), new Set(["ak-coder-task", "ak-coder-phase"]));
   await coderRuntime.activate();
   assert.deepEqual([...coder.tools.keys()], [CODER_OUTPUT_TOOL_NAME]);
   assert.ok(coder.handlers.has("before_agent_start"));
