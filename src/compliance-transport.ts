@@ -1,5 +1,4 @@
 import {
-  StringEnum,
   uuidv7,
   type Api,
   type AssistantMessage,
@@ -9,7 +8,8 @@ import {
   type Usage,
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 
 export type ComplianceCompletion = (
   model: Model<Api>,
@@ -19,7 +19,13 @@ export type ComplianceCompletion = (
 
 export type ComplianceDecision =
   | { status: "pass"; usage?: Usage }
-  | { status: "revise"; violations: readonly string[]; usage?: Usage };
+  | { status: "revise"; violations: readonly string[]; usage?: Usage }
+  | {
+    status: "escalate";
+    conflicts: readonly string[];
+    decisionGate: { question: string; options: readonly string[] };
+    usage?: Usage;
+  };
 
 export type ComplianceDispatch = {
   model: Model<Api>;
@@ -30,6 +36,44 @@ export type ComplianceDispatch = {
   };
 };
 
+const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
+const decisionGateSchema = Type.Object(
+  {
+    question: nonblank,
+    options: Type.Array(nonblank, { minItems: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+/** The registered audit tool is the single field/status-leaf schema owner. */
+export const complianceDecisionSchema = Type.Union([
+  Type.Object(
+    {
+      status: Type.Literal("pass"),
+      // Preserve the established pass shape: an explicitly empty violations list.
+      violations: Type.Array(nonblank, { maxItems: 0 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      status: Type.Literal("revise"),
+      violations: Type.Array(nonblank, { minItems: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      status: Type.Literal("escalate"),
+      conflicts: Type.Array(nonblank, { minItems: 1 }),
+      decisionGate: decisionGateSchema,
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+type ComplianceDecisionArguments = Static<typeof complianceDecisionSchema>;
+
 export function createComplianceDecisionTool(
   name: string,
   description: string,
@@ -37,13 +81,7 @@ export function createComplianceDecisionTool(
   return {
     name,
     description,
-    parameters: Type.Object(
-      {
-        status: StringEnum(["pass", "revise"] as const),
-        violations: Type.Array(Type.String({ minLength: 1 })),
-      },
-      { additionalProperties: false },
-    ),
+    parameters: complianceDecisionSchema,
     constrainedSampling: {
       type: "json_schema" as const,
       strict: "prefer" as const,
@@ -109,35 +147,27 @@ export function readComplianceDecision(
   ) {
     throw new Error(`${invalidLabel}: arguments must be an object`);
   }
-  const decision = arguments_ as Record<string, unknown>;
-  const keys = Object.keys(decision);
-  if (
-    keys.length !== 2 ||
-    !keys.includes("status") ||
-    !keys.includes("violations")
-  ) {
-    throw new Error(`${invalidLabel}: arguments must have exact keys`);
+  if (!Value.Check(complianceDecisionSchema, arguments_)) {
+    throw new Error(`${invalidLabel}: arguments do not match the decision schema`);
   }
-  const status = decision["status"];
-  const violations = decision["violations"];
-  if (
-    !Array.isArray(violations) ||
-    !violations.every(
-      (value): value is string =>
-        typeof value === "string" && value.trim().length > 0,
-    )
-  ) {
-    throw new Error(`${invalidLabel}: violations must be non-blank strings`);
+  const decision = arguments_ as ComplianceDecisionArguments;
+  switch (decision.status) {
+    case "pass":
+      return { status: "pass", usage: response.usage };
+    case "revise":
+      return {
+        status: "revise",
+        violations: decision.violations,
+        usage: response.usage,
+      };
+    case "escalate":
+      return {
+        status: "escalate",
+        conflicts: decision.conflicts,
+        decisionGate: decision.decisionGate,
+        usage: response.usage,
+      };
   }
-  if (status === "pass" && violations.length === 0) {
-    return { status: "pass", usage: response.usage };
-  }
-  if (status === "revise" && violations.length > 0) {
-    return { status: "revise", violations, usage: response.usage };
-  }
-  throw new Error(
-    `${invalidLabel}: pass requires no violations and revise requires violations`,
-  );
 }
 
 export async function runComplianceAudit(options: {

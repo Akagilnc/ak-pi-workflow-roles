@@ -4,33 +4,31 @@ import {
   createComplianceDecisionTool,
   runComplianceAudit,
   type ComplianceCompletion,
+  type ComplianceDecision,
 } from "./compliance-transport.ts";
-import type { SoulAuditInput, SoulAuditResult } from "./judge-role.ts";
+import { loadAuditorSoul } from "./auditor-soul.ts";
+import type { SoulAuditInput } from "./judge-role.ts";
 
-export const SOUL_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
+export const JUDGE_AUDIT_TOOL_NAME = "ak_soul_audit_decision";
+export const SOUL_AUDIT_TOOL_NAME = JUDGE_AUDIT_TOOL_NAME;
 
-export type SoulAuditOptions = {
+export type JudgeAuditOptions = {
   context: ExtensionContext;
   signal?: AbortSignal;
 };
 
 const auditDecisionTool = createComplianceDecisionTool(
-  SOUL_AUDIT_TOOL_NAME,
+  JUDGE_AUDIT_TOOL_NAME,
   "Return whether the proposed verdict demonstrably follows the supplied judge soul.",
 );
 
-export function createPiSoulAuditor(
+export function createPiJudgeAuditor(
   runCompletion?: ComplianceCompletion,
-): (input: SoulAuditInput, options: SoulAuditOptions) => Promise<SoulAuditResult> {
+): (input: SoulAuditInput, options: JudgeAuditOptions) => Promise<ComplianceDecision> {
   return async (input, options) =>
     runComplianceAudit({
       tool: auditDecisionTool,
-      systemPrompt: [
-        "You are a procedural compliance auditor, not a second judge.",
-        "Determine only whether the proposed verdict demonstrably applied the supplied judge soul to the adjudication record.",
-        "Do not replace the judge's substantive finding decisions with your own.",
-        `Call ${SOUL_AUDIT_TOOL_NAME} exactly once. Use pass only when the record demonstrates compliance; otherwise use revise and name each violated soul rule.`,
-      ].join("\n"),
+      systemPrompt: await loadAuditorSoul("judge"),
       serializedInput: [
         "<judge_soul>",
         input.soul,

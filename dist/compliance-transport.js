@@ -1,13 +1,33 @@
-import { StringEnum, uuidv7, } from "@earendil-works/pi-ai";
+import { uuidv7, } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
+const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
+const decisionGateSchema = Type.Object({
+    question: nonblank,
+    options: Type.Array(nonblank, { minItems: 1 }),
+}, { additionalProperties: false });
+/** The registered audit tool is the single field/status-leaf schema owner. */
+export const complianceDecisionSchema = Type.Union([
+    Type.Object({
+        status: Type.Literal("pass"),
+        // Preserve the established pass shape: an explicitly empty violations list.
+        violations: Type.Array(nonblank, { maxItems: 0 }),
+    }, { additionalProperties: false }),
+    Type.Object({
+        status: Type.Literal("revise"),
+        violations: Type.Array(nonblank, { minItems: 1 }),
+    }, { additionalProperties: false }),
+    Type.Object({
+        status: Type.Literal("escalate"),
+        conflicts: Type.Array(nonblank, { minItems: 1 }),
+        decisionGate: decisionGateSchema,
+    }, { additionalProperties: false }),
+]);
 export function createComplianceDecisionTool(name, description) {
     return {
         name,
         description,
-        parameters: Type.Object({
-            status: StringEnum(["pass", "revise"]),
-            violations: Type.Array(Type.String({ minLength: 1 })),
-        }, { additionalProperties: false }),
+        parameters: complianceDecisionSchema,
         constrainedSampling: {
             type: "json_schema",
             strict: "prefer",
@@ -55,26 +75,27 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
         Array.isArray(arguments_)) {
         throw new Error(`${invalidLabel}: arguments must be an object`);
     }
+    if (!Value.Check(complianceDecisionSchema, arguments_)) {
+        throw new Error(`${invalidLabel}: arguments do not match the decision schema`);
+    }
     const decision = arguments_;
-    const keys = Object.keys(decision);
-    if (keys.length !== 2 ||
-        !keys.includes("status") ||
-        !keys.includes("violations")) {
-        throw new Error(`${invalidLabel}: arguments must have exact keys`);
+    switch (decision.status) {
+        case "pass":
+            return { status: "pass", usage: response.usage };
+        case "revise":
+            return {
+                status: "revise",
+                violations: decision.violations,
+                usage: response.usage,
+            };
+        case "escalate":
+            return {
+                status: "escalate",
+                conflicts: decision.conflicts,
+                decisionGate: decision.decisionGate,
+                usage: response.usage,
+            };
     }
-    const status = decision["status"];
-    const violations = decision["violations"];
-    if (!Array.isArray(violations) ||
-        !violations.every((value) => typeof value === "string" && value.trim().length > 0)) {
-        throw new Error(`${invalidLabel}: violations must be non-blank strings`);
-    }
-    if (status === "pass" && violations.length === 0) {
-        return { status: "pass", usage: response.usage };
-    }
-    if (status === "revise" && violations.length > 0) {
-        return { status: "revise", violations, usage: response.usage };
-    }
-    throw new Error(`${invalidLabel}: pass requires no violations and revise requires violations`);
 }
 export async function runComplianceAudit(options) {
     const model = options.context.model;

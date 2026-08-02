@@ -33,11 +33,7 @@ test("Navigator role definitions retain only role-specific evidence and output b
     snapshot,
     store: new NavigatorEvidenceStore(snapshot.evidence, new Map([["h", bytes]])),
   };
-  const definitions = createNavigatorToolDefinitions(
-    { auditCompliance: async () => ({ status: "pass" }) },
-    () => active,
-    { failInfrastructure(error: unknown, _ctx: ExtensionContext): never { throw error; } },
-  );
+  const definitions = createNavigatorToolDefinitions(() => active);
   assert.deepEqual(definitions.map((definition) => definition.name), [NAVIGATOR_EVIDENCE_TOOL_NAME, NAVIGATOR_OUTPUT_TOOL_NAME]);
   const read = await definitions[0].execute("read", { evidenceId: "e" });
   assert.match(read.details.content, /invoke shell/);

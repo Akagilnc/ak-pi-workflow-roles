@@ -24,6 +24,7 @@ import {
   type ReviewerIntent,
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
+import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorReceiptV1, type RecordedNavigatorReceiptV1 } from "./navigator-output.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
@@ -131,6 +132,11 @@ export function validateAcceptedDetails(
   toolName: TerminatingToolName,
   details: unknown,
 ): AcceptedDetails {
+  if (isAuditEscalationResult(details)) {
+    throw new AcceptedDetailsContractError(
+      "audit escalation is not an accepted role receipt",
+    );
+  }
   try {
     switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:

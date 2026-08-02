@@ -20,12 +20,11 @@ import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiReviewerAuditor } from "../src/reviewer-auditor.ts";
 import { createPiFixerAuditor } from "../src/fixer-auditor.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
-import { createPiNavigatorAuditor } from "../src/navigator-auditor.ts";
 import type { CurrentPositionSnapshotV1 } from "../src/navigator-contracts.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
-import { createPiSoulAuditor } from "../src/soul-auditor.ts";
+import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
 
 const extensionPath = fileURLToPath(import.meta.url);
 const judgeSoulPath = fileURLToPath(new URL("../souls/judge.md", import.meta.url));
@@ -119,7 +118,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadNavigatorSoul: () => readFile(navigatorSoulPath, "utf8"),
     loadNavigatorSnapshot: async (path) => JSON.parse(await readFile(path, "utf8")),
     loadNavigatorEvidence,
-    auditNavigatorCompliance: createPiNavigatorAuditor(),
     loadMergerSoul: () => readFile(mergerSoulPath, "utf8"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     createMergerGitState: (repositoryRoot) =>
@@ -129,7 +127,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext,
-    auditSoulCompliance: createPiSoulAuditor(),
+    auditSoulCompliance: createPiJudgeAuditor(),
     auditFixerCompliance: createPiFixerAuditor(),
     auditReviewerCompliance: createPiReviewerAuditor(),
   })(pi);

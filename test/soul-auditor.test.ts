@@ -9,7 +9,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { createPiSoulAuditor } from "../src/soul-auditor.ts";
+import { createPiJudgeAuditor as createPiSoulAuditor } from "../src/judge-auditor.ts";
 
 const usage = {
   input: 10,

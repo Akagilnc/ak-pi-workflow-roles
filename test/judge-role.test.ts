@@ -11,7 +11,7 @@ import {
 import { transcriptFromContext as productionTranscriptFromContext } from "../extensions/role-runtime.ts";
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
-import { createPiSoulAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
+import { createPiJudgeAuditor as createPiSoulAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
@@ -727,6 +727,43 @@ test("judge role returns revise as an ordinary errored tool result without abort
     /No authority clause was applied; Tests were not adjudicated/,
   );
   assert.equal(abortCalls, 0);
+});
+
+test("judge escalation returns one terminating human decision without a role verdict", async () => {
+  let auditCalls = 0;
+  const { tool } = await startJudge(async () => {
+    auditCalls += 1;
+    return {
+      status: "escalate",
+      conflicts: ["Judge Soul and controlling authority conflict"],
+      decisionGate: {
+        question: "Which authority should govern?",
+        options: ["Soul", "Controlling authority"],
+      },
+    };
+  });
+  const verdict = { judgeStatus: "converged" };
+  const result = await tool.execute(
+    "audit-escalation",
+    verdict,
+    undefined,
+    undefined,
+    toolCallContext([{ id: "audit-escalation", arguments: verdict }]),
+  );
+
+  assert.equal(auditCalls, 1);
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, {
+    kind: "audit_escalation",
+    conflicts: ["Judge Soul and controlling authority conflict"],
+    decisionGate: {
+      question: "Which authority should govern?",
+      options: ["Soul", "Controlling authority"],
+    },
+  });
+  assert.equal(Object.hasOwn(result.details, "judgeStatus"), false);
+  assert.match(result.content[0].text, /Human decision required/);
+  assert.doesNotMatch(result.content[0].text, /Judge verdict accepted/i);
 });
 
 test("judge aborts the active operation before rethrowing audit infrastructure failures", async () => {
