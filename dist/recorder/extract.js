@@ -1,4 +1,5 @@
-import { carriesPackageAuditObservation, COLLECTOR_OUTPUT_TOOL, deepEqual, isTerminatingToolName, projectReviewerIntentToReceipt, validateAcceptedDetails, validateDoctorSubmissionShape, } from "../package-contracts/terminating-tools.js";
+import { AcceptedDetailsContractError, carriesPackageAuditObservation, COLLECTOR_OUTPUT_TOOL, deepEqual, isTerminatingToolName, projectReviewerIntentToReceipt, validateAcceptedDetails, validateDoctorSubmissionShape, } from "../package-contracts/terminating-tools.js";
+import { DoctorSubmissionContractError } from "../doctor-contracts.js";
 import { RecorderError } from "./errors.js";
 import { combineReports, scanJsonValue } from "./scanner.js";
 const emptyReport = { hits: [], redacted: false };
@@ -27,8 +28,10 @@ function doctorProjection(argumentsValue, details) {
         const { cost: _runtimeCost, ...projected } = receipt;
         return deepEqual(testimony, projected);
     }
-    catch {
-        return false;
+    catch (error) {
+        if (error instanceof DoctorSubmissionContractError || error instanceof AcceptedDetailsContractError)
+            return false;
+        throw error;
     }
 }
 function usageOf(value) {

@@ -1,4 +1,5 @@
 import {
+  AcceptedDetailsContractError,
   carriesPackageAuditObservation,
   COLLECTOR_OUTPUT_TOOL,
   deepEqual,
@@ -10,6 +11,7 @@ import {
   type TerminatingToolName,
 } from "../package-contracts/terminating-tools.ts";
 import type { CollectorReceipt, DoctorOutput, JudgeVerdict, MergerOutput, RecordedNavigatorReceiptV1, RuntimeReviewerReceiptV2, WorkerOutput } from "../package-contracts/terminating-tools.ts";
+import { DoctorSubmissionContractError } from "../doctor-contracts.ts";
 import { RecorderError } from "./errors.ts";
 import { combineReports, scanJsonValue, type ScanReport } from "./scanner.ts";
 
@@ -43,8 +45,9 @@ function doctorProjection(argumentsValue: unknown, details: unknown): boolean {
     if (receipt.status !== "completed") return false;
     const { cost: _runtimeCost, ...projected } = receipt;
     return deepEqual(testimony, projected);
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof DoctorSubmissionContractError || error instanceof AcceptedDetailsContractError) return false;
+    throw error;
   }
 }
 

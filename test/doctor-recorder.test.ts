@@ -22,9 +22,16 @@ test("Recorder accepts only Doctor runtime cost augmentation", () => {
   assert.deepEqual(extract(refusal, refusal).receipt.details, refusal);
 });
 
-test("Recorder rejects changed testimony, malformed cost, and other augmentation", () => {
+test("Recorder rejects changed testimony, malformed contracts, and other augmentation", () => {
   assert.throws(() => extract(testimony, { ...receipt, findings: [{ targetKey: "case", observation: "changed", evidenceIds: ["e"] }] }), /acceptance lifecycle is invalid/);
   assert.throws(() => extract(testimony, { ...receipt, cost: { ...cost, toolCalls: { count: -1, sources: [] } } }), /acceptance lifecycle is invalid/);
   assert.throws(() => extract(testimony, { ...receipt, extra: true }), /acceptance lifecycle is invalid/);
   assert.throws(() => extract({ ...testimony, cost }, receipt), /acceptance lifecycle is invalid/);
+  assert.throws(() => extract({ status: "completed" }, receipt), /acceptance lifecycle is invalid/);
+});
+
+test("Recorder preserves unexpected Doctor projection failures", () => {
+  const sentinel = new Error("validator implementation failed");
+  const hostile = new Proxy(testimony, { get(target, key, receiver) { if (key === "status") throw sentinel; return Reflect.get(target, key, receiver); } });
+  assert.throws(() => extract(hostile, receipt), (error: unknown) => error === sentinel);
 });
