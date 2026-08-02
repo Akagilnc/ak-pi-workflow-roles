@@ -15,4 +15,4 @@ canonical Skill 决定各轴的实质问题和基线；包适配器只替代其�
 合规则 `pass`；明确违反 Soul 则 `revise` 并逐条指出；Soul 或 controlling authority
 冲突导致无法判断合规时，提交 `escalate` 并写明问题和可选项。
 
-恰好调用一次审计决定工具。
+恰好调用一次 `ak_reviewer_audit_decision`。
