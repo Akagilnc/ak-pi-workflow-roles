@@ -12,7 +12,16 @@ import { isTerminatingToolName, validateAcceptedDetails } from "./package-contra
 
 type LocalReceipt = { artifactKind: "acceptedReceipt"; details: unknown; toolCallId: string; toolName: string };
 type ChildFact = { exitCode: number | null; signal: NodeJS.Signals | null };
-type LocalInvocation = { receipt: LocalReceipt; evidenceRead: Array<{ evidenceId: string; fullyRead: boolean }>; reference: { id: string; sha256: string }; child: ChildFact };
+type LocalInvocation = { receipt: LocalReceipt | null; evidenceRead: Array<{ evidenceId: string; fullyRead: boolean }>; reference: { id: string; sha256: string }; child: ChildFact };
+
+function childFact(value: unknown): ChildFact {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("private invocation child fact malformed");
+  const fact = value as Record<string, unknown>;
+  if (Object.keys(fact).sort().join(",") !== "exitCode,signal" || !(fact.exitCode === null || Number.isInteger(fact.exitCode)) || !(fact.signal === null || typeof fact.signal === "string")) throw new Error("private invocation child fact malformed");
+  return fact as ChildFact;
+}
+
+function childFailed(child: ChildFact) { return child.signal !== null || child.exitCode !== 0; }
 
 async function store(path: string, value: unknown) {
   const text = `${canonicalJson(value)}\n`;
@@ -108,13 +117,17 @@ async function invoke(config: AssistedCallConfigV1, invocationId: string, childA
   await store(join(inputDirectory, "task.json"), task);
   await mkdir(sessionDirectory, { recursive: true, mode: 0o700 });
   const argv = [childArgv[0]!, "--session-dir", sessionDirectory, "--session-id", invocationId, ...childArgv.slice(1)];
-  const child = await launch(argv, config.execution.cwd, effectiveEnv(config, baseEnv));
-  const text = await sessionText(sessionDirectory, invocationId);
-  const receipt = acceptedReceipt(text);
-  const evidenceRead = nativeSessionEvidenceReads(text);
+  const child = childFact(await launch(argv, config.execution.cwd, effectiveEnv(config, baseEnv)));
   await mkdir(join(runDirectory, "invocations"), { recursive: true });
   await mkdir(invocationDirectory, { recursive: false });
   await store(join(invocationDirectory, "child.json"), child);
+  if (childFailed(child)) {
+    const failureStored = await store(join(inputDirectory, "failure.json"), child);
+    return { receipt: null, child, evidenceRead: [], reference: { id: `failure:${invocationId}`, sha256: failureStored.sha256 } };
+  }
+  const text = await sessionText(sessionDirectory, invocationId);
+  const receipt = acceptedReceipt(text);
+  const evidenceRead = nativeSessionEvidenceReads(text);
   const receiptStored = await store(join(invocationDirectory, "receipt.json"), receipt);
   return { receipt, child, evidenceRead, reference: { id: `receipt:${invocationId}`, sha256: receiptStored.sha256 } };
 }
@@ -123,19 +136,25 @@ async function existing(config: AssistedCallConfigV1, invocationId: string): Pro
   const runDirectory = assistedRunDirectory(config.subject.repositoryRoot, config.subject.parentIssue, config.runId);
   const invocationDirectory = join(runDirectory, "invocations", invocationId);
   try { await stat(invocationDirectory); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
-  let receiptText: string;
-  try { receiptText = await readFile(join(invocationDirectory, "receipt.json"), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
-  const receipt = JSON.parse(receiptText) as LocalReceipt;
-  if (!isTerminatingToolName(receipt.toolName)) throw new Error("private invocation tool mismatch");
-  validateAcceptedDetails(receipt.toolName, receipt.details);
-  const child = JSON.parse(await readFile(join(invocationDirectory, "child.json"), "utf8")) as ChildFact;
+  const child = childFact(JSON.parse(await readFile(join(invocationDirectory, "child.json"), "utf8")));
+  if (childFailed(child)) {
+    const failureText = await readFile(join(runDirectory, "invocation-inputs", invocationId, "failure.json"), "utf8");
+    if (canonicalJson(JSON.parse(failureText)) !== canonicalJson(child)) throw new Error("private invocation child failure mismatch");
+    return { receipt: null, child, evidenceRead: [], reference: { id: `failure:${invocationId}`, sha256: sha256Hex(failureText) } };
+  }
   const text = await sessionText(join(runDirectory, "sessions", invocationId, "session"), invocationId);
+  const extracted = acceptedReceipt(text);
+  const receiptText = await readFile(join(invocationDirectory, "receipt.json"), "utf8");
+  const receipt = JSON.parse(receiptText) as LocalReceipt;
+  if (!isTerminatingToolName(receipt.toolName) || canonicalJson(receipt) !== canonicalJson(extracted)) throw new Error("private invocation receipt mismatch");
+  validateAcceptedDetails(receipt.toolName, receipt.details);
   return { receipt, child, evidenceRead: nativeSessionEvidenceReads(text), reference: { id: `receipt:${invocationId}`, sha256: sha256Hex(receiptText) } };
 }
 
 function classifyRole(config: AssistedCallConfigV1, value: LocalInvocation, beforeTarget: string, afterTarget: string): RoleInvocationSettlementV1 {
   if (value.child.signal) return { terminalClass: "cancellation", reference: value.reference, beforeTarget, afterTarget };
   if (value.child.exitCode !== 0) return { terminalClass: "infrastructure_failure", reference: value.reference, beforeTarget, afterTarget };
+  if (!value.receipt) throw new Error("accepted role outcome missing from private invocation");
   const expected = { coder: "ak_coder_output", fixer: "ak_fixer_output", judge: "ak_judge_output", reviewer: "ak_reviewer_output", collector: "ak_collector_output", doctor: "ak_doctor_output" }[config.execution.role];
   if (value.receipt.toolName !== expected) throw new Error("selected-role tool mismatch");
   const details = value.receipt.details as Record<string, unknown>;
@@ -157,6 +176,7 @@ export function createAssistedInvocationTransportV1(baseEnv: NodeJS.ProcessEnv =
       if (!value) return null;
       if (kind === "navigator") {
         if (value.child.signal || value.child.exitCode !== 0) return { kind: "infrastructure_failure", reference: value.reference };
+        if (!value.receipt) throw new Error("accepted Navigator outcome missing from private invocation");
         if (value.receipt.toolName !== "ak_navigator_output") throw new Error("Navigator tool mismatch");
         return { kind: "accepted", receipt: value.receipt.details as NavigatorReceiptV1, evidenceRead: value.evidenceRead, reference: value.reference };
       }
@@ -169,6 +189,7 @@ export function createAssistedInvocationTransportV1(baseEnv: NodeJS.ProcessEnv =
       const argv = [piArgv[0]!, ...modelArgs(piArgv), "--ak-role", "navigator", "--ak-navigator-snapshot", snapshotPath, "--print", "Advise on this frozen current position and submit exactly one Navigator output."];
       const value = await invoke(config, invocationId, argv, position.snapshot, { kind: "navigator-consultation", snapshotDigest: position.snapshot.digest, positionCursor: position.snapshot.positionCursor }, baseEnv);
       if (value.child.signal || value.child.exitCode !== 0) return { kind: "infrastructure_failure", reference: value.reference };
+      if (!value.receipt) throw new Error("accepted Navigator outcome missing from private invocation");
       if (value.receipt.toolName !== "ak_navigator_output") throw new Error("Navigator tool mismatch");
       return { kind: "accepted", receipt: value.receipt.details as NavigatorReceiptV1, evidenceRead: value.evidenceRead, reference: value.reference };
     },
