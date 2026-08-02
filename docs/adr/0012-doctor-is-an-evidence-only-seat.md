@@ -8,3 +8,5 @@ Date: 2026-07-30
 只有实际 docket Receipt/verdict 才构成 bite；对获准人口的完整有界检索可以证明没有 bite。`keep` 必须有实际 bite。
 
 宿主的四理由驳回法仍只属于 caller/host overlay，不进入 Doctor Soul、输出合同、runtime 或工具说明。
+
+**Forward amendment (2026-08-02):** The earlier docket-only bite rule is retired. Doctor now admits the caller-retained Pi-native case evidence defined by the current package contract; typed terminating results in those sessions remain the only bite.

@@ -1,7 +1,0 @@
-# Issue #12 Fixer Apply — single complete Recorder manifest contract
-
-Sole authority: `.ak/dockets/issues/12/judgment/pr39-review/receipt.json`.
-
-Repair exactly `single-recorder-manifest-contract`. Make `validatePublicManifest` consume the complete shipped v2 schema plus centralized semantic joins, validating exact nested keys/types/literals and artifact identity alternatives before any cast. `loadPublicManifestSchema` must expose the real schema, not a stub. StatsLine must reuse this one contract, never a second manifest schema. Add a production-path malformed nested literal regression including stderr=`captured`.
-
-Preserve Recorder v2 admission/publication, generated artifacts, StatsLine behavior and cold install. Do not repair other PR39 classes. Run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this key.

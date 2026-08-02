@@ -1,5 +1,0 @@
-{
-  "version": 1,
-  "instructions": "Repair exactly StaleFixerApplyReceiptFixtures authorized by .ak/dockets/issues/28/judgment/post-default-merge-gates-retry/receipt.json. Update only the three stale Fixer apply details literals in test/assisted-settlement-truth.test.ts to lawful current exact per-class leaves while preserving refusal, child-failure dominance, recovery, artifact identity, and docket tamper assertions. Use the fixture repository HEAD where a completed class requires a real full commit identity. Do not alter production, schemas, Soul, generated artifacts, or weaken validation. Run focused and unified gates, commit forward, and settle the class.",
-  "prerequisites": []
-}

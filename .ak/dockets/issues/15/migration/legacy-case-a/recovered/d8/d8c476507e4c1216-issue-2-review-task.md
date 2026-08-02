@@ -1,5 +1,0 @@
-# Fresh review: issue #2 institutional-memory carriers
-
-Review exact fixed range `c04d24e19390cab239b8c7e31c7ccb9a8975ad18...8357f6d59f3da4572ef33847645745abfec63571` in `/Users/akagilnc/WorkSpace/ak-pi-workflow-roles` against frozen `/tmp/issue-2-authority.md` and approved `/tmp/issue-2-coder-plan.md`.
-
-Run canonical Standards and Spec review. Inspect all five caller-owned packet templates, distinct Authority/Plan/Apply/Review/repair evidence burdens, digest/path/full-SHA/range/behavior distinctions, no self-digest recursion, no posture-law restatement, unambiguous snapshot/delta roles, manual R# reconciliation without mechanical/audit claims, contributor-only development closure, forward-only trail/restart/omission semantics, CLAUDE probe lifecycle, exact seven-path scope, package exclusion and all non-goals. Do not repair or route.

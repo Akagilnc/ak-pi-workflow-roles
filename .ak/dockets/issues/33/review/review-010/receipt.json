@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_yC3doGaKMSN4T7gpbrkbxYVP|fc_0186c0642f15649c016a6cd2b62f3881918fedf618ce879e3b",
-  "details": {
-    "status": "refused",
-    "report": "Unable to produce a method-compliant final review. The required single sibling-parallel Agent batch was run, but its prompts summarized rather than pasted the full captured commit list, violating the supplied code-review method. In addition, the Standards child crossed authority axes by treating the issue-specific Review-009 Judge receipt (`ISS33-SECURITY-SOURCE-READABILITY`) as a documented repository coding standard and a hard Standards violation. The task forbids a replacement/corrective Agent after the batch, so these defects cannot be repaired without violating the mandated method. Preconditions did pass: both pinned commits resolved, the three-dot diff was non-empty, and `.ak/dockets/issues/33/review-materials/review-010/materials.md` verified at SHA-256 `9985ef17aa75892b72e768a8d44a304b79d55d9f488426424da96d0b1864b70b`."
-  },
-  "artifactKind": "acceptedReceipt"
-}

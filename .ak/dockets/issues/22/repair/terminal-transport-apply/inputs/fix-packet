@@ -1,7 +1,0 @@
-# Issue #22 Merger terminal transport Fixer apply
-
-Close exactly `Issue22MergerTerminalFailureMustAbort` under `.ak/dockets/issues/22/judgment/final-convergence-retry/receipt.json`.
-
-Repair the production Pi transport gap: malformed Merger candidate objects must pass transport admission only far enough to reach the existing exact package validator and fatal host seam. Do not weaken the exported/accepted completed|escalate contract. Add a real Pi argument-validation/execution integration regression proving missing/unknown malformed output aborts nonzero, produces no recoverable retry/receipt, and valid leaves remain unchanged.
-
-Do not add a parallel validator, generic transport policy, retry, phase, orchestration, publication, or unrelated repair. Work test-first, run all gates, commit forward, and submit the typed completed class result.

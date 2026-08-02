@@ -1,1 +1,0 @@
-Apply the owner-authorized Reviewer snapshot retention repair in `reviewer-snapshot-retention-repair.md` directly, without a Fixer Plan. Repair the lifecycle policy as a class, test it, commit forward, and submit through `ak_fixer_output`.

@@ -1,10 +1,8 @@
-import { mkdir, readdir, readFile, open, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, open, unlink, link } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { canonicalJson } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
-import { renameNoReplace } from "./recorder/rename-no-replace.js";
-import { isOccupiedRenameError } from "./recorder/rename-no-replace.js";
 class AssistedLedgerConflictError extends Error {
   constructor(message = "assisted ledger generation conflict") {
     super(message);
@@ -46,14 +44,15 @@ async function appendAssistedGenerationV1(runDirectory, event, now = () => (/* @
     await handle.sync();
     await handle.close();
     handle = void 0;
-    renameNoReplace(tempPath, finalPath);
+    await link(tempPath, finalPath);
+    await unlink(tempPath);
   } catch (e) {
     try {
       await unlink(tempPath);
     } catch (cleanup) {
       if (cleanup.code !== "ENOENT") throw new AggregateError([e, cleanup], "assisted ledger publication and cleanup failed", { cause: e });
     }
-    if (e.code === "EEXIST" || isOccupiedRenameError(e)) throw new AssistedLedgerConflictError();
+    if (e.code === "EEXIST") throw new AssistedLedgerConflictError();
     throw e;
   } finally {
     await handle?.close();

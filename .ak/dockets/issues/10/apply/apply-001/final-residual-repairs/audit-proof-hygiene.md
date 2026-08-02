@@ -1,3 +1,0 @@
-# Repair packet: audit-observation credential proof and active hygiene
-
-At current committed HEAD, add a production Judge/Reviewer accepted lifecycle carrying credential-shaped promotable metadata such as bound call identity, and prove through existing extraction/scanner/storage seams that stage/final manifest, Receipt, audit-observation, redaction report, and failure JSON contain no raw value. No new scanner or production hook. Remove only the active EOF blank in `test/recorder-transaction.test.ts`; preserve sealed authority/materials bytes. Run focused/typecheck/full/diff checks, one forward commit and exact Receipt. Preserve unrelated behavior; do not inspect sessions.

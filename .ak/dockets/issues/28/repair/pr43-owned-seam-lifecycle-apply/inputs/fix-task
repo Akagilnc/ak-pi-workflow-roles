@@ -1,9 +1,0 @@
-# PR #43 Fixer apply — owned-seam lifecycle proof
-
-Close exactly under `.ak/dockets/issues/28/judgment/pr43-final-retry/receipt.json`:
-
-- `LifecycleAdmissionExclusion`
-- `RecoveryStateContinuity`
-- `LedgerTemporaryPublicationSafety`
-
-Remove the test-only production hooks/callbacks identified by Judge. Replace them with barriers at existing owned production seams, and prove every exact race/crash/temp/cleanup oracle including exact receipt identities and no duplicate launches/consultations. No new hook, lock, timeout, retry, scheduler, or public mechanism. Run gates, commit, report exactly these keys.

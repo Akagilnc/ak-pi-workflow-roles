@@ -1,7 +1,0 @@
-# Issue #12 Fixer Apply — closed StatsLine validation
-
-Sole authority: `.ak/dockets/issues/12/judgment/review-001/receipt.json`.
-
-Repair exactly `F5-closed-statsline-metric-validation` under its full owner/boundary/disposition. Validate every closed measured payload and metric-specific unavailable reason, counts/bytes/durations, role totals, timestamps, merge milliseconds, ratio states and consistency. Reject wrong types, negatives/fractions/overflow, extra keys, inconsistent ratios and cross-metric reasons. Preserve producer facts and truthful current unavailable metrics. Add logic-focused table-driven red/greens and ensure Doctor intake cannot call malformed lines validated.
-
-Do not repair F1-F4 in this invocation. Regenerate artifacts if needed; run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this class.

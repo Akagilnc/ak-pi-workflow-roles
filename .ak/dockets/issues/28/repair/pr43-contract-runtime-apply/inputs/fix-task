@@ -1,9 +1,0 @@
-# PR #43 Fixer apply — Navigator contract/schema/runtime classes
-
-Apply exactly these Judge-authorized classes from `.ak/dockets/issues/28/judgment/pr43-review/receipt.json`:
-
-- `NavigatorReceiptContract`
-- `SchemaContractParity`
-- `NavigatorActivationAtomicity`
-
-Complete nested receipt citation/recorded-receipt validation, closed schema/runtime parity for every role-phase and Navigator variant, and fail-closed atomic Navigator activation. Follow every production proof. Do not add orchestration, a competing validator truth, prompt marker mechanism, or unsupported exports. Work test-first, rebuild, run unified gates, commit, and report exactly these keys.

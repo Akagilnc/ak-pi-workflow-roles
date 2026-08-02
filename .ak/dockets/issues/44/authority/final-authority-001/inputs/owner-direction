@@ -1,7 +1,0 @@
-# Owner direction — Issue #44
-
-Repair dispatch and Fixer must support compatible multi-class packets. No one-class-per-Fixer rule exists.
-
-The PR #43 production counterexample establishes a role-side bug: Fixer abandoned a 13-class authorized packet after about 84 seconds without an authority, safety, evidence, repository-state, infrastructure, tool, context, or caller-budget blocker. It repaired two classes, ran gates, and called the remaining unfinished work a refusal. Workload, packet size, elapsed or expected effort, incomplete work, and avoidance of a false completed claim are not refusal grounds.
-
-Fixer must continue while authorized safe work remains. Legitimate refusal must identify a concrete typed blocker and checkable evidence/remaining scope. Infrastructure and tool failures remain honest failure channels. Preserve caller ownership of batching, invocation budget, stopping, sequencing, and composition; preserve per-class accountability.

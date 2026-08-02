@@ -1,7 +1,0 @@
-# Issue #12 Review-002 adjudication
-
-Adjudicate accepted `.ak/dockets/issues/12/review/review-002/receipt.json`.
-
-Both axes identify one root: committed claim-chain resolver seals exact raw target bytes, but `validateDoctorEvidenceIndex` recomputes digest/length from canonicalized parsed JSON. Valid pretty-printed/trailing-newline/different-key-order committed manifests/receipts therefore fail despite correct frozen-byte identity; compact one-key fixtures mask it. Canonical serialization may remain appropriate for normalized inline StatsLine/Git/tracker evidence, but must not replace raw committed-byte identity.
-
-Define one owner and typed distinction between resolver-derived raw committed identity and canonical normalized evidence identity; preserve sealed actual-bite joins, path/target confinement, duplicate/corruption rejection, and constrained tools. Authorize a direct Fixer class if sustained; no Plan unless a major interface choice is truly unresolved. No code edits; submit via `ak_judge_output`.

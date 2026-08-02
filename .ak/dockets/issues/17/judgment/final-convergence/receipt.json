@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_judge_output",
-  "toolCallId": "call_3uTRPBg9rWx2lC37d1V7dEBL|fc_0468c96d4db0a2f9016a6d0db1ab788191af16b2d29e2e4036",
-  "details": {
-    "judgeStatus": "converged",
-    "note": "Current HEAD `827672c` is mechanically verified, independently of Fixer claims: `npm run typecheck` passed; 41 focused current-HEAD tests across runner, ledger, settlement/runtime receipt, role lifecycle, and the compile-time materialization contracts passed; `git diff --check`, clean-status, and `git diff --exit-code eb366f3..HEAD -- src dist test` checks passed. Success branches at runner, ledger, and public receipt boundaries now require typed `MaterializedBundleEvidenceV1`; failed branches require classification and optionally preserve post-materialization evidence. Settlement projects both branches exactly, and tracked generated package validator/runner/ledger paths enforce or carry the same laws. The Review-035–038 census maps all eight sustained classes one-for-one to completed repair receipts, with no unadjudicated class. Review-038 Standards remains correctly dismissed because the cited `--no-session` records are immutable pre-rule history; the repair changed no dockets, and Issue #17 historical docket tree identity is identical across `eb366f3`. No sustained current class remains."
-  },
-  "artifactKind": "acceptedReceipt"
-}
