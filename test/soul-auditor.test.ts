@@ -95,7 +95,7 @@ test("Pi soul auditor submits the record and accepts an exact pass decision", as
   const calls: Array<{ context: Context; options: ProviderStreamOptions }> = [];
   const auditor = createPiSoulAuditor(async (_model, context, options) => {
     calls.push({ context, options });
-    return auditResponse({ status: "pass", violations: [] });
+    return auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null });
   });
 
   const result = await auditor(auditInput, { context: auditContext() });
@@ -109,7 +109,7 @@ test("Pi soul auditor submits the record and accepts an exact pass decision", as
 
 test("Pi soul auditor accepts an exact revise decision", async () => {
   const auditor = createPiSoulAuditor(async () =>
-    auditResponse({ status: "revise", violations: ["rule 1", "rule 2"] }),
+    auditResponse({ status: "revise", violations: ["rule 1", "rule 2"], conflicts: [], decisionGate: null }),
   );
 
   assert.deepEqual(
@@ -142,7 +142,7 @@ test("Pi soul auditor rejects malformed and contradictory decisions", async (t) 
 });
 
 test("Pi soul auditor requires exactly one decision call", async () => {
-  const decisionWithExtraCall = auditResponse({ status: "pass", violations: [] });
+  const decisionWithExtraCall = auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null });
   decisionWithExtraCall.content.push({
     type: "toolCall",
     id: "other-1",
@@ -152,8 +152,8 @@ test("Pi soul auditor requires exactly one decision call", async () => {
   for (const response of [
     auditResponse(),
     auditResponse(
-      { status: "pass", violations: [] },
-      { status: "revise", violations: ["contradiction"] },
+      { status: "pass", violations: [], conflicts: [], decisionGate: null },
+      { status: "revise", violations: ["contradiction"], conflicts: [], decisionGate: null },
     ),
     decisionWithExtraCall,
   ]) {
@@ -169,7 +169,7 @@ test("Pi soul auditor supports successful keyless provider authentication", asyn
   let seenOptions: ProviderStreamOptions | undefined;
   const auditor = createPiSoulAuditor(async (_model, _context, options) => {
     seenOptions = options;
-    return auditResponse({ status: "pass", violations: [] });
+    return auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null });
   });
 
   assert.equal(
@@ -185,7 +185,7 @@ test("Pi soul auditor supports successful keyless provider authentication", asyn
 test("Pi soul auditor preserves authentication failures", async () => {
   const context = auditContext(undefined, new Error("login expired"));
   const auditor = createPiSoulAuditor(async () =>
-    auditResponse({ status: "pass", violations: [] }),
+    auditResponse({ status: "pass", violations: [], conflicts: [], decisionGate: null }),
   );
 
   await assert.rejects(

@@ -54,7 +54,7 @@ test("Reviewer auditor receives complete method inputs and has only its decision
   const audit = createPiReviewerAuditor(async (_model, request) => {
     seen = request;
     return fauxAssistantMessage(
-      fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, { status: "pass", violations: [] }),
+      fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
       { stopReason: "toolUse" },
     );
   });
@@ -108,6 +108,8 @@ test("Reviewer auditor enforces exact pass or revise decisions", async () => {
     fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, {
       status: "revise",
       violations: ["Axis aggregation is not traceable"],
+      conflicts: [],
+      decisionGate: null,
     }),
     { stopReason: "toolUse" },
   ));

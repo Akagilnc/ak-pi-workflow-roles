@@ -47,6 +47,7 @@ const context = {
 
 const escalationArguments = {
   status: "escalate",
+  violations: [],
   conflicts: ["Soul authority and controlling authority disagree"],
   decisionGate: {
     question: "Which authority governs this submission?",

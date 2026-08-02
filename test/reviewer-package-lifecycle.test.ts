@@ -120,9 +120,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       (ctx) => { children.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
       (ctx) => { children.push(ctx); return fauxAssistantMessage("Spec report: requirement satisfied."); },
       fauxAssistantMessage(fauxToolCall(Output, candidate, { id: "candidate" }), { stopReason: "toolUse" }),
-      (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "revise", violations: ["add axis counts"] }), { stopReason: "toolUse" }); },
+      (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "revise", violations: ["add axis counts"], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); },
       fauxAssistantMessage(fauxToolCall(Output, corrected, { id: "corrected" }), { stopReason: "toolUse" }),
-      (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }); },
+      (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); }
     ]);
 
     const originalCwd = process.cwd();
@@ -173,7 +173,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       (ctx) => { noSpecCommandContexts.push(ctx); return fauxAssistantMessage(fauxToolCall("bash", { command: diffCommand }, { id: "canonical-command" }), { stopReason: "toolUse" }); },
       (ctx) => { noSpecCommandContexts.push(ctx); noSpecChildren.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
       fauxAssistantMessage(fauxToolCall(Output, { status: "completed" }, { id: "no-spec-output" }), { stopReason: "toolUse" }),
-      (ctx) => { noSpecAudits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }); },
+      (ctx) => { noSpecAudits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); },
     ]);
     await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-no-spec"), faux: noSpecFaux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
       assert.deepEqual(loader.getExtensions().errors, []);
@@ -199,7 +199,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const refusedFaux = fauxProvider({ api: "package-reviewer-refused", provider: "package-reviewer-refused", tokenSize: { min: 1000, max: 1000 } });
     refusedFaux.setResponses([
       fauxAssistantMessage(fauxToolCall(Output, { status: "refused", diagnostic: "No review can be started." }, { id: "refused-output" }), { stopReason: "toolUse" }),
-      fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [] }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
     ]);
     await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-refused"), faux: refusedFaux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ session, sessionManager }) => {
       await session.prompt("Refuse before dispatch.");

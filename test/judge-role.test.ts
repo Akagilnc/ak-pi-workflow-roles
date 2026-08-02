@@ -581,7 +581,7 @@ test("production Judge-to-Soul audit projection ignores opaque evidence and pres
   const auditor = createPiSoulAuditor(async (_model, request) => {
     auditRequests.push(request);
     return fauxAssistantMessage(
-      fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [] }),
+      fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
       { stopReason: "toolUse" },
     );
   });
@@ -1311,9 +1311,9 @@ test("Fixer audits every structurally valid attempt freshly and revise permits c
 test("Fixer prospective prerequisite decisions survive the production submission lifecycle unchanged", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   const decisions = [
-    { status: "revise", violations: ["completed work was retrospectively relabeled as blocked"] },
-    { status: "pass", violations: [] },
-    { status: "pass", violations: [] },
+    { status: "revise", violations: ["completed work was retrospectively relabeled as blocked"], conflicts: [], decisionGate: null },
+    { status: "pass", violations: [], conflicts: [], decisionGate: null },
+    { status: "pass", violations: [], conflicts: [], decisionGate: null },
   ] as const;
   let auditCalls = 0;
   const auditInputs: Context[] = [];
