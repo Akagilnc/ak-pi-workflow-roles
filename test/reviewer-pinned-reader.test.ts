@@ -142,6 +142,19 @@ test("pinning rejects non-repositories and bare repositories", async () => {
   } finally { await rm(temporary, { recursive: true, force: true }); }
 });
 
+test("material path safety rejects unsafe Git object paths at the concrete read seam", async () => {
+  const root = await mkdtemp(join(tmpdir(), "reviewer-material-path-"));
+  try {
+    await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
+    await writeFile(join(root, "safe"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "initial");
+    const reader = await createReviewerPinnedGitReader(root);
+    for (const path of ["/absolute", "../escape", "dir/../escape", "bad\\path", "bad\npath"]) {
+      await assert.rejects(reader.material(path, reader.pin.targetHead), /material-invalid/);
+    }
+    assert.equal(Buffer.from(await reader.material("safe", reader.pin.targetHead)).toString(), "content\n");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("shared ref snapshot helper canonicalizes immutably and compares order-independently", () => {
   const refs = immutableReviewerRefs({ "refs/tags/z": { objectId: "2", peeledCommitId: "2" }, "refs/heads/a": { objectId: "1", peeledCommitId: "1" } });
   assert.deepEqual(Object.keys(refs), ["refs/heads/a", "refs/tags/z"]);
