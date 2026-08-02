@@ -67,13 +67,17 @@ The caller should treat the successful `ak_judge_output` tool result as the auth
 
 ## Fixer
 
-The fixer role loads `souls/fixer.md` plus a caller-supplied closed JSON `FixPacketV1`, then repairs/tests or returns an evidence-bearing refusal. The packet contract is exported as `fixerPacketV1Schema`, `parseFixPacketV1`, and `FixPacketV1`:
+The fixer role loads `souls/fixer.md` plus caller-supplied opaque prose instructions. Optional typed prerequisites travel as a separate JSON-array attachment:
 
-```json
-{"version":1,"instructions":"Opaque nonblank repair prose.","prerequisites":[{"id":"owner.choice","requirement":"The controlling owner decision exists."}]}
+```markdown
+Repair the caller-assigned findings and preserve all unrelated behavior.
 ```
 
-`instructions`, `requirement`, and blocker evidence are trim-nonblank but preserved byte-for-byte after JSON decoding; their prose, headings, and wording are never machine-parsed. Prerequisite IDs are case-sensitive, packet-unique, and match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The object is exact: legacy Markdown, extra keys, bad versions, blank strings, malformed or duplicate IDs, and malformed JSON fail activation before agent/model work. The admitted packet is frozen for the invocation. There is no fallback, frontmatter, adapter, or automatic carry-forward.
+```json
+[{"id":"owner.choice","requirement":"The controlling owner decision exists."}]
+```
+
+Instruction prose is rejected at activation when empty or trim-blank, is not machine-parsed, and admitted instruction bytes are preserved exactly. Prerequisite declarations are exported as `fixerPrerequisitesSchema`, `parseFixerPrerequisites`, and `validateFixerPrerequisites`; IDs are case-sensitive, attachment-unique, and match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The admitted prose and declarations are frozen together for the invocation. There is no frontmatter parser or automatic carry-forward.
 
 The CLI advertises the complete phase vocabulary in `pi --ak-role fixer --help`:
 
@@ -87,12 +91,14 @@ There is no third phase. Apply partial means a mixture of completed and lawfully
 ```bash
 pi --ak-role fixer \
   --ak-fixer-phase plan \
-  --ak-fix-packet /path/to/fix-packet.json \
+  --ak-fix-packet /path/to/fix-instructions.md \
+  --ak-fixer-prerequisites /path/to/prerequisites.json \
   -p "Prepare the repair plan."
 
 pi --ak-role fixer \
   --ak-fixer-phase apply \
-  --ak-fix-packet /path/to/approved-fix.json \
+  --ak-fix-packet /path/to/approved-fix.md \
+  --ak-fixer-prerequisites /path/to/prerequisites.json \
   -p "Apply the approved repair plan."
 ```
 
@@ -101,13 +107,15 @@ Fixer terminates through `ak_fixer_output`. Its legal status-dependent shapes ar
 ```json
 {"status":"planned","report":"Markdown report"}
 {"status":"refused","report":"Markdown report","remainingScope":"assignment scope","blocker":{"cause":"authority_violation","evidence":"concrete evidence"}}
-{"status":"completed","report":"Markdown report","classResults":[{"name":"ClassName","disposition":"completed","searchScope":"complete census scope","exceptions":[{"where":"inspected location","reason":"why no repair was required"}],"commitSha":"full lowercase 40- or 64-hex object ID"}]}
+{"status":"completed","report":"Markdown report","classResults":[{"name":"Class name","disposition":"completed","searchScope":"complete census scope","exceptions":[{"where":"inspected location","reason":"why no repair was required"}],"commitSha":"committed revision identity"}]}
 {"status":"partially_completed","report":"Markdown report","classResults":[{"name":"Done","disposition":"completed","searchScope":"all locations","exceptions":[],"commitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"Blocked","disposition":"refused","remainingScope":"exact remaining assignment scope","blocker":{"cause":"prerequisite_unmet","prerequisiteId":"owner.choice","evidence":"concrete absent prerequisite"}}]}
 ```
 
-Apply `classResults` is non-empty with unique comma-free names. `completed` contains only completed results, `refused` only refused results, and `partially_completed` at least one of each. Completed commit IDs are full, lowercase, and unique. The only blockers are `authority_violation` and `prerequisite_unmet`. The authority blocker remains exactly `{cause,evidence}`. A prerequisite blocker is exactly `{cause,prerequisiteId,evidence}`, and its ID must be declared by the invocation packet; an undeclared reference is rejected before audit and may be corrected. Empty declarations therefore forbid only `prerequisite_unmet`, not authority refusals or completed settlements.
+Every receipt requires `status` and a nonblank `report`. In `plan`, the semantic branches are `planned` or an assignment-level `refused`: a planned receipt has no other required semantic fields, while a plan-level refusal additionally requires nonblank `remainingScope` and a blocker. For apply, `classResults` is non-empty with unique nonblank `name` values. Each completed result requires `disposition: "completed"`, nonblank `searchScope` and `commitSha`, and an `exceptions` array whose entries require nonblank `where` and `reason`; completed commit identities are unique. Each refused result requires `disposition: "refused"`, nonblank `remainingScope`, and a blocker. `completed` contains only completed results, `refused` only refused results, and `partially_completed` at least one of each. Authority blockers require `cause: "authority_violation"` and nonblank `evidence`; prerequisite blockers require `cause: "prerequisite_unmet"`, a pattern-valid `prerequisiteId`, and nonblank `evidence`.
 
-Typed admission guarantees declaration/reference integrity only. Whether the declared predecessor is actually absent, controlling, and causally blocks lawful work remains an explicitly nondeterministic auditor judgment. The semantic auditor rejects retrospective method/history laundering, but tests and callers must not treat prompt prose as deterministic proof. Completed work remains completed; its report must disclose any method breach, claim only current verification, and not claim test-first execution that did not occur. Provider, authentication, auditor, tool, or transport failure aborts without a receipt. Every admitted candidate is checked by one fresh same-active-model compliance audit over the exact frozen packet and unchanged candidate; revise permits corrected resubmission, while audit infrastructure failure is nonzero.
+These are required semantic fields, not exact object shapes: presentation-only extras such as labels, notes, and decorations are ignored and projected out of the accepted receipt. Contradictory semantic fields are rejected, including top-level `commitSha` or `classesRepaired`, fields from the opposite class-result disposition, and `prerequisiteId` on an authority blocker. A `prerequisite_unmet` blocker may name only an ID declared in the separate `--ak-fixer-prerequisites` JSON-array attachment; opaque instructions supplied through `--ak-fix-packet` do not declare IDs. An undeclared reference is rejected before audit and may be corrected. Empty declarations therefore forbid only `prerequisite_unmet`, not authority refusals or completed settlements.
+
+Typed admission guarantees declaration/reference integrity only. Whether the declared predecessor is actually absent, controlling, and causally blocks lawful work remains an explicitly nondeterministic auditor judgment. The semantic auditor rejects retrospective method/history laundering, but tests and callers must not treat prompt prose as deterministic proof. Completed work remains completed; its report must disclose any method breach, claim only current verification, and not claim test-first execution that did not occur. Provider, authentication, auditor, tool, or transport failure aborts without a receipt. Every admitted candidate is checked by one fresh same-active-model compliance audit over the exact frozen instructions, prerequisite attachment, and unchanged candidate; revise permits corrected resubmission, while audit infrastructure failure is nonzero.
 
 Fixer-only bash seatbelt (both `plan` and `apply`): before a `bash` tool executes, the package inspects only the string `command` and blocks when it case-sensitively contains any one of these exact ASCII literals — `rm -rf`, `git reset --hard`, `git clean`, `git checkout --`. The block is an ordinary nonterminating tool error that names the matched literal; bash does not run, the Fixer session stays alive, and the model may retry a different spelling/operation or submit `refused`. This is accidental-destruction drift prevention only — not hostile-code defense, shell sandboxing, filesystem isolation, or bypass resistance. Callers that need isolation must supply a container or sandbox.
 
@@ -159,7 +167,13 @@ pi --no-skills \
   -p "Review the requested fixed point."
 ```
 
-The authoritative capability contract and validation live in the exported TypeScript API in [`src/reviewer-dispatch.ts`](src/reviewer-dispatch.ts). The authoritative `Agent` input contract is the exported runtime `reviewerProposalSchema` in [`src/reviewer-role.ts`](src/reviewer-role.ts), with its corresponding TypeScript proposal type in `reviewer-dispatch.ts`. Callers should derive validation and proposal construction from those exports rather than this invocation guide.
+The authoritative capability contract and validation live in the exported TypeScript API in [`src/reviewer-dispatch.ts`](src/reviewer-dispatch.ts). A static capability names tools and prerequisite operations; it never supplies a Git range command:
+
+```json
+{"version":1,"taskSha256":"<SHA-256 of exact task bytes>","tools":["read","bash"],"prerequisiteOperations":["preflight.git.pin-target","preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"]}
+```
+
+The authoritative `Agent` input contract is the exported runtime `reviewerProposalSchema` in [`src/reviewer-role.ts`](src/reviewer-role.ts), with its corresponding TypeScript proposal type in `reviewer-dispatch.ts`. Proposals name a semantic base and materials, not a resolved commit or shell command; the runtime derives and pins those facts. Callers should derive validation and proposal construction from those exports rather than this invocation guide.
 
 Reviewer terminates with this exact receipt:
 
@@ -271,4 +285,4 @@ Workflow ordering and routing are caller-owned. A separate orchestrator is optio
 
 ## Composing class-repair contracts
 
-Callers may use the typed contracts together without parsing prose: a `continue` Judge receipt identifies non-empty `classes[]`; a caller composes a `FixPacketV1`; an apply Fixer receipt settles findings in `classResults[]`; and `--ak-review-scope-keys <comma-separated keys>` limits Reviewer to exact class keys (omit it for a full review). Fixer prerequisite declarations and blocker references are typed IDs, but the package does not infer, execute, graph, route, retry, or schedule dependencies. Packet composition, compatibility grouping, contextual reconciliation, sequencing, stopping, invocation budgets, routing, and next-hop acceptance remain caller-owned; these contracts create no orchestration topology.
+Callers may use the typed contracts together without parsing prose: a `continue` Judge receipt identifies non-empty `classes[]`; a caller supplies opaque Fixer instructions and, separately, typed prerequisite declarations; an apply Fixer receipt settles findings in `classResults[]`; and `--ak-review-scope-keys <comma-separated keys>` limits Reviewer to exact class keys (omit it for a full review). Fixer prerequisite declarations and blocker references are typed IDs, but the package does not infer, execute, graph, route, retry, or schedule dependencies. Packet composition, compatibility grouping, contextual reconciliation, sequencing, stopping, invocation budgets, routing, and next-hop acceptance remain caller-owned; these contracts create no orchestration topology.

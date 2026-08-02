@@ -13,8 +13,8 @@ export type {
   FixerOutput,
   FixerPhase,
 } from "./fixer-output.ts";
-export { fixerPacketV1Schema, fixerPrerequisiteSchema, parseFixPacketV1, validateFixPacketV1 } from "./fixer-packet.ts";
-export type { FixPacketV1, FixerPrerequisite } from "./fixer-packet.ts";
+export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./fixer-packet.ts";
+export type { FixerInvocationInput, FixerPrerequisite } from "./fixer-packet.ts";
 import { validateFixerOutput, type FixerOutput } from "./fixer-output.ts";
 
 export const CODER_OUTPUT_TOOL_NAME = "ak_coder_output";

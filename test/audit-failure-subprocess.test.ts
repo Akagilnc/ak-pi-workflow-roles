@@ -111,7 +111,6 @@ async function runReviewerCli(
         version: 1,
         taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
         tools: ["read", "bash"],
-        bashCommands: [diffCommand],
         prerequisiteOperations: [
           "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
           "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror",

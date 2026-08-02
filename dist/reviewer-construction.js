@@ -55,7 +55,8 @@ export function constructReviewerDispatch(input) {
     const task = reviewerPromptIdentity(input.taskText);
     const compiled = compileMechanicalBundle({ canonicalSkill: input.canonicalSkill, task: input.taskText, range: input.evidence.range, materials: input.evidence.materials });
     const common = [`Task-SHA256: ${task.sha256}`, `Target: ${input.evidence.range.target}`, `Base: ${input.evidence.range.base}`, `Diff: ${input.evidence.range.diffCommand}`, reviewerScopePrompt(input.reviewScopeKeys), `Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`, `Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`, bundlePromptReferences(compiled.bundle)].join("\n");
-    const axes = [{ axis: "standards", grant: input.admitted.standardsGrant }, ...(input.admitted.specGrant ? [{ axis: "spec", grant: input.admitted.specGrant }] : [])];
+    const finalize = (grant) => Object.freeze({ ...grant, bashCommands: Object.freeze(grant.tools.includes("bash") ? [input.evidence.range.diffCommand] : []) });
+    const axes = [{ axis: "standards", grant: finalize(input.admitted.standardsGrant) }, ...(input.admitted.specGrant ? [{ axis: "spec", grant: finalize(input.admitted.specGrant) }] : [])];
     const compile = input.compilePrompt ?? ((text) => reviewerPromptIdentity(text));
     const build = (x, pass) => compile(`${common}\nGrant: ${JSON.stringify(x.grant)}\n${reviewerAxisMethodAdapter(x.axis)}\n`, x.axis, pass);
     const first = axes.map(x => build(x, 1)), second = axes.map(x => build(x, 2));
@@ -69,9 +70,13 @@ export function constructReviewerDispatch(input) {
 }
 export class ReviewerConstructionError extends Error {
     code;
-    constructor(code) {
-        super(code);
+    diagnostic;
+    constructor(code, diagnostic = code === "prompt-identity-invalid"
+        ? "compiled prompt identity must contain canonical text, UTF-8 length, and SHA-256"
+        : "repeated prompt compilation must produce the same prompt identity") {
+        super(`${code}: ${diagnostic}`);
         this.code = code;
+        this.diagnostic = diagnostic;
     }
 }
 export function bundlePromptReferences(bundle) {

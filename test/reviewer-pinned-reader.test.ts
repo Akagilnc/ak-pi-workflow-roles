@@ -31,7 +31,7 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     const pinnedTagObject = await git(root, "rev-parse", "review-tag^{object}");
     assert.deepEqual(reader.pin.refs["refs/tags/review-tag"], { objectId: pinnedTagObject, peeledCommitId: base });
     assert.deepEqual(reader.pin.refs["refs/tags/blob-base"], { objectId: blob, peeledCommitId: null });
-    await assert.rejects(reader.resolve("blob-base"), /base-invalid/);
+    await assert.rejects(reader.resolve("blob-base"), /base revision ref must resolve to a commit/);
     await git(root, "branch", "-f", "review-base", "HEAD");
     await git(root, "tag", "-f", "review-tag", "HEAD");
     assert.equal(await reader.resolve("review-base"), base);
@@ -42,13 +42,13 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     assert.equal(await reader.resolve("HEAD~1"), base);
     assert.equal(await reader.resolve("HEAD^1"), base);
     assert.equal(reader.pin.targetHead, target);
-    await assert.rejects(reader.resolve("new-live-name"), /base-invalid/);
+    await assert.rejects(reader.resolve("new-live-name"), /base revision must name an existing pinned ref or reachable commit/);
 
     const ambiguous = await createReviewerPinnedGitReader(root);
     await git(root, "branch", "same", base); await git(root, "tag", "same", base);
     const withAliases = await createReviewerPinnedGitReader(root);
-    await assert.rejects(withAliases.resolve("same"), /base-invalid/);
-    await assert.rejects(ambiguous.resolve("HEAD:evil"), /base-invalid/);
+    await assert.rejects(withAliases.resolve("same"), /base revision is ambiguous across pinned refs/);
+    await assert.rejects(ambiguous.resolve("HEAD:evil"), /base revision syntax is invalid or uses a forbidden revision form/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -140,6 +140,27 @@ test("pinning rejects non-repositories and bare repositories", async () => {
     await git(temporary, "init", "--bare", bare);
     await assert.rejects(createReviewerPinnedGitReader(bare));
   } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test("material path safety rejects unsafe Git object paths at the concrete read seam", async () => {
+  const root = await mkdtemp(join(tmpdir(), "reviewer-material-path-"));
+  try {
+    await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
+    await writeFile(join(root, "safe"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "initial");
+    const reader = await createReviewerPinnedGitReader(root);
+    const unsafe = [
+      { path: "/absolute", diagnostic: /materials\.repositoryPath must be relative, not absolute/ },
+      { path: "../escape", diagnostic: /materials\.repositoryPath must not contain .*parent-directory/ },
+      { path: "dir/../escape", diagnostic: /materials\.repositoryPath must not contain .*parent-directory/ },
+      { path: "bad\\path", diagnostic: /materials\.repositoryPath must not contain backslashes/ },
+      { path: "bad\npath", diagnostic: /materials\.repositoryPath must not contain control characters/ },
+    ];
+    for (const { path, diagnostic } of unsafe) {
+      await assert.rejects(reader.material(path, reader.pin.targetHead), diagnostic);
+    }
+    await assert.rejects(reader.material("missing", reader.pin.targetHead), /pinned material at materials\.repositoryPath is missing from the target/);
+    assert.equal(Buffer.from(await reader.material("safe", reader.pin.targetHead)).toString(), "content\n");
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("shared ref snapshot helper canonicalizes immutably and compares order-independently", () => {

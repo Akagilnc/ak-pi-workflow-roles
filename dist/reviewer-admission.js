@@ -6,61 +6,70 @@ export const REVIEWER_PREREQUISITES = [
 ];
 export class ReviewerAdmissionError extends Error {
     code;
-    constructor(code) {
-        super(code);
+    diagnostic;
+    constructor(code, diagnostic) {
+        super(`${code}: ${diagnostic}`);
         this.code = code;
+        this.diagnostic = diagnostic;
     }
 }
-const fail = (code) => { throw new ReviewerAdmissionError(code); };
-const exact = (value, keys) => typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(k => Object.hasOwn(value, k));
+const fail = (code, diagnostic) => { throw new ReviewerAdmissionError(code, diagnostic); };
+const record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const unique = (xs) => new Set(xs).size === xs.length;
 const frozen = (xs) => Object.freeze([...xs]);
-const immutableRequest = (r) => Object.freeze({ tools: frozen(r.tools), bashCommands: frozen(r.bashCommands), prerequisiteOperations: frozen(r.prerequisiteOperations) });
+const immutableRequest = (r) => Object.freeze({ tools: frozen(r.tools), prerequisiteOperations: frozen(r.prerequisiteOperations) });
 function request(value, ceiling, hostTools) {
-    if (!exact(value, ["tools", "bashCommands", "prerequisiteOperations"]))
-        fail("capability-invalid");
-    const { tools, bashCommands, prerequisiteOperations } = value;
-    if (!Array.isArray(tools) || !Array.isArray(bashCommands) || !Array.isArray(prerequisiteOperations) || !tools.every(x => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !bashCommands.every(x => typeof x === "string") || !prerequisiteOperations.every(x => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || !unique(tools) || !unique(bashCommands) || !unique(prerequisiteOperations) || (bashCommands.length > 0 && !tools.includes("bash")) || tools.some(x => !ceiling.tools.includes(x) || !hostTools.includes(x)) || prerequisiteOperations.some(x => !ceiling.prerequisiteOperations.includes(x)))
-        fail("capability-invalid");
-    return immutableRequest({ tools: tools, bashCommands: bashCommands, prerequisiteOperations: prerequisiteOperations });
+    if (!record(value))
+        fail("capability-invalid", "required capability request must be an object");
+    const { tools, prerequisiteOperations } = value;
+    if (!Array.isArray(tools) || !Array.isArray(prerequisiteOperations) || !tools.every(x => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !prerequisiteOperations.every(x => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || !unique(tools) || !unique(prerequisiteOperations) || tools.some(x => !ceiling.tools.includes(x) || !hostTools.includes(x)) || prerequisiteOperations.some(x => !ceiling.prerequisiteOperations.includes(x)))
+        fail("capability-invalid", "required.tools/prerequisiteOperations must be unique, known, and within the capability and host ceilings");
+    return immutableRequest({ tools: tools, prerequisiteOperations: prerequisiteOperations });
 }
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export function admitReviewerProposal(proposal, ceiling, hostTools) {
+    if (!record(proposal) || proposal.version !== 1)
+        fail("proposal-invalid", "proposal.version must equal 1");
     const p = proposal;
-    const keys = p?.relevanceHints === undefined ? ["version", "base", "materials", "spec", "required"] : ["version", "base", "materials", "relevanceHints", "spec", "required"];
-    if (!exact(p, keys) || p.version !== 1)
-        fail("proposal-invalid");
-    if (!exact(p.base, ["revision"]) || typeof p.base.revision !== "string" || !p.base.revision)
-        fail("base-invalid");
+    if (!record(p.base) || typeof p.base.revision !== "string" || !p.base.revision)
+        fail("base-invalid", "base.revision must be a nonempty string");
+    const base = p.base;
     if (!Array.isArray(p.materials))
-        fail("material-invalid");
-    for (const m of p.materials) {
-        if (!exact(m, ["id", "repositoryPath"]) || typeof m.id !== "string" || !SAFE_ID.test(m.id) || typeof m.repositoryPath !== "string" || !m.repositoryPath || m.repositoryPath.startsWith("/") || m.repositoryPath.includes("\\") || /[\u0000-\u001f\u007f]/u.test(m.repositoryPath) || m.repositoryPath.split("/").some(s => !s || s === "." || s === ".."))
-            fail("material-invalid");
+        fail("material-invalid", "materials must be an array");
+    const materialValues = p.materials;
+    const materials = [];
+    for (const value of materialValues) {
+        if (!record(value) || typeof value.id !== "string" || !SAFE_ID.test(value.id) || typeof value.repositoryPath !== "string" || !value.repositoryPath)
+            fail("material-invalid", "each materials entry requires a safe id and nonempty repositoryPath");
+        const material = value;
+        materials.push(Object.freeze({ id: material.id, repositoryPath: material.repositoryPath }));
     }
-    if (!unique(p.materials.map(x => x.id)) || !unique(p.materials.map(x => x.repositoryPath.normalize("NFC"))))
-        fail("material-invalid");
-    if (!exact(p.spec, ["state"]) || (p.spec.state !== "established" && p.spec.state !== "not-established"))
-        fail("spec-invalid");
-    const requiredKeys = p.spec.state === "established" ? ["standards", "spec"] : ["standards"];
-    if (!exact(p.required, requiredKeys))
-        fail("capability-invalid");
+    if (!unique(materials.map(x => x.id)) || !unique(materials.map(x => x.repositoryPath.normalize("NFC"))))
+        fail("material-invalid", "materials ids and normalized repositoryPath values must be unique");
+    if (!record(p.spec) || (p.spec.state !== "established" && p.spec.state !== "not-established"))
+        fail("spec-invalid", "spec.state must be established or not-established");
+    const spec = p.spec;
+    if (!record(p.required) || p.required.standards === undefined || (spec.state === "established" && p.required.spec === undefined))
+        fail("capability-invalid", "required.standards is mandatory and required.spec is mandatory when spec.state is established");
+    const required = p.required;
+    let relevanceHints;
     if (p.relevanceHints !== undefined) {
-        if (!exact(p.relevanceHints, Object.keys(p.relevanceHints)) || Object.keys(p.relevanceHints).some(k => k !== "standards" && k !== "spec"))
-            fail("material-invalid");
-        const ids = new Set(p.materials.map(x => x.id));
-        for (const hs of [p.relevanceHints.standards, p.relevanceHints.spec])
-            if (hs !== undefined && (!Array.isArray(hs) || !hs.every(x => typeof x === "string" && ids.has(x)) || !unique(hs)))
-                fail("material-invalid");
+        if (!record(p.relevanceHints))
+            fail("material-invalid", "relevanceHints must be an object");
+        const hints = p.relevanceHints;
+        for (const hs of [hints.standards, hints.spec])
+            if (hs !== undefined && (!Array.isArray(hs) || !hs.every(x => typeof x === "string") || !unique(hs)))
+                fail("material-invalid", "relevanceHints axes must contain unique strings");
+        relevanceHints = Object.freeze({ ...(hints.standards === undefined ? {} : { standards: frozen(hints.standards) }), ...(hints.spec === undefined ? {} : { spec: frozen(hints.spec) }) });
     }
     for (const op of REVIEWER_PREREQUISITES.filter(x => x.startsWith("preflight.")))
         if (!ceiling.prerequisiteOperations.includes(op))
-            fail("prerequisite-missing");
-    const standardsGrant = request(p.required.standards, ceiling, hostTools);
-    const specGrant = p.spec.state === "established" ? request(p.required.spec, ceiling, hostTools) : undefined;
+            fail("prerequisite-missing", `capability prerequisiteOperations is missing ${op}`);
+    const standardsGrant = request(required.standards, ceiling, hostTools);
+    const specGrant = spec.state === "established" ? request(required.spec, ceiling, hostTools) : undefined;
     const runner = REVIEWER_PREREQUISITES.filter(x => x.startsWith("runner."));
     for (const op of runner)
         if (!ceiling.prerequisiteOperations.includes(op))
-            fail("prerequisite-missing");
-    return Object.freeze({ baseRevision: p.base.revision, materials: Object.freeze(p.materials.map(m => Object.freeze({ ...m }))), ...(p.relevanceHints === undefined ? {} : { relevanceHints: Object.freeze({ ...p.relevanceHints }) }), standardsGrant, ...(specGrant ? { specGrant } : {}), prerequisiteOperations: frozen([...new Set([...standardsGrant.prerequisiteOperations, ...(specGrant?.prerequisiteOperations ?? []), ...runner])]) });
+            fail("prerequisite-missing", `capability prerequisiteOperations is missing ${op}`);
+    return Object.freeze({ baseRevision: base.revision, materials: Object.freeze(materials), ...(relevanceHints === undefined ? {} : { relevanceHints }), standardsGrant, ...(specGrant ? { specGrant } : {}), prerequisiteOperations: frozen([...new Set([...standardsGrant.prerequisiteOperations, ...(specGrant?.prerequisiteOperations ?? []), ...runner])]) });
 }

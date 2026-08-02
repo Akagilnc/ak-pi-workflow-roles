@@ -67,7 +67,7 @@ test("every registered healthy production ignition leaves structured start and c
       loadNavigatorSoul: async () => "LAW", loadMergerSoul: async () => "LAW",
       loadFixPacket: async () => JSON.stringify({ version: 1, instructions: "repair", prerequisites: [] }),
       loadCoderTask: async () => "task", loadReviewerTask: async () => new TextEncoder().encode("task"),
-      loadReviewerCapabilities: async () => new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: [], bashCommands: [], prerequisiteOperations: ["preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range", "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] })),
+      loadReviewerCapabilities: async () => new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: [], prerequisiteOperations: ["preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range", "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] })),
       loadCanonicalSkillBinding: async (name) => ({ name, snapshot: { raw: "skill", path: "/skill", baseDir: "/", body: "skill", snapshotIdentity: { sha256: digest, utf8Length: 5 } }, invocation: (request: string) => request, captureExpansion: () => undefined }) as never,
       createReviewerPinnedGitReader: async () => ({ pin: { repositoryRoot: "/repository", objectFormat: "sha1", targetHead: "a".repeat(40), refs: {} } }) as never, reviewerHostTools: [],
       createCollectorTransport: () => ({}) as never,
@@ -190,18 +190,21 @@ test("every registered whole-activation rejection terminates nonzero with a name
   }
 });
 
-test("incident 2026-08-02: malformed FixPacketV1 fails the real Pi subprocess before provider dispatch", async () => {
+test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch", async () => {
   await withHermeticHome({ prefix: "ak-fixer-activation-incident-" }, async ({ home, agentDir }) => {
-    const packet = resolve(home, "malformed.json");
-    await writeFile(packet, JSON.stringify({ version: "not-v1" }));
+    const instructions = resolve(home, "instructions.md");
+    const prerequisites = resolve(home, "prerequisites.json");
+    await writeFile(instructions, "Apply the assigned repair.\n");
+    await writeFile(prerequisites, JSON.stringify({ prerequisites: [] }));
     const result = await runPiSubprocess([
       "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-session",
       "-e", resolve(packageRoot, "extensions/role-runtime.ts"),
       "-e", resolve(packageRoot, "test/fixtures/fixer-audit-failure-provider.ts"),
-      "--ak-role", "fixer", "--ak-fixer-phase", "apply", "--ak-fix-packet", packet,
+      "--ak-role", "fixer", "--ak-fixer-phase", "apply", "--ak-fix-packet", instructions,
+      "--ak-fixer-prerequisites", prerequisites,
       "--provider", "ak-fixer-audit-failure", "--model", "faux-1", "-p", "Apply.",
     ], { cwd: packageRoot, timeoutMs: 15_000, env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" } });
-    assert.equal(result.timedOut, false, "malformed packet subprocess did not time out");
+    assert.equal(result.timedOut, false, "malformed prerequisites subprocess did not time out");
     assert.equal(result.code, 1);
     assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=0/);
     const traces = result.stderr.split("\n").flatMap((line) => {
@@ -215,6 +218,7 @@ test("incident 2026-08-02: malformed FixPacketV1 fails the real Pi subprocess be
     const failed = traces[1];
     assert.ok(failed?.status === "failed");
     assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
+    assert.match(failed.cause.message, /Fixer prerequisites/);
   });
 });
 
