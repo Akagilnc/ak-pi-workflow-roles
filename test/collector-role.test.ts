@@ -58,7 +58,7 @@ function assertCollectorActivationFailure(
   assert.ok(failed, "Collector activation must emit a typed failed trace");
   assert.equal(failed.role, "collector");
   assert.equal(failed.stageId, "load-and-install");
-  assert.deepEqual(failed.cause, { name: "Error", message: expectedMessage });
+  assert.deepEqual(failed.cause, { identity: "Error", name: "Error", message: expectedMessage });
 }
 
 const COLLECTOR_SOUL = [

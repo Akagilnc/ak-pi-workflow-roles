@@ -23,8 +23,17 @@ export type FixPacketV1 = Readonly<{
   prerequisites: readonly FixerPrerequisite[];
 }>;
 
+export class FixPacketValidationError extends Error {
+  readonly code = "AK_INVALID_FIX_PACKET";
+
+  constructor() {
+    super("FixPacketV1 violates the exact packet contract");
+    this.name = "FixPacketValidationError";
+  }
+}
+
 function fail(): never {
-  throw new Error("FixPacketV1 violates the exact packet contract");
+  throw new FixPacketValidationError();
 }
 
 export function validateFixPacketV1(value: unknown): FixPacketV1 {

@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
@@ -11,6 +15,8 @@ import {
   type ActivationStage,
 } from "../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../src/activation-trace.ts";
+import { canonicalSnapshotDigestV1 } from "../src/navigator-contracts.ts";
+import { packageRoot, runPiSubprocess, withHermeticHome } from "./helpers/pi-test-harness.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -27,32 +33,60 @@ test("registration enrolls every role in stable named activation stages", () => 
   }
 });
 
-test("every registered whole activation leaves structured start and completion traces", async () => {
+test("every registered healthy production ignition leaves structured start and completion traces", async () => {
+  const fixture = await mkdtemp(resolve(tmpdir(), "ak-activation-healthy-"));
+  const collectorManifest = resolve(fixture, "legs.json");
+  await writeFile(collectorManifest, JSON.stringify({ version: 1, legs: [{ id: "gate", expectedAuthors: ["gatebot"], request: { body: "review" } }] }));
+  try {
   for (const entry of ROLE_REGISTRY) {
     const traces: ActivationTraceRecord[] = [];
-    const runtime = new Proxy({
-      context: {} as ExtensionContext,
-      event: { reason: "startup" },
-      navigator: async () => {},
-      merger: async () => {},
-    } as Record<string, unknown>, {
-      get(target, property) {
-        return Reflect.get(target, property) ?? { activate: async () => {} };
-      },
-    });
-
-    await executeActivationStages(
-      entry.role,
-      entry.stages.map((stage) => ({ id: stage.id, run: () => stage.run(runtime as never) })),
-      { clock: () => "2025-01-01T00:00:00.000Z", writeTrace: (record) => { traces.push(record); } },
-    );
-
-    assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
-      { role: entry.role, stageId: entry.stages[0]!.id, status: "started" },
-      { role: entry.role, stageId: entry.stages[0]!.id, status: "completed" },
-    ]);
+    const handlers = new Map<string, Array<(event: { reason?: string }, ctx: ExtensionContext) => unknown>>();
+    const flags: Record<string, unknown> = {
+      "ak-role": entry.role,
+      "ak-fixer-phase": "apply", "ak-fix-packet": "/packet.json",
+      "ak-coder-phase": "apply", "ak-coder-task": "/task.md",
+      "ak-review-task": "/task.md", "ak-review-capabilities": "/capabilities.json",
+      "ak-collector-repo": "owner/repo", "ak-collector-pr": "1", "ak-collector-legs": collectorManifest,
+      "ak-doctor-case": "/case", "ak-navigator-snapshot": "/snapshot.json", "ak-merger-input": "/merger.json",
+    };
+    const tools: Array<{ name: string }> = entry.role === "merger" ? ["read", "grep", "find", "ls", "bash", "write", "edit"].map((name) => ({ name })) : [];
+    let activeTools: string[] = [];
+    const pi = {
+      registerFlag() {}, registerTool(tool: { name: string }) { tools.push(tool); }, setActiveTools(names: string[]) { activeTools = [...names]; }, getActiveTools() { return activeTools; }, getAllTools() { return tools; },
+      getFlag(name: string) { return flags[name]; },
+      on(name: string, handler: (event: { reason?: string }, ctx: ExtensionContext) => unknown) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+    } as unknown as ExtensionAPI;
+    const digest = "0ebb429fa86d481c2630fac53db1c91cffed5d4d41d1021c179444eb67e7ee0b";
+    const snapshotBase = { version: 1 as const, capturedAt: "2025-01-01T00:00:00.000Z", runId: "018f22a0-7b4c-7abc-8def-0123456789ab", subject: { repositoryRoot: "/repository", github: { owner: "o", name: "r", id: "R" }, parent: { number: 1, id: "I" } }, children: [], parentObservation: { state: "open" as const, labels: [], observedAt: "2025-01-01T00:00:00.000Z", query: { transport: "github_rest" as const, operation: "issue" } }, labelPolicy: [], workspaces: [{ id: "w", root: "/repository", relation: "repository" as const, head: "a".repeat(40), target: "a".repeat(40) }], evidence: [], positionCursor: 0, latestAttempt: null };
+    const snapshot = { ...snapshotBase, digest: canonicalSnapshotDigestV1(snapshotBase) };
+    const material = (text: string) => ({ bytesBase64: Buffer.from(text).toString("base64"), sha256: createHash("sha256").update(text).digest("hex") });
+    const mergerInput = { version: 1 as const, attemptId: "attempt", targetObjectId: "a".repeat(40), sourceObjectId: "b".repeat(40), materials: { task: material("task"), authority: material("authority"), targetIntent: material("target"), sourceIntent: material("source") }, expectedConflictPaths: ["same.txt"], resolutionScope: ["same.txt"], authorizedChecks: [{ name: "test", argv: ["npm", "test"] }] };
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "LAW", loadFixerSoul: async () => "LAW", loadCoderSoul: async () => "LAW",
+      loadReviewerSoul: async () => "LAW", loadCollectorSoul: async () => "LAW", loadDoctorSoul: async () => "LAW",
+      loadNavigatorSoul: async () => "LAW", loadMergerSoul: async () => "LAW",
+      loadFixPacket: async () => JSON.stringify({ version: 1, instructions: "repair", prerequisites: [] }),
+      loadCoderTask: async () => "task", loadReviewerTask: async () => new TextEncoder().encode("task"),
+      loadReviewerCapabilities: async () => new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: [], bashCommands: [], prerequisiteOperations: ["preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range", "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] })),
+      loadCanonicalSkillBinding: async (name) => ({ name, snapshot: { raw: "skill", path: "/skill", baseDir: "/", body: "skill", snapshotIdentity: { sha256: digest, utf8Length: 5 } }, invocation: (request: string) => request, captureExpansion: () => undefined }) as never,
+      createReviewerPinnedGitReader: async () => ({ pin: { repositoryRoot: "/repository", objectFormat: "sha1", targetHead: "a".repeat(40), refs: {} } }) as never, reviewerHostTools: [],
+      createCollectorTransport: () => ({}) as never,
+      loadDoctorCase: async () => ({ version: 1, identity: { issueNumber: 1, runsPath: "/case" }, evidence: [], cost: {}, statuses: [], commits: [], sessions: [], outputBytes: {} }) as never,
+      loadNavigatorSnapshot: async () => snapshot, loadNavigatorEvidence: async () => new Map(),
+      loadMergerInput: async () => mergerInput,
+      mergerGitState: { activeMerge: async () => ({ targetObjectId: "a".repeat(40), sourceObjectId: "b".repeat(40), unmergedPaths: ["same.txt"], automaticMergeTreeId: "d".repeat(40) }), completedMerge: async () => ({}) as never },
+      transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }),
+      activationClock: () => "2025-01-01T00:00:00.000Z", activationTraceWriter: (record) => { traces.push(record); },
+    })(pi);
+    const start = handlers.get("session_start")?.[0];
+    assert.ok(start);
+    await start({ reason: "startup" }, { mode: "print", cwd: "/repository", abort() {} } as unknown as ExtensionContext);
+    assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), entry.stages.flatMap(({ id }) => [
+      { role: entry.role, stageId: id, status: "started" }, { role: entry.role, stageId: id, status: "completed" },
+    ]));
     for (const trace of traces) assert.equal(Value.Check(activationTraceRecordSchema, trace), true);
   }
+  } finally { await rm(fixture, { recursive: true, force: true }); }
 });
 
 test("the shared executor runs every declared stage in order", async () => {
@@ -152,50 +186,35 @@ test("every registered whole-activation rejection terminates nonzero with a name
     assert.equal(process.exitCode, 1);
     const failed = traces.find((trace) => trace.status === "failed");
     assert.ok(failed && failed.status === "failed");
-    assert.deepEqual(failed.cause, { name: "TypeError", message: `${entry.role} activation rejected` });
+    assert.deepEqual(failed.cause, { identity: "TypeError", name: "TypeError", message: `${entry.role} activation rejected` });
   }
 });
 
-test("incident 2026-08-02: a FixPacketV1-violating fixer ignition never continues uncaged", async () => {
-  process.exitCode = undefined;
-  type Handler = (event: { reason?: string }, ctx: ExtensionContext) => unknown;
-  const handlers = new Map<string, Handler[]>();
-  const traces: ActivationTraceRecord[] = [];
-  let providerTurns = 0;
-  const flags: Record<string, unknown> = {
-    "ak-role": "fixer",
-    "ak-fixer-phase": "apply",
-    "ak-fix-packet": "/lawful/malformed-fix-packet.json",
-  };
-  const pi = {
-    registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
-    getFlag(name: string) { return flags[name]; },
-    on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
-  } as unknown as ExtensionAPI;
-  createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "unused",
-    loadFixerSoul: async () => "FIXER LAW",
-    loadFixPacket: async () => JSON.stringify({ version: "not-FixPacketV1" }),
-    transcriptFromContext: () => "",
-    auditSoulCompliance: async () => ({ status: "pass" }),
-    activationClock: () => "2026-08-02T00:00:00.000Z",
-    activationTraceWriter: (record) => { traces.push(record); },
-  })(pi);
-  const ctx = { mode: "print", cwd: "/repository", abort() {} } as unknown as ExtensionContext;
-  const start = handlers.get("session_start")?.[0];
-  assert.ok(start);
-  await assert.rejects(async () => start({ reason: "startup" }, ctx), /FixPacketV1/);
-  await assert.rejects(async () => {
-    for (const before of handlers.get("before_agent_start") ?? []) await before({}, ctx);
-    providerTurns++;
-  }, (error: unknown) => error instanceof ActivationBarrierError);
-
-  assert.equal(process.exitCode, 1);
-  assert.equal(providerTurns, 0);
-  const failed = traces.find((trace) => trace.status === "failed");
-  assert.ok(failed && failed.status === "failed");
-  assert.equal(failed.cause.name.length > 0, true);
-  assert.match(failed.cause.message, /FixPacketV1/);
+test("incident 2026-08-02: malformed FixPacketV1 fails the real Pi subprocess before provider dispatch", async () => {
+  await withHermeticHome({ prefix: "ak-fixer-activation-incident-" }, async ({ home, agentDir }) => {
+    const packet = resolve(home, "malformed.json");
+    await writeFile(packet, JSON.stringify({ version: "not-v1" }));
+    const result = await runPiSubprocess([
+      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-session",
+      "-e", resolve(packageRoot, "extensions/role-runtime.ts"),
+      "-e", resolve(packageRoot, "test/fixtures/fixer-audit-failure-provider.ts"),
+      "--ak-role", "fixer", "--ak-fixer-phase", "apply", "--ak-fix-packet", packet,
+      "--provider", "ak-fixer-audit-failure", "--model", "faux-1", "-p", "Apply.",
+    ], { cwd: packageRoot, timeoutMs: 15_000, env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" } });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=0/);
+    const traces = result.stderr.split("\n").flatMap((line) => {
+      try { const value = JSON.parse(line) as ActivationTraceRecord; return Value.Check(activationTraceRecordSchema, value) ? [value] : []; }
+      catch { return []; }
+    });
+    assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
+      { role: "fixer", stageId: "load-and-install", status: "started" },
+      { role: "fixer", stageId: "load-and-install", status: "failed" },
+    ]);
+    const failed = traces[1];
+    assert.ok(failed?.status === "failed");
+    assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
+  });
 });
 
 test("a rejected registered activation fails closed with a structured named cause and dispatch barrier", async () => {
@@ -210,7 +229,7 @@ test("a rejected registered activation fails closed with a structured named caus
   for (const trace of h.traces) assert.equal(Value.Check(activationTraceRecordSchema, trace), true);
   const failure = h.traces[1]!;
   assert.equal(failure.status, "failed");
-  if (failure.status === "failed") assert.deepEqual(failure.cause, { name: "TypeError", message: "soul unavailable" });
+  if (failure.status === "failed") assert.deepEqual(failure.cause, { identity: "TypeError", name: "TypeError", message: "soul unavailable" });
   await assert.rejects(async () => h.handler("before_agent_start")({}, h.ctx), (error: unknown) => error instanceof ActivationBarrierError && error.code === "AK_ACTIVATION_NOT_ADMITTED");
 });
 
