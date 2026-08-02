@@ -105,10 +105,21 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
         "src/merger-role.ts",
         "src/package-contracts/fixer-packet.ts",
         "dist/package-contracts/fixer-packet.js",
-        "packets/fixer-repair.json",
+        "packets/fixer-repair.md",
+        "packets/fixer-prerequisites.json",
       ]) {
         assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
       }
+      assert.equal(paths.has("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed");
+      const callerArtifacts = await Promise.all([
+        readFile(resolve(packageRoot, "README.md"), "utf8"),
+        readFile(resolve(packageRoot, "docs/development-closure.md"), "utf8"),
+        readFile(resolve(packageRoot, "packets/fixer-repair.md"), "utf8"),
+        readFile(resolve(packageRoot, "packets/fixer-prerequisites.json"), "utf8"),
+      ]);
+      const shippedCallerText = callerArtifacts.join("\n");
+      assert.doesNotMatch(shippedCallerText, /FixPacketV1|fixerPacketV1Schema|parseFixPacketV1|commitSha[^}\n]*full lowercase 40- or 64-hex|Apply `classResults`[^\n]*comma-free/);
+      assert.doesNotMatch(shippedCallerText, /"version"\s*:\s*1[\s\S]{0,200}"instructions"[\s\S]{0,200}"prerequisites"/);
     },
   );
 });

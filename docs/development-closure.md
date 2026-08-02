@@ -37,11 +37,12 @@ be omitted only with an **explicit disposition** recorded in the trail.
 6. **Preserve independent review and per-finding adjudication** — bind each
    finding/disposition to authority, a fixed reviewed range (full base
    and target SHAs), and current facts (see `packets/judge-review.md`).
-7. **Issue a forward repair artifact when needed** — open a new `FixPacketV1`
-   repair request using its current typed contract (see the
-   `packets/fixer-repair.json` example) without overwriting prior artifacts.
-   Preserve the accepted current Fixer receipt and its audit observation. Its
-   typed `classResults` records completed or lawfully refused findings.
+7. **Issue forward repair material when needed** — write opaque prose
+   instructions (see `packets/fixer-repair.md`) and, only when needed, a separate
+   typed prerequisite attachment (see `packets/fixer-prerequisites.json`) without
+   overwriting prior artifacts. Preserve the accepted current Fixer receipt and
+   its audit observation. Its typed `classResults` records completed or lawfully
+   refused findings.
 
 ## Artifact preservation rules
 
