@@ -8,7 +8,7 @@ export const REVIEWER_PREREQUISITES = [
 ] as const;
 export type ReviewerChildToolName = (typeof REVIEWER_CHILD_TOOLS)[number];
 export type ReviewerPrerequisiteOperation = (typeof REVIEWER_PREREQUISITES)[number];
-export type ReviewerCapabilityRequest = Readonly<{ tools: readonly ReviewerChildToolName[]; bashCommands: readonly string[]; prerequisiteOperations: readonly ReviewerPrerequisiteOperation[] }>;
+export type ReviewerCapabilityRequest = Readonly<{ tools: readonly ReviewerChildToolName[]; prerequisiteOperations: readonly ReviewerPrerequisiteOperation[] }>;
 export type ReviewerCapabilitiesV1 = ReviewerCapabilityRequest & Readonly<{ version: 1; taskSha256: string; document: ReviewerPromptIdentity }>;
 export type MaterialSelection = Readonly<{ id: string; repositoryPath: string }>;
 export type ReviewerProposalV1 = Readonly<{ version: 1; base: Readonly<{ revision: string }>; materials: readonly MaterialSelection[]; relevanceHints?: Readonly<{ standards?: readonly string[]; spec?: readonly string[] }>; spec: Readonly<{ state: "established" | "not-established" }>; required: Readonly<{ standards: ReviewerCapabilityRequest; spec?: ReviewerCapabilityRequest }> }>;
@@ -19,12 +19,12 @@ const fail = (code: ReviewerAdmissionError["code"]): never => { throw new Review
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const unique = (xs: readonly unknown[]) => new Set(xs).size === xs.length;
 const frozen = <T extends string>(xs: readonly T[]): readonly T[] => Object.freeze([...xs]);
-const immutableRequest = (r: ReviewerCapabilityRequest): ReviewerCapabilityRequest => Object.freeze({ tools:frozen(r.tools), bashCommands:frozen(r.bashCommands), prerequisiteOperations:frozen(r.prerequisiteOperations) });
+const immutableRequest = (r: ReviewerCapabilityRequest): ReviewerCapabilityRequest => Object.freeze({ tools:frozen(r.tools), prerequisiteOperations:frozen(r.prerequisiteOperations) });
 function request(value: unknown, ceiling: ReviewerCapabilitiesV1, hostTools: readonly string[]): ReviewerCapabilityRequest {
   if (!record(value)) fail("capability-invalid");
-  const {tools,bashCommands,prerequisiteOperations}=value as Record<string, unknown>;
-  if (!Array.isArray(tools)||!Array.isArray(bashCommands)||!Array.isArray(prerequisiteOperations)||!tools.every(x=>typeof x==="string"&&(REVIEWER_CHILD_TOOLS as readonly string[]).includes(x))||!bashCommands.every(x=>typeof x==="string")||!prerequisiteOperations.every(x=>typeof x==="string"&&(REVIEWER_PREREQUISITES as readonly string[]).includes(x))||!unique(tools)||!unique(bashCommands)||!unique(prerequisiteOperations)|| (bashCommands.length>0&&!tools.includes("bash")) || tools.some(x=>!ceiling.tools.includes(x as ReviewerChildToolName)||!hostTools.includes(x)) || prerequisiteOperations.some(x=>!ceiling.prerequisiteOperations.includes(x as ReviewerPrerequisiteOperation))) fail("capability-invalid");
-  return immutableRequest({tools:tools as ReviewerChildToolName[],bashCommands:bashCommands as string[],prerequisiteOperations:prerequisiteOperations as ReviewerPrerequisiteOperation[]});
+  const {tools,prerequisiteOperations}=value as Record<string, unknown>;
+  if (!Array.isArray(tools)||!Array.isArray(prerequisiteOperations)||!tools.every(x=>typeof x==="string"&&(REVIEWER_CHILD_TOOLS as readonly string[]).includes(x))||!prerequisiteOperations.every(x=>typeof x==="string"&&(REVIEWER_PREREQUISITES as readonly string[]).includes(x))||!unique(tools)||!unique(prerequisiteOperations)||tools.some(x=>!ceiling.tools.includes(x as ReviewerChildToolName)||!hostTools.includes(x))||prerequisiteOperations.some(x=>!ceiling.prerequisiteOperations.includes(x as ReviewerPrerequisiteOperation))) fail("capability-invalid");
+  return immutableRequest({tools:tools as ReviewerChildToolName[],prerequisiteOperations:prerequisiteOperations as ReviewerPrerequisiteOperation[]});
 }
 const SAFE_ID=/^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export function admitReviewerProposal(proposal: unknown, ceiling: ReviewerCapabilitiesV1, hostTools: readonly string[]): AdmittedReviewerProposal {

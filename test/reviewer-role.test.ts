@@ -14,10 +14,10 @@ const task = new TextEncoder().encode("review exact bytes\n");
 const digest = createHash("sha256").update(task).digest("hex");
 const operations = ["preflight.git.pin-target","preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"] as const;
 const diffCommand = "git diff base...target";
-const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: operations }));
+const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read", "bash"], prerequisiteOperations: operations }));
 const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
 const pin = { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "target", refs: { "refs/heads/main": { objectId: "target", peeledCommitId: "target" } } };
-const request = { tools: ["read", "bash"] as const, bashCommands: [diffCommand] as const, prerequisiteOperations: operations };
+const request = { tools: ["read", "bash"] as const, prerequisiteOperations: operations };
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, materials: established ? [{ id: "rules", repositoryPath: "RULES.md" }, { id: "spec", repositoryPath: "SPEC.md" }] : [{ id: "rules", repositoryPath: "RULES.md" }, { id: "absence", repositoryPath: "README.md" }], spec: established ? { state: "established" } : { state: "not-established" }, required: established ? { standards: request, spec: request } : { standards: request } }; }
 function constructionEvidence(dispatch: AcceptedReviewerExecution, leg: AcceptedReviewerLeg) { return { leg: leg.axis, workspaceIdentity: `${leg.axis}-workspace`, manifestSha256: dispatch.bundle.manifestSha256, entries: dispatch.bundle.entries.map(({id,relativeClonePath,utf8Length,sha256})=>({id,relativeClonePath,utf8Length,sha256,verified:true as const})) }; }
 function successfulLeg(dispatch: AcceptedReviewerExecution, leg: AcceptedReviewerLeg, report = `${leg.axis} report`) { return { status: "successful" as const, report, usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}, target:pin, prompt:leg.prompt, workspaceDisposition:"deleted" as const, runtimeConstructionEvidence:constructionEvidence(dispatch,leg) }; }
@@ -36,7 +36,7 @@ function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1
 
 test("activation authorizes pin-target before creating the pinned Git reader", async()=>{
   let pins=0;
-  const withoutPin=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read"],bashCommands:[],prerequisiteOperations:operations.filter(operation=>operation!=="preflight.git.pin-target")}));
+  const withoutPin=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read"],prerequisiteOperations:operations.filter(operation=>operation!=="preflight.git.pin-target")}));
   const reviewerHarness=setup({loadCapabilities:async()=>withoutPin,createPinnedGitReader:async()=>{pins++;throw new Error("must not pin");}});
   await assert.rejects(reviewerHarness.runtime.activate(),/pin-target/);
   assert.equal(pins,0);
@@ -44,7 +44,7 @@ test("activation authorizes pin-target before creating the pinned Git reader", a
 
 test("activation permits unused ceiling authority absent from the host", async()=>{
   let runs=0;
-  const unavailable=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash","write"],bashCommands:[diffCommand],prerequisiteOperations:operations}));
+  const unavailable=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash","write"],prerequisiteOperations:operations}));
   const reviewerHarness=setup({loadCapabilities:async()=>unavailable,hostTools:()=>["read","bash"],runDispatch:async()=>{runs++;throw new Error("must not run");}});
   await reviewerHarness.runtime.activate();
   assert.equal(runs,0);
@@ -53,7 +53,7 @@ test("activation permits unused ceiling authority absent from the host", async()
 test("activation fails closed for absent, malformed, and task-mismatched capabilities", async()=>{
   const missing=setup(); delete missing.flags["ak-review-capabilities"]; await assert.rejects(missing.runtime.activate(),/requires --ak-review-capabilities/);
   await assert.rejects(setup({loadCapabilities:async()=>new TextEncoder().encode("{}")}).runtime.activate(),/capabilities/);
-  const wrong=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:"0".repeat(64),tools:[],bashCommands:[],prerequisiteOperations:[]}));
+  const wrong=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:"0".repeat(64),tools:[],prerequisiteOperations:[]}));
   await assert.rejects(setup({loadCapabilities:async()=>wrong}).runtime.activate(),/digest mismatch/);
 });
 

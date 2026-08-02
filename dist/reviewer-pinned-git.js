@@ -25,9 +25,6 @@ export async function acquireReviewerPinnedEvidence(reader, target, admitted, ce
     if (readRange.base !== base || readRange.target !== target.targetHead || readRange.diffCommand !== `git diff ${base}...${target.targetHead}` || !/^[0-9a-f]{64}$/.test(readRange.diffSha256) || readRange.diffSha256 === sha256Hex("") || !Array.isArray(readRange.commits) || !readRange.commits.every(x => typeof x === "string") || new Set(readRange.commits).size !== readRange.commits.length)
         evidenceViolation("range-invalid");
     const range = Object.freeze({ ...readRange, commits: Object.freeze([...readRange.commits]) });
-    const grants = [admitted.standardsGrant, ...(admitted.specGrant ? [admitted.specGrant] : [])];
-    if (!ceiling.tools.includes("bash") || !ceiling.bashCommands.includes(range.diffCommand) || grants.some(g => !g.tools.includes("bash") || !g.bashCommands.includes(range.diffCommand) || g.bashCommands.some(c => !ceiling.bashCommands.includes(c))))
-        evidenceViolation("capability-invalid");
     const materials = [];
     for (const item of admitted.materials) {
         let bytes;

@@ -15,14 +15,14 @@ const fail = (code) => { throw new ReviewerAdmissionError(code); };
 const record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const unique = (xs) => new Set(xs).size === xs.length;
 const frozen = (xs) => Object.freeze([...xs]);
-const immutableRequest = (r) => Object.freeze({ tools: frozen(r.tools), bashCommands: frozen(r.bashCommands), prerequisiteOperations: frozen(r.prerequisiteOperations) });
+const immutableRequest = (r) => Object.freeze({ tools: frozen(r.tools), prerequisiteOperations: frozen(r.prerequisiteOperations) });
 function request(value, ceiling, hostTools) {
     if (!record(value))
         fail("capability-invalid");
-    const { tools, bashCommands, prerequisiteOperations } = value;
-    if (!Array.isArray(tools) || !Array.isArray(bashCommands) || !Array.isArray(prerequisiteOperations) || !tools.every(x => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !bashCommands.every(x => typeof x === "string") || !prerequisiteOperations.every(x => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || !unique(tools) || !unique(bashCommands) || !unique(prerequisiteOperations) || (bashCommands.length > 0 && !tools.includes("bash")) || tools.some(x => !ceiling.tools.includes(x) || !hostTools.includes(x)) || prerequisiteOperations.some(x => !ceiling.prerequisiteOperations.includes(x)))
+    const { tools, prerequisiteOperations } = value;
+    if (!Array.isArray(tools) || !Array.isArray(prerequisiteOperations) || !tools.every(x => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !prerequisiteOperations.every(x => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || !unique(tools) || !unique(prerequisiteOperations) || tools.some(x => !ceiling.tools.includes(x) || !hostTools.includes(x)) || prerequisiteOperations.some(x => !ceiling.prerequisiteOperations.includes(x)))
         fail("capability-invalid");
-    return immutableRequest({ tools: tools, bashCommands: bashCommands, prerequisiteOperations: prerequisiteOperations });
+    return immutableRequest({ tools: tools, prerequisiteOperations: prerequisiteOperations });
 }
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export function admitReviewerProposal(proposal, ceiling, hostTools) {

@@ -46,8 +46,8 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const target = await git(fixture, "rev-parse", "HEAD");
     const base = await git(fixture, "rev-parse", "review-base");
     const diffCommand = `git diff ${base}...${target}`;
-    const standardsRequest = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: [] };
-    const specRequest = { tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: ["preflight.git.read-material"] };
+    const standardsRequest = { tools: ["read", "bash"], prerequisiteOperations: [] };
+    const specRequest = { tools: ["read", "bash"], prerequisiteOperations: ["preflight.git.read-material"] };
     const root = await realpath(fixture);
     const nestedCwd = resolve(fixture, "nested", "invocation");
     await mkdir(nestedCwd, { recursive: true });
@@ -72,7 +72,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     const taskPath = resolve(fixture, "review-task.md");
     const capsPath = resolve(fixture, "review-capabilities.json");
     await writeFile(taskPath, taskBytes);
-    const capabilityText = JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash", "edit"], bashCommands: [diffCommand], prerequisiteOperations: prerequisites }, null, 2) + "\n";
+    const capabilityText = JSON.stringify({ version: 1, taskSha256: createHash("sha256").update(taskBytes).digest("hex"), tools: ["read", "bash", "edit"], prerequisiteOperations: prerequisites }, null, 2) + "\n";
     await writeFile(capsPath, capabilityText);
 
     const installedDispatch = await import(new URL(`file://${resolve(fixture, "node_modules/@ak/pi-workflow-roles/src/reviewer-dispatch.ts")}`).href);
@@ -85,7 +85,6 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       version: 1,
       taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
       tools: ["read", "bash"],
-      bashCommands: [diffCommand],
       prerequisiteOperations: prerequisites.filter((operation) => operation !== "runner.git.verify-snapshot"),
     });
     let missingRecipeRuns = 0;
@@ -105,7 +104,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     });
 
     const proposal =  { version: 1, base: { revision: "review-base" }, materials: [{ id: "spec", repositoryPath: "SPEC.md" }], spec: { state: "established" }, required: { standards: standardsRequest, spec: specRequest } };
-    const bad = { ...proposal, required: { standards: standardsRequest, spec: { ...specRequest, bashCommands: ["git status"] } } };
+    const bad = { ...proposal, required: { standards: standardsRequest, spec: { ...specRequest, tools: ["write"] } } };
     const missingRecipe = await missingRecipeDispatcher.propose(proposal);
     assert.equal(missingRecipe.status, "rejected");
     if (missingRecipe.status === "rejected") assert.deepEqual(missingRecipe.violations, ["prerequisite-missing"]);
