@@ -157,6 +157,29 @@ export function validateAcceptedDetails(
   }
 }
 
+export function validateAcceptedLifecycle(
+  toolName: TerminatingToolName,
+  argumentsValue: unknown,
+  detailsValue: unknown,
+): AcceptedDetails {
+  const details = validateAcceptedDetails(toolName, detailsValue);
+  if (toolName === DOCTOR_OUTPUT_TOOL_NAME) {
+    const testimony = validateDoctorSubmissionShape(argumentsValue);
+    if (testimony.status === "refused") {
+      if (!deepEqual(testimony, details)) throw new Error("accepted tool lifecycle details mismatch");
+      return details;
+    }
+    const receipt = details as DoctorOutput;
+    if (receipt.status !== "completed") throw new Error("accepted tool lifecycle details mismatch");
+    const { cost: _runtimeCost, ...projected } = receipt;
+    if (!deepEqual(testimony, projected)) throw new Error("accepted tool lifecycle details mismatch");
+    return details;
+  }
+  const argumentsDetails = validateAcceptedDetails(toolName, argumentsValue);
+  if (!deepEqual(argumentsDetails, details)) throw new Error("accepted tool lifecycle details mismatch");
+  return details;
+}
+
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): { status?: string; commit?: string } {
   switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:

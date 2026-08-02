@@ -8,7 +8,7 @@ import type { AssistedInvocationTransportV1, NavigatorInvocationSettlementV1, Ro
 import type { AssistedCallConfigV1, AssistedTerminalClass } from "./assisted-contracts.ts";
 import type { NavigatorReceiptV1 } from "./navigator-contracts.ts";
 import { createGitCliTransportV1 } from "./assisted-acquisition.ts";
-import { isTerminatingToolName, validateAcceptedDetails } from "./package-contracts/terminating-tools.ts";
+import { isTerminatingToolName, validateAcceptedDetails, validateAcceptedLifecycle } from "./package-contracts/terminating-tools.ts";
 
 type LocalReceipt = { artifactKind: "acceptedReceipt"; details: unknown; toolCallId: string; toolName: string };
 type ChildFact = { exitCode: number | null; signal: NodeJS.Signals | null };
@@ -100,9 +100,7 @@ function acceptedReceipt(sessionText: string): LocalReceipt {
     if (!call) throw new Error("accepted tool result is orphaned or precedes its call in native session");
     if (settled.has(message.toolCallId)) throw new Error("duplicate accepted tool result in native session");
     if (call.name !== message.toolName) throw new Error("accepted tool lifecycle name mismatch in native session");
-    const callDetails = validateAcceptedDetails(message.toolName, call.arguments);
-    const details = validateAcceptedDetails(message.toolName, message.details);
-    if (canonicalJson(callDetails) !== canonicalJson(details)) throw new Error("accepted tool lifecycle details mismatch in native session");
+    const details = validateAcceptedLifecycle(message.toolName, call.arguments, message.details);
     if (accepted) throw new Error("multiple accepted role outcomes in native session");
     settled.add(message.toolCallId);
     accepted = { artifactKind: "acceptedReceipt", details, toolCallId: message.toolCallId, toolName: message.toolName };
