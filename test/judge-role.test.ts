@@ -960,6 +960,27 @@ test("Fixer activation rejects malformed typed prerequisite attachments before a
   }
 });
 
+test("Fixer activation rejects empty or trim-blank instructions before installing its tool", async () => {
+  for (const instructions of ["", " \t\n"]) {
+    const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-phase": "apply" });
+    let audits = 0;
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "judge",
+      loadFixerSoul: async () => "fixer",
+      loadFixPacket: async () => instructions,
+      transcriptFromContext: () => "record",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      auditFixerCompliance: async () => { audits += 1; return { status: "pass" }; },
+    })(harness.pi as ExtensionAPI);
+    await assert.rejects(
+      Promise.resolve(harness.handlers.get("session_start")?.({}, {})),
+      /Fixer instructions must be nonblank/,
+    );
+    assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), false);
+    assert.equal(audits, 0);
+  }
+});
+
 test("undeclared prerequisite submissions are correctable before audit and declared references receive one immutable audit input", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   const seen: unknown[] = [];
@@ -1032,6 +1053,7 @@ test("Fixer apply accepts one multi-class settlement once on first attempt and r
 
 test("fixer role loads opaque instructions and returns a thin report envelope", async () => {
   const loadedPaths: string[] = [];
+  const instructionBytes = "  REPAIR INSTRUCTIONS\nFix the live findings.\n\n";
   const harness = extensionHarness("fixer", {
     "ak-fix-packet": "/materials/fix.md",
     "ak-fixer-phase": "apply",
@@ -1041,7 +1063,7 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     loadFixerSoul: async () => "FIXER LAW\nCreate one forward commit.",
     loadFixPacket: async (path) => {
       loadedPaths.push(path);
-      return "REPAIR INSTRUCTIONS\nFix the live findings.";
+      return instructionBytes;
     },
     transcriptFromContext: () => "invocation record",
     auditSoulCompliance: async () => ({ status: "pass" }),
@@ -1058,7 +1080,7 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
   assert.deepEqual(loadedPaths, ["/materials/fix.md"]);
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
   assert.match(prompt, /FIXER LAW/);
-  assert.match(prompt, /REPAIR INSTRUCTIONS/);
+  assert.equal(prompt.includes(`<fix_packet>\n${instructionBytes}\n</fix_packet>`), true);
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);

@@ -170,6 +170,9 @@ export function createFixerRoleRuntime(
         throw new Error("Fixer role requires --ak-fix-packet");
       }
       const instructions = await dependencies.loadPacket(packetPath);
+      if (instructions.trim().length === 0) {
+        throw new Error("Fixer instructions must be nonblank");
+      }
       const prerequisitesPath = pi.getFlag("ak-fixer-prerequisites");
       if (prerequisitesPath !== undefined && (typeof prerequisitesPath !== "string" || prerequisitesPath.trim().length === 0)) {
         throw new Error("Fixer --ak-fixer-prerequisites path must be nonblank when supplied");
