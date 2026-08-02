@@ -7,8 +7,16 @@ import { ReviewerCorrectablePreflightError } from "./reviewer-preflight-error.js
 import { exactUtf8 } from "./exact-utf8.js";
 import { ReviewerAdmissionError } from "./reviewer-admission.js";
 const execFileAsync = promisify(execFile);
-const evidenceViolation = (code) => { if (code === "capability-invalid")
-    throw new ReviewerAdmissionError(code); throw new ReviewerCorrectablePreflightError(code); };
+const evidenceViolation = (code) => {
+    const diagnostic = code === "range-invalid"
+        ? "derived range must match the resolved base and pinned target with canonical command, digest, and unique commits"
+        : code === "material-invalid"
+            ? "selected material must be valid UTF-8 at the pinned target"
+            : "capability constraint failed while acquiring pinned evidence";
+    if (code === "capability-invalid")
+        throw new ReviewerAdmissionError(code, diagnostic);
+    throw new ReviewerCorrectablePreflightError(code, diagnostic);
+};
 const classifyEvidenceRead = (error) => { if (error instanceof ReviewerCorrectablePreflightError)
     throw error; throw error; };
 /** Acquires and normalizes all proposal-dependent bytes against the immutable pin. */
