@@ -176,13 +176,21 @@ export async function withHermeticHome<T>(
   }
 }
 
+export interface PiSubprocessResult {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
 export async function runPiSubprocess(
   args: string[],
   options: {
     cwd: string;
     env?: NodeJS.ProcessEnv;
+    timeoutMs?: number;
   },
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
+): Promise<PiSubprocessResult> {
   return await new Promise((resolveResult, reject) => {
     const child = spawn(piCli, args, {
       cwd: options.cwd,
@@ -191,14 +199,22 @@ export async function runPiSubprocess(
     });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
     child.stdout.setEncoding("utf8").on("data", (chunk) => {
       stdout += chunk;
     });
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", reject);
-    child.on("close", (code) => resolveResult({ code, stdout, stderr }));
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, options.timeoutMs ?? 30_000);
+    child.on("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      resolveResult({ code, stdout, stderr, timedOut });
+    });
   });
 }
 

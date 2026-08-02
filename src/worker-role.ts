@@ -20,7 +20,11 @@ import {
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
 import { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket, type FixerPhase } from "./package-contracts/fixer-output.ts";
-import { parseFixerPrerequisites, type FixerInvocationInput } from "./package-contracts/fixer-packet.ts";
+import {
+  FixerPacketValidationError,
+  parseFixerPrerequisites,
+  type FixerInvocationInput,
+} from "./package-contracts/fixer-packet.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -171,7 +175,9 @@ export function createFixerRoleRuntime(
       }
       const instructions = await dependencies.loadPacket(packetPath);
       if (instructions.trim().length === 0) {
-        throw new Error("Fixer instructions must be nonblank");
+        throw new FixerPacketValidationError(
+          new Error("Fixer instructions must be nonblank"),
+        );
       }
       const prerequisitesPath = pi.getFlag("ak-fixer-prerequisites");
       if (prerequisitesPath !== undefined && (typeof prerequisitesPath !== "string" || prerequisitesPath.trim().length === 0)) {

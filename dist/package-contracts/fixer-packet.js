@@ -6,21 +6,50 @@ export const fixerPrerequisiteSchema = Type.Object({
     requirement: Type.String({ pattern: "\\S" }),
 }, { additionalProperties: false });
 export const fixerPrerequisitesSchema = Type.Array(fixerPrerequisiteSchema);
+function causeMessage(cause) {
+    if (cause instanceof Error)
+        return cause.message;
+    if (typeof cause === "string")
+        return cause;
+    try {
+        return JSON.stringify(cause) ?? String(cause);
+    }
+    catch {
+        return String(cause);
+    }
+}
+export class FixerPacketValidationError extends Error {
+    code = "AK_INVALID_FIX_PACKET";
+    constructor(cause) {
+        const prefix = "Fixer prerequisites or instructions violate the invocation contract";
+        super(cause === undefined ? prefix : `${prefix}: ${causeMessage(cause)}`, cause === undefined ? undefined : { cause });
+        this.name = "FixerPacketValidationError";
+    }
+}
+function fail(cause) {
+    throw new FixerPacketValidationError(cause);
+}
 function parseFailure(value) {
     if (!Array.isArray(value))
-        throw new Error("Fixer prerequisites must be a JSON array");
+        fail(new Error("Fixer prerequisites must be a JSON array"));
     for (const entry of value) {
-        if (typeof entry !== "object" || entry === null || Array.isArray(entry))
-            throw new Error("Fixer prerequisite entry must be an object with id and requirement fields");
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+            fail(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
+        }
         const keys = Object.keys(entry);
-        if (keys.length !== 2 || !keys.includes("id") || !keys.includes("requirement"))
-            throw new Error("Fixer prerequisite entry fields must be exactly id and requirement");
-        if (typeof entry.id !== "string" || !(new RegExp(FIXER_PREREQUISITE_ID_PATTERN)).test(entry.id))
-            throw new Error(`Fixer prerequisite id violates pattern ${FIXER_PREREQUISITE_ID_PATTERN}`);
-        if (typeof entry.requirement !== "string" || !/\S/.test(entry.requirement))
-            throw new Error("Fixer prerequisite requirement must be nonblank");
+        if (keys.length !== 2 || !keys.includes("id") || !keys.includes("requirement")) {
+            fail(new Error("Fixer prerequisite entry fields must be exactly id and requirement"));
+        }
+        if (typeof entry.id !== "string" ||
+            !(new RegExp(FIXER_PREREQUISITE_ID_PATTERN)).test(entry.id)) {
+            fail(new Error(`Fixer prerequisite id violates pattern ${FIXER_PREREQUISITE_ID_PATTERN}`));
+        }
+        if (typeof entry.requirement !== "string" ||
+            !/\S/.test(entry.requirement)) {
+            fail(new Error("Fixer prerequisite requirement must be nonblank"));
+        }
     }
-    throw new Error("Fixer prerequisites violate the attachment schema");
+    fail(new Error("Fixer prerequisites violate the attachment schema"));
 }
 export function validateFixerPrerequisites(value) {
     if (!Value.Check(fixerPrerequisitesSchema, value))
@@ -28,8 +57,9 @@ export function validateFixerPrerequisites(value) {
     const entries = value;
     const ids = new Set();
     const prerequisites = entries.map((entry) => {
-        if (ids.has(entry.id))
-            throw new Error(`Fixer prerequisites contain duplicate id: ${entry.id}`);
+        if (ids.has(entry.id)) {
+            fail(new Error(`Fixer prerequisites contain duplicate id: ${entry.id}`));
+        }
         ids.add(entry.id);
         return Object.freeze({ id: entry.id, requirement: entry.requirement });
     });
@@ -40,8 +70,8 @@ export function parseFixerPrerequisites(source) {
     try {
         decoded = JSON.parse(source);
     }
-    catch {
-        throw new Error("Fixer prerequisites must contain valid JSON");
+    catch (error) {
+        fail(error);
     }
     return validateFixerPrerequisites(decoded);
 }
