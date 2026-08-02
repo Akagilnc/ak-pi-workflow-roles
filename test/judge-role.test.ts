@@ -520,6 +520,52 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   assert.deepEqual(result.details, verdict);
 });
 
+test("judge role rejects a terminal audit response before accepting its valid decision call", async () => {
+  const audit = createPiSoulAuditor(async () =>
+    fauxAssistantMessage(
+      fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+        status: "pass",
+        violations: [],
+        conflicts: [],
+        decisionGate: null,
+      }),
+      { stopReason: "error", errorMessage: "native provider failure" },
+    ),
+  );
+  const { harness, tool } = await startJudge(audit);
+  const ctx = Object.assign(
+    toolCallContext([{ id: "terminal-audit", arguments: { judgeStatus: "converged" } }]),
+    {
+      model: { api: "openai-responses", provider: "audit-test", id: "audit-model" },
+      modelRegistry: {
+        async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
+        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "secret" }; },
+      },
+    },
+  ) as ExtensionContext;
+
+  await assert.rejects(
+    tool.execute("terminal-audit", { judgeStatus: "converged" }, undefined, undefined, ctx),
+    /stopReason error/,
+  );
+  const retained = ctx.sessionManager.getEntries().filter(
+    (entry) => entry.type === "message" && entry.message.role === "assistant",
+  );
+  assert.equal(retained.length, 2);
+  assert.equal(retained[1]?.type, "message");
+  if (retained[1]?.type === "message" && retained[1].message.role === "assistant") {
+    assert.equal(retained[1].message.stopReason, "error");
+    assert.equal(retained[1].message.errorMessage, "native provider failure");
+  }
+  assert.equal(
+    ctx.sessionManager.getEntries().some(
+      (entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "terminal-audit",
+    ),
+    false,
+  );
+  void harness;
+});
+
 test("judge role audits only adjudicative fields while retaining evidence in receipts", async () => {
   const audited: JudgeAdjudicativeVerdict[] = [];
   const { tool } = await startJudge(async ({ verdict }) => {

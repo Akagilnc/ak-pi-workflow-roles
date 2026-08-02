@@ -315,6 +315,15 @@ export function readComplianceDecision(
     (part): part is Extract<AssistantMessage["content"][number], { type: "toolCall" }> =>
       part.type === "toolCall",
   );
+  if (response.stopReason === "error" || response.stopReason === "aborted") {
+    throw malformedComplianceDecision(
+      response,
+      toolName,
+      invalidLabel,
+      `provider response terminated with stopReason ${response.stopReason}`,
+      calls,
+    );
+  }
   const call = calls[0];
   if (
     calls.length !== 1 ||
