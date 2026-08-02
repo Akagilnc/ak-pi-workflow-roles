@@ -80,7 +80,7 @@ export const doctorSubmissionSchema = Type.Union([
     findings: Type.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." }),
   }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
   Type.Object({
-    status: Type.Literal("refused", { description: "Reserved for inability to support even a truthful cost diagnosis or case observation, not for an unavailable prescription axis." }),
+    status: Type.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
     reason: nonblank,
     missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 }),
   }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." }),
@@ -90,7 +90,8 @@ export const doctorOutputSchema = Type.Union([
   doctorSubmissionSchema.anyOf[1]!,
 ]);
 export const doctorEvidenceReadSchema = Type.Object({ evidenceId: nonblank, offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
-export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission { if (!Value.Check(doctorSubmissionSchema, value)) throw new Error("Doctor submission does not match its closed contract"); return value as DoctorSubmission; }
+export class DoctorSubmissionContractError extends Error { override readonly name = "DoctorSubmissionContractError"; }
+export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission { if (!Value.Check(doctorSubmissionSchema, value)) throw new DoctorSubmissionContractError("Doctor submission does not match its closed contract"); return value as DoctorSubmission; }
 export function validateRecordedDoctorOutput(value: unknown): DoctorOutput { if (!Value.Check(doctorOutputSchema, value)) throw new Error("Doctor output does not match its closed contract"); return value as DoctorOutput; }
 
 export class DoctorEvidenceStore {

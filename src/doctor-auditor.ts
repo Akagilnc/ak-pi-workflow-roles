@@ -17,7 +17,7 @@ export function createPiDoctorAuditor(runCompletion?: ComplianceCompletion) {
       "Do not replace medical judgment or invent evidence.",
       `Call ${DOCTOR_AUDIT_TOOL_NAME} exactly once; pass requires no violations and revise names every procedural violation.`,
     ].join("\n"),
-    serializedInput: ["<doctor_soul>", input.soul, "</doctor_soul>", "<frozen_evidence_index>", JSON.stringify(frozenIndex), "</frozen_evidence_index>", "<read_record>", JSON.stringify(input.readRecord), "</read_record>", "<proposed_doctor_testimony>", JSON.stringify(input.testimony), "</proposed_doctor_testimony>"].join("\n"),
+    serializedInput: JSON.stringify({ soul: input.soul, frozenEvidenceIndex: frozenIndex, readRecord: input.readRecord, proposedTestimony: input.testimony }),
       roleLabel: "Doctor Soul compliance audit", invalidDecisionLabel: "invalid Doctor audit decision", context: options.context,
       ...(options.signal === undefined ? {} : { signal: options.signal }), ...(runCompletion === undefined ? {} : { runCompletion }),
     });
