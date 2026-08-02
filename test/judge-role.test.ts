@@ -8,8 +8,10 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { transcriptFromContext as productionTranscriptFromContext } from "../extensions/role-runtime.ts";
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
+import { createPiSoulAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
@@ -21,6 +23,7 @@ import {
   FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
   createRoleRuntimeExtension,
+  type JudgeAdjudicativeVerdict,
   type JudgeVerdict,
   type SoulAuditInput,
 } from "../src/role-runtime.ts";
@@ -142,11 +145,13 @@ async function startJudge(
   auditSoulCompliance: Parameters<
     typeof createRoleRuntimeExtension
   >[0]["auditSoulCompliance"],
+  transcriptFromContext: (ctx: ExtensionContext) => string = () =>
+    "review evidence and adjudication",
 ) {
   const harness = extensionHarness("judge");
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
-    transcriptFromContext: () => "review evidence and adjudication",
+    transcriptFromContext,
     auditSoulCompliance,
   })(harness.pi as ExtensionAPI);
   await harness.handlers.get("session_start")?.({}, {});
@@ -384,7 +389,7 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
         promptSnippet: "Submit the final judge verdict after adjudication",
         promptGuidelines: [`Use ${JUDGE_OUTPUT_TOOL_NAME} as the final action for the judge role.`],
       },
-      output: { judgeStatus: "converged" },
+      output: { judgeStatus: "converged", evidence: { checks: [{ name: "receipt", passed: true }] } },
       acceptedText: "Judge verdict accepted",
     },
     {
@@ -460,7 +465,7 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       assert.deepEqual(
         Object.keys(tool.parameters.properties),
         fixture.role === "judge"
-          ? ["judgeStatus", "fix", "classes", "note", "decisionGate"]
+          ? ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"]
           : ["status", "report", "commitSha"],
       );
     }
@@ -515,13 +520,44 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   assert.deepEqual(result.details, verdict);
 });
 
-test("judge role accepts valid examples of all three verdict shapes", async () => {
-  const audited: JudgeVerdict[] = [];
+test("judge role audits only adjudicative fields while retaining evidence in receipts", async () => {
+  const audited: JudgeAdjudicativeVerdict[] = [];
   const { tool } = await startJudge(async ({ verdict }) => {
     audited.push(verdict);
     return { status: "pass" };
   });
   const verdicts: JudgeVerdict[] = [
+    { judgeStatus: "converged", evidence: { checks: ["converged"] } },
+    {
+      judgeStatus: "continue",
+      fix: { summary: "Repair the parser" },
+      classes: [{
+        name: "parser-contract",
+        owner: "parser",
+        boundary: "input parsing",
+        disposition: "repair malformed input handling",
+      }],
+      evidence: [],
+    },
+    {
+      judgeStatus: "escalate",
+      decisionGate: { question: "Which API?", options: ["A", "B"] },
+      evidence: null,
+    },
+  ];
+
+  for (const [index, verdict] of verdicts.entries()) {
+    const id = `valid-${index}`;
+    const result = await tool.execute(
+      id,
+      verdict,
+      undefined,
+      undefined,
+      toolCallContext([{ id, arguments: verdict }]),
+    );
+    assert.deepEqual(result.details, verdict);
+  }
+  assert.deepEqual(audited, [
     { judgeStatus: "converged" },
     {
       judgeStatus: "continue",
@@ -537,20 +573,79 @@ test("judge role accepts valid examples of all three verdict shapes", async () =
       judgeStatus: "escalate",
       decisionGate: { question: "Which API?", options: ["A", "B"] },
     },
-  ];
+  ]);
+});
 
-  for (const [index, verdict] of verdicts.entries()) {
-    const id = `valid-${index}`;
-    const result = await tool.execute(
-      id,
-      verdict,
-      undefined,
-      undefined,
-      toolCallContext([{ id, arguments: verdict }]),
+test("production Judge-to-Soul audit projection ignores opaque evidence and preserves receipt details", async () => {
+  const auditRequests: Context[] = [];
+  const auditor = createPiSoulAuditor(async (_model, request) => {
+    auditRequests.push(request);
+    return fauxAssistantMessage(
+      fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [] }),
+      { stopReason: "toolUse" },
     );
-    assert.deepEqual(result.details, verdict);
-  }
-  assert.deepEqual(audited, verdicts);
+  });
+  const { tool } = await startJudge(auditor, productionTranscriptFromContext);
+  const auditedContext = (id: string, verdict: JudgeVerdict) => Object.assign(
+    toolCallContext([{ id, arguments: verdict }]),
+    {
+      model: { provider: "active", id: "judge" },
+      modelRegistry: {
+        async getProviderAuth() {
+          return { auth: { apiKey: "secret" } };
+        },
+        async getApiKeyAndHeaders() {
+          return { ok: true, apiKey: "secret" };
+        },
+      },
+    },
+  ) as ExtensionContext;
+  const withoutEvidence: JudgeVerdict = { judgeStatus: "converged" };
+  const evidence = { opaqueOnly: "must not reach the auditor" } as const;
+  const withEvidence: JudgeVerdict = { judgeStatus: "converged", evidence };
+
+  const withoutReceipt = await tool.execute(
+    "without-evidence",
+    withoutEvidence,
+    undefined,
+    undefined,
+    auditedContext("without-evidence", withoutEvidence),
+  );
+  const withReceipt = await tool.execute(
+    "with-evidence",
+    withEvidence,
+    undefined,
+    undefined,
+    auditedContext("with-evidence", withEvidence),
+  );
+
+  assert.equal(auditRequests.length, 2);
+  const serializedAuditInput = (request: Context): string => {
+    assert.equal(request.messages.length, 1);
+    const [user] = request.messages;
+    assert.ok(user?.role === "user");
+    assert.ok(Array.isArray(user.content));
+    assert.equal(user.content.length, 1);
+    const [part] = user.content;
+    assert.ok(part?.type === "text");
+    return part.text;
+  };
+  const firstAuditText = serializedAuditInput(auditRequests[0]!);
+  const secondAuditText = serializedAuditInput(auditRequests[1]!);
+  assert.deepEqual(
+    Buffer.from(firstAuditText, "utf8"),
+    Buffer.from(secondAuditText, "utf8"),
+  );
+  assert.match(
+    firstAuditText,
+    /\[Assistant tool calls\]: ak_judge_output\(judgeStatus="converged"\)/,
+  );
+  assert.doesNotMatch(firstAuditText, /evidence|opaqueOnly/);
+  assert.equal(withoutReceipt.terminate, true);
+  assert.equal(withReceipt.terminate, true);
+  assert.deepEqual(withoutReceipt.details, withoutEvidence);
+  assert.deepEqual(withReceipt.details, withEvidence);
+  assert.equal(withReceipt.details.evidence, evidence);
 });
 
 test("judge preserves an optional advisory note on every verdict", async () => {
