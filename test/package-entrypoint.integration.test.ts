@@ -132,7 +132,7 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
   )?.[1];
 
   assert.match(extensionHelp ?? "", /--ak-fix-packet <value>\s+Path to opaque prose instructions for the Fixer/);
-  assert.match(extensionHelp ?? "", /--ak-fixer-prerequisites <value>\s+Optional path to a JSON array of typed Fixer prerequisites/);
+  assert.match(extensionHelp ?? "", /--ak-fixer-prerequisites <value>\s*Optional path to a JSON array of typed Fixer prerequisites/);
   assert.match(extensionHelp ?? "", /--ak-fixer-phase <value>\s+Fixer phase: plan .* or apply/);
   assert.match(extensionHelp ?? "", /--ak-review-capabilities <value>\s*Closed Reviewer capability grant/);
   assert.match(extensionHelp ?? "", /--ak-review-scope-keys <value>\s*Optional comma-separated exact class keys/);
