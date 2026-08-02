@@ -23,6 +23,47 @@ export const complianceDecisionSchema = Type.Union([
         decisionGate: decisionGateSchema,
     }, { additionalProperties: false }),
 ]);
+function complianceToolChoice(model, toolName) {
+    switch (model.api) {
+        case "anthropic-messages":
+        case "bedrock-converse-stream":
+            return { type: "tool", name: toolName };
+        case "mistral-conversations":
+        case "openai-completions":
+        case "pi-messages":
+            return { type: "function", function: { name: toolName } };
+        case "azure-openai-responses":
+        case "openai-responses":
+            return { type: "function", name: toolName };
+        case "google-generative-ai":
+        case "google-vertex":
+            return "any";
+        case "openai-codex-responses":
+            return "required";
+        default:
+            return "required";
+    }
+}
+function singleComplianceToolCallPayload(model, toolName) {
+    switch (model.api) {
+        case "azure-openai-responses":
+        case "openai-completions":
+        case "openai-codex-responses":
+        case "openai-responses":
+            return (payload) => {
+                if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+                    return payload;
+                }
+                return {
+                    ...payload,
+                    parallel_tool_calls: false,
+                    tool_choice: complianceToolChoice(model, toolName),
+                };
+            };
+        default:
+            return undefined;
+    }
+}
 export function createComplianceDecisionTool(name, description) {
     return {
         name,
@@ -111,6 +152,7 @@ export async function runComplianceAudit(options) {
             }
             return provider.stream(auditModel, context, request).result();
         });
+    const onPayload = singleComplianceToolCallPayload(dispatch.model, options.tool.name);
     const response = await complete(dispatch.model, {
         systemPrompt: options.systemPrompt,
         messages: [
@@ -126,6 +168,8 @@ export async function runComplianceAudit(options) {
         maxTokens: 2048,
         cacheRetention: "none",
         sessionId: uuidv7(),
+        toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
+        ...(onPayload === undefined ? {} : { onPayload }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
