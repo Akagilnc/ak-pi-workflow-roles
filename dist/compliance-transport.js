@@ -6,23 +6,21 @@ const decisionGateSchema = Type.Object({
     question: nonblank,
     options: Type.Array(nonblank, { minItems: 1 }),
 }, { additionalProperties: false });
-/** The registered audit tool is the single field/status-leaf schema owner. */
-export const complianceDecisionSchema = Type.Union([
-    Type.Object({
-        status: Type.Literal("pass"),
-        // Preserve the established pass shape: an explicitly empty violations list.
-        violations: Type.Array(nonblank, { maxItems: 0 }),
-    }, { additionalProperties: false }),
-    Type.Object({
-        status: Type.Literal("revise"),
-        violations: Type.Array(nonblank, { minItems: 1 }),
-    }, { additionalProperties: false }),
-    Type.Object({
-        status: Type.Literal("escalate"),
-        conflicts: Type.Array(nonblank, { minItems: 1 }),
-        decisionGate: decisionGateSchema,
-    }, { additionalProperties: false }),
-]);
+/**
+ * Codex requires the registered function parameters to be an object at the
+ * root. Status-dependent field combinations are checked by the shared parser
+ * below because JSON Schema cannot express this contract without a root union.
+ */
+export const complianceDecisionSchema = Type.Object({
+    status: Type.Union([
+        Type.Literal("pass"),
+        Type.Literal("revise"),
+        Type.Literal("escalate"),
+    ]),
+    violations: Type.Optional(Type.Array(nonblank)),
+    conflicts: Type.Optional(Type.Array(nonblank)),
+    decisionGate: Type.Optional(decisionGateSchema),
+}, { additionalProperties: false });
 function complianceToolChoice(model, toolName) {
     switch (model.api) {
         case "anthropic-messages":
@@ -115,6 +113,60 @@ function complianceDecisionFacts(response, toolName, calls) {
 function malformedComplianceDecision(response, toolName, invalidLabel, reason, calls) {
     return new Error(`${invalidLabel}: ${reason}; ${JSON.stringify(complianceDecisionFacts(response, toolName, calls))}`);
 }
+function hasOwn(value, key) {
+    return Object.prototype.hasOwnProperty.call(value, key);
+}
+function isArrayOfStrings(value) {
+    return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+function validateStatusDependentDecision(decision, response, toolName, invalidLabel, calls) {
+    const reject = (reason) => {
+        throw malformedComplianceDecision(response, toolName, invalidLabel, reason, calls);
+    };
+    switch (decision.status) {
+        case "pass": {
+            const violations = decision.violations;
+            if (!hasOwn(decision, "violations") || !isArrayOfStrings(violations)) {
+                reject("arguments do not match the pass decision contract");
+            }
+            const validViolations = violations ?? reject("arguments do not match the pass decision contract");
+            if (validViolations.length !== 0 ||
+                hasOwn(decision, "conflicts") ||
+                hasOwn(decision, "decisionGate")) {
+                reject("arguments do not match the pass decision contract");
+            }
+            return { status: "pass", violations: validViolations };
+        }
+        case "revise": {
+            const violations = decision.violations;
+            if (!hasOwn(decision, "violations") || !isArrayOfStrings(violations)) {
+                reject("arguments do not match the revise decision contract");
+            }
+            const validViolations = violations ?? reject("arguments do not match the revise decision contract");
+            if (validViolations.length === 0 ||
+                hasOwn(decision, "conflicts") ||
+                hasOwn(decision, "decisionGate")) {
+                reject("arguments do not match the revise decision contract");
+            }
+            return { status: "revise", violations: validViolations };
+        }
+        case "escalate": {
+            const conflicts = decision.conflicts;
+            const decisionGate = decision.decisionGate;
+            if (!hasOwn(decision, "conflicts") || !isArrayOfStrings(conflicts)) {
+                reject("arguments do not match the escalate decision contract");
+            }
+            const validConflicts = conflicts ?? reject("arguments do not match the escalate decision contract");
+            const validDecisionGate = decisionGate ?? reject("arguments do not match the escalate decision contract");
+            if (validConflicts.length === 0 ||
+                !hasOwn(decision, "decisionGate") ||
+                hasOwn(decision, "violations")) {
+                reject("arguments do not match the escalate decision contract");
+            }
+            return { status: "escalate", conflicts: validConflicts, decisionGate: validDecisionGate };
+        }
+    }
+}
 /**
  * Retain the provider's structured response verbatim in the active Pi session.
  * ExtensionContext exposes this manager as read-only, but the live manager still
@@ -143,7 +195,7 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
     if (!Value.Check(complianceDecisionSchema, arguments_)) {
         throw malformedComplianceDecision(response, toolName, invalidLabel, "arguments do not match the decision schema", calls);
     }
-    const decision = arguments_;
+    const decision = validateStatusDependentDecision(arguments_, response, toolName, invalidLabel, calls);
     switch (decision.status) {
         case "pass":
             return { status: "pass", usage: response.usage };
