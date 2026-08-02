@@ -17,10 +17,17 @@ export const complianceDecisionSchema = Type.Object({
         Type.Literal("revise"),
         Type.Literal("escalate"),
     ]),
-    violations: Type.Optional(Type.Array(nonblank)),
-    conflicts: Type.Optional(Type.Array(nonblank)),
-    decisionGate: Type.Optional(decisionGateSchema),
+    violations: Type.Array(nonblank),
+    conflicts: Type.Array(nonblank),
+    decisionGate: Type.Union([decisionGateSchema, Type.Null()]),
 }, { additionalProperties: false });
+const complianceDecisionArgumentInstructions = [
+    "Call the supplied decision tool exactly once with all four required fields.",
+    'pass: {"status":"pass","violations":[],"conflicts":[],"decisionGate":null}',
+    'revise: {"status":"revise","violations":["non-blank violation"],"conflicts":[],"decisionGate":null}',
+    'escalate: {"status":"escalate","violations":[],"conflicts":["non-blank conflict"],"decisionGate":{"question":"non-blank question","options":["non-blank option"]}}',
+    "Use the neutral values shown for fields not used by the selected status.",
+].join("\n");
 function complianceToolChoice(model, toolName) {
     switch (model.api) {
         case "anthropic-messages":
@@ -113,9 +120,6 @@ function complianceDecisionFacts(response, toolName, calls) {
 function malformedComplianceDecision(response, toolName, invalidLabel, reason, calls) {
     return new Error(`${invalidLabel}: ${reason}; ${JSON.stringify(complianceDecisionFacts(response, toolName, calls))}`);
 }
-function hasOwn(value, key) {
-    return Object.prototype.hasOwnProperty.call(value, key);
-}
 function isArrayOfStrings(value) {
     return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -125,45 +129,38 @@ function validateStatusDependentDecision(decision, response, toolName, invalidLa
     };
     switch (decision.status) {
         case "pass": {
-            const violations = decision.violations;
-            if (!hasOwn(decision, "violations") || !isArrayOfStrings(violations)) {
+            const { violations, conflicts, decisionGate } = decision;
+            if (!isArrayOfStrings(violations) ||
+                !isArrayOfStrings(conflicts) ||
+                violations.length !== 0 ||
+                conflicts.length !== 0 ||
+                decisionGate !== null) {
                 reject("arguments do not match the pass decision contract");
             }
-            const validViolations = violations ?? reject("arguments do not match the pass decision contract");
-            if (validViolations.length !== 0 ||
-                hasOwn(decision, "conflicts") ||
-                hasOwn(decision, "decisionGate")) {
-                reject("arguments do not match the pass decision contract");
-            }
-            return { status: "pass", violations: validViolations };
+            return { status: "pass", violations };
         }
         case "revise": {
-            const violations = decision.violations;
-            if (!hasOwn(decision, "violations") || !isArrayOfStrings(violations)) {
+            const { violations, conflicts, decisionGate } = decision;
+            if (!isArrayOfStrings(violations) ||
+                !isArrayOfStrings(conflicts) ||
+                violations.length === 0 ||
+                conflicts.length !== 0 ||
+                decisionGate !== null) {
                 reject("arguments do not match the revise decision contract");
             }
-            const validViolations = violations ?? reject("arguments do not match the revise decision contract");
-            if (validViolations.length === 0 ||
-                hasOwn(decision, "conflicts") ||
-                hasOwn(decision, "decisionGate")) {
-                reject("arguments do not match the revise decision contract");
-            }
-            return { status: "revise", violations: validViolations };
+            return { status: "revise", violations };
         }
         case "escalate": {
-            const conflicts = decision.conflicts;
-            const decisionGate = decision.decisionGate;
-            if (!hasOwn(decision, "conflicts") || !isArrayOfStrings(conflicts)) {
+            const { violations, conflicts, decisionGate } = decision;
+            if (!isArrayOfStrings(violations) ||
+                !isArrayOfStrings(conflicts) ||
+                violations.length !== 0 ||
+                conflicts.length === 0 ||
+                decisionGate === null) {
                 reject("arguments do not match the escalate decision contract");
             }
-            const validConflicts = conflicts ?? reject("arguments do not match the escalate decision contract");
             const validDecisionGate = decisionGate ?? reject("arguments do not match the escalate decision contract");
-            if (validConflicts.length === 0 ||
-                !hasOwn(decision, "decisionGate") ||
-                hasOwn(decision, "violations")) {
-                reject("arguments do not match the escalate decision contract");
-            }
-            return { status: "escalate", conflicts: validConflicts, decisionGate: validDecisionGate };
+            return { status: "escalate", conflicts, decisionGate: validDecisionGate };
         }
     }
 }
@@ -234,7 +231,10 @@ export async function runComplianceAudit(options) {
         messages: [
             {
                 role: "user",
-                content: [{ type: "text", text: options.serializedInput }],
+                content: [{
+                        type: "text",
+                        text: `${options.serializedInput}\n<decision_tool_contract>\n${complianceDecisionArgumentInstructions}\n</decision_tool_contract>`,
+                    }],
                 timestamp: Date.now(),
             },
         ],

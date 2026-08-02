@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+  complianceDecisionSchema,
   createComplianceDecisionTool,
   runComplianceAudit,
 } from "../src/compliance-transport.ts";
@@ -123,16 +124,22 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
   const cases = [
     {
       status: "pass" as const,
-      arguments: { status: "pass", violations: [] },
+      arguments: { status: "pass", violations: [], conflicts: [], decisionGate: null },
     },
     {
       status: "revise" as const,
-      arguments: { status: "revise", violations: ["one violation"] },
+      arguments: {
+        status: "revise",
+        violations: ["one violation"],
+        conflicts: [],
+        decisionGate: null,
+      },
     },
     {
       status: "escalate" as const,
       arguments: {
         status: "escalate",
+        violations: [],
         conflicts: ["authority conflict"],
         decisionGate: { question: "Which authority?", options: ["A", "B"] },
       },
@@ -169,18 +176,33 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
   }
 });
 
+test("Codex decision schema is an object with every property required", () => {
+  assert.equal(complianceDecisionSchema.type, "object");
+  assert.equal((complianceDecisionSchema as { anyOf?: unknown }).anyOf, undefined);
+  assert.deepEqual(
+    complianceDecisionSchema.required,
+    Object.keys(complianceDecisionSchema.properties),
+  );
+  assert.deepEqual(Object.keys(complianceDecisionSchema.properties), [
+    "status",
+    "violations",
+    "conflicts",
+    "decisionGate",
+  ]);
+});
+
 test("status-dependent decision combinations are validated at the shared parser seam", async () => {
   const invalidArguments = [
+    { status: "pass", violations: [], conflicts: ["unexpected"], decisionGate: null },
+    { status: "pass", violations: [], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
+    { status: "pass", violations: ["unexpected"], conflicts: [], decisionGate: null },
+    { status: "revise", violations: [], conflicts: [], decisionGate: null },
+    { status: "revise", violations: ["real"], conflicts: ["unexpected"], decisionGate: null },
+    { status: "revise", violations: ["real"], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
+    { status: "escalate", violations: [], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
+    { status: "escalate", violations: ["unexpected"], conflicts: ["conflict"], decisionGate: { question: "Choose", options: ["A"] } },
+    { status: "escalate", violations: [], conflicts: ["conflict"], decisionGate: null },
     { status: "pass" },
-    { status: "pass", violations: ["unexpected"] },
-    { status: "pass", violations: [], conflicts: ["unexpected"] },
-    { status: "pass", violations: [], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "revise" },
-    { status: "revise", violations: [] },
-    { status: "revise", violations: ["real"], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "escalate", conflicts: ["conflict"] },
-    { status: "escalate", conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "escalate", conflicts: ["conflict"], decisionGate: { question: "Choose", options: ["A"] }, violations: [] },
   ];
 
   for (const [index, arguments_] of invalidArguments.entries()) {
@@ -211,7 +233,7 @@ test("malformed nested decisions retain raw responses and report typed facts", a
     },
     {
       id: "wrong-name",
-      content: [fauxToolCall("ak_other_decision", { status: "pass", violations: [] })],
+      content: [fauxToolCall("ak_other_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null })],
       stopReason: "stop" as const,
       expectedCount: 1,
       expectedNames: ["ak_other_decision"],
@@ -220,8 +242,8 @@ test("malformed nested decisions retain raw responses and report typed facts", a
     {
       id: "multiple-calls",
       content: [
-        fauxToolCall(decisionToolName, { status: "pass", violations: [] }),
-        fauxToolCall("ak_other_decision", { status: "pass", violations: [] }),
+        fauxToolCall(decisionToolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+        fauxToolCall("ak_other_decision", { status: "pass", violations: [], conflicts: [], decisionGate: null }),
       ],
       stopReason: "toolUse" as const,
       expectedCount: 2,
@@ -234,6 +256,8 @@ test("malformed nested decisions retain raw responses and report typed facts", a
         fauxToolCall(decisionToolName, {
           status: "pass",
           violations: ["pass must be empty"],
+          conflicts: [],
+          decisionGate: null,
         }),
       ],
       stopReason: "error" as const,

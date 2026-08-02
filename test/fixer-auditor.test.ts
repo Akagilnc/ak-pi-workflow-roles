@@ -18,7 +18,7 @@ const context = { model: { provider: "active", id: "same-model" }, modelRegistry
 
 test("Fixer auditor uses the active model, exact invocation inputs, and a non-overreaching fresh decision context", async () => {
   let model: Model<any> | undefined; let seen: Context | undefined;
-  const audit = createPiFixerAuditor(async (actual, request) => { model = actual; seen = request; return fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [] }), { stopReason: "toolUse" }); });
+  const audit = createPiFixerAuditor(async (actual, request) => { model = actual; seen = request; return fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); });
   assert.equal((await audit(input, { context })).status, "pass");
   assert.equal(model?.id, "same-model");
   assert.deepEqual(seen?.tools?.map((tool) => tool.name), [FIXER_AUDIT_TOOL_NAME]);
@@ -37,7 +37,7 @@ test("Fixer auditor uses the active model, exact invocation inputs, and a non-ov
 });
 
 test("Fixer auditor returns revise and rejects malformed decisions", async () => {
-  const revise = createPiFixerAuditor(async () => fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "revise", violations: ["unfinished workload was relabeled"] }), { stopReason: "toolUse" }));
+  const revise = createPiFixerAuditor(async () => fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "revise", violations: ["unfinished workload was relabeled"], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }));
   assert.equal((await revise(input, { context })).status, "revise");
   await assert.rejects(createPiFixerAuditor(async () => fauxAssistantMessage("overreach"))(input, { context }), /invalid fixer audit decision/);
 });

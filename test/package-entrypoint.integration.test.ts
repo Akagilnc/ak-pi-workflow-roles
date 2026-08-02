@@ -274,7 +274,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
             return fauxAssistantMessage(
               fauxToolCall(
                 SOUL_AUDIT_TOOL_NAME,
-                { status: "pass", violations: [] },
+                { status: "pass", violations: [], conflicts: [], decisionGate: null },
                 { id: "audit-pass" },
               ),
               { stopReason: "toolUse" },
@@ -388,6 +388,7 @@ test("packaged judge escalation terminates with one typed human decision and no 
               SOUL_AUDIT_TOOL_NAME,
               {
                 status: "escalate",
+                violations: [],
                 conflicts: ["Soul authority conflicts with controlling authority"],
                 decisionGate: {
                   question: "Which authority governs this verdict?",
@@ -843,7 +844,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               }),
               { stopReason: "toolUse" },
             ),
-            fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [] }), { stopReason: "toolUse" }),
+            fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
           ]);
           await session.prompt(`Accept a sole Fixer output in ${phase}.`);
           const accepted = sessionManager.getEntries().find(
