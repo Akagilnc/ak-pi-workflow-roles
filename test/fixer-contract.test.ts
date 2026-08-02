@@ -40,7 +40,25 @@ test("every legal Fixer plan/apply shape crosses the public TypeBox schema and p
   }
 });
 
-test("Fixer hard-cuts legacy leaves and enforces exact plan/apply unions", () => {
+test("Fixer projects semantic settlements despite presentation trivia", () => {
+  const candidate = {
+    presentation: "ignored",
+    classResults: [
+      { ...completed("Parser, Unicode，Case", "REVISION-A"), decoration: true, exceptions: [{ where: "legacy adapter", reason: "already correct", note: "presentation" }] },
+      { ...completed("SchemaCase", "revision-B"), decoration: true },
+    ],
+    report: "settled",
+    status: "completed" as const,
+  };
+  assert.equal(Value.Check(fixerOutputSchema, candidate), true);
+  assert.deepEqual(validateFixerOutput(candidate, "apply"), {
+    status: "completed",
+    report: "settled",
+    classResults: [completed("Parser, Unicode，Case", "REVISION-A"), completed("SchemaCase", "revision-B")],
+  });
+});
+
+test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", () => {
   const invalid = [
     ["apply", { status: "completed", report: "old", commitSha: shaA }],
     ["apply", { status: "completed", report: "old", classesRepaired: [] }],
@@ -52,7 +70,7 @@ test("Fixer hard-cuts legacy leaves and enforces exact plan/apply unions", () =>
     ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "safety", evidence: "x" } }],
     ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }],
     ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("B", shaA)] }],
-    ["apply", { status: "completed", report: "x", classResults: [completed("A", "abc")] }],
+    ["apply", { status: "completed", report: "x", classResults: [completed("A", " ")] }],
     ["apply", { status: "partially_completed", report: "unfinished", classResults: [completed()] }],
     ["apply", { status: "partially_completed", report: "unfinished", classResults: [refused()] }],
     ["apply", { status: "completed", report: "mixed", classResults: [completed(), refused()] }],
@@ -61,4 +79,11 @@ test("Fixer hard-cuts legacy leaves and enforces exact plan/apply unions", () =>
   for (const [phase, output] of invalid) {
     assert.throws(() => validateFixerOutput(output, phase), /Fixer/);
   }
+});
+
+test("every surviving Fixer rejection names its violated field or constraint", () => {
+  assert.throws(() => validateFixerOutput({ status: "completed", report: " ", classResults: [completed()] }, "apply"), /report.*nonblank/i);
+  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }, "apply"), /classResults.*name.*unique/i);
+  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [completed("A"), completed("B", shaA)] }, "apply"), /classResults.*commitSha.*distinct/i);
+  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [{ name: "A" }] }, "apply"), /classResults.*disposition/i);
 });
