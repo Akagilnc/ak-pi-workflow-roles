@@ -8,6 +8,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { transcriptFromContext as productionTranscriptFromContext } from "../extensions/role-runtime.ts";
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
 import { createPiSoulAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
@@ -144,11 +145,13 @@ async function startJudge(
   auditSoulCompliance: Parameters<
     typeof createRoleRuntimeExtension
   >[0]["auditSoulCompliance"],
+  transcriptFromContext: (ctx: ExtensionContext) => string = () =>
+    "review evidence and adjudication",
 ) {
   const harness = extensionHarness("judge");
   createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
-    transcriptFromContext: () => "review evidence and adjudication",
+    transcriptFromContext,
     auditSoulCompliance,
   })(harness.pi as ExtensionAPI);
   await harness.handlers.get("session_start")?.({}, {});
@@ -578,7 +581,7 @@ test("production Judge-to-Soul audit projection ignores opaque evidence and pres
       { stopReason: "toolUse" },
     );
   });
-  const { tool } = await startJudge(auditor);
+  const { tool } = await startJudge(auditor, productionTranscriptFromContext);
   const auditedContext = (id: string, verdict: JudgeVerdict) => Object.assign(
     toolCallContext([{ id, arguments: verdict }]),
     {
@@ -613,18 +616,27 @@ test("production Judge-to-Soul audit projection ignores opaque evidence and pres
   );
 
   assert.equal(auditRequests.length, 2);
-  const auditText = (request: Context): string => {
-    const user = request.messages.find((message) => message.role === "user");
+  const serializedAuditInput = (request: Context): string => {
+    assert.equal(request.messages.length, 1);
+    const [user] = request.messages;
     assert.ok(user?.role === "user");
     assert.ok(Array.isArray(user.content));
-    return user.content
-      .map((part) => part.type === "text" ? part.text : "")
-      .join("");
+    assert.equal(user.content.length, 1);
+    const [part] = user.content;
+    assert.ok(part?.type === "text");
+    return part.text;
   };
-  const firstAuditText = auditText(auditRequests[0]!);
-  const secondAuditText = auditText(auditRequests[1]!);
-  assert.equal(firstAuditText, secondAuditText);
-  assert.doesNotMatch(firstAuditText, /opaqueOnly/);
+  const firstAuditText = serializedAuditInput(auditRequests[0]!);
+  const secondAuditText = serializedAuditInput(auditRequests[1]!);
+  assert.deepEqual(
+    Buffer.from(firstAuditText, "utf8"),
+    Buffer.from(secondAuditText, "utf8"),
+  );
+  assert.match(
+    firstAuditText,
+    /\[Assistant tool calls\]: ak_judge_output\(judgeStatus="converged"\)/,
+  );
+  assert.doesNotMatch(firstAuditText, /evidence|opaqueOnly/);
   assert.equal(withoutReceipt.terminate, true);
   assert.equal(withReceipt.terminate, true);
   assert.deepEqual(withoutReceipt.details, withoutEvidence);
