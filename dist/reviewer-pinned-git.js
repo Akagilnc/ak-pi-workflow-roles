@@ -146,6 +146,8 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
         async material(path, revision) {
             if (revision !== targetHead)
                 throw new Error("Material revision is not the pinned target");
+            if (path.startsWith("/") || path.includes("\\") || /[\u0000-\u001f\u007f]/u.test(path) || path.split("/").some((segment) => !segment || segment === "." || segment === ".."))
+                invalid("material-invalid");
             try {
                 const { stdout } = await execFileAsync("git", ["-C", repositoryRoot, "show", `${revision}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
                 return Uint8Array.from(stdout);
