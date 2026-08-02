@@ -176,20 +176,83 @@ export async function prepareComplianceDispatch(
   };
 }
 
+type ComplianceDecisionFacts = {
+  expectedDecisionToolName: string;
+  observedToolCallCount: number;
+  observedToolNames: string[];
+  responseStopReason: AssistantMessage["stopReason"];
+  errorMessageOrDiagnosticPresent: boolean;
+};
+
+type ActiveSessionResponseAppender = {
+  appendMessage(message: AssistantMessage): string;
+};
+
+function complianceDecisionFacts(
+  response: AssistantMessage,
+  toolName: string,
+  calls: readonly Extract<AssistantMessage["content"][number], { type: "toolCall" }>[],
+): ComplianceDecisionFacts {
+  return {
+    expectedDecisionToolName: toolName,
+    observedToolCallCount: calls.length,
+    observedToolNames: calls.map((call) => call.name),
+    responseStopReason: response.stopReason,
+    errorMessageOrDiagnosticPresent:
+      response.errorMessage !== undefined ||
+      (response.diagnostics?.length ?? 0) > 0,
+  };
+}
+
+function malformedComplianceDecision(
+  response: AssistantMessage,
+  toolName: string,
+  invalidLabel: string,
+  reason: string,
+  calls: readonly Extract<AssistantMessage["content"][number], { type: "toolCall" }>[],
+): Error {
+  return new Error(
+    `${invalidLabel}: ${reason}; ${JSON.stringify(complianceDecisionFacts(response, toolName, calls))}`,
+  );
+}
+
+/**
+ * Retain the provider's structured response verbatim in the active Pi session.
+ * ExtensionContext exposes this manager as read-only, but the live manager still
+ * owns the append operation used by the active session runtime.
+ */
+function retainComplianceResponse(
+  context: ExtensionContext,
+  response: AssistantMessage,
+): void {
+  const sessionManager = context.sessionManager as unknown as
+    | (Partial<ActiveSessionResponseAppender> & object)
+    | undefined;
+  if (typeof sessionManager?.appendMessage !== "function") return;
+  sessionManager.appendMessage(response);
+}
+
 export function readComplianceDecision(
   response: AssistantMessage,
   toolName: string,
   invalidLabel: string,
 ): ComplianceDecision {
-  const calls = response.content.filter((part) => part.type === "toolCall");
+  const calls = response.content.filter(
+    (part): part is Extract<AssistantMessage["content"][number], { type: "toolCall" }> =>
+      part.type === "toolCall",
+  );
   const call = calls[0];
   if (
     calls.length !== 1 ||
     call?.type !== "toolCall" ||
     call.name !== toolName
   ) {
-    throw new Error(
-      `${invalidLabel}: expected exactly one decision tool call`,
+    throw malformedComplianceDecision(
+      response,
+      toolName,
+      invalidLabel,
+      "expected exactly one decision tool call",
+      calls,
     );
   }
   const arguments_: unknown = call.arguments;
@@ -198,10 +261,22 @@ export function readComplianceDecision(
     arguments_ === null ||
     Array.isArray(arguments_)
   ) {
-    throw new Error(`${invalidLabel}: arguments must be an object`);
+    throw malformedComplianceDecision(
+      response,
+      toolName,
+      invalidLabel,
+      "arguments must be an object",
+      calls,
+    );
   }
   if (!Value.Check(complianceDecisionSchema, arguments_)) {
-    throw new Error(`${invalidLabel}: arguments do not match the decision schema`);
+    throw malformedComplianceDecision(
+      response,
+      toolName,
+      invalidLabel,
+      "arguments do not match the decision schema",
+      calls,
+    );
   }
   const decision = arguments_ as ComplianceDecisionArguments;
   switch (decision.status) {
@@ -282,6 +357,7 @@ export async function runComplianceAudit(options: {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     },
   );
+  retainComplianceResponse(options.context, response);
   return readComplianceDecision(
     response,
     options.tool.name,

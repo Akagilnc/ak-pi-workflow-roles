@@ -102,22 +102,46 @@ export async function prepareComplianceDispatch(model, context, label) {
         },
     };
 }
+function complianceDecisionFacts(response, toolName, calls) {
+    return {
+        expectedDecisionToolName: toolName,
+        observedToolCallCount: calls.length,
+        observedToolNames: calls.map((call) => call.name),
+        responseStopReason: response.stopReason,
+        errorMessageOrDiagnosticPresent: response.errorMessage !== undefined ||
+            (response.diagnostics?.length ?? 0) > 0,
+    };
+}
+function malformedComplianceDecision(response, toolName, invalidLabel, reason, calls) {
+    return new Error(`${invalidLabel}: ${reason}; ${JSON.stringify(complianceDecisionFacts(response, toolName, calls))}`);
+}
+/**
+ * Retain the provider's structured response verbatim in the active Pi session.
+ * ExtensionContext exposes this manager as read-only, but the live manager still
+ * owns the append operation used by the active session runtime.
+ */
+function retainComplianceResponse(context, response) {
+    const sessionManager = context.sessionManager;
+    if (typeof sessionManager?.appendMessage !== "function")
+        return;
+    sessionManager.appendMessage(response);
+}
 export function readComplianceDecision(response, toolName, invalidLabel) {
     const calls = response.content.filter((part) => part.type === "toolCall");
     const call = calls[0];
     if (calls.length !== 1 ||
         call?.type !== "toolCall" ||
         call.name !== toolName) {
-        throw new Error(`${invalidLabel}: expected exactly one decision tool call`);
+        throw malformedComplianceDecision(response, toolName, invalidLabel, "expected exactly one decision tool call", calls);
     }
     const arguments_ = call.arguments;
     if (typeof arguments_ !== "object" ||
         arguments_ === null ||
         Array.isArray(arguments_)) {
-        throw new Error(`${invalidLabel}: arguments must be an object`);
+        throw malformedComplianceDecision(response, toolName, invalidLabel, "arguments must be an object", calls);
     }
     if (!Value.Check(complianceDecisionSchema, arguments_)) {
-        throw new Error(`${invalidLabel}: arguments do not match the decision schema`);
+        throw malformedComplianceDecision(response, toolName, invalidLabel, "arguments do not match the decision schema", calls);
     }
     const decision = arguments_;
     switch (decision.status) {
@@ -172,5 +196,6 @@ export async function runComplianceAudit(options) {
         ...(onPayload === undefined ? {} : { onPayload }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
+    retainComplianceResponse(options.context, response);
     return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
 }
