@@ -1,5 +1,0 @@
-# Issue #12 PR #39 final judgment retry
-
-Re-evaluate only the remaining `closed-canonical-json-domain` class from `.ak/dockets/issues/12/judgment/pr39-final/receipt.json` against current HEAD and `.ak/dockets/issues/12/repair/pr39-canonical-container-apply/receipt.json`. Verify own-symbol and extra-array-member aliases reject with typed stable paths, ordinary JSON containers remain canonical, unexpected reflective/getter failures propagate, and shipped artifact matches.
-
-Prior judgment mechanically closed every other PR39 class; confirm no regression. Return `converged` if no class remains, otherwise exact Fixer class. No edits, Plan or new axis.

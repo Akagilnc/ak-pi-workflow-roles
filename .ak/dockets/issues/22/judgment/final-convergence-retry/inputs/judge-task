@@ -1,5 +1,0 @@
-# Issue #22 Merger final convergence retry
-
-Re-evaluate current HEAD against complete Merger authority and `.ak/dockets/issues/22/judgment/final-convergence/receipt.json` after the forward repairs and accepted settlement in `.ak/dockets/issues/22/repair/final-convergence-settlement-retry/receipt.json`.
-
-Independently verify both formerly open classes, the prior automatic-tree scope repair, complete Merger v1 behavior and prohibitions, package/Recorder/docs/cold lifecycle, and current gates. Treat forward follow-up commits as ordinary immutable repair history; each class result binds its final closing commit. Converge only with no residual.

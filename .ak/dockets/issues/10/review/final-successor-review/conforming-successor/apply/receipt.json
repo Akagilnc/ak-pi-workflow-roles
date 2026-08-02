@@ -1,5 +1,0 @@
-{
-  "status": "completed",
-  "report": "| R# | Disposition |\n| --- | --- |\n| R1 | implemented(composed Authorization + non-structural promotion matrix) |\n| R2 | implemented(isolated-pack stress + Collector/Recorder/Reviewer package-lifecycle) |",
-  "commitSha": "064a18d83d2535cf006f8b14066f996a8aff7b95"
-}

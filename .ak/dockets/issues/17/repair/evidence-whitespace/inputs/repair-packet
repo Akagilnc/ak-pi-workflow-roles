@@ -1,9 +1,0 @@
-# Issue #17 evidence-whitespace gate repair
-
-R1 — Preserve committed Recorder docket input bytes and their manifest digests. Do not edit `.ak/dockets/issues/17/apply/coder-007/inputs/coder-task` or any historical manifest/receipt.
-
-R2 — Add the narrow repository Git whitespace attribute needed so `git diff --check` does not reject trailing spaces inside immutable `.ak/dockets/**` archival evidence. Product source, tests, docs outside docket evidence must retain normal trailing-whitespace checking.
-
-R3 — Prove `git diff --check cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5..HEAD` passes and the archived input SHA-256 still matches its manifest. Keep scope to the owning Git attribute configuration and tests/checks only.
-
-Return exactly one nonblank keyed line for R1, R2, and R3. Commit forward; do not amend or rewrite history.

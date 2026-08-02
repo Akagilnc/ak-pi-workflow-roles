@@ -1,7 +1,0 @@
-# Issue #17 Fixer follow-up — complete authorized Reviewer projection class
-
-Authority remains `.ak/dockets/issues/17/judgment/review-033-invocation/receipt.json`, class `Typed Reviewer intent-to-runtime-receipt contract`.
-
-The prior source repair committed `baf8686a6c0a9abe20bc2f00261522f2b58269a1`, but omitted the tracked generated Recorder artifact. Real `bin/ak-docket-record.js` still loads old `dist/recorder/extract.js`, so a successful enriched refused Reviewer result again ends as Recorder `acceptance-invalid`.
-
-Complete this already-authorized class: regenerate and commit every tracked generated artifact required by the package/CLI so installed and source behavior are identical. Add or strengthen a production/package seam if needed to prevent source-only projection changes. Rerun the isolated-HOME full suite after all fixture/artifact updates (the prior receipt did not report a post-update full rerun), plus typecheck, package/cold-install, pack dry-run, and diff check. Do not alter axis policy or the reports. Submit only the one repaired class and commit forward.

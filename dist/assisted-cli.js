@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { createGitCliTransportV1, createGhJsonTransportV1 } from "./assisted-acquisition.js";
-import { createRecorderAssistedTransportV1 } from "./assisted-recorder-transport.js";
+import { createAssistedInvocationTransportV1 } from "./assisted-invocation-transport.js";
 import { endAssistedRunV1, enterAssistedCallV1, readAssistedRunV1, recoverAssistedInvocationV1, resumeAssistedCallV1 } from "./assisted-runner.js";
 function value(args, name, required = true) {
   const i = args.indexOf(name);
@@ -10,7 +10,7 @@ function value(args, name, required = true) {
   return v;
 }
 function common() {
-  return { git: createGitCliTransportV1(), github: createGhJsonTransportV1(), recorder: createRecorderAssistedTransportV1(), async resolveEnvironmentPolicy() {
+  return { git: createGitCliTransportV1(), github: createGhJsonTransportV1(), invocation: createAssistedInvocationTransportV1(), async resolveEnvironmentPolicy() {
     const path = process.env.AK_ASSISTED_ENVIRONMENT_POLICY_FILE;
     if (!path) throw new Error("recovery environment reference unavailable");
     return JSON.parse(await readFile(resolve(path), "utf8"));

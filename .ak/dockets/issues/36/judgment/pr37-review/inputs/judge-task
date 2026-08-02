@@ -1,7 +1,0 @@
-# Issue #36 PR #37 external finding adjudication
-
-Adjudicate the CodeRabbit finding against current HEAD:
-
-`validDiagnostics` checks optional `details` and `error` with `isRecord(diagnostic.details ?? {})` and `isRecord(diagnostic.error ?? {})`. Therefore explicit `null` is converted to `{}` and accepted, despite Judge authority requiring optional fields to be absent or correctly typed and rejecting null.
-
-Inspect current code and authority. Decide the complete bounded defect class, including both optional fields and focused mutations/generated artifact synchronization. Preserve all other Issue #36 behavior and avoid broad diagnostics redesign. Return direct Fixer authority if sustained, converged if false, or escalate only for owner policy. No Plan or code edits. Submit through `ak_judge_output`.

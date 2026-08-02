@@ -1,9 +1,0 @@
-{
-  "hits": [
-    {
-      "ruleId": "authorization-header",
-      "location": "child.stdout",
-      "count": 5
-    }
-  ]
-}

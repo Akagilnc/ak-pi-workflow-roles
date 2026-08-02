@@ -5,31 +5,24 @@
   "type": "module",
   "keywords": ["pi-package"],
   "bin": {
-    "ak-docket-record": "./bin/ak-docket-record.js",
     "ak-assisted-run": "./bin/ak-assisted-run.js"
   },
   "files": [
     "bin",
     "dist",
     "extensions",
-    "scripts/build-rename-no-replace.mjs",
     "scripts/generate-activation-trace-schema.ts",
     "scripts/build-assisted.mjs",
-    "scripts/rename_no_replace.c",
     "src",
     "souls",
     "schemas",
     "packets",
     "README.md"
   ],
-  "os": ["darwin", "linux"],
-  "cpu": ["x64", "arm64"],
   "scripts": {
-    "build:native": "node scripts/build-rename-no-replace.mjs",
     "generate:activation-trace-schema": "tsx scripts/generate-activation-trace-schema.ts",
-    "build:recorder": "npm run generate:activation-trace-schema && tsc -p tsconfig.recorder.json && node scripts/build-assisted.mjs && npm run build:native",
-    "prepack": "npm run build:recorder",
-    "install": "node scripts/build-rename-no-replace.mjs",
+    "build": "npm run generate:activation-trace-schema && tsc -p tsconfig.build.json && node scripts/build-assisted.mjs",
+    "prepack": "npm run build",
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

@@ -1,1 +1,0 @@
-Packet key set `{R1,R2,R3}` exactly equals the Apply Receipt key set. Each key begins one keyed data section, occurs once, and has a nonblank disposition. No missing, duplicate, or extra R key exists. Header presence or spelling was not used as a conformance condition.

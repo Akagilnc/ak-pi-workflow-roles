@@ -1,7 +1,0 @@
-# Owner comment 2
-
-URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5126931652
-Created: 2026-07-30T05:21:29Z
-Author: Akagilnc
-
-Owner grill 收线(2026-07-30):十条拍定决策已综合为 authority materials,落分支 `design/doctor-role`(commit 6134bb6,路径 `.ak/dockets/issues/12/authority/materials.md`)。要点:唯一病人=工厂;医生=纯举证席,方子走法链;输入=主张链+元数据、禁 session;closure 机械产数、医生环外读数;v1 纯手召;`ak_doctor_output` typed 契约含 refused 拒诊通道;薄 soul 指针引法;主生命体征=issue 立案→并 default 墙钟(一天=正常标尺);方子品味法=简化>>复杂与补丁;名 `doctor`。待主刀合并后进 authority 闸;四个待裁问题已列文末。
