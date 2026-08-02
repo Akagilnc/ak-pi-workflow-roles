@@ -21,8 +21,8 @@ import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_AUDIT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
-  fixerPacketV1Schema,
-  parseFixPacketV1,
+  fixerPrerequisitesSchema,
+  parseFixerPrerequisites,
   validateFixerOutputForPacket,
   JUDGE_OUTPUT_TOOL_NAME,
   MERGER_INPUT_FLAG,
@@ -81,8 +81,8 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   assert.equal(DOCTOR_CASE_FLAG.definition.type, "string");
   assert.equal(MERGER_INPUT_FLAG.name, "ak-merger-input");
   assert.equal(MERGER_OUTPUT_TOOL_NAME, "ak_merger_output");
-  const packet = parseFixPacketV1(JSON.stringify({ version: 1, instructions: "repair", prerequisites: [] }));
-  assert.equal((fixerPacketV1Schema as any).additionalProperties, false);
+  const packet = { instructions: "repair", prerequisites: parseFixerPrerequisites("[]") };
+  assert.equal((fixerPrerequisitesSchema as any).type, "array");
   assert.deepEqual(validateFixerOutputForPacket({ status: "planned", report: "plan" }, "plan", packet), { status: "planned", report: "plan" });
   await withHermeticHome(
     { prefix: "ak-doctor-pack-" },
@@ -131,7 +131,8 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
     /Extension CLI Flags:\n([\s\S]*?)\n\nExamples:/,
   )?.[1];
 
-  assert.match(extensionHelp ?? "", /--ak-fix-packet <value>\s+Path to a closed FixPacketV1 JSON repair packet/);
+  assert.match(extensionHelp ?? "", /--ak-fix-packet <value>\s+Path to opaque prose instructions for the Fixer/);
+  assert.match(extensionHelp ?? "", /--ak-fixer-prerequisites <value>\s*Optional path to a JSON array of typed Fixer prerequisites/);
   assert.match(extensionHelp ?? "", /--ak-fixer-phase <value>\s+Fixer phase: plan .* or apply/);
   assert.match(extensionHelp ?? "", /--ak-review-capabilities <value>\s*Closed Reviewer capability grant/);
   assert.match(extensionHelp ?? "", /--ak-review-scope-keys <value>\s*Optional comma-separated exact class keys/);

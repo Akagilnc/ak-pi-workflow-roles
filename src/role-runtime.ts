@@ -75,8 +75,8 @@ export {
 } from "./worker-role.ts";
 export { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket } from "./package-contracts/fixer-output.ts";
 export type { FixerBlocker, FixerClassResult, FixerPhase } from "./package-contracts/fixer-output.ts";
-export { fixerPacketV1Schema, fixerPrerequisiteSchema, parseFixPacketV1, validateFixPacketV1 } from "./package-contracts/fixer-packet.ts";
-export type { FixPacketV1, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
+export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
+export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
 export { FIXER_AUDIT_TOOL_NAME, createPiFixerAuditor } from "./fixer-auditor.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,

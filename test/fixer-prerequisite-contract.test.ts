@@ -3,9 +3,8 @@ import test from "node:test";
 import { Value } from "typebox/value";
 
 import {
-  fixerPacketV1Schema,
-  parseFixPacketV1,
-  type FixPacketV1,
+  parseFixerPrerequisites,
+  type FixerInvocationInput,
 } from "../src/package-contracts/fixer-packet.ts";
 import {
   fixerOutputSchema,
@@ -13,14 +12,15 @@ import {
   validateFixerOutputForPacket,
 } from "../src/package-contracts/fixer-output.ts";
 
-const packetText = JSON.stringify({
-  version: 1,
-  instructions: "  Keep this opaque: # heading and prerequisite-looking prose.  ",
-  prerequisites: [
-    { id: "owner.choice-1", requirement: "  Owner selects the public contract.  " },
-    { id: "artifact_A", requirement: "Build artifact exists." },
-  ],
-});
+const instructions = "# Repair packet\n\n保留 Unicode and `{ JSON-looking prose }` exactly.\n";
+const prerequisitesText = JSON.stringify([
+  { id: "owner.choice-1", requirement: "  Owner selects the public contract.  " },
+  { id: "artifact_A", requirement: "Build artifact exists." },
+]);
+
+function input(prerequisites = parseFixerPrerequisites(prerequisitesText)): FixerInvocationInput {
+  return Object.freeze({ instructions, prerequisites });
+}
 
 const planRefusal = {
   status: "refused" as const,
@@ -39,50 +39,46 @@ const applyRefusal = {
   }],
 };
 
-function mutablePacket(): FixPacketV1 {
+function mutableInput(): FixerInvocationInput {
   return {
-    version: 1,
     instructions: "Repair exactly what is assigned.",
     prerequisites: [{ id: "owner.choice-1", requirement: "Owner selects the contract." }],
   };
 }
 
-test("FixPacketV1 parser admits only the closed JSON contract, preserves opaque strings, and freezes the invocation input", () => {
-  const packet = parseFixPacketV1(packetText);
-  assert.equal(Value.Check(fixerPacketV1Schema, JSON.parse(packetText)), true);
-  assert.deepEqual(packet, JSON.parse(packetText));
-  assert.equal(Object.isFrozen(packet), true);
-  assert.equal(Object.isFrozen(packet.prerequisites), true);
-  assert.equal(Object.isFrozen(packet.prerequisites[0]), true);
-  assert.throws(() => { (packet.prerequisites as any).push({ id: "later", requirement: "late" }); }, TypeError);
+test("opaque fixer prose is independent of the frozen typed prerequisite attachment", () => {
+  const prerequisites = parseFixerPrerequisites(prerequisitesText);
+  assert.equal(input(prerequisites).instructions, instructions);
+  assert.deepEqual(prerequisites, JSON.parse(prerequisitesText));
+  assert.equal(Object.isFrozen(prerequisites), true);
+  assert.equal(Object.isFrozen(prerequisites[0]), true);
+  assert.throws(() => { (prerequisites as any).push({ id: "later", requirement: "late" }); }, TypeError);
 });
 
-test("FixPacketV1 hard-cuts legacy Markdown and malformed, extra, blank, or duplicate declarations", () => {
-  const invalid = [
-    "# Legacy repair packet",
-    "{",
-    JSON.stringify({ version: 2, instructions: "repair", prerequisites: [] }),
-    JSON.stringify({ version: 1, instructions: " ", prerequisites: [] }),
-    JSON.stringify({ version: 1, instructions: "repair", prerequisites: [], extra: true }),
-    JSON.stringify({ version: 1, instructions: "repair", prerequisites: [{ id: "bad/id", requirement: "x" }] }),
-    JSON.stringify({ version: 1, instructions: "repair", prerequisites: [{ id: "x", requirement: " " }] }),
-    JSON.stringify({ version: 1, instructions: "repair", prerequisites: [{ id: "Same", requirement: "x" }, { id: "Same", requirement: "y" }] }),
+test("prerequisite attachment failures name the violated field or constraint", () => {
+  const invalid: Array<[string, RegExp]> = [
+    ["{", /JSON/],
+    [JSON.stringify({ prerequisites: [] }), /array/],
+    [JSON.stringify([{ id: "bad\/id", requirement: "x" }]), /id.*pattern/],
+    [JSON.stringify([{ id: "x", requirement: " " }]), /requirement.*nonblank/],
+    [JSON.stringify([{ id: "x", requirement: "x", extra: true }]), /entry.*fields/],
+    [JSON.stringify([{ id: "Same", requirement: "x" }, { id: "Same", requirement: "y" }]), /duplicate.*id/],
   ];
-  for (const source of invalid) assert.throws(() => parseFixPacketV1(source), /FixPacketV1/);
-  assert.doesNotThrow(() => parseFixPacketV1(JSON.stringify({ version: 1, instructions: "repair", prerequisites: [{ id: "Same", requirement: "x" }, { id: "same", requirement: "y" }] })));
+  for (const [source, diagnostic] of invalid) assert.throws(() => parseFixerPrerequisites(source), diagnostic);
+  assert.doesNotThrow(() => parseFixerPrerequisites(JSON.stringify([{ id: "Same", requirement: "x" }, { id: "same", requirement: "y" }])));
 });
 
-test("typed prerequisite blockers cross the public TypeBox schema and packet-aware production validator", () => {
-  const packet = parseFixPacketV1(packetText);
+test("typed prerequisite blockers cross the public TypeBox schema and prerequisite-aware production validator", () => {
+  const invocation = input();
   for (const [phase, candidate] of [["plan", planRefusal], ["apply", applyRefusal]] as const) {
     assert.equal(Value.Check(fixerOutputSchema, candidate), true);
     assert.deepEqual(validateFixerOutput(candidate, phase), candidate);
-    assert.deepEqual(validateFixerOutputForPacket(candidate, phase, packet), candidate);
+    assert.deepEqual(validateFixerOutputForPacket(candidate, phase, invocation), candidate);
   }
 });
 
 test("current leaves reject old, malformed, and undeclared prerequisite references in plan and apply", () => {
-  const packet = mutablePacket();
+  const invocation = mutableInput();
   const blockers = [
     { cause: "prerequisite_unmet", evidence: "old missing-ID leaf" },
     { cause: "prerequisite_unmet", prerequisiteId: "bad/id", evidence: "malformed" },
@@ -95,23 +91,23 @@ test("current leaves reject old, malformed, and undeclared prerequisite referenc
     const mixed = { status: "partially_completed", report: "Mixed.", classResults: [{ name: "Done", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }, refusedLeaf] };
     assert.equal(Value.Check(fixerOutputSchema, plan), index === 2, `TypeBox plan blocker ${index}`);
     assert.equal(Value.Check(fixerOutputSchema, apply), index === 2, `TypeBox apply blocker ${index}`);
-    assert.throws(() => validateFixerOutputForPacket(plan, "plan", packet), /Fixer output/);
-    assert.throws(() => validateFixerOutputForPacket(apply, "apply", packet), /Fixer output/);
-    assert.throws(() => validateFixerOutputForPacket(mixed, "apply", packet), /Fixer output/);
+    assert.throws(() => validateFixerOutputForPacket(plan, "plan", invocation), /Fixer output/);
+    assert.throws(() => validateFixerOutputForPacket(apply, "apply", invocation), /Fixer output/);
+    assert.throws(() => validateFixerOutputForPacket(mixed, "apply", invocation), /Fixer output/);
   }
   const decorated = { ...planRefusal, blocker: { ...planRefusal.blocker, presentation: true } };
   assert.equal(Value.Check(fixerOutputSchema, decorated), true);
-  assert.deepEqual(validateFixerOutputForPacket(decorated, "plan", packet), planRefusal);
-  const empty = { version: 1, instructions: "repair", prerequisites: [] } satisfies FixPacketV1;
-  assert.throws(() => validateFixerOutputForPacket(planRefusal, "plan", empty), /Fixer output/);
-  assert.throws(() => validateFixerOutputForPacket(applyRefusal, "apply", empty), /Fixer output/);
-  assert.throws(() => validateFixerOutputForPacket({ status: "partially_completed", report: "Mixed.", classResults: [{ name: "Done", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }, applyRefusal.classResults[0]] }, "apply", empty), /Fixer output/);
+  assert.deepEqual(validateFixerOutputForPacket(decorated, "plan", invocation), planRefusal);
+  const empty = input(Object.freeze([]));
+  assert.throws(() => validateFixerOutputForPacket(planRefusal, "plan", empty), /prerequisiteId.*declared/);
+  assert.throws(() => validateFixerOutputForPacket(applyRefusal, "apply", empty), /prerequisiteId.*declared/);
+  assert.throws(() => validateFixerOutputForPacket({ status: "partially_completed", report: "Mixed.", classResults: [{ name: "Done", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }, applyRefusal.classResults[0]] }, "apply", empty), /prerequisiteId.*declared/);
 });
 
 test("zero declarations preserve authority refusal, completed apply, and existing settlement combinations", () => {
-  const packet = parseFixPacketV1(JSON.stringify({ version: 1, instructions: "repair", prerequisites: [] }));
+  const invocation = input(Object.freeze([]));
   const authority = { status: "refused" as const, report: "Forbidden.", remainingScope: "outside authority", blocker: { cause: "authority_violation" as const, evidence: "Owner excluded it." } };
   const completed = { status: "completed" as const, report: "Done.", classResults: [{ name: "Contract", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
-  assert.deepEqual(validateFixerOutputForPacket(authority, "plan", packet), authority);
-  assert.deepEqual(validateFixerOutputForPacket(completed, "apply", packet), completed);
+  assert.deepEqual(validateFixerOutputForPacket(authority, "plan", invocation), authority);
+  assert.deepEqual(validateFixerOutputForPacket(completed, "apply", invocation), completed);
 });
