@@ -43,7 +43,10 @@ function fail(constraint: string): never { throw new Error(`Fixer output violate
 function blocker(value: unknown, path: string): FixerBlocker {
   if (!record(value)) fail(`${path} object constraint`);
   if (!nonblank(value.evidence)) fail(`${path}.evidence nonblank constraint`);
-  if (value.cause === "authority_violation") return { cause: "authority_violation", evidence: value.evidence };
+  if (value.cause === "authority_violation") {
+    if (Object.hasOwn(value, "prerequisiteId")) fail(`${path} authority_violation prerequisiteId semantic-field constraint`);
+    return { cause: "authority_violation", evidence: value.evidence };
+  }
   if (value.cause === "prerequisite_unmet") {
     if (typeof value.prerequisiteId !== "string" || !new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(value.prerequisiteId)) fail(`${path}.prerequisiteId pattern constraint`);
     return { cause: "prerequisite_unmet", prerequisiteId: value.prerequisiteId, evidence: value.evidence };
@@ -54,12 +57,14 @@ function blocker(value: unknown, path: string): FixerBlocker {
 export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOutput {
   if (!record(value)) fail("root object constraint");
   if (!nonblank(value.report)) fail("report nonblank constraint");
+  if (Object.hasOwn(value, "commitSha") || Object.hasOwn(value, "classesRepaired")) fail("removed top-level commit semantic-field constraint");
   if (value.status === "planned") {
     if (phase === "apply") fail("status phase constraint: apply forbids planned");
     if (Object.hasOwn(value, "classResults") || Object.hasOwn(value, "remainingScope") || Object.hasOwn(value, "blocker") || Object.hasOwn(value, "commitSha")) fail("status planned semantic-field combination constraint");
     return { status: "planned", report: value.report };
   }
   if (value.status === "refused" && Object.hasOwn(value, "remainingScope")) {
+    if (Object.hasOwn(value, "classResults")) fail("status refused plan/apply semantic-field combination constraint");
     if (phase === "apply") fail("status phase constraint: apply refusal requires classResults");
     if (!nonblank(value.remainingScope)) fail("remainingScope nonblank constraint");
     return { status: "refused", report: value.report, remainingScope: value.remainingScope, blocker: blocker(value.blocker, "blocker") };
@@ -76,6 +81,7 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
     if (names.has(item.name)) fail("classResults name unique constraint");
     names.add(item.name);
     if (item.disposition === "completed") {
+      if (Object.hasOwn(item, "remainingScope") || Object.hasOwn(item, "blocker")) fail(`${path} completed/refused semantic-field combination constraint`);
       if (!nonblank(item.searchScope)) fail(`${path}.searchScope nonblank constraint`);
       if (!Array.isArray(item.exceptions)) fail(`${path}.exceptions array constraint`);
       const exceptions = item.exceptions.map((entry, exceptionIndex) => {
@@ -91,6 +97,7 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
       return { name: item.name, disposition: "completed", searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
     }
     if (item.disposition === "refused") {
+      if (Object.hasOwn(item, "searchScope") || Object.hasOwn(item, "exceptions") || Object.hasOwn(item, "commitSha")) fail(`${path} refused/completed semantic-field combination constraint`);
       if (!nonblank(item.remainingScope)) fail(`${path}.remainingScope nonblank constraint`);
       refused++;
       return { name: item.name, disposition: "refused", remainingScope: item.remainingScope, blocker: blocker(item.blocker, `${path}.blocker`) };

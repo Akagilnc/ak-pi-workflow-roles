@@ -81,6 +81,18 @@ test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", ()
   }
 });
 
+test("Fixer rejects branch-incompatible semantic fields while ignoring presentation decoration", () => {
+  const contradictions = [
+    { candidate: { ...legal[1]!.output, classResults: [refused()] }, phase: "plan", diagnostic: /plan\/apply semantic-field combination/ },
+    { candidate: { status: "completed", report: "x", commitSha: shaA, classResults: [completed()] }, phase: "apply", diagnostic: /removed top-level commit semantic-field/ },
+    { candidate: { ...legal[1]!.output, blocker: { cause: "authority_violation", evidence: "x", prerequisiteId: "repository.ready" } }, phase: "plan", diagnostic: /authority_violation prerequisiteId semantic-field/ },
+    { candidate: { status: "completed", report: "x", classResults: [{ ...completed(), remainingScope: "contradiction" }] }, phase: "apply", diagnostic: /completed\/refused semantic-field combination/ },
+    { candidate: { status: "refused", report: "x", classResults: [{ ...refused(), commitSha: shaA }] }, phase: "apply", diagnostic: /refused\/completed semantic-field combination/ },
+  ] as const;
+  for (const row of contradictions) assert.throws(() => validateFixerOutput(row.candidate, row.phase), row.diagnostic);
+  assert.deepEqual(validateFixerOutput({ ...legal[1]!.output, presentation: { commitSha: shaA }, blocker: { ...(legal[1]!.output as any).blocker, note: "display only" } }, "plan"), legal[1]!.output);
+});
+
 test("every surviving Fixer rejection names its violated field or constraint", () => {
   assert.throws(() => validateFixerOutput({ status: "completed", report: " ", classResults: [completed()] }, "apply"), /report.*nonblank/i);
   assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }, "apply"), /classResults.*name.*unique/i);
