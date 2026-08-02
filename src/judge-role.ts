@@ -30,6 +30,7 @@ const judgeVerdictSchema = Type.Object(
       disposition: Type.String({ minLength: 1 }),
     }, { additionalProperties: false }), { minItems: 1 })),
     note: Type.Optional(Type.String({ minLength: 1 })),
+    evidence: Type.Optional(Type.Unknown()),
     decisionGate: Type.Optional(
       Type.Object(
         {

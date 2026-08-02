@@ -257,6 +257,7 @@ Judge's legal status-dependent shapes are:
 {"judgeStatus":"converged"}
 {"judgeStatus":"continue","fix":{"summary":"non-empty repair summary"},"classes":[{"name":"ClassName","owner":"owning seam","boundary":"bounded scope","disposition":"adjudication"}]}
 {"judgeStatus":"escalate","decisionGate":{"question":"non-empty owner question","options":["non-empty option"]}}
+{"judgeStatus":"converged","evidence":{"checks":[{"name":"verification","passed":true}]}}
 ```
 
 A `continue` receipt requires non-empty `classes` with unique comma-free nonblank names and nonblank owner, boundary, and disposition fields. `classes` is forbidden on `converged` and `escalate` receipts. The shapes retain these meanings:
@@ -266,6 +267,8 @@ A `continue` receipt requires non-empty `classes` with unique comma-free nonblan
 - `escalate` — an owner decision is required
 
 Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields (including apply obligations attached to a construction-ready plan). It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
+
+Any verdict may also carry an optional `evidence` JSON value, including an empty value. It is an opaque retained field: the runtime does not audit, normalize, or interpret its contents beyond receiving well-formed JSON, and no package consumer reads, enforces, classifies, or routes it. The accepted receipt details retain the value unchanged for callers.
 
 Workflow ordering and routing are caller-owned. A separate orchestrator is optional infrastructure, not a package requirement.
 
