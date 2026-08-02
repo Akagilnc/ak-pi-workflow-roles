@@ -79,14 +79,32 @@ export function nativeSessionEvidenceReads(sessionText: string) {
 }
 
 function acceptedReceipt(sessionText: string): LocalReceipt {
+  const calls = new Map<string, { name: string; arguments: unknown }>();
+  const settled = new Set<string>();
   let accepted: LocalReceipt | null = null;
   for (const line of sessionText.split("\n")) {
     if (!line) continue;
     const row = JSON.parse(line);
     const message = row?.message;
-    if (message?.role !== "toolResult" || message.isError !== false || typeof message.toolName !== "string" || !isTerminatingToolName(message.toolName) || typeof message.toolCallId !== "string") continue;
+    if (message?.role === "assistant" && Array.isArray(message.content)) {
+      for (const part of message.content) {
+        if (part?.type !== "toolCall" || typeof part.id !== "string" || !part.id || typeof part.name !== "string") continue;
+        if (calls.has(part.id)) throw new Error("duplicate tool call identity in native session");
+        calls.set(part.id, { name: part.name, arguments: part.arguments });
+      }
+      continue;
+    }
+    if (message?.role !== "toolResult" || message.isError !== false || typeof message.toolName !== "string" || !isTerminatingToolName(message.toolName)) continue;
+    if (typeof message.toolCallId !== "string" || !message.toolCallId) throw new Error("accepted tool result call identity missing from native session");
+    const call = calls.get(message.toolCallId);
+    if (!call) throw new Error("accepted tool result is orphaned or precedes its call in native session");
+    if (settled.has(message.toolCallId)) throw new Error("duplicate accepted tool result in native session");
+    if (call.name !== message.toolName) throw new Error("accepted tool lifecycle name mismatch in native session");
+    const callDetails = validateAcceptedDetails(message.toolName, call.arguments);
     const details = validateAcceptedDetails(message.toolName, message.details);
+    if (canonicalJson(callDetails) !== canonicalJson(details)) throw new Error("accepted tool lifecycle details mismatch in native session");
     if (accepted) throw new Error("multiple accepted role outcomes in native session");
+    settled.add(message.toolCallId);
     accepted = { artifactKind: "acceptedReceipt", details, toolCallId: message.toolCallId, toolName: message.toolName };
   }
   if (!accepted) throw new Error("accepted role outcome missing from native session");
