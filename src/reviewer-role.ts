@@ -4,6 +4,7 @@ import { Type } from "typebox";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
+import { reviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 import { exactUtf8 } from "./exact-utf8.ts";
 import {
   createReviewerDispatcher,
@@ -52,6 +53,7 @@ export type ReviewerRoleDependencies = {
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
   hostTools(): readonly string[];
   runDispatch(execution: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerDispatchRunResult>;
+  compilePrompt?(prompt: string, axis: "standards" | "spec", pass: 1 | 2): ReturnType<typeof reviewerPromptIdentity>;
   shutdownAgent?(): Promise<void>;
   auditCompliance(input: ReviewerAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
@@ -152,6 +154,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
       reader,
       hostTools: dependencies.hostTools(),
       ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
+      ...(dependencies.compilePrompt === undefined ? {} : { compilePrompt: dependencies.compilePrompt }),
       decisionEvidence(decision) {
         try {
           if (decision.disposition === "accepted") {

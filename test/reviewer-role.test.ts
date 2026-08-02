@@ -71,6 +71,7 @@ test("registered Agent rejection text names the violated proposal or pinned-evid
     { expected: /required\.tools\/prerequisiteOperations/, candidate: { ...proposal(), required: { standards: { tools: ["write"], prerequisiteOperations: operations } } as any } },
     { expected: /missing preflight\.git\.derive-range/, overrides: { loadCapabilities: async()=>new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash"],prerequisiteOperations:operations.filter(x=>x!=="preflight.git.derive-range")})) } },
     { expected: /derived range must match the resolved base and pinned target/, overrides: { createPinnedGitReader: async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"wrong",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}) } },
+    { expected: /repeated prompt compilation must produce the same prompt identity/, overrides: { compilePrompt: (()=>{let pass=0;return (text:string)=>reviewerPromptIdentity(`${text}${++pass===1?"":"changed"}`);})() } },
     { expected: /pinned target snapshot changed before child execution/, overrides: { createPinnedGitReader: async()=>{let observations=0;return {pin,snapshot:async()=>++observations===1?{...pin,targetHead:"other"}:pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}} } },
   ];
   for (const row of cases) {
