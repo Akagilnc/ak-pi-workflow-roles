@@ -5,7 +5,7 @@ import { canonicalJson } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
 import { assistedRunDirectory } from "./assisted-ledger.js";
 import { createGitCliTransportV1 } from "./assisted-acquisition.js";
-import { isTerminatingToolName, validateAcceptedDetails } from "./package-contracts/terminating-tools.js";
+import { isTerminatingToolName, validateAcceptedDetails, validateAcceptedLifecycle } from "./package-contracts/terminating-tools.js";
 function childFact(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("private invocation child fact malformed");
   const fact = value;
@@ -87,9 +87,7 @@ function acceptedReceipt(sessionText2) {
     if (!call) throw new Error("accepted tool result is orphaned or precedes its call in native session");
     if (settled.has(message.toolCallId)) throw new Error("duplicate accepted tool result in native session");
     if (call.name !== message.toolName) throw new Error("accepted tool lifecycle name mismatch in native session");
-    const callDetails = validateAcceptedDetails(message.toolName, call.arguments);
-    const details = validateAcceptedDetails(message.toolName, message.details);
-    if (canonicalJson(callDetails) !== canonicalJson(details)) throw new Error("accepted tool lifecycle details mismatch in native session");
+    const details = validateAcceptedLifecycle(message.toolName, call.arguments, message.details);
     if (accepted) throw new Error("multiple accepted role outcomes in native session");
     settled.add(message.toolCallId);
     accepted = { artifactKind: "acceptedReceipt", details, toolCallId: message.toolCallId, toolName: message.toolName };
