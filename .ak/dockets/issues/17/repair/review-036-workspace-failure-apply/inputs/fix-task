@@ -1,7 +1,0 @@
-# Issue #17 Fixer Apply — preparation/cleanup resource state
-
-Sole authority: `.ak/dockets/issues/17/judgment/review-036/receipt.json`.
-
-Repair exactly `Fallible preparation versus cleanup-owned resource state` under its full boundary. Separate fallible preparation from cleanup ownership; shutdown must not replay classified pre/post-creation rejection, delete retained evidence, or lose disposition/cause, while successful owned mirror deletion remains exactly once and genuine rm failure remains fatal. Add owner-seam and production refused-receipt regressions specified by Judge. Preserve all Reviewer ownership, settlement, shutdown, receipt, and failure-honesty laws.
-
-Do not touch compatibility exports in this invocation. Regenerate tracked artifacts. Run focused, typecheck, isolated-HOME full, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this class.

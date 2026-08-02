@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_judge_output",
-  "toolCallId": "call_c4pxAJ8KdgwTMNmAfJJjpd9C|fc_04f12bce6f3dba77016a6d8f68f7788191aa182f9a8f5f0357",
-  "details": {
-    "judgeStatus": "converged",
-    "note": "Exact HEAD 65bcc6c4b75074feb7c855eb8571eaa310d0ef2c is executable-proof converged. The sole open NavigatorEvidenceReadTruthResidual is closed: `test/assisted-recorder-evidence.test.ts` emits malformed, forged, omitted, duplicate, unknown, and unread records directly in native Pi JSONL; both live `createRecorderAssistedTransportV1.invokeNavigator` and recovered `readSealed` consume the production Recorder artifact. Malformed details reject during extraction on both paths, while all receipt/read-truth mismatches reject through `validateNavigatorReceiptV1`, the production validator used by live and recovered Runner settlement. There is no post-extraction mutation or direct `sealedEvidenceReads` substitution. The repair is test-only, so all prior closed classes remain closed and no parallel mechanism or production hook was introduced. Independently verified: clean worktree and exact HEAD; typecheck passed; focused Recorder/Runner tests passed 11/11 including all six counterexamples; isolated-HOME full suite passed 388, failed 0, skipped 5; `npm pack --dry-run` and `git diff --check` passed."
-  },
-  "artifactKind": "acceptedReceipt"
-}

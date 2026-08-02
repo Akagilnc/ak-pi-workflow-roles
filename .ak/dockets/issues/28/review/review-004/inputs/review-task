@@ -1,7 +1,0 @@
-# Issue #28 post-repair fixed-target review
-
-Review target `0100affe834d39736faa79dddc5724482edf6901` against base `4e96b7b1a95d16fb6dbf14cb424d63f3225bdbc5`, including the complete Navigator v1, Assisted Runner, and authorized Review-003 repair.
-
-The established Spec materials are the two Issue #28 authority receipts. Repository law is `CLAUDE.md`. Review both Standards and Spec against all relevant clone material. Verify every authorized behavior and repair class, authored-source ownership, actual package lifecycle, cold installation, failure honesty, ledger/recovery atomicity, evidence-read truth, credential boundary, and production-seam tests.
-
-Use only the supplied capabilities. Report concrete findings only. Do not repair.

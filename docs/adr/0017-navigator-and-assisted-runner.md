@@ -25,3 +25,5 @@ Typed Git/GitHub adapters acquire only the caller-declared repository, parent, c
 ## Consequences
 
 ADR 0010 is narrowed only for Navigator advice and Runner's automatic consultations. Direct role invocation remains compatible. The package gains no queue, scheduler, station graph, worktree manager, or compulsory route policy.
+
+**Forward amendment (2026-08-02):** Assisted Runner now owns only a private direct adapter that launches its one caller-selected Pi child, reads that invocation’s Pi-native session, and keeps derived settlement material local to the Assisted run. The global Recorder and its sealing/manifest contracts are retired; no general replacement is implied.

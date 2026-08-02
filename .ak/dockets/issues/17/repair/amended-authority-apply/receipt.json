@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_fixer_output",
-  "toolCallId": "call_W8UuU9NN18kfd7JXeXUQGbgf|fc_09fe288d9f3d1d84016a6cf081a50c8191b6e7d3aa2316928b",
-  "details": {
-    "status": "refused",
-    "report": "Refused rather than claim partial completion. The seven classes require a coordinated one-time schema/runtime/test migration across reviewer-dispatch, reviewer-agent, reviewer-role, execution ledger, output contracts, package lifecycle, and cold-install fixtures. I could not complete and validate that migration safely in this apply run. The working tree is restored clean; no commit was created and no pre-existing changes were altered. Evidence: the current production still has the authority-identified superseded axis-compartment and driver-aggregation mechanisms. A baseline test run completed with 339 tests: 332 passed, 2 failed, 5 skipped; the two failures are the admitted MERGE Judge class-contract compatibility residuals. `git diff --check` is clean. All seven requested classes remain unrepaired; none is claimed complete."
-  },
-  "artifactKind": "acceptedReceipt"
-}

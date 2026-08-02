@@ -1,9 +1,0 @@
-# Owner comment 9
-
-URL: https://github.com/Akagilnc/ak-pi-workflow-roles/issues/12#issuecomment-5139691089
-Created: 2026-07-31T05:41:53Z
-Author: Akagilnc
-
-## 化验科数据面缺口:腿级时间不可见(owner 2026-07-31:「plan 的时间数据应该是看得见的」)
-
-**问题(不附方案)**:docket 按小核法零时间戳——2026-07-31 全部时间账(#23 plan 21min/apply 11min、fixer 腿 832s 等)均靠 commit 节拍与 session 尾气推算,而尾气属默认删除的执行废气。医生开机时化验科无腿级原始计时数据;owner 已定调该数据必须可见。怎么补,归医生方子+判官闸。

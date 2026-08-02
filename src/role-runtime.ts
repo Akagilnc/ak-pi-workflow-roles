@@ -102,7 +102,7 @@ export * from "./assisted-contracts.ts";
 export * from "./assisted-acquisition.ts";
 export * from "./assisted-ledger.ts";
 export * from "./assisted-runner.ts";
-export { createRecorderAssistedTransportV1 } from "./assisted-recorder-transport.ts";
+export { createAssistedInvocationTransportV1 } from "./assisted-invocation-transport.ts";
 export { MERGER_INPUT_FLAG, MERGER_ACTIVE_TOOLS, createMergerRoleRuntime } from "./merger-role.ts";
 export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
 export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";

@@ -1,9 +1,0 @@
-# PR #43 Fixer apply — lifecycle proof completion
-
-Using `.ak/dockets/issues/28/judgment/pr43-final/receipt.json` and the honest partial disposition in `.ak/dockets/issues/28/repair/pr43-proof-completion-apply/receipt.json`, close exactly:
-
-- `LifecycleAdmissionExclusion`
-- `RecoveryStateContinuity`
-- `LedgerTemporaryPublicationSafety`
-
-Add every missing production barrier/failure-injection oracle named by Judge. Preserve current implementation unless a real seam fails. Prove end/call exclusion at all windows, reservation/recovered/post-navigation crash continuity, and cleanup I/O causality. No locks/timeouts/retries/scheduler. Run gates, commit, and report exactly these keys.

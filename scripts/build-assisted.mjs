@@ -11,7 +11,7 @@ const entries = [
   "assisted-ledger",
   "assisted-acquisition",
   "assisted-runner",
-  "assisted-recorder-transport",
+  "assisted-invocation-transport",
   "assisted-cli",
 ];
 await build({
@@ -20,6 +20,7 @@ await build({
   format: "esm",
   platform: "node",
   target: "node20",
+  supported: { "import-attributes": true },
   bundle: false,
   packages: "external",
 });

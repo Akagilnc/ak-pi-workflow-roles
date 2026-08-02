@@ -1,8 +1,0 @@
-{
-  "discoverySpecSha256": "176fe8f30467470a42a7cccf317957799035b03a12fd928c701628568bd4f6d3",
-  "equal": true,
-  "keyCount": 597,
-  "algorithm": "itemKey-set-equality",
-  "constructionEntryCount": 597,
-  "independentEntryCount": 597
-}

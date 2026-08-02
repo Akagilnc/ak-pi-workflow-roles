@@ -1,4 +1,0 @@
-{
-  "status": "refused",
-  "report": "# Evidence-bearing refusal\n\nThe fixed base and target resolved and the diff was non-empty, but the required canonical review method was not validly completed. The sole permitted sibling-parallel Standards/Spec batch was run once; its Standards prompt abbreviated the mandatory Fowler smell baseline instead of pasting the canonical definitions and remedies in full. The Reviewer method audit rejected completion on that exact defect.\n\nRunning another sibling batch would violate the task’s “exactly one” batch constraint. Therefore no method-compliant Standards/Spec aggregation can be formed in this invocation, and the substantive child reports are not submitted as a completed review."
-}

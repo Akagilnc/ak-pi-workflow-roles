@@ -1,9 +1,0 @@
-# Issue #17 Fixer Apply — thin Agent result
-
-Sole authority: `.ak/dockets/issues/17/judgment/review-035/receipt.json`. No Plan.
-
-Repair exactly `Thin Agent result` under its complete owner/boundary/disposition.
-
-Narrow only the driver-visible accepted `Agent` tool result to exact details `{status:"accepted", identity}` and non-leaking text. Keep rich accepted dispatch/outcomes internal until projected into ledger, semantic audit, and runtime V2 receipt. Preserve exact prompt/accepted-leg validation, reports, refusal/failure truth, settlement and shutdown. Replace the rich public-shape assertion with exact thin-shape coverage and prove hidden evidence still reaches the receipt.
-
-Do not alter the repaired construction/workspace ownership seams. Regenerate tracked package artifacts if needed. Run focused tests, typecheck, isolated-HOME full tests, package/cold-install, pack dry-run, diff check; commit forward and submit exactly this class.

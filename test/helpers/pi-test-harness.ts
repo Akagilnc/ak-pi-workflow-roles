@@ -33,10 +33,6 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-/** Generated host binding: not Git-owned; prepack/native build recreates it. */
-export const GENERATED_NATIVE_BINDING =
-  "dist/recorder/rename_no_replace.node";
-
 export const packageRoot = dirname(
   fileURLToPath(new URL("../../package.json", import.meta.url)),
 );
@@ -44,7 +40,6 @@ export const piCli = resolve(packageRoot, "node_modules/.bin/pi");
 
 /**
  * Tracked package inputs eligible for private materialization.
- * Excludes only the generated native binding (host-local, gitignored).
  */
 export function trackedPackageInputPaths(): string[] {
   const raw = execFileSync("git", ["-C", packageRoot, "ls-files", "-z"], {
@@ -52,8 +47,7 @@ export function trackedPackageInputPaths(): string[] {
   }).toString("utf8");
   return raw
     .split("\0")
-    .filter(Boolean)
-    .filter((rel) => rel !== GENERATED_NATIVE_BINDING);
+    .filter(Boolean);
 }
 
 export interface MaterializePackageOptions {
@@ -65,7 +59,7 @@ export interface MaterializePackageOptions {
 
 /**
  * Copy tracked package inputs into an isolated directory so lifecycle scripts
- * (prepack/tsc/native build) cannot rewrite the shared repository tree.
+ * (prepack/build) cannot rewrite the shared repository tree.
  */
 export async function materializePackageTree(
   dest: string,
@@ -116,7 +110,7 @@ export interface IsolatedPackResult {
 
 /**
  * Materialize a private package tree and run real `npm pack` there so the
- * prepack → build:recorder → tsc + native chain cannot rewrite shared dist/.
+ * prepack → retained package build cannot rewrite shared dist/.
  */
 export async function packIsolatedPackage(
   packDestination: string,

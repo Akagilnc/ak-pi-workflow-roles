@@ -1,5 +1,0 @@
-# Issue #12 final convergence retry
-
-Re-evaluate only the remaining class from `.ak/dockets/issues/12/judgment/final-convergence/receipt.json` against current HEAD and `.ak/dockets/issues/12/repair/final-ratio-apply/receipt.json`. Verify mechanically that unclassified count and ratio status/reason are mutually consistent in the public validator and generated package artifact, with focused contradiction coverage and unchanged producer complement law.
-
-The prior census already closed every other Review-001–003 class; confirm no repair regressed those current seams. If no sustained class remains, return `judgeStatus: converged`; otherwise exact Fixer class only. No edits, Plan, or new axis. Submit via `ak_judge_output`.

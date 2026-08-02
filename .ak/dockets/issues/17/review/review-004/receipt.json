@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_JPQ6cDoUCjrfuCHGqby53Nwk|fc_0f5ea187242e26c1016a6b8626f1508191911994f74bb6f763",
-  "details": {
-    "status": "refused",
-    "report": "Unable to submit a compliant two-axis review receipt for `cc5cdf4c021b04ac67ef160906b5c73dc1c3a1c5...5f31da3f250eeaa3061c778acf9be71e98a87e65`.\n\nThe sole Standards child based its only P1 finding on `README.md:131`, but the atomic proposal established only `CLAUDE.md` as Standards authority. Faithfully aggregating that finding would exceed the fixed authority; excluding or substantively readjudicating it would alter the child result, and the structured execution record contains no separate semantic-auditor decision authorizing such an override. Therefore a complete, authority-traceable Standards axis cannot be formed from this execution, so the combined report is refused rather than guessed."
-  },
-  "artifactKind": "acceptedReceipt"
-}

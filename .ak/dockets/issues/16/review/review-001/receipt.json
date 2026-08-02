@@ -1,9 +1,0 @@
-{
-  "toolName": "ak_reviewer_output",
-  "toolCallId": "call_5y61MbLsZXFSnVwtXWu5L4qT|fc_01d206a2eb8fe7cb016a6b2f154f64819189ee82cc25fcc1a4",
-  "details": {
-    "status": "refused",
-    "report": "# Evidence-bearing refusal\n\nI cannot truthfully certify completion of the requested canonical review method.\n\nThe required single sibling-parallel Standards/Spec batch was dispatched once, but both agent prompts used the two-endpoint command:\n\n`git diff 78cd4e9807aa8a6ebf5a0d852b096b62180fb2da 49a73c6b71683da488ec593731c23b2e834b176d`\n\nThe canonical Skill required dispatching:\n\n`git diff 78cd4e9807aa8a6ebf5a0d852b096b62180fb2da...49a73c6b71683da488ec593731c23b2e834b176d`\n\nA subsequent check established that `git merge-base` is the supplied base and that both commands happen to select the same committed diff, but this does not retroactively satisfy the required dispatch method. Running corrected agents would require a second sibling-parallel batch, contradicting the caller’s explicit “exactly one” constraint. I therefore refuse rather than misrepresent method compliance or violate the batch constraint."
-  },
-  "artifactKind": "acceptedReceipt"
-}
