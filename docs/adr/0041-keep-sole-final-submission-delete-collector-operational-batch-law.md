@@ -1,6 +1,6 @@
 # 保留 sole-final 交卷，删除 Collector operational batch law
 
-Status: accepted（owner 大扫除裁决，2026-08-02）
+Status: accepted（authority/provenance: ADR 0019）
 
 所有角色的终止回执继续要求是 sole final tool call。特别理由：交卷同时执行其他工具会产生“已完成但仍在行动”的无声歧义。
 

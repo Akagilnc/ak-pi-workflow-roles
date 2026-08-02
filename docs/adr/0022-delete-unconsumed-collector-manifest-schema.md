@@ -1,6 +1,6 @@
 # 删除无人消费的 Collector manifest 发布 Schema
 
-Status: accepted（owner 大扫除裁决，2026-08-02）
+Status: accepted（authority/provenance: ADR 0019）
 
 删除 `schemas/collector-legs-v1.schema.json`、代码中的 `COLLECTOR_LEGS_SCHEMA` 镜像，以及逐字段 parity、打包存在性等专属测试。Collector manifest 的唯一生产真源是 `loadCollectorManifest` 的语义校验；README 只保留调用者可读的最小输入示例，不再把使用说明升级成第二法源。
 

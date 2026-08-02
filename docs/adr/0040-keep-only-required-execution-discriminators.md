@@ -1,6 +1,6 @@
 # 只保留必需的执行判别值
 
-Status: accepted（owner 大扫除裁决，2026-08-02）
+Status: accepted（authority/provenance: ADR 0019）
 
 作为 ADR 0036 的保留例外，继续验证机器选择实际执行分支所必需的判别字段，例如角色名、Coder/Fixer phase、各角色终态 status/kind、Collector PR number。
 

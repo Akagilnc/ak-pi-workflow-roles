@@ -1,6 +1,6 @@
 # 输入输出只验证必须有的
 
-Status: accepted（owner 大扫除裁决，2026-08-02）
+Status: accepted（authority/provenance: ADR 0019）
 
 所有输入输出验证只验证必须有的；除此之外一概不管。
 

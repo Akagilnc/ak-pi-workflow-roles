@@ -1,6 +1,6 @@
 # Runtime 可以拥有事实，不能再造第二座契约工厂
 
-Status: accepted（owner 大扫除裁决，2026-08-02）
+Status: accepted（authority/provenance: ADR 0019）
 
 保留 Reviewer/Collector 的事实归属边界：模型只给判断，runtime 只补它现场掌握的真实结果，避免模型自报运行事实。但不因此保留两套严格格式契约或 runtime 对自己刚生成对象的二次精确校验。
 
