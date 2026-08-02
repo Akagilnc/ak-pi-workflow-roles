@@ -220,6 +220,7 @@ async function runCoderSkillFailureCli(
 test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
   for (const mode of ["print", "json"] as const) {
     const result = await runCli(mode);
+    assert.equal(result.timedOut, false, `${mode} subprocess did not time out`);
     assert.equal(result.code, 1, `${mode} exits nonzero`);
     assert.match(
       result.stderr,
@@ -241,6 +242,7 @@ test("fatal Fixer audit infrastructure failure aborts print and JSON without a r
   for (const mode of ["print", "json"] as const) {
     const result = await runFixerAuditFailureCli(mode);
     const combined = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.timedOut, false, `${mode} subprocess did not time out`);
     assert.equal(result.code, 1, combined);
     assert.match(combined, /invalid fixer audit decision|Request was aborted/);
     assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=3/);
@@ -253,6 +255,7 @@ test("unavailable canonical tdd is infrastructure failure in print and JSON", as
     for (const mode of ["print", "json"] as const) {
       const result = await runCoderSkillFailureCli(mode, fixture);
       const combined = `${result.stdout}\n${result.stderr}`;
+      assert.equal(result.timedOut, false, `${fixture}/${mode} subprocess did not time out`);
       assert.equal(result.code, 1, `${fixture}/${mode} exits nonzero`);
       assert.match(
         combined,
@@ -322,6 +325,7 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
     for (const mode of ["json", "print"] as const) {
       const result = await runReviewerCli(mode, row.stage);
       const combined = `${result.stdout}\n${result.stderr}`;
+      assert.equal(result.timedOut, false, `${row.stage}/${mode} subprocess did not time out`);
       assert.equal(result.code, 1, `${row.stage}/${mode} exits nonzero\n${combined}`);
       assert.match(
         combined,
