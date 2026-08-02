@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Value } from "typebox/value";
 
+import { namedActivationCause } from "../src/activation-trace.ts";
 import {
+  FixPacketValidationError,
   fixerPacketV1Schema,
   parseFixPacketV1,
   type FixPacketV1,
@@ -47,6 +49,17 @@ function mutablePacket(): FixPacketV1 {
   };
 }
 
+function captureValidationError(source: string): FixPacketValidationError {
+  let caught: unknown;
+  try {
+    parseFixPacketV1(source);
+  } catch (error) {
+    caught = error;
+  }
+  assert.ok(caught instanceof FixPacketValidationError);
+  return caught;
+}
+
 test("FixPacketV1 parser admits only the closed JSON contract, preserves opaque strings, and freezes the invocation input", () => {
   const packet = parseFixPacketV1(packetText);
   assert.equal(Value.Check(fixerPacketV1Schema, JSON.parse(packetText)), true);
@@ -70,6 +83,28 @@ test("FixPacketV1 hard-cuts legacy Markdown and malformed, extra, blank, or dupl
   ];
   for (const source of invalid) assert.throws(() => parseFixPacketV1(source), /FixPacketV1/);
   assert.doesNotThrow(() => parseFixPacketV1(JSON.stringify({ version: 1, instructions: "repair", prerequisites: [{ id: "Same", requirement: "x" }, { id: "same", requirement: "y" }] })));
+});
+
+test("invalid packets retain their true cause without changing the stable activation identity", () => {
+  const syntax = captureValidationError("{");
+  assert.ok(syntax.cause instanceof SyntaxError);
+  assert.deepEqual(namedActivationCause(syntax), {
+    identity: "AK_INVALID_FIX_PACKET",
+    name: "FixPacketValidationError",
+    message: "FixPacketV1 violates the exact packet contract",
+  });
+
+  const schema = captureValidationError(JSON.stringify({ version: "not-v1" }));
+  assert.ok(schema.cause instanceof Error);
+  assert.match(schema.cause.message, /FixPacketV1 schema validation failed/);
+
+  const duplicate = captureValidationError(JSON.stringify({
+    version: 1,
+    instructions: "repair",
+    prerequisites: [{ id: "same", requirement: "first" }, { id: "same", requirement: "second" }],
+  }));
+  assert.ok(duplicate.cause instanceof Error);
+  assert.match(duplicate.cause.message, /duplicate prerequisite id: same/);
 });
 
 test("typed prerequisite blockers cross the public TypeBox schema and packet-aware production validator", () => {

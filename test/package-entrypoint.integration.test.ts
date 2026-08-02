@@ -126,6 +126,7 @@ test("packaged CLI help exposes the complete fixer phase contract", async () => 
     ],
     { cwd: packageRoot },
   );
+  assert.equal(result.timedOut, false, "fixer help subprocess did not time out");
   assert.equal(result.code, 0);
   const extensionHelp = result.stdout.match(
     /Extension CLI Flags:\n([\s\S]*?)\n\nExamples:/,

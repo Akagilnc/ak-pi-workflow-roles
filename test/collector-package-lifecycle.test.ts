@@ -237,6 +237,7 @@ test("packaged collector help documents fixed host launch profile flags", async 
     ],
     { cwd: packageRoot },
   );
+  assert.equal(result.timedOut, false, "collector help subprocess did not time out");
   assert.equal(result.code, 0);
   assert.match(result.stdout, /ak-collector-repo/);
   assert.match(result.stdout, /ak-collector-pr/);
