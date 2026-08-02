@@ -1,51 +1,71 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 export const FIXER_PREREQUISITE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]*$";
-const trimNonblankString = Type.String({ pattern: "\\S" });
 export const fixerPrerequisiteSchema = Type.Object({
     id: Type.String({ pattern: FIXER_PREREQUISITE_ID_PATTERN }),
-    requirement: trimNonblankString,
+    requirement: Type.String({ pattern: "\\S" }),
 }, { additionalProperties: false });
-export const fixerPacketV1Schema = Type.Object({
-    version: Type.Literal(1),
-    instructions: trimNonblankString,
-    prerequisites: Type.Array(fixerPrerequisiteSchema),
-}, { additionalProperties: false });
-export class FixPacketValidationError extends Error {
+export const fixerPrerequisitesSchema = Type.Array(fixerPrerequisiteSchema);
+function causeMessage(cause) {
+    if (cause instanceof Error)
+        return cause.message;
+    if (typeof cause === "string")
+        return cause;
+    try {
+        return JSON.stringify(cause) ?? String(cause);
+    }
+    catch {
+        return String(cause);
+    }
+}
+export class FixerPacketValidationError extends Error {
     code = "AK_INVALID_FIX_PACKET";
     constructor(cause) {
-        super("FixPacketV1 violates the exact packet contract", cause === undefined ? undefined : { cause });
-        this.name = "FixPacketValidationError";
+        const prefix = "Fixer prerequisites or instructions violate the invocation contract";
+        super(cause === undefined ? prefix : `${prefix}: ${causeMessage(cause)}`, cause === undefined ? undefined : { cause });
+        this.name = "FixerPacketValidationError";
     }
 }
 function fail(cause) {
-    throw new FixPacketValidationError(cause);
+    throw new FixerPacketValidationError(cause);
 }
-function schemaValidationCause(value) {
-    const details = Value.Errors(fixerPacketV1Schema, value)
-        .map(({ instancePath, message }) => `${instancePath || "/"}: ${message}`)
-        .join("; ");
-    return new Error(`FixPacketV1 schema validation failed${details.length === 0 ? "" : `: ${details}`}`);
+function parseFailure(value) {
+    if (!Array.isArray(value))
+        fail(new Error("Fixer prerequisites must be a JSON array"));
+    for (const entry of value) {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+            fail(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
+        }
+        const keys = Object.keys(entry);
+        if (keys.length !== 2 || !keys.includes("id") || !keys.includes("requirement")) {
+            fail(new Error("Fixer prerequisite entry fields must be exactly id and requirement"));
+        }
+        if (typeof entry.id !== "string" ||
+            !(new RegExp(FIXER_PREREQUISITE_ID_PATTERN)).test(entry.id)) {
+            fail(new Error(`Fixer prerequisite id violates pattern ${FIXER_PREREQUISITE_ID_PATTERN}`));
+        }
+        if (typeof entry.requirement !== "string" ||
+            !/\S/.test(entry.requirement)) {
+            fail(new Error("Fixer prerequisite requirement must be nonblank"));
+        }
+    }
+    fail(new Error("Fixer prerequisites violate the attachment schema"));
 }
-export function validateFixPacketV1(value) {
-    if (!Value.Check(fixerPacketV1Schema, value))
-        fail(schemaValidationCause(value));
-    const parsed = value;
+export function validateFixerPrerequisites(value) {
+    if (!Value.Check(fixerPrerequisitesSchema, value))
+        parseFailure(value);
+    const entries = value;
     const ids = new Set();
-    const prerequisites = parsed.prerequisites.map((entry) => {
+    const prerequisites = entries.map((entry) => {
         if (ids.has(entry.id)) {
-            fail(new Error(`FixPacketV1 contains duplicate prerequisite id: ${entry.id}`));
+            fail(new Error(`Fixer prerequisites contain duplicate id: ${entry.id}`));
         }
         ids.add(entry.id);
         return Object.freeze({ id: entry.id, requirement: entry.requirement });
     });
-    return Object.freeze({
-        version: 1,
-        instructions: parsed.instructions,
-        prerequisites: Object.freeze(prerequisites),
-    });
+    return Object.freeze(prerequisites);
 }
-export function parseFixPacketV1(source) {
+export function parseFixerPrerequisites(source) {
     let decoded;
     try {
         decoded = JSON.parse(source);
@@ -53,5 +73,5 @@ export function parseFixPacketV1(source) {
     catch (error) {
         fail(error);
     }
-    return validateFixPacketV1(decoded);
+    return validateFixerPrerequisites(decoded);
 }

@@ -1,0 +1,6 @@
+[
+  {
+    "id": "owner.choice",
+    "requirement": "The controlling owner decision required before this repair exists."
+  }
+]

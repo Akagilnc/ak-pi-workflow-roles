@@ -73,7 +73,8 @@ export function compileMechanicalBundle(input: {
   const bundle = Object.freeze({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, manifestSha256: sha256Hex(manifestBytes(entries)), entries });
   return { canonicalSkill, construction: REVIEWER_CONSTRUCTION_RECIPE, bundle };
 }
-export type ConstructedReviewerLeg = Readonly<{ axis:"standards"|"spec"; prompt:ReviewerPromptIdentity; grant:ReviewerCapabilityRequest }>;
+export type FinalizedReviewerGrant = ReviewerCapabilityRequest & Readonly<{ bashCommands: readonly string[] }>;
+export type ConstructedReviewerLeg = Readonly<{ axis:"standards"|"spec"; prompt:ReviewerPromptIdentity; grant:FinalizedReviewerGrant }>;
 export type ConstructedReviewerDispatch = Readonly<{ identity:string; recipe:"reviewer-common-bundle-v1"; input:Readonly<{task:ReviewerPromptIdentity;canonicalSkill:CanonicalSkillIdentity;construction:ReviewerConstructionIdentity;capabilityDocument:ReviewerPromptIdentity}>; targetSnapshot:ReviewerPinnedTarget; prerequisiteOperations:readonly ReviewerPrerequisiteOperation[]; range:ReviewerFrozenEvidence["range"]; materials:ReviewerFrozenEvidence["materials"]; relevanceHints?:AdmittedReviewerProposal["relevanceHints"]; bundle:PinnedMechanicalBundleV1; legs:readonly ConstructedReviewerLeg[] }>;
 export type ReviewerPromptCompiler = (prompt:string,axis:"standards"|"spec",pass:1|2)=>ReviewerPromptIdentity;
 
@@ -81,13 +82,21 @@ export type ReviewerPromptCompiler = (prompt:string,axis:"standards"|"spec",pass
 export function constructReviewerDispatch(input:{identity:string;taskText:string;canonicalSkill:string;capabilityDocument:ReviewerPromptIdentity;target:ReviewerPinnedTarget;admitted:AdmittedReviewerProposal;evidence:ReviewerFrozenEvidence;reviewScopeKeys?:readonly string[];compilePrompt?:ReviewerPromptCompiler}):ConstructedReviewerDispatch {
   const task=reviewerPromptIdentity(input.taskText); const compiled=compileMechanicalBundle({canonicalSkill:input.canonicalSkill,task:input.taskText,range:input.evidence.range,materials:input.evidence.materials});
   const common=[`Task-SHA256: ${task.sha256}`,`Target: ${input.evidence.range.target}`,`Base: ${input.evidence.range.base}`,`Diff: ${input.evidence.range.diffCommand}`,reviewerScopePrompt(input.reviewScopeKeys),`Recipe: ${compiled.construction.recipeId}@${compiled.construction.version}`,`Bundle-Manifest-SHA256: ${compiled.bundle.manifestSha256}`,bundlePromptReferences(compiled.bundle)].join("\n");
-  const axes:Array<{axis:"standards"|"spec";grant:ReviewerCapabilityRequest}>=[{axis:"standards",grant:input.admitted.standardsGrant},...(input.admitted.specGrant?[{axis:"spec" as const,grant:input.admitted.specGrant}]:[])];
+  const finalize=(grant:ReviewerCapabilityRequest):FinalizedReviewerGrant=>Object.freeze({...grant,bashCommands:Object.freeze(grant.tools.includes("bash")?[input.evidence.range.diffCommand]:[])});
+  const axes:Array<{axis:"standards"|"spec";grant:FinalizedReviewerGrant}>=[{axis:"standards",grant:finalize(input.admitted.standardsGrant)},...(input.admitted.specGrant?[{axis:"spec" as const,grant:finalize(input.admitted.specGrant)}]:[])];
   const compile=input.compilePrompt??((text:string)=>reviewerPromptIdentity(text)); const build=(x:typeof axes[number],pass:1|2)=>compile(`${common}\nGrant: ${JSON.stringify(x.grant)}\n${reviewerAxisMethodAdapter(x.axis)}\n`,x.axis,pass);
   const first=axes.map(x=>build(x,1)),second=axes.map(x=>build(x,2));
   for(let i=0;i<first.length;i++){if(!isReviewerPromptIdentity(first[i]!)||!isReviewerPromptIdentity(second[i]!))throw new ReviewerConstructionError("prompt-identity-invalid");if(!sameReviewerPromptIdentity(first[i]!,second[i]!))throw new ReviewerConstructionError("prompt-identity-mismatch");}
   return Object.freeze({identity:input.identity,recipe:"reviewer-common-bundle-v1",input:Object.freeze({task,canonicalSkill:compiled.canonicalSkill,construction:compiled.construction,capabilityDocument:input.capabilityDocument}),targetSnapshot:input.target,prerequisiteOperations:input.admitted.prerequisiteOperations,range:input.evidence.range,materials:input.evidence.materials,...(input.admitted.relevanceHints===undefined?{}:{relevanceHints:input.admitted.relevanceHints}),bundle:compiled.bundle,legs:Object.freeze(axes.map((x,i)=>Object.freeze({...x,prompt:first[i]!}))) });
 }
-export class ReviewerConstructionError extends Error { constructor(readonly code:"prompt-identity-invalid"|"prompt-identity-mismatch"){super(code);} }
+export class ReviewerConstructionError extends Error {
+  constructor(
+    readonly code:"prompt-identity-invalid"|"prompt-identity-mismatch",
+    readonly diagnostic = code === "prompt-identity-invalid"
+      ? "compiled prompt identity must contain canonical text, UTF-8 length, and SHA-256"
+      : "repeated prompt compilation must produce the same prompt identity",
+  ){super(`${code}: ${diagnostic}`);}
+}
 
 export function bundlePromptReferences(bundle: PinnedMechanicalBundleV1): string {
   return bundle.entries.map(({ id, relativeClonePath, sha256 }) => `Bundle-Material: ${JSON.stringify({ id, relativeClonePath, sha256 })}`).join("\n");

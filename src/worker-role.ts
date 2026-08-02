@@ -20,7 +20,11 @@ import {
   type WorkerRoleLabel,
 } from "./package-contracts/worker-output.ts";
 import { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket, type FixerPhase } from "./package-contracts/fixer-output.ts";
-import { parseFixPacketV1, type FixPacketV1 } from "./package-contracts/fixer-packet.ts";
+import {
+  FixerPacketValidationError,
+  parseFixerPrerequisites,
+  type FixerInvocationInput,
+} from "./package-contracts/fixer-packet.ts";
 
 export {
   CODER_OUTPUT_TOOL_NAME,
@@ -53,13 +57,43 @@ const workerOutputFields = {
 const coderOutputSchema = Type.Object(workerOutputFields, { additionalProperties: false });
 type WorkerOutputParameters = Static<typeof coderOutputSchema> | FixerOutput;
 export type { FixerOutput, CoderOutput };
-type WorkerPhase = "plan" | "apply";
+export const FIXER_FLAG_DEFINITIONS = {
+  packet: {
+    name: "ak-fix-packet",
+    definition: {
+      description: "Path to opaque prose instructions for the Fixer",
+      type: "string" as const,
+    },
+  },
+  prerequisites: {
+    name: "ak-fixer-prerequisites",
+    definition: {
+      description: "Optional path to a JSON array of typed Fixer prerequisites",
+      type: "string" as const,
+    },
+  },
+  phase: {
+    name: "ak-fixer-phase",
+    definition: {
+      description:
+        "Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
+      type: "string" as const,
+    },
+  },
+} as const;
+
+export const FIXER_PHASES = ["plan", "apply"] as const satisfies readonly FixerPhase[];
+type WorkerPhase = (typeof FIXER_PHASES)[number];
+
+function isWorkerPhase(value: unknown): value is WorkerPhase {
+  return typeof value === "string" && (FIXER_PHASES as readonly string[]).includes(value);
+}
 
 export type WorkerRoleHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext): never;
 };
 
-export type FixerAuditInput = Readonly<{ soul: string; packet: FixPacketV1; phase: FixerPhase; transcript: string; candidate: FixerOutput }>;
+export type FixerAuditInput = Readonly<{ soul: string; packet: FixerInvocationInput; phase: FixerPhase; transcript: string; candidate: FixerOutput }>;
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadPacket(path: string): Promise<string>;
@@ -136,36 +170,52 @@ export function createFixerRoleRuntime(
   hostActions?: WorkerRoleHostActions,
 ): { activate(): Promise<void> } {
   let soul: string | undefined;
-  let packet: FixPacketV1 | undefined;
+  let packet: FixerInvocationInput | undefined;
   let phase: WorkerPhase | undefined;
   let lifecycleRegistered = false;
 
-  pi.registerFlag("ak-fix-packet", {
-    description: "Path to a closed FixPacketV1 JSON repair packet",
-    type: "string",
-  });
-  pi.registerFlag("ak-fixer-phase", {
-    description:
-      "Fixer phase: plan (inspect and propose a repair plan; no edits or commits) or apply (execute the approved plan, verify, and commit when repaired)",
-    type: "string",
-  });
+  pi.registerFlag(
+    FIXER_FLAG_DEFINITIONS.packet.name,
+    FIXER_FLAG_DEFINITIONS.packet.definition,
+  );
+  pi.registerFlag(
+    FIXER_FLAG_DEFINITIONS.prerequisites.name,
+    FIXER_FLAG_DEFINITIONS.prerequisites.definition,
+  );
+  pi.registerFlag(
+    FIXER_FLAG_DEFINITIONS.phase.name,
+    FIXER_FLAG_DEFINITIONS.phase.definition,
+  );
 
   return {
     async activate() {
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Fixer soul is empty");
-      const selectedPhase = pi.getFlag("ak-fixer-phase");
-      if (selectedPhase !== "plan" && selectedPhase !== "apply") {
+      const selectedPhase = pi.getFlag(FIXER_FLAG_DEFINITIONS.phase.name);
+      if (!isWorkerPhase(selectedPhase)) {
         throw new Error(
           "Fixer role requires --ak-fixer-phase plan|apply; no other phase is supported",
         );
       }
       phase = selectedPhase;
-      const packetPath = pi.getFlag("ak-fix-packet");
+      const packetPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.packet.name);
       if (typeof packetPath !== "string" || packetPath.trim().length === 0) {
         throw new Error("Fixer role requires --ak-fix-packet");
       }
-      packet = parseFixPacketV1(await dependencies.loadPacket(packetPath));
+      const instructions = await dependencies.loadPacket(packetPath);
+      if (instructions.trim().length === 0) {
+        throw new FixerPacketValidationError(
+          new Error("Fixer instructions must be nonblank"),
+        );
+      }
+      const prerequisitesPath = pi.getFlag(FIXER_FLAG_DEFINITIONS.prerequisites.name);
+      if (prerequisitesPath !== undefined && (typeof prerequisitesPath !== "string" || prerequisitesPath.trim().length === 0)) {
+        throw new Error("Fixer --ak-fixer-prerequisites path must be nonblank when supplied");
+      }
+      const prerequisites = typeof prerequisitesPath === "string"
+        ? parseFixerPrerequisites(await dependencies.loadPacket(prerequisitesPath))
+        : Object.freeze([]);
+      packet = Object.freeze({ instructions, prerequisites });
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
@@ -173,7 +223,7 @@ export function createFixerRoleRuntime(
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "Fixer Output",
           description:
-            "Submit the exact plan refusal or per-finding apply settlement for compliance audit.",
+            "Submit the plan refusal or per-finding apply settlement for compliance audit.",
           promptSnippet: "Submit the final fixer report",
           promptGuidelines: [
             `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
@@ -230,7 +280,7 @@ export function createFixerRoleRuntime(
           if (soul === undefined) throw new Error("Fixer soul was not loaded");
           return {
             systemPrompt:
-              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet === undefined ? "" : JSON.stringify(packet)}\n</fix_packet>`,
+              `${event.systemPrompt}\n\n<fixer_soul>\n${soul}\n</fixer_soul>\n\n<fixer_phase>\n${phase ?? ""}\n</fixer_phase>\n\n<fix_packet>\n${packet?.instructions ?? ""}\n</fix_packet>\n\n<fixer_prerequisites>\n${JSON.stringify(packet?.prerequisites ?? [])}\n</fixer_prerequisites>`,
           };
         });
       }

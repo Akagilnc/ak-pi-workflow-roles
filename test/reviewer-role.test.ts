@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -8,15 +13,21 @@ import { createReviewerRoleRuntime, AGENT_TOOL_NAME, REVIEWER_OUTPUT_TOOL_NAME, 
 import type { AcceptedReviewerDispatch, AcceptedReviewerExecution, AcceptedReviewerLeg, ReviewerProposalV1 } from "../src/reviewer-dispatch.ts";
 import { ReviewerDispatchExecutionError } from "../src/reviewer-agent.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
+import { ReviewerCorrectablePreflightError } from "../src/reviewer-preflight-error.ts";
+import { createReviewerPinnedGitReader } from "../src/reviewer-pinned-git.ts";
 
 const task = new TextEncoder().encode("review exact bytes\n");
 const digest = createHash("sha256").update(task).digest("hex");
 const operations = ["preflight.git.pin-target","preflight.git.resolve-base","preflight.git.derive-range","preflight.git.list-ordered-commits","preflight.git.read-material","runner.git.materialize-mirror","runner.git.materialize-workspace","runner.git.verify-snapshot"] as const;
 const diffCommand = "git diff base...target";
-const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read", "bash"], bashCommands: [diffCommand], prerequisiteOperations: operations }));
+const capabilities = new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: ["read", "bash"], prerequisiteOperations: operations }));
 const skill = readFileSync(new URL("./fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
 const pin = { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead: "target", refs: { "refs/heads/main": { objectId: "target", peeledCommitId: "target" } } };
-const request = { tools: ["read", "bash"] as const, bashCommands: [diffCommand] as const, prerequisiteOperations: operations };
+const request = { tools: ["read", "bash"] as const, prerequisiteOperations: operations };
+const exec = promisify(execFile);
+async function git(root: string, ...args: string[]): Promise<string> {
+  return (await exec("git", ["-C", root, ...args])).stdout.trim();
+}
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, materials: established ? [{ id: "rules", repositoryPath: "RULES.md" }, { id: "spec", repositoryPath: "SPEC.md" }] : [{ id: "rules", repositoryPath: "RULES.md" }, { id: "absence", repositoryPath: "README.md" }], spec: established ? { state: "established" } : { state: "not-established" }, required: established ? { standards: request, spec: request } : { standards: request } }; }
 function constructionEvidence(dispatch: AcceptedReviewerExecution, leg: AcceptedReviewerLeg) { return { leg: leg.axis, workspaceIdentity: `${leg.axis}-workspace`, manifestSha256: dispatch.bundle.manifestSha256, entries: dispatch.bundle.entries.map(({id,relativeClonePath,utf8Length,sha256})=>({id,relativeClonePath,utf8Length,sha256,verified:true as const})) }; }
 function successfulLeg(dispatch: AcceptedReviewerExecution, leg: AcceptedReviewerLeg, report = `${leg.axis} report`) { return { status: "successful" as const, report, usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}, target:pin, prompt:leg.prompt, workspaceDisposition:"deleted" as const, runtimeConstructionEvidence:constructionEvidence(dispatch,leg) }; }
@@ -29,13 +40,13 @@ function outputContext(id:string): ExtensionContext { const sessionManager=Sessi
 function captureReviewExpansion(reviewerHarness: ReturnType<typeof harness>) { reviewerHarness.handlers.get("input")({text:"review"}); reviewerHarness.handlers.get("before_agent_start")({prompt:"review",systemPrompt:"system"}); }
 function setup(overrides: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> = {}) {
   const reviewerHarness=harness(); let starts=0; const audits:ReviewerAuditInput[]=[];
-  const runtime=createReviewerRoleRuntime(reviewerHarness.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill,snapshotIdentity:reviewerPromptIdentity(skill)},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>new TextEncoder().encode(path)}), hostTools:()=>["read", "bash"], runDispatch:async(dispatch:AcceptedReviewerExecution)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={status:"successful",report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted",runtimeConstructionEvidence:constructionEvidence(dispatch,leg)}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
+  const runtime=createReviewerRoleRuntime(reviewerHarness.pi,{ loadSoul:async()=>"law", loadTask:async()=>task, loadCapabilities:async()=>capabilities, loadCanonicalSkillBinding:async()=>({name:"code-review",snapshot:{raw:skill,path:"/skill",baseDir:"/",body:skill,snapshotIdentity:reviewerPromptIdentity(skill)},invocation:x=>x,captureExpansion:(prompt,original)=>prompt===original?{name:"code-review",location:"/skill",content:skill,userMessage:original}:undefined}), createPinnedGitReader:async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand:"git diff base...target",diffSha256:"1".repeat(64),commits:["target"]}),material:async(path)=>{if(path.startsWith("/")||path.includes("\\")||/[\u0000-\u001f\u007f]/u.test(path)||path.split("/").some(segment=>!segment||segment==="."||segment===".."))throw new ReviewerCorrectablePreflightError("material-invalid");return new TextEncoder().encode(path);}}), hostTools:()=>["read", "bash"], runDispatch:async(dispatch:AcceptedReviewerExecution)=>{starts++; const legs:any={}; for(const leg of dispatch.legs) legs[leg.axis]={status:"successful",report:`${leg.axis} report`,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},target:pin,prompt:{text:leg.prompt.text,utf8Length:leg.prompt.utf8Length,sha256:leg.prompt.sha256},workspaceDisposition:"deleted",runtimeConstructionEvidence:constructionEvidence(dispatch,leg)}; return {identity:dispatch.identity,target:pin,legs};}, auditCompliance:async input=>{audits.push(input);return {status:"pass"};}, ...overrides },{failInfrastructure(error){throw error;}});
   return {...reviewerHarness,runtime,audits,get starts(){return starts;},get activeTools(){return reviewerHarness.activeTools;}};
 }
 
 test("activation authorizes pin-target before creating the pinned Git reader", async()=>{
   let pins=0;
-  const withoutPin=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read"],bashCommands:[],prerequisiteOperations:operations.filter(operation=>operation!=="preflight.git.pin-target")}));
+  const withoutPin=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read"],prerequisiteOperations:operations.filter(operation=>operation!=="preflight.git.pin-target")}));
   const reviewerHarness=setup({loadCapabilities:async()=>withoutPin,createPinnedGitReader:async()=>{pins++;throw new Error("must not pin");}});
   await assert.rejects(reviewerHarness.runtime.activate(),/pin-target/);
   assert.equal(pins,0);
@@ -43,7 +54,7 @@ test("activation authorizes pin-target before creating the pinned Git reader", a
 
 test("activation permits unused ceiling authority absent from the host", async()=>{
   let runs=0;
-  const unavailable=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash","write"],bashCommands:[diffCommand],prerequisiteOperations:operations}));
+  const unavailable=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash","write"],prerequisiteOperations:operations}));
   const reviewerHarness=setup({loadCapabilities:async()=>unavailable,hostTools:()=>["read","bash"],runDispatch:async()=>{runs++;throw new Error("must not run");}});
   await reviewerHarness.runtime.activate();
   assert.equal(runs,0);
@@ -52,7 +63,7 @@ test("activation permits unused ceiling authority absent from the host", async()
 test("activation fails closed for absent, malformed, and task-mismatched capabilities", async()=>{
   const missing=setup(); delete missing.flags["ak-review-capabilities"]; await assert.rejects(missing.runtime.activate(),/requires --ak-review-capabilities/);
   await assert.rejects(setup({loadCapabilities:async()=>new TextEncoder().encode("{}")}).runtime.activate(),/capabilities/);
-  const wrong=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:"0".repeat(64),tools:[],bashCommands:[],prerequisiteOperations:[]}));
+  const wrong=new TextEncoder().encode(JSON.stringify({version:1,taskSha256:"0".repeat(64),tools:[],prerequisiteOperations:[]}));
   await assert.rejects(setup({loadCapabilities:async()=>wrong}).runtime.activate(),/digest mismatch/);
 });
 
@@ -61,6 +72,73 @@ test("preflight rejection can be corrected, starts no rejected runner, and accep
   const bad:any={...proposal(),materials:[{id:"bad id",repositoryPath:"RULES.md"}]}; const rejected=await tool.execute("bad",bad,undefined,undefined,extensionContext); assert.equal(rejected.details.status,"rejected"); assert.equal(reviewerHarness.starts,0);
   const accepted=await tool.execute("ok",{...proposal(),materials:[]},undefined,undefined,extensionContext); assert.deepEqual(accepted.details,{status:"accepted",identity:accepted.details.identity}); assert.equal(reviewerHarness.starts,1);
   const closed=await tool.execute("later",proposal(true),undefined,undefined,extensionContext); assert.equal(closed.details.status,"closed"); assert.equal(reviewerHarness.starts,1);
+});
+
+test("registered Agent rejection text names the violated proposal or pinned-evidence constraint", async()=>{
+  const cases: Array<{ expected: RegExp; candidate?: ReviewerProposalV1; overrides?: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> }> = [
+    { expected: /base\.revision must be a nonempty string/, candidate: { ...proposal(), base: { revision: "" } } },
+    { expected: /materials entry requires a safe id/, candidate: { ...proposal(), materials: [{ id: "bad id", repositoryPath: "RULES.md" }] } },
+    { expected: /required\.tools\/prerequisiteOperations/, candidate: { ...proposal(), required: { standards: { tools: ["write"], prerequisiteOperations: operations } } as any } },
+    { expected: /missing preflight\.git\.derive-range/, overrides: { loadCapabilities: async()=>new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash"],prerequisiteOperations:operations.filter(x=>x!=="preflight.git.derive-range")})) } },
+    { expected: /derived range must match the resolved base and pinned target/, overrides: { createPinnedGitReader: async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"wrong",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}) } },
+    { expected: /repeated prompt compilation must produce the same prompt identity/, overrides: { compilePrompt: (()=>{let pass=0;return (text:string)=>reviewerPromptIdentity(`${text}${++pass===1?"":"changed"}`);})() } },
+    { expected: /pinned target snapshot changed before child execution/, overrides: { createPinnedGitReader: async()=>{let observations=0;return {pin,snapshot:async()=>++observations===1?{...pin,targetHead:"other"}:pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}} } },
+  ];
+  for (const row of cases) {
+    const reviewerHarness=setup(row.overrides); await reviewerHarness.runtime.activate();
+    const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("bad",row.candidate??proposal(),undefined,undefined,{} as ExtensionContext);
+    assert.equal(result.details.status,"rejected"); assert.match(result.content[0].text,row.expected); assert.equal(reviewerHarness.starts,0);
+  }
+});
+
+test("registered Agent preserves production pinned-reader diagnostics for Git preflight failures", async () => {
+  const root = await mkdtemp(join(tmpdir(), "reviewer-production-preflight-"));
+  try {
+    await git(root, "init");
+    await git(root, "config", "user.email", "test@example.com");
+    await git(root, "config", "user.name", "Test");
+    await writeFile(join(root, "file"), "base\n");
+    await git(root, "add", ".");
+    await git(root, "commit", "-m", "base");
+    const base = await git(root, "rev-parse", "HEAD");
+    await writeFile(join(root, "file"), "target\n");
+    await git(root, "commit", "-am", "target");
+    const reader = await createReviewerPinnedGitReader(root);
+    const cases: Array<{ candidate: ReviewerProposalV1; code: string; diagnostic: RegExp }> = [
+      {
+        candidate: { ...proposal(), base: { revision: base }, materials: [{ id: "unsafe", repositoryPath: "/etc/passwd" }] },
+        code: "material-invalid",
+        diagnostic: /materials\.repositoryPath must be relative, not absolute/,
+      },
+      {
+        candidate: { ...proposal(), base: { revision: "missing-production-base" }, materials: [] },
+        code: "base-invalid",
+        diagnostic: /base revision must name an existing pinned ref or reachable commit/,
+      },
+      {
+        candidate: { ...proposal(), base: { revision: reader.pin.targetHead }, materials: [] },
+        code: "range-invalid",
+        diagnostic: /review range must contain a non-empty diff between base and pinned target/,
+      },
+    ];
+    for (const row of cases) {
+      const reviewerHarness = setup({ createPinnedGitReader: async () => reader });
+      await reviewerHarness.runtime.activate();
+      const result = await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute(
+        "production-preflight",
+        row.candidate,
+        undefined,
+        undefined,
+        {} as ExtensionContext,
+      );
+      assert.equal(result.details.status, "rejected");
+      assert.deepEqual(result.details.violations, [row.code]);
+      assert.match(result.content[0].text, row.diagnostic);
+      assert.equal(reviewerHarness.starts, 0);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("final-review proposal accepts durable hidden authority material after typed path correction", async()=>{
