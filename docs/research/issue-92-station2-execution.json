@@ -25,7 +25,7 @@
         "kind": "construction-rebuild",
         "note": "Source-tree imports + fake harness; revise/pass/escalate per role retained; cold-install boundary stays in neighbour install tests.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "488281f"
       }
     },
     "test/package-entrypoint.integration.test.ts::cold-installed package audits all four roles from editable Souls": {
@@ -86,7 +86,7 @@
         "kind": "construction-rebuild",
         "note": "One diagnostic per cause; prose independence owned by navigator-attendance seam.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "488281f"
       }
     },
     "test/package-entrypoint.integration.test.ts::normal packaged Navigator presents independently in print and JSON and reuses one subject session": {
@@ -102,7 +102,7 @@
         "kind": "construction-rebuild",
         "note": "One session per mode (3) + revised route; dropped decorative rate/latency over deterministic replays.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "488281f"
       }
     },
     "test/package-entrypoint.integration.test.ts::fresh packaged processes resume cross-role Navigator route memory and isolate subjects": {
@@ -118,7 +118,7 @@
         "kind": "construction-rebuild",
         "note": "Two process-boundary legs only; isolation stays in-process neighbour.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "488281f"
       }
     },
     "test/package-entrypoint.integration.test.ts::ordinary Navigator attendance is absent at the pinned pre-Issue-28 baseline and present after Issue 28": {
@@ -134,7 +134,7 @@
         "kind": "construction-rebuild",
         "note": "Dropped rotting baseline archive arm; live ordering/latency contract retained.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "488281f"
       }
     },
     "test/package-entrypoint.integration.test.ts::packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion": {
@@ -150,7 +150,7 @@
         "kind": "construction-rebuild",
         "note": "Two-row table with canonical /skill:tdd on shared fixture.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "488281f"
       }
     },
     "test/collector-package-lifecycle.test.ts::installed npm tarball collector runs default gh transport end-to-end in print and json": {
@@ -1641,7 +1641,7 @@
     "class-contracts": "63d67a9",
     "collector-ledger": "e52cf71",
     "collector-github": "3ac8800",
-    "package-entrypoint": "(pending)"
+    "package-entrypoint": "488281f"
   },
   "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
   "validation": {
