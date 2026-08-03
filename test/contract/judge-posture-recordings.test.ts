@@ -980,15 +980,16 @@ test("JSONL bind/neutrality refuses coached prompt, materials body mismatch, and
   ] as const;
 
   for (const row of cases) {
+    const scaffold = {
+      prompt: staticPrompt,
+      path: row.path,
+      materialsBody: row.materialsBody,
+      ...("userPromptExtra" in row ? { userPromptExtra: row.userPromptExtra } : {}),
+    };
     assert.throws(
       () =>
         assertJsonlBoundNeutralInputs(
-          neutralityRows({
-            prompt: staticPrompt,
-            path: row.path,
-            materialsBody: row.materialsBody,
-            userPromptExtra: "userPromptExtra" in row ? row.userPromptExtra : undefined,
-          }),
+          neutralityRows(scaffold),
           staticPrompt,
           row.staticMaterials,
         ),
