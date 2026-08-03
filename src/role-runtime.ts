@@ -16,7 +16,7 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement } from "./navigator-attendance.ts";
 import { isAuditEscalationResult } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -378,11 +378,29 @@ export function createRoleRuntimeExtension(
       if (role !== undefined && !admitted) return { action: "handled" as const };
       return { action: "continue" as const };
     });
-    pi.on("before_agent_start", (_event, ctx) => {
+    pi.on("before_agent_start", (event, ctx) => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
+      }
+      if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorWorkContext.contextError === undefined) {
+        const currentSubject = navigatorWorkContext.subject;
+        // Flagged roles already have a concrete packet/task/case/review input.
+        // A bare Judge (and other bare packaged entrypoint) gets its concrete
+        // user task at this seam; do not copy the assembled system prompt.
+        if (currentSubject.startsWith("work subject: ")) {
+          const subject = event.prompt.trim();
+          if (subject !== "") {
+            const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+            navigatorWorkContext = {
+              ...navigatorWorkContext,
+              subjectKey: navigatorSubjectKey(root, subject),
+              subject,
+            };
+            navigatorAttendance.setWorkContext(navigatorWorkContext);
+          }
+        }
       }
       navigatorAttendance?.prepare();
     });

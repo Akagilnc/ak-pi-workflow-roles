@@ -197,7 +197,24 @@ function subjectPath(sessionDir: string, cwd = process.cwd()): string {
     if (cwdIssue !== undefined) return cwdIssue;
   }
   const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
-  return issueRoot(resolvedSession) ?? resolvedSession;
+  const issue = issueRoot(resolvedSession);
+  if (issue !== undefined) return issue;
+  // Ad-hoc role sessions live below the same work root.  Remove the role's
+  // private run directory before deriving identity; the run/session spelling
+  // must not become a cross-role routing key.
+  const runsMarker = "/runs/";
+  const runsIndex = resolvedSession.indexOf(runsMarker);
+  if (runsIndex >= 0 && resolvedSession.endsWith("/session")) {
+    return resolvedSession.slice(0, runsIndex);
+  }
+  return resolvedSession;
+}
+
+export function navigatorSubjectKey(subjectRoot: string, subject: string): string {
+  if (issueRoot(subjectRoot) !== undefined || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
+  const normalized = subject.trim().replace(/\s+/g, " ");
+  if (normalized === "" || normalized === `work subject: ${subjectRoot}`) return subjectRoot;
+  return `${subjectRoot}#${createHash("sha256").update(normalized).digest("hex").slice(0, 32)}`;
 }
 
 function subjectDirectory(cwd: string, subjectKey: string): string {
@@ -425,8 +442,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       } else {
         try {
           if (sessionReady !== undefined) await sessionReady;
-          session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
           const prepared = await preparation;
+          session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
           const selected = selectNavigatorCandidate(prepared, settlement);
           if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");
           const routeChanged = !routeEqual(previousRoute, selected.route);

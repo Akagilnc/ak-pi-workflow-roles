@@ -14,6 +14,7 @@ import {
   NAVIGATOR_TARGETS,
   type NavigatorPreparationSession,
   navigatorSessionDirectory,
+  navigatorSubjectKey,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
   selectNavigatorCandidate,
@@ -352,6 +353,12 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", () 
   const second = navigatorSessionDirectory(base, "/repo/task-b.md");
   assert.equal(firstRelative, first);
   assert.notEqual(first, second);
+  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/coder/session", "/repo"), "/repo/.ak/work/ad-hoc");
+  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/reviewer/session", "/repo"), "/repo/.ak/work/ad-hoc");
+  const adHocRoot = "/repo/.ak/work/ad-hoc";
+  assert.equal(navigatorSubjectKey(adHocRoot, "same concrete task"), navigatorSubjectKey(adHocRoot, "same   concrete task"));
+  assert.notEqual(navigatorSubjectKey(adHocRoot, "same concrete task"), navigatorSubjectKey(adHocRoot, "different task"));
+  assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
   assert.equal(first.startsWith("/repo/.ak/work/navigator/"), true);
   assert.equal(first.includes("/navigator/navigator"), false);
 });

@@ -95,7 +95,20 @@ function subjectPath(sessionDir, cwd = process.cwd()) {
     if (cwdIssue !== void 0) return cwdIssue;
   }
   const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
-  return issueRoot(resolvedSession) ?? resolvedSession;
+  const issue = issueRoot(resolvedSession);
+  if (issue !== void 0) return issue;
+  const runsMarker = "/runs/";
+  const runsIndex = resolvedSession.indexOf(runsMarker);
+  if (runsIndex >= 0 && resolvedSession.endsWith("/session")) {
+    return resolvedSession.slice(0, runsIndex);
+  }
+  return resolvedSession;
+}
+function navigatorSubjectKey(subjectRoot, subject) {
+  if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
+  const normalized = subject.trim().replace(/\s+/g, " ");
+  if (normalized === "" || normalized === `work subject: ${subjectRoot}`) return subjectRoot;
+  return `${subjectRoot}#${createHash("sha256").update(normalized).digest("hex").slice(0, 32)}`;
 }
 function subjectDirectory(cwd, subjectKey) {
   const issue = issueRoot(subjectKey);
@@ -329,8 +342,8 @@ ${helpContext}
     } else {
       try {
         if (sessionReady !== void 0) await sessionReady;
-        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
         const prepared = await preparation;
+        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
         const selected = selectNavigatorCandidate(prepared, settlement);
         if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");
         const routeChanged = !routeEqual(previousRoute, selected.route);
@@ -442,6 +455,7 @@ export {
   formatNavigatorReport,
   navigatorModelSettingPath,
   navigatorSessionDirectory,
+  navigatorSubjectKey,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
   registerNavigatorModelCommand,

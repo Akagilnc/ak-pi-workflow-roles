@@ -33,6 +33,7 @@ import {
   writeNavigatorModelSetting,
   MERGER_INPUT_FLAG,
   MERGER_OUTPUT_TOOL_NAME,
+  navigatorSessionDirectory,
   ROLE_FLAG,
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
@@ -778,14 +779,12 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       process.env.PI_CODING_AGENT_DIR = agentDir;
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
       let navigatorCalls = 0;
-      let navigatorMessages: Context["messages"] | undefined;
       let invalidJudge = true;
       const notifications: Array<{ level: string | undefined }> = [];
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
-          navigatorMessages = context.messages;
           return fauxAssistantMessage(
             fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
               candidates: [{
@@ -823,7 +822,6 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       try {
         for (const mode of ["json", "print", "tui"] as const) {
           navigatorCalls = 0;
-          navigatorMessages = undefined;
           notifications.length = 0;
           invalidJudge = true;
           faux.setResponses([response, response, response, response]);
@@ -874,10 +872,22 @@ test("normal packaged Navigator presents independently in print and JSON and reu
 
       }
       assert.ok(printOutput.length > 0);
-      assert.ok(navigatorMessages);
-      const navigatorText = navigatorMessages.flatMap((message) => typeof message.content === "string" ? [message.content] : message.content.filter((part) => part.type === "text").map((part) => part.text)).join("\n");
-      assert.equal(navigatorText.includes("owner decision: automatic attendance"), true);
-      assert.equal(navigatorText.includes("judgeStatus"), false);
+      const navigatorSession = SessionManager.continueRecent(issueRoot, navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot));
+      const navigatorEntries = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: unknown });
+      const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
+      const settlements = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
+      const routes = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-route");
+      assert.equal(invocations.length, 3);
+      assert.equal(settlements.length, 3);
+      assert.equal(routes.length, 3);
+      assert.deepEqual((invocations[0] as { data: { role: string; phase: null; subjectKey: string } }).data, {
+        invocationId: (routes[0] as { data: { invocationId: string } }).data.invocationId,
+        role: "judge",
+        phase: null,
+        subjectKey: issueRoot,
+      });
+      assert.ok(routes.every((entry) => (entry as { data: { subjectKey: string; route: unknown } }).data.subjectKey === issueRoot));
+      assert.ok(settlements.every((entry) => (entry as { data: { kind: string; role: string; phase: null } }).data.kind === "accepted"));
       assert.equal(faux.getPendingResponseCount(), 0);
     },
   );

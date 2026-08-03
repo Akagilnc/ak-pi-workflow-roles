@@ -24,6 +24,7 @@ import {
   createNavigatorAttendance,
   NAVIGATOR_EVENT_TYPE,
   navigatorSessionDirectory,
+  navigatorSubjectKey,
   registerNavigatorModelCommand,
   subjectPath,
   type NavigatorTargetRole,
@@ -161,15 +162,15 @@ export default function roleRuntime(pi: ExtensionAPI): void {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
       }
-      let subject = input ?? issueMaterial ?? `work subject: ${subjectKey}`;
+      let subject = input ?? `work subject: ${subjectKey}`;
       if (options.role === "doctor" && reference !== undefined) {
         const patient = await loadDoctorCase(reference);
         subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
       }
-      // Assigned task/packet/review bytes are the production work seam.  If the
-      // seam carries an explicit authority field use it; otherwise preserve the
-      // admitted bytes as the Navigator's bounded controlling context.
-      const authority = navigatorAuthorityFromInput(input ?? "") ?? input ?? issueMaterial;
+      // Assigned task/packet/review bytes are the production work seam.  The
+      // authority must remain a separately bounded field; task bytes alone are
+      // not silently promoted to controlling authority.
+      const authority = navigatorAuthorityFromInput(input ?? "") ?? issueMaterial;
       if (authority === undefined || authority.trim() === "") {
         throw new Error("controlling authority content was not supplied as typed work context");
       }
