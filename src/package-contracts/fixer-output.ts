@@ -23,10 +23,12 @@ const refusedClassResultSchema = Type.Object({
   blocker: blockerSchema,
 });
 const classResultSchema = Type.Union([completedClassResultSchema, refusedClassResultSchema]);
+const completedClassResultsSchema = Type.Array(completedClassResultSchema, { minItems: 1 });
 
 export const fixerOutputSchema = Type.Union([
   Type.Object({ status: Type.Literal("planned"), report: nonblankTransportString }),
   Type.Object({ status: Type.Literal("refused"), report: nonblankTransportString, remainingScope: nonblankTransportString, blocker: blockerSchema }),
+  Type.Object({ status: Type.Literal("unfinished"), report: nonblankTransportString, remainingScope: nonblankTransportString, classResults: Type.Optional(completedClassResultsSchema) }),
   Type.Object({ status: Type.Literal("completed"), report: nonblankTransportString, classResults: Type.Array(classResultSchema, { minItems: 1 }) }),
   Type.Object({ status: Type.Literal("refused"), report: nonblankTransportString, classResults: Type.Array(classResultSchema, { minItems: 1 }) }),
   Type.Object({ status: Type.Literal("partially_completed"), report: nonblankTransportString, classResults: Type.Array(classResultSchema, { minItems: 1 }) }),
@@ -62,6 +64,32 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
     if (phase === "apply") fail("status phase constraint: apply forbids planned");
     if (Object.hasOwn(value, "classResults") || Object.hasOwn(value, "remainingScope") || Object.hasOwn(value, "blocker") || Object.hasOwn(value, "commitSha")) fail("status planned semantic-field combination constraint");
     return { status: "planned", report: value.report };
+  }
+  if (value.status === "unfinished") {
+    if (phase === "plan") fail("status phase constraint: plan forbids unfinished");
+    if (!nonblank(value.remainingScope)) fail("remainingScope nonblank constraint");
+    if (Object.hasOwn(value, "blocker") || Object.hasOwn(value, "commitSha")) fail("status unfinished semantic-field combination constraint");
+    if (!Object.hasOwn(value, "classResults")) return { status: "unfinished", report: value.report, remainingScope: value.remainingScope };
+    if (!Array.isArray(value.classResults) || value.classResults.length === 0) fail("unfinished classResults nonempty array constraint");
+    const names = new Set<string>();
+    const classResults = value.classResults.map((item, index) => {
+      const path = `classResults[${index}]`;
+      if (!record(item) || item.disposition !== "completed") fail(`${path} unfinished completed-only constraint`);
+      if (!nonblank(item.name)) fail(`${path}.name nonblank constraint`);
+      if (names.has(item.name)) fail("classResults name unique constraint");
+      names.add(item.name);
+      if (Object.hasOwn(item, "remainingScope") || Object.hasOwn(item, "blocker")) fail(`${path} completed/refused semantic-field combination constraint`);
+      if (!nonblank(item.searchScope)) fail(`${path}.searchScope nonblank constraint`);
+      if (!Array.isArray(item.exceptions)) fail(`${path}.exceptions array constraint`);
+      const exceptions = item.exceptions.map((entry, exceptionIndex) => {
+        const exceptionPath = `${path}.exceptions[${exceptionIndex}]`;
+        if (!record(entry) || !nonblank(entry.where) || !nonblank(entry.reason)) fail(`${exceptionPath} nonblank constraint`);
+        return { where: entry.where, reason: entry.reason };
+      });
+      if (!nonblank(item.commitSha)) fail(`${path}.commitSha nonblank constraint`);
+      return { name: item.name, disposition: "completed" as const, searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
+    });
+    return { status: "unfinished", report: value.report, remainingScope: value.remainingScope, classResults };
   }
   if (value.status === "refused" && Object.hasOwn(value, "remainingScope")) {
     if (Object.hasOwn(value, "classResults")) fail("status refused plan/apply semantic-field combination constraint");
@@ -116,7 +144,7 @@ export function validateFixerOutputForPacket(value: unknown, phase: FixerPhase, 
   const blockers: FixerBlocker[] = "blocker" in output
     ? [output.blocker]
     : "classResults" in output
-      ? output.classResults.filter((entry) => entry.disposition === "refused").map((entry) => entry.blocker)
+      ? output.classResults.flatMap((entry) => entry.disposition === "refused" ? [entry.blocker] : [])
       : [];
   if (blockers.some((entry) => entry.cause === "prerequisite_unmet" && !declaredIds.has(entry.prerequisiteId))) {
     fail("blocker.prerequisiteId declared-prerequisite constraint");
