@@ -142,3 +142,48 @@ test("fatal infrastructure evidence is preserved for the auditor", () => {
   assert.throws(() => ledger.recordForAudit("completed"), /infrastructure previously failed: infrastructure-failure/);
   assert.throws(() => ledger.recordForAudit("refused"), /infrastructure previously failed: infrastructure-failure/);
 });
+
+test("failed-leg dispositions project through the durable ledger by classification", () => {
+  // Hoisted from reviewer-agent setup-failure table: ledger round-trip is owned here.
+  const rows = [
+    { failure: "snapshot" as const, workspaceDisposition: "not-created" as const },
+    { failure: "workspace" as const, workspaceDisposition: { retained: "/tmp/retained-ws" } },
+    { failure: "child" as const, workspaceDisposition: { retained: "/tmp/retained-child" } },
+  ];
+  for (const row of rows) {
+    const ledger = createReviewerExecutionLedger();
+    const event = accepted(false) as Extract<ReviewerEvidenceEvent, { source: "reviewer-dispatch"; type: "accepted" }>;
+    ledger.append(event);
+    ledger.append({ source: "reviewer-agent", type: "dispatch-started", dispatchIdentity: "proposal-1", cardinality: 1 });
+    ledger.append({
+      source: "reviewer-agent",
+      type: "leg-settled",
+      dispatchIdentity: "proposal-1",
+      axis: "standards",
+      status: "failed",
+      prompt: event.legs[0]!.prompt,
+      target,
+      failure: row.failure,
+      workspaceDisposition: row.workspaceDisposition,
+      ...(row.failure === "child"
+        ? {
+            runtimeConstructionEvidence: {
+              leg: "standards" as const,
+              workspaceIdentity: "standards-workspace",
+              manifestSha256: event.bundle.manifestSha256,
+              entries: event.bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({
+                id,
+                relativeClonePath,
+                utf8Length,
+                sha256,
+                verified: true,
+              })),
+            },
+          }
+        : {}),
+    });
+    const record = ledger.recordForAudit("refused");
+    assert.deepEqual(record.results.standards?.workspaceDisposition, row.workspaceDisposition);
+    assert.equal(record.results.standards?.failure, row.failure);
+  }
+});
