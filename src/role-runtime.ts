@@ -6,6 +6,7 @@ import { activationTraceRecordSchema, namedActivationCause, type ActivationTrace
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
   createToolExecutionObservationFace,
+  systemToolExecutionObservationMonoNow,
   writeToolExecutionObservationRecord,
   type ToolExecutionObservationWriter,
 } from "./tool-execution-observation.ts";
@@ -59,6 +60,7 @@ export {
   TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION,
   createToolExecutionObservationFace,
   isProducingToolUpdate,
+  systemToolExecutionObservationMonoNow,
   toolExecutionObservationRecordSchema,
   validateToolExecutionObservationRecord,
   writeToolExecutionObservationRecord,
@@ -294,7 +296,7 @@ export type RoleRuntimeDependencies = {
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
   toolExecutionObservationClock?(): string;
-  /** Monotonic ms clock for update throttling; defaults to Date.now. */
+  /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
   toolExecutionObservationMonoNow?(): number;
   toolExecutionObservationWriter?: ToolExecutionObservationWriter;
 };
@@ -612,17 +614,30 @@ export function createRoleRuntimeExtension(
       role: () => selectedRole,
       admitted: () => admitted,
       clock: dependencies.toolExecutionObservationClock ?? clock,
-      monoNow: dependencies.toolExecutionObservationMonoNow ?? (() => Date.now()),
+      monoNow: dependencies.toolExecutionObservationMonoNow ?? systemToolExecutionObservationMonoNow,
       write: dependencies.toolExecutionObservationWriter ?? writeToolExecutionObservationRecord,
     });
-    pi.on("tool_execution_start", async (event) => {
-      await observationFace.onStart(event);
+    // ExtensionRunner.emit catches ordinary handler throws, emits extension error, and continues.
+    // Observation plane failures must still hit the shared infrastructure termination path
+    // (abort + nonzero print/json exit) with the original cause before that swallow.
+    const observe = async (
+      run: () => void | Promise<void>,
+      ctx: ExtensionContext,
+    ): Promise<void> => {
+      try {
+        await run();
+      } catch (error) {
+        failInfrastructure(error, ctx);
+      }
+    };
+    pi.on("tool_execution_start", async (event, ctx) => {
+      await observe(() => observationFace.onStart(event), ctx);
     });
-    pi.on("tool_execution_update", async (event) => {
-      await observationFace.onUpdate(event);
+    pi.on("tool_execution_update", async (event, ctx) => {
+      await observe(() => observationFace.onUpdate(event), ctx);
     });
-    pi.on("tool_execution_end", async (event) => {
-      await observationFace.onEnd(event);
+    pi.on("tool_execution_end", async (event, ctx) => {
+      await observe(() => observationFace.onEnd(event), ctx);
     });
 
     pi.on("session_start", async (event, ctx) => {
