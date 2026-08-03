@@ -47,6 +47,40 @@ async function runCli(mode: "print" | "json") {
   );
 }
 
+async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json", siblingOrder: "failure-first" | "sibling-first") {
+  return withHermeticHome(
+    { prefix: `ak-audit-navigator-${siblingOrder}-` },
+    async ({ home, agentDir }) => {
+      const issueRoot = resolve(home, ".ak/work/issues/28");
+      const sessionDirectory = resolve(issueRoot, "runs/judge/session");
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(resolve(issueRoot, "authority.md"), "owner authority for Navigator drain\n", "utf8");
+      await writeFile(resolve(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-audit-failure/faux-1" }), "utf8");
+      const args = [
+        "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+        "--session-dir", sessionDirectory,
+        "-e", resolve(packageRoot, "extensions/role-runtime.ts"),
+        "-e", resolve(packageRoot, "test/fixtures/audit-failure-provider.ts"),
+        "--ak-role", "judge",
+        "--provider", "ak-audit-failure", "--model", "faux-1",
+        ...(mode === "print" ? ["-p", "Judge."] : ["--mode", "json", "Judge."]),
+      ];
+      return runPiSubprocess(args, {
+        cwd: issueRoot,
+        env: {
+          ...process.env,
+          HOME: home,
+          PI_CODING_AGENT_DIR: agentDir,
+          AK_HEALTHY_NAVIGATOR: "1",
+          AK_NAVIGATOR_SIBLING_ORDER: siblingOrder,
+          AK_NAVIGATOR_ROOT: issueRoot,
+          PI_OFFLINE: "1",
+        },
+      });
+    },
+  );
+}
+
 async function runFixerAuditFailureCli(mode: "print" | "json") {
   return withHermeticHome({ prefix: "ak-fixer-audit-fatal-cli-" }, async ({ home, agentDir }) => {
     const packet = resolve(home, "packet.json");
@@ -234,6 +268,21 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
       );
       assert.match(result.stdout, /"stopReason":"aborted"/);
     }
+  }
+});
+
+test("fatal Judge audit failure drains one healthy packaged Navigator without advice in both sibling orders", async () => {
+  for (const siblingOrder of ["failure-first", "sibling-first"] as const) {
+    const result = await runHealthyNavigatorAuditFailureCli("json", siblingOrder);
+    assert.equal(result.timedOut, false, `${siblingOrder} subprocess did not time out`);
+    assert.equal(result.code, 1, `${siblingOrder} exits nonzero`);
+    assert.match(result.stderr, /NAVIGATOR_CALLS=1/);
+    assert.match(result.stderr, new RegExp(`NAVIGATOR_SIBLING_ORDER=${siblingOrder}`));
+    assert.match(result.stderr, /NAVIGATOR_PREPARED_AT=\S+/);
+    assert.match(result.stderr, /NAVIGATOR_SETTLEMENT_KIND=role_infrastructure_failure/);
+    assert.doesNotMatch(result.stdout, /ak-navigator-attendance|导航不可用|路线：/);
+    assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
+    assert.match(result.stdout, /"toolName":"ak_judge_output".*"isError":true/);
   }
 });
 
