@@ -32,7 +32,6 @@ import {
 } from "../src/navigator-attendance.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
-import { validateMergerInput } from "../src/merger-contracts.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { packagedRoleInputFlag } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
@@ -69,22 +68,6 @@ export async function loadNavigatorRoleHelp(
   }
   if (result.code !== 0) throw new Error(`live help unavailable for ${role}: ${result.stderr || result.stdout}`);
   return result.stdout || result.stderr;
-}
-
-/**
- * Authority may come only from a role-owned validated typed contract leaf.
- * Opaque task/packet JSON top-level fields never override the separate authority seam.
- * Merger is the current contract owner via materials.authority.
- */
-export function navigatorAuthorityFromRoleInput(role: string, raw: string): string | undefined {
-  if (role !== "merger" || raw.trim() === "") return undefined;
-  try {
-    const input = validateMergerInput(JSON.parse(raw) as unknown);
-    const content = Buffer.from(input.materials.authority.bytesBase64, "base64").toString("utf8");
-    return content.trim() === "" ? undefined : content;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -136,6 +119,18 @@ export async function loadNavigatorWorkContext(
   const subjectKey = reference === undefined
     ? subjectRoot
     : navigatorSubjectKeyForInput(subjectRoot, reference, options.context.cwd);
+  let subject = input ?? `work subject: ${subjectKey}`;
+  let subjectProvenance: NavigatorSubjectProvenance = input === undefined ? "placeholder" : "role_input";
+  if (options.role === "doctor" && reference !== undefined) {
+    const patient = await loadDoctorCase(reference);
+    subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
+    subjectProvenance = "role_input";
+  }
+  // True short-circuit: non-whitespace role-input is authority verbatim.
+  // Do not probe work-root authority files once input already supplies material.
+  if (input !== undefined && input.trim() !== "") {
+    return { subjectKey, subject, authority: input, subjectProvenance };
+  }
   const workRoot = subjectRoot.includes("/.ak/work/") ? subjectRoot : undefined;
   const authorityFiles = workRoot === undefined ? [] : [
     resolve(workRoot, "authority.md"),
@@ -154,16 +149,7 @@ export async function loadNavigatorWorkContext(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  let subject = input ?? `work subject: ${subjectKey}`;
-  let subjectProvenance: NavigatorSubjectProvenance = input === undefined ? "placeholder" : "role_input";
-  if (options.role === "doctor" && reference !== undefined) {
-    const patient = await loadDoctorCase(reference);
-    subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
-    subjectProvenance = "role_input";
-  }
-  // Non-empty role-input document bytes are authority material verbatim and
-  // win over work-root files (closest per-dispatch provenance). Absent or
-  // whitespace-only input yields to the existing file fallback.
+  // Absent or whitespace-only input yields to the existing file fallback.
   const authority = resolveNavigatorAuthorityMaterial(input, authorityMaterial);
   if (authority === undefined) {
     throw navigatorUnavailableError("context", new Error("controlling authority content was not supplied as typed work context"));

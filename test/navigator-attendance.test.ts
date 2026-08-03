@@ -34,7 +34,6 @@ import { PACKAGED_ROLE_REGISTRY } from "../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../src/role-runtime.ts";
 import {
   loadNavigatorWorkContext,
-  navigatorAuthorityFromRoleInput,
   resolveNavigatorAuthorityMaterial,
 } from "../extensions/role-runtime.ts";
 import { createHash } from "node:crypto";
@@ -773,39 +772,6 @@ test("registry output tools are the contract-owned constants", () => {
   assert.equal(publicNavigatorSettlement("fixer", "apply", { toolName: FIXER_OUTPUT_TOOL_NAME, isError: false, details: { status: "unfinished" } })?.kind, "accepted");
 });
 
-test("authority extraction only admits role-owned validated typed contracts", async () => {
-  const { sha256Hex } = await import("../src/sha256.ts");
-  const material = (text: string) => {
-    const bytes = Buffer.from(text, "utf8");
-    return { bytesBase64: bytes.toString("base64"), sha256: sha256Hex(bytes) };
-  };
-  const mergerAuthority = "merger-contract-authority";
-  const mergerInput = {
-    version: 1 as const,
-    attemptId: "attempt-1",
-    targetObjectId: "a".repeat(40),
-    sourceObjectId: "b".repeat(40),
-    materials: {
-      task: material("task"),
-      authority: material(mergerAuthority),
-      targetIntent: material("target"),
-      sourceIntent: material("source"),
-    },
-    expectedConflictPaths: ["src/a.ts"],
-    resolutionScope: ["src/a.ts"],
-    authorizedChecks: [],
-  };
-  assert.equal(navigatorAuthorityFromRoleInput("merger", JSON.stringify(mergerInput)), mergerAuthority);
-  // Opaque task/packet JSON cannot override the separate authority seam.
-  assert.equal(navigatorAuthorityFromRoleInput("fixer", JSON.stringify({ authority: "task-controlled", status: "planned" })), undefined);
-  assert.equal(navigatorAuthorityFromRoleInput("coder", JSON.stringify({ controllingAuthority: "task-controlled" })), undefined);
-  assert.equal(navigatorAuthorityFromRoleInput("reviewer", JSON.stringify({ authority: "task-controlled" })), undefined);
-  assert.equal(navigatorAuthorityFromRoleInput("collector", JSON.stringify({ authority: "task-controlled" })), undefined);
-  assert.equal(navigatorAuthorityFromRoleInput("judge", JSON.stringify({ authority: "task-controlled" })), undefined);
-  // Incomplete merger-shaped JSON is not a validated contract leaf.
-  assert.equal(navigatorAuthorityFromRoleInput("merger", JSON.stringify({ materials: { authority: material("x") } })), undefined);
-});
-
 test("role-input authority wins verbatim; files fall back; neither is honestly unavailable", async () => {
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", "file authority\n"), "packet authority\n");
   assert.equal(resolveNavigatorAuthorityMaterial("packet authority\n", undefined), "packet authority\n");
@@ -843,12 +809,22 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
     assert.equal(both.authority, packetBytes);
     assert.notEqual(both.authority, "work-root file authority\n");
 
-    // 3) no input (judge with only -p) + files present → files still used (主刀 flow)
+    // 3) valid input + unreadable/directory authority.md still succeeds verbatim (true short-circuit)
+    await rm(resolve(workRoot, "authority.md"));
+    await mkdir(resolve(workRoot, "authority.md"), { recursive: true });
+    const withDirectoryAuthority = await loadNavigatorWorkContext(fixerPi, { context: fixerCtx, role: "fixer" });
+    assert.equal(withDirectoryAuthority.authority, packetBytes);
+    assert.equal(withDirectoryAuthority.subject, packetBytes);
+    assert.equal(withDirectoryAuthority.subjectProvenance, "role_input");
+
+    // 4) no input (judge with only -p) + files present → files still used (主刀 flow)
+    await rm(resolve(workRoot, "authority.md"), { recursive: true, force: true });
+    await writeFile(resolve(workRoot, "authority.md"), "work-root file authority\n", "utf8");
     const filesOnly = await loadNavigatorWorkContext(noInputPi, { context: judgeCtx, role: "judge" });
     assert.equal(filesOnly.authority, "work-root file authority\n");
     assert.equal(filesOnly.subjectProvenance, "placeholder");
 
-    // 4) neither → honest unavailable
+    // 5) neither → honest unavailable
     await rm(resolve(workRoot, "authority.md"));
     await assert.rejects(
       () => loadNavigatorWorkContext(noInputPi, { context: judgeCtx, role: "judge" }),
