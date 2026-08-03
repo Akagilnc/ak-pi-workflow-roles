@@ -5,6 +5,7 @@
 import { COLLECTOR_ACCEPTED_TEXT, COLLECTOR_OUTPUT_TOOL, validateAcceptedCollectorReceipt, } from "./collector-output.js";
 import { JUDGE_ACCEPTED_TEXT, JUDGE_OUTPUT_TOOL_NAME, validateAcceptedJudgeDetails, } from "./judge-output.js";
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, } from "./reviewer-output.js";
+import { isAuditEscalationResult } from "../audit-escalation.js";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput } from "../doctor-contracts.js";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput } from "../merger-contracts.js";
 import { CODER_ACCEPTED_TEXT, CODER_OUTPUT_TOOL_NAME, FIXER_ACCEPTED_TEXT, FIXER_OUTPUT_TOOL_NAME, validateAcceptedWorkerDetails, } from "./worker-output.js";
@@ -46,6 +47,9 @@ export class AcceptedDetailsContractError extends Error {
     }
 }
 export function validateAcceptedDetails(toolName, details) {
+    if (isAuditEscalationResult(details)) {
+        throw new AcceptedDetailsContractError("audit escalation is not an accepted role receipt");
+    }
     try {
         switch (toolName) {
             case CODER_OUTPUT_TOOL_NAME:
@@ -108,13 +112,6 @@ export function acceptedFacts(toolName, details) {
         }
         case COLLECTOR_OUTPUT_TOOL: return {};
     }
-}
-export function carriesPackageAuditObservation(toolName) {
-    return (toolName === JUDGE_OUTPUT_TOOL_NAME ||
-        toolName === FIXER_OUTPUT_TOOL_NAME ||
-        toolName === REVIEWER_OUTPUT_TOOL_NAME ||
-        toolName === DOCTOR_OUTPUT_TOOL_NAME ||
-        false);
 }
 /** Deep structural equality for lifecycle agreement checks. */
 export function deepEqual(a, b) {
