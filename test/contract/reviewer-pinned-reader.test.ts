@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,11 +16,32 @@ async function git(root: string, ...args: string[]): Promise<string> {
   return (await exec("git", ["-C", root, ...args])).stdout.trim();
 }
 
+/** One seeded repo template; cases cp -R into independent mkdtemps. */
+let seededTemplateMemo: Promise<string> | undefined;
+async function seededTemplate(): Promise<string> {
+  seededTemplateMemo ??= (async () => {
+    const root = await mkdtemp(join(tmpdir(), "reviewer-pin-template-"));
+    await git(root, "init");
+    await git(root, "config", "user.email", "test@example.com");
+    await git(root, "config", "user.name", "Test");
+    await writeFile(join(root, "file"), "base\n");
+    await git(root, "add", ".");
+    await git(root, "commit", "-m", "base");
+    return root;
+  })();
+  return seededTemplateMemo;
+}
+
+async function materializeSeededRepo(prefix: string): Promise<string> {
+  const template = await seededTemplate();
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  await cp(template, root, { recursive: true });
+  return root;
+}
+
 test("pinned base resolution ignores moved refs and accepts reachable full commits", async () => {
-  const root = await mkdtemp(join(tmpdir(), "reviewer-pin-"));
+  const root = await materializeSeededRepo("reviewer-pin-");
   try {
-    await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
-    await writeFile(join(root, "file"), "base\n"); await git(root, "add", "."); await git(root, "commit", "-m", "base");
     const base = await git(root, "rev-parse", "HEAD"); await git(root, "branch", "review-base", base);
     await writeFile(join(root, "file"), "target\n"); await git(root, "commit", "-am", "target");
     await git(root, "tag", "-a", "review-tag", base, "-m", "annotated");
@@ -77,10 +98,8 @@ test("SHA-256 pins full and abbreviated commits, range, material, and ref snapsh
 });
 
 test("abbreviated bases are resolved only among commits reachable from the activation target", async () => {
-  const root = await mkdtemp(join(tmpdir(), "reviewer-prefix-"));
+  const root = await materializeSeededRepo("reviewer-prefix-");
   try {
-    await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
-    await writeFile(join(root, "file"), "base\n"); await git(root, "add", "."); await git(root, "commit", "-m", "base");
     const base = await git(root, "rev-parse", "HEAD");
     await writeFile(join(root, "file"), "target\n"); await git(root, "commit", "-am", "target");
     const reader = await createReviewerPinnedGitReader(root);
@@ -147,8 +166,8 @@ test("pinning discovers and canonicalizes the worktree root from nested and syml
   const linked = join(temporary, "linked-repository");
   try {
     await mkdir(nested, { recursive: true });
-    await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
-    await writeFile(join(root, "file"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "initial");
+    const template = await seededTemplate();
+    await cp(template, root, { recursive: true });
     await symlink(root, linked, "dir");
     const canonicalRoot = await realpath(root);
     assert.equal((await createReviewerPinnedGitReader(nested)).pin.repositoryRoot, canonicalRoot);
@@ -167,10 +186,9 @@ test("pinning rejects non-repositories and bare repositories", async () => {
 });
 
 test("material path safety rejects unsafe Git object paths at the concrete read seam", async () => {
-  const root = await mkdtemp(join(tmpdir(), "reviewer-material-path-"));
+  const root = await materializeSeededRepo("reviewer-material-path-");
   try {
-    await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
-    await writeFile(join(root, "safe"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "initial");
+    await writeFile(join(root, "safe"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "safe");
     const reader = await createReviewerPinnedGitReader(root);
     const unsafe = [
       { path: "/absolute", diagnostic: /materials\.repositoryPath must be relative, not absolute/ },
