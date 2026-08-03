@@ -798,7 +798,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           { stopReason: "toolUse" },
         );
       };
-      for (const mode of ["json", "print", "tui"] as const) {
+      const presentationSamples = ["json", "print", "tui", "json", "print", "tui", "json", "print", "tui", "json"] as const;
+      for (const [sample, mode] of presentationSamples.entries()) {
           navigatorCalls = 0;
           roleModelCalls = 0;
           invalidJudge = true;
@@ -823,7 +824,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             const event = (message as { details: { disposition: string; subjectKey: string; route?: unknown; next?: unknown } }).details;
             assert.equal(event.disposition, "recommendation");
             assert.equal(event.subjectKey, issueRoot);
-            if (mode === "json") assert.ok(event.route);
+            if (sample === 0) assert.ok(event.route);
             else assert.equal(event.route, undefined);
             assert.deepEqual(event.next, { role: "reviewer", phase: null });
           });
@@ -840,9 +841,9 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
       const settlements = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
       const routes = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-route");
-      assert.equal(invocations.length, 3);
-      assert.equal(settlements.length, 3);
-      assert.equal(routes.length, 3);
+      assert.equal(invocations.length, 10);
+      assert.equal(settlements.length, 10);
+      assert.equal(routes.length, 10);
       assert.deepEqual((invocations[0] as { data: { role: string; phase: null; subjectKey: string } }).data, {
         invocationId: (routes[0] as { data: { invocationId: string } }).data.invocationId,
         role: "judge",
