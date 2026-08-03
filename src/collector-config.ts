@@ -75,8 +75,8 @@ export type CollectorManifest = {
   sourcePath: string;
 };
 
-function fail(message: string): never {
-  throw new Error(message);
+function fail(message: string, cause?: unknown): never {
+  throw new Error(message, cause === undefined ? undefined : { cause });
 }
 
 function isAsciiControlOrNonAscii(input: string): boolean {
@@ -481,7 +481,7 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
     bytes = await readFile(path);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    fail(`Collector leg manifest is unreadable at ${path}: ${detail}`);
+    fail(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
   }
 
   let text: string;
@@ -503,7 +503,7 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
     parsed = JSON.parse(text);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    fail(`Collector leg manifest is not valid JSON: ${detail}`);
+    fail(`Collector leg manifest is not valid JSON: ${detail}`, error);
   }
 
   if (!isPlainObject(parsed) || !exactKeys(parsed, ["version", "legs"])) {

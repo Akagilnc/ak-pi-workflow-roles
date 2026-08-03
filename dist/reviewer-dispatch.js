@@ -34,12 +34,8 @@ catch {
     throw new Error("Invalid Reviewer capabilities schema"); if (!/^[0-9a-f]{64}$/.test(v.taskSha256) || v.taskSha256 !== sha256Hex(task))
     throw new Error("Reviewer capabilities task digest mismatch"); if (!v.tools.every((x) => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !v.prerequisiteOperations.every((x) => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || new Set(v.tools).size !== v.tools.length || new Set(v.prerequisiteOperations).size !== v.prerequisiteOperations.length)
     throw new Error("Reviewer capabilities contain unknown or duplicate values"); return Object.freeze({ version: 1, taskSha256: v.taskSha256, document: reviewerPromptIdentity(text), tools: frozen(v.tools), prerequisiteOperations: frozen(v.prerequisiteOperations) }); }
-const identity = (proposal) => { try {
-    return sha256Hex(JSON.stringify(proposal));
-}
-catch {
-    return sha256Hex("[unserializable proposal]");
-} };
+const identity = (proposal) => { const serialized = JSON.stringify(proposal); if (serialized === undefined)
+    throw new TypeError("Reviewer proposal is not serializable"); return sha256Hex(serialized); };
 const preflight = (error) => error instanceof ReviewerPreflightError ? error : error instanceof ReviewerAdmissionError || error instanceof ReviewerConstructionError || error instanceof ReviewerCorrectablePreflightError ? new ReviewerPreflightError(error.code, error.diagnostic) : undefined;
 export function createReviewerDispatcher(d) {
     const task = Uint8Array.from(d.task), target = immutableReviewerPin(d.reader.pin), host = frozen(d.hostTools);

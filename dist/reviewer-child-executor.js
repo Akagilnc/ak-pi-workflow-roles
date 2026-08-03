@@ -5,7 +5,7 @@ import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { prepareComplianceDispatch } from "./compliance-transport.js";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.js";
-function classifiedError(error, reviewerFailure) { const wrapped = error instanceof Error ? error : new Error(String(error)); const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
+function classifiedError(error, reviewerFailure) { const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error }); const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
 function emptyUsage() {
     return {
         input: 0,

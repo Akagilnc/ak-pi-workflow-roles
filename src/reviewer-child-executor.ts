@@ -10,7 +10,7 @@ import type { ReviewerPromptIdentity } from "./reviewer-prompt-identity.ts";
 
 export type ReviewerExecutorFaultPoint = "child.reload" | "child.session";
 type ClassifiedReviewerError = Error & Readonly<{ reviewerFailure: "provider" | "child" }>;
-function classifiedError(error: unknown, reviewerFailure: "provider" | "child"): ClassifiedReviewerError { const wrapped = error instanceof Error ? error : new Error(String(error)); const classification = "reviewerFailure" in wrapped ? (wrapped as ClassifiedReviewerError).reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
+function classifiedError(error: unknown, reviewerFailure: "provider" | "child"): ClassifiedReviewerError { const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error }); const classification = "reviewerFailure" in wrapped ? (wrapped as ClassifiedReviewerError).reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
 function emptyUsage(): Usage {
   return {
     input: 0,

@@ -950,8 +950,9 @@ echo "unexpected $*" >&2; exit 2
         const text = await (await import("node:fs/promises")).readFile(pidFile, "utf8");
         pid = Number(text.trim());
         if (Number.isSafeInteger(pid) && pid > 0) break;
-      } catch {
-        // not yet
+      } catch (error) {
+        // Contract: docs/adr/0016-tests-follow-logic-not-format.md#Tests-follow-logic-not-format — only the typed not-yet-created pid file is an expected negative; other read failures propagate.
+        if (!(error instanceof Error && "code" in error && ((error as NodeJS.ErrnoException).code === "ENOENT" || (error as NodeJS.ErrnoException).code === "ENOTDIR"))) throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }

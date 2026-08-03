@@ -161,7 +161,7 @@ test("workspace owner prepares and installs every leg without constructing a pro
       await owner.dispose(workspace);
     }
   } finally {
-    await owner.shutdown().catch(() => {});
+    await owner.shutdown();
     await rm(source.root, { recursive: true, force: true });
   }
 });
@@ -180,7 +180,7 @@ test("child executor runs in an already-prepared workspace without Git materiali
     assert.deepEqual(operations, ["child.reload", "child.session"]);
     await owner.dispose(workspace);
   } finally {
-    await owner.shutdown().catch(() => {});
+    await owner.shutdown();
     await rm(source.root, { recursive: true, force: true });
   }
 });
@@ -238,7 +238,7 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
 test("Reviewer materializes and verifies a real SHA-256 repository", async (t) => {
   let source: Awaited<ReturnType<typeof repository>>;
   try { source = await repository("sha256"); }
-  catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
+  catch (error) { t.skip(`installed Git lacks SHA-256 repository support: ${error instanceof Error ? error.message : String(error)}`); return; }
   try {
     const { context } = await parentContext(source.root, async () => {}, 1);
     const runner = createReviewerAgentRunner();
@@ -518,7 +518,7 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
       const scratchAfter = (await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name));
       assert.deepEqual(scratchAfter, [], `${fault} leaked credential scratch`);
     } finally {
-      await runner.shutdown().catch(() => {});
+      await runner.shutdown();
       if (retained !== undefined) await rm(retained, { recursive: true, force: true });
       await rm(source.root, { recursive: true, force: true });
     }
@@ -563,7 +563,7 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     await access(retained);
     assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name)), []);
   } finally {
-    await runner.shutdown().catch(() => {});
+    await runner.shutdown();
     if (retained !== undefined) {
       await rm(retained, { recursive: true, force: true });
     }
