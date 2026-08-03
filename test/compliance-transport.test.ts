@@ -313,6 +313,7 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       try {
         await audit(nested, sessionManager);
       } catch (error) {
+        // Contract: docs/adr/0016-tests-follow-logic-not-format.md#Tests-follow-logic-not-format — this is a typed expected-negative predicate; retain the exact rejection for the assertions below.
         thrown = error;
       }
       assert.ok(thrown instanceof Error);

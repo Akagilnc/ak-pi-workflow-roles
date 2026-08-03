@@ -78,13 +78,16 @@ export async function loadNavigatorRoleHelp(
  */
 export function navigatorAuthorityFromRoleInput(role: string, raw: string): string | undefined {
   if (role !== "merger" || raw.trim() === "") return undefined;
+  // Contract: docs/adr/0043-external-data-gets-minimal-consumer-driven-parsing.md#External-data-gets-minimal-consumer-driven-parsing — malformed optional merger authority is a typed expected-negative and falls back to the separately loaded authority seam.
+  let input: ReturnType<typeof validateMergerInput>;
   try {
-    const input = validateMergerInput(JSON.parse(raw) as unknown);
-    const content = Buffer.from(input.materials.authority.bytesBase64, "base64").toString("utf8");
-    return content.trim() === "" ? undefined : content;
-  } catch {
-    return undefined;
+    input = validateMergerInput(JSON.parse(raw) as unknown);
+  } catch (error) {
+    if (error instanceof Error) return undefined;
+    throw error;
   }
+  const content = Buffer.from(input.materials.authority.bytesBase64, "base64").toString("utf8");
+  return content.trim() === "" ? undefined : content;
 }
 
 function projectJudgeTranscriptForAudit(messages: Message[]): Message[] {

@@ -669,10 +669,8 @@ export function createRoleRuntimeExtension(
             work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
             contextError = work.contextError;
           } catch (error) {
+            // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
             contextError = navigatorUnavailableError("context", error);
-            // A loader failure must not turn the role session directory into a
-            // per-invocation Navigator identity.  Keep the stable work-root key
-            // even though this attendance can only report unavailable.
             const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           }

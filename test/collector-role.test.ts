@@ -2618,8 +2618,9 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
         ]);
         try {
           await session.prompt("start");
-        } catch {
-          // failInfrastructure throws
+        } catch (error) {
+          // The expected contract failure must remain observable to this assertion.
+          assert.ok(error instanceof Error);
         }
         const successOutput = sessionManager.getEntries().some((entry) =>
           entry.type === "message" &&

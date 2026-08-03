@@ -13,7 +13,7 @@ export class ReviewerDispatchExecutionError extends Error {
 function classify(error, signal) { if (signal?.aborted || (error instanceof Error && error.name === "AbortError"))
     return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error)
     return error.reviewerFailure; return "unknown"; }
-function failed(error, target, prompt, signal, retained, evidence) { const attached = typeof error === "object" && error !== null ? error : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
+function failed(error, target, prompt, signal, retained, evidence) { const attached = typeof error === "object" && error !== null ? error : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), cause: error, target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
 export function createReviewerAgentRunner(dependencies = {}) {
     const workspaceOwner = createReviewerWorkspaceOwner(dependencies.fault === undefined ? {} : { fault: dependencies.fault });
     let accepted = false;

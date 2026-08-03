@@ -56,7 +56,7 @@ test("SHA-256 pins full and abbreviated commits, range, material, and ref snapsh
   const root = await mkdtemp(join(tmpdir(), "reviewer-sha256-"));
   try {
     try { await git(root, "init", "--object-format=sha256"); }
-    catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
+    catch (error) { t.skip(`installed Git lacks SHA-256 repository support: ${error instanceof Error ? error.message : String(error)}`); return; }
     await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
     await writeFile(join(root, "file"), "base\n"); await git(root, "add", "."); await git(root, "commit", "-m", "base");
     const base = await git(root, "rev-parse", "HEAD"); await git(root, "branch", "review-base");

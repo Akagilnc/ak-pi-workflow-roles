@@ -74,6 +74,7 @@ export type GitHubCreateCommentResult =
   | {
       kind: "ambiguous_loss";
       diagnostics: string;
+      cause?: { name: string; message: string; evidenceId: string };
     }
   | {
       kind: "rejected";
@@ -168,9 +169,17 @@ function parseJson(text: string, label: string): unknown {
   try {
     return JSON.parse(text);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`GitHub ${label} returned malformed JSON: ${detail}`);
+    throw new Error(`GitHub ${label} returned malformed JSON`, { cause: error });
   }
+}
+
+let commentFailureEvidence = 0;
+function commentFailureCause(error: unknown) {
+  return {
+    name: error instanceof Error ? error.name : typeof error,
+    message: error instanceof Error ? error.message : String(error),
+    evidenceId: `github-comment-failure-${++commentFailureEvidence}`,
+  };
 }
 
 /** Authenticated /user requires a login; throws when absent. */
@@ -300,8 +309,9 @@ export function createGhApiRunner(
       const onAbort = () => {
         try {
           child.kill("SIGTERM");
-        } catch {
-          // ignore kill races after exit
+        } catch (error) {
+          settle(() => reject(error));
+          return;
         }
         settle(() => {
           reject(signal?.reason ?? new Error("aborted"));
@@ -529,11 +539,9 @@ export function createGhCollectorGitHubTransport(
               kind: "success",
               comment: normalizeIssueComment(parseJson(response.bodyText, path)),
             };
-          } catch (error) {
-            return {
-              kind: "ambiguous_loss",
-              diagnostics: error instanceof Error ? error.message : String(error),
-            };
+            } catch (error) {
+            const cause = commentFailureCause(error);
+            return { kind: "ambiguous_loss", diagnostics: cause.message, cause };
           }
         }
         return {
@@ -548,10 +556,8 @@ export function createGhCollectorGitHubTransport(
         }
         // Non-aborted transport tag only (after signal).
         if (isRecord(error) && error["ambiguousGhFailure"] === true) {
-          return {
-            kind: "ambiguous_loss",
-            diagnostics: error instanceof Error ? error.message : String(error),
-          };
+          const cause = commentFailureCause(error);
+          return { kind: "ambiguous_loss", diagnostics: cause.message, cause };
         }
         // Non-signal AbortError belt only (after tag).
         if (isRecord(error) && error["name"] === "AbortError") {
