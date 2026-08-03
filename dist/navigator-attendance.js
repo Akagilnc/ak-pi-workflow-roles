@@ -46,6 +46,10 @@ const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = "ak-navigator-invocation";
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
 const targetRoles = new Set(NAVIGATOR_TARGETS.map(({ role }) => role));
+const unavailableKeys = /* @__PURE__ */ new Set(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
+function unavailableKey(value) {
+  return typeof value === "string" && unavailableKeys.has(value) ? value : void 0;
+}
 function exactRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -353,8 +357,11 @@ ${helpContext}
             if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
             return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
           });
-          const errorMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) && typeof nativeFailure.message.errorMessage === "string" ? nativeFailure.message.errorMessage : "Navigator did not submit typed route candidates";
-          throw navigatorUnavailableError("transport", errorMessage);
+          const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : void 0;
+          const errorMessage = nativeMessage !== void 0 && typeof nativeMessage.errorMessage === "string" ? nativeMessage.errorMessage : "Navigator did not submit typed route candidates";
+          const source = unavailableKey(nativeMessage?.navigatorUnavailableSource) ?? "unknown";
+          const cause = unavailableKey(nativeMessage?.navigatorUnavailableCause) ?? source;
+          throw navigatorUnavailableError(source, errorMessage, cause);
         }
         candidates = validatePrepareOutput(output);
         return candidates;

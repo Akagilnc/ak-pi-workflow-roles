@@ -155,6 +155,13 @@ const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = "ak-navigator-invocation";
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
 const targetRoles = new Set<string>(NAVIGATOR_TARGETS.map(({ role }) => role));
+const unavailableKeys = new Set<NavigatorUnavailableKey>(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
+
+function unavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
+  return typeof value === "string" && unavailableKeys.has(value as NavigatorUnavailableKey)
+    ? value as NavigatorUnavailableKey
+    : undefined;
+}
 
 function exactRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -481,10 +488,13 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
             return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
           });
-          const errorMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) && typeof nativeFailure.message.errorMessage === "string"
-            ? nativeFailure.message.errorMessage
+          const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : undefined;
+          const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
+            ? nativeMessage.errorMessage
             : "Navigator did not submit typed route candidates";
-          throw navigatorUnavailableError("transport", errorMessage);
+          const source = unavailableKey(nativeMessage?.navigatorUnavailableSource) ?? "unknown";
+          const cause = unavailableKey(nativeMessage?.navigatorUnavailableCause) ?? source;
+          throw navigatorUnavailableError(source, errorMessage, cause);
         }
         candidates = validatePrepareOutput(output);
         return candidates;
