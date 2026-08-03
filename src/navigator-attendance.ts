@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
 
@@ -35,8 +36,15 @@ export type NavigatorProviderFailureFact = {
   cause: NavigatorUnavailableKey;
 };
 
+const navigatorProviderFailureSchema = Type.Object({
+  source: Type.Union([Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"), Type.Literal("auth"), Type.Literal("quota"), Type.Literal("transport"), Type.Literal("unknown")]),
+  cause: Type.Union([Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"), Type.Literal("auth"), Type.Literal("quota"), Type.Literal("transport"), Type.Literal("unknown")]),
+}, { additionalProperties: false });
+
 export function navigatorProviderFailure<T extends object>(message: T, source: NavigatorUnavailableKey, cause: NavigatorUnavailableKey = source): T & { navigatorFailure: NavigatorProviderFailureFact } {
-  return Object.assign(message, { navigatorFailure: { source, cause } });
+  const fact = { source, cause } satisfies NavigatorProviderFailureFact;
+  if (!Value.Check(navigatorProviderFailureSchema, fact)) throw new TypeError("Navigator provider failure fact is not typed");
+  return Object.assign(message, { navigatorFailure: fact });
 }
 
 export function navigatorUnavailableError(source: NavigatorUnavailableKey, error: unknown, cause: NavigatorUnavailableKey = source): NavigatorUnavailableError {
