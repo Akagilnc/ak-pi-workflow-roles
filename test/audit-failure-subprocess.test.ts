@@ -278,8 +278,22 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     assert.equal(result.code, 1, `${siblingOrder} exits nonzero`);
     assert.match(result.stderr, /NAVIGATOR_CALLS=1/);
     assert.match(result.stderr, new RegExp(`NAVIGATOR_SIBLING_ORDER=${siblingOrder}`));
-    assert.match(result.stderr, /NAVIGATOR_PREPARED_AT=\S+/);
+    const timestamp = (name: string) => {
+      const value = result.stderr.match(new RegExp(`${name}=([^\\n]+)`))?.[1];
+      assert.ok(value, `${siblingOrder} must emit ${name}`);
+      const parsed = Date.parse(value);
+      assert.ok(Number.isFinite(parsed), `${name} must be an ISO timestamp`);
+      return parsed;
+    };
+    const startedAt = timestamp("NAVIGATOR_STARTED_AT");
+    const completedAt = timestamp("NAVIGATOR_COMPLETED_AT");
+    const preparedAt = timestamp("NAVIGATOR_PREPARED_AT");
+    const settledAt = timestamp("NAVIGATOR_SETTLEMENT_AT");
+    assert.ok(startedAt <= completedAt, `${siblingOrder} preparation start must precede completion`);
+    assert.ok(completedAt <= preparedAt, `${siblingOrder} provider completion must precede typed preparation persistence`);
+    assert.ok(preparedAt <= settledAt, `${siblingOrder} preparation must precede settlement`);
     assert.match(result.stderr, /NAVIGATOR_SETTLEMENT_KIND=role_infrastructure_failure/);
+    assert.match(result.stderr, /NAVIGATOR_RELEASE_AFTER_DRAIN=true/);
     assert.doesNotMatch(result.stdout, /ak-navigator-attendance|导航不可用|路线：/);
     assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
     assert.match(result.stdout, /"toolName":"ak_judge_output".*"isError":true/);
