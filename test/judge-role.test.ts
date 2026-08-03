@@ -11,7 +11,8 @@ import {
 import { transcriptFromContext as productionTranscriptFromContext } from "../extensions/role-runtime.ts";
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
-import { createPiJudgeAuditor as createPiSoulAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../src/compliance-transport.ts";
+import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
@@ -476,7 +477,7 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
 });
 
 test("judge role rejects a terminal audit response before accepting its valid decision call", async () => {
-  const audit = createPiSoulAuditor(async () =>
+  const audit = createPiJudgeAuditor(async () =>
     fauxAssistantMessage(
       fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
         status: "pass",
@@ -506,12 +507,14 @@ test("judge role rejects a terminal audit response before accepting its valid de
   const retained = ctx.sessionManager.getEntries().filter(
     (entry) => entry.type === "message" && entry.message.role === "assistant",
   );
-  assert.equal(retained.length, 2);
-  assert.equal(retained[1]?.type, "message");
-  if (retained[1]?.type === "message" && retained[1].message.role === "assistant") {
-    assert.equal(retained[1].message.stopReason, "error");
-    assert.equal(retained[1].message.errorMessage, "native provider failure");
-  }
+  assert.equal(retained.length, 1);
+  const evidence = ctx.sessionManager.getEntries().find(
+    (entry) => entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
+  );
+  assert.ok(evidence?.type === "custom");
+  const nested = (evidence.data as { response: AssistantMessage }).response;
+  assert.equal(nested.stopReason, "error");
+  assert.equal(nested.errorMessage, "native provider failure");
   assert.equal(
     ctx.sessionManager.getEntries().some(
       (entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "terminal-audit",
@@ -579,7 +582,7 @@ test("judge role audits only adjudicative fields while retaining evidence in rec
 
 test("production Judge-to-Soul audit projection ignores opaque evidence and preserves receipt details", async () => {
   const auditRequests: Context[] = [];
-  const auditor = createPiSoulAuditor(async (_model, request) => {
+  const auditor = createPiJudgeAuditor(async (_model, request) => {
     auditRequests.push(request);
     return fauxAssistantMessage(
       fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),

@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fauxAssistantMessage, fauxToolCall, type Context } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  SessionManager,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { createPiDoctorAuditor, DOCTOR_AUDIT_TOOL_NAME } from "../src/doctor-auditor.ts";
 
-const context = { model: { provider: "test", id: "doctor" }, modelRegistry: { async getProviderAuth() { return { auth: { apiKey: "secret" } }; }, async getApiKeyAndHeaders() { return { ok: true, apiKey: "secret" }; } } } as unknown as ExtensionContext;
+const context = { model: { provider: "test", id: "doctor" }, modelRegistry: { async getProviderAuth() { return { auth: { apiKey: "secret" } }; }, async getApiKeyAndHeaders() { return { ok: true, apiKey: "secret" }; } }, sessionManager: SessionManager.inMemory() } as unknown as ExtensionContext;
 
 test("Doctor audit receives the frozen evidence index without replaying large session content", async () => {
   let seen: Context | undefined;
@@ -17,7 +20,11 @@ test("Doctor audit receives the frozen evidence index without replaying large se
   assert.ok(Array.isArray(user.content));
   const text = user.content.find((part) => part.type === "text");
   assert.ok(text?.type === "text");
-  const payload = JSON.parse(text.text.split("\n<decision_tool_contract>\n", 1)[0]!);
+  const contractDelimiter = "\n<decision_tool_contract>\n";
+  const sections = text.text.split(contractDelimiter);
+  assert.equal(sections.length, 2, "Doctor audit must append its decision contract delimiter");
+  assert.match(sections[1]!, /[\s\S]*\n<\/decision_tool_contract>$/);
+  const payload = JSON.parse(sections[0]!);
   assert.deepEqual(Object.keys(payload).sort(), ["frozenEvidenceIndex", "proposedTestimony", "readRecord", "soul"]);
   assert.equal(payload.soul, "Doctor law");
   assert.deepEqual(payload.readRecord, [{ evidenceId: "review/session/live.jsonl", fullyRead: true }]);

@@ -174,7 +174,7 @@ export async function withColdInstalledPackage<T>(
   await execFileAsync(
     "npm",
     ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
-    { cwd: fixture },
+    { cwd: fixture, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
   );
 
   const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");

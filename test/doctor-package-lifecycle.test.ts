@@ -3,6 +3,7 @@ import { mkdir, readdir, realpath, readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path";
 import test from "node:test";
 
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../src/compliance-transport.ts";
 import { validateRecordedDoctorOutput } from "../src/doctor-contracts.ts";
 import {
   packageRoot,
@@ -93,13 +94,20 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         const recordedToolCalls = sessionRows
           .filter((row) => row.type === "message" && row.message?.role === "assistant")
           .flatMap((row) => row.message.content.filter((part: any) => part.type === "toolCall"));
-        assert.equal(recordedToolCalls.length, 2);
+        assert.equal(recordedToolCalls.length, 1);
+        const retainedAuditRows = sessionRows.filter(
+          (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
+        );
+        assert.equal(retainedAuditRows.length, 1);
+        const retainedAudit = retainedAuditRows[0].data.response;
+        assert.equal(retainedAudit.role, "assistant");
+        assert.equal(retainedAudit.stopReason, "toolUse");
         assert.equal(
           recordedToolCalls.filter((part: any) => part.name === "ak_doctor_output").length,
           1,
         );
-        const auditCalls = recordedToolCalls.filter(
-          (part: any) => part.name === "ak_doctor_audit_decision",
+        const auditCalls = retainedAudit.content.filter(
+          (part: any) => part.type === "toolCall" && part.name === "ak_doctor_audit_decision",
         );
         assert.equal(auditCalls.length, 1);
         assert.deepEqual(auditCalls[0].arguments, {

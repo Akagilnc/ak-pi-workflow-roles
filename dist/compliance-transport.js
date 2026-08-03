@@ -107,18 +107,36 @@ export async function prepareComplianceDispatch(model, context, label) {
         },
     };
 }
+export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+export class ComplianceDecisionContractError extends Error {
+    details;
+    constructor(message, details) {
+        super(message);
+        this.details = details;
+        this.name = "ComplianceDecisionContractError";
+    }
+}
+export class ComplianceResponseRetentionError extends Error {
+    constructor(message, options) {
+        super(message, options);
+        this.name = "ComplianceResponseRetentionError";
+    }
+}
 function complianceDecisionFacts(response, toolName, calls) {
     return {
         expectedDecisionToolName: toolName,
         observedToolCallCount: calls.length,
         observedToolNames: calls.map((call) => call.name),
         responseStopReason: response.stopReason,
-        errorMessageOrDiagnosticPresent: response.errorMessage !== undefined ||
-            (response.diagnostics?.length ?? 0) > 0,
+        provider: response.provider,
+        model: response.model,
+        responseModel: response.responseModel ?? null,
+        errorMessage: response.errorMessage ?? null,
+        diagnostics: response.diagnostics ?? [],
     };
 }
 function malformedComplianceDecision(response, toolName, invalidLabel, reason, calls) {
-    return new Error(`${invalidLabel}: ${reason}; ${JSON.stringify(complianceDecisionFacts(response, toolName, calls))}`);
+    return new ComplianceDecisionContractError(`${invalidLabel}: ${reason}`, complianceDecisionFacts(response, toolName, calls));
 }
 function isArrayOfStrings(value) {
     return Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -165,15 +183,24 @@ function validateStatusDependentDecision(decision, response, toolName, invalidLa
     }
 }
 /**
- * Retain the provider's structured response verbatim in the active Pi session.
- * ExtensionContext exposes this manager as read-only, but the live manager still
- * owns the append operation used by the active session runtime.
+ * Retain the provider's structured response as extension state, not a
+ * conversational message. A missing or failed append is an infrastructure
+ * failure because the nested response is mandatory audit evidence.
  */
 function retainComplianceResponse(context, response) {
     const sessionManager = context.sessionManager;
-    if (typeof sessionManager?.appendMessage !== "function")
-        return;
-    sessionManager.appendMessage(response);
+    if (typeof sessionManager?.appendCustomEntry !== "function") {
+        throw new ComplianceResponseRetentionError("compliance response retention is unavailable");
+    }
+    try {
+        sessionManager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, {
+            version: 1,
+            response,
+        });
+    }
+    catch (error) {
+        throw new ComplianceResponseRetentionError("compliance response retention failed", { cause: error });
+    }
 }
 export function readComplianceDecision(response, toolName, invalidLabel) {
     const calls = response.content.filter((part) => part.type === "toolCall");

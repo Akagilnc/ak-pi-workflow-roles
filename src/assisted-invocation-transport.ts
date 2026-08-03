@@ -8,9 +8,15 @@ import type { AssistedInvocationTransportV1, NavigatorInvocationSettlementV1, Ro
 import type { AssistedCallConfigV1, AssistedTerminalClass } from "./assisted-contracts.ts";
 import type { NavigatorReceiptV1 } from "./navigator-contracts.ts";
 import { createGitCliTransportV1 } from "./assisted-acquisition.ts";
+import { isAuditEscalationResult, type AuditEscalationResult } from "./audit-escalation.ts";
 import { isTerminatingToolName, validateAcceptedDetails, validateAcceptedLifecycle } from "./package-contracts/terminating-tools.ts";
 
-type LocalReceipt = { artifactKind: "acceptedReceipt"; details: unknown; toolCallId: string; toolName: string };
+type LocalReceipt = {
+  artifactKind: "acceptedReceipt" | "roleEscalation";
+  details: unknown;
+  toolCallId: string;
+  toolName: string;
+};
 type ChildFact = { exitCode: number | null; signal: NodeJS.Signals | null };
 type LocalInvocation = { receipt: LocalReceipt | null; evidenceRead: Array<{ evidenceId: string; fullyRead: boolean }>; reference: { id: string; sha256: string }; child: ChildFact };
 
@@ -100,10 +106,17 @@ function acceptedReceipt(sessionText: string): LocalReceipt {
     if (!call) throw new Error("accepted tool result is orphaned or precedes its call in native session");
     if (settled.has(message.toolCallId)) throw new Error("duplicate accepted tool result in native session");
     if (call.name !== message.toolName) throw new Error("accepted tool lifecycle name mismatch in native session");
-    const details = validateAcceptedLifecycle(message.toolName, call.arguments, message.details);
+    const details = isAuditEscalationResult(message.details)
+      ? message.details
+      : validateAcceptedLifecycle(message.toolName, call.arguments, message.details);
     if (accepted) throw new Error("multiple accepted role outcomes in native session");
     settled.add(message.toolCallId);
-    accepted = { artifactKind: "acceptedReceipt", details, toolCallId: message.toolCallId, toolName: message.toolName };
+    accepted = {
+      artifactKind: isAuditEscalationResult(details) ? "roleEscalation" : "acceptedReceipt",
+      details,
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+    };
   }
   if (!accepted) throw new Error("accepted role outcome missing from native session");
   return accepted;
@@ -164,7 +177,11 @@ async function existing(config: AssistedCallConfigV1, invocationId: string): Pro
   const receiptText = await readFile(join(invocationDirectory, "receipt.json"), "utf8");
   const receipt = JSON.parse(receiptText) as LocalReceipt;
   if (!isTerminatingToolName(receipt.toolName) || canonicalJson(receipt) !== canonicalJson(extracted)) throw new Error("private invocation receipt mismatch");
-  validateAcceptedDetails(receipt.toolName, receipt.details);
+  if (receipt.artifactKind === "acceptedReceipt") {
+    validateAcceptedDetails(receipt.toolName, receipt.details);
+  } else if (!isAuditEscalationResult(receipt.details)) {
+    throw new Error("private invocation role escalation artifact malformed");
+  }
   return { receipt, child, evidenceRead, reference: { id: `receipt:${invocationId}`, sha256: sha256Hex(receiptText) } };
 }
 
@@ -174,6 +191,11 @@ function classifyRole(config: AssistedCallConfigV1, value: LocalInvocation, befo
   if (!value.receipt) throw new Error("accepted role outcome missing from private invocation");
   const expected = { coder: "ak_coder_output", fixer: "ak_fixer_output", judge: "ak_judge_output", reviewer: "ak_reviewer_output", collector: "ak_collector_output", doctor: "ak_doctor_output" }[config.execution.role];
   if (value.receipt.toolName !== expected) throw new Error("selected-role tool mismatch");
+  if (value.receipt.artifactKind === "roleEscalation") {
+    const escalation = value.receipt.details as AuditEscalationResult;
+    if (!isAuditEscalationResult(escalation)) throw new Error("role escalation artifact malformed");
+    return { terminalClass: "role_escalation", reference: value.reference, beforeTarget, afterTarget };
+  }
   const details = value.receipt.details as Record<string, unknown>;
   const status = details.status;
   if (config.execution.phase === "plan" && status === "completed" || config.execution.phase === "apply" && status === "planned") throw new Error("selected-role phase mismatch");
