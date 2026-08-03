@@ -280,7 +280,10 @@ test("cold-installed role outputs run nested audits through pass, revise, and es
       };
       const outputs = {
         judge: { judgeStatus: "converged" },
-        fixer: { status: "completed", report: "done", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] },
+        fixer: { status: "completed", report: "done", classResults: [
+          { name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
+          { name: "Audit", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
+        ] },
         reviewer: { status: "refused", diagnostic: "no accepted dispatch" },
         doctor: { status: "refused", reason: "missing", missingEvidence: [{ need: "case evidence", targetKeys: ["case"] }] },
       } as const;
@@ -1121,7 +1124,10 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
 
           const output = phase === "plan"
             ? { status: "planned", report: "Repair plan ready." }
-            : { status: "completed", report: "Repaired and verified.", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
+            : { status: "completed", report: "Repaired and verified.", classResults: [
+              { name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
+              { name: "Audit", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
+            ] };
           faux.setResponses([
             fauxAssistantMessage(
               [
