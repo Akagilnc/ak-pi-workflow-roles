@@ -4,14 +4,44 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { materializeMechanicalBundle } from "./reviewer-bundle-materializer.js";
 import { parseReviewerRefSnapshot, reviewerRefSnapshotArgs, sameReviewerPinnedTarget, sameReviewerRefs } from "./reviewer-git-snapshot.js";
+export class ReviewerProcessError extends Error {
+    command;
+    args;
+    code;
+    signal;
+    timedOut;
+    aborted;
+    stderr;
+    stdout;
+    constructor(command, args, code, signal, timedOut, aborted, stderr, stdout, cause) {
+        super(`${command} ${args.join(" ")} failed`, { cause });
+        this.command = command;
+        this.args = args;
+        this.code = code;
+        this.signal = signal;
+        this.timedOut = timedOut;
+        this.aborted = aborted;
+        this.stderr = stderr;
+        this.stdout = stdout;
+        this.name = "ReviewerProcessError";
+    }
+}
 async function runCommand(command, args, options = {}) {
     return await new Promise((resolve, reject) => {
         const child = spawn(command, args, { ...(options.cwd === undefined ? {} : { cwd: options.cwd }), stdio: ["ignore", "pipe", "pipe"], signal: options.signal });
         let stdout = "", stderr = "";
         child.stdout.setEncoding("utf8").on("data", chunk => { stdout += chunk; });
         child.stderr.setEncoding("utf8").on("data", chunk => { stderr += chunk; });
-        child.on("error", reject);
-        child.on("close", code => { const actual = code ?? 1; (options.allowedCodes ?? [0]).includes(actual) ? resolve({ stdout, stderr, code: actual }) : reject(new Error(`${command} ${args.join(" ")} failed (${actual}): ${stderr.trim() || stdout.trim()}`)); });
+        let settled = false;
+        const fail = (error, code, signal) => { if (settled)
+            return; settled = true; reject(new ReviewerProcessError(command, args, code, signal, false, options.signal?.aborted === true, stderr, stdout, error)); };
+        child.on("error", error => fail(error, null, null));
+        child.on("close", (code, signal) => { const actual = code ?? 1; if ((options.allowedCodes ?? [0]).includes(actual)) {
+            settled = true;
+            resolve({ stdout, stderr, code: actual });
+        }
+        else
+            fail(undefined, code, signal); });
     });
 }
 async function git(cwd, args, signal, allowedCodes) { return runCommand("git", ["-C", cwd, ...args], { ...(signal === undefined ? {} : { signal }), ...(allowedCodes === undefined ? {} : { allowedCodes }) }); }
@@ -31,7 +61,7 @@ async function verifySnapshot(cwd, snapshot, signal) {
     }
 }
 function workspaceError(error, failure, disposition, target) {
-    const wrapped = error instanceof Error ? error : new Error(String(error));
+    const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error });
     return Object.assign(wrapped, { reviewerFailure: failure, workspaceDisposition: disposition, targetSnapshot: target });
 }
 async function prepareSnapshot(accepted, signal, dependencies) {

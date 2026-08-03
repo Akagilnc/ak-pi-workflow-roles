@@ -292,7 +292,8 @@ export function createCollectorRoleRuntime(
       try {
         activation.ledger.beginOperational(event.toolName, event.toolCallId);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = error instanceof Error ? error.message : "unknown failure";
+        activation.ledger.latchFatal(reason, error);
         return { block: true, reason };
       }
       return undefined;

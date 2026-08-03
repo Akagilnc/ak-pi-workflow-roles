@@ -12,6 +12,7 @@ import { createMergerRoleRuntime } from "../src/merger-role.ts";
 import { createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../src/merger-contracts.ts";
 import { withHermeticHome, withInProcessPi } from "./helpers/pi-test-harness.ts";
+import { withPrimaryAwareCleanup } from "./helpers/primary-aware-cleanup.ts";
 
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });
@@ -24,7 +25,7 @@ test("production extension observes session repository B, not ambient repository
   const repositoryB = await mkdtemp(resolve(tmpdir(), "ak-merger-session-b-"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repositoryB, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const env = { ...process.env, GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z" };
-  try {
+  await withPrimaryAwareCleanup(async () => {
     git("init", "-b", "main"); git("config", "user.name", "Merger Test"); git("config", "user.email", "merger@test.local");
     await writeFile(resolve(repositoryB, "same.txt"), "base\n"); git("add", "."); git("commit", "-m", "base");
     git("checkout", "-b", "source"); await writeFile(resolve(repositoryB, "same.txt"), "source\n"); git("commit", "-am", "source"); const source = git("rev-parse", "HEAD");
@@ -51,7 +52,7 @@ test("production extension observes session repository B, not ambient repository
         assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content)); assert.equal(result?.message.details.mergeCommitId, mergeCommitId);
       });
     });
-  } finally { await rm(repositoryB, { recursive: true, force: true }); }
+  }, () => rm(repositoryB, { recursive: true, force: true }));
 });
 
 test("role extension binds Merger Git state to session cwd while preserving injected state", async () => {

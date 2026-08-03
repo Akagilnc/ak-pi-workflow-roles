@@ -8,8 +8,8 @@ export type ReviewerCorrectablePreflightCode = (typeof REVIEWER_CORRECTABLE_PREF
 
 /** Closed policy error shared by concrete Git reads and dispatch compilation. */
 export class ReviewerCorrectablePreflightError extends Error {
-  constructor(readonly code: ReviewerCorrectablePreflightCode, readonly diagnostic = `${code} constraint failed`) {
-    super(`${code}: ${diagnostic}`);
+  constructor(readonly code: ReviewerCorrectablePreflightCode, readonly diagnostic = `${code} constraint failed`, options?: { cause?: unknown }) {
+    super(`${code}: ${diagnostic}`, options);
     this.name = "ReviewerCorrectablePreflightError";
   }
 }

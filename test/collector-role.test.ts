@@ -50,6 +50,12 @@ import {
   withInProcessPi,
 } from "./helpers/pi-test-harness.ts";
 
+function assertAndReturnEvidenceId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("activation evidence id must be a string");
+  assert.match(value, /^activation-cause-/);
+  return value;
+}
+
 function assertCollectorActivationFailure(
   traces: readonly ActivationTraceRecord[],
   expectedMessage: string,
@@ -58,7 +64,7 @@ function assertCollectorActivationFailure(
   assert.ok(failed, "Collector activation must emit a typed failed trace");
   assert.equal(failed.role, "collector");
   assert.equal(failed.stageId, "load-and-install");
-  assert.deepEqual(failed.cause, { identity: "Error", name: "Error", message: expectedMessage });
+  assert.deepEqual(failed.cause, { identity: "Error", name: "Error", message: expectedMessage, evidenceId: assertAndReturnEvidenceId(failed.cause.evidenceId) });
 }
 
 const COLLECTOR_SOUL = [
@@ -2116,7 +2122,8 @@ test("F3-ambient-skills unsupported hostile sibling-extension injection", async 
       }, async ({ session, sessionManager }) => {
         try {
           await session.prompt("start");
-        } catch {
+        } catch (error) {
+          assert.ok(error !== undefined);
           // failInfrastructure throws at before_agent_start skills guard
         }
         assert.equal(process.exitCode, 1);
@@ -2207,7 +2214,8 @@ test("F3-ambient-contextFiles", async () => {
       }, async ({ session }) => {
         try {
           await session.prompt("start");
-        } catch {
+        } catch (error) {
+          assert.ok(error !== undefined);
           // expected infrastructure failure
         }
         assert.equal(process.exitCode, 1);
@@ -2287,7 +2295,8 @@ test("F3-ambient-appendSystemPrompt", async () => {
       }, async ({ session }) => {
         try {
           await session.prompt("start");
-        } catch {
+        } catch (error) {
+          assert.ok(error !== undefined);
           // expected infrastructure failure
         }
         assert.equal(process.exitCode, 1);
@@ -2618,8 +2627,9 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
         ]);
         try {
           await session.prompt("start");
-        } catch {
-          // failInfrastructure throws
+        } catch (error) { // Contract: docs/adr/0016-tests-follow-logic-not-format.md#Tests-follow-logic-not-format — this typed expected-negative assertion retains the exact rejection for the assertions below.
+          // The expected contract failure must remain observable to this assertion.
+          assert.ok(error instanceof Error);
         }
         const successOutput = sessionManager.getEntries().some((entry) =>
           entry.type === "message" &&

@@ -60,6 +60,15 @@ function candidate() {
   };
 }
 
+async function cleanupTempDir(root: string, primaryFailure?: unknown): Promise<void> {
+  try {
+    await rm(root, { recursive: true, force: true });
+  } catch (cleanupFailure) {
+    if (primaryFailure === undefined) throw cleanupFailure;
+    throw new AggregateError([primaryFailure, cleanupFailure], "Test failed and cleanup failed", { cause: primaryFailure });
+  }
+}
+
 function sessionHarness() {
   const entries: unknown[] = [];
   const modelSettings: Array<{ model: string; thinkingLevel: string }> = [];
@@ -135,9 +144,11 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     assert.equal((settlement as any).data.invocationId, events[0].invocationId);
     assert.equal((route as any).data.invocationId, events[0].invocationId);
     assert.equal(formatNavigatorReport({ disposition: "recommendation", route: events[0].route, next: events[0].next, reason: events[0].reason, command: events[0].command }).includes(events[0].command), true);
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("live help changes the next hint without a static template or fabricated task arguments", async () => {
@@ -163,9 +174,11 @@ test("live help changes the next hint without a static template or fabricated ta
     await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("unchanged routes are omitted after a native-session route entry, while changed settings are reread", async () => {
@@ -205,9 +218,11 @@ test("unchanged routes are omitted after a native-session route entry, while cha
       { model: "provider/three", thinkingLevel: "off" },
     ]);
     assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("typed owner-decision and role-infrastructure outcomes remain silent", async () => {
@@ -232,9 +247,11 @@ test("typed owner-decision and role-infrastructure outcomes remain silent", asyn
     await infra;
     assert.deepEqual(events, []);
     assert.equal(harness.prompts(), 2);
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("Navigator session creation failures become unavailable without rejecting settlement", async () => {
@@ -266,9 +283,11 @@ test("Navigator session creation failures become unavailable without rejecting s
       assert.equal(events[0].unavailableCause, "session");
       assert.notEqual(events[0].unavailableReason, undefined);
     }
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("model settings are exact and typed settlement projection ignores prose and correctable errors", () => {
@@ -323,11 +342,15 @@ test("native session uses the saved model exactly and rejects unsupported thinki
         && error.unavailableSource === "model"
         && error.unavailableCause === "model",
     );
-  } finally {
+  } catch (error) {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;
-    await rm(root, { recursive: true, force: true });
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previous;
+  await cleanupTempDir(root);
 });
 
 test("native provider stream seam classifies auth/quota/transport after setModel without message metadata oracle", async () => {
@@ -406,11 +429,15 @@ test("native provider stream seam classifies auth/quota/transport after setModel
         session.dispose();
       }
     }
-  } finally {
+  } catch (error) {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;
-    await rm(root, { recursive: true, force: true });
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previous;
+  await cleanupTempDir(root);
 });
 
 test("native provider stream seam resets per call and classifies terminal-less completion", async () => {
@@ -509,11 +536,15 @@ test("native provider stream seam resets per call and classifies terminal-less c
       assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
       session.dispose();
     }
-  } finally {
+  } catch (error) {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;
-    await rm(root, { recursive: true, force: true });
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previous;
+  await cleanupTempDir(root);
 });
 
 test("persistent model edits are immediate and have no fallback", async () => {
@@ -530,9 +561,11 @@ test("persistent model edits are immediate and have no fallback", async () => {
     await writeFile(path, JSON.stringify({ model: "provider/one:backup" }));
     const invalid = await readNavigatorModelSetting(path);
     assert.throws(() => parseNavigatorModelSetting(invalid));
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("future arrival is typed and presentation-only", async () => {
@@ -548,9 +581,11 @@ test("future arrival is typed and presentation-only", async () => {
     assert.equal(events[0]?.arrivalMessage, "抵达");
     assert.equal(formatNavigatorReport({ disposition: "arrival", arrivalMessage: "抵达" }), "抵达");
     assert.equal(harness.prompts(), 0);
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("settlement decoration carries recommendation only; unavailable and silence stay absent", () => {
@@ -697,16 +732,18 @@ test("dispose during pending createSession drains the created session without pr
     while (!nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     nav.dispose();
     releaseCreate();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }).catch(() => undefined);
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     // Allow the in-flight initializer to observe disposed and drain.
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
     assert.equal(promptCalls, 0, "disposed attendance must not prompt");
     assert.equal(setModelCalls, 0, "disposed attendance must not configure the late session");
     assert.equal(disposeCalls, 1, "created session must be disposed exactly once");
     assert.equal(events.some((event) => event.disposition === "recommendation"), false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("status-specific route candidates outrank generics regardless of declaration order", () => {
@@ -798,9 +835,11 @@ test("resumed setModel and thinking failures preserve typed source and cause", a
       assert.equal(events[1]?.unavailableSource, scenario.source, scenario.name);
       assert.equal(events[1]?.unavailableCause, scenario.source, scenario.name);
     }
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    await cleanupTempDir(root, error);
+    throw error;
   }
+  await cleanupTempDir(root);
 });
 
 test("typed subject provenance replaces prose prefix branching", () => {

@@ -31,6 +31,7 @@ import { createReviewerWorkspaceOwner } from "../src/reviewer-workspace.ts";
 import { compileMechanicalBundle } from "../src/reviewer-construction.ts";
 import type { AcceptedReviewerExecution } from "../src/reviewer-dispatch.ts";
 import { createReviewerExecutionLedger, projectAcceptedDispatch } from "../src/reviewer-execution-ledger.ts";
+import { withPrimaryAwareCleanup } from "./helpers/primary-aware-cleanup.ts";
 
 async function dispatch(root: string, prompts: readonly string[], tools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "write" | "edit")[] = ["read", "grep", "find", "ls", "bash", "write", "edit"], bashCommands: readonly string[] = []): Promise<AcceptedReviewerExecution> {
   const objectFormat = await git(root, "rev-parse", "--show-object-format") as "sha1" | "sha256";
@@ -151,7 +152,7 @@ test("workspace owner prepares and installs every leg without constructing a pro
   const accepted = await dispatch(source.root, ["Standards", "Spec"]);
   let workspaceOperations = 0;
   const owner = createReviewerWorkspaceOwner({ fault() { workspaceOperations += 1; } });
-  try {
+  await withPrimaryAwareCleanup(async () => {
     const batch = await owner.prepare(accepted.targetSnapshot, ["standards", "spec"], accepted.bundle);
     assert.equal(batch.workspaces.length, 2);
     assert.ok(workspaceOperations > 0);
@@ -160,17 +161,14 @@ test("workspace owner prepares and installs every leg without constructing a pro
       await access(join(workspace.path, workspace.evidence.entries[0]!.relativeClonePath));
       await owner.dispose(workspace);
     }
-  } finally {
-    await owner.shutdown().catch(() => {});
-    await rm(source.root, { recursive: true, force: true });
-  }
+  }, () => owner.shutdown(), () => rm(source.root, { recursive: true, force: true }));
 });
 
 test("child executor runs in an already-prepared workspace without Git materialization", async () => {
   const source = await repository();
   const accepted = await dispatch(source.root, ["Prepared child prompt"]);
   const owner = createReviewerWorkspaceOwner();
-  try {
+  await withPrimaryAwareCleanup(async () => {
     const batch = await owner.prepare(accepted.targetSnapshot, ["standards"], accepted.bundle);
     const workspace = batch.workspaces[0]!;
     const { context } = await parentContext(source.root, async () => {}, 1);
@@ -179,16 +177,13 @@ test("child executor runs in an already-prepared workspace without Git materiali
     assert.equal(result.report, "axis 1 report");
     assert.deepEqual(operations, ["child.reload", "child.session"]);
     await owner.dispose(workspace);
-  } finally {
-    await owner.shutdown().catch(() => {});
-    await rm(source.root, { recursive: true, force: true });
-  }
+  }, () => owner.shutdown(), () => rm(source.root, { recursive: true, force: true }));
 });
 
 test("Reviewer materializes shallow session snapshot refs into the workspace", async () => {
   const seed = await repository();
   const shallowRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-shallow-"));
-  try {
+  await withPrimaryAwareCleanup(async () => {
     await exec("git", [
       "clone",
       "--depth",
@@ -216,7 +211,7 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
       childReached = true;
     }, 1);
     const runner = createReviewerAgentRunner();
-    try {
+    await withPrimaryAwareCleanup(async () => {
       const result = await runner.run(await dispatch(shallowRoot, ["Shallow snapshot review"]), { context });
       const leg = result.legs.standards;
       assert.equal(childReached, true);
@@ -226,29 +221,28 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
       assert.equal(result.target.refs["refs/tags/fixed-tag"]?.objectId, tip);
       assert.equal(result.target.refs["refs/remotes/upstream/fixed"]?.objectId, tip);
       for (const [name, sha] of Object.entries(sourceRefs)) assert.equal(result.target.refs[name]?.objectId, sha);
-    } finally {
-      await runner.shutdown();
-    }
-  } finally {
-    await rm(shallowRoot, { recursive: true, force: true });
-    await rm(seed.root, { recursive: true, force: true });
-  }
+    }, () => runner.shutdown());
+  }, () => rm(shallowRoot, { recursive: true, force: true }), () => rm(seed.root, { recursive: true, force: true }));
 });
 
 test("Reviewer materializes and verifies a real SHA-256 repository", async (t) => {
   let source: Awaited<ReturnType<typeof repository>>;
   try { source = await repository("sha256"); }
-  catch { t.skip("installed Git lacks SHA-256 repository support"); return; }
-  try {
+  catch (error) {
+    if (typeof error === "object" && error !== null && (error as { code?: unknown }).code === 128) {
+      t.skip("Git rejected the SHA-256 repository capability");
+      return;
+    }
+    throw error;
+  }
+  const runner = createReviewerAgentRunner();
+  await withPrimaryAwareCleanup(async () => {
     const { context } = await parentContext(source.root, async () => {}, 1);
-    const runner = createReviewerAgentRunner();
-    try {
-      const result = await runner.run(await dispatch(source.root, ["SHA-256 snapshot review"]), { context });
-      assert.equal(result.target.objectFormat, "sha256");
-      assert.match(result.target.targetHead, /^[0-9a-f]{64}$/);
-      assert.equal(result.legs.standards.status, "successful");
-    } finally { await runner.shutdown(); }
-  } finally { await rm(source.root, { recursive: true, force: true }); }
+    const result = await runner.run(await dispatch(source.root, ["SHA-256 snapshot review"]), { context });
+    assert.equal(result.target.objectFormat, "sha256");
+    assert.match(result.target.targetHead, /^[0-9a-f]{64}$/);
+    assert.equal(result.legs.standards.status, "successful");
+  }, () => runner.shutdown(), () => rm(source.root, { recursive: true, force: true }));
 });
 
 test("two Reviewer Agent legs overlap in isolated clones with one pinned ref snapshot", async () => {
@@ -283,7 +277,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
     status: await git(source.root, "status", "--porcelain"),
   };
 
-  try {
+  await withPrimaryAwareCleanup(async () => {
     const acceptedDispatch = await dispatch(source.root, ["Standards prompt", "Spec prompt"]);
     const batch = await runner.run(acceptedDispatch, { context });
     const standards = batch.legs.standards;
@@ -326,10 +320,7 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
       refs: await git(source.root, "show-ref"),
       status: await git(source.root, "status", "--porcelain"),
     }, before);
-  } finally {
-    await runner.shutdown();
-    await rm(source.root, { recursive: true, force: true });
-  }
+  }, () => runner.shutdown(), () => rm(source.root, { recursive: true, force: true }));
 });
 
 test("Reviewer child provider delegates class-private streams to the original receiver", async () => {
@@ -412,7 +403,7 @@ test("Reviewer child provider delegates class-private streams to the original re
     modelRegistry: new ModelRegistry(runtime),
   } as unknown as ExtensionContext;
   const runner = createReviewerAgentRunner();
-  try {
+  await withPrimaryAwareCleanup(async () => {
     const result = await runner.run(await dispatch(source.root, ["Inspect private provider dispatch"], ["bash"], ["printf exact > allowed.txt"]), { context });
     assert.equal(result.legs.standards.report, "private provider report");
     assert.deepEqual(visibleTools, [["bash"], ["bash"]]);
@@ -425,10 +416,7 @@ test("Reviewer child provider delegates class-private streams to the original re
       headers: { "x-private": "yes" },
       env: { PRIVATE_TENANT: "test" },
     })));
-  } finally {
-    await runner.shutdown();
-    await rm(source.root, { recursive: true, force: true });
-  }
+  }, () => runner.shutdown(), () => rm(source.root, { recursive: true, force: true }));
 });
 
 test("workspace shutdown does not replay pre-creation or post-creation preparation rejection", async () => {
@@ -438,7 +426,7 @@ test("workspace shutdown does not replay pre-creation or post-creation preparati
     const cause = new Error(`classified ${fault}`);
     const owner = createReviewerWorkspaceOwner({ fault(operation) { if (operation === fault) throw cause; } });
     let retained: string | undefined;
-    try {
+    await withPrimaryAwareCleanup(async () => {
       await assert.rejects(owner.prepare(accepted.targetSnapshot, ["standards"], accepted.bundle), (error) => {
         assert.equal(error, cause);
         const classified = error as typeof cause & { reviewerFailure: string; targetSnapshot: unknown; workspaceDisposition: "not-created" | { retained: string } };
@@ -452,13 +440,13 @@ test("workspace shutdown does not replay pre-creation or post-creation preparati
         }
         return true;
       });
+      // Double shutdown is the subject under test — propagate rejection if either fails.
       await owner.shutdown();
       await owner.shutdown();
       if (retained !== undefined) await access(retained);
-    } finally {
+    }, async () => {
       if (retained !== undefined) await rm(retained, { recursive: true, force: true });
-      await rm(source.root, { recursive: true, force: true });
-    }
+    }, () => rm(source.root, { recursive: true, force: true }));
   }
 });
 
@@ -483,7 +471,7 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
     const acceptedDispatch = await dispatch(source.root, [fault]);
     const scratchBefore = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-")));
     let retained: string | undefined;
-    try {
+    await withPrimaryAwareCleanup(async () => {
       await assert.rejects(
         runner.run(acceptedDispatch, { context }),
         (error: any) => {
@@ -517,11 +505,9 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
       if (retained !== undefined) await access(retained);
       const scratchAfter = (await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name));
       assert.deepEqual(scratchAfter, [], `${fault} leaked credential scratch`);
-    } finally {
-      await runner.shutdown().catch(() => {});
+    }, () => runner.shutdown(), async () => {
       if (retained !== undefined) await rm(retained, { recursive: true, force: true });
-      await rm(source.root, { recursive: true, force: true });
-    }
+    }, () => rm(source.root, { recursive: true, force: true }));
   }
 });
 
@@ -543,7 +529,7 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
   await started;
   controller.abort();
   let retained: string | undefined;
-  try {
+  await withPrimaryAwareCleanup(async () => {
     await assert.rejects(async () => {
       try {
         await call;
@@ -562,11 +548,7 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     assert.ok(retained);
     await access(retained);
     assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name)), []);
-  } finally {
-    await runner.shutdown().catch(() => {});
-    if (retained !== undefined) {
-      await rm(retained, { recursive: true, force: true });
-    }
-    await rm(source.root, { recursive: true, force: true });
-  }
+  }, () => runner.shutdown(), async () => {
+    if (retained !== undefined) await rm(retained, { recursive: true, force: true });
+  }, () => rm(source.root, { recursive: true, force: true }));
 });

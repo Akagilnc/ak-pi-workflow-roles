@@ -221,7 +221,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
               return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
             },
             revise: (violations) => {
-              throw new Error(`Reviewer receipt violates its method: ${violations.join("; ")}`);
+              throw new AggregateError([], "aggregate Reviewer receipt violates its method", { cause: Object.freeze([...violations]) });
             },
             escalate: async (result) => {
               try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
