@@ -22,6 +22,8 @@ async function seededTemplate(): Promise<string> {
   seededTemplateMemo ??= (async () => {
     const root = await mkdtemp(join(tmpdir(), "reviewer-pin-template-"));
     await git(root, "init");
+    await git(root, "config", "maintenance.auto", "false");
+    await git(root, "config", "gc.auto", "0");
     await git(root, "config", "user.email", "test@example.com");
     await git(root, "config", "user.name", "Test");
     await writeFile(join(root, "file"), "base\n");

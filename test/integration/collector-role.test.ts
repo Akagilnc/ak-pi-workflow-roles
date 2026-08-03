@@ -21,6 +21,7 @@ import {
   createCollectorRoleRuntime,
 } from "../../src/collector-role.ts";
 import {
+  COLLECTOR_RECEIPT_MAX_BYTES,
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
 import { loadCollectorManifest } from "../../src/collector-config.ts";
@@ -1709,7 +1710,7 @@ test("F3-ambient-commands", async () => {
 test("F3-receipt-overflow uses the ledger test seam", async () => {
   await withHermeticHome({ prefix: "ak-collector-recv-ovf-" }, async ({ home }) => {
     const legs = await writeLegs(home);
-    const receiptMaxBytes = 4_096;
+    const receiptMaxBytes = COLLECTOR_RECEIPT_MAX_BYTES;
     const { parseCollectorRepository, parseCollectorPrNumber } =
       await import("../../src/collector-config.ts");
     const manifest = await loadCollectorManifest(legs);
@@ -1733,7 +1734,6 @@ test("F3-receipt-overflow uses the ledger test seam", async () => {
       repository: parseCollectorRepository("acme/widgets"),
       prNumber: parseCollectorPrNumber("1"),
       manifest,
-      receiptMaxBytes,
     };
     const measure = async (rationale: string) => {
       const ledger = createCollectorLedger(config);
@@ -1758,7 +1758,7 @@ test("F3-receipt-overflow uses the ledger test seam", async () => {
       (error: unknown) => {
         assert.ok(error instanceof Error);
         assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
-        assert.match(error.message, /receipt exceeded 4096 UTF-8 bytes/);
+        assert.match(error.message, new RegExp(`receipt exceeded ${receiptMaxBytes} UTF-8 bytes`));
         return true;
       },
     );
