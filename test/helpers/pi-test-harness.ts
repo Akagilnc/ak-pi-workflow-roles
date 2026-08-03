@@ -1,4 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   copyFile,
@@ -8,13 +10,13 @@ import {
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { withPrimaryAwareCleanup } from "./primary-aware-cleanup.ts";
 
 import {
   type FauxProviderHandle,
@@ -52,8 +54,12 @@ export function trackedPackageInputPaths(): string[] {
 }
 
 export interface MaterializePackageOptions {
-  /** Copy live package node_modules for offline prepack/install. Default true. */
-  nodeModules?: boolean;
+  /**
+   * Provide package node_modules for offline prepack/install.
+   * Default "symlink" (cheap). "copy" keeps the historical full tree copy.
+   * false skips node_modules entirely.
+   */
+  nodeModules?: boolean | "symlink" | "copy";
   /** Initialize a git repo and commit the seeded tree. Default false. */
   gitSeed?: boolean;
 }
@@ -77,12 +83,25 @@ export async function materializePackageTree(
     await copyFile(src, dst);
   }
 
-  if (options.nodeModules !== false) {
+  const nodeModulesMode = options.nodeModules === undefined
+    ? "symlink"
+    : options.nodeModules === true
+    ? "symlink"
+    : options.nodeModules === false
+    ? false
+    : options.nodeModules;
+
+  if (nodeModulesMode === "copy") {
     await cp(
       resolve(packageRoot, "node_modules"),
       resolve(dest, "node_modules"),
       { recursive: true, force: true },
     );
+  } else if (nodeModulesMode === "symlink") {
+    const target = resolve(dest, "node_modules");
+    if (!existsSync(target)) {
+      await symlink(resolve(packageRoot, "node_modules"), target, "dir");
+    }
   }
 
   if (options.gitSeed) {
@@ -101,7 +120,10 @@ export async function materializePackageTree(
 }
 
 export interface IsolatedPackResult {
-  /** Private materialization root used for pack (removed before return). */
+  /**
+   * Private materialization root used for pack.
+   * Ephemeral packs remove this before return; shared packs keep a durable cache root.
+   */
   root: string;
   /** Absolute path to the packed tarball under packDestination. */
   tarball: string;
@@ -115,16 +137,372 @@ export interface IsolatedPackResult {
  */
 export async function packIsolatedPackage(
   packDestination: string,
+  options: { nodeModules?: MaterializePackageOptions["nodeModules"] } = {},
 ): Promise<IsolatedPackResult> {
   await mkdir(packDestination, { recursive: true });
   const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
-  return await withPrimaryAwareCleanup(async () => {
-    await materializePackageTree(root, { nodeModules: true });
-    const { stdout } = await execFileAsync("npm", ["pack", "--json", "--pack-destination", packDestination], { cwd: root, maxBuffer: 10 * 1024 * 1024 });
-    const pack = JSON.parse(stdout) as Array<{ filename: string; files: Array<{ path: string }> }>;
+  try {
+    await materializePackageTree(root, {
+      nodeModules: options.nodeModules ?? "symlink",
+    });
+    const { stdout } = await execFileAsync(
+      "npm",
+      ["pack", "--json", "--pack-destination", packDestination],
+      { cwd: root, maxBuffer: 10 * 1024 * 1024 },
+    );
+    const pack = JSON.parse(stdout) as Array<{
+      filename: string;
+      files: Array<{ path: string }>;
+    }>;
     const entry = pack[0]!;
-    return { root, tarball: resolve(packDestination, entry.filename), filename: entry.filename, files: entry.files };
-  }, async () => rm(root, { recursive: true, force: true }));
+    return {
+      root,
+      tarball: resolve(packDestination, entry.filename),
+      filename: entry.filename,
+      files: entry.files,
+    };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+export interface ConstructionProvenance {
+  /** `git rev-parse HEAD` at fixture build time. */
+  head: string;
+  /** Fingerprint of HEAD + worktree dirty paths + content hashes of dirty paths. */
+  fingerprint: string;
+  builtAt: string;
+}
+
+/**
+ * Provenance for the current construction HEAD. Dirty worktrees hash dirty
+ * file contents so the shared fixture never reuses a stale artifact.
+ */
+export function constructionProvenance(): ConstructionProvenance {
+  const head = execFileSync("git", ["-C", packageRoot, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  const status = execFileSync(
+    "git",
+    ["-C", packageRoot, "status", "--porcelain=v1", "-z"],
+    { encoding: "buffer" },
+  ).toString("utf8");
+  const hash = createHash("sha256").update(head).update("\0");
+  if (status.length > 0) {
+    hash.update(status);
+    for (const entry of status.split("\0")) {
+      if (!entry) continue;
+      // porcelain -z: XY SPACE path, or rename "R  old\0new"
+      const pathPart = entry.slice(3);
+      if (!pathPart) continue;
+      const abs = resolve(packageRoot, pathPart);
+      if (!existsSync(abs)) {
+        hash.update("missing:").update(pathPart);
+        continue;
+      }
+      try {
+        hash.update(pathPart).update("\0");
+        hash.update(execFileSync("git", ["-C", packageRoot, "hash-object", abs]));
+      } catch {
+        hash.update("unreadable:").update(pathPart);
+      }
+    }
+  }
+  return {
+    head,
+    fingerprint: hash.digest("hex").slice(0, 24),
+    builtAt: new Date().toISOString(),
+  };
+}
+
+export interface SharedPackFixture extends IsolatedPackResult {
+  provenance: ConstructionProvenance;
+  cacheDir: string;
+}
+
+export interface SharedColdInstallFixture extends ColdInstalledPackage {
+  provenance: ConstructionProvenance;
+  cacheDir: string;
+}
+
+const FIXTURE_CACHE_ROOT = resolve(
+  tmpdir(),
+  "ak-pi-workflow-roles-cold-fixtures",
+);
+
+async function acquireDirLock(lockDir: string, timeoutMs = 300_000): Promise<() => Promise<void>> {
+  const started = Date.now();
+  while (true) {
+    try {
+      await mkdir(lockDir);
+      return async () => {
+        await rm(lockDir, { recursive: true, force: true });
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (Date.now() - started > timeoutMs) {
+        throw new Error(`timed out waiting for fixture lock at ${lockDir}`);
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+    }
+  }
+}
+
+async function waitForReady(
+  readyPath: string,
+  lockDir: string,
+  timeoutMs = 300_000,
+): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started <= timeoutMs) {
+    if (existsSync(readyPath)) return true;
+    if (!existsSync(lockDir)) {
+      // Builder crashed without ready marker — caller may rebuild.
+      return false;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+  }
+  throw new Error(`timed out waiting for fixture readiness at ${readyPath}`);
+}
+
+let sharedPackMemo: Promise<SharedPackFixture> | undefined;
+let sharedColdInstallMemo: Promise<SharedColdInstallFixture> | undefined;
+
+/**
+ * Build or reuse one isolated pack for the current construction HEAD.
+ * Cross-process safe via a fingerprint-keyed cache under os.tmpdir().
+ */
+export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
+  sharedPackMemo ??= (async () => {
+    const provenance = constructionProvenance();
+    const cacheDir = resolve(FIXTURE_CACHE_ROOT, provenance.fingerprint, "pack");
+    const readyPath = resolve(cacheDir, "ready.json");
+    const metaPath = resolve(cacheDir, "meta.json");
+    const lockDir = resolve(cacheDir, ".lock");
+
+    await mkdir(cacheDir, { recursive: true });
+
+    const loadReady = async (): Promise<SharedPackFixture | undefined> => {
+      if (!existsSync(readyPath) || !existsSync(metaPath)) return undefined;
+      const meta = JSON.parse(await readFile(metaPath, "utf8")) as {
+        filename: string;
+        files: Array<{ path: string }>;
+        provenance: ConstructionProvenance;
+      };
+      const tarball = resolve(cacheDir, meta.filename);
+      if (!existsSync(tarball)) return undefined;
+      return {
+        root: cacheDir,
+        tarball,
+        filename: meta.filename,
+        files: meta.files,
+        provenance: meta.provenance,
+        cacheDir,
+      };
+    };
+
+    const existing = await loadReady();
+    if (existing) return existing;
+
+    if (await waitForReady(readyPath, lockDir)) {
+      const ready = await loadReady();
+      if (ready) return ready;
+    }
+
+    const release = await acquireDirLock(lockDir);
+    try {
+      const raced = await loadReady();
+      if (raced) return raced;
+
+      const packDestination = cacheDir;
+      const materialRoot = await mkdtemp(resolve(cacheDir, "mat-"));
+      try {
+        await materializePackageTree(materialRoot, { nodeModules: "symlink" });
+        const { stdout } = await execFileAsync(
+          "npm",
+          ["pack", "--json", "--pack-destination", packDestination],
+          { cwd: materialRoot, maxBuffer: 10 * 1024 * 1024 },
+        );
+        const pack = JSON.parse(stdout) as Array<{
+          filename: string;
+          files: Array<{ path: string }>;
+        }>;
+        const entry = pack[0]!;
+        const builtProvenance = constructionProvenance();
+        await writeFile(
+          metaPath,
+          JSON.stringify(
+            {
+              filename: entry.filename,
+              files: entry.files,
+              provenance: builtProvenance,
+            },
+            null,
+            2,
+          ),
+        );
+        await writeFile(
+          readyPath,
+          JSON.stringify(
+            {
+              head: builtProvenance.head,
+              fingerprint: builtProvenance.fingerprint,
+              builtAt: builtProvenance.builtAt,
+            },
+            null,
+            2,
+          ),
+        );
+        return {
+          root: cacheDir,
+          tarball: resolve(cacheDir, entry.filename),
+          filename: entry.filename,
+          files: entry.files,
+          provenance: builtProvenance,
+          cacheDir,
+        };
+      } finally {
+        await rm(materialRoot, { recursive: true, force: true });
+      }
+    } finally {
+      await release();
+    }
+  })();
+  return sharedPackMemo;
+}
+
+function coldInstallDependencySpec(tarball: string): Record<string, string> {
+  return {
+    "@ak/pi-workflow-roles": `file:${tarball}`,
+    "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
+    "@earendil-works/pi-coding-agent": `file:${
+      resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")
+    }`,
+    typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
+  };
+}
+
+/**
+ * Build or reuse one cold-installed consumer tree for the current HEAD.
+ * Cross-process safe; tests should clone via withColdInstalledPackage / cloneSharedColdInstall.
+ */
+export async function getSharedColdInstalledPackage(): Promise<SharedColdInstallFixture> {
+  sharedColdInstallMemo ??= (async () => {
+    const pack = await getSharedIsolatedPack();
+    const cacheDir = resolve(
+      FIXTURE_CACHE_ROOT,
+      pack.provenance.fingerprint,
+      "cold-install",
+    );
+    const readyPath = resolve(cacheDir, "ready.json");
+    const lockDir = resolve(cacheDir, ".lock");
+    const fixture = resolve(cacheDir, "consumer");
+    const installedRoot = resolve(
+      fixture,
+      "node_modules/@ak/pi-workflow-roles",
+    );
+
+    await mkdir(cacheDir, { recursive: true });
+
+    const loadReady = async (): Promise<SharedColdInstallFixture | undefined> => {
+      if (!existsSync(readyPath) || !existsSync(installedRoot)) return undefined;
+      const ready = JSON.parse(await readFile(readyPath, "utf8")) as {
+        provenance: ConstructionProvenance;
+      };
+      const installed = (relativePath: string) =>
+        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
+      return {
+        fixture,
+        pack,
+        installedRoot,
+        installed,
+        provenance: ready.provenance,
+        cacheDir,
+      };
+    };
+
+    const existing = await loadReady();
+    if (existing) return existing;
+
+    if (await waitForReady(readyPath, lockDir)) {
+      const ready = await loadReady();
+      if (ready) return ready;
+    }
+
+    const release = await acquireDirLock(lockDir);
+    try {
+      const raced = await loadReady();
+      if (raced) return raced;
+
+      await rm(fixture, { recursive: true, force: true });
+      await mkdir(fixture, { recursive: true });
+      await writeFile(
+        resolve(fixture, "package.json"),
+        JSON.stringify({
+          private: true,
+          type: "module",
+          dependencies: coldInstallDependencySpec(pack.tarball),
+        }),
+      );
+      await execFileAsync(
+        "npm",
+        ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+        { cwd: fixture, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
+      );
+
+      const builtProvenance = pack.provenance;
+      await writeFile(
+        readyPath,
+        JSON.stringify(
+          {
+            head: builtProvenance.head,
+            fingerprint: builtProvenance.fingerprint,
+            builtAt: new Date().toISOString(),
+            provenance: builtProvenance,
+            tarball: pack.tarball,
+          },
+          null,
+          2,
+        ),
+      );
+
+      const installed = (relativePath: string) =>
+        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
+      return {
+        fixture,
+        pack,
+        installedRoot,
+        installed,
+        provenance: builtProvenance,
+        cacheDir,
+      };
+    } finally {
+      await release();
+    }
+  })();
+  return sharedColdInstallMemo;
+}
+
+/**
+ * Clone the shared cold-install tree into dest so each test owns a private
+ * consumer workspace (and a writable installed package copy).
+ */
+export async function cloneSharedColdInstall(
+  dest: string,
+): Promise<ColdInstalledPackage> {
+  const shared = await getSharedColdInstalledPackage();
+  await rm(dest, { recursive: true, force: true });
+  await mkdir(dirname(dest), { recursive: true });
+  await cp(shared.fixture, dest, { recursive: true, force: true });
+  const installedRoot = resolve(dest, "node_modules/@ak/pi-workflow-roles");
+  const installed = (relativePath: string) =>
+    import(pathToFileURL(resolve(installedRoot, relativePath)).href);
+  return {
+    fixture: dest,
+    pack: shared.pack,
+    installedRoot,
+    installed,
+  };
 }
 
 export interface ColdInstalledPackage {
@@ -136,41 +514,14 @@ export interface ColdInstalledPackage {
 
 /**
  * Pack and install the current package into a private consumer directory.
- * This is test-only lifecycle setup; callers own the installed behavior assertions.
+ * Uses the shared HEAD-keyed cold-install fixture and clones it under home.
  */
 export async function withColdInstalledPackage<T>(
   home: string,
   scenario: (fixture: ColdInstalledPackage) => Promise<T>,
 ): Promise<T> {
-  const fixture = resolve(home, "consumer");
-  await mkdir(fixture, { recursive: true });
-  const pack = await packIsolatedPackage(home);
-  await writeFile(
-    resolve(fixture, "package.json"),
-    JSON.stringify({
-      private: true,
-      type: "module",
-      dependencies: {
-        "@ak/pi-workflow-roles": `file:${pack.tarball}`,
-        "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
-        "@earendil-works/pi-coding-agent": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")}`,
-        typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
-      },
-    }),
-  );
-  await execFileAsync(
-    "npm",
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
-    { cwd: fixture, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
-  );
-
-  const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");
-  const installed = (relativePath: string) =>
-    import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-  return await withPrimaryAwareCleanup(
-    () => scenario({ fixture, pack, installedRoot, installed }),
-    () => rm(fixture, { recursive: true, force: true }),
-  );
+  const fixture = await cloneSharedColdInstall(resolve(home, "consumer"));
+  return await scenario(fixture);
 }
 
 export interface RawPackageManifest {
@@ -189,25 +540,70 @@ export function resolvePackageEntrypoint(manifest: RawPackageManifest): string {
   return resolve(packageRoot, manifest.pi!.extensions![0]!);
 }
 
+/**
+ * Serialize process-global mutations (HOME, cwd) so hermetic scenarios stay
+ * per-invocation even when the test runner overlaps async work.
+ * Re-entrant via AsyncLocalStorage so withProcessCwd may nest inside withHermeticHome.
+ */
+let processGlobalChain: Promise<void> = Promise.resolve();
+const holdingProcessGlobal = new AsyncLocalStorage<boolean>();
+
+async function withProcessGlobalLock<T>(scenario: () => Promise<T>): Promise<T> {
+  if (holdingProcessGlobal.getStore()) {
+    return await scenario();
+  }
+  let release!: () => void;
+  const prior = processGlobalChain;
+  processGlobalChain = new Promise<void>((resolveLock) => {
+    release = resolveLock;
+  });
+  await prior;
+  try {
+    return await holdingProcessGlobal.run(true, scenario);
+  } finally {
+    release();
+  }
+}
+
 export async function withHermeticHome<T>(
   options: { prefix?: string },
   scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
 ): Promise<T> {
-  const home = await mkdtemp(
-    resolve(tmpdir(), options.prefix ?? "ak-pi-test-"),
-  );
-  const agentDir = resolve(home, ".pi-agent");
-  await mkdir(agentDir, { recursive: true });
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
-  return await withPrimaryAwareCleanup(
-    () => scenario({ home, agentDir }),
-    async () => {
+  return await withProcessGlobalLock(async () => {
+    const home = await mkdtemp(
+      resolve(tmpdir(), options.prefix ?? "ak-pi-test-"),
+    );
+    const agentDir = resolve(home, ".pi-agent");
+    await mkdir(agentDir, { recursive: true });
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      return await scenario({ home, agentDir });
+    } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
       await rm(home, { recursive: true, force: true });
-    },
-  );
+    }
+  });
+}
+
+/**
+ * Scope process.chdir to one invocation under the same process-global lock
+ * used by withHermeticHome, so shared fixtures stay safe under overlap.
+ */
+export async function withProcessCwd<T>(
+  cwd: string,
+  scenario: () => Promise<T>,
+): Promise<T> {
+  return await withProcessGlobalLock(async () => {
+    const previous = process.cwd();
+    process.chdir(cwd);
+    try {
+      return await scenario();
+    } finally {
+      process.chdir(previous);
+    }
+  });
 }
 
 export interface PiSubprocessResult {
@@ -215,8 +611,6 @@ export interface PiSubprocessResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
-  signal?: NodeJS.Signals | null;
-  cause?: unknown;
 }
 
 export async function runNodeSubprocess(
@@ -236,14 +630,12 @@ export async function runNodeSubprocess(
     });
     return { code: 0, stdout: result.stdout, stderr: result.stderr, timedOut: false };
   } catch (error) {
-    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: NodeJS.Signals | null };
+    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: string };
     return {
       code: typeof failure.code === "number" ? failure.code : null,
       stdout: failure.stdout ?? "",
       stderr: failure.stderr ?? failure.message ?? "",
       timedOut: failure.killed === true || failure.signal === "SIGTERM",
-      signal: failure.signal ?? null,
-      cause: error,
     };
   }
 }
@@ -254,38 +646,31 @@ export async function runPiSubprocess(
     cwd: string;
     env?: NodeJS.ProcessEnv;
     timeoutMs?: number;
-    /** Canonical headless pattern discards stdout; default retains a pipe. */
-    stdout?: "pipe" | "ignore";
   },
 ): Promise<PiSubprocessResult> {
   return await new Promise((resolveResult, reject) => {
-    const stdoutMode = options.stdout ?? "pipe";
     const child = spawn(piCli, args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", stdoutMode, "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
-    if (stdoutMode === "pipe" && child.stdout) {
-      child.stdout.setEncoding("utf8").on("data", (chunk) => {
-        stdout += chunk;
-      });
-    }
-    if (child.stderr) {
-      child.stderr.setEncoding("utf8").on("data", (chunk) => {
-        stderr += chunk;
-      });
-    }
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
     }, options.timeoutMs ?? 30_000);
     child.on("error", (error) => { clearTimeout(timeout); reject(error); });
-    child.on("close", (code, signal) => {
+    child.on("close", (code) => {
       clearTimeout(timeout);
-      resolveResult({ code, stdout, stderr, timedOut, signal });
+      resolveResult({ code, stdout, stderr, timedOut });
     });
   });
 }
@@ -406,22 +791,33 @@ export async function withInProcessPi<T>(
       ? {}
       : { customTools: options.customTools }),
   });
-  return await withPrimaryAwareCleanup(
-    async () => {
-      for (const [name, value] of Object.entries(options.flags)) {
-        session.extensionRunner.setFlagValue(name, value);
+  try {
+    for (const [name, value] of Object.entries(options.flags)) {
+      session.extensionRunner.setFlagValue(name, value);
+    }
+    await session.bindExtensions({ mode: options.mode });
+    return await scenario({
+      faux: options.faux,
+      provider,
+      model,
+      modelRuntime,
+      loader,
+      extensions: extensionsResult,
+      session,
+      sessionManager,
+    });
+  } finally {
+    try {
+      if (options.reviewerShutdown) {
+        await session.extensionRunner.emit({
+          type: "session_shutdown",
+          reason: "quit",
+        });
       }
-      await session.bindExtensions({ mode: options.mode });
-      return await scenario({ faux: options.faux, provider, model, modelRuntime, loader, extensions: extensionsResult, session, sessionManager });
-    },
-    async () => {
-      try {
-        if (options.reviewerShutdown) await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-      } finally {
-        session.dispose();
-      }
-    },
-  );
+    } finally {
+      session.dispose();
+    }
+  }
 }
 
 export async function writeTestSkill(

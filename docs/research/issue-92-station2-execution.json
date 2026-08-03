@@ -1,0 +1,1700 @@
+{
+  "schemaVersion": 1,
+  "issue": 92,
+  "station": "2e",
+  "generatedAt": "2026-08-03T20:07:48.573Z",
+  "baseHeadAtStart": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+  "law": "Per-entry rebuild disposition proof: executed | absorbed | deleted. A green suite alone is not proof that construction changed.",
+  "totals": {
+    "unfinished": 0,
+    "absorbed": 8,
+    "executed": 86,
+    "deleted": 9
+  },
+  "entries": {
+    "test/package-entrypoint.integration.test.ts::cold-installed role outputs run nested audits through pass, revise, and escalation": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "cold-installed role outputs run nested audits through pass, revise, and escalation",
+      "ledgerDurationMs": 74313.49,
+      "ledgerProjectedMs": 14862.7,
+      "owningSeam": "src/audit-escalation.ts + per-role auditor modules (installed entrypoint boundary)",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/package-entrypoint.integration.test.ts :: \"cold-installed role outputs run nested audits through pass, revise, and escalation\". Former survivor ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Source-tree imports + fake harness; revise/pass/escalate per role retained; cold-install boundary stays in neighbour install tests.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "488281f"
+      }
+    },
+    "test/package-entrypoint.integration.test.ts::cold-installed package audits all four roles from editable Souls": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "cold-installed package audits all four roles from editable Souls",
+      "ledgerDurationMs": 65959.3,
+      "ledgerProjectedMs": 6595.93,
+      "owningSeam": "installed package Soul loader boundary + test/helpers/pi-test-harness.ts shared cold-install/pack fixture",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/doctor-package-lifecycle.test.ts:19. Cheaper construction: one module-scope cold install shared by every cold-install consumer (this file's lines 244, 334, 764 plus te",
+      "state": "absorbed",
+      "evidence": {
+        "kind": "shared-cold-install-or-pack-fixture",
+        "commit": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+        "note": "295e3d1 withColdInstalledPackage / shared HEAD-keyed cold-install"
+      }
+    },
+    "test/package-entrypoint.integration.test.ts::cold-installed live help follows the loaded extension and changes on the next hint": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "cold-installed live help follows the loaded extension and changes on the next hint",
+      "ledgerDurationMs": 43992.48,
+      "ledgerProjectedMs": 4399.25,
+      "owningSeam": "src/role-runtime.ts live-help surface + test/helpers/pi-test-harness.ts shared cold-install/pack fixture",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/navigator-attendance.test.ts. Cheaper construction: keep lines 765-800 on the SHARED cold install; drop lines 802-813 and 864-966 as same-root duplicates of navigator-",
+      "state": "absorbed",
+      "evidence": {
+        "kind": "shared-cold-install-or-pack-fixture",
+        "commit": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+        "note": "295e3d1 withColdInstalledPackage shared fixture"
+      }
+    },
+    "test/package-entrypoint.integration.test.ts::packed package includes Doctor role, evidence flag, and runtime dependencies": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "packed package includes Doctor role, evidence flag, and runtime dependencies",
+      "ledgerDurationMs": 42483.09,
+      "ledgerProjectedMs": 4248.31,
+      "owningSeam": "installed package Soul loader boundary + test/helpers/pi-test-harness.ts shared cold-install/pack fixture",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/package-entrypoint.integration.test.ts. Cheaper construction: one shared packed tarball (symlinked node_modules) built once per suite; this test asserts only the path ",
+      "state": "absorbed",
+      "evidence": {
+        "kind": "shared-cold-install-or-pack-fixture",
+        "commit": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+        "note": "295e3d1 getSharedIsolatedPack"
+      }
+    },
+    "test/package-entrypoint.integration.test.ts::normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the cause matrix": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the cause matrix",
+      "ledgerDurationMs": 15357.13,
+      "ledgerProjectedMs": 3071.43,
+      "owningSeam": "src/navigator-attendance.ts failure classification + packaged role-runtime attendance boundary",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/package-entrypoint.integration.test.ts :: \"normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the caus",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "One diagnostic per cause; prose independence owned by navigator-attendance seam.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "488281f"
+      }
+    },
+    "test/package-entrypoint.integration.test.ts::normal packaged Navigator presents independently in print and JSON and reuses one subject session": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "normal packaged Navigator presents independently in print and JSON and reuses one subject session",
+      "ledgerDurationMs": 12154.84,
+      "ledgerProjectedMs": 3654.84,
+      "owningSeam": "test/helpers/pi-test-harness.ts shared cold-install/pack fixture + installed package loader boundary",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/package-entrypoint.integration.test.ts. Cheaper construction: one session per mode (3 total), assert route-only-on-first + navigatorCalls===1 + the persisted-log count",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "One session per mode (3) + revised route; dropped decorative rate/latency over deterministic replays.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "488281f"
+      }
+    },
+    "test/package-entrypoint.integration.test.ts::fresh packaged processes resume cross-role Navigator route memory and isolate subjects": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "fresh packaged processes resume cross-role Navigator route memory and isolate subjects",
+      "ledgerDurationMs": 10135.66,
+      "ledgerProjectedMs": 6735.66,
+      "owningSeam": "test/helpers/pi-test-harness.ts shared cold-install/pack fixture + installed package loader boundary",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/package-entrypoint.integration.test.ts. Cheaper construction: drop the third subprocess and its two asserts (1669-1671); the isolation contract keeps its single home a",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Two process-boundary legs only; isolation stays in-process neighbour.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "488281f"
+      }
+    },
+    "test/package-entrypoint.integration.test.ts::ordinary Navigator attendance is absent at the pinned pre-Issue-28 baseline and present after Issue 28": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "ordinary Navigator attendance is absent at the pinned pre-Issue-28 baseline and present after Issue 28",
+      "ledgerDurationMs": 7263.06,
+      "ledgerProjectedMs": 3663.06,
+      "owningSeam": "test/helpers/pi-test-harness.ts shared cold-install/pack fixture + installed package loader boundary",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/package-entrypoint.integration.test.ts:150. Cheaper construction: one `pi` subprocess against the current entrypoint, keeping lines 165-183 verbatim; delete the `basel",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Dropped rotting baseline archive arm; live ordering/latency contract retained.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "488281f"
+      }
+    },
+    "test/package-entrypoint.integration.test.ts::packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion": {
+      "ledgerFile": "test/package-entrypoint.integration.test.ts",
+      "currentFile": "test/package/package-entrypoint.integration.test.ts",
+      "test": "packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion",
+      "ledgerDurationMs": 29.86,
+      "ledgerProjectedMs": 14.93,
+      "owningSeam": "src/canonical-skill-binding.ts + packaged coder apply path via src/role-runtime.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/package-entrypoint.integration.test.ts :: \"packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion\". Former survivo",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Two-row table with canonical /skill:tdd on shared fixture.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "488281f"
+      }
+    },
+    "test/collector-package-lifecycle.test.ts::installed npm tarball collector runs default gh transport end-to-end in print and json": {
+      "ledgerFile": "test/collector-package-lifecycle.test.ts",
+      "currentFile": "test/package/collector-package-lifecycle.test.ts",
+      "test": "installed npm tarball collector runs default gh transport end-to-end in print and json",
+      "ledgerDurationMs": 149978,
+      "ledgerProjectedMs": 14997.8,
+      "owningSeam": "src/collector-role.ts packaged entry + test/helpers/pi-test-harness.ts shared cold-install/pack fixture",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-package-lifecycle.test.ts:46. Cheaper construction: shared process-wide cold-installed fixture + ONE run in one mode — ~150,000 ms becomes ~2,000 ms, of whic",
+      "state": "absorbed",
+      "evidence": {
+        "kind": "shared-cold-install-or-pack-fixture",
+        "commit": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+        "note": "295e3d1 withColdInstalledPackage"
+      }
+    },
+    "test/collector-package-lifecycle.test.ts::npm pack includes collector modules, schema, and soul and excludes skills/orchestrator collect": {
+      "ledgerFile": "test/collector-package-lifecycle.test.ts",
+      "currentFile": "test/package/collector-package-lifecycle.test.ts",
+      "test": "npm pack includes collector modules, schema, and soul and excludes skills/orchestrator collect",
+      "ledgerDurationMs": 48654,
+      "ledgerProjectedMs": 4865.4,
+      "owningSeam": "installed package Soul loader boundary + test/helpers/pi-test-harness.ts shared cold-install/pack fixture",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-package-lifecycle.test.ts:28. Cheaper construction: one process-wide memoized cold-pack fixture (lazy singleton in pi-test-harness.ts, built on first demand,",
+      "state": "absorbed",
+      "evidence": {
+        "kind": "shared-cold-install-or-pack-fixture",
+        "commit": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+        "note": "295e3d1 getSharedIsolatedPack"
+      }
+    },
+    "test/collector-package-lifecycle.test.ts::packaged collector help subprocess succeeds": {
+      "ledgerFile": "test/collector-package-lifecycle.test.ts",
+      "currentFile": "test/package/collector-package-lifecycle.test.ts",
+      "test": "packaged collector help subprocess succeeds",
+      "ledgerDurationMs": 1848,
+      "ledgerProjectedMs": 369.6,
+      "owningSeam": "src/role-runtime.ts live-help surface + test/helpers/pi-test-harness.ts shared cold-install/pack fixture",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-package-lifecycle.test.ts :: \"packaged collector help subprocess succeeds\". Former survivor mapping failed open-body check: Opened sur",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "Absorbed into package-entrypoint cold-installed live help: real runPiSubprocess --help asserts timedOut===false && code===0.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/pi-test-harness.test.ts::isolated packs leave shared dist identity stable under concurrent contract imports": {
+      "ledgerFile": "test/pi-test-harness.test.ts",
+      "currentFile": "test/package/pi-test-harness.test.ts",
+      "test": "isolated packs leave shared dist identity stable under concurrent contract imports",
+      "ledgerDurationMs": 63643.217917,
+      "ledgerProjectedMs": 6364.32,
+      "owningSeam": "test/helpers/pi-test-harness.ts shared cold-install/pack fixture + installed package loader boundary",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/pi-test-harness.test.ts. Cheaper construction: assert the structural invariant directly — pack ONCE and assert `packed.root !== packageRoot` and that root lives under ",
+      "state": "absorbed",
+      "evidence": {
+        "kind": "shared-cold-install-or-pack-fixture",
+        "commit": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+        "note": "295e3d1 structural invariant on getSharedIsolatedPack (no 3× pack stress)"
+      }
+    },
+    "test/reviewer-package-lifecycle.test.ts::installed npm tarball runs the complete established-Spec Reviewer lifecycle": {
+      "ledgerFile": "test/reviewer-package-lifecycle.test.ts",
+      "currentFile": "test/package/reviewer-package-lifecycle.test.ts",
+      "test": "installed npm tarball runs the complete established-Spec Reviewer lifecycle",
+      "ledgerDurationMs": 51199,
+      "ledgerProjectedMs": 5119.9,
+      "owningSeam": "src/audit-escalation.ts + per-role auditor modules (installed entrypoint boundary)",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-package-lifecycle.test.ts:28. Cheaper construction: shared process-wide cold-installed fixture + this test keeps only the three lifecycle runs; ~51,199 ms bec",
+      "state": "absorbed",
+      "evidence": {
+        "kind": "shared-cold-install-or-pack-fixture",
+        "commit": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+        "note": "295e3d1 withColdInstalledPackage"
+      }
+    },
+    "test/doctor-package-lifecycle.test.ts::fresh Pi process loads the installed Doctor extension and completes one audited output": {
+      "ledgerFile": "test/doctor-package-lifecycle.test.ts",
+      "currentFile": "test/package/doctor-package-lifecycle.test.ts",
+      "test": "fresh Pi process loads the installed Doctor extension and completes one audited output",
+      "ledgerDurationMs": 50288.502791,
+      "ledgerProjectedMs": 5028.85,
+      "owningSeam": "src/audit-escalation.ts + per-role auditor modules (installed entrypoint boundary)",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/doctor-package-lifecycle.test.ts. Cheaper construction: materialize + pack + install once per test run behind a module-scope lazy promise (or one setup fixture) and ha",
+      "state": "absorbed",
+      "evidence": {
+        "kind": "shared-cold-install-or-pack-fixture",
+        "commit": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+        "note": "295e3d1 withColdInstalledPackage"
+      }
+    },
+    "test/reviewer-agent.test.ts::Reviewer Agent reports deterministic setup failures with bounded retention evidence": {
+      "ledgerFile": "test/reviewer-agent.test.ts",
+      "currentFile": "test/contract/reviewer-agent.test.ts",
+      "test": "Reviewer Agent reports deterministic setup failures with bounded retention evidence",
+      "ledgerDurationMs": 19652.3,
+      "ledgerProjectedMs": 4500,
+      "owningSeam": "src/reviewer-agent.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-execution-ledger.test.ts:83. Cheaper construction: hoist source repo + parentContext + cached dispatch snapshot to file scope (11 → 1), keep the 11-row fault ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared frozen source + one parentContext; 11-row fault table without per-row repo; ledger projection moved to reviewer-execution-ledger.test.ts.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
+      }
+    },
+    "test/reviewer-agent.test.ts::Reviewer Agent cancellation is infrastructure failure and retains its workspace": {
+      "ledgerFile": "test/reviewer-agent.test.ts",
+      "currentFile": "test/contract/reviewer-agent.test.ts",
+      "test": "Reviewer Agent cancellation is infrastructure failure and retains its workspace",
+      "ledgerDurationMs": 3745.8,
+      "ledgerProjectedMs": 2800,
+      "owningSeam": "src/reviewer-agent.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-agent.test.ts:528. Cheaper construction: shared frozen source repo, `assert.rejects(call, predicate)` directly, read `retained` only from the outcome envelope",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared frozen source; assert.rejects reads retained solely from outcome envelope.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
+      }
+    },
+    "test/reviewer-agent.test.ts::workspace owner prepares and installs every leg without constructing a provider": {
+      "ledgerFile": "test/reviewer-agent.test.ts",
+      "currentFile": "test/contract/reviewer-agent.test.ts",
+      "test": "workspace owner prepares and installs every leg without constructing a provider",
+      "ledgerDurationMs": 2762.8,
+      "ledgerProjectedMs": 1200,
+      "owningSeam": "src/reviewer-agent.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-agent.test.ts:150. Cheaper construction: one module-level frozen source repo + one cached AcceptedReviewerExecution, prepare 2 legs, assert only `workspaces.l",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared dual dispatch + frozen source; assert workspaces.length===2 and verified evidence; dropped workspaceOperations tautology.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
+      }
+    },
+    "test/reviewer-agent.test.ts::Reviewer materializes shallow session snapshot refs into the workspace": {
+      "ledgerFile": "test/reviewer-agent.test.ts",
+      "currentFile": "test/contract/reviewer-agent.test.ts",
+      "test": "Reviewer materializes shallow session snapshot refs into the workspace",
+      "ledgerDurationMs": 2178.3,
+      "ledgerProjectedMs": 900,
+      "owningSeam": "src/reviewer-agent.ts workspace materialization (refs snapshot)",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/reviewer-agent.test.ts :: \"Reviewer materializes shallow session snapshot refs into the workspace\". Former survivor mapping failed open-body che",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "owner.prepare proves shallow ref materialization without full runner round-trip.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
+      }
+    },
+    "test/reviewer-agent.test.ts::Reviewer materializes and verifies a real SHA-256 repository": {
+      "ledgerFile": "test/reviewer-agent.test.ts",
+      "currentFile": "test/contract/reviewer-agent.test.ts",
+      "test": "Reviewer materializes and verifies a real SHA-256 repository",
+      "ledgerDurationMs": 2102.5,
+      "ledgerProjectedMs": 1000,
+      "owningSeam": "src/reviewer-agent.ts objectFormat materialization",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-agent.test.ts:238. Cheaper construction: one file-scope sha256 fixture (skip-guarded), assert objectFormat + /^[0-9a-f]{64}$/ head + verified bundle evidence ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "File-scope sha256 fixture via owner.prepare; drop runner round-trip.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
+      }
+    },
+    "test/reviewer-agent.test.ts::child executor runs in an already-prepared workspace without Git materialization": {
+      "ledgerFile": "test/reviewer-agent.test.ts",
+      "currentFile": "test/contract/reviewer-agent.test.ts",
+      "test": "child executor runs in an already-prepared workspace without Git materialization",
+      "ledgerDurationMs": 2019.3,
+      "ledgerProjectedMs": 500,
+      "owningSeam": "src/reviewer-agent.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-agent.test.ts:170. Cheaper construction: consume a workspace from the file-level once-prepared batch (the same batch the owner test builds) and only construct",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Consumes shared single-leg dispatch + owner.prepare batch.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
+      }
+    },
+    "test/reviewer-agent.test.ts::Reviewer child provider delegates class-private streams to the original receiver": {
+      "ledgerFile": "test/reviewer-agent.test.ts",
+      "currentFile": "test/contract/reviewer-agent.test.ts",
+      "test": "Reviewer child provider delegates class-private streams to the original receiver",
+      "ledgerDurationMs": 1983.4,
+      "ledgerProjectedMs": 1300,
+      "owningSeam": "src/reviewer-agent.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-agent.test.ts:335. Cheaper construction: shared frozen source repo, keep the PrivateProvider class and both bash-gate cases, drop the 盯文 regex, collapse the a",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared source; typed isError gate replaces 盯文 regex; private-provider auth fact only.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
+      }
+    },
+    "test/reviewer-agent.test.ts::workspace shutdown does not replay pre-creation or post-creation preparation rejection": {
+      "ledgerFile": "test/reviewer-agent.test.ts",
+      "currentFile": "test/contract/reviewer-agent.test.ts",
+      "test": "workspace shutdown does not replay pre-creation or post-creation preparation rejection",
+      "ledgerDurationMs": 1486.6,
+      "ledgerProjectedMs": 500,
+      "owningSeam": "src/reviewer-agent.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-agent.test.ts:434. Cheaper construction: keep exactly that — shared frozen source, prepare once per fault, assert double-shutdown resolves and the retained pa",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared source; double-shutdown + retained path; classification owned by setup-failure table.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
+      }
+    },
+    "test/audit-failure-subprocess.test.ts::installed Reviewer fatal stages abort without a receipt": {
+      "ledgerFile": "test/audit-failure-subprocess.test.ts",
+      "currentFile": "test/integration/audit-failure-subprocess.test.ts",
+      "test": "installed Reviewer fatal stages abort without a receipt",
+      "ledgerDurationMs": 14495.89,
+      "ledgerProjectedMs": 1449.59,
+      "owningSeam": "src/compliance-transport.ts nested audit failure abort path",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/audit-failure-subprocess.test.ts:366. Cheaper construction: shared by all rows; (b) keep ONE stage x print+json as the process-level negative case; (c) move the 4-stag",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared git-clone template (cp -R); process-level audit-auth×print+json; remaining stages json-only; in-process audit-stage fail-closed carrier added.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "0f38a13"
+      }
+    },
+    "test/audit-failure-subprocess.test.ts::unavailable canonical tdd is infrastructure failure in print and JSON": {
+      "ledgerFile": "test/audit-failure-subprocess.test.ts",
+      "currentFile": "test/integration/audit-failure-subprocess.test.ts",
+      "test": "unavailable canonical tdd is infrastructure failure in print and JSON",
+      "ledgerDurationMs": 8539.05,
+      "ledgerProjectedMs": 853.9,
+      "owningSeam": "src/compliance-transport.ts nested audit failure abort path",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/audit-failure-subprocess.test.ts:327. Cheaper construction: keep ONE fixture x print+json as the process-level 'infrastructure, not a receipt' negative case (法条③ prese",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "ONE fixture (missing)×print+json process negative; unavailability matrix remains at canonical-skill-binding.test.ts.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "0f38a13"
+      }
+    },
+    "test/audit-failure-subprocess.test.ts::fatal Judge audit failure drains one healthy packaged Navigator without advice": {
+      "ledgerFile": "test/audit-failure-subprocess.test.ts",
+      "currentFile": "test/integration/audit-failure-subprocess.test.ts",
+      "test": "fatal Judge audit failure drains one healthy packaged Navigator without advice",
+      "ledgerDurationMs": 3549.42,
+      "ledgerProjectedMs": 354.94,
+      "owningSeam": "src/compliance-transport.ts nested audit failure abort path",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/audit-failure-subprocess.test.ts:273. Cheaper construction: move an in-process object through a string. Cheap homes already exist and are 20-150x cheaper: navigator-at",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Retained single json subprocess — process-release evidence requires process exit boundary.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "0f38a13"
+      }
+    },
+    "test/audit-failure-subprocess.test.ts::fatal Fixer audit infrastructure failure aborts print and JSON without a receipt": {
+      "ledgerFile": "test/audit-failure-subprocess.test.ts",
+      "currentFile": "test/integration/audit-failure-subprocess.test.ts",
+      "test": "fatal Fixer audit infrastructure failure aborts print and JSON without a receipt",
+      "ledgerDurationMs": 2676.92,
+      "ledgerProjectedMs": 535.38,
+      "owningSeam": "src/compliance-transport.ts nested audit failure abort path",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/audit-failure-subprocess.test.ts :: \"fatal Fixer audit infrastructure failure aborts print and JSON without a receipt\". Former survivor mapping ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Kept Fixer-specific FIXER_AUDIT_FAILURE_PROVIDER_CALLS process proof (Judge survivor lacks this clause).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "0f38a13"
+      }
+    },
+    "test/reviewer-pinned-reader.test.ts::abbreviated bases are resolved only among commits reachable from the activation target": {
+      "ledgerFile": "test/reviewer-pinned-reader.test.ts",
+      "currentFile": "test/contract/reviewer-pinned-reader.test.ts",
+      "test": "abbreviated bases are resolved only among commits reachable from the activation target",
+      "ledgerDurationMs": 13295.992917,
+      "ledgerProjectedMs": 1329.6,
+      "owningSeam": "src/reviewer-pinned-git.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-pinned-reader.test.ts. Cheaper construction: stream all candidate commits through a SINGLE `git fast-import` invocation (one subprocess for the whole chain) a",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "git fast-import single stream for reachable chain (~13s→~0.5s).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/reviewer-pinned-reader.test.ts::pinned base resolution ignores moved refs and accepts reachable full commits": {
+      "ledgerFile": "test/reviewer-pinned-reader.test.ts",
+      "currentFile": "test/contract/reviewer-pinned-reader.test.ts",
+      "test": "pinned base resolution ignores moved refs and accepts reachable full commits",
+      "ledgerDurationMs": 1462.24075,
+      "ledgerProjectedMs": 146.22,
+      "owningSeam": "src/reviewer-pinned-git.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-pinned-reader.test.ts. Cheaper construction: build the base repo ONCE at module scope (or seed it via a single chained git invocation), then have each test cp",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Module-level seeded template + cp -R per case across file.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "255875c"
+      }
+    },
+    "test/merger-role.test.ts::Pi transports malformed Merger candidates to the fatal validator while valid leaves still terminate": {
+      "ledgerFile": "test/merger-role.test.ts",
+      "currentFile": "test/integration/merger-role.test.ts",
+      "test": "Pi transports malformed Merger candidates to the fatal validator while valid leaves still terminate",
+      "ledgerDurationMs": 5860.607542,
+      "ledgerProjectedMs": 586.06,
+      "owningSeam": "src/merger-role.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/merger-role.test.ts. Cheaper construction: a ~20-line child fixture script that boots one in-process Pi with the malformed candidate and lets the fatal path set the ex",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Dedicated test/fixtures/merger-fatal-child.ts via runNodeSubprocess; keeps 3 transport candidates + process exit 1.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "255875c"
+      }
+    },
+    "test/merger-role.test.ts::production extension observes session repository B, not ambient repository A, through activation and completion": {
+      "ledgerFile": "test/merger-role.test.ts",
+      "currentFile": "test/integration/merger-role.test.ts",
+      "test": "production extension observes session repository B, not ambient repository A, through activation and completion",
+      "ledgerDurationMs": 3040.9535,
+      "ledgerProjectedMs": 304.1,
+      "owningSeam": "src/merger-role.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/merger-role.test.ts. Cheaper construction: build one conflicted-repo template per run and cp -R it per case (a few MB, tens of ms), shared with merger-git-state.test.t",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Module-level conflicted-repo template + local clone per case.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "255875c"
+      }
+    },
+    "test/collector-github.test.ts::request-path AbortSignal cancels hung POST child without rejected attempt": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "request-path AbortSignal cancels hung POST child without rejected attempt",
+      "ledgerDurationMs": 866.417666,
+      "ledgerProjectedMs": 433.21,
+      "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:875. Cheaper construction: 保留 ①③④ 断言；「真子进程被杀」只在 :1104 证一次。本条同时是 :1002 的并入目的地。 Ledger projectedMs≈433.21.",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "In-process abort-reason matrix (Error/non-Error/tagged); child kill owned by R11.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::PATH gh recovery through ledger request+observe sets recoverySnapshotId": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "PATH gh recovery through ledger request+observe sets recoverySnapshotId",
+      "ledgerDurationMs": 755.015875,
+      "ledgerProjectedMs": 377.508,
+      "owningSeam": "src/collector-github.ts ambiguous_loss recovery + src/collector-ledger.ts recoverySnapshotId",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-github.test.ts :: \"PATH gh recovery through ledger request+observe sets recoverySnapshotId\". Former survivor mapping failed open-body ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "recoverySnapshotId asserted on in-process marker recovery carrier; PATH spawn twin deleted.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::request-path abort with non-Error reason cancels without rejected attempt": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "request-path abort with non-Error reason cancels without rejected attempt",
+      "ledgerDurationMs": 693.409,
+      "ledgerProjectedMs": 346.7,
+      "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1010. Cheaper construction: 并入 :995 重建后的进程内 abort-reason 参数化矩阵（Error / 非 Error / tagged 三例共用一条 in-process 夹具），耗时 ~1ms。 Ledger projectedMs≈346.",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Row of in-process abort-reason matrix.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::default createGhApiRunner spawns executable gh on PATH hermetically": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "default createGhApiRunner spawns executable gh on PATH hermetically",
+      "ledgerDurationMs": 683.043125,
+      "ledgerProjectedMs": 341.52,
+      "owningSeam": "src/collector-github.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:195. Cheaper construction: Rebuild at cheaper seam: ②：真 spawn 那一小块非贵不可证（不可逆地需要真子进程），但本测把 6 个已在别处便宜证过的场景全塞进同一个 bash 脚本，贵在冗余场景而非贵在契约。 Ledger pro",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "One real spawn: GET /user + argv log; scenario matrix stays in-process.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::request-path abort with tagged ambiguousGhFailure reason preserves identity over ambiguous_loss": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "request-path abort with tagged ambiguousGhFailure reason preserves identity over ambiguous_loss",
+      "ledgerDurationMs": 670.492,
+      "ledgerProjectedMs": 335.25,
+      "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1020. Cheaper construction: Rebuild at cheaper seam: ②：这是四变体里信息量最高的一条（钉住 catch 分支的先后次序），但仍不需要真子进程。 Ledger projectedMs≈335.25.",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Row of in-process abort-reason matrix.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss",
+      "ledgerDurationMs": 430.111125,
+      "ledgerProjectedMs": 215.056,
+      "owningSeam": "src/collector-github.ts createGhApiRunner EPIPE / ambiguous_loss",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-github.test.ts :: \"createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss\". Former survivor mapping failed open-bo",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Folded into EPIPE carrier as second assertion on same runner.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::createGhApiRunner stdin EPIPE settles once without uncaughtException": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "createGhApiRunner stdin EPIPE settles once without uncaughtException",
+      "ledgerDurationMs": 322.427417,
+      "ledgerProjectedMs": 161.21,
+      "owningSeam": "src/collector-github.ts createGhApiRunner EPIPE / ambiguous_loss",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1056. Cheaper construction: 并入目的地。 Ledger projectedMs≈161.21.",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "1 MiB stdin; shared with createIssueComment ambiguous_loss on same stub.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::R10 multi-page pagination stops before retaining oversize normalized budget": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "R10 multi-page pagination stops before retaining oversize normalized budget",
+      "ledgerDurationMs": 68.719125,
+      "ledgerProjectedMs": 34.36,
+      "owningSeam": "src/collector-github.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:644. Cheaper construction: Rebuild at cheaper seam: ②：契约是「计费点在取下一页之前」，与 8 MiB 这个具体数字无关；现构造为了撑爆真实 8 MiB 常量而 `\"x\".repeat(2.4M)` 造两条巨型 body 并反复 J",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "createSnapshotByteBudget(4096) + 1.5KB bodies; pagesFetched<3 unchanged.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::R11 observe abort through ledger does not certify a snapshot": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "R11 observe abort through ledger does not certify a snapshot",
+      "ledgerDurationMs": 47.3385,
+      "ledgerProjectedMs": 23.67,
+      "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1125. Cheaper construction: Rebuild at cheaper seam: ②：契约纯属 ledger 层状态不变式，与真不真 spawn 无关；现构造却靠 bash `sleep 30` 制造挂起，还配 40ms 固定等待。 Ledger projec",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "In-process hang-until-aborted /user runner; ledger state asserts only.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/collector-github.test.ts::R11 hung gh child aborted through runner settles once and kills child": {
+      "ledgerFile": "test/collector-github.test.ts",
+      "currentFile": "test/contract/collector-github.test.ts",
+      "test": "R11 hung gh child aborted through runner settles once and kills child",
+      "ledgerDurationMs": 36.60675,
+      "ledgerProjectedMs": 18.3,
+      "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1118. Cheaper construction: Rebuild at cheaper seam: ②：这是全卷证明「真子进程真的被杀」的最便宜位置（只 spawn 一个 hang 住的 child，36ms），但它现在只断言 rejects、根本没验尸——名不副实，逼得 :9",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Sole real-child kill proof: pidfile + ESRCH poll after abort; exec sleep.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "3ac8800"
+      }
+    },
+    "test/merger-git-state.test.ts::production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit": {
+      "ledgerFile": "test/merger-git-state.test.ts",
+      "currentFile": "test/unit/merger-git-state.test.ts",
+      "test": "production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit",
+      "ledgerDurationMs": 1252.85,
+      "ledgerProjectedMs": 125.28,
+      "owningSeam": "src/merger-git-state.ts automatic merge tree baseline",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/merger-git-state.test.ts:10. Cheaper construction: 模块级一次性冷装一个 base repo（init + base/source/target 三个 commit），每个用例 `git clone --local <base>` + `git merge` 两条子进程即可到达同一冲",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Module-level base template + git clone --local per case.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    },
+    "test/merger-git-state.test.ts::production Merger Git seam accepts a clean source-only first-parent change": {
+      "ledgerFile": "test/merger-git-state.test.ts",
+      "currentFile": "test/unit/merger-git-state.test.ts",
+      "test": "production Merger Git seam accepts a clean source-only first-parent change",
+      "ledgerDurationMs": 1125.49,
+      "ledgerProjectedMs": 225.1,
+      "owningSeam": "src/merger-git-state.ts automatic merge tree baseline",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/merger-git-state.test.ts :: \"production Merger Git seam accepts a clean source-only first-parent change\". Former survivor mapping failed open-bo",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared template; asserts source-only absent from resolutionChangedPaths while present in first-parent diff.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    },
+    "test/merger-git-state.test.ts::production Merger Git seam reports tampering with a clean source-side path": {
+      "ledgerFile": "test/merger-git-state.test.ts",
+      "currentFile": "test/unit/merger-git-state.test.ts",
+      "test": "production Merger Git seam reports tampering with a clean source-side path",
+      "ledgerDurationMs": 1075.23,
+      "ledgerProjectedMs": 215.05,
+      "owningSeam": "src/merger-git-state.ts automatic merge tree baseline",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/merger-git-state.test.ts. Cheaper construction: Surviving oracle from adjudication: 法条②（同根：与 t1 同一契约同一代码路径）+ 法条④（同形状夹具第二份＝病）。 Mer",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared template; distinct tamper-on-source-path input shape.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    },
+    "test/merger-git-state.test.ts::production Merger Git seam reports no conflict set after a non-conflicting merge": {
+      "ledgerFile": "test/merger-git-state.test.ts",
+      "currentFile": "test/unit/merger-git-state.test.ts",
+      "test": "production Merger Git seam reports no conflict set after a non-conflicting merge",
+      "ledgerDurationMs": 613.87,
+      "ledgerProjectedMs": 306.94,
+      "owningSeam": "src/merger-git-state.ts automatic merge tree baseline",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/merger-git-state.test.ts:70. Cheaper construction: 复用 t1 rebuild 里那个模块级冷装 base repo，`git clone --local <base>` 后直接 `git merge --no-commit --no-ff source`——两条子进程到位，省掉整套",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared template + local clone; non-conflicting clean-source branch.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    },
+    "test/activation-envelope-contract.test.ts::incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch": {
+      "ledgerFile": "test/activation-envelope-contract.test.ts",
+      "currentFile": "test/integration/activation-envelope-contract.test.ts",
+      "test": "incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch",
+      "ledgerDurationMs": 1960.47,
+      "ledgerProjectedMs": 196.05,
+      "owningSeam": "src/role-runtime.ts activation envelope + src/activation-trace.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/activation-envelope-contract.test.ts:195. Cheaper construction: one shared harness, still one CLI boot. The ~1.96s boot itself is irreducible if the family wants any r",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared runFixerAuditFailureCli harness (test/helpers/fixer-audit-cli.ts); still one real CLI boot.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "8050b81"
+      }
+    },
+    "test/activation-envelope-contract.test.ts::default tool observation writer retries short writes on fd 2 and rejects schema-invalid records": {
+      "ledgerFile": "test/activation-envelope-contract.test.ts",
+      "currentFile": "test/integration/activation-envelope-contract.test.ts",
+      "test": "default tool observation writer retries short writes on fd 2 and rejects schema-invalid records",
+      "ledgerDurationMs": 0.19,
+      "ledgerProjectedMs": 0.1,
+      "owningSeam": "src/role-runtime.ts activation envelope + src/activation-trace.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/activation-envelope-contract.test.ts:496. Cheaper construction: Rebuild at cheaper seam: 法条④ — 同形状夹具第二份：the fake writeSync (EAGAIN on call 1, then min(N, length) short",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Merged into parameterized retry table with activation-trace writer; fd-2 + invalid-record rows retained.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "8050b81"
+      }
+    },
+    "test/collector-receipt.test.ts::receipt and ledger overflow latch fatal infrastructure failure": {
+      "ledgerFile": "test/collector-receipt.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "receipt and ledger overflow latch fatal infrastructure failure",
+      "ledgerDurationMs": 1337.5,
+      "ledgerProjectedMs": 133.75,
+      "owningSeam": "src/collector-ledger.ts observe() production receipt/materialization limit",
+      "greenSummary": "Green (restored gate-negative): six distinct 6 MiB reviews pass through the real observe() construction; each snapshot stays below the production 8 MiB limit, retained materialization exceeds the production 32 MiB receipt limit, and fatal state rejects later work before transport access.",
+      "state": "executed",
+      "evidence": {
+        "kind": "production-limit-observe-construction",
+        "note": "Real production limits: six distinct 6 MiB reviews through observe(), asserting the 33554432-byte receipt overflow and fail-fast fatal latch.",
+        "commit": "129252b"
+      }
+    },
+    "test/collector-receipt.test.ts::F2 two-leg missing contamination: request only a": {
+      "ledgerFile": "test/collector-receipt.test.ts",
+      "currentFile": "test/contract/collector-receipt.test.ts",
+      "test": "F2 two-leg missing contamination: request only a",
+      "ledgerDurationMs": 0.4,
+      "ledgerProjectedMs": 0.2,
+      "owningSeam": "src/collector-receipt.ts multi-leg evidenceRef join",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-receipt.test.ts :: \"F2 two-leg missing contamination: request only a\". Former survivor mapping failed open-body check: Opened survivor",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "Weaker precondition of F2-latestRelevant-recovered-then-succeeded (leg refs ≡ terminal-fact + cross-leg non-contamination).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-receipt.test.ts::F3-timestamp-less-review-text": {
+      "ledgerFile": "test/collector-receipt.test.ts",
+      "currentFile": "test/contract/collector-receipt.test.ts",
+      "test": "F3-timestamp-less-review-text",
+      "ledgerDurationMs": 0.3,
+      "ledgerProjectedMs": 0.15,
+      "owningSeam": "src/collector-receipt.ts authoritativeTime / windowRelation",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-receipt.test.ts :: \"F3-timestamp-less-review-text\". Former survivor mapping failed open-body check: Opened survivor test/collector-rol",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Folded with state-edit sibling into one 2-cell trigger matrix; stableGitHubId identity retained on text cell.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::F3-receipt-overflow-role-path exact MAX+1 through output execute": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "F3-receipt-overflow-role-path exact MAX+1 through output execute",
+      "ledgerDurationMs": 877.46,
+      "ledgerProjectedMs": 438.73,
+      "owningSeam": "src/collector-receipt.ts size bound + src/collector-role.ts output path",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-receipt.test.ts:2687. Cheaper construction: keep ONLY the role-path tracer (L2498-2649) with a single measurement pass, and make the cap injectable exactly a",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Injectable receiptMaxBytes; single role-path tracer MAX+1 through output execute; dropped dead unitLedger and dual 32MiB MAX mirror.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::F1 real-Pi invalid output rows deny at message_end with zero GitHub": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "F1 real-Pi invalid output rows deny at message_end with zero GitHub",
+      "ledgerDurationMs": 133.43,
+      "ledgerProjectedMs": 66.72,
+      "owningSeam": "src/collector-receipt.ts parseCollectorOutputCandidate + src/collector-role.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-role.test.ts:1376. Cheaper construction: 1 tracer row through real Pi (keep 'unavailable missing scope' — it is the discriminated-union clause most likely to",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "1 real-Pi tracer (unavailable missing scope) + 1 observe+bad-output sibling + schema table rows; one shared never-touched transport.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::collector same-session batch provenance matrix freezes transport after fatal": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "collector same-session batch provenance matrix freezes transport after fatal",
+      "ledgerDurationMs": 78.95,
+      "ledgerProjectedMs": 39.48,
+      "owningSeam": "src/collector-role.ts batch gate + src/collector-ledger.ts evaluateBatch",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-role.test.ts:860. Cheaper construction: keep exactly 2 tracer sessions — (a) valid→invalid freeze (L860-894, the only block asserting frozenPull/frozenCreate",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Kept 3 sessions: dual-op isError sweep, valid→invalid freeze, invalid→valid latch; shape clauses owned by ledger unit.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::F1 control: well-formed missing is schema-accepted": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "F1 control: well-formed missing is schema-accepted",
+      "ledgerDurationMs": 15.87,
+      "ledgerProjectedMs": 7.93,
+      "owningSeam": "src/collector-receipt.ts parseCollectorOutputCandidate + src/collector-role.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-role.test.ts:1668. Cheaper construction: add an optional `reobserveAfterAdvance` step to runSchemaAcceptedControl and route this test through it (~10 lines i",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Routed through runSchemaAcceptedControl with reobserveAfterAdvance; pull>=2 retained.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::F3-ambient-appendSystemPrompt": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "F3-ambient-appendSystemPrompt",
+      "ledgerDurationMs": 13.95,
+      "ledgerProjectedMs": 6.97,
+      "owningSeam": "src/collector-role.ts ambient-input rejection",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-role.test.ts:2252. Cheaper construction: fold into the shared ambient-guard table. Ledger projectedMs≈6.97.",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Folded into shared ambient-guard table with skills and contextFiles.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::collector immediate all-valid path through observe and singleton output": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "collector immediate all-valid path through observe and singleton output",
+      "ledgerDurationMs": 10.97,
+      "ledgerProjectedMs": 5.485,
+      "owningSeam": "src/collector-receipt.ts size bound + src/collector-role.ts output path",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-role.test.ts :: \"collector immediate all-valid path through observe and singleton output\". Former survivor mapping failed open-body ch",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "targetHead/snapshots/evidenceRecords folded into observe content valid-path survivor; free-text report regex dropped.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::F3-ambient-skills unsupported hostile sibling-extension injection": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "F3-ambient-skills unsupported hostile sibling-extension injection",
+      "ledgerDurationMs": 8.87,
+      "ledgerProjectedMs": 4.43,
+      "owningSeam": "src/collector-receipt.ts size bound + src/collector-role.ts output path",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-role.test.ts:2084. Cheaper construction: one `runAmbientGuardCase({ seedChannel, expectedMessage })` table with 3 rows; prefer routing through createRoleRunt",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Folded into shared ambient-guard table (3 rows); failInfrastructure capture retained.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::F3-ambient-contextFiles": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "F3-ambient-contextFiles",
+      "ledgerDurationMs": 8.09,
+      "ledgerProjectedMs": 4.04,
+      "owningSeam": "src/collector-role.ts ambient-input rejection",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-role.test.ts:2149. Cheaper construction: fold into the shared ambient-guard table. Ledger projectedMs≈4.04.",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Folded into shared ambient-guard table with skills and appendSystemPrompt.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/collector-role.test.ts::F1 registered collector tool schemas are the singular TypeBox owner": {
+      "ledgerFile": "test/collector-role.test.ts",
+      "currentFile": "test/integration/collector-role.test.ts",
+      "test": "F1 registered collector tool schemas are the singular TypeBox owner",
+      "ledgerDurationMs": 6.77,
+      "ledgerProjectedMs": 3.38,
+      "owningSeam": "src/collector-receipt.ts parseCollectorOutputCandidate + src/collector-role.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-role.test.ts:1329. Cheaper construction: run the 4 identity assertions against the in-memory fake pi already demonstrated in this same file at L2665-2670 (re",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "In-memory fake pi + activate; 4 identity assertions only (JSON Schema anyOf internals owned by receipt matrix).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "61d59f9"
+      }
+    },
+    "test/navigator-attendance.test.ts::native provider stream seam classifies auth/quota/transport after setModel without message metadata oracle": {
+      "ledgerFile": "test/navigator-attendance.test.ts",
+      "currentFile": "test/contract/navigator-attendance.test.ts",
+      "test": "native provider stream seam classifies auth/quota/transport after setModel without message metadata oracle",
+      "ledgerDurationMs": 493.568416,
+      "ledgerProjectedMs": 246.78,
+      "owningSeam": "src/navigator-attendance.ts native provider failure classification",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/navigator-attendance.test.ts:338. Cheaper construction: Rebuild at cheaper seam: 法条②（现构造贵于最便宜构造）：它为 3 个 source × 2 种措辞各建一次全新 native session ＝ 6 次 ModelRuntime.create+c",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "One session per source × two diagnostics (6→3 sessions).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/navigator-attendance.test.ts::model settings are exact and typed settlement projection ignores prose and correctable errors": {
+      "ledgerFile": "test/navigator-attendance.test.ts",
+      "currentFile": "test/contract/navigator-attendance.test.ts",
+      "test": "model settings are exact and typed settlement projection ignores prose and correctable errors",
+      "ledgerDurationMs": 0.594041,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "src/navigator-attendance.ts",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/navigator-attendance.test.ts:278. Cheaper construction: 一个带 overrides 的 candidate builder，selectNavigatorCandidate 的全部条款只在 #15 一处",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Kept parse/settlement asserts; selectNavigatorCandidate statuses moved to status-specific table via candidate() builder.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/navigator-attendance.test.ts::typed subject provenance replaces prose prefix branching": {
+      "ledgerFile": "test/navigator-attendance.test.ts",
+      "currentFile": "test/contract/navigator-attendance.test.ts",
+      "test": "typed subject provenance replaces prose prefix branching",
+      "ledgerDurationMs": 0.203125,
+      "ledgerProjectedMs": 0.102,
+      "owningSeam": "src/navigator-attendance.ts navigatorSubjectKey provenance",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/navigator-attendance.test.ts :: \"typed subject provenance replaces prose prefix branching\". Former survivor mapping failed open-body check: Open",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Provenance clauses folded into session placement carrier.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/navigator-attendance.test.ts::NAVIGATOR_TARGETS preserves packaged registry order": {
+      "ledgerFile": "test/navigator-attendance.test.ts",
+      "currentFile": "test/contract/navigator-attendance.test.ts",
+      "test": "NAVIGATOR_TARGETS preserves packaged registry order",
+      "ledgerDurationMs": 0.139459,
+      "ledgerProjectedMs": 0.07,
+      "owningSeam": "src/navigator-attendance.ts NAVIGATOR_TARGETS + src/packaged-role-registry.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/navigator-attendance.test.ts :: \"NAVIGATOR_TARGETS preserves packaged registry order\". Former survivor mapping failed open-body check: Opened su",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Folded into registry output tools constants assert against PACKAGED_ROLE_REGISTRY order.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/reviewer-role.test.ts::registered Agent rejection text names the violated proposal or pinned-evidence constraint": {
+      "ledgerFile": "test/reviewer-role.test.ts",
+      "currentFile": "test/contract/reviewer-role.test.ts",
+      "test": "registered Agent rejection text names the violated proposal or pinned-evidence constraint",
+      "ledgerDurationMs": 2.86,
+      "ledgerProjectedMs": 1.43,
+      "owningSeam": "src/reviewer-role.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-role.test.ts:78. Cheaper construction: Rebuild at cheaper seam: 法条② — 对自由文本措辞建机械依赖. The construction pins seven exact diagnostic wordings by regex when the se",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Assert typed violations codes instead of free-text diagnostic regexes.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    },
+    "test/collector-ledger.test.ts::8 MiB snapshot boundary: measured MAX accept and MAX+1 fail": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "8 MiB snapshot boundary: measured MAX accept and MAX+1 fail",
+      "ledgerDurationMs": 490.4757,
+      "ledgerProjectedMs": 245.24,
+      "owningSeam": "src/collector-ledger.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-ledger.test.ts:1115. Cheaper construction: thread an optional snapshotMaxBytes into the ledger config (src/collector-evidence.ts:452 already accepts maxBytes",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Injected snapshotMaxBytes; accept-at-bound / reject-at-bound+1 via learned exact size; no MiB alloc or pipeline mirror.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::R10 cross-surface normalized budget rejects before later surfaces and terminal PR": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "R10 cross-surface normalized budget rejects before later surfaces and terminal PR",
+      "ledgerDurationMs": 120.6605,
+      "ledgerProjectedMs": 60.33,
+      "owningSeam": "src/collector-ledger.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-ledger.test.ts:541. Cheaper construction: thread an optional snapshotMaxBytes through the ledger config, drive this law at a few-KiB bound over the existing ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Few-KiB injected bound + fake transport call counters; tight exceeded-N message.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::R10 intra-surface multi-page normalized budget stops before later pages/surfaces": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "R10 intra-surface multi-page normalized budget stops before later pages/surfaces",
+      "ledgerDurationMs": 74.1498,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "src/collector-ledger.ts",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/collector-ledger.test.ts:697. Cheaper construction: fold the surviving clause (exceed inside the first surface ⇒ later surfaces +",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Folded as second row of R10 table (exceed in first surface ⇒ later surfaces skip); page stop remains github-layer.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::snapshot and ledger size bounds fail loudly without truncation": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "snapshot and ledger size bounds fail loudly without truncation",
+      "ledgerDurationMs": 55.918,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "src/collector-ledger.ts",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/collector-ledger.test.ts:515. Cheaper construction: drop this test entirely — the rebuilt boundary test (injected small bound) pr",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Absorbed by injected boundary + production default sanity constants.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::observe start-before finish-after cutoff satisfies final obligation": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "observe start-before finish-after cutoff satisfies final obligation",
+      "ledgerDurationMs": 7.1773,
+      "ledgerProjectedMs": 3.59,
+      "owningSeam": "src/collector-ledger.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-ledger.test.ts:854. Cheaper construction: one ledger on one shared clock, drop the dead fixture, and assert the wall-clock progression as its own equality in",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "One ledger/one clock; wall progression asserted as equality not always-true OR.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::batch gate permits one operational or sole output and latches mixed/multiple": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "batch gate permits one operational or sole output and latches mixed/multiple",
+      "ledgerDurationMs": 2.0498,
+      "ledgerProjectedMs": 1.025,
+      "owningSeam": "src/collector-ledger.ts evaluateBatch",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-ledger.test.ts :: \"batch gate permits one operational or sole output and latches mixed/multiple\". Former survivor mapping failed open-",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Allow observe + sole-output-after-snapshot + deny table absorb evaluateBatch twin.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::wait PR4 shape caps to five minutes so re-observe still fits before deadline": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "wait PR4 shape caps to five minutes so re-observe still fits before deadline",
+      "ledgerDurationMs": 1.0138,
+      "ledgerProjectedMs": 0.507,
+      "owningSeam": "src/collector-ledger.ts applyEvidenceVersionHistory",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-ledger.test.ts :: \"wait PR4 shape caps to five minutes so re-observe still fits before deadline\". Former survivor mapping failed open-",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Offset wait + re-observe completedMono < deadline folded into wait caps carrier.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::R9 updatedAt churn forces full-surface retry and fails closed on repeated drift": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "R9 updatedAt churn forces full-surface retry and fails closed on repeated drift",
+      "ledgerDurationMs": 0.3124,
+      "ledgerProjectedMs": 0.156,
+      "owningSeam": "src/collector-ledger.ts PR identity tuple / observe retry",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-ledger.test.ts :: \"R9 updatedAt churn forces full-surface retry and fails closed on repeated drift\". Former survivor mapping failed op",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "updatedAt fail-closed row in identity-drift table; retry-visible evidence keeps one focused carrier.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::version history: later review edit without timestamp is uncertain": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "version history: later review edit without timestamp is uncertain",
+      "ledgerDurationMs": 0.2149,
+      "ledgerProjectedMs": 0.107,
+      "owningSeam": "src/collector-ledger.ts applyEvidenceVersionHistory",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-ledger.test.ts :: \"version history: later review edit without timestamp is uncertain\". Former survivor mapping failed open-body check:",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Earlier-version retention + baseline folded into R5 third-observation carrier.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/collector-ledger.test.ts::applyEvidenceVersionHistory first review keeps submitted_at at/before deadline mono": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "applyEvidenceVersionHistory first review keeps submitted_at at/before deadline mono",
+      "ledgerDurationMs": 0.0405,
+      "ledgerProjectedMs": 0.02,
+      "owningSeam": "src/collector-ledger.ts applyEvidenceVersionHistory",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-ledger.test.ts :: \"applyEvidenceVersionHistory first review keeps submitted_at at/before deadline mono\". Former survivor mapping faile",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Parameterized mono boundary table (===keep / +60k null / NaN null) + R5 reuse.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "e52cf71"
+      }
+    },
+    "test/judge-posture-recordings.test.ts::recorded r-block accepts via JSONL trust root and matches external expected": {
+      "ledgerFile": "test/judge-posture-recordings.test.ts",
+      "currentFile": "test/contract/judge-posture-recordings.test.ts",
+      "test": "recorded r-block accepts via JSONL trust root and matches external expected",
+      "ledgerDurationMs": 360.942792,
+      "ledgerProjectedMs": 180.47,
+      "owningSeam": "src/judge-role.ts posture bind/neutrality seam",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/judge-posture-recordings.test.ts:732. Cheaper construction: one module-level memoized family fixture (both bundles read+parsed once), sessionContainsSoul takes the alr",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Family loop carrier test/contract/judge-posture-recordings.test.ts:731 recorded ${bundleName}.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
+      }
+    },
+    "test/judge-posture-recordings.test.ts::posture oracle rejects metadata package SHA with mismatched packaged Judge Soul": {
+      "ledgerFile": "test/judge-posture-recordings.test.ts",
+      "currentFile": "test/contract/judge-posture-recordings.test.ts",
+      "test": "posture oracle rejects metadata package SHA with mismatched packaged Judge Soul",
+      "ledgerDurationMs": 243.01325,
+      "ledgerProjectedMs": 121.51,
+      "owningSeam": "src/judge-role.ts posture bind/neutrality seam",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/judge-posture-recordings.test.ts:780. Cheaper construction: drop the redundant positive (test:782) and give assertPackagedSoulMatchesMeta a packaged-soul-reader seam (",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Injectable packaged-soul reader; negative is in-process digest compare; positive stays on shared bundle loads.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
+      }
+    },
+    "test/judge-posture-recordings.test.ts::recorded r-ready accepts via JSONL trust root and matches external expected": {
+      "ledgerFile": "test/judge-posture-recordings.test.ts",
+      "currentFile": "test/contract/judge-posture-recordings.test.ts",
+      "test": "recorded r-ready accepts via JSONL trust root and matches external expected",
+      "ledgerDurationMs": 121.007667,
+      "ledgerProjectedMs": 60.5,
+      "owningSeam": "src/judge-role.ts posture bind/neutrality seam",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/judge-posture-recordings.test.ts:732. Cheaper construction: identical to #2 — shared memoized family fixture + one packaged-soul resolution per packageSha + rows-takin",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Family loop carrier test/contract/judge-posture-recordings.test.ts:731 recorded ${bundleName}.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
+      }
+    },
+    "test/judge-posture-recordings.test.ts::judge posture fixture bundles are present": {
+      "ledgerFile": "test/judge-posture-recordings.test.ts",
+      "currentFile": "test/contract/judge-posture-recordings.test.ts",
+      "test": "judge posture fixture bundles are present",
+      "ledgerDurationMs": 4.758792,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "src/judge-role.ts posture bind/neutrality seam",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/judge-posture-recordings.test.ts:724. Cheaper construction: none — delete the test, presence is a free side effect of loads that ",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "Presence is free side effect of loadBundle; README existence not a behavioral contract.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
+      }
+    },
+    "test/judge-posture-recordings.test.ts::posture oracle refuses receipt-only trust without JSONL acceptance": {
+      "ledgerFile": "test/judge-posture-recordings.test.ts",
+      "currentFile": "test/contract/judge-posture-recordings.test.ts",
+      "test": "posture oracle refuses receipt-only trust without JSONL acceptance",
+      "ledgerDurationMs": 3.939875,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "src/judge-role.ts posture bind/neutrality seam",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/judge-posture-recordings.test.ts:793. Cheaper construction: none needed — test:820 already is it. Merge rejection: Opened posture",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "Weaker duplicate of unbound-terminal parser cases; never reached bind (failed accepted-text guard).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
+      }
+    },
+    "test/judge-posture-recordings.test.ts::JSONL bind refuses materials-read body mismatch with static input": {
+      "ledgerFile": "test/judge-posture-recordings.test.ts",
+      "currentFile": "test/contract/judge-posture-recordings.test.ts",
+      "test": "JSONL bind refuses materials-read body mismatch with static input",
+      "ledgerDurationMs": 0.212334,
+      "ledgerProjectedMs": 0.106,
+      "owningSeam": "src/judge-role.ts posture bind/neutrality seam",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-posture-recordings.test.ts :: \"JSONL bind refuses materials-read body mismatch with static input\". Former survivor mapping failed open-bod",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Absorbed into neutralityRows table with coached prompt + labeled path.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
+      }
+    },
+    "test/judge-posture-recordings.test.ts::JSONL bind refuses direction-labeled materials path in user prompt": {
+      "ledgerFile": "test/judge-posture-recordings.test.ts",
+      "currentFile": "test/contract/judge-posture-recordings.test.ts",
+      "test": "JSONL bind refuses direction-labeled materials path in user prompt",
+      "ledgerDurationMs": 0.140125,
+      "ledgerProjectedMs": 0.07,
+      "owningSeam": "src/judge-role.ts posture bind/neutrality seam",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-posture-recordings.test.ts :: \"JSONL bind refuses direction-labeled materials path in user prompt\". Former survivor mapping failed open-bo",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Absorbed into neutralityRows table with coached prompt + body mismatch.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
+      }
+    },
+    "test/reviewer-bundle-materializer.test.ts::materializer rejects traversal, absolute paths, collisions, and symlink parents": {
+      "ledgerFile": "test/reviewer-bundle-materializer.test.ts",
+      "currentFile": "test/unit/reviewer-bundle-materializer.test.ts",
+      "test": "materializer rejects traversal, absolute paths, collisions, and symlink parents",
+      "ledgerDurationMs": 5.9605,
+      "ledgerProjectedMs": 2.98,
+      "owningSeam": "src/reviewer-bundle-materializer.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-bundle-materializer.test.ts:12. Cheaper construction: Rebuild at cheaper seam: 法条③ (闸类负向案不可删，只能修好) + 法条② (现构造证不出它自称的契约，且带死夹具) Ledger projectedMs≈2.98.",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Hostile paths via compileMechanicalBundle material id; specific confined message; shared roots.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/reviewer-bundle-materializer.test.ts::materializer rejects digest and manifest mutation atomically": {
+      "ledgerFile": "test/reviewer-bundle-materializer.test.ts",
+      "currentFile": "test/unit/reviewer-bundle-materializer.test.ts",
+      "test": "materializer rejects digest and manifest mutation atomically",
+      "ledgerDurationMs": 2.46125,
+      "ledgerProjectedMs": 1.23,
+      "owningSeam": "src/reviewer-bundle-materializer.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-bundle-materializer.test.ts:11. Cheaper construction: drop both mkdtemp/rm, pass any string as workspace, and assert the specific message; if atomicity is gen",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "No tmpdir; assert specific digest/manifest mismatch message.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/judge-role.test.ts::named Judge and worker tools preserve exact metadata, schema leaves, and receipts": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "named Judge and worker tools preserve exact metadata, schema leaves, and receipts",
+      "ledgerDurationMs": 4.427875,
+      "ledgerProjectedMs": 2.21,
+      "owningSeam": "src/worker-role.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/judge-role.test.ts:343. Cheaper construction: keep :429-437 (closed schema, property/branch key order) and :440-453 (receipt terminate/details/usage), construct via cr",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Focused create*RoleRuntime construction; structural schema/receipt asserts; prose deepEqual → nonblank+names-tool.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::stable factory preserves exact Judge, Fixer, and Coder prompt bytes": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "stable factory preserves exact Judge, Fixer, and Coder prompt bytes",
+      "ledgerDurationMs": 4.173167,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "src/worker-role.ts Fixer activation/prerequisites + src/package-contracts/fixer-packet.ts",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/judge-role.test.ts:297. Cheaper construction: Merge into: judge row → :235 (focused Judge controller, already asserts this string",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Byte-exact envelopes folded into focused Judge/Fixer/Coder controllers (and fixer apply envelope test).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::coder apply binds completion to the immediately following canonical tdd expansion": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "coder apply binds completion to the immediately following canonical tdd expansion",
+      "ledgerDurationMs": 2.173792,
+      "ledgerProjectedMs": 1.09,
+      "owningSeam": "src/judge-role.ts activation tool narrowing",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/judge-role.test.ts:1581. Cheaper construction: delete the 7-row malformed loop and keep exactly ONE negative row to prove the completed-gate itself (law ③ requires one",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Kept one malformed completed-gate row; full spelling matrix remains in canonical-skill-binding.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::judge role rejects mixed and blank verdict shapes before soul audit": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "judge role rejects mixed and blank verdict shapes before soul audit",
+      "ledgerDurationMs": 1.97975,
+      "ledgerProjectedMs": 0.99,
+      "owningSeam": "src/compliance-transport.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/judge-output-contract.test.ts. Cheaper construction: move the 13 rows to test/judge-output-contract.test.ts (extend its existing `assert.throws(() => validateAcceptedJ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shape matrix in judge-output-contract; one tool-route gate proves pre-audit ordering.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::declared plan refusal, apply refusal, and partial apply each reach exactly one fresh audit": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "declared plan refusal, apply refusal, and partial apply each reach exactly one fresh audit",
+      "ledgerDurationMs": 1.562375,
+      "ledgerProjectedMs": 0.781,
+      "owningSeam": "src/judge-role.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-role.test.ts :: \"declared plan refusal, apply refusal, and partial apply each reach exactly one fresh audit\". Former survivor mapping fail",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Apply refusal+partial on shared harness; plan refusal keeps one plan-phase carrier; distinct frozen audits asserted.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::judge role audits only adjudicative fields while retaining evidence in receipts": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "judge role audits only adjudicative fields while retaining evidence in receipts",
+      "ledgerDurationMs": 1.501166,
+      "ledgerProjectedMs": 0.751,
+      "owningSeam": "src/judge-role.ts audit projection + src/package-contracts/judge-output.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-role.test.ts :: \"judge role audits only adjudicative fields while retaining evidence in receipts\". Former survivor mapping failed open-bod",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "projectJudgeVerdictForAudit unit table covers three statuses; production projection keeps receipt evidence.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::Fixer apply accepts differently named classes with a shared commit and rejects duplicate names or missing pointers": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "Fixer apply accepts differently named classes with a shared commit and rejects duplicate names or missing pointers",
+      "ledgerDurationMs": 0.935125,
+      "ledgerProjectedMs": 0.468,
+      "owningSeam": "src/worker-role.ts Fixer output route + src/package-contracts/fixer-output.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-role.test.ts :: \"Fixer apply accepts differently named classes with a shared commit and rejects duplicate names or missing pointers\". Form",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared-commit accept + one reject on undeclared-prerequisite harness; validator rejects in fixer-contract hard-cuts.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::judge preserves an optional advisory note on every verdict": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "judge preserves an optional advisory note on every verdict",
+      "ledgerDurationMs": 0.928542,
+      "ledgerProjectedMs": 0.464,
+      "owningSeam": "src/audit-escalation.ts + src/judge-role.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-role.test.ts :: \"judge preserves an optional advisory note on every verdict\". Former survivor mapping failed open-body check: Opened survi",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Note round-trip on every status moved to judge-output-contract retained evidence+note table.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::worker output rejects malformed, unknown, blank, and non-object values": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "worker output rejects malformed, unknown, blank, and non-object values",
+      "ledgerDurationMs": 0.795708,
+      "ledgerProjectedMs": 0.398,
+      "owningSeam": "src/worker-role.ts Fixer output route + src/package-contracts/fixer-output.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-role.test.ts :: \"worker output rejects malformed, unknown, blank, and non-object values\". Former survivor mapping failed open-body check: ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Named diagnostics in fixer-contract hard-cuts; one null tool-route gate on undeclared harness.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::Fixer activation rejects empty or trim-blank instructions before installing its tool": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "Fixer activation rejects empty or trim-blank instructions before installing its tool",
+      "ledgerDurationMs": 0.735208,
+      "ledgerProjectedMs": 0.368,
+      "owningSeam": "src/worker-role.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-role.test.ts :: \"Fixer activation rejects empty or trim-blank instructions before installing its tool\". Former survivor mapping failed ope",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Merged into activation table with prerequisite rows; both diagnostics retained as distinct rows.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::Fixer audits unfinished attempts through the production route and revise permits corrected resubmission": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "Fixer audits unfinished attempts through the production route and revise permits corrected resubmission",
+      "ledgerDurationMs": 0.316083,
+      "ledgerProjectedMs": 0.158,
+      "owningSeam": "src/worker-role.ts Fixer output route + src/package-contracts/fixer-output.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-role.test.ts :: \"Fixer audits unfinished attempts through the production route and revise permits corrected resubmission\". Former survivor",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Revise→pass distinctness absorbed into prospective prerequisite production route (auditInputs[0] !== [1]).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/judge-role.test.ts::fixer plan phase accepts plans but rejects construction receipts": {
+      "ledgerFile": "test/judge-role.test.ts",
+      "currentFile": "test/contract/judge-role.test.ts",
+      "test": "fixer plan phase accepts plans but rejects construction receipts",
+      "ledgerDurationMs": 0.286625,
+      "ledgerProjectedMs": 0.143,
+      "owningSeam": "src/worker-role.ts Fixer output route + src/package-contracts/fixer-output.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/judge-role.test.ts :: \"fixer plan phase accepts plans but rejects construction receipts\". Former survivor mapping failed open-body check: Opened",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Plan accept + construction reject on focused Fixer controller; commit-bearing plan in fixer-contract hard-cuts.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/audit-escalation.test.ts::the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor": {
+      "ledgerFile": "test/audit-escalation.test.ts",
+      "currentFile": "test/contract/audit-escalation.test.ts",
+      "test": "the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor",
+      "ledgerDurationMs": 0.71,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "src/audit-escalation.ts",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/audit-escalation.test.ts:133. Cheaper construction: move line 134 to the top of the escalation loop test and drop the rest; the s",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "Census folded into escalation-loop fixture integrity assert; standalone test deleted.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    },
+    "test/fixer-contract.test.ts::every surviving Fixer rejection names its violated field or constraint": {
+      "ledgerFile": "test/fixer-contract.test.ts",
+      "currentFile": "test/unit/fixer-contract.test.ts",
+      "test": "every surviving Fixer rejection names its violated field or constraint",
+      "ledgerDurationMs": 0.349916,
+      "ledgerProjectedMs": 0.175,
+      "owningSeam": "src/package-contracts/fixer-output.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/fixer-contract.test.ts :: \"every surviving Fixer rejection names its violated field or constraint\". Former survivor mapping failed open-body che",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "Absorbed into hard-cuts table as per-row diagnostics; standalone test deleted.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    },
+    "test/doctor-auditor.test.ts::Doctor audit receives the frozen evidence index without replaying large session content": {
+      "ledgerFile": "test/doctor-auditor.test.ts",
+      "currentFile": "test/unit/doctor-auditor.test.ts",
+      "test": "Doctor audit receives the frozen evidence index without replaying large session content",
+      "ledgerDurationMs": 7.412875,
+      "ledgerProjectedMs": 3.71,
+      "owningSeam": "src/doctor-auditor.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/doctor-auditor.test.ts. Cheaper construction: one `patient(overrides)` builder in test/helpers/ (the directory already exists, alongside pi-test-harness.ts), imported ",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shrunk secret content payload; frozenEvidenceIndex still omits content at 50MB byteLength.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/judge-soul.test.ts::Judge Soul excludes process, schema, transport, platform, and issue carriers": {
+      "ledgerFile": "test/judge-soul.test.ts",
+      "currentFile": "test/contract/judge-soul.test.ts",
+      "test": "Judge Soul excludes process, schema, transport, platform, and issue carriers",
+      "ledgerDurationMs": 0.62425,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "souls/judge.md (Soul prose surface; delete-class wording except carrier-purity)",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/judge-soul.test.ts:75. Cheaper construction: one test, one shared table, twelve souls. Merge rejection: Opened judge-soul :75-109",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Shared denylist table over all souls/*.md; wording fossils dropped.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "48283e3"
+      }
+    },
+    "test/reviewer-construction-seams.test.ts::construction is deterministic from admitted immutable inputs and frozen evidence": {
+      "ledgerFile": "test/reviewer-construction-seams.test.ts",
+      "currentFile": "test/unit/reviewer-construction-seams.test.ts",
+      "test": "construction is deterministic from admitted immutable inputs and frozen evidence",
+      "ledgerDurationMs": 0.602833,
+      "ledgerProjectedMs": 0,
+      "owningSeam": "src/reviewer-construction.ts + src/reviewer-admission.ts",
+      "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/reviewer-construction-seams.test.ts:18. Cheaper construction: delete this case and let reviewer-dispatch.test.ts:16 carry the det",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "Deleted pure self-double-call; production double-compiles.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    },
+    "test/class-contracts.test.ts::Judge class receipt enforces status, grammar, and exact-name uniqueness": {
+      "ledgerFile": "test/class-contracts.test.ts",
+      "currentFile": "test/contract/class-contracts.test.ts",
+      "test": "Judge class receipt enforces status, grammar, and exact-name uniqueness",
+      "ledgerDurationMs": 0.926792,
+      "ledgerProjectedMs": 0.463,
+      "owningSeam": "src/package-contracts/judge-output.ts + src/package-contracts/worker-output.ts",
+      "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/class-contracts.test.ts :: \"Judge class receipt enforces status, grammar, and exact-name uniqueness\". Former survivor mapping failed open-body c",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "continue-without-classes / name grammar / duplicate names moved into judge-output-contract mixed shapes table.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/class-contracts.test.ts::current Fixer settlement is independent while Coder remains byte-compatible and closed": {
+      "ledgerFile": "test/class-contracts.test.ts",
+      "currentFile": "test/contract/class-contracts.test.ts",
+      "test": "current Fixer settlement is independent while Coder remains byte-compatible and closed",
+      "ledgerDurationMs": 0.334916,
+      "ledgerProjectedMs": 0.17,
+      "owningSeam": "src/package-contracts/judge-output.ts + src/package-contracts/worker-output.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/class-contracts.test.ts. Cheaper construction: hoist `completed()` into test/helpers, import it here, and assert only the four routing/closure facts — the fixture stop",
+      "state": "executed",
+      "evidence": {
+        "kind": "construction-rebuild",
+        "note": "Hoisted completed() fixture; routing/closure facts only.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "63d67a9"
+      }
+    },
+    "test/reviewer-materialization-outcome-contracts.test.ts::materialization outcome type contracts compile": {
+      "ledgerFile": "test/reviewer-materialization-outcome-contracts.test.ts",
+      "currentFile": null,
+      "test": "materialization outcome type contracts compile",
+      "ledgerDurationMs": 0.461083,
+      "ledgerProjectedMs": 0.23,
+      "owningSeam": "src/reviewer-agent.ts materialization outcomes + src/package-contracts/reviewer-output.ts",
+      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-materialization-outcome-contracts.test.ts. Cheaper construction: 把三条 @ts-expect-error 断言留成纯 typecheck 夹具（挪出 `*.test.ts` glob、改名如 test/types/reviewer-materiali",
+      "state": "deleted",
+      "evidence": {
+        "kind": "cheaper-carrier-or-dead-self-proof",
+        "note": "Moved to test/types/reviewer-materialization.type-test.ts pure typecheck fixture; runtime test() deleted.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
+      }
+    }
+  },
+  "unfinishedKeys": [],
+  "notes": [
+    "Mandatory court classes reviewer-agent-rebuild-class-unexecuted and audit-failure-rebuild-class-unexecuted are executed this apply.",
+    "Package-tier entries whose Green was shared cold-install/pack are absorbed at 295e3d1 with consumer call-site evidence.",
+    "deleted = cheaper carrier absorbed the contract or pure self-proof removed; contract retained elsewhere where required.",
+    "Remaining unfinished keys keep contracts green under prior constructions; cheaper rebuild still owed (ADR-0050).",
+    "judge-role family + class-contracts rebuilt onto cheaper carriers (station 2d).",
+    "collector-ledger family rebuilt with injectable snapshotMaxBytes (station 2d).",
+    "collector-github family rebuilt: in-process abort/recovery, few-KiB R10, 1MiB EPIPE, one real kill (station 2d).",
+    "package-entrypoint family rebuilt: drop baseline, 3 presentation modes, source nested audits, thinner failure matrix (station 2d).",
+    "navigator-attendance + reviewer-bundle + pinned abbrev + judge-soul + doctor-auditor rebuilt (station 2d).",
+    "Station 2e: final 23 rebuild keys executed (judge-posture, activation-envelope, merger/pinned, collector-role/receipt/package-help)."
+  ],
+  "applyCommits": {
+    "reviewer-agent": "fe972da",
+    "audit-failure": "0f38a13",
+    "small": "eed97f9",
+    "ledger": "143a311",
+    "shared-fixture": "295e3d1f30a56640bef5426518ff21d0e57fed93",
+    "judge-role": "63d67a9",
+    "class-contracts": "63d67a9",
+    "collector-ledger": "e52cf71",
+    "collector-github": "3ac8800",
+    "package-entrypoint": "488281f",
+    "navigator-tail-small": "48283e3",
+    "judge-posture": "a94a79a",
+    "activation-envelope": "8050b81",
+    "merger-pinned": "255875c",
+    "collector-role-receipt": "61d59f9",
+    "station-2e": "61d59f9"
+  },
+  "constructionHead": "129252b",
+  "validation": {
+    "testedHead": "129252b",
+    "typecheck": "pass",
+    "testAll": {
+      "pass": 360,
+      "fail": 0,
+      "nodeDurationMs": 57491.891459,
+      "wallSeconds": 57.64,
+      "command": "npm run test:all"
+    },
+    "recordedAt": "2026-08-03T22:05:47.300Z",
+    "note": "Station 2l validation: test-only Collector limit overrides were removed entirely; the protected negative runs through production constants (commit 129252b)."
+  }
+}
