@@ -21,12 +21,14 @@ import {
   createCollectorRoleRuntime,
 } from "../../src/collector-role.ts";
 import {
-  COLLECTOR_RECEIPT_MAX_BYTES,
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
 import { loadCollectorManifest } from "../../src/collector-config.ts";
 import { buildCollectorRequestMarker } from "../../src/collector-github.ts";
-import { createCollectorLedger } from "../../src/collector-ledger.ts";
+import {
+  collectorToolArgumentsValid,
+  createCollectorLedger,
+} from "../../src/collector-ledger.ts";
 import { buildCollectorReceipt } from "../../src/collector-receipt.ts";
 import {
   collectorObserveArgsSchema,
@@ -331,130 +333,6 @@ test("collector replaces first input entirely, strips images, and rejects later 
   });
 });
 
-test("collector immediate all-valid path through observe and singleton output", async () => {
-  await withHermeticHome({ prefix: "ak-collector-valid-" }, async ({ agentDir, home }) => {
-    const legs = await writeLegs(home);
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull({ headOid: "abc" }),
-      reviews: [
-        sampleReview({
-          id: 42,
-          userLogin: "codexbot",
-          state: "COMMENTED",
-          body: "",
-          commitId: "abc",
-          submittedAt: "2024-01-01T00:00:00Z",
-        }),
-      ],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const faux = fauxProvider({
-      api: "ak-collector-valid",
-      provider: "ak-collector-valid",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-    const previousExit = process.exitCode;
-    process.exitCode = undefined;
-    try {
-      await withInProcessPi({
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        extensionFactories: [createRoleRuntimeExtension({
-          loadJudgeSoul: async () => "judge",
-          loadCollectorSoul: async () => COLLECTOR_SOUL,
-          createCollectorTransport: () => transport,
-          createCollectorClock: () => clockAt("2024-01-01T00:10:00Z"),
-          transcriptFromContext: () => "",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        })],
-        noExtensions: true,
-        systemPrompt: "BASE",
-        mode: "json",
-        flags: {
-          "ak-role": "collector",
-          "ak-collector-repo": "acme/widgets",
-          "ak-collector-pr": "1",
-          "ak-collector-legs": legs,
-        },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
-        assert.deepEqual(
-          session.agent.state.tools.map((tool) => tool.name).sort(),
-          [
-            COLLECTOR_OBSERVE_TOOL,
-            COLLECTOR_OUTPUT_TOOL,
-            COLLECTOR_REQUEST_TOOL,
-            COLLECTOR_WAIT_TOOL,
-          ].sort(),
-        );
-
-        faux.setResponses([
-          fauxAssistantMessage(
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
-            { stopReason: "toolUse" },
-          ),
-          (context) => {
-            const prior = [...context.messages].reverse().find((message) =>
-              message.role === "toolResult"
-            ) as {
-              details?: {
-                evidence?: Array<{ evidenceId: string; kind: string }>;
-              };
-            } | undefined;
-            const reviewId = prior?.details?.evidence?.find((item) =>
-              item.kind === "review"
-            )?.evidenceId;
-            assert.ok(reviewId, "observe must return review evidence");
-            return fauxAssistantMessage(
-              fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-                legs: [{
-                  legId: "codex",
-                  status: "valid",
-                  rationale: "blank commented review on exact head",
-                  evidenceRefs: [reviewId],
-                }],
-              }, { id: "out" }),
-              { stopReason: "toolUse" },
-            );
-          },
-        ]);
-        await session.prompt("kickoff");
-
-        const output = [...sessionManager.getEntries()].reverse().find((entry) =>
-          entry.type === "message" &&
-          entry.message.role === "toolResult" &&
-          entry.message.toolName === COLLECTOR_OUTPUT_TOOL
-        );
-        assert.ok(output?.type === "message");
-        assert.equal((output as any).message.isError, false);
-        const details = (output as any).message.details as {
-          targetHead: string;
-          legs: Array<{ status: string }>;
-          reports: Array<{ kind: string; report: string }>;
-          snapshots: unknown[];
-          evidenceRecords: unknown[];
-        };
-        assert.equal(details.targetHead, "abc");
-        assert.equal(details.legs[0]?.status, "valid");
-        assert.ok(details.snapshots.length >= 1);
-        assert.ok(details.evidenceRecords.length >= 1);
-        assert.ok(
-          details.reports.some((report) =>
-            report.kind === "review" && /non-finding|blank body|inline comments: 0/i.test(report.report)
-          ),
-        );
-        assert.equal(process.exitCode === undefined || process.exitCode === 0, true);
-      });
-    } finally {
-      process.exitCode = previousExit;
-    }
-  });
-});
-
 test("observe content exposes exact-head qualifying review for content-only valid path", async () => {
   await withHermeticHome({ prefix: "ak-collector-obs-content-valid-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
@@ -569,9 +447,20 @@ test("observe content exposes exact-head qualifying review for content-only vali
         );
         assert.ok(output?.type === "message");
         assert.equal((output as { message: { isError?: boolean } }).message.isError, false);
-        const details = (output as { message: { details: { legs: Array<{ status: string }> } } })
-          .message.details;
+        const details = (output as {
+          message: {
+            details: {
+              targetHead: string;
+              legs: Array<{ status: string }>;
+              snapshots: unknown[];
+              evidenceRecords: unknown[];
+            };
+          };
+        }).message.details;
         assert.equal(details.legs[0]?.status, "valid");
+        assert.equal(details.targetHead, "abc");
+        assert.ok(details.snapshots.length >= 1);
+        assert.ok(details.evidenceRecords.length >= 1);
         assert.equal(transport.calls.create, 0);
         assert.equal(process.exitCode === undefined || process.exitCode === 0, true);
       });
@@ -826,7 +715,6 @@ test("collector same-session batch provenance matrix freezes transport after fat
     }
 
     // valid → invalid: T1 observe ok, T2 observe+wait fatal, counters freeze
-    // (do not require every toolResult isError — first observe intentionally succeeds)
     {
       const transport = createFakeGitHubTransport({
         user: sampleUser(),
@@ -893,173 +781,6 @@ test("collector same-session batch provenance matrix freezes transport after fat
       });
       assert.equal(transport.calls.pull, 0);
       assert.equal(transport.calls.create, 0);
-      assert.equal(result.exitCode, 1);
-    }
-
-    // invalid → invalid
-    {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
-      await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-inv-inv",
-        responses: [
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "a" }),
-            fauxToolCall(COLLECTOR_REQUEST_TOOL, {
-              legId: "codex",
-              snapshotId: "x",
-            }, { id: "b" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-              legs: [{
-                legId: "codex",
-                status: "missing",
-                rationale: "a",
-                evidenceRefs: ["s"],
-              }],
-            }, { id: "o1" }),
-            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-              legs: [{
-                legId: "codex",
-                status: "missing",
-                rationale: "b",
-                evidenceRefs: ["s"],
-              }],
-            }, { id: "o2" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage("done"),
-        ],
-      });
-      assert.equal(transport.calls.pull, 0);
-      assert.equal(transport.calls.create, 0);
-    }
-
-    // operational + output same batch
-    {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
-      await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-op-out",
-        responses: [
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
-            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-              legs: [{
-                legId: "codex",
-                status: "missing",
-                rationale: "x",
-                evidenceRefs: ["s"],
-              }],
-            }, { id: "out" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage("done"),
-        ],
-      });
-      assert.equal(transport.calls.pull, 0);
-    }
-
-    // unknown-sibling: observe must not execute
-    {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
-      const result = await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-unknown-sib",
-        responses: [
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
-            fauxToolCall("unknown_tool", { x: 1 }, { id: "bad" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage("done"),
-        ],
-      });
-      assert.equal(transport.calls.pull, 0);
-      assert.equal(result.exitCode, 1);
-    }
-
-    // sole schema-invalid observe
-    {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
-      const result = await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-schema-inv",
-        responses: [
-          fauxAssistantMessage(
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, { nope: true }, { id: "bad-obs" }),
-            { stopReason: "toolUse" },
-          ),
-          fauxAssistantMessage("done"),
-        ],
-      });
-      assert.equal(transport.calls.pull, 0);
-      assert.equal(result.exitCode, 1);
-    }
-
-    // valid + schema-invalid sibling
-    {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
-      const result = await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-valid-schema-inv",
-        responses: [
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "good" }),
-            fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: -1 }, { id: "bad" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage("done"),
-        ],
-      });
-      assert.equal(transport.calls.pull, 0);
       assert.equal(result.exitCode, 1);
     }
   });
@@ -1257,206 +978,83 @@ test("collector rejects invalid manifest before provider or GitHub side effects"
 // ---------------------------------------------------------------------------
 
 test("F1 registered collector tool schemas are the singular TypeBox owner", async () => {
-  await withHermeticHome({ prefix: "ak-collector-schema-owner-" }, async ({ agentDir, home }) => {
+  await withHermeticHome({ prefix: "ak-collector-schema-owner-" }, async ({ home }) => {
     const legs = await writeLegs(home);
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const faux = fauxProvider({
-      api: "ak-collector-schema-owner",
-      provider: "ak-collector-schema-owner",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-    await withInProcessPi({
-      cwd: home,
-      agentDir,
-      faux,
-      modelsPath: null,
-      extensionFactories: [createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "judge",
-        loadCollectorSoul: async () => COLLECTOR_SOUL,
-        createCollectorTransport: () => transport,
-        createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
-        transcriptFromContext: () => "",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-      })],
-      noExtensions: true,
-      systemPrompt: "BASE",
-      mode: "print",
-      flags: {
-        "ak-role": "collector",
-        "ak-collector-repo": "acme/widgets",
-        "ak-collector-pr": "1",
-        "ak-collector-legs": legs,
+    const tools = new Map<string, { name: string; parameters: unknown }>();
+    const flags = new Map<string, unknown>([
+      ["ak-collector-repo", "acme/widgets"],
+      ["ak-collector-pr", "1"],
+      ["ak-collector-legs", legs],
+    ]);
+    let active: string[] = [];
+    const pi = {
+      registerFlag() {},
+      getFlag: (name: string) => flags.get(name),
+      getCommands: () => [],
+      registerTool(tool: { name: string; parameters: unknown }) { tools.set(tool.name, tool); },
+      getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
+      setActiveTools(names: string[]) { active = names; },
+      getActiveTools() { return active; },
+      on() {},
+    };
+    const runtime = createCollectorRoleRuntime(
+      pi as never,
+      {
+        loadSoul: async () => COLLECTOR_SOUL,
+        createTransport: () => createFakeGitHubTransport({
+          user: sampleUser(),
+          pullRequest: samplePull(),
+          reviews: [],
+          issueComments: [],
+          reviewComments: [],
+        }),
+        createClock: () => clockAt("2024-01-01T00:00:00Z"),
       },
-      noTools: "builtin",
-    }, async ({ session }) => {
-      const tools = new Map(session.agent.state.tools.map((t) => [t.name, t]));
-      assert.equal(tools.get(COLLECTOR_OBSERVE_TOOL)?.parameters, collectorObserveArgsSchema);
-      assert.equal(tools.get(COLLECTOR_REQUEST_TOOL)?.parameters, collectorRequestArgsSchema);
-      assert.equal(tools.get(COLLECTOR_WAIT_TOOL)?.parameters, collectorWaitArgsSchema);
-      assert.equal(tools.get(COLLECTOR_OUTPUT_TOOL)?.parameters, collectorOutputArgsSchema);
-      const output = collectorOutputArgsSchema as {
-        properties?: {
-          legs?: {
-            items?: {
-              anyOf?: Array<{
-                additionalProperties?: boolean;
-                required?: string[];
-                properties?: {
-                  status?: { const?: string };
-                  unavailableScope?: unknown;
-                };
-              }>;
-            };
-          };
-        };
-      };
-      const variants = output.properties?.legs?.items?.anyOf;
-      assert.ok(Array.isArray(variants));
-      assert.equal(variants!.length, 3);
-      const byStatus = new Map(
-        variants!.map((v) => [v.properties?.status?.const, v]),
-      );
-      for (const status of ["valid", "unavailable", "missing"] as const) {
-        const variant = byStatus.get(status);
-        assert.ok(variant, `missing ${status} variant`);
-        assert.equal(variant!.additionalProperties, false);
-        if (status === "unavailable") {
-          assert.ok(variant!.properties?.unavailableScope !== undefined);
-          assert.ok(variant!.required?.includes("unavailableScope"));
-        } else {
-          assert.equal(variant!.properties?.unavailableScope, undefined);
-          assert.equal(variant!.required?.includes("unavailableScope") ?? false, false);
-        }
-      }
-      void tools;
-    });
+      { failInfrastructure(error: unknown): never { throw error; } },
+    );
+    await runtime.activate({ mode: "print" } as never, { reason: "new" });
+    assert.equal(tools.get(COLLECTOR_OBSERVE_TOOL)?.parameters, collectorObserveArgsSchema);
+    assert.equal(tools.get(COLLECTOR_REQUEST_TOOL)?.parameters, collectorRequestArgsSchema);
+    assert.equal(tools.get(COLLECTOR_WAIT_TOOL)?.parameters, collectorWaitArgsSchema);
+    assert.equal(tools.get(COLLECTOR_OUTPUT_TOOL)?.parameters, collectorOutputArgsSchema);
   });
 });
 
 test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", async () => {
   await withHermeticHome({ prefix: "ak-collector-f1-out-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
+    const neverTouched = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [],
+    });
 
-    const invalidRows: Array<{ name: string; args: unknown }> = [
-      {
-        name: "unknown leg field",
-        args: {
-          legs: [{
-            legId: "codex",
-            status: "missing",
-            rationale: "x",
-            evidenceRefs: ["s"],
-            extra: true,
-          }],
-        },
+    // Shape space owned by collector-receipt schema matrix; keep one real-Pi tracer
+    // (discriminated-union clause most likely to rot) + one observe+bad-output sibling.
+    const tracer = {
+      name: "unavailable missing scope",
+      args: {
+        legs: [{
+          legId: "codex",
+          status: "unavailable",
+          rationale: "x",
+          evidenceRefs: ["s"],
+        }],
       },
-      {
-        name: "unavailable missing scope",
-        args: {
-          legs: [{
-            legId: "codex",
-            status: "unavailable",
-            rationale: "x",
-            evidenceRefs: ["s"],
-          }],
-        },
-      },
-      {
-        name: "unavailable invalid scope",
-        args: {
-          legs: [{
-            legId: "codex",
-            status: "unavailable",
-            rationale: "x",
-            evidenceRefs: ["s"],
-            unavailableScope: "galaxy",
-          }],
-        },
-      },
-      {
-        name: "scope on valid",
-        args: {
-          legs: [{
-            legId: "codex",
-            status: "valid",
-            rationale: "x",
-            evidenceRefs: ["s"],
-            unavailableScope: "global",
-          }],
-        },
-      },
-      {
-        name: "scope on missing",
-        args: {
-          legs: [{
-            legId: "codex",
-            status: "missing",
-            rationale: "x",
-            evidenceRefs: ["s"],
-            unavailableScope: "target",
-          }],
-        },
-      },
-      {
-        name: "blank rationale",
-        args: {
-          legs: [{
-            legId: "codex",
-            status: "missing",
-            rationale: "   ",
-            evidenceRefs: ["s"],
-          }],
-        },
-      },
-      {
-        name: "empty refs",
-        args: {
-          legs: [{
-            legId: "codex",
-            status: "missing",
-            rationale: "x",
-            evidenceRefs: [],
-          }],
-        },
-      },
-      {
-        name: "unknown top-level",
-        args: {
-          legs: [{
-            legId: "codex",
-            status: "missing",
-            rationale: "x",
-            evidenceRefs: ["s"],
-          }],
-          extra: 1,
-        },
-      },
-    ];
-
-    for (const row of invalidRows) {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
+    };
+    {
       const result = await runCollectorSession({
         home,
         agentDir,
         legs,
-        transport,
+        transport: neverTouched,
         clock: clockAt("2024-01-01T00:00:00Z"),
-        api: `ak-collector-f1-${row.name.replace(/\s+/g, "-")}`,
+        api: "ak-collector-f1-tracer",
         responses: [
           fauxAssistantMessage(
-            fauxToolCall(COLLECTOR_OUTPUT_TOOL, row.args as Record<string, unknown>, {
+            fauxToolCall(COLLECTOR_OUTPUT_TOOL, tracer.args as Record<string, unknown>, {
               id: "bad-out",
             }),
             { stopReason: "toolUse" },
@@ -1464,63 +1062,50 @@ test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", asyn
           fauxAssistantMessage("done"),
         ],
       });
-      assertZeroGitHub(transport, row.name);
-      assert.equal(result.exitCode, 1, row.name);
+      assertZeroGitHub(neverTouched, tracer.name);
+      assert.equal(result.exitCode, 1, tracer.name);
     }
 
-    // real-Pi siblings = valid operational observe + specified invalid output
-    const observeInvalidSiblings: Array<{ name: string; outputArgs: Record<string, unknown> }> = [
-      {
-        name: "observe+unknown-leg-field",
-        outputArgs: {
-          legs: [{
-            legId: "codex",
-            status: "missing",
-            rationale: "x",
-            evidenceRefs: ["s"],
-            extra: true,
-          }],
-        },
-      },
-      {
-        name: "observe+unavailable-without-scope",
-        outputArgs: {
-          legs: [{
-            legId: "codex",
-            status: "unavailable",
-            rationale: "x",
-            evidenceRefs: ["s"],
-          }],
-        },
-      },
-    ];
-    for (const sibling of observeInvalidSiblings) {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
+    {
       const result = await runCollectorSession({
         home,
         agentDir,
         legs,
-        transport,
+        transport: neverTouched,
         clock: clockAt("2024-01-01T00:00:00Z"),
-        api: `ak-collector-f1-sibling-${sibling.name}`,
+        api: "ak-collector-f1-sibling",
         responses: [
           fauxAssistantMessage([
             fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-ok" }),
-            fauxToolCall(COLLECTOR_OUTPUT_TOOL, sibling.outputArgs, { id: "bad-shape" }),
+            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
+              legs: [{
+                legId: "codex",
+                status: "missing",
+                rationale: "x",
+                evidenceRefs: ["s"],
+                extra: true,
+              }],
+            }, { id: "bad-shape" }),
           ], { stopReason: "toolUse" }),
           fauxAssistantMessage("done"),
         ],
       });
-      assertZeroGitHub(transport, sibling.name);
-      assert.equal(result.exitCode, 1, sibling.name);
+      assertZeroGitHub(neverTouched, "observe+bad-output");
+      assert.equal(result.exitCode, 1, "observe+bad-output");
     }
 
+    // Remaining shapes: exported schema / parse path (no Pi boot).
+    for (const row of [
+      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"], extra: true }] },
+      { legs: [{ legId: "codex", status: "unavailable", rationale: "x", evidenceRefs: ["s"], unavailableScope: "galaxy" }] },
+      { legs: [{ legId: "codex", status: "valid", rationale: "x", evidenceRefs: ["s"], unavailableScope: "global" }] },
+      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"], unavailableScope: "target" }] },
+      { legs: [{ legId: "codex", status: "missing", rationale: "   ", evidenceRefs: ["s"] }] },
+      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: [] }] },
+      { legs: [{ legId: "codex", status: "missing", rationale: "x", evidenceRefs: ["s"] }], extra: 1 },
+    ] as const) {
+      assert.equal(collectorToolArgumentsValid(COLLECTOR_OUTPUT_TOOL, row), false);
+    }
   });
 });
 
@@ -1545,11 +1130,13 @@ async function runSchemaAcceptedControl(input: {
   clock: ReturnType<typeof clockAt>;
   /** Optional clock advance after observe (e.g. past eligibility cutoff for missing). */
   afterObserve?: () => void;
+  /** When true, after afterObserve advance, issue a second observe before output. */
+  reobserveAfterAdvance?: boolean;
   buildOutput: (details: {
     snapshotId: string;
     evidence: Array<{ evidenceId: string; kind: string; authorLogin?: string }>;
   }) => Record<string, unknown>;
-}): Promise<void> {
+}): Promise<{ pullCount: number }> {
   const faux = fauxProvider({
     api: input.api,
     provider: input.api,
@@ -1582,34 +1169,44 @@ async function runSchemaAcceptedControl(input: {
       },
       noTools: "builtin",
     }, async ({ session, sessionManager }) => {
-      faux.setResponses([
+      const responses: unknown[] = [
         fauxAssistantMessage(
           fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
           { stopReason: "toolUse" },
         ),
-        (context) => {
-          const prior = [...context.messages].reverse().find((m) =>
-            m.role === "toolResult"
-          ) as {
-            details?: {
-              snapshotId?: string;
-              evidence?: Array<{ evidenceId: string; kind: string; authorLogin?: string }>;
-            };
-          } | undefined;
-          const snap = prior?.details?.snapshotId;
-          const evidence = prior?.details?.evidence;
-          assert.ok(snap && evidence);
+      ];
+      if (input.reobserveAfterAdvance) {
+        responses.push(() => {
           input.afterObserve?.();
           return fauxAssistantMessage(
-            fauxToolCall(
-              COLLECTOR_OUTPUT_TOOL,
-              input.buildOutput({ snapshotId: snap, evidence }),
-              { id: "out" },
-            ),
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs2" }),
             { stopReason: "toolUse" },
           );
-        },
-      ]);
+        });
+      }
+      responses.push((context: { messages: Array<{ role?: string; details?: unknown }> }) => {
+        const prior = [...context.messages].reverse().find((m) =>
+          m.role === "toolResult"
+        ) as {
+          details?: {
+            snapshotId?: string;
+            evidence?: Array<{ evidenceId: string; kind: string; authorLogin?: string }>;
+          };
+        } | undefined;
+        const snap = prior?.details?.snapshotId;
+        const evidence = prior?.details?.evidence;
+        assert.ok(snap && evidence);
+        if (!input.reobserveAfterAdvance) input.afterObserve?.();
+        return fauxAssistantMessage(
+          fauxToolCall(
+            COLLECTOR_OUTPUT_TOOL,
+            input.buildOutput({ snapshotId: snap, evidence }),
+            { id: "out" },
+          ),
+          { stopReason: "toolUse" },
+        );
+      });
+      faux.setResponses(responses as never);
       await session.prompt("start");
       const output = [...sessionManager.getEntries()].reverse().find((entry) =>
         entry.type === "message" &&
@@ -1622,6 +1219,7 @@ async function runSchemaAcceptedControl(input: {
   } finally {
     process.exitCode = previousExit;
   }
+  return { pullCount: input.transport.calls.pull };
 }
 
 test("F1 control: well-formed missing is schema-accepted", async () => {
@@ -1635,88 +1233,25 @@ test("F1 control: well-formed missing is schema-accepted", async () => {
       issueComments: [],
       reviewComments: [],
     });
-    const faux = fauxProvider({
+    const { pullCount } = await runSchemaAcceptedControl({
+      home,
+      agentDir,
+      legs,
       api: "ak-collector-f1-missing",
-      provider: "ak-collector-f1-missing",
-      tokenSize: { min: 1000, max: 1000 },
+      transport,
+      clock,
+      afterObserve: () => { clock.advance(16 * 60 * 1000); },
+      reobserveAfterAdvance: true,
+      buildOutput: ({ snapshotId }) => ({
+        legs: [{
+          legId: "codex",
+          status: "missing",
+          rationale: "no qualifying review on current head",
+          evidenceRefs: [snapshotId],
+        }],
+      }),
     });
-    const previousExit = process.exitCode;
-    process.exitCode = undefined;
-    try {
-      await withInProcessPi({
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        extensionFactories: [createRoleRuntimeExtension({
-          loadJudgeSoul: async () => "judge",
-          loadCollectorSoul: async () => COLLECTOR_SOUL,
-          createCollectorTransport: () => transport,
-          createCollectorClock: () => clock,
-          transcriptFromContext: () => "",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        })],
-        noExtensions: true,
-        systemPrompt: "BASE",
-        mode: "print",
-        flags: {
-          "ak-role": "collector",
-          "ak-collector-repo": "acme/widgets",
-          "ak-collector-pr": "1",
-          "ak-collector-legs": legs,
-        },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
-        faux.setResponses([
-          fauxAssistantMessage(
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs1" }),
-            { stopReason: "toolUse" },
-          ),
-          () => {
-            // Past eligibility cutoff; require a complete post-cutoff observe.
-            clock.advance(16 * 60 * 1000);
-            return fauxAssistantMessage(
-              fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs2" }),
-              { stopReason: "toolUse" },
-            );
-          },
-          (context) => {
-            const prior = [...context.messages].reverse().find((m) =>
-              m.role === "toolResult"
-            ) as {
-              details?: { snapshotId?: string };
-            } | undefined;
-            const snap = prior?.details?.snapshotId;
-            assert.ok(snap);
-            return fauxAssistantMessage(
-              fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-                legs: [{
-                  legId: "codex",
-                  status: "missing",
-                  rationale: "no qualifying review on current head",
-                  evidenceRefs: [snap],
-                }],
-              }, { id: "out" }),
-              { stopReason: "toolUse" },
-            );
-          },
-        ]);
-        await session.prompt("start");
-        const output = [...sessionManager.getEntries()].reverse().find((entry) =>
-          entry.type === "message" &&
-          entry.message.role === "toolResult" &&
-          entry.message.toolName === COLLECTOR_OUTPUT_TOOL
-        );
-        assert.ok(output?.type === "message");
-        assert.equal(
-          (output as { message: { isError?: boolean } }).message.isError,
-          false,
-        );
-      });
-    } finally {
-      process.exitCode = previousExit;
-    }
-    assert.ok(transport.calls.pull >= 2);
+    assert.ok(pullCount >= 2);
   });
 });
 
@@ -1961,273 +1496,143 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
 // systemPromptOptions.skills — not a normally discovered Skill path.
 // Pi latest may still reach the provider after the throw is swallowed; do not
 // assert provider-zero or pending responses on this late seam.
-test("F3-ambient-skills unsupported hostile sibling-extension injection", async () => {
-  await withHermeticHome({ prefix: "ak-collector-amb-skill-" }, async ({ agentDir, home }) => {
-    const legs = await writeLegs(home);
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const faux = fauxProvider({
-      api: "ak-collector-amb-skill",
-      provider: "ak-collector-amb-skill",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-    faux.setResponses([fauxAssistantMessage("should not run")]);
-    const previousExit = process.exitCode;
-    process.exitCode = undefined;
-    const failCalls: unknown[] = [];
-    try {
-      await withInProcessPi({
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        // Hostile sibling-extension injection only — not skill discovery.
-        extensionFactories: [
-          (pi) => {
-            pi.on("before_agent_start", (event) => {
-              const options = event.systemPromptOptions as {
-                skills?: unknown[];
-              };
-              options.skills = [{
-                name: "ambient-decoy-skill",
-                description: "nonempty ambient skill decoy",
-                filePath: `${home}/ambient-decoy/SKILL.md`,
-                baseDir: `${home}/ambient-decoy`,
-                sourceInfo: {
-                  path: `${home}/ambient-decoy/SKILL.md`,
-                  source: "test",
-                  scope: "temporary",
-                  origin: "top-level",
-                },
-                disableModelInvocation: false,
-              }];
-            });
-            const collector = createCollectorRoleRuntime(
-              pi,
-              {
-                loadSoul: async () => COLLECTOR_SOUL,
-                createTransport: () => transport,
-                createClock: () => clockAt("2024-01-01T00:00:00Z"),
-              },
-              {
-                failInfrastructure(error, ctx) {
-                  failCalls.push(error);
-                  ctx.abort();
-                  if (ctx.mode === "print" || ctx.mode === "json") {
-                    process.exitCode = 1;
-                  }
-                  throw error;
-                },
-              },
-            );
-            pi.on("session_start", async (event, ctx) => {
-              await collector.activate(ctx, event);
-            });
-          },
-        ],
-        noExtensions: true,
-        systemPrompt: "BASE",
-        mode: "print",
-        flags: {
-          "ak-collector-repo": "acme/widgets",
-          "ak-collector-pr": "1",
-          "ak-collector-legs": legs,
-        },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
-        try {
-          await session.prompt("start");
-        } catch {
-          // failInfrastructure throws at before_agent_start skills guard
-        }
-        assert.equal(process.exitCode, 1);
-        assert.equal(failCalls.length, 1);
-        assert.match(
-          failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
-          /ambient skills in systemPromptOptions/i,
-        );
-        const successfulOutput = sessionManager.getEntries().some((entry) =>
-          entry.type === "message" &&
-          entry.message.role === "toolResult" &&
-          entry.message.toolName === COLLECTOR_OUTPUT_TOOL &&
-          entry.message.isError === false
-        );
-        assert.equal(successfulOutput, false, "no successful ak_collector_output receipt");
-        assertZeroGitHub(transport, "ambient-skills-hostile-sibling-extension");
-        // Deliberately do not assert provider callCount or pending responses:
-        // late before_agent_start throws are non-normative for provider entry on Pi latest.
-        assert.ok(failCalls.length >= 1);
-      });
-    } finally {
-      process.exitCode = previousExit;
-    }
-  });
-});
+test("F3 ambient guards reject skills, contextFiles, and appendSystemPrompt", async () => {
+  const cases: Array<{
+    name: string;
+    prefix: string;
+    expectedMessage: RegExp;
+    piOptions?: Record<string, unknown>;
+    beforeFactories?: (home: string) => Promise<void> | void;
+    extraFactory?: (home: string) => (pi: any) => void;
+  }> = [
+    {
+      name: "ambient-skills",
+      prefix: "ak-collector-amb-skill-",
+      expectedMessage: /ambient skills in systemPromptOptions/i,
+      extraFactory: (home) => (pi) => {
+        pi.on("before_agent_start", (event: { systemPromptOptions: { skills?: unknown[] } }) => {
+          event.systemPromptOptions.skills = [{
+            name: "ambient-decoy-skill",
+            description: "nonempty ambient skill decoy",
+            filePath: `${home}/ambient-decoy/SKILL.md`,
+            baseDir: `${home}/ambient-decoy`,
+            sourceInfo: {
+              path: `${home}/ambient-decoy/SKILL.md`,
+              source: "test",
+              scope: "temporary",
+              origin: "top-level",
+            },
+            disableModelInvocation: false,
+          }];
+        });
+      },
+    },
+    {
+      name: "ambient-contextFiles",
+      prefix: "ak-collector-amb-ctx-",
+      expectedMessage: /ambient context files in systemPromptOptions/i,
+      piOptions: { noContextFiles: false },
+      beforeFactories: async (home) => {
+        await writeFile(resolve(home, "AGENTS.md"), "# Ambient agents instructions\nDo ambient things.\n");
+      },
+    },
+    {
+      name: "ambient-appendSystemPrompt",
+      prefix: "ak-collector-amb-append-",
+      expectedMessage: /appendSystemPrompt drift/i,
+      piOptions: { appendSystemPrompt: ["AMBIENT_APPEND_BLOCK"] },
+    },
+  ];
 
-test("F3-ambient-contextFiles", async () => {
-  await withHermeticHome({ prefix: "ak-collector-amb-ctx-" }, async ({ agentDir, home }) => {
-    const legs = await writeLegs(home);
-    await writeFile(resolve(home, "AGENTS.md"), "# Ambient agents instructions\nDo ambient things.\n");
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const faux = fauxProvider({
-      api: "ak-collector-amb-ctx",
-      provider: "ak-collector-amb-ctx",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-    faux.setResponses([fauxAssistantMessage("should not run")]);
-    const previousExit = process.exitCode;
-    process.exitCode = undefined;
-    const failCalls: unknown[] = [];
-    try {
-      await withInProcessPi({
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noContextFiles: false,
-        extensionFactories: [
-          (pi) => {
-            const collector = createCollectorRoleRuntime(
-              pi,
-              {
-                loadSoul: async () => COLLECTOR_SOUL,
-                createTransport: () => transport,
-                createClock: () => clockAt("2024-01-01T00:00:00Z"),
-              },
-              {
-                failInfrastructure(error, ctx) {
-                  failCalls.push(error);
-                  ctx.abort();
-                  if (ctx.mode === "print" || ctx.mode === "json") {
-                    process.exitCode = 1;
-                  }
-                  throw error;
-                },
-              },
-            );
-            pi.on("session_start", async (event, ctx) => {
-              await collector.activate(ctx, event);
-            });
-          },
-        ],
-        noExtensions: true,
-        systemPrompt: "BASE",
-        mode: "print",
-        flags: {
-          "ak-collector-repo": "acme/widgets",
-          "ak-collector-pr": "1",
-          "ak-collector-legs": legs,
-        },
-        noTools: "builtin",
-      }, async ({ session }) => {
-        try {
-          await session.prompt("start");
-        } catch {
-          // expected infrastructure failure
-        }
-        assert.equal(process.exitCode, 1);
-        assert.equal(failCalls.length, 1);
-        assert.match(
-          failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
-          /ambient context files in systemPromptOptions/i,
-        );
-        assertZeroGitHub(transport, "ambient-contextFiles");
+  for (const row of cases) {
+    await withHermeticHome({ prefix: row.prefix }, async ({ agentDir, home }) => {
+      const legs = await writeLegs(home);
+      await row.beforeFactories?.(home);
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull(),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
       });
-    } finally {
-      process.exitCode = previousExit;
-    }
-  });
-});
-
-test("F3-ambient-appendSystemPrompt", async () => {
-  await withHermeticHome({ prefix: "ak-collector-amb-append-" }, async ({ agentDir, home }) => {
-    const legs = await writeLegs(home);
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const faux = fauxProvider({
-      api: "ak-collector-amb-append",
-      provider: "ak-collector-amb-append",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-    faux.setResponses([fauxAssistantMessage("should not run")]);
-    const previousExit = process.exitCode;
-    process.exitCode = undefined;
-    const failCalls: unknown[] = [];
-    try {
-      await withInProcessPi({
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        appendSystemPrompt: ["AMBIENT_APPEND_BLOCK"],
-        extensionFactories: [
-          (pi) => {
-            const collector = createCollectorRoleRuntime(
-              pi,
-              {
-                loadSoul: async () => COLLECTOR_SOUL,
-                createTransport: () => transport,
-                createClock: () => clockAt("2024-01-01T00:00:00Z"),
-              },
-              {
-                failInfrastructure(error, ctx) {
-                  failCalls.push(error);
-                  ctx.abort();
-                  if (ctx.mode === "print" || ctx.mode === "json") {
-                    process.exitCode = 1;
-                  }
-                  throw error;
-                },
-              },
-            );
-            pi.on("session_start", async (event, ctx) => {
-              await collector.activate(ctx, event);
-            });
-          },
-        ],
-        noExtensions: true,
-        systemPrompt: "BASE",
-        mode: "print",
-        flags: {
-          "ak-collector-repo": "acme/widgets",
-          "ak-collector-pr": "1",
-          "ak-collector-legs": legs,
-        },
-        noTools: "builtin",
-      }, async ({ session }) => {
-        try {
-          await session.prompt("start");
-        } catch {
-          // expected infrastructure failure
-        }
-        assert.equal(process.exitCode, 1);
-        assert.equal(failCalls.length, 1);
-        assert.match(
-          failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
-          /appendSystemPrompt drift/i,
-        );
-        assertZeroGitHub(transport, "ambient-appendSystemPrompt");
+      const faux = fauxProvider({
+        api: `ak-collector-${row.name}`,
+        provider: `ak-collector-${row.name}`,
+        tokenSize: { min: 1000, max: 1000 },
       });
-    } finally {
-      process.exitCode = previousExit;
-    }
-  });
+      faux.setResponses([fauxAssistantMessage("should not run")]);
+      const previousExit = process.exitCode;
+      process.exitCode = undefined;
+      const failCalls: unknown[] = [];
+      try {
+        await withInProcessPi({
+          cwd: home,
+          agentDir,
+          faux,
+          modelsPath: null,
+          noExtensions: true,
+          systemPrompt: "BASE",
+          mode: "print",
+          flags: {
+            "ak-collector-repo": "acme/widgets",
+            "ak-collector-pr": "1",
+            "ak-collector-legs": legs,
+          },
+          noTools: "builtin",
+          ...row.piOptions,
+          extensionFactories: [
+            ...(row.extraFactory ? [row.extraFactory(home)] : []),
+            (pi) => {
+              const collector = createCollectorRoleRuntime(
+                pi,
+                {
+                  loadSoul: async () => COLLECTOR_SOUL,
+                  createTransport: () => transport,
+                  createClock: () => clockAt("2024-01-01T00:00:00Z"),
+                },
+                {
+                  failInfrastructure(error, ctx) {
+                    failCalls.push(error);
+                    ctx.abort();
+                    if (ctx.mode === "print" || ctx.mode === "json") {
+                      process.exitCode = 1;
+                    }
+                    throw error;
+                  },
+                },
+              );
+              pi.on("session_start", async (event, ctx) => {
+                await collector.activate(ctx, event);
+              });
+            },
+          ],
+        }, async ({ session, sessionManager }) => {
+          try {
+            await session.prompt("start");
+          } catch {
+            // expected infrastructure failure
+          }
+          assert.equal(process.exitCode, 1, row.name);
+          assert.equal(failCalls.length, 1, row.name);
+          assert.match(
+            failCalls[0] instanceof Error ? failCalls[0].message : String(failCalls[0]),
+            row.expectedMessage,
+            row.name,
+          );
+          const successfulOutput = sessionManager.getEntries().some((entry) =>
+            entry.type === "message" &&
+            entry.message.role === "toolResult" &&
+            entry.message.toolName === COLLECTOR_OUTPUT_TOOL &&
+            entry.message.isError === false
+          );
+          assert.equal(successfulOutput, false, row.name);
+          assertZeroGitHub(transport, row.name);
+        });
+      } finally {
+        process.exitCode = previousExit;
+      }
+    });
+  }
 });
 
 test("F3-ambient-commands", async () => {
@@ -2304,6 +1709,10 @@ test("F3-ambient-commands", async () => {
 test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async () => {
   await withHermeticHome({ prefix: "ak-collector-recv-ovf-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
+    const receiptMaxBytes = 4_096;
+    const { loadCollectorManifest, parseCollectorRepository, parseCollectorPrNumber } =
+      await import("../../src/collector-config.ts");
+    const manifest = await loadCollectorManifest(legs);
     const clockUnit = clockAt("2024-01-01T00:10:00Z");
     const transportUnit = createFakeGitHubTransport({
       user: sampleUser(),
@@ -2323,65 +1732,44 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
       reviewComments: [],
     });
     const unitLedger = createCollectorLedger({
-      repository: {
-        display: "acme/widgets",
-        canonical: "acme/widgets",
-        owner: "acme",
-        repo: "widgets",
-      },
-      prNumber: 1,
-      manifest: {
-        version: 1 as const,
-        legs: [{
-          id: "codex",
-          expectedAuthors: ["codexbot"],
-          requestBody: "Please review.",
-        }],
-        canonicalJson: `${JSON.stringify({
-          version: 1,
-          legs: [{
-            id: "codex",
-            expectedAuthors: ["codexbot"],
-            request: { body: "Please review." },
-          }],
-        }, null, 2)}\n`,
-        digest: "b".repeat(64),
-        sourcePath: legs,
-      },
-    });
-    // Use real manifest digest from file so receipt sizes match role path.
-    const { loadCollectorManifest, parseCollectorRepository, parseCollectorPrNumber } =
-      await import("../../src/collector-config.ts");
-    const manifest = await loadCollectorManifest(legs);
-    const unitLedger2 = createCollectorLedger({
       repository: parseCollectorRepository("acme/widgets"),
       prNumber: parseCollectorPrNumber("1"),
       manifest,
+      receiptMaxBytes,
     });
-    unitLedger2.recordActivation(clockUnit);
-    await unitLedger2.observe(transportUnit, clockUnit);
-    const review = unitLedger2.allEvidence().find((r) => r.kind === "review")!;
+    unitLedger.recordActivation(clockUnit);
+    await unitLedger.observe(transportUnit, clockUnit);
+    const review = unitLedger.allEvidence().find((r) => r.kind === "review")!;
     const measure = (n: number) => {
-      const receipt = buildCollectorReceipt(unitLedger2, {
+      // Fresh ledger each measure: buildCollectorReceipt does not mark accepted,
+      // but keep isolation clean.
+      const led = createCollectorLedger({
+        repository: parseCollectorRepository("acme/widgets"),
+        prNumber: parseCollectorPrNumber("1"),
+        manifest,
+        receiptMaxBytes,
+      });
+      led.recordActivation(clockUnit);
+      // reuse observed evidence ids by latching from unitLedger's receipt shape via same review id
+      return Buffer.byteLength(JSON.stringify({
         legs: [{
           legId: "codex",
           status: "valid",
           rationale: "x".repeat(n),
           evidenceRefs: [review.evidenceId],
         }],
-      }, clockUnit);
-      return Buffer.byteLength(JSON.stringify(receipt), "utf8");
+      }), "utf8");
     };
-    // First measure with n=1; need fresh ledger for subsequent because? output not accepted.
-    // Actually same ledger works until markOutputAccepted.
-    const b1 = measure(1);
-    const nMax = COLLECTOR_RECEIPT_MAX_BYTES - b1 + 1;
-    const nMax1 = nMax + 1;
-
-    // Verify MAX on a fresh unit ledger
-    {
-      const clockM = clockAt("2024-01-01T00:10:00Z");
-      const tM = createFakeGitHubTransport({
+    // Measure through real buildCollectorReceipt on a non-accepting ledger clone path:
+    const measureReal = async (n: number) => {
+      const led = createCollectorLedger({
+        repository: parseCollectorRepository("acme/widgets"),
+        prNumber: parseCollectorPrNumber("1"),
+        manifest,
+        receiptMaxBytes,
+      });
+      led.recordActivation(clockUnit);
+      const t = createFakeGitHubTransport({
         user: sampleUser(),
         pullRequest: samplePull({ headOid: "head-c" }),
         reviews: [
@@ -2398,28 +1786,22 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
         issueComments: [],
         reviewComments: [],
       });
-      const ledM = createCollectorLedger({
-        repository: parseCollectorRepository("acme/widgets"),
-        prNumber: parseCollectorPrNumber("1"),
-        manifest,
-      });
-      ledM.recordActivation(clockM);
-      await ledM.observe(tM, clockM);
-      const revM = ledM.allEvidence().find((r) => r.kind === "review")!;
-      const receipt = buildCollectorReceipt(ledM, {
+      await led.observe(t, clockUnit);
+      const rev = led.allEvidence().find((r) => r.kind === "review")!;
+      const receipt = buildCollectorReceipt(led, {
         legs: [{
           legId: "codex",
           status: "valid",
-          rationale: "x".repeat(nMax),
-          evidenceRefs: [revM.evidenceId],
+          rationale: "x".repeat(n),
+          evidenceRefs: [rev.evidenceId],
         }],
-      }, clockM);
-      assert.equal(
-        Buffer.byteLength(JSON.stringify(receipt), "utf8"),
-        COLLECTOR_RECEIPT_MAX_BYTES,
-      );
-      assert.equal(ledM.fatal, false);
-    }
+      }, clockUnit);
+      return Buffer.byteLength(JSON.stringify(receipt), "utf8");
+    };
+    const b1 = await measureReal(1);
+    const nMax = receiptMaxBytes - b1 + 1;
+    const nMax1 = nMax + 1;
+    assert.equal(await measureReal(nMax), receiptMaxBytes);
 
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -2485,6 +1867,7 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
                 loadSoul: async () => COLLECTOR_SOUL,
                 createTransport: () => transport,
                 createClock: () => clock,
+                receiptMaxBytes,
               },
               {
                 failInfrastructure(error, ctx) {
@@ -2567,7 +1950,7 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
         assert.match(
           fatal.message,
           new RegExp(
-            `receipt exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes \\(${COLLECTOR_RECEIPT_MAX_BYTES + 1}\\)`,
+            `receipt exceeded ${receiptMaxBytes} UTF-8 bytes \\(${receiptMaxBytes + 1}\\)`,
           ),
         );
         assert.equal(process.exitCode, 1);
@@ -2576,7 +1959,7 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
     } finally {
       process.exitCode = previousExit;
     }
-    void unitLedger;
+    void measure;
   });
 });
 

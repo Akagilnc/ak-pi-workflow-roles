@@ -802,9 +802,11 @@ export function buildCollectorReceipt(
   };
 
   const bytes = Buffer.byteLength(JSON.stringify(receipt), "utf8");
-  if (bytes > COLLECTOR_RECEIPT_MAX_BYTES) {
+  const receiptMaxBytes =
+    ledger.config.receiptMaxBytes ?? COLLECTOR_RECEIPT_MAX_BYTES;
+  if (bytes > receiptMaxBytes) {
     throw ledger.latchFatal(
-      `Collector receipt exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes (${bytes})`,
+      `Collector receipt exceeded ${receiptMaxBytes} UTF-8 bytes (${bytes})`,
     );
   }
 
