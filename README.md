@@ -16,7 +16,7 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 | coder | **将作监** | 营造新作——首次实现 | 已建 |
 | fixer | **修内司** | 缮修既有——按修理包结算 | 已建 |
 | collector | **门下省** | 合并前收外证：等线上评审、区分 pending／terminal、绑定精确 HEAD，报**收集终态**（腿可为 `valid｜unavailable｜missing`） | 已建；不裁决、不批准，CI／可合并性／thread resolved 均非覆盖范围 |
-| navigator | **游奕使** | 随军游巡、先行备路、进言下一站；建议非授权，调用者可偏离 | 已建 |
+| （无 CLI） | **游奕使** | 随军游巡、先行备路、进言下一站；建议非授权，调用者可偏离 | 已建；共享生命周期自动出席，非 `--ak-role` |
 | merger | **校书郎** | 雠校两本——调和冲突集而不以意改字，需新决定则阙疑上呈 | 已建 |
 | doctor | 医生 | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建；`弘文馆` 挂起 |
 | — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；席位形态属 [#67](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/67) 素材，未定 |

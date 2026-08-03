@@ -170,10 +170,11 @@ function subjectPath(sessionDir, cwd = process.cwd()) {
   }
   return resolvedSession;
 }
-function navigatorSubjectKey(subjectRoot, subject) {
+function navigatorSubjectKey(subjectRoot, subject, provenance = "role_input") {
   if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
+  if (provenance === "placeholder") return subjectRoot;
   const normalized = subject.trim().replace(/\s+/g, " ");
-  if (normalized === "" || normalized === `work subject: ${subjectRoot}`) return subjectRoot;
+  if (normalized === "") return subjectRoot;
   return `${subjectRoot}#${createHash("sha256").update(normalized).digest("hex").slice(0, 32)}`;
 }
 function navigatorSubjectKeyForInput(subjectRoot, reference, cwd = process.cwd()) {
@@ -241,11 +242,14 @@ function createNavigatorPrepareTool(onOutput) {
 }
 function selectNavigatorCandidate(candidates, settlement) {
   if (settlement.kind !== "accepted") return void 0;
-  return candidates.find((candidate) => {
-    if (candidate.matches.role !== settlement.role || candidate.matches.phase !== settlement.phase) return false;
-    if (candidate.matches.statuses !== void 0 && (settlement.status === void 0 || !candidate.matches.statuses.includes(settlement.status))) return false;
-    return true;
-  });
+  const rolePhaseMatches = candidates.filter(
+    (candidate) => candidate.matches.role === settlement.role && candidate.matches.phase === settlement.phase
+  );
+  if (settlement.status !== void 0) {
+    const statusSpecific = rolePhaseMatches.find((candidate) => candidate.matches.statuses?.includes(settlement.status) === true);
+    if (statusSpecific !== void 0) return statusSpecific;
+  }
+  return rolePhaseMatches.find((candidate) => candidate.matches.statuses === void 0);
 }
 function formatNavigatorReport(report) {
   if (report.disposition === "silence") return "";
@@ -332,28 +336,39 @@ ${text}
           } catch (error) {
             throw navigatorUnavailableError("session", error);
           }
+          if (disposed) {
+            created.dispose();
+            throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          }
           try {
             await created.setModel?.(modelSetting, model.thinkingLevel);
+            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
             if (created.getThinkingLevel?.() !== void 0 && created.getThinkingLevel() !== model.thinkingLevel) {
               throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
             }
             created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
             session = created;
             return created;
           } catch (error) {
-            created.dispose();
+            if (session !== created) created.dispose();
             throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
           }
         })();
         await sessionReady;
         sessionReady = void 0;
       } else {
-        await session.setModel?.(modelSetting, model.thinkingLevel);
-        if (session.getThinkingLevel?.() !== void 0 && session.getThinkingLevel() !== model.thinkingLevel) {
-          throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+        try {
+          await session.setModel?.(modelSetting, model.thinkingLevel);
+          if (session.getThinkingLevel?.() !== void 0 && session.getThinkingLevel() !== model.thinkingLevel) {
+            throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+          }
+        } catch (error) {
+          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
         }
         session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
       }
+      if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
       const activeSession = session;
       if (activeSession === void 0) throw new Error("Navigator session was not created");
       const prior = activeSession.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
@@ -398,9 +413,10 @@ ${helpContext}
       ].join("\n\n");
       try {
         try {
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
           await activeSession.prompt(request);
         } catch (error) {
-          throw navigatorUnavailableError("transport", error);
+          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
         }
         if (output === void 0) {
           const nativeFailure = [...activeSession.entries()].reverse().find((entry) => {
@@ -451,7 +467,6 @@ ${helpContext}
     },
     dispose() {
       disposed = true;
-      sessionReady = void 0;
       session?.dispose();
       session = void 0;
       activeInvocationId = void 0;

@@ -14,6 +14,7 @@ import {
   NavigatorUnavailableError,
   writeNavigatorModelSetting,
   NAVIGATOR_TARGETS,
+  type NavigatorCandidate,
   type NavigatorPreparationSession,
   navigatorSessionDirectory,
   navigatorSubjectKey,
@@ -23,7 +24,16 @@ import {
   selectNavigatorCandidate,
   subjectPath,
 } from "../src/navigator-attendance.ts";
+import { COLLECTOR_OUTPUT_TOOL } from "../src/package-contracts/collector-output.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME } from "../src/package-contracts/reviewer-output.ts";
+import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../src/package-contracts/worker-output.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME } from "../src/doctor-contracts.ts";
+import { MERGER_OUTPUT_TOOL_NAME } from "../src/merger-contracts.ts";
+import { PACKAGED_ROLE_REGISTRY } from "../src/packaged-role-registry.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../src/role-runtime.ts";
+import { navigatorAuthorityFromRoleInput } from "../extensions/role-runtime.ts";
+import { createHash } from "node:crypto";
 
 function context() {
   return {
@@ -580,4 +590,214 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", () 
   assert.equal(first.includes("/navigator/navigator"), false);
 });
 
-assert.deepEqual(NAVIGATOR_TARGETS.map(({ role }) => role), ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"]);
+test("NAVIGATOR_TARGETS preserves packaged registry order", () => {
+  assert.deepEqual(NAVIGATOR_TARGETS.map(({ role }) => role), ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"]);
+});
+
+test("dispose during pending createSession drains the created session without prompt or assignment", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-dispose-race-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    let disposeCalls = 0;
+    let promptCalls = 0;
+    let setModelCalls = 0;
+    const events: any[] = [];
+    const nav = createNavigatorAttendance({
+      context: context(),
+      role: "coder",
+      phase: "apply",
+      subjectKey: "/repo/.ak/work/issues/28",
+      sessionDir: join(root, "session"),
+      subject: "Fix issue 28",
+      authority: "owner decision",
+      loadSoul: async () => "route judgment",
+      loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+      modelSettingPath: setting,
+      createSession: async () => {
+        await createGate;
+        return {
+          async prompt() { promptCalls += 1; },
+          appendEntry() {},
+          entries: () => [],
+          async setModel() { setModelCalls += 1; },
+          getThinkingLevel: () => "off",
+          dispose() { disposeCalls += 1; },
+        };
+      },
+      onEvent: async (event) => { events.push(event); },
+    });
+    nav.prepare();
+    while (!nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+    nav.dispose();
+    releaseCreate();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }).catch(() => undefined);
+    // Allow the in-flight initializer to observe disposed and drain.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    assert.equal(promptCalls, 0, "disposed attendance must not prompt");
+    assert.equal(setModelCalls, 0, "disposed attendance must not configure the late session");
+    assert.equal(disposeCalls, 1, "created session must be disposed exactly once");
+    assert.equal(events.some((event) => event.disposition === "recommendation"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("status-specific route candidates outrank generics regardless of declaration order", () => {
+  const route = [{ role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }];
+  const generic: NavigatorCandidate = {
+    id: "generic",
+    matches: { role: "fixer", phase: "apply", kind: "accepted" },
+    route,
+    next: route[1]!,
+    reason: "generic fallback",
+    command: "Usage: pi --ak-role judge --help",
+  };
+  const unfinishedSpecific: NavigatorCandidate = {
+    id: "unfinished-specific",
+    matches: { role: "fixer", phase: "apply", kind: "accepted", statuses: ["unfinished"] },
+    route,
+    next: route[0]!,
+    reason: "finish the open class",
+    command: "Usage: pi --ak-role fixer --help",
+  };
+  const settlement = { kind: "accepted" as const, role: "fixer", phase: "apply" as const, status: "unfinished" };
+  assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], settlement)?.id, "unfinished-specific");
+  assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], settlement)?.id, "unfinished-specific");
+  assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], { kind: "accepted", role: "fixer", phase: "apply", status: "completed" })?.id, "generic");
+  assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], { kind: "accepted", role: "fixer", phase: "apply", status: "completed" })?.id, "generic");
+});
+
+test("resumed setModel and thinking failures preserve typed source and cause", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-resumed-cause-"));
+  try {
+    const setting = join(root, "model.json");
+    const cases = [
+      { name: "thinking", secondModel: "provider/model:max", source: "thinking" as const, fail: "thinking" as const },
+      { name: "session", secondModel: "provider/model", source: "session" as const, fail: "session" as const },
+    ] as const;
+    for (const scenario of cases) {
+      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+      const events: any[] = [];
+      let setModelCalls = 0;
+      let created = false;
+      const nav = createNavigatorAttendance({
+        context: context(),
+        role: "judge",
+        phase: null,
+        subjectKey: "/repo/.ak/work/issues/28",
+        sessionDir: join(root, scenario.name),
+        subject: "task",
+        authority: "authority",
+        loadSoul: async () => "route judgment",
+        loadRoleHelp: async () => "help",
+        modelSettingPath: setting,
+        createSession: async ({ tool }) => {
+          created = true;
+          return {
+            async prompt() {
+              await tool.execute("prepare", {
+                candidates: [{
+                  id: "resume-route",
+                  matches: { role: "judge", phase: null, kind: "accepted" },
+                  route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+                  next: { role: "reviewer", phase: null },
+                  reason: "resume path",
+                  command: "Usage: pi --ak-role reviewer --help",
+                }],
+              }, undefined, undefined, {} as never);
+            },
+            appendEntry() {},
+            entries: () => [],
+            async setModel() {
+              setModelCalls += 1;
+              if (scenario.fail === "session" && setModelCalls > 1) {
+                throw new Error("setModel blew up with untyped wording");
+              }
+            },
+            getThinkingLevel: () => "off",
+            dispose() {},
+          };
+        },
+        onEvent: async (event) => { events.push(event); },
+      });
+      nav.prepare();
+      await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+      assert.equal(created, true);
+      assert.equal(events[0]?.disposition, "recommendation");
+      await writeFile(setting, JSON.stringify({ model: scenario.secondModel }));
+      nav.prepare();
+      await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+      assert.equal(events[1]?.disposition, "unavailable", scenario.name);
+      assert.equal(events[1]?.unavailableSource, scenario.source, scenario.name);
+      assert.equal(events[1]?.unavailableCause, scenario.source, scenario.name);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("typed subject provenance replaces prose prefix branching", () => {
+  const adHocRoot = "/repo/.ak/work/ad-hoc";
+  assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
+  // A legitimate role input that begins with the old prose prefix remains concrete work.
+  const legitimate = `work subject: ${adHocRoot} with real task bytes`;
+  const hashed = navigatorSubjectKey(adHocRoot, legitimate, "role_input");
+  assert.notEqual(hashed, adHocRoot);
+  assert.equal(hashed, `${adHocRoot}#${createHash("sha256").update(legitimate.trim().replace(/\s+/g, " ")).digest("hex").slice(0, 32)}`);
+  // Wording variation of the old placeholder phrase does not disable replacement semantics:
+  // only typed provenance does.
+  assert.equal(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "placeholder"), adHocRoot);
+  assert.notEqual(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "user_prompt"), adHocRoot);
+});
+
+test("registry output tools are the contract-owned constants", () => {
+  assert.deepEqual(
+    PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),
+    [
+      { role: "judge", outputTool: JUDGE_OUTPUT_TOOL_NAME },
+      { role: "fixer", outputTool: FIXER_OUTPUT_TOOL_NAME },
+      { role: "coder", outputTool: CODER_OUTPUT_TOOL_NAME },
+      { role: "reviewer", outputTool: REVIEWER_OUTPUT_TOOL_NAME },
+      { role: "collector", outputTool: COLLECTOR_OUTPUT_TOOL },
+      { role: "doctor", outputTool: DOCTOR_OUTPUT_TOOL_NAME },
+      { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
+    ],
+  );
+  assert.equal(publicNavigatorSettlement("fixer", "apply", { toolName: FIXER_OUTPUT_TOOL_NAME, isError: false, details: { status: "unfinished" } })?.kind, "accepted");
+});
+
+test("authority extraction only admits role-owned validated typed contracts", async () => {
+  const { sha256Hex } = await import("../src/sha256.ts");
+  const material = (text: string) => {
+    const bytes = Buffer.from(text, "utf8");
+    return { bytesBase64: bytes.toString("base64"), sha256: sha256Hex(bytes) };
+  };
+  const mergerAuthority = "merger-contract-authority";
+  const mergerInput = {
+    version: 1 as const,
+    attemptId: "attempt-1",
+    targetObjectId: "a".repeat(40),
+    sourceObjectId: "b".repeat(40),
+    materials: {
+      task: material("task"),
+      authority: material(mergerAuthority),
+      targetIntent: material("target"),
+      sourceIntent: material("source"),
+    },
+    expectedConflictPaths: ["src/a.ts"],
+    resolutionScope: ["src/a.ts"],
+    authorizedChecks: [],
+  };
+  assert.equal(navigatorAuthorityFromRoleInput("merger", JSON.stringify(mergerInput)), mergerAuthority);
+  // Opaque task/packet JSON cannot override the separate authority seam.
+  assert.equal(navigatorAuthorityFromRoleInput("fixer", JSON.stringify({ authority: "task-controlled", status: "planned" })), undefined);
+  assert.equal(navigatorAuthorityFromRoleInput("coder", JSON.stringify({ controllingAuthority: "task-controlled" })), undefined);
+  assert.equal(navigatorAuthorityFromRoleInput("reviewer", JSON.stringify({ authority: "task-controlled" })), undefined);
+  assert.equal(navigatorAuthorityFromRoleInput("collector", JSON.stringify({ authority: "task-controlled" })), undefined);
+  assert.equal(navigatorAuthorityFromRoleInput("judge", JSON.stringify({ authority: "task-controlled" })), undefined);
+  // Incomplete merger-shaped JSON is not a validated contract leaf.
+  assert.equal(navigatorAuthorityFromRoleInput("merger", JSON.stringify({ materials: { authority: material("x") } })), undefined);
+});

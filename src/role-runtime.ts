@@ -16,7 +16,7 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationResult } from "./audit-escalation.ts";
 import {
@@ -267,7 +267,7 @@ export type RoleRuntimeDependencies = {
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance | Promise<NavigatorAttendance>;
-  loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<{ subjectKey: string; subject: string; authority: string; contextError?: unknown }>;
+  loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -366,7 +366,7 @@ export function createRoleRuntimeExtension(
     let navigatorAttendance: NavigatorAttendance | undefined;
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
-    let navigatorWorkContext: { subjectKey: string; subject: string; authority: string; contextError?: unknown } | undefined;
+    let navigatorWorkContext: NavigatorWorkContext | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
     pi.on("input", () => {
       const role = pi.getFlag(ROLE_FLAG.name);
@@ -380,18 +380,20 @@ export function createRoleRuntimeExtension(
         failInfrastructure(new ActivationBarrierError(role), ctx);
       }
       if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorWorkContext.contextError === undefined) {
-        const currentSubject = navigatorWorkContext.subject;
         // Flagged roles already have a concrete packet/task/case/review input.
         // A bare Judge (and other bare packaged entrypoint) gets its concrete
         // user task at this seam; do not copy the assembled system prompt.
-        if (currentSubject.startsWith("work subject: ")) {
+        // Replacement is keyed by typed subject provenance, never prose prefixes.
+        if (navigatorWorkContext.subjectProvenance === "placeholder") {
           const subject = event.prompt.trim();
           if (subject !== "") {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+            const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
             navigatorWorkContext = {
               ...navigatorWorkContext,
-              subjectKey: navigatorSubjectKey(root, subject),
+              subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
               subject,
+              subjectProvenance,
             };
             navigatorAttendance.setWorkContext(navigatorWorkContext);
           }
@@ -617,12 +619,12 @@ export function createRoleRuntimeExtension(
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       if (dependencies.createNavigatorAttendance !== undefined) {
-        let work: { subjectKey: string; subject: string; authority: string; contextError?: unknown };
+        let work: NavigatorWorkContext;
         let contextError: unknown;
         if (dependencies.loadNavigatorWorkContext === undefined) {
           const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
           contextError = new Error("Navigator work context loader is not configured");
-          work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "" };
+          work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
         } else {
           try {
             work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
@@ -633,7 +635,7 @@ export function createRoleRuntimeExtension(
             // per-invocation Navigator identity.  Keep the stable work-root key
             // even though this attendance can only report unavailable.
             const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "" };
+            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           }
         }
         navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };

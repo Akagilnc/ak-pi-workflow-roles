@@ -827,7 +827,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "record",
       auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
-      loadNavigatorWorkContext: async () => ({ subjectKey: "/repo/.ak/work/issues/28", subject: "issue 28", authority: "owner authority" }),
+      loadNavigatorWorkContext: async () => ({ subjectKey: "/repo/.ak/work/issues/28", subject: "issue 28", authority: "owner authority", subjectProvenance: "role_input" as const }),
       createNavigatorAttendance: async (options) => {
         navigator = createNavigatorAttendance({
           ...options,
