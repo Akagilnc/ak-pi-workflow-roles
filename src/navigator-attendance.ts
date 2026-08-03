@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
@@ -138,6 +139,7 @@ export type NavigatorPreparationSession = {
   prompt(text: string, projection?: NavigatorContextProjection): Promise<void>;
   appendEntry(customType: string, data: unknown): void;
   entries(): readonly unknown[];
+  providerFailure?(): NavigatorProviderFailureFact | undefined;
   setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
   getThinkingLevel?(): string;
   dispose(): void;
@@ -509,9 +511,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
             ? nativeMessage.errorMessage
             : "Navigator did not submit typed route candidates";
-          const providerFailure = exactRecord(nativeMessage?.navigatorFailure) ? nativeMessage.navigatorFailure : undefined;
-          const source = unavailableKey(providerFailure?.source) ?? "unknown";
-          const cause = unavailableKey(providerFailure?.cause) ?? source;
+          const providerFailure = activeSession.providerFailure?.();
+          const retainedFailure = exactRecord(nativeMessage?.navigatorFailure) ? nativeMessage.navigatorFailure : undefined;
+          const source = providerFailure?.source ?? unavailableKey(retainedFailure?.source) ?? "unknown";
+          const cause = providerFailure?.cause ?? unavailableKey(retainedFailure?.cause) ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
         }
         candidates = validatePrepareOutput(output);
@@ -658,10 +661,41 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         throw navigatorUnavailableError("session", error);
       }
     }
+    let providerFailure: NavigatorProviderFailureFact | undefined;
+    const wrapProviderStream = (source: ReturnType<typeof provider.stream>) => {
+      const wrapped = createAssistantMessageEventStream();
+      void (async () => {
+        let result: Awaited<ReturnType<typeof source.result>> | undefined;
+        try {
+          for await (const event of source) {
+            if (event.type === "error" && exactRecord(event.error)) {
+              const fact = event.error.navigatorFailure;
+              if (exactRecord(fact) && unavailableKey(fact.source) !== undefined && unavailableKey(fact.cause) !== undefined) {
+                providerFailure = { source: unavailableKey(fact.source)!, cause: unavailableKey(fact.cause)! };
+              }
+            }
+            wrapped.push(event);
+          }
+          result = await source.result();
+        } finally {
+          wrapped.end(result);
+        }
+      })();
+      return wrapped;
+    };
+    const instrumentedProvider = {
+      ...provider,
+      stream(model: Parameters<typeof provider.stream>[0], context: Parameters<typeof provider.stream>[1], options: Parameters<typeof provider.stream>[2]) {
+        return wrapProviderStream(provider.stream(model, context, options));
+      },
+      streamSimple(model: Parameters<typeof provider.streamSimple>[0], context: Parameters<typeof provider.streamSimple>[1], options: Parameters<typeof provider.streamSimple>[2]) {
+        return wrapProviderStream(provider.streamSimple(model, context, options));
+      },
+    } as typeof provider;
     let modelRuntime: Awaited<ReturnType<typeof ModelRuntime.create>>;
     try {
       modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
-      modelRuntime.registerNativeProvider(provider);
+      modelRuntime.registerNativeProvider(instrumentedProvider);
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
@@ -693,6 +727,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
           throw navigatorUnavailableError("transport", error);
         }
       },
+      providerFailure: () => providerFailure,
       appendEntry: (customType, data) => { created.session.sessionManager.appendCustomEntry(customType, data); },
       entries: () => created.session.sessionManager.getEntries(),
       setModel: async (next, thinkingLevel) => {
