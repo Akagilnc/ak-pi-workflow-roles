@@ -30,7 +30,7 @@ contract remains represented in its assigned tier.
 
 ## Station 2 — rebuild and merge
 
-1. Apply the 100 rebuild and 13 semantically mapped merge dispositions in the
+1. Apply the 113 rebuild dispositions and no merge dispositions in the
    ledger; the remaining former merge rows are explicit rebuilds where their
    old oracle did not cover the absorbed contract.
 2. For every merge, use its machine-checkable `mergeInto` target or shared
