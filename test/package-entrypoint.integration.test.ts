@@ -82,8 +82,8 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
 test("packed package includes Doctor role, evidence flag, and runtime dependencies", async () => {
   const manifest = await loadRawPackageManifest();
   packageEntrypoint(manifest);
-  assert.equal(manifest.bin?.["ak-assisted-run"], "./bin/ak-assisted-run.js");
-  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "navigator", "merger"]);
+  assert.equal(manifest.bin, undefined);
+  assert.deepEqual(WORKFLOW_ROLES, ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"]);
   assert.equal(ROLE_FLAG.name, "ak-role");
   assert.deepEqual(
     Object.values(FIXER_FLAG_DEFINITIONS).map(({ name, definition }) => ({
@@ -115,10 +115,8 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
         "src/doctor-evidence.ts",
         "src/canonical-json.ts",
         "souls/navigator.md",
-        "src/navigator-contracts.ts",
-        "src/assisted-runner.ts",
-        "schemas/assisted-call-v1.schema.json",
-        "bin/ak-assisted-run.js",
+        "src/navigator-attendance.ts",
+        "dist/navigator-attendance.js",
         "souls/merger.md",
         "src/merger-contracts.ts",
         "src/merger-git-state.ts",
@@ -640,7 +638,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.deepEqual(acceptedResult.message.details, {
           judgeStatus: "converged",
         });
-        assert.equal(faux.state.callCount, 4);
+        assert.equal(faux.state.callCount, 5);
         assert.equal(faux.getPendingResponseCount(), 0);
         assert.equal(
           sessionManager

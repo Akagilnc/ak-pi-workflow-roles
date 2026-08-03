@@ -4,15 +4,11 @@
   "description": "Soul-bound workflow roles for Pi",
   "type": "module",
   "keywords": ["pi-package"],
-  "bin": {
-    "ak-assisted-run": "./bin/ak-assisted-run.js"
-  },
   "files": [
-    "bin",
     "dist",
     "extensions",
     "scripts/generate-activation-trace-schema.ts",
-    "scripts/build-assisted.mjs",
+    "scripts/build-package.mjs",
     "src",
     "souls",
     "schemas",
@@ -21,7 +17,7 @@
   ],
   "scripts": {
     "generate:activation-trace-schema": "tsx scripts/generate-activation-trace-schema.ts",
-    "build": "npm run generate:activation-trace-schema && tsc -p tsconfig.build.json && node scripts/build-assisted.mjs",
+    "build": "npm run generate:activation-trace-schema && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
     "prepack": "npm run build",
     "test": "node --import tsx --test test/**/*.test.ts",
     "typecheck": "tsc --noEmit"

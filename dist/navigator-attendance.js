@@ -1,0 +1,354 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
+const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
+const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max";
+const NAVIGATOR_TARGETS = [
+  { role: "judge", phases: [null] },
+  { role: "fixer", phases: ["plan", "apply"] },
+  { role: "coder", phases: ["plan", "apply"] },
+  { role: "reviewer", phases: [null] },
+  { role: "collector", phases: [null] },
+  { role: "doctor", phases: [null] },
+  { role: "merger", phases: [null] }
+];
+const targetSchema = Type.Object({
+  role: Type.String({ minLength: 1 }),
+  phase: Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")])
+}, { additionalProperties: false });
+const candidateSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  matches: Type.Object({
+    role: Type.String({ minLength: 1 }),
+    phase: Type.Union([Type.Null(), Type.Literal("plan"), Type.Literal("apply")]),
+    kind: Type.Literal("accepted"),
+    statuses: Type.Optional(Type.Array(Type.String({ minLength: 1 })))
+  }, { additionalProperties: false }),
+  route: Type.Array(targetSchema, { minItems: 1 }),
+  next: targetSchema,
+  reason: Type.String({ minLength: 1 }),
+  command: Type.String({ minLength: 1 })
+}, { additionalProperties: false });
+const prepareSchema = Type.Object({ candidates: Type.Array(candidateSchema, { minItems: 1 }) }, { additionalProperties: false });
+const ROUTE_ENTRY = "ak-navigator-route";
+const INVOCATION_ENTRY = "ak-navigator-invocation";
+const targetRoles = new Set(NAVIGATOR_TARGETS.map(({ role }) => role));
+function exactRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function targetIsValid(value) {
+  return exactRecord(value) && targetRoles.has(String(value.role)) && (value.phase === null || value.phase === "plan" || value.phase === "apply") && (value.role === "coder" || value.role === "fixer" ? value.phase !== null : value.phase === null);
+}
+function validateCandidate(value) {
+  const next = exactRecord(value) ? value.next : void 0;
+  if (!exactRecord(value) || typeof value.id !== "string" || value.id.trim() === "" || !exactRecord(value.matches) || typeof value.matches.role !== "string" || value.matches.role.trim() === "" || value.matches.phase !== null && value.matches.phase !== "plan" && value.matches.phase !== "apply" || value.matches.kind !== "accepted" || value.matches.statuses !== void 0 && (!Array.isArray(value.matches.statuses) || value.matches.statuses.some((s) => typeof s !== "string" || s.trim() === "")) || !Array.isArray(value.route) || value.route.length === 0 || value.route.some((target) => !targetIsValid(target)) || !targetIsValid(next) || !value.route.some((target) => target.role === next.role && target.phase === next.phase) || typeof value.reason !== "string" || value.reason.trim() === "" || typeof value.command !== "string" || value.command.trim() === "") {
+    throw new Error("Navigator preparation output is not a typed route candidate");
+  }
+  return {
+    id: value.id,
+    matches: {
+      role: value.matches.role,
+      phase: value.matches.phase,
+      kind: "accepted",
+      ...value.matches.statuses === void 0 ? {} : { statuses: [...value.matches.statuses] }
+    },
+    route: value.route.map((target) => ({ role: target.role, phase: target.phase })),
+    next: { role: next.role, phase: next.phase },
+    reason: value.reason,
+    command: value.command
+  };
+}
+function validatePrepareOutput(value) {
+  if (!exactRecord(value) || !Array.isArray(value.candidates) || value.candidates.length === 0) {
+    throw new Error("Navigator must prepare at least one route candidate");
+  }
+  return value.candidates.map(validateCandidate);
+}
+function routeEqual(a, b) {
+  return a !== void 0 && a.length === b.length && a.every((target, index) => target.role === b[index].role && target.phase === b[index].phase);
+}
+function routeText(route) {
+  return route.map((target) => target.phase === null ? target.role : `${target.role} ${target.phase}`).join(" \u2192 ");
+}
+function targetText(target) {
+  return target.phase === null ? target.role : `${target.role} ${target.phase}`;
+}
+function oneLine(value) {
+  return value.split(/\r?\n/, 1)[0].trim();
+}
+function subjectPath(sessionDir) {
+  const marker = `${join(".ak", "work", "issues")}${"/"}`;
+  const normalized = sessionDir.replaceAll("\\", "/");
+  const index = normalized.indexOf(marker);
+  if (index >= 0) {
+    const rest = normalized.slice(index + marker.length);
+    const issue = rest.split("/")[0];
+    if (issue) return normalized.slice(0, index + marker.length) + issue;
+  }
+  return sessionDir;
+}
+function navigatorModelSettingPath() {
+  return join(process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "navigator-model.json");
+}
+async function readNavigatorModelSetting(path = navigatorModelSettingPath()) {
+  try {
+    const raw = JSON.parse(await readFile(path, "utf8"));
+    if (!exactRecord(raw) || typeof raw.model !== "string" || raw.model.trim() === "") throw new Error("Navigator model setting is malformed");
+    return raw.model;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return NAVIGATOR_DEFAULT_MODEL;
+    throw error;
+  }
+}
+async function writeNavigatorModelSetting(model, path = navigatorModelSettingPath()) {
+  if (model.trim() === "" || !model.includes("/")) throw new Error("Navigator model must be provider/model");
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify({ model: model.trim() }) + "\n", "utf8");
+}
+function parseModelSetting(value) {
+  const slash = value.indexOf("/");
+  if (slash <= 0 || slash === value.length - 1) throw new Error("Navigator model setting must be provider/model");
+  const provider = value.slice(0, slash);
+  const modelWithThinking = value.slice(slash + 1);
+  const colon = modelWithThinking.lastIndexOf(":");
+  const thinkingLevel = colon >= 0 && modelWithThinking.slice(colon + 1) === "max" ? "max" : void 0;
+  return { provider, model: colon >= 0 ? modelWithThinking.slice(0, colon) : modelWithThinking, thinkingLevel };
+}
+function createNavigatorPrepareTool(onOutput) {
+  return {
+    name: NAVIGATOR_PREPARE_TOOL_NAME,
+    label: "Navigator preparation",
+    description: "Submit typed route candidates for the shared Navigator attendance seat.",
+    parameters: prepareSchema,
+    async execute(_id, value) {
+      onOutput(value);
+      return { content: [{ type: "text", text: "Navigator preparation accepted" }], details: value, terminate: true };
+    }
+  };
+}
+function selectNavigatorCandidate(candidates, settlement) {
+  if (settlement.kind !== "accepted") return void 0;
+  return candidates.find((candidate) => {
+    if (candidate.matches.role !== settlement.role || candidate.matches.phase !== settlement.phase) return false;
+    if (candidate.matches.statuses !== void 0 && (settlement.status === void 0 || !candidate.matches.statuses.includes(settlement.status))) return false;
+    return true;
+  });
+}
+function formatNavigatorReport(report) {
+  if (report.disposition === "silence") return "";
+  if (report.disposition === "unavailable") return `\u5BFC\u822A\u4E0D\u53EF\u7528\uFF1A${oneLine(report.unavailableReason ?? "\u672A\u80FD\u5B8C\u6210\u5BFC\u822A\u51C6\u5907")}`;
+  return [
+    ...report.route === void 0 ? [] : [`\u8DEF\u7EBF\uFF1A${routeText(report.route)}`],
+    `\u4E0B\u4E00\u6B65\uFF1A${targetText(report.next)}`,
+    `\u7406\u7531\uFF1A${oneLine(report.reason ?? "")}`,
+    `\u547D\u4EE4\uFF1A${oneLine(report.command ?? "")}`
+  ].join("\n");
+}
+function createNavigatorAttendance(options) {
+  let preparation;
+  let session;
+  let candidates;
+  let invocationNumber = 0;
+  let previousRoute;
+  let outputSink;
+  let disposed = false;
+  const unavailable = (invocationId, reason) => ({
+    disposition: "unavailable",
+    unavailableReason: reason instanceof Error ? reason.message : String(reason)
+  });
+  const prepare = async (prompt) => {
+    const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
+    try {
+      const soul = (await options.loadSoul()).trim();
+      if (!soul) throw new Error("Navigator soul is empty");
+      const [modelSetting, ...help] = await Promise.all([
+        readNavigatorModelSetting(options.modelSettingPath),
+        ...NAVIGATOR_TARGETS.map(async ({ role }) => ({ role, help: await options.loadRoleHelp(role) }))
+      ]);
+      const model = parseModelSetting(modelSetting);
+      const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">
+${text}
+</role_help>`).join("\n");
+      let output;
+      outputSink = (value) => {
+        if (output !== void 0) throw new Error("Navigator preparation must submit exactly one typed candidate batch");
+        output = value;
+      };
+      const tool = createNavigatorPrepareTool((value) => {
+        outputSink?.(value);
+      });
+      session ??= await options.createSession({ context: options.context, sessionDir: options.sessionDir, tool });
+      await session.setModel?.(modelSetting);
+      session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase });
+      const prior = session.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === options.subjectKey).at(-1)?.data;
+      if (exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
+        previousRoute = prior.route.map((target) => ({ role: target.role, phase: target.phase }));
+      }
+      const request = [
+        "Act as the Navigator route judge. Prepare distinct typed route candidates; do not execute or invoke any role.",
+        `<navigator_soul>
+${soul}
+</navigator_soul>`,
+        `<work_subject>
+${options.subject}
+</work_subject>`,
+        `<controlling_authority>
+${options.authority}
+</controlling_authority>`,
+        `<current_role>
+${JSON.stringify({ role: options.role, phase: options.phase })}
+</current_role>`,
+        `<prior_route>
+${JSON.stringify(prior ?? null)}
+</prior_route>`,
+        `<current_prompt>
+${prompt}
+</current_prompt>`,
+        `<live_role_help>
+${helpContext}
+</live_role_help>`,
+        `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call. The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.`
+      ].join("\n\n");
+      void model;
+      try {
+        await session.prompt(request);
+        if (output === void 0) throw new Error("Navigator did not submit typed route candidates");
+        candidates = validatePrepareOutput(output);
+        return candidates;
+      } finally {
+        outputSink = void 0;
+      }
+    } catch (error) {
+      throw error;
+    }
+  };
+  return {
+    prepare(prompt) {
+      if (disposed || preparation !== void 0) return;
+      preparation = prepare(prompt);
+      void preparation.catch(() => void 0);
+    },
+    async settle(settlement) {
+      const invocationId = `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
+      let report;
+      if (settlement.kind !== "accepted") {
+        report = { disposition: "silence" };
+      } else if (preparation === void 0) {
+        report = unavailable(invocationId, "Navigator preparation did not start");
+      } else {
+        try {
+          const prepared = await preparation;
+          const selected = selectNavigatorCandidate(prepared, settlement);
+          if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");
+          const routeChanged = !routeEqual(previousRoute, selected.route);
+          report = {
+            disposition: "recommendation",
+            ...routeChanged ? { route: selected.route } : {},
+            next: selected.next,
+            reason: oneLine(selected.reason),
+            command: oneLine(selected.command)
+          };
+          previousRoute = selected.route;
+          session?.appendEntry(ROUTE_ENTRY, { subjectKey: options.subjectKey, route: selected.route });
+        } catch (error) {
+          report = unavailable(invocationId, error);
+        }
+      }
+      const event = {
+        version: 1,
+        disposition: report.disposition,
+        invocationId,
+        role: options.role,
+        phase: options.phase,
+        subjectKey: options.subjectKey,
+        ...report.route === void 0 ? {} : { route: report.route },
+        ...report.next === void 0 ? {} : { next: report.next },
+        ...report.reason === void 0 ? {} : { reason: report.reason },
+        ...report.command === void 0 ? {} : { command: report.command },
+        ...report.unavailableReason === void 0 ? {} : { unavailableReason: report.unavailableReason }
+      };
+      if (report.disposition !== "silence") await options.onEvent(event, report);
+      preparation = void 0;
+      candidates = void 0;
+    },
+    dispose() {
+      disposed = true;
+      session?.dispose();
+      session = void 0;
+    }
+  };
+}
+function createNativeNavigatorSessionFactory() {
+  return async ({ context, sessionDir, tool }) => {
+    const configured = await readNavigatorModelSetting();
+    const parsed = parseModelSetting(configured);
+    const model = context.modelRegistry.find(parsed.provider, parsed.model);
+    const provider = context.modelRegistry.getProvider(parsed.provider);
+    if (model === void 0 || provider === void 0) throw new Error(`Navigator model is unavailable: ${configured}`);
+    const auth = await context.modelRegistry.getApiKeyAndHeaders(model);
+    if (!auth.ok) throw new Error(auth.error);
+    const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
+    modelRuntime.registerNativeProvider(provider);
+    const created = await createAgentSession({
+      cwd: context.cwd,
+      model,
+      modelRuntime,
+      ...parsed.thinkingLevel === void 0 ? {} : { thinkingLevel: parsed.thinkingLevel },
+      sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
+      settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
+      noTools: "all",
+      tools: [NAVIGATOR_PREPARE_TOOL_NAME],
+      customTools: [tool]
+    });
+    return {
+      prompt: (text) => created.session.prompt(text),
+      appendEntry: (customType, data) => {
+        created.session.sessionManager.appendCustomEntry(customType, data);
+      },
+      entries: () => created.session.sessionManager.getEntries(),
+      setModel: async (next) => {
+        const nextParsed = parseModelSetting(next);
+        const nextModel = context.modelRegistry.find(nextParsed.provider, nextParsed.model);
+        const nextProvider = context.modelRegistry.getProvider(nextParsed.provider);
+        if (nextModel === void 0 || nextProvider === void 0) throw new Error(`Navigator model is unavailable: ${next}`);
+        const nextAuth = await context.modelRegistry.getApiKeyAndHeaders(nextModel);
+        if (!nextAuth.ok) throw new Error(nextAuth.error);
+        modelRuntime.registerNativeProvider(nextProvider);
+        await created.session.setModel(nextModel);
+      },
+      dispose: () => created.session.dispose()
+    };
+  };
+}
+function registerNavigatorModelCommand(pi, path = navigatorModelSettingPath()) {
+  pi.registerCommand("navigator-model", {
+    description: "Set the persistent Navigator model (provider/model[:max]).",
+    handler: async (args) => {
+      await writeNavigatorModelSetting(args.trim(), path);
+    }
+  });
+}
+function navigatorSessionDirectory(context) {
+  const current = context.sessionManager.getSessionDir();
+  return join(dirname(dirname(current)), "navigator");
+}
+export {
+  NAVIGATOR_DEFAULT_MODEL,
+  NAVIGATOR_EVENT_TYPE,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  NAVIGATOR_TARGETS,
+  createNativeNavigatorSessionFactory,
+  createNavigatorAttendance,
+  createNavigatorPrepareTool,
+  formatNavigatorReport,
+  navigatorModelSettingPath,
+  navigatorSessionDirectory,
+  readNavigatorModelSetting,
+  registerNavigatorModelCommand,
+  selectNavigatorCandidate,
+  subjectPath,
+  writeNavigatorModelSetting
+};

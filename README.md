@@ -1,28 +1,14 @@
 # @ak/pi-workflow-roles
 
-Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, `navigator`, and `merger`.
+Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
 
-## Navigator and Assisted Runner
+## Navigator attendance
 
-Navigator advises the least-cost safe **single next process** from a frozen, digest-bound current-position snapshot. It has exactly two active tools: a bounded admitted-evidence reader and terminating `ak_navigator_output`. Judge, Fixer, Reviewer, and Doctor each receive one fresh same-active-model compliance audit of their candidate output; Navigator does not receive a compliance audit. Navigator never invokes roles, Agent, shell, Git/GitHub, filesystems, or Runner; its ordinary advice is not authorization and callers may deviate.
+Every registered non-Navigator packaged role automatically prepares Navigator advice alongside its own work. The existing `pi --ak-role ...` invocation is unchanged. Navigator uses its own resumable Pi session, waits for that same preparation at typed role settlement, and emits an independent typed attendance message; it never invokes or enforces the recommended role.
 
-Assisted Runner is a separate package capability. It persistently wraps exactly one caller-selected packaged non-Navigator role, automatically consulting Navigator before launch and again after settlement. It never selects or automatically dispatches the recommended role, manages worktrees, or continues a workflow. Its private direct child/session adapter keeps settlement evidence only inside the Assisted run; the caller still owns role/phase/argv/cwd, evidence declarations, retries, budgets, worktrees, and whether to end assisted mode.
+The first attendance shows the concise role/phase route, one next step, a short reason, and one live-help-based Usage hint. Later attendance omits an unchanged route. Human-decision and role-infrastructure outcomes are silent; Navigator failures are reported honestly as unavailable and never invalidate the role Receipt.
 
-```bash
-ak-assisted-run enter --config assisted-call-v1.json -- pi --ak-role coder --ak-coder-phase apply --ak-coder-task task.md --print "Apply it."
-ak-assisted-run resume --config assisted-call-v1.json -- pi --ak-role reviewer --ak-review-task review.md --ak-review-capabilities capabilities.json --print "Review it."
-ak-assisted-run status --repository-root "$PWD" --run-id <uuidv7> --json
-ak-assisted-run recover --repository-root "$PWD" --run-id <uuidv7> --invocation-id <uuidv7> --confirmed-stopped
-ak-assisted-run end --repository-root "$PWD" --run-id <uuidv7>
-```
-
-`enter`/`resume` require canonical UUIDv7 `runId` and `callId`, an exact caller-declared child set, registered workspaces/evidence, and one typed role/phase agreeing with argv. Session flags, Navigator, shells, non-package roles, conflicting phases, and credential-shaped argv are rejected. The authoritative machine result is `status --json`; child stdout/stderr remains presentation passthrough. State is append-only and hash-chained below `.ak/work/issues/<parent>/assisted/<runId>/`. A completed `callId` replays its stored result; conflicting reuse, ledger gaps/forks, concurrent generation loss, or an unresolved started invocation fails closed. `recover` records `outcome_unavailable_after_runner_loss`, never fabricates a role outcome. `end` ends assisted mode only and does not mean issue closure or correctness.
-
-Authoritative runtime validation and public types are exported from `src/navigator-contracts.ts`, `src/assisted-contracts.ts`, and `src/assisted-runner.ts`; acquisition transport contracts are in `src/assisted-acquisition.ts`. Raw GitHub responses, credentials, environment values, and Pi sessions are not promoted as snapshot evidence.
-
-An ignition that cannot activate its role exits nonzero; nothing falls back to uncaged pi (ADR 0018).
-
-Ignition discipline: close stdin on every non-interactive ignition (append `</dev/null`). pi drains a non-TTY stdin to EOF before doing any work, so a background pipe that never closes parks the invocation forever, before the session header (upstream: earendil-works/pi#2078).
+The persistent model setting defaults to `openai-codex/gpt-5.6-luna:max`. Change it with `/navigator-model provider/model[:max]`; each later attendance rereads the setting and has no fallback or retry model.
 
 ## Judge
 
@@ -31,16 +17,14 @@ The judge role:
 1. loads the bundled [`souls/judge.md`](souls/judge.md) into the system prompt;
 2. lets the active Pi model adjudicate with normal tools;
 3. accepts a final verdict only through `ak_judge_output`;
-4. runs a separate Soul-compliance model call before settling the verdict;
-5. returns a terminating structured tool result after the audit passes or produces a typed audit escalation.
+4. runs a separate Soul-compliance model call before accepting the verdict;
+5. returns a terminating structured tool result only after the audit passes.
 
 The compliance call uses the active Pi model and credentials. It checks demonstrated procedural compliance with the Soul; it does not replace the judge's substantive finding decisions.
 
 Judge infers its burden of proof from the supplied materials alone (authority completeness, plan construction-readiness, apply executable proof, or review finding adjudication).
 
 On activation, Judge narrows active tools to the registered members of this exact whitelist: `read`, `grep`, `find`, `ls`, `bash`, and `ak_judge_output`. In particular, `write`, `edit`, and arbitrary sibling tools are inactive. This is role gating to prevent accidental role drift, not a security boundary; callers that need isolation must provide a sandbox or container.
-
-`audit_escalation` is a successful terminating typed human-decision result from a compliance audit. It carries `conflicts` and a `decisionGate`; it is never a role Receipt or role status. Callers must validate accepted details against the relevant role contract and must not treat every successful role-output tool result as an authoritative Receipt.
 
 ## Install
 
@@ -65,7 +49,7 @@ After installation:
 pi --ak-role judge --mode json -p "Judge the supplied review materials."
 ```
 
-Accepted Judge details, not plain assistant text, constitute a completed judge verdict.
+The caller should treat the successful `ak_judge_output` tool result as the authoritative receipt. Plain assistant text is not a completed judge verdict.
 
 ## Fixer
 

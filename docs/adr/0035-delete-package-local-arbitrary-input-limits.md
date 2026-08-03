@@ -1,3 +1,5 @@
+> Historical record: this ADR predates Issue #28 Navigator attendance and is retained only for provenance.
+
 # 删除包内自设的任意输入上限
 
 Status: accepted（authority/provenance: ADR 0019）
