@@ -45,15 +45,20 @@ function context() {
   } as never;
 }
 
-function candidate() {
+function candidate(overrides: Partial<NavigatorCandidate> = {}) {
+  const base: NavigatorCandidate = {
+    id: "small-fix",
+    matches: { role: "coder", phase: "apply" as const, kind: "accepted" as const, statuses: ["completed", "refused"] },
+    route: [{ role: "coder" as const, phase: "apply" as const }, { role: "reviewer" as const, phase: null }, { role: "judge" as const, phase: null }],
+    next: { role: "reviewer" as const, phase: null },
+    reason: "The implementation is ready for an independent review.",
+    command: "Usage: pi --ak-role reviewer --help",
+  };
   return {
     candidates: [{
-      id: "small-fix",
-      matches: { role: "coder", phase: "apply" as const, kind: "accepted" as const, statuses: ["completed", "refused"] },
-      route: [{ role: "coder" as const, phase: "apply" as const }, { role: "reviewer" as const, phase: null }, { role: "judge" as const, phase: null }],
-      next: { role: "reviewer" as const, phase: null },
-      reason: "The implementation is ready for an independent review.",
-      command: "Usage: pi --ak-role reviewer --help",
+      ...base,
+      ...overrides,
+      matches: { ...base.matches, ...(overrides.matches ?? {}) },
     }],
   };
 }
@@ -278,11 +283,7 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("judge", null, { toolName: "ak_judge_output", isError: false, details: { judgeStatus: "escalate", report: "any wording" } }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
   assert.deepEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], decisionGate: { question: "Which?", options: ["owner"] } } }), { kind: "human_decision", role: "fixer", phase: "apply", status: "audit_escalation" });
-  const route = [{ role: "judge" as const, phase: null }];
-  const source = candidate().candidates[0]!;
-  const candidates = [{ id: source.id, matches: { role: "reviewer", phase: null, kind: "accepted" as const, statuses: ["completed", "refused"] }, route, next: route[0]!, reason: source.reason, command: source.command }];
-  assert.equal(selectNavigatorCandidate(candidates, { kind: "accepted", role: "reviewer", phase: null, status: "completed" })?.id, candidates[0]!.id);
-  assert.equal(selectNavigatorCandidate(candidates, { kind: "accepted", role: "reviewer", phase: null, status: "refused" })?.id, candidates[0]!.id);
+  // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });
 
 test("native session uses the saved model exactly and rejects unsupported thinking without fallback", async () => {
@@ -339,58 +340,60 @@ test("native provider stream seam classifies auth/quota/transport after setModel
       { name: "transport", source: "transport" as const, diagnostics: ["transport unavailable", "socket reset differently"] },
     ] as const;
     for (const scenario of cases) {
-      for (const diagnostic of scenario.diagnostics) {
-        const faux = fauxProvider({ provider: `native-stream-${scenario.name}`, api: `native-stream-${scenario.name}` });
-        const model = faux.getModel();
-        const setting = join(root, "navigator-model.json");
-        await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-        const observedCallbacks: number[] = [];
-        const failingProvider = {
-          ...faux.provider,
-          stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-            const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-            if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never, options as never);
-            const stream = createAssistantMessageEventStream();
-            const human = scenario.source === "transport"
-              ? {
-                ...fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic }),
-                diagnostics: [{
-                  type: "provider_transport_failure",
-                  timestamp: Date.now(),
-                  error: { message: diagnostic, code: "transport_error" },
-                }],
+      // One session per source; two diagnostics prove prose-independence without rebuilding native sessions.
+      const faux = fauxProvider({ provider: `native-stream-${scenario.name}`, api: `native-stream-${scenario.name}` });
+      const model = faux.getModel();
+      const setting = join(root, "navigator-model.json");
+      await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      let currentDiagnostic = scenario.diagnostics[0]!;
+      const observedCallbacks: number[] = [];
+      const failingProvider = {
+        ...faux.provider,
+        stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
+          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
+          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never, options as never);
+          const stream = createAssistantMessageEventStream();
+          const human = scenario.source === "transport"
+            ? {
+              ...fauxAssistantMessage("", { stopReason: "error", errorMessage: currentDiagnostic }),
+              diagnostics: [{
+                type: "provider_transport_failure",
+                timestamp: Date.now(),
+                error: { message: currentDiagnostic, code: "transport_error" },
+              }],
+            }
+            : fauxAssistantMessage("", { stopReason: "error", errorMessage: currentDiagnostic });
+          queueMicrotask(() => {
+            void (async () => {
+              if ("status" in scenario) {
+                await options?.onResponse?.({ status: scenario.status, headers: {} }, requestModel);
+                observedCallbacks.push(scenario.status);
               }
-              : fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
-            queueMicrotask(() => {
-              void (async () => {
-                if ("status" in scenario) {
-                  // Contract path: typed ProviderResponse.status via StreamOptions.onResponse.
-                  await options?.onResponse?.({ status: scenario.status, headers: {} }, requestModel);
-                  observedCallbacks.push(scenario.status);
-                }
-                stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
-                stream.push({ type: "error", reason: "error", error: human });
-              })();
-            });
-            return stream;
-          },
-          streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
-            return this.stream(requestModel, streamContext, options);
-          },
-        };
-        const nativeContext = {
-          cwd: root,
-          modelRegistry: {
-            find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
-            getProvider: (provider: string) => provider === model.provider ? failingProvider : undefined,
-            async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-          },
-        } as never;
-        const factory = createNativeNavigatorSessionFactory();
-        const tool = createNavigatorPrepareTool(() => {});
-        const session = await factory({ context: nativeContext, sessionDir: join(root, `session-${scenario.name}-${diagnostic.length}`), tool });
-        // Production order: setModel replaces the registered provider before prompt.
-        await session.setModel?.(`${model.provider}/${model.id}`, "off");
+              stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
+              stream.push({ type: "error", reason: "error", error: human });
+            })();
+          });
+          return stream;
+        },
+        streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
+          return this.stream(requestModel, streamContext, options);
+        },
+      };
+      const nativeContext = {
+        cwd: root,
+        modelRegistry: {
+          find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
+          getProvider: (provider: string) => provider === model.provider ? failingProvider : undefined,
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+        },
+      } as never;
+      const factory = createNativeNavigatorSessionFactory();
+      const tool = createNavigatorPrepareTool(() => {});
+      const session = await factory({ context: nativeContext, sessionDir: join(root, `session-${scenario.name}`), tool });
+      await session.setModel?.(`${model.provider}/${model.id}`, "off");
+      for (const diagnostic of scenario.diagnostics) {
+        currentDiagnostic = diagnostic;
+        observedCallbacks.length = 0;
         await session.prompt("prepare routes");
         assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source }, `${scenario.name}:${diagnostic}`);
         const assistant = [...session.entries()].reverse().find((entry: any) => entry?.type === "message" && entry?.message?.role === "assistant") as any;
@@ -401,8 +404,8 @@ test("native provider stream seam classifies auth/quota/transport after setModel
         if ("status" in scenario) {
           assert.deepEqual(observedCallbacks, [scenario.status], `${scenario.name}:${diagnostic}`);
         }
-        session.dispose();
       }
+      session.dispose();
     }
   } finally {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -591,10 +594,14 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", () 
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
   assert.equal(first.startsWith("/repo/.ak/work/navigator/"), true);
   assert.equal(first.includes("/navigator/navigator"), false);
-});
-
-test("NAVIGATOR_TARGETS preserves packaged registry order", () => {
-  assert.deepEqual(NAVIGATOR_TARGETS.map(({ role }) => role), ["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"]);
+  // Typed provenance (absorbed from standalone provenance carrier).
+  assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
+  const legitimate = `work subject: ${adHocRoot} with real task bytes`;
+  const hashed = navigatorSubjectKey(adHocRoot, legitimate, "role_input");
+  assert.notEqual(hashed, adHocRoot);
+  assert.equal(hashed, `${adHocRoot}#${createHash("sha256").update(legitimate.trim().replace(/\s+/g, " ")).digest("hex").slice(0, 32)}`);
+  assert.equal(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "placeholder"), adHocRoot);
+  assert.notEqual(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "user_prompt"), adHocRoot);
 });
 
 test("dispose during pending createSession drains the created session without prompt or assignment", async () => {
@@ -650,27 +657,35 @@ test("dispose during pending createSession drains the created session without pr
 
 test("status-specific route candidates outrank generics regardless of declaration order", () => {
   const route = [{ role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }];
-  const generic: NavigatorCandidate = {
+  const generic = candidate({
     id: "generic",
     matches: { role: "fixer", phase: "apply", kind: "accepted" },
     route,
     next: route[1]!,
     reason: "generic fallback",
     command: "Usage: pi --ak-role judge --help",
-  };
-  const unfinishedSpecific: NavigatorCandidate = {
+  }).candidates[0]!;
+  const unfinishedSpecific = candidate({
     id: "unfinished-specific",
     matches: { role: "fixer", phase: "apply", kind: "accepted", statuses: ["unfinished"] },
     route,
     next: route[0]!,
     reason: "finish the open class",
     command: "Usage: pi --ak-role fixer --help",
-  };
+  }).candidates[0]!;
   const settlement = { kind: "accepted" as const, role: "fixer", phase: "apply" as const, status: "unfinished" };
   assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], settlement)?.id, "unfinished-specific");
   assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], settlement)?.id, "unfinished-specific");
   assert.equal(selectNavigatorCandidate([generic, unfinishedSpecific], { kind: "accepted", role: "fixer", phase: "apply", status: "completed" })?.id, "generic");
   assert.equal(selectNavigatorCandidate([unfinishedSpecific, generic], { kind: "accepted", role: "fixer", phase: "apply", status: "completed" })?.id, "generic");
+  // Statuses list membership (absorbed from model-settings carrier).
+  const reviewerStatuses = candidate({
+    matches: { role: "reviewer", phase: null, kind: "accepted", statuses: ["completed", "refused"] },
+    route: [{ role: "judge", phase: null }],
+    next: { role: "judge", phase: null },
+  }).candidates;
+  assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "completed" })?.id, reviewerStatuses[0]!.id);
+  assert.equal(selectNavigatorCandidate(reviewerStatuses, { kind: "accepted", role: "reviewer", phase: null, status: "refused" })?.id, reviewerStatuses[0]!.id);
 });
 
 test("resumed setModel and thinking failures preserve typed source and cause", async () => {
@@ -742,21 +757,11 @@ test("resumed setModel and thinking failures preserve typed source and cause", a
   }
 });
 
-test("typed subject provenance replaces prose prefix branching", () => {
-  const adHocRoot = "/repo/.ak/work/ad-hoc";
-  assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
-  // A legitimate role input that begins with the old prose prefix remains concrete work.
-  const legitimate = `work subject: ${adHocRoot} with real task bytes`;
-  const hashed = navigatorSubjectKey(adHocRoot, legitimate, "role_input");
-  assert.notEqual(hashed, adHocRoot);
-  assert.equal(hashed, `${adHocRoot}#${createHash("sha256").update(legitimate.trim().replace(/\s+/g, " ")).digest("hex").slice(0, 32)}`);
-  // Wording variation of the old placeholder phrase does not disable replacement semantics:
-  // only typed provenance does.
-  assert.equal(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "placeholder"), adHocRoot);
-  assert.notEqual(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "user_prompt"), adHocRoot);
-});
-
 test("registry output tools are the contract-owned constants", () => {
+  assert.deepEqual(
+    NAVIGATOR_TARGETS.map(({ role }) => role),
+    PACKAGED_ROLE_REGISTRY.map(({ role }) => role),
+  );
   assert.deepEqual(
     PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),
     [
