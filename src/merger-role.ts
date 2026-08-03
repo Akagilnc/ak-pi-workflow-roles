@@ -9,7 +9,7 @@ export { MERGER_OUTPUT_TOOL_NAME };
 export const MERGER_INPUT_FLAG = { name: "ak-merger-input", definition: { description: "Path to an immutable digest-bound Merger v1 input JSON file", type: "string" as const } } as const;
 export const MERGER_ACTIVE_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit", MERGER_OUTPUT_TOOL_NAME] as const;
 export type MergerRoleDependencies = { loadSoul(): Promise<string>; loadInput(path: string): Promise<unknown>; gitState: MergerGitState };
-export type MergerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext): never };
+export type MergerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never };
 
 const mergerCandidateTransportSchema = Type.Object({}, {
   additionalProperties: true,
@@ -47,14 +47,14 @@ export function createMergerRoleRuntime(pi: ExtensionAPI, dependencies: MergerRo
             singleton(id, ctx);
             output = validateMergerOutput(params, activation.input.attemptId);
           } catch (error) {
-            host.failInfrastructure(error, ctx);
+            host.failInfrastructure(error, ctx, id);
           }
           if (output.status === "completed") {
             let state;
             try { state = await dependencies.gitState.completedMerge(output.mergeCommitId, activation.automaticMergeTreeId); }
-            catch (error) { host.failInfrastructure(error, ctx); }
+            catch (error) { host.failInfrastructure(error, ctx, id); }
             const scope = new Set(activation.input.resolutionScope);
-            if (state.mergeCommitId !== output.mergeCommitId || !same(state.parentObjectIds, [activation.input.targetObjectId, activation.input.sourceObjectId]) || state.unmergedPaths.length !== 0 || !state.worktreeClean || state.resolutionChangedPaths.some(path => !scope.has(path))) host.failInfrastructure(new Error("Merger completed-state verification failed"), ctx);
+            if (state.mergeCommitId !== output.mergeCommitId || !same(state.parentObjectIds, [activation.input.targetObjectId, activation.input.sourceObjectId]) || state.unmergedPaths.length !== 0 || !state.worktreeClean || state.resolutionChangedPaths.some(path => !scope.has(path))) host.failInfrastructure(new Error("Merger completed-state verification failed"), ctx, id);
           }
           accepted = true;
           return { content: [{ type: "text" as const, text: MERGER_ACCEPTED_TEXT }], details: output, terminate: true as const };

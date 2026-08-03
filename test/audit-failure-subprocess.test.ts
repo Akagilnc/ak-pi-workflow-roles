@@ -47,6 +47,39 @@ async function runCli(mode: "print" | "json") {
   );
 }
 
+async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
+  return withHermeticHome(
+    { prefix: "ak-audit-navigator-" },
+    async ({ home, agentDir }) => {
+      const issueRoot = resolve(home, ".ak/work/issues/28");
+      const sessionDirectory = resolve(issueRoot, "runs/judge/session");
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(resolve(issueRoot, "authority.md"), "owner authority for Navigator drain\n", "utf8");
+      await writeFile(resolve(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-audit-failure/faux-1" }), "utf8");
+      const args = [
+        "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+        "--session-dir", sessionDirectory,
+        "-e", resolve(packageRoot, "extensions/role-runtime.ts"),
+        "-e", resolve(packageRoot, "test/fixtures/audit-failure-provider.ts"),
+        "--ak-role", "judge",
+        "--provider", "ak-audit-failure", "--model", "faux-1",
+        ...(mode === "print" ? ["-p", "Judge."] : ["--mode", "json", "Judge."]),
+      ];
+      return runPiSubprocess(args, {
+        cwd: issueRoot,
+        env: {
+          ...process.env,
+          HOME: home,
+          PI_CODING_AGENT_DIR: agentDir,
+          AK_HEALTHY_NAVIGATOR: "1",
+          AK_NAVIGATOR_ROOT: issueRoot,
+          PI_OFFLINE: "1",
+        },
+      });
+    },
+  );
+}
+
 async function runFixerAuditFailureCli(mode: "print" | "json") {
   return withHermeticHome({ prefix: "ak-fixer-audit-fatal-cli-" }, async ({ home, agentDir }) => {
     const packet = resolve(home, "packet.json");
@@ -235,6 +268,48 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
       assert.match(result.stdout, /"stopReason":"aborted"/);
     }
   }
+});
+
+test("fatal Judge audit failure drains one healthy packaged Navigator without advice", async () => {
+  const result = await runHealthyNavigatorAuditFailureCli("json");
+  assert.equal(result.timedOut, false, "subprocess did not time out");
+  assert.equal(result.code, 1, "subprocess exits nonzero");
+  const evidenceLine = result.stderr.split("\n").find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
+  assert.ok(evidenceLine, `must emit typed evidence: ${result.stderr}`);
+  const evidence = JSON.parse(evidenceLine.slice("AUDIT_FAILURE_EVIDENCE=".length)) as {
+    providerCalls: number;
+    navigatorCalls: number;
+    navigator: { startedAt: string; completedAt: string; preparedAt: string; settledAt: string; settlementKind: string; inputReleasedAt: string; releaseAfterDrain: boolean };
+    role: { failedOutput: { toolCallId: string; toolName: string; isError: boolean; details: Record<string, unknown> }; failedOutputAt: string; failedOutputCorrelation: boolean };
+  };
+  assert.equal(evidence.navigatorCalls, 1);
+  assert.equal(evidence.navigator.settlementKind, "role_infrastructure_failure");
+  const timestamp = (value: string, label: string) => {
+    const parsed = Date.parse(value);
+    assert.ok(Number.isFinite(parsed), `${label} must be an ISO timestamp`);
+    return parsed;
+  };
+  const startedAt = timestamp(evidence.navigator.startedAt, "preparation start");
+  const completedAt = timestamp(evidence.navigator.completedAt, "preparation completion");
+  const preparedAt = timestamp(evidence.navigator.preparedAt, "typed preparation persistence");
+  const settledAt = timestamp(evidence.navigator.settledAt, "typed settlement");
+  const inputReleasedAt = timestamp(evidence.navigator.inputReleasedAt, "input release");
+  const processReleaseLine = result.stderr.split("\n").find((line) => line.startsWith("AUDIT_FAILURE_PROCESS_RELEASE="));
+  assert.ok(processReleaseLine, "must emit process release evidence");
+  const processReleasedAt = timestamp((JSON.parse(processReleaseLine.slice("AUDIT_FAILURE_PROCESS_RELEASE=".length)) as { at: string }).at, "process release");
+  timestamp(evidence.role.failedOutputAt, "failed output result");
+  assert.ok(startedAt <= completedAt && completedAt <= preparedAt && preparedAt <= settledAt, "Navigator preparation must drain before settlement");
+  assert.ok(settledAt <= inputReleasedAt && inputReleasedAt <= processReleasedAt, "input and process release must follow the drained Navigator settlement");
+  assert.deepEqual(evidence.role.failedOutput, { toolCallId: "fatal-judge", toolName: "ak_judge_output", isError: true, details: {} });
+  assert.equal(evidence.role.failedOutputCorrelation, true, "failure must correlate the exact Judge output call");
+  assert.equal(evidence.navigator.releaseAfterDrain, true);
+  const events = result.stdout.split("\n").filter((line) => line.trim().startsWith("{")).map((line) => JSON.parse(line) as any);
+  const failedOutputs = events.filter((event) => event.type === "message_end" && event.message?.role === "toolResult" && event.message.toolName === "ak_judge_output" && event.message.toolCallId === "fatal-judge");
+  assert.equal(failedOutputs.length, 1, "must report exactly the failed Judge output call");
+  assert.equal(failedOutputs[0].message.isError, true);
+  assert.equal(events.some((event) => event.type === "message_end" && event.message?.role === "assistant" && event.message.stopReason === "aborted"), true);
+  assert.equal(events.some((event) => event.type === "custom_message" && event.customType === "ak-navigator-attendance"), false, "infrastructure failure must remain typed silence");
+  assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
 });
 
 test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {

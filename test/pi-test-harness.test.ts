@@ -167,7 +167,7 @@ test("isolated packs leave shared dist identity stable under concurrent contract
         const paths = packed.files.map((file) => file.path);
         assert.ok(paths.includes("dist/package-contracts/terminating-tools.js"));
         assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
-        assert.ok(paths.includes("bin/ak-assisted-run.js"));
+        assert.ok(paths.includes("dist/navigator-attendance.js"));
         assert.ok(!paths.some((path) => path.includes("recorder")));
         return packed;
       });

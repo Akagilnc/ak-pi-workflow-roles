@@ -58,7 +58,7 @@ export type ReviewerRoleDependencies = {
   shutdownAgent?(): Promise<void>;
   auditCompliance(input: ReviewerAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
 };
-export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext): never };
+export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never };
 
 function requireSoleReviewerOutputCall(id: string, ctx: ExtensionContext): void {
   const leaf = ctx.sessionManager.getLeafEntry();
@@ -206,7 +206,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           const output = validateReviewerIntent(parameters);
           if (output.status === "completed" && !expansionCaptured) throw new Error("Reviewer completed requires canonical Skill expansion capture");
           let record: ReviewerExecutionRecord;
-          try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx); throw error; }
+          try { record = ledger.recordForAudit(output.status); } catch (error) { if ((error as any)?.fatalReviewerInfrastructure) hostActions.failInfrastructure(error, toolCtx, id); throw error; }
           const candidate = assembleRuntimeReviewerReceipt({
             intent: output,
             record,
@@ -214,17 +214,17 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           });
           let audit: ComplianceDecision;
           try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
-          catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
+          catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
           return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
             pass: async (usage) => {
-              try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
+              try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
               return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
             },
             revise: (violations) => {
               throw new Error(`Reviewer receipt violates its method: ${violations.join("; ")}`);
             },
             escalate: async (result) => {
-              try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx); }
+              try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }
               return result;
             },
           });

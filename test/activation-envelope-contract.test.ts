@@ -15,14 +15,13 @@ import {
   type ActivationStage,
 } from "../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../src/activation-trace.ts";
-import { canonicalSnapshotDigestV1 } from "../src/navigator-contracts.ts";
 import { packageRoot, runPiSubprocess, withHermeticHome } from "./helpers/pi-test-harness.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
 
 test("registration enrolls every role in stable named activation stages", () => {
-  assert.equal(ROLE_REGISTRY.length, 8);
+  assert.equal(ROLE_REGISTRY.length, 7);
   for (const entry of ROLE_REGISTRY) {
     assert.ok(entry.stages.length > 0);
     assert.equal(new Set(entry.stages.map(({ id }) => id)).size, entry.stages.length);
@@ -47,7 +46,7 @@ test("every registered healthy production ignition leaves structured start and c
       "ak-coder-phase": "apply", "ak-coder-task": "/task.md",
       "ak-review-task": "/task.md", "ak-review-capabilities": "/capabilities.json",
       "ak-collector-repo": "owner/repo", "ak-collector-pr": "1", "ak-collector-legs": collectorManifest,
-      "ak-doctor-case": "/case", "ak-navigator-snapshot": "/snapshot.json", "ak-merger-input": "/merger.json",
+      "ak-doctor-case": "/case", "ak-merger-input": "/merger.json",
     };
     const tools: Array<{ name: string }> = entry.role === "merger" ? ["read", "grep", "find", "ls", "bash", "write", "edit"].map((name) => ({ name })) : [];
     let activeTools: string[] = [];
@@ -57,14 +56,12 @@ test("every registered healthy production ignition leaves structured start and c
       on(name: string, handler: (event: { reason?: string }, ctx: ExtensionContext) => unknown) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
     } as unknown as ExtensionAPI;
     const digest = "0ebb429fa86d481c2630fac53db1c91cffed5d4d41d1021c179444eb67e7ee0b";
-    const snapshotBase = { version: 1 as const, capturedAt: "2025-01-01T00:00:00.000Z", runId: "018f22a0-7b4c-7abc-8def-0123456789ab", subject: { repositoryRoot: "/repository", github: { owner: "o", name: "r", id: "R" }, parent: { number: 1, id: "I" } }, children: [], parentObservation: { state: "open" as const, labels: [], observedAt: "2025-01-01T00:00:00.000Z", query: { transport: "github_rest" as const, operation: "issue" } }, labelPolicy: [], workspaces: [{ id: "w", root: "/repository", relation: "repository" as const, head: "a".repeat(40), target: "a".repeat(40) }], evidence: [], positionCursor: 0, latestAttempt: null };
-    const snapshot = { ...snapshotBase, digest: canonicalSnapshotDigestV1(snapshotBase) };
     const material = (text: string) => ({ bytesBase64: Buffer.from(text).toString("base64"), sha256: createHash("sha256").update(text).digest("hex") });
     const mergerInput = { version: 1 as const, attemptId: "attempt", targetObjectId: "a".repeat(40), sourceObjectId: "b".repeat(40), materials: { task: material("task"), authority: material("authority"), targetIntent: material("target"), sourceIntent: material("source") }, expectedConflictPaths: ["same.txt"], resolutionScope: ["same.txt"], authorizedChecks: [{ name: "test", argv: ["npm", "test"] }] };
     createRoleRuntimeExtension({
       loadJudgeSoul: async () => "LAW", loadFixerSoul: async () => "LAW", loadCoderSoul: async () => "LAW",
       loadReviewerSoul: async () => "LAW", loadCollectorSoul: async () => "LAW", loadDoctorSoul: async () => "LAW",
-      loadNavigatorSoul: async () => "LAW", loadMergerSoul: async () => "LAW",
+      loadMergerSoul: async () => "LAW",
       loadFixPacket: async () => JSON.stringify({ version: 1, instructions: "repair", prerequisites: [] }),
       loadCoderTask: async () => "task", loadReviewerTask: async () => new TextEncoder().encode("task"),
       loadReviewerCapabilities: async () => new TextEncoder().encode(JSON.stringify({ version: 1, taskSha256: digest, tools: [], prerequisiteOperations: ["preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range", "preflight.git.list-ordered-commits", "preflight.git.read-material", "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] })),
@@ -72,7 +69,6 @@ test("every registered healthy production ignition leaves structured start and c
       createReviewerPinnedGitReader: async () => ({ pin: { repositoryRoot: "/repository", objectFormat: "sha1", targetHead: "a".repeat(40), refs: {} } }) as never, reviewerHostTools: [],
       createCollectorTransport: () => ({}) as never,
       loadDoctorCase: async () => ({ version: 1, identity: { issueNumber: 1, runsPath: "/case" }, evidence: [], cost: {}, statuses: [], commits: [], sessions: [], outputBytes: {} }) as never,
-      loadNavigatorSnapshot: async () => snapshot, loadNavigatorEvidence: async () => new Map(),
       loadMergerInput: async () => mergerInput,
       mergerGitState: { activeMerge: async () => ({ targetObjectId: "a".repeat(40), sourceObjectId: "b".repeat(40), unmergedPaths: ["same.txt"], automaticMergeTreeId: "d".repeat(40) }), completedMerge: async () => ({}) as never },
       transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }),
@@ -141,7 +137,6 @@ test("every registered whole-activation rejection terminates nonzero with a name
     let providerTurns = 0;
     const flags: Record<string, unknown> = {
       "ak-role": entry.role,
-      "ak-navigator-snapshot": "/lawful/snapshot.json",
       "ak-doctor-case": "/lawful/case",
       "ak-merger-input": "/lawful/merger.json",
     };
@@ -161,9 +156,6 @@ test("every registered whole-activation rejection terminates nonzero with a name
       loadReviewerSoul: reject,
       loadCollectorSoul: reject,
       loadDoctorSoul: reject,
-      loadNavigatorSoul: reject,
-      loadNavigatorSnapshot: reject,
-      loadNavigatorEvidence: reject,
       loadMergerSoul: reject,
       createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
       transcriptFromContext: () => "",
