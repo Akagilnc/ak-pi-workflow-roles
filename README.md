@@ -12,19 +12,21 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 | --- | --- | --- | --- |
 | judge | **大理寺** | 鞫狱定谳——自行取证、下三态判词，不改码不 commit | 已建 |
 | reviewer | **御史台** | 察举弹劾——出 finding，不作最终裁决 | 已建 |
-| （合规审计） | **审刑院** | 复核程序是否合法度，不得替换实质裁决 | 已建 |
+| （无 CLI） | **审刑院** | 复核程序是否合法度，不得替换实质裁决 | 已建；共享内部接缝，非 `--ak-role` |
 | coder | **将作监** | 营造新作——首次实现 | 已建 |
 | fixer | **修内司** | 缮修既有——按修理包结算 | 已建 |
-| collector | **门下省** | 合并前收外证：等线上评审、区分 pending／terminal、绑定精确 HEAD | 已建 |
+| collector | **门下省** | 合并前收外证：等线上评审、区分 pending／terminal、绑定精确 HEAD，报**收集终态**（腿可为 `valid｜unavailable｜missing`） | 已建；不裁决、不批准，CI／可合并性／thread resolved 均非覆盖范围 |
 | navigator | **斥候** | 先行探路、进言下一步；建议非授权，调用者可偏离 | 已建 |
 | merger | **校书郎** | 雠校两本——调和冲突集而不以意改字，需新决定则阙疑上呈 | 已建 |
 | doctor | 医生 | 单案诊断工厂机制，开 `keep｜thin｜delete` 方 | 已建；`弘文馆` 挂起 |
-| — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | 未建（[#67](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/67)） |
-| — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建（[#67](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/67)） |
-| — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 未建，待司天台有簿可考 |
+| — | **司天台** | 记候簿——只打点、只指针，不分析不执法 | **一期不是角色**（[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md)：零 LLM 双面对账）；席位形态属 [#67](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/67) 素材，未定 |
+| — | **兰台** | 读档议制——耗时／缺口／冗余三条，上奏不执法 | 未建（[#67](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/67) 两席之一） |
+| — | **考功司** | 考具体效率——角色与档位的升档率、一次通过率、每票成本 | 留档，不属 #67，需要时另立票 |
 | — | **主簿** | 合并后勾稽销案：核实确已合上、清理残留、报到达 | 未建 |
 
-**merge 按钮归调用者**，没有任何角色握不可逆权限：门下省把苦活做完并报「手续齐备」，人（或 AI）自己点，点完想调主簿就调、不调也可以。
+**merge 按钮归调用者**，没有任何角色握不可逆权限：门下省把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
+
+上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；合规审计也并非只跟在判官之后，Judge、Fixer、Reviewer、Doctor 各自都有一次。
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
