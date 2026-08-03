@@ -16,9 +16,10 @@ import {
   COLLECTOR_OUTPUT_TOOL,
 } from "../../src/collector-role.ts";
 import {
+  getSharedIsolatedPack,
   packageRoot,
-  packIsolatedPackage,
   runPiSubprocess,
+  withColdInstalledPackage,
   withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
@@ -26,21 +27,19 @@ import {
 const exec = promisify(execFile);
 
 test("npm pack includes collector modules, schema, and soul and excludes skills/orchestrator collect", async () => {
-  await withHermeticHome({ prefix: "ak-collector-pack-" }, async ({ home }) => {
-    const pack = await packIsolatedPackage(home);
-    const paths = pack.files.map((file) => file.path);
-    assert.ok(paths.includes("souls/collector.md"));
-    assert.ok(paths.includes("schemas/collector-legs-v1.schema.json"));
-    assert.ok(paths.includes("src/collector-role.ts"));
-    assert.ok(paths.includes("src/collector-tool-schemas.ts"));
-    assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
-    assert.equal(paths.includes("souls/collect.md"), false);
-    const archiveText = (await exec("tar", ["-xOf", pack.tarball], {
-      maxBuffer: 5 * 1024 * 1024,
-    })).stdout;
-    assert.doesNotMatch(archiveText, /onlineCollect|ReviewCargo|souls\/collect\.md/);
-    assert.doesNotMatch(archiveText, /Mysterious Name|Under 400 words|Feature Envy/);
-  });
+  const pack = await getSharedIsolatedPack();
+  const paths = pack.files.map((file) => file.path);
+  assert.ok(paths.includes("souls/collector.md"));
+  assert.ok(paths.includes("schemas/collector-legs-v1.schema.json"));
+  assert.ok(paths.includes("src/collector-role.ts"));
+  assert.ok(paths.includes("src/collector-tool-schemas.ts"));
+  assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
+  assert.equal(paths.includes("souls/collect.md"), false);
+  const archiveText = (await exec("tar", ["-xOf", pack.tarball], {
+    maxBuffer: 5 * 1024 * 1024,
+  })).stdout;
+  assert.doesNotMatch(archiveText, /onlineCollect|ReviewCargo|souls\/collect\.md/);
+  assert.doesNotMatch(archiveText, /Mysterious Name|Under 400 words|Feature Envy/);
 });
 
 test("installed npm tarball collector runs default gh transport end-to-end in print and json", async () => {
@@ -48,43 +47,7 @@ test("installed npm tarball collector runs default gh transport end-to-end in pr
     await withHermeticHome(
       { prefix: `ak-collector-install-${mode}-` },
       async ({ home }) => {
-        const pack = await packIsolatedPackage(home);
-        const tarball = pack.tarball;
-        const consumer = resolve(home, "consumer");
-        await mkdir(consumer, { recursive: true });
-        await writeFile(
-          resolve(consumer, "package.json"),
-          JSON.stringify({
-            private: true,
-            dependencies: {
-              "@ak/pi-workflow-roles": `file:${tarball}`,
-              "@earendil-works/pi-ai": `file:${
-                resolve(packageRoot, "node_modules/@earendil-works/pi-ai")
-              }`,
-              "@earendil-works/pi-coding-agent": `file:${
-                resolve(
-                  packageRoot,
-                  "node_modules/@earendil-works/pi-coding-agent",
-                )
-              }`,
-              typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
-            },
-          }),
-        );
-        await exec("npm", [
-          "install",
-          "--ignore-scripts",
-          "--no-audit",
-          "--no-fund",
-        ], {
-          cwd: consumer,
-          maxBuffer: 5 * 1024 * 1024,
-        });
-
-        const installedRoot = resolve(
-          consumer,
-          "node_modules/@ak/pi-workflow-roles",
-        );
+        await withColdInstalledPackage(home, async ({ fixture: consumer, installedRoot }) => {
         const installedEntrypoint = resolve(
           installedRoot,
           "extensions/role-runtime.ts",
@@ -222,6 +185,7 @@ exit 2
           if (previousPath === undefined) delete process.env.PATH;
           else process.env.PATH = previousPath;
         }
+        });
       },
     );
   }

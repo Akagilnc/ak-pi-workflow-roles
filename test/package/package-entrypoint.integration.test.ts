@@ -49,8 +49,8 @@ import { validateAcceptedDetails } from "../../src/package-contracts/terminating
 import { SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import type { ComplianceCompletion } from "../../src/compliance-transport.ts";
 import {
+  getSharedIsolatedPack,
   loadRawPackageManifest,
-  packIsolatedPackage,
   packageRoot,
   type RawPackageManifest,
   resolvePackageEntrypoint,
@@ -208,33 +208,28 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
   const packet = { instructions: "repair", prerequisites: parseFixerPrerequisites("[]") };
   assert.equal((fixerPrerequisitesSchema as any).type, "array");
   assert.deepEqual(validateFixerOutputForPacket({ status: "planned", report: "plan" }, "plan", packet), { status: "planned", report: "plan" });
-  await withHermeticHome(
-    { prefix: "ak-doctor-pack-" },
-    async ({ home }) => {
-      const packed = await packIsolatedPackage(home);
-      const paths = new Set(packed.files.map((file) => file.path));
-      for (const path of [
-        "souls/doctor.md",
-        "src/doctor-contracts.ts",
-        "src/doctor-evidence.ts",
-        "src/canonical-json.ts",
-        "souls/navigator.md",
-        "src/navigator-attendance.ts",
-        "dist/navigator-attendance.js",
-        "souls/merger.md",
-        "src/merger-contracts.ts",
-        "src/merger-git-state.ts",
-        "src/merger-role.ts",
-        "src/package-contracts/fixer-packet.ts",
-        "dist/package-contracts/fixer-packet.js",
-        "packets/fixer-repair.md",
-        "packets/fixer-prerequisites.json",
-      ]) {
-        assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
-      }
-      assert.equal(paths.has("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed");
-    },
-  );
+  const packed = await getSharedIsolatedPack();
+  const paths = new Set(packed.files.map((file) => file.path));
+  for (const path of [
+    "souls/doctor.md",
+    "src/doctor-contracts.ts",
+    "src/doctor-evidence.ts",
+    "src/canonical-json.ts",
+    "souls/navigator.md",
+    "src/navigator-attendance.ts",
+    "dist/navigator-attendance.js",
+    "souls/merger.md",
+    "src/merger-contracts.ts",
+    "src/merger-git-state.ts",
+    "src/merger-role.ts",
+    "src/package-contracts/fixer-packet.ts",
+    "dist/package-contracts/fixer-packet.js",
+    "packets/fixer-repair.md",
+    "packets/fixer-prerequisites.json",
+  ]) {
+    assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
+  }
+  assert.equal(paths.has("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed");
 });
 
 test("cold-installed package audits all four roles from editable Souls", async () => {

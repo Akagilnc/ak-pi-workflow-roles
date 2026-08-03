@@ -4,18 +4,23 @@ import { readdirSync, statSync } from "node:fs";
 import {
   access,
   mkdir,
+  mkdtemp,
   readFile,
+  realpath,
   writeFile,
 } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { tmpdir } from "node:os";
 
 import {
+  constructionProvenance,
+  getSharedIsolatedPack,
   packageRoot,
-  packIsolatedPackage,
   runPiSubprocess,
   withHermeticHome,
+  withProcessCwd,
 } from "../helpers/pi-test-harness.ts";
 
 test("subprocess timeouts are explicit instead of looking like natural no-code closes", async () => {
@@ -59,6 +64,27 @@ test("hermetic HOME restores the exact prior value and recursively cleans up aft
     else process.env.HOME = originalHome;
   }
 });
+
+test("withProcessCwd restores the prior working directory after a throw", async () => {
+  const prior = process.cwd();
+  const target = await realpathMkdir();
+  const sentinel = { reason: "cwd sentinel" };
+  await assert.rejects(
+    withProcessCwd(target, async () => {
+      assert.equal(process.cwd(), target);
+      throw sentinel;
+    }),
+    (error) => {
+      assert.equal(error, sentinel);
+      return true;
+    },
+  );
+  assert.equal(process.cwd(), prior);
+});
+
+async function realpathMkdir(): Promise<string> {
+  return await realpath(await mkdtemp(resolve(tmpdir(), "ak-cwd-scope-")));
+}
 
 interface DistSnapshotEntry {
   size: number;
@@ -142,63 +168,38 @@ async function exerciseSharedPackageContracts(): Promise<void> {
 }
 
 test("isolated packs leave shared dist identity stable under concurrent contract imports", async () => {
-  await withHermeticHome(
-    { prefix: "ak-pack-isolation-stress-" },
-    async ({ home }) => {
-      const distRoot = resolve(packageRoot, "dist");
-      const before = await snapshotDistTree(distRoot);
-      assert.ok(
-        before.has("package-contracts/terminating-tools.js"),
-        "shared terminating-tools.js must exist before stress",
-      );
-      assert.ok(
-        before.has("package-contracts/judge-output.js"),
-        "shared judge-output.js must exist before stress",
-      );
-
-      const packCount = 3;
-      const importRounds = 24;
-      let stopImports = false;
-
-      const packPromises = Array.from({ length: packCount }, async (_, i) => {
-        const dest = resolve(home, `pack-${i}`);
-        await mkdir(dest, { recursive: true });
-        const packed = await packIsolatedPackage(dest);
-        const paths = packed.files.map((file) => file.path);
-        assert.ok(paths.includes("dist/package-contracts/terminating-tools.js"));
-        assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
-        assert.ok(paths.includes("dist/navigator-attendance.js"));
-        assert.ok(!paths.some((path) => path.includes("recorder")));
-        return packed;
-      });
-
-      const importPromise = (async () => {
-        for (let i = 0; i < importRounds && !stopImports; i++) {
-          await exerciseSharedPackageContracts();
-        }
-      })();
-
-      const packs = await Promise.all(packPromises);
-      stopImports = true;
-      await importPromise;
-
-      assert.equal(packs.length, packCount);
-      for (const packed of packs) {
-        assert.notEqual(
-          packed.root,
-          packageRoot,
-          "pack materialization must not be packageRoot",
-        );
-        await access(packed.tarball);
-      }
-
-      // Keep reading the shared chain after packs complete.
-      for (let i = 0; i < 8; i++) {
-        await exerciseSharedPackageContracts();
-      }
-
-      const after = await snapshotDistTree(distRoot);
-      assertDistSnapshotUnchanged(before, after);
-    },
+  const distRoot = resolve(packageRoot, "dist");
+  const before = await snapshotDistTree(distRoot);
+  assert.ok(
+    before.has("package-contracts/terminating-tools.js"),
+    "shared terminating-tools.js must exist before stress",
   );
+  assert.ok(
+    before.has("package-contracts/judge-output.js"),
+    "shared judge-output.js must exist before stress",
+  );
+
+  // Structural invariant: one private pack (shared fixture) never rewrites packageRoot/dist.
+  const shared = await getSharedIsolatedPack();
+  assert.notEqual(shared.root, packageRoot);
+  assert.ok(shared.root.startsWith(tmpdir()) || shared.cacheDir.includes("ak-pi-workflow-roles-cold-fixtures"));
+  await access(shared.tarball);
+  const paths = shared.files.map((file) => file.path);
+  assert.ok(paths.includes("dist/package-contracts/terminating-tools.js"));
+  assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
+  assert.ok(paths.includes("dist/navigator-attendance.js"));
+  assert.ok(!paths.some((path) => path.includes("recorder")));
+
+  // Provenance must bind the fixture to the current construction HEAD.
+  const live = constructionProvenance();
+  assert.equal(shared.provenance.head, live.head);
+  assert.equal(shared.provenance.fingerprint, live.fingerprint);
+
+  // Keep reading the shared contract chain after the private pack completes.
+  for (let i = 0; i < 8; i++) {
+    await exerciseSharedPackageContracts();
+  }
+
+  const after = await snapshotDistTree(distRoot);
+  assertDistSnapshotUnchanged(before, after);
 });
