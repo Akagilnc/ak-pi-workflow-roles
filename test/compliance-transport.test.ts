@@ -335,6 +335,13 @@ test("malformed nested decisions retain raw responses and report typed facts", a
         JSON.parse(JSON.stringify(nested)),
         `${candidate.id} raw response must survive malformed parsing`,
       );
+      assert.equal(
+        sessionManager.getEntries().some(
+          (entry) => entry.type === "message" && entry.message.role === "toolResult",
+        ),
+        false,
+        `${candidate.id} must not append a toolResult for the rejected nested decision`,
+      );
     });
   }
 });

@@ -6633,7 +6633,7 @@
       "behavior": "Batch gate: an assistant turn carrying two operational tool calls is wholly rejected — every toolResult isError, zero GitHub, exit 1.",
       "owningSeam": "src/collector-role.ts batch gate + src/collector-ledger.ts evaluateBatch",
       "preFixRedCounterexample": "Red (merge class): test/collector-role.test.ts :: \"collector rejects parallel operational siblings and mixed output batches\" costs 22.88 ms re-proving a root already carried by test/collector-role.test.ts:855 \"collector same-session batch provenance matrix freezes transport after fatal\". Duplicate construction: Duplicate proof of an already-covered root costing 22.88 ms. test/collector-role.test.ts:778-797 vs 855:875-893. The only assertion here not present in the matrix is L790-795 ('every toolResult isError === true') —",
-      "postFixGreenResult": "Green (merge class): survivor test/collector-role.test.ts:855 \"collector same-session batch provenance matrix freezes transport after fatal\" covers the absorbed contract per r6 open-body proof. Survivor matrix includes parallel operational siblings (observe+wait) and mixed invalid batches, asserting exitCode 1 and frozen/zero GitHub — covering the absorbed batch-gate rejection clauses.",
+      "postFixGreenResult": "Green (merge class): survivor test/collector-role.test.ts:855 now asserts that the parallel observe+wait batch produces only isError:true toolResults, exitCode 1, and no GitHub create call; the matrix also preserves its observed pull count and cross-turn frozen transport assertions.",
       "unchangedScope": "Preserve absorbed contract: Batch gate: an assistant turn carrying two operational tool calls is wholly rejected — every toolResult isError, zero GitHub, exit 1. Survivor test/collector-role.test.ts::collector same-session batch provenance matrix freezes transport after fatal keeps it; source test/collector-role.test.ts::collector rejects parallel operational siblings and mixed output batches ceases as independent carrier.",
       "trace": {
         "sourceFile": "test/collector-role.test.ts",
@@ -6657,8 +6657,8 @@
         },
         "mergeInto": "test/collector-role.test.ts::collector same-session batch provenance matrix freezes transport after fatal"
       },
-      "observableGreenResult": "Green (merge class): survivor test/collector-role.test.ts:855 \"collector same-session batch provenance matrix freezes transport after fatal\" covers the absorbed contract per r6 open-body proof. Survivor matrix includes parallel operational siblings (observe+wait) and mixed invalid batches, asserting exitCode 1 and frozen/zero GitHub — covering the absorbed batch-gate rejection clauses.",
-      "mergeRepairJustification": "Opened test/collector-role.test.ts:855 \"collector same-session batch provenance matrix freezes transport after fatal\". Assertions observed: assert.ok(transport.calls.pull >= 2); | assert.equal(transport.calls.create, 0); | assert.equal(result.exitCode, 1); | assert.equal(transport.calls.pull, frozenPull); | assert.equal(transport.calls.create, frozenCreate); | assert.equal(transport.calls.pull, 0); | assert.equal(transport.calls.create, 0); | assert.equal(result.exitCode, 1); | assert.equal(transport.calls.pull, 0); | assert.equal(transport.calls.create, 0); | assert.equal(transport.calls.pull, 0); | assert.equal(transport.calls.pull, 0);. Survivor matrix includes parallel operational siblings (observe+wait) and mixed invalid batches, asserting exitCode 1 and frozen/zero GitHub — covering the absorbed batch-gate rejection clauses."
+      "observableGreenResult": "Green (merge class): survivor test/collector-role.test.ts:855 asserts every resulting toolResult has isError === true for the parallel operational batch, alongside exitCode 1 and zero GitHub; the matrix retains its frozen transport cases.",
+      "mergeRepairJustification": "Extended test/collector-role.test.ts:855 survivor matrix: its first parallel observe+wait block now inspects the session toolResults and requires a non-empty result set in which every result has isError === true, then retains the existing exitCode and zero/frozen GitHub assertions."
     },
     "fact-425d98ddbc24": {
       "behavior": "Positive control for the missing status: a well-formed missing output, produced from a complete post-cutoff re-observe, is accepted (isError false) and required 2 PR reads.",
@@ -7662,7 +7662,7 @@
       "behavior": "An auditor response carrying a well-formed decision call but stopReason:\"error\" is rejected; the raw nested response is retained as compliance evidence and no toolResult is appended for the output call.",
       "owningSeam": "src/judge-role.ts audit projection + src/package-contracts/judge-output.ts",
       "preFixRedCounterexample": "Red (merge class): test/judge-role.test.ts :: \"judge role rejects a terminal audit response before accepting its valid decision call\" costs 12.830292 ms re-proving a root already carried by test/compliance-transport.test.ts:225 \"malformed nested decisions retain raw responses and report typed facts\". Duplicate construction: Duplicate proof of an already-covered root costing 12.83 ms. test/judge-role.test.ts:491-537 (12.83ms — 2nd most expensive test in this file, ~17% of the file's total, for a contract it does not own). Its exact scenario is case id `terminal-error-with-valid-call` in test/compliance-transport.test.ts:225-236 (valid decision call + stopReason error + errorMessage), whose matrix additionally covers aborted / zero-calls / wrong-name / multiple-calls.",
-      "postFixGreenResult": "Green (merge class): survivor test/compliance-transport.test.ts:225 \"malformed nested decisions retain raw responses and report typed facts\" covers the absorbed contract per r6 open-body proof. Survivor table includes terminal-error-with-valid-call: stopReason error with a well-formed decision call is rejected, raw nested response retained as compliance evidence — matching the absorbed clause.",
+      "postFixGreenResult": "Green (merge class): survivor test/compliance-transport.test.ts:225 now asserts the terminal-error-with-valid-call case is rejected, retains the raw response and typed facts, and appends no toolResult for the rejected nested decision call.",
       "unchangedScope": "Preserve absorbed contract: An auditor response carrying a well-formed decision call but stopReason:\"error\" is rejected; the raw nested response is retained as compliance evidence and no toolResult is appended for the output call. Survivor test/compliance-transport.test.ts::malformed nested decisions retain raw responses and report typed facts keeps it; source test/judge-role.test.ts::judge role rejects a terminal audit response before accepting its valid decision call ceases as independent carrier.",
       "trace": {
         "sourceFile": "test/judge-role.test.ts",
@@ -7686,8 +7686,8 @@
         },
         "mergeInto": "test/compliance-transport.test.ts::malformed nested decisions retain raw responses and report typed facts"
       },
-      "observableGreenResult": "Green (merge class): survivor test/compliance-transport.test.ts:225 \"malformed nested decisions retain raw responses and report typed facts\" covers the absorbed contract per r6 open-body proof. Survivor table includes terminal-error-with-valid-call: stopReason error with a well-formed decision call is rejected, raw nested response retained as compliance evidence — matching the absorbed clause.",
-      "mergeRepairJustification": "Opened test/compliance-transport.test.ts:225 \"malformed nested decisions retain raw responses and report typed facts\". Assertions observed: assert.ok(thrown instanceof Error); | assert.equal(thrown.name, \"ComplianceDecisionContractError\"); | assert.deepEqual(diagnosticFacts(thrown), { | assert.deepEqual(. Survivor table includes terminal-error-with-valid-call: stopReason error with a well-formed decision call is rejected, raw nested response retained as compliance evidence — matching the absorbed clause."
+      "observableGreenResult": "Green (merge class): survivor test/compliance-transport.test.ts:225 asserts rejection, raw-response retention, complete typed facts, and absence of any appended toolResult for each malformed nested response.",
+      "mergeRepairJustification": "Extended test/compliance-transport.test.ts:225 case matrix with a session-entry assertion that no toolResult is appended after the rejected nested decision; existing assertions retain typed rejection and raw-response retention."
     },
     "fact-860deb4c0749": {
       "behavior": "Bundles two different things: (a) real structure — each role registers exactly one output tool under the contract-owned name, judge's schema is closed (additionalProperties:false) with a fixed property order, coder's is a 3-branch anyOf with fixed leaf order, and an accepted call returns terminate:true with details echoed verbatim and usage propagated only for audited roles; and (b) exact-string equality on model-facing prose (description / promptSnippet / promptGuidelines).",
@@ -8009,7 +8009,7 @@
       "behavior": "On judge activation the active tool set is narrowed to read/grep/find/ls/bash plus the output tool — write, edit and arbitrary sibling tools are dropped.",
       "owningSeam": "src/judge-role.ts audit projection + src/package-contracts/judge-output.ts",
       "preFixRedCounterexample": "Red (merge class): test/judge-role.test.ts :: \"judge activation narrows active tools to registered evidence tools and output\" costs 0.46075 ms re-proving a root already carried by test/judge-role.test.ts:235 \"focused Judge controller owns activation, output, narrowing, and prompt\". Duplicate construction: Duplicate proof of an already-covered root costing 0.46 ms. test/judge-role.test.ts:697-723 (0.46ms). Its registry at :698-707 is the meaningful one (it is the version that can observe write/edit/arbitrary_sibling being dropped); :250's registry only offers read/bash/write.",
-      "postFixGreenResult": "Green (merge class): survivor test/judge-role.test.ts:235 \"focused Judge controller owns activation, output, narrowing, and prompt\" covers the absorbed contract per r6 open-body proof. Survivor asserts setActiveTools narrows to evidence tools + judge output and drops write; same activation narrowing law as the source (registered evidence tools + output only).",
+      "postFixGreenResult": "Green (merge class): survivor test/judge-role.test.ts:235 registers read/grep/find/ls/bash plus disallowed write/edit/arbitrary_sibling and asserts the exact active set is read/grep/find/ls/bash plus the Judge output tool, proving both retention and exclusion.",
       "unchangedScope": "Preserve absorbed contract: On judge activation the active tool set is narrowed to read/grep/find/ls/bash plus the output tool — write, edit and arbitrary sibling tools are dropped. Survivor test/judge-role.test.ts::focused Judge controller owns activation, output, narrowing, and prompt keeps it; source test/judge-role.test.ts::judge activation narrows active tools to registered evidence tools and output ceases as independent carrier.",
       "trace": {
         "sourceFile": "test/judge-role.test.ts",
@@ -8033,8 +8033,8 @@
         },
         "mergeInto": "test/judge-role.test.ts::focused Judge controller owns activation, output, narrowing, and prompt"
       },
-      "observableGreenResult": "Green (merge class): survivor test/judge-role.test.ts:235 \"focused Judge controller owns activation, output, narrowing, and prompt\" covers the absorbed contract per r6 open-body proof. Survivor asserts setActiveTools narrows to evidence tools + judge output and drops write; same activation narrowing law as the source (registered evidence tools + output only).",
-      "mergeRepairJustification": "Opened test/judge-role.test.ts:235 \"focused Judge controller owns activation, output, narrowing, and prompt\". Assertions observed: assert.deepEqual([...harness.tools.keys()], [JUDGE_OUTPUT_TOOL_NAME]); | assert.deepEqual(harness.activeToolSets, [[\"read\", \"bash\", JUDGE_OUTPUT_TOOL_NAME]]); | assert.equal(. Survivor asserts setActiveTools narrows to evidence tools + judge output and drops write; same activation narrowing law as the source (registered evidence tools + output only)."
+      "observableGreenResult": "Green (merge class): survivor test/judge-role.test.ts:235 asserts the exact activeToolSets array [read, grep, find, ls, bash, Judge output], while the registered write/edit/arbitrary_sibling tools are absent.",
+      "mergeRepairJustification": "Expanded test/judge-role.test.ts:235 registry to read/grep/find/ls/bash plus write/edit/arbitrary_sibling and changed the exact activeToolSets oracle to [read, grep, find, ls, bash, JUDGE_OUTPUT_TOOL_NAME], preserving the exclusion negative."
     },
     "fact-34525c8589ed": {
       "behavior": "A revise audit decision rejects the submission with `violates its law`, an unchanged resubmission then passes, and the two audits receive distinct input objects.",
@@ -9030,7 +9030,7 @@
         "mergeInto": "test/collector-role.test.ts::collector same-session batch provenance matrix freezes transport after fatal",
         "absorbedContract": "Batch gate: an assistant turn carrying two operational tool calls is wholly rejected — every toolResult isError, zero GitHub, exit 1.",
         "oracleRoot": "collector same-session batch provenance matrix freezes transport after fatal",
-        "coverageProof": "Opened test/collector-role.test.ts:855 \"collector same-session batch provenance matrix freezes transport after fatal\". Assertions observed: assert.ok(transport.calls.pull >= 2); | assert.equal(transport.calls.create, 0); | assert.equal(result.exitCode, 1); | assert.equal(transport.calls.pull, frozenPull); | assert.equal(transport.calls.create, frozenCreate); | assert.equal(transport.calls.pull, 0); | assert.equal(transport.calls.create, 0); | assert.equal(result.exitCode, 1); | assert.equal(transport.calls.pull, 0); | assert.equal(transport.calls.create, 0); | assert.equal(transport.calls.pull, 0); | assert.equal(transport.calls.pull, 0);. Survivor matrix includes parallel operational siblings (observe+wait) and mixed invalid batches, asserting exitCode 1 and frozen/zero GitHub — covering the absorbed batch-gate rejection clauses.",
+        "coverageProof": "Opened test/collector-role.test.ts:855: the parallel observe+wait block now asserts a non-empty toolResult set where every result has isError === true, plus exitCode 1 and create count 0; the remaining matrix blocks assert the observed pull count and frozen transport across turns.",
         "survivor": {
           "file": "test/collector-role.test.ts",
           "line": 855,
@@ -9038,7 +9038,7 @@
         },
         "peers": [],
         "independentValidation": "r6-opened-survivor-test-body",
-        "independentNote": "Survivor matrix includes parallel operational siblings (observe+wait) and mixed invalid batches, asserting exitCode 1 and frozen/zero GitHub — covering the absorbed batch-gate rejection clauses.",
+        "independentNote": "Survivor matrix explicitly checks every toolResult isError === true for the parallel observe+wait batch, plus exitCode 1 and create count 0, while preserving the observed/frozen pull assertions.",
         "sourceLine": 736
       },
       {
@@ -9081,7 +9081,7 @@
         "mergeInto": "test/compliance-transport.test.ts::malformed nested decisions retain raw responses and report typed facts",
         "absorbedContract": "An auditor response carrying a well-formed decision call but stopReason:\"error\" is rejected; the raw nested response is retained as compliance evidence and no toolResult is appended for the output call.",
         "oracleRoot": "malformed nested decisions retain raw responses and report typed facts",
-        "coverageProof": "Opened test/compliance-transport.test.ts:225 \"malformed nested decisions retain raw responses and report typed facts\". Assertions observed: assert.ok(thrown instanceof Error); | assert.equal(thrown.name, \"ComplianceDecisionContractError\"); | assert.deepEqual(diagnosticFacts(thrown), { | assert.deepEqual(. Survivor table includes terminal-error-with-valid-call: stopReason error with a well-formed decision call is rejected, raw nested response retained as compliance evidence — matching the absorbed clause.",
+        "coverageProof": "Opened test/compliance-transport.test.ts:225: terminal-error-with-valid-call is rejected with typed facts, its raw response is retained, and the session contains no appended toolResult.",
         "survivor": {
           "file": "test/compliance-transport.test.ts",
           "line": 225,
@@ -9089,7 +9089,7 @@
         },
         "peers": [],
         "independentValidation": "r6-opened-survivor-test-body",
-        "independentNote": "Survivor table includes terminal-error-with-valid-call: stopReason error with a well-formed decision call is rejected, raw nested response retained as compliance evidence — matching the absorbed clause.",
+        "independentNote": "Survivor table now asserts typed rejection and raw-response retention plus absence of any appended toolResult for the terminal-error-with-valid-call case.",
         "sourceLine": 491
       },
       {
@@ -9115,7 +9115,7 @@
         "mergeInto": "test/judge-role.test.ts::focused Judge controller owns activation, output, narrowing, and prompt",
         "absorbedContract": "On judge activation the active tool set is narrowed to read/grep/find/ls/bash plus the output tool — write, edit and arbitrary sibling tools are dropped.",
         "oracleRoot": "focused Judge controller owns activation, output, narrowing, and prompt",
-        "coverageProof": "Opened test/judge-role.test.ts:235 \"focused Judge controller owns activation, output, narrowing, and prompt\". Assertions observed: assert.deepEqual([...harness.tools.keys()], [JUDGE_OUTPUT_TOOL_NAME]); | assert.deepEqual(harness.activeToolSets, [[\"read\", \"bash\", JUDGE_OUTPUT_TOOL_NAME]]); | assert.equal(. Survivor asserts setActiveTools narrows to evidence tools + judge output and drops write; same activation narrowing law as the source (registered evidence tools + output only).",
+        "coverageProof": "Opened test/judge-role.test.ts:235: the focused controller registers read/grep/find/ls/bash and disallowed write/edit/arbitrary_sibling, then exact-deep-equals activeToolSets to [read, grep, find, ls, bash, JUDGE_OUTPUT_TOOL_NAME].",
         "survivor": {
           "file": "test/judge-role.test.ts",
           "line": 235,
@@ -9123,7 +9123,7 @@
         },
         "peers": [],
         "independentValidation": "r6-opened-survivor-test-body",
-        "independentNote": "Survivor asserts setActiveTools narrows to evidence tools + judge output and drops write; same activation narrowing law as the source (registered evidence tools + output only).",
+        "independentNote": "Survivor exact activeToolSets oracle proves retention of read/grep/find/ls/bash and exclusion of write/edit/arbitrary_sibling.",
         "sourceLine": 697
       }
     ],
