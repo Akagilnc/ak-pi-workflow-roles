@@ -29,7 +29,16 @@ async function git(root: string, ...args: string[]): Promise<string> {
   try {
     return (await exec("git", ["-C", root, ...args])).stdout.trim();
   } catch (error) {
-    throw new Error(`git ${args[0] ?? "command"} failed`, { cause: error });
+    const source = error as { code?: unknown; signal?: unknown; stderr?: unknown; stdout?: unknown; killed?: unknown };
+    const failure = new Error(`git ${args[0] ?? "command"} failed`, { cause: error });
+    Object.assign(failure, {
+      code: typeof source.code === "number" ? source.code : null,
+      signal: typeof source.signal === "string" ? source.signal : null,
+      timedOut: source.killed === true,
+      stderr: String(source.stderr ?? ""),
+      stdout: String(source.stdout ?? ""),
+    });
+    throw failure;
   }
 }
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, materials: established ? [{ id: "rules", repositoryPath: "RULES.md" }, { id: "spec", repositoryPath: "SPEC.md" }] : [{ id: "rules", repositoryPath: "RULES.md" }, { id: "absence", repositoryPath: "README.md" }], spec: established ? { state: "established" } : { state: "not-established" }, required: established ? { standards: request, spec: request } : { standards: request } }; }
