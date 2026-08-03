@@ -23,12 +23,14 @@ export type NavigatorUnavailableKey = "context" | "session" | "model" | "thinkin
 export class NavigatorUnavailableError extends Error {
   readonly unavailableSource: NavigatorUnavailableKey;
   readonly unavailableCause: NavigatorUnavailableKey;
+  readonly originalCause: unknown;
 
-  constructor(source: NavigatorUnavailableKey, message: string, cause: NavigatorUnavailableKey = source) {
+  constructor(source: NavigatorUnavailableKey, message: string, cause: NavigatorUnavailableKey = source, originalCause?: unknown) {
     super(message);
     this.name = "NavigatorUnavailableError";
     this.unavailableSource = source;
     this.unavailableCause = cause;
+    this.originalCause = originalCause;
   }
 }
 
@@ -107,7 +109,7 @@ export function navigatorProviderFailure<T extends object>(message: T, source: N
 
 export function navigatorUnavailableError(source: NavigatorUnavailableKey, error: unknown, cause: NavigatorUnavailableKey = source): NavigatorUnavailableError {
   const message = error instanceof Error ? error.message : String(error);
-  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause);
+  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
 }
 export type NavigatorSettlement =
   | { kind: "accepted"; role: string; phase: NavigatorPhase; status?: string }
@@ -376,6 +378,7 @@ export async function readNavigatorModelSetting(path = navigatorModelSettingPath
     if (!exactRecord(raw) || typeof raw.model !== "string" || raw.model.trim() === "") throw new Error("Navigator model setting is malformed");
     return raw.model;
   } catch (error) {
+    // Contract: README.md#Navigator-attendance — the absent optional persistent setting uses the documented default; all other causes propagate.
     if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return NAVIGATOR_DEFAULT_MODEL;
     throw error;
   }
@@ -452,6 +455,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let previousRoute: NavigatorRouteTarget[] | undefined;
   let outputSink: ((value: PrepareOutput) => void) | undefined;
   let settlementTail: Promise<void> = Promise.resolve();
+  let settlementFailure: unknown;
+  let preparationFailure: unknown;
   let disposed = false;
 
   const unavailable = (invocationId: string, reason: unknown): NavigatorReport => {
@@ -468,8 +473,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   const prepare = async (): Promise<NavigatorCandidate[]> => {
     const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
     activeInvocationId = invocationId;
-    try {
-      if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
+    if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
       let soul: string;
       try {
         soul = (await options.loadSoul()).trim();
@@ -604,9 +608,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       } finally {
         outputSink = undefined;
       }
-    } catch (error) {
-      throw error;
-    }
   };
 
   return {
@@ -624,15 +625,18 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     },
     prepare(): void {
       if (disposed || preparation !== undefined) return;
+      preparationFailure = undefined;
       preparation = prepare();
-      void preparation.catch(() => undefined);
+      // Contract: README.md#Navigator-attendance — background preparation rejection is drained so the later typed settlement can report unavailable; retain the exact cause until settlement.
+      void preparation.catch((error) => { preparationFailure = error; });
     },
     isPreparing(): boolean {
       return preparation !== undefined || sessionReady !== undefined;
     },
     settle(settlement: NavigatorSettlement): Promise<void> {
       const next = settlementTail.then(() => settleOnce(settlement));
-      settlementTail = next.catch(() => undefined);
+      // Contract: README.md#Navigator-attendance — rejected attendance settlements are drained only to serialize later attendance; retain the exact rejection for the caller/audit path.
+      settlementTail = next.catch((error) => { settlementFailure = error; });
       return next;
     },
     dispose(): void {
@@ -647,18 +651,35 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
       const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
       let report: NavigatorReport;
+      let suppressEvent = false;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
-        // Silence is a presentation choice, not permission to abandon the in-flight
-        // preparation.  The next driver input must not start a second prompt on the
-        // same native session while this one is still running.
-        if (sessionReady !== undefined) await sessionReady.catch(() => undefined);
-        if (preparation !== undefined) await preparation.catch(() => undefined);
+        // Contract: README.md#Navigator-attendance — human/role outcomes are silent only when preparation completed; a rejected preparation is reported as typed unavailable with its cause.
+        // Drain the in-flight work so the next driver input cannot start a second prompt on the same native session.
+        if (sessionReady !== undefined) {
+          try { await sessionReady; } catch (error) { preparationFailure ??= error; }
+        }
+        if (preparation !== undefined) {
+          try { await preparation; } catch (error) { preparationFailure ??= error; }
+        }
         session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.kind === "human_decision" ? { status: settlement.status } : {}) });
-        report = { disposition: "silence" };
+        if (preparationFailure !== undefined) {
+          // Keep the typed unavailable disposition for the failed attendance, but preserve the documented silence of role/human settlement events.
+          report = unavailable(invocationId, preparationFailure);
+          suppressEvent = true;
+        } else {
+          report = { disposition: "silence" };
+        }
       } else if (settlement.kind === "arrival") {
-        if (sessionReady !== undefined) await sessionReady.catch(() => undefined);
-        if (preparation !== undefined) await preparation.catch(() => undefined);
-        report = { disposition: "arrival", arrivalMessage: settlement.message ?? "已到达目的地" };
+        // Contract: README.md#Navigator-attendance — failed attendance is reported as typed unavailable rather than silently discarded.
+        if (sessionReady !== undefined) {
+          try { await sessionReady; } catch (error) { preparationFailure ??= error; }
+        }
+        if (preparation !== undefined) {
+          try { await preparation; } catch (error) { preparationFailure ??= error; }
+        }
+        report = preparationFailure === undefined
+          ? { disposition: "arrival", arrivalMessage: settlement.message ?? "已到达目的地" }
+          : unavailable(invocationId, preparationFailure);
       } else if (preparation === undefined) {
         report = unavailable(invocationId, "Navigator preparation did not start");
       } else {
@@ -679,9 +700,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           previousRoute = selected.route;
           session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selected.route });
         } catch (error) {
-          // Session creation, model/auth resolution, quota, transport, and prompt
-          // failures are Navigator failures.  They must become a typed unavailable
-          // presentation without changing the role's own Receipt lifecycle.
+          // Contract: README.md#Navigator-attendance — Navigator failures become typed unavailable without invalidating the role Receipt; retain the original cause in the unavailable report.
           report = unavailable(invocationId, error);
         }
       }
@@ -701,10 +720,11 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.unavailableCause === undefined ? {} : { unavailableCause: report.unavailableCause }),
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
-      if (report.disposition !== "silence") await options.onEvent(event, report);
+      if (report.disposition !== "silence" && !suppressEvent) await options.onEvent(event, report);
       preparation = undefined;
       sessionReady = undefined;
       candidates = undefined;
+      preparationFailure = undefined;
   }
 }
 
@@ -739,6 +759,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       if (!sessionInfo.isDirectory()) throw new NavigatorUnavailableError("session", `Navigator session path is not a directory: ${sessionDir}`);
     } catch (error) {
       if (error instanceof NavigatorUnavailableError) throw error;
+      // Contract: README.md#Navigator-attendance — the resumable session directory may be created by session setup; retain and classify every other filesystem cause.
       if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) {
         throw navigatorUnavailableError("session", error);
       }
@@ -776,6 +797,13 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       delete human.navigatorFailure;
       return human;
     };
+    let providerFailureEvidenceNumber = 0;
+    let providerFailureEvidence: { id: string; error: unknown } | undefined;
+    const retainProviderFailure = (error: unknown): string => {
+      const id = `navigator-provider-failure-${++providerFailureEvidenceNumber}`;
+      providerFailureEvidence = { id, error };
+      return id;
+    };
     const setupFailureMessage = (error: unknown) => ({
       role: "assistant" as const,
       content: [] as [],
@@ -785,6 +813,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: "error" as const,
       errorMessage: error instanceof Error ? error.message : String(error),
+      navigatorFailureEvidenceId: retainProviderFailure(error),
       timestamp: Date.now(),
     });
     const instrumentProvider = <TProvider extends NonNullable<typeof provider>>(sourceProvider: TProvider): TProvider => {
@@ -836,6 +865,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
               else if (result === undefined) result = terminal;
             }
           } catch (error) {
+            // Contract: README.md#Navigator-attendance — synthetic provider errors retain a stable pointer to the raw rejection while exposing only human-safe text.
             classifyProviderStreamError(error);
             if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
             if (!sawTerminal) {
@@ -865,6 +895,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         try {
           return wrapProviderStream(invoke());
         } catch (error) {
+          // Contract: README.md#Navigator-attendance — setup failures become terminal synthetic errors, with the raw rejection retained by stable evidence pointer.
           classifyProviderStreamError(error);
           if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
           const wrapped = createAssistantMessageEventStream();
