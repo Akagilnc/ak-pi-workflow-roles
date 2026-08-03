@@ -47,7 +47,7 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 ## Role invocation evidence
 
-调用角色时使用 `pi --session-dir .ak/work/<issue>/runs/<invocation>/session`（不用 `--no-session`），stdout 可丢到 `/dev/null`，`stderr.log` 和 `invocation.json` 留在同次 `runs/` 目录。
+调用角色时使用 `pi --session-dir .ak/work/<issue>/runs/<invocation>/session`（不用 `--no-session`），stdout **须**丢到 `/dev/null`（stdout 流是无上限副本面，session 才是正本——2026-08-03 一条 med 腿 stdout 膨胀 137GB 实证；仪表挂 `stderr.log` 与 session 文件），`stderr.log` 和 `invocation.json` 留在同次 `runs/` 目录。
 
 ## 锚定宪法
 
