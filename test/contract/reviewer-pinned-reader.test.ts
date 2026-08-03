@@ -99,18 +99,42 @@ test("abbreviated bases are resolved only among commits reachable from the activ
     assert.equal(collisionId.startsWith(prefix), true);
     assert.equal(await reader.resolve(prefix), base);
 
-    const tree = await git(root, "rev-parse", "HEAD^{tree}");
-    let parent = reader.pin.targetHead;
+    const parent = reader.pin.targetHead;
+    // One git fast-import stream creates the reachable chain (vs one spawn per commit-tree).
+    const parts: string[] = [];
+    for (let index = 0; index < 1200; index++) {
+      const message = `reachable-${index}\n`;
+      parts.push(
+        "commit refs/heads/collision-chain\n" +
+          `mark :${index + 1}\n` +
+          `committer Test <test@example.com> ${1_700_000_000 + index} +0000\n` +
+          `data ${Buffer.byteLength(message)}\n` +
+          message +
+          (index === 0 ? `from ${parent}\n` : `from :${index}\n`) +
+          "\n",
+      );
+    }
+    execFileSync("git", ["-C", root, "fast-import", "--quiet", "--date-format=raw"], {
+      input: parts.join(""),
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const chain = execFileSync("git", ["-C", root, "rev-list", "collision-chain"], { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .filter(Boolean);
     const prefixes = new Map<string, string>();
     let ambiguousPrefix: string | undefined;
-    for (let index = 0; index < 1200 && ambiguousPrefix === undefined; index++) {
-      parent = execFileSync("git", ["-C", root, "commit-tree", tree, "-p", parent], { input: `reachable-${index}\n`, encoding: "utf8" }).trim();
-      const candidatePrefix = parent.slice(0, 4);
-      if (prefixes.has(candidatePrefix)) ambiguousPrefix = candidatePrefix;
-      else prefixes.set(candidatePrefix, parent);
+    for (const sha of [...chain].reverse()) {
+      const candidatePrefix = sha.slice(0, 4);
+      if (prefixes.has(candidatePrefix)) {
+        ambiguousPrefix = candidatePrefix;
+        break;
+      }
+      prefixes.set(candidatePrefix, sha);
     }
     assert.ok(ambiguousPrefix, "expected a four-hex collision among reachable commits");
-    await git(root, "update-ref", "HEAD", parent);
+    await git(root, "update-ref", "HEAD", chain[0]!);
     const ambiguousReader = await createReviewerPinnedGitReader(root);
     await assert.rejects(ambiguousReader.resolve(ambiguousPrefix), /base-invalid/);
   } finally { await rm(root, { recursive: true, force: true }); }

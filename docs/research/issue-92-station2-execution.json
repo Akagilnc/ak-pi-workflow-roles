@@ -442,10 +442,12 @@
       "ledgerProjectedMs": 1329.6,
       "owningSeam": "src/reviewer-pinned-git.ts",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-pinned-reader.test.ts. Cheaper construction: stream all candidate commits through a SINGLE `git fast-import` invocation (one subprocess for the whole chain) a",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "git fast-import single stream for reachable chain (~13s→~0.5s).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/reviewer-pinned-reader.test.ts::pinned base resolution ignores moved refs and accepts reachable full commits": {
@@ -918,10 +920,12 @@
       "ledgerProjectedMs": 246.78,
       "owningSeam": "src/navigator-attendance.ts native provider failure classification",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/navigator-attendance.test.ts:338. Cheaper construction: Rebuild at cheaper seam: 法条②（现构造贵于最便宜构造）：它为 3 个 source × 2 种措辞各建一次全新 native session ＝ 6 次 ModelRuntime.create+c",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "One session per source × two diagnostics (6→3 sessions).",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/navigator-attendance.test.ts::model settings are exact and typed settlement projection ignores prose and correctable errors": {
@@ -932,10 +936,12 @@
       "ledgerProjectedMs": 0,
       "owningSeam": "src/navigator-attendance.ts",
       "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/navigator-attendance.test.ts:278. Cheaper construction: 一个带 overrides 的 candidate builder，selectNavigatorCandidate 的全部条款只在 #15 一处",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Kept parse/settlement asserts; selectNavigatorCandidate statuses moved to status-specific table via candidate() builder.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/navigator-attendance.test.ts::typed subject provenance replaces prose prefix branching": {
@@ -946,10 +952,12 @@
       "ledgerProjectedMs": 0.102,
       "owningSeam": "src/navigator-attendance.ts navigatorSubjectKey provenance",
       "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/navigator-attendance.test.ts :: \"typed subject provenance replaces prose prefix branching\". Former survivor mapping failed open-body check: Open",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Provenance clauses folded into session placement carrier.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/navigator-attendance.test.ts::NAVIGATOR_TARGETS preserves packaged registry order": {
@@ -960,10 +968,12 @@
       "ledgerProjectedMs": 0.07,
       "owningSeam": "src/navigator-attendance.ts NAVIGATOR_TARGETS + src/packaged-role-registry.ts",
       "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/navigator-attendance.test.ts :: \"NAVIGATOR_TARGETS preserves packaged registry order\". Former survivor mapping failed open-body check: Opened su",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Folded into registry output tools constants assert against PACKAGED_ROLE_REGISTRY order.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/reviewer-role.test.ts::registered Agent rejection text names the violated proposal or pinned-evidence constraint": {
@@ -1250,10 +1260,12 @@
       "ledgerProjectedMs": 2.98,
       "owningSeam": "src/reviewer-bundle-materializer.ts",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-bundle-materializer.test.ts:12. Cheaper construction: Rebuild at cheaper seam: 法条③ (闸类负向案不可删，只能修好) + 法条② (现构造证不出它自称的契约，且带死夹具) Ledger projectedMs≈2.98.",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Hostile paths via compileMechanicalBundle material id; specific confined message; shared roots.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/reviewer-bundle-materializer.test.ts::materializer rejects digest and manifest mutation atomically": {
@@ -1264,10 +1276,12 @@
       "ledgerProjectedMs": 1.23,
       "owningSeam": "src/reviewer-bundle-materializer.ts",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/reviewer-bundle-materializer.test.ts:11. Cheaper construction: drop both mkdtemp/rm, pass any string as workspace, and assert the specific message; if atomicity is gen",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "No tmpdir; assert specific digest/manifest mismatch message.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/judge-role.test.ts::named Judge and worker tools preserve exact metadata, schema leaves, and receipts": {
@@ -1502,10 +1516,12 @@
       "ledgerProjectedMs": 3.71,
       "owningSeam": "src/doctor-auditor.ts",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/doctor-auditor.test.ts. Cheaper construction: one `patient(overrides)` builder in test/helpers/ (the directory already exists, alongside pi-test-harness.ts), imported ",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Shrunk secret content payload; frozenEvidenceIndex still omits content at 50MB byteLength.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/judge-soul.test.ts::Judge Soul excludes process, schema, transport, platform, and issue carriers": {
@@ -1516,10 +1532,12 @@
       "ledgerProjectedMs": 0,
       "owningSeam": "souls/judge.md (Soul prose surface; delete-class wording except carrier-purity)",
       "greenSummary": "Green (rebuild class; former merge failed independent survivor coverage): rebuild contract at owning seam test/judge-soul.test.ts:75. Cheaper construction: one test, one shared table, twelve souls. Merge rejection: Opened judge-soul :75-109",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Shared denylist table over all souls/*.md; wording fossils dropped.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/reviewer-construction-seams.test.ts::construction is deterministic from admitted immutable inputs and frozen evidence": {
@@ -1603,22 +1621,13 @@
     "test/collector-role.test.ts::F3-receipt-overflow-role-path exact MAX+1 through output execute",
     "test/collector-role.test.ts::collector immediate all-valid path through observe and singleton output",
     "test/collector-role.test.ts::collector same-session batch provenance matrix freezes transport after fatal",
-    "test/doctor-auditor.test.ts::Doctor audit receives the frozen evidence index without replaying large session content",
     "test/judge-posture-recordings.test.ts::JSONL bind refuses direction-labeled materials path in user prompt",
     "test/judge-posture-recordings.test.ts::JSONL bind refuses materials-read body mismatch with static input",
     "test/judge-posture-recordings.test.ts::judge posture fixture bundles are present",
     "test/judge-posture-recordings.test.ts::posture oracle refuses receipt-only trust without JSONL acceptance",
     "test/judge-posture-recordings.test.ts::posture oracle rejects metadata package SHA with mismatched packaged Judge Soul",
-    "test/judge-soul.test.ts::Judge Soul excludes process, schema, transport, platform, and issue carriers",
     "test/merger-role.test.ts::Pi transports malformed Merger candidates to the fatal validator while valid leaves still terminate",
     "test/merger-role.test.ts::production extension observes session repository B, not ambient repository A, through activation and completion",
-    "test/navigator-attendance.test.ts::NAVIGATOR_TARGETS preserves packaged registry order",
-    "test/navigator-attendance.test.ts::model settings are exact and typed settlement projection ignores prose and correctable errors",
-    "test/navigator-attendance.test.ts::native provider stream seam classifies auth/quota/transport after setModel without message metadata oracle",
-    "test/navigator-attendance.test.ts::typed subject provenance replaces prose prefix branching",
-    "test/reviewer-bundle-materializer.test.ts::materializer rejects digest and manifest mutation atomically",
-    "test/reviewer-bundle-materializer.test.ts::materializer rejects traversal, absolute paths, collisions, and symlink parents",
-    "test/reviewer-pinned-reader.test.ts::abbreviated bases are resolved only among commits reachable from the activation target",
     "test/reviewer-pinned-reader.test.ts::pinned base resolution ignores moved refs and accepts reachable full commits"
   ],
   "notes": [
@@ -1629,7 +1638,8 @@
     "judge-role family + class-contracts rebuilt onto cheaper carriers (station 2d).",
     "collector-ledger family rebuilt with injectable snapshotMaxBytes (station 2d).",
     "collector-github family rebuilt: in-process abort/recovery, few-KiB R10, 1MiB EPIPE, one real kill (station 2d).",
-    "package-entrypoint family rebuilt: drop baseline, 3 presentation modes, source nested audits, thinner failure matrix (station 2d)."
+    "package-entrypoint family rebuilt: drop baseline, 3 presentation modes, source nested audits, thinner failure matrix (station 2d).",
+    "navigator-attendance + reviewer-bundle + pinned abbrev + judge-soul + doctor-auditor rebuilt (station 2d)."
   ],
   "applyCommits": {
     "reviewer-agent": "fe972da",
@@ -1641,7 +1651,8 @@
     "class-contracts": "63d67a9",
     "collector-ledger": "e52cf71",
     "collector-github": "3ac8800",
-    "package-entrypoint": "488281f"
+    "package-entrypoint": "488281f",
+    "navigator-tail-small": "(pending)"
   },
   "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
   "validation": {
