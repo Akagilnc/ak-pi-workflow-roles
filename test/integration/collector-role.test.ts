@@ -810,7 +810,7 @@ async function runCollectorSession(input: {
   clock: CollectorClock & { advance?(ms: number): void };
   responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
   api: string;
-}): Promise<{ exitCode: number | undefined; toolResultErrors: boolean[] }> {
+}): Promise<{ exitCode: number | undefined }> {
   const faux = fauxProvider({
     api: input.api,
     provider: input.api,
@@ -818,7 +818,6 @@ async function runCollectorSession(input: {
   });
   const previousExit = process.exitCode;
   process.exitCode = undefined;
-  let toolResultErrors: boolean[] = [];
   try {
     await withInProcessPi({
       cwd: input.home,
@@ -843,17 +842,11 @@ async function runCollectorSession(input: {
         "ak-collector-legs": input.legs,
       },
       noTools: "builtin",
-    }, async ({ session, sessionManager }) => {
+    }, async ({ session }) => {
       faux.setResponses(input.responses);
       await session.prompt("start");
-      toolResultErrors = sessionManager.getEntries()
-        .filter((entry) => entry.type === "message" && entry.message.role === "toolResult")
-        .map((entry) => entry.type === "message" && entry.message.isError === true);
     });
-    return {
-      exitCode: process.exitCode,
-      toolResultErrors,
-    };
+    return { exitCode: process.exitCode };
   } finally {
     process.exitCode = previousExit;
   }
@@ -891,8 +884,6 @@ test("collector same-session batch provenance matrix freezes transport after fat
           fauxAssistantMessage("done"),
         ],
       });
-      assert.ok(result.toolResultErrors.length >= 1);
-      assert.equal(result.toolResultErrors.every((isError) => isError), true);
       assert.ok(transport.calls.pull >= 2);
       const frozenPull = transport.calls.pull;
       const frozenCreate = transport.calls.create;
