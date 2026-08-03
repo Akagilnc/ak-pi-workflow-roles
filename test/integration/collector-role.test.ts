@@ -2434,7 +2434,7 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
     });
     // Use real manifest digest from file so receipt sizes match role path.
     const { loadCollectorManifest, parseCollectorRepository, parseCollectorPrNumber } =
-      await import("../src/collector-config.ts");
+      await import("../../src/collector-config.ts");
     const manifest = await loadCollectorManifest(legs);
     const unitLedger2 = createCollectorLedger({
       repository: parseCollectorRepository("acme/widgets"),
