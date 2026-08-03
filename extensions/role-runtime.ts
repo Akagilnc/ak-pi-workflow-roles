@@ -26,6 +26,7 @@ import {
   navigatorSessionDirectory,
   registerNavigatorModelCommand,
   subjectPath,
+  type NavigatorTargetRole,
 } from "../src/navigator-attendance.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
@@ -54,6 +55,17 @@ function navigatorInputReference(pi: ExtensionAPI, role: string): string | undef
   const name = names[role];
   const value = name === undefined ? undefined : pi.getFlag(name);
   return typeof value === "string" && value !== "" ? resolve(value) : undefined;
+}
+
+export async function loadNavigatorRoleHelp(
+  pi: Pick<ExtensionAPI, "exec">,
+  extensionPath: string,
+  cwd: string,
+  role: NavigatorTargetRole,
+): Promise<string> {
+  const result = await pi.exec("pi", ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "-e", extensionPath, "--ak-role", role, "--help"], { cwd, timeout: 5000 });
+  if (result.code !== 0) throw new Error(`live help unavailable for ${role}: ${result.stderr || result.stdout}`);
+  return result.stdout || result.stderr;
 }
 
 function navigatorAuthorityFromInput(raw: string): string | undefined {
@@ -157,11 +169,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         subject: options.subject,
         authority: options.authority,
         loadSoul: () => readFile(navigatorSoulPath, "utf8"),
-        loadRoleHelp: async (role) => {
-          const result = await pi.exec("pi", ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "-e", extensionPath, "--ak-role", role, "--help"], { cwd: options.context.cwd, timeout: 5000 });
-          if (result.code !== 0) throw new Error(`live help unavailable for ${role}: ${result.stderr || result.stdout}`);
-          return result.stdout || result.stderr;
-        },
+        loadRoleHelp: (role) => loadNavigatorRoleHelp(pi, extensionPath, options.context.cwd, role),
         createSession: navigatorSessionFactory,
         onEvent: options.onEvent,
       });

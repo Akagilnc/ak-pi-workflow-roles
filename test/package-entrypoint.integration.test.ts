@@ -47,6 +47,7 @@ import {
   packageRoot,
   type RawPackageManifest,
   resolvePackageEntrypoint,
+  runPiSubprocess,
   withHermeticHome,
   withInProcessPi,
   withColdInstalledPackage,
@@ -666,6 +667,38 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
   );
 });
 
+test("cold-installed live help follows the loaded extension and changes on the next hint", async () => {
+  await withHermeticHome(
+    { prefix: "ak-navigator-live-help-cold-" },
+    async ({ home }) => {
+      await withColdInstalledPackage(home, async ({ fixture, installedRoot, installed }) => {
+        const runtimePath = resolve(installedRoot, "src/role-runtime.ts");
+        const original = await readFile(runtimePath, "utf8");
+        const firstMarker = "COLD_INSTALLED_LIVE_HELP_ONE";
+        const secondMarker = "COLD_INSTALLED_LIVE_HELP_TWO";
+        assert.equal(original.includes("Activate a packaged workflow role:"), true);
+        const runtime = await installed("extensions/role-runtime.ts");
+        const exec = async (_command: string, args: string[], options: { cwd?: string; timeout?: number }) => {
+          assert.deepEqual(args.slice(-3), ["--ak-role", "coder", "--help"]);
+          const result = await runPiSubprocess(args, {
+            cwd: options.cwd ?? fixture,
+            env: process.env,
+            ...(options.timeout === undefined ? {} : { timeoutMs: options.timeout }),
+          });
+          return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr };
+        };
+        await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${firstMarker}:`));
+        const first = await runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, "coder");
+        assert.match(first, new RegExp(firstMarker));
+        await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${secondMarker}:`));
+        const second = await runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, "coder");
+        assert.doesNotMatch(second, new RegExp(firstMarker));
+        assert.match(second, new RegExp(secondMarker));
+      });
+    },
+  );
+});
+
 test("normal packaged Navigator presents independently in print and JSON and reuses one subject session", async () => {
   const manifest = await loadRawPackageManifest();
   await withHermeticHome(
@@ -687,11 +720,13 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       process.env.PI_WORK_AUTHORITY = "owner decision: automatic attendance";
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
       let navigatorCalls = 0;
+      let navigatorContextText = "";
       let invalidJudge = true;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
+          navigatorContextText = JSON.stringify(context.messages);
           return fauxAssistantMessage(
             fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
               candidates: [{
@@ -729,6 +764,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       try {
         for (const mode of ["print", "json"] as const) {
           navigatorCalls = 0;
+          navigatorContextText = "";
           invalidJudge = true;
           faux.setResponses([response, response, response, response]);
           await withInProcessPi({
@@ -762,6 +798,9 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         if (oldAuthority === undefined) delete process.env.PI_WORK_AUTHORITY; else process.env.PI_WORK_AUTHORITY = oldAuthority;
       }
       assert.match(printOutput, /下一步：reviewer/);
+      assert.match(navigatorContextText, /Issue 28 Navigator production acceptance/);
+      assert.match(navigatorContextText, /owner decision: automatic attendance/);
+      assert.doesNotMatch(navigatorContextText, /unexpected|judgeStatus|ak_judge_output/);
       assert.equal(faux.getPendingResponseCount(), 0);
     },
   );
