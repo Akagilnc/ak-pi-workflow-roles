@@ -28,19 +28,19 @@ export type ActivationTraceWriter = (record: ActivationTraceRecord) => void;
 
 let activationCauseEvidence = 0;
 const retainedActivationCauses = new Map<string, unknown>();
-export function namedActivationCause(error: unknown): { identity: string; name: string; message: string; evidenceId?: string } {
+export function namedActivationCause(error: unknown): { identity: string; name: string; message: string; evidenceId: string } {
+  const evidenceId = `activation-cause-${++activationCauseEvidence}`;
+  retainedActivationCauses.set(evidenceId, error);
   if (error instanceof Error) {
     const code = (error as Error & { code?: unknown }).code;
     const name = error.name || "Error";
-    return { identity: typeof code === "string" && code.length > 0 ? code : name, name, message: error.message };
+    return { identity: typeof code === "string" && code.length > 0 ? code : name, name, message: error.message, evidenceId };
   }
   let message: string;
   try {
     message = typeof error === "string" ? error : JSON.stringify(error) ?? String(error);
-    return { identity: "UnknownThrownCause", name: "UnknownThrownCause", message };
+    return { identity: "UnknownThrownCause", name: "UnknownThrownCause", message, evidenceId };
   } catch {
-    const evidenceId = `activation-cause-${++activationCauseEvidence}`;
-    retainedActivationCauses.set(evidenceId, error);
     return { identity: "UnknownThrownCause", name: "UnknownThrownCause", message: String(error), evidenceId };
   }
 }
