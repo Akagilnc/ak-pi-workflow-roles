@@ -963,7 +963,7 @@
         "kind": "construction-rebuild",
         "note": "Injected snapshotMaxBytes; accept-at-bound / reject-at-bound+1 via learned exact size; no MiB alloc or pipeline mirror.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::R10 cross-surface normalized budget rejects before later surfaces and terminal PR": {
@@ -979,7 +979,7 @@
         "kind": "construction-rebuild",
         "note": "Few-KiB injected bound + fake transport call counters; tight exceeded-N message.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::R10 intra-surface multi-page normalized budget stops before later pages/surfaces": {
@@ -995,7 +995,7 @@
         "kind": "construction-rebuild",
         "note": "Folded as second row of R10 table (exceed in first surface ⇒ later surfaces skip); page stop remains github-layer.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::snapshot and ledger size bounds fail loudly without truncation": {
@@ -1011,7 +1011,7 @@
         "kind": "construction-rebuild",
         "note": "Absorbed by injected boundary + production default sanity constants.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::observe start-before finish-after cutoff satisfies final obligation": {
@@ -1027,7 +1027,7 @@
         "kind": "construction-rebuild",
         "note": "One ledger/one clock; wall progression asserted as equality not always-true OR.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::batch gate permits one operational or sole output and latches mixed/multiple": {
@@ -1043,7 +1043,7 @@
         "kind": "construction-rebuild",
         "note": "Allow observe + sole-output-after-snapshot + deny table absorb evaluateBatch twin.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::wait PR4 shape caps to five minutes so re-observe still fits before deadline": {
@@ -1059,7 +1059,7 @@
         "kind": "construction-rebuild",
         "note": "Offset wait + re-observe completedMono < deadline folded into wait caps carrier.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::R9 updatedAt churn forces full-surface retry and fails closed on repeated drift": {
@@ -1075,7 +1075,7 @@
         "kind": "construction-rebuild",
         "note": "updatedAt fail-closed row in identity-drift table; retry-visible evidence keeps one focused carrier.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::version history: later review edit without timestamp is uncertain": {
@@ -1091,7 +1091,7 @@
         "kind": "construction-rebuild",
         "note": "Earlier-version retention + baseline folded into R5 third-observation carrier.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/collector-ledger.test.ts::applyEvidenceVersionHistory first review keeps submitted_at at/before deadline mono": {
@@ -1107,7 +1107,7 @@
         "kind": "construction-rebuild",
         "note": "Parameterized mono boundary table (===keep / +60k null / NaN null) + R5 reuse.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "e52cf71"
       }
     },
     "test/judge-posture-recordings.test.ts::recorded r-block accepts via JSONL trust root and matches external expected": {
@@ -1621,7 +1621,7 @@
     "shared-fixture": "295e3d1f30a56640bef5426518ff21d0e57fed93",
     "judge-role": "63d67a9",
     "class-contracts": "63d67a9",
-    "collector-ledger": "(pending)"
+    "collector-ledger": "e52cf71"
   },
   "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
   "validation": {
