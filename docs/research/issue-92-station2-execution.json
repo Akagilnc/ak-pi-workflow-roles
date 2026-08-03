@@ -1654,16 +1654,17 @@
     "package-entrypoint": "488281f",
     "navigator-tail-small": "48283e3"
   },
-  "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
+  "constructionHead": "b5926b70e6b0ce2cd0b9fee8fa92fea857e4c210",
   "validation": {
     "typecheck": "pass",
     "testAll": {
-      "pass": 403,
+      "pass": 370,
       "fail": 0,
-      "nodeDurationMs": 69206.167458,
-      "wallSeconds": 69.29,
+      "nodeDurationMs": 57149.609208,
+      "wallSeconds": 57.23,
       "command": "npm run test:all"
     },
-    "recordedAt": "2026-08-03T19:53:26.676326+00:00"
+    "recordedAt": "2026-08-03T20:27:18.206Z",
+    "note": "Station 2d partial: 49 of 72 rebuild keys executed; 23 unfinished remain (collector-role/receipt, judge-posture, merger, activation-envelope, collector-package-lifecycle, pinned-base-refs)."
   }
 }
