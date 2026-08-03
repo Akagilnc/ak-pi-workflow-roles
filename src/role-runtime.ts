@@ -285,13 +285,6 @@ export type RoleRuntimeDependencies = {
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
 };
 
-function withoutNavigatorMessages<T>(messages: T[]): T[] {
-  return messages.filter((message) => {
-    const candidate = message as unknown as { role?: string; customType?: unknown };
-    return !(candidate.role === "custom" && candidate.customType === NAVIGATOR_EVENT_TYPE);
-  });
-}
-
 function abortContext(ctx: ExtensionContext): void {
   const abort = (ctx as ExtensionContext & { abort?: () => void }).abort;
   if (typeof abort === "function") abort.call(ctx);
@@ -370,9 +363,8 @@ export function createRoleRuntimeExtension(
     let selectedRole: string | undefined;
     let navigatorAttendance: NavigatorAttendance | undefined;
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
-    let navigatorPresentationMode: ExtensionContext["mode"] = "tui";
     let navigatorWorkContext: { subjectKey: string; subject: string; authority: string; contextError?: unknown } | undefined;
-    let pendingInfrastructureToolCallId: string | undefined;
+    const pendingInfrastructureToolCallIds = new Set<string>();
     pi.on("input", () => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
@@ -404,12 +396,10 @@ export function createRoleRuntimeExtension(
       }
       navigatorAttendance?.prepare();
     });
-    pi.on("context", (event) => ({ messages: withoutNavigatorMessages(event.messages) }));
     pi.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined || navigatorAttendance === undefined) return;
-      const isRoleInfrastructureFailure = pendingInfrastructureToolCallId === event.toolCallId;
-      if (isRoleInfrastructureFailure) pendingInfrastructureToolCallId = undefined;
+      const isRoleInfrastructureFailure = pendingInfrastructureToolCallIds.delete(event.toolCallId);
       const settlement = publicNavigatorSettlement(
         role,
         navigatorPhase(pi, role),
@@ -417,30 +407,28 @@ export function createRoleRuntimeExtension(
       );
       if (settlement !== undefined) await navigatorAttendance.settle(settlement);
     });
-    pi.on("agent_settled", async (_event, ctx) => {
+    pi.on("agent_settled", async () => {
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation === undefined) return;
-      const content = formatNavigatorReport(presentation.report);
-      if (navigatorPresentationMode === "json") {
-        pi.appendEntry(NAVIGATOR_EVENT_TYPE, presentation.event);
-      } else if (navigatorPresentationMode === "tui") {
-        ctx.ui.notify(content, presentation.report.disposition === "unavailable" ? "warning" : "info");
-      } else if (content !== "") {
-        process.stdout.write(`${content}\n`);
-      }
+      await pi.sendMessage({
+        customType: NAVIGATOR_EVENT_TYPE,
+        content: formatNavigatorReport(presentation.report),
+        display: true,
+        details: presentation.event,
+      }, { triggerTurn: false });
     });
     pi.on("session_shutdown", () => {
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       pendingNavigatorPresentation = undefined;
-      pendingInfrastructureToolCallId = undefined;
+      pendingInfrastructureToolCallIds.clear();
     });
 
     const hostActions = {
       failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never {
         if (toolCallId !== undefined) {
-          pendingInfrastructureToolCallId = toolCallId;
+          pendingInfrastructureToolCallIds.add(toolCallId);
         }
         failInfrastructure(error, ctx);
       },
@@ -593,7 +581,7 @@ export function createRoleRuntimeExtension(
       admitted = false;
       selectedRole = undefined;
       pendingNavigatorPresentation = undefined;
-      pendingInfrastructureToolCallId = undefined;
+      pendingInfrastructureToolCallIds.clear();
       navigatorWorkContext = undefined;
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
@@ -602,7 +590,6 @@ export function createRoleRuntimeExtension(
         failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
-      navigatorPresentationMode = ctx.mode;
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       if (dependencies.createNavigatorAttendance !== undefined) {
@@ -634,7 +621,7 @@ export function createRoleRuntimeExtension(
           subject: work.subject,
           authority: work.authority,
           ...(contextError === undefined ? {} : { contextError }),
-          onEvent: async (navigatorEvent, report) => {
+          onEvent: (navigatorEvent, report) => {
             pendingNavigatorPresentation = { event: navigatorEvent, report };
           },
         });

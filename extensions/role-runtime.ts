@@ -22,7 +22,6 @@ import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
-  NAVIGATOR_EVENT_TYPE,
   navigatorSessionDirectory,
   navigatorSubjectKey,
   registerNavigatorModelCommand,
@@ -115,9 +114,8 @@ export function transcriptFromContext(ctx: ExtensionContext): string {
     [...ctx.sessionManager.getEntries()],
     ctx.sessionManager.getLeafId(),
   );
-  const messages = context.messages.filter((message) => !(message.role === "custom" && (message as { customType?: unknown }).customType === NAVIGATOR_EVENT_TYPE));
   return serializeConversation(
-    projectJudgeTranscriptForAudit(convertToLlm(messages)),
+    projectJudgeTranscriptForAudit(convertToLlm(context.messages)),
   );
 }
 

@@ -192,7 +192,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
   for (const [name, options] of harness.flags) {
     assert.equal((options as { type?: unknown }).type, "string", name);
   }
-  assert.deepEqual(new Set(harness.handlers.keys()), new Set(["input", "before_agent_start", "session_start", "context", "tool_result", "agent_settled", "session_shutdown"]));
+  assert.deepEqual(new Set(harness.handlers.keys()), new Set(["input", "before_agent_start", "session_start", "tool_result", "agent_settled", "session_shutdown"]));
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
   assert.deepEqual([...harness.tools], []);
