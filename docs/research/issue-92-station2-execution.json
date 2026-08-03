@@ -1231,7 +1231,7 @@
         "kind": "construction-rebuild",
         "note": "Focused create*RoleRuntime construction; structural schema/receipt asserts; prose deepEqual → nonblank+names-tool.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::stable factory preserves exact Judge, Fixer, and Coder prompt bytes": {
@@ -1247,7 +1247,7 @@
         "kind": "construction-rebuild",
         "note": "Byte-exact envelopes folded into focused Judge/Fixer/Coder controllers (and fixer apply envelope test).",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::coder apply binds completion to the immediately following canonical tdd expansion": {
@@ -1263,7 +1263,7 @@
         "kind": "construction-rebuild",
         "note": "Kept one malformed completed-gate row; full spelling matrix remains in canonical-skill-binding.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::judge role rejects mixed and blank verdict shapes before soul audit": {
@@ -1279,7 +1279,7 @@
         "kind": "construction-rebuild",
         "note": "Shape matrix in judge-output-contract; one tool-route gate proves pre-audit ordering.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::declared plan refusal, apply refusal, and partial apply each reach exactly one fresh audit": {
@@ -1295,7 +1295,7 @@
         "kind": "construction-rebuild",
         "note": "Apply refusal+partial on shared harness; plan refusal keeps one plan-phase carrier; distinct frozen audits asserted.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::judge role audits only adjudicative fields while retaining evidence in receipts": {
@@ -1311,7 +1311,7 @@
         "kind": "construction-rebuild",
         "note": "projectJudgeVerdictForAudit unit table covers three statuses; production projection keeps receipt evidence.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::Fixer apply accepts differently named classes with a shared commit and rejects duplicate names or missing pointers": {
@@ -1327,7 +1327,7 @@
         "kind": "construction-rebuild",
         "note": "Shared-commit accept + one reject on undeclared-prerequisite harness; validator rejects in fixer-contract hard-cuts.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::judge preserves an optional advisory note on every verdict": {
@@ -1343,7 +1343,7 @@
         "kind": "construction-rebuild",
         "note": "Note round-trip on every status moved to judge-output-contract retained evidence+note table.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::worker output rejects malformed, unknown, blank, and non-object values": {
@@ -1359,7 +1359,7 @@
         "kind": "construction-rebuild",
         "note": "Named diagnostics in fixer-contract hard-cuts; one null tool-route gate on undeclared harness.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::Fixer activation rejects empty or trim-blank instructions before installing its tool": {
@@ -1375,7 +1375,7 @@
         "kind": "construction-rebuild",
         "note": "Merged into activation table with prerequisite rows; both diagnostics retained as distinct rows.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::Fixer audits unfinished attempts through the production route and revise permits corrected resubmission": {
@@ -1391,7 +1391,7 @@
         "kind": "construction-rebuild",
         "note": "Revise→pass distinctness absorbed into prospective prerequisite production route (auditInputs[0] !== [1]).",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/judge-role.test.ts::fixer plan phase accepts plans but rejects construction receipts": {
@@ -1407,7 +1407,7 @@
         "kind": "construction-rebuild",
         "note": "Plan accept + construction reject on focused Fixer controller; commit-bearing plan in fixer-contract hard-cuts.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/audit-escalation.test.ts::the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor": {
@@ -1499,7 +1499,7 @@
         "kind": "construction-rebuild",
         "note": "continue-without-classes / name grammar / duplicate names moved into judge-output-contract mixed shapes table.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/class-contracts.test.ts::current Fixer settlement is independent while Coder remains byte-compatible and closed": {
@@ -1515,7 +1515,7 @@
         "kind": "construction-rebuild",
         "note": "Hoisted completed() fixture; routing/closure facts only.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "63d67a9"
       }
     },
     "test/reviewer-materialization-outcome-contracts.test.ts::materialization outcome type contracts compile": {
@@ -1608,7 +1608,8 @@
     "small": "eed97f9",
     "ledger": "143a311",
     "shared-fixture": "295e3d1f30a56640bef5426518ff21d0e57fed93",
-    "judge-role": "(pending)"
+    "judge-role": "63d67a9",
+    "class-contracts": "63d67a9"
   },
   "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
   "validation": {
