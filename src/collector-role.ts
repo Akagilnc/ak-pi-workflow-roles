@@ -167,7 +167,7 @@ export function createCollectorRoleRuntime(
   });
   pi.registerFlag("ak-collector-legs", {
     description:
-      "Path to the Collector v1 leg manifest JSON file. Pi 0.82.1 late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
+      "Path to the Collector v1 leg manifest JSON file. In Pi latest, late hostile sibling-extension Skill injection is unsupported and fail-closed when detected; drift prevention only, not a security boundary or provider-zero guarantee",
     type: "string",
   });
 

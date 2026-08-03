@@ -2033,7 +2033,7 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
 
 // Unsupported hostile sibling-extension injection into before_agent_start
 // systemPromptOptions.skills — not a normally discovered Skill path.
-// Pi 0.82.1 may still reach the provider after the throw is swallowed; do not
+// Pi latest may still reach the provider after the throw is swallowed; do not
 // assert provider-zero or pending responses on this late seam.
 test("F3-ambient-skills unsupported hostile sibling-extension injection", async () => {
   await withHermeticHome({ prefix: "ak-collector-amb-skill-" }, async ({ agentDir, home }) => {
@@ -2134,7 +2134,7 @@ test("F3-ambient-skills unsupported hostile sibling-extension injection", async 
         assert.equal(successfulOutput, false, "no successful ak_collector_output receipt");
         assertZeroGitHub(transport, "ambient-skills-hostile-sibling-extension");
         // Deliberately do not assert provider callCount or pending responses:
-        // late before_agent_start throws are non-normative for provider entry on Pi 0.82.1.
+        // late before_agent_start throws are non-normative for provider entry on Pi latest.
         assert.ok(failCalls.length >= 1);
       });
     } finally {
