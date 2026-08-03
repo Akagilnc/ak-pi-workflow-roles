@@ -52,7 +52,7 @@ export type ReviewerEvidenceEvent =
   | (Readonly<{ source: "reviewer-dispatch"; type: "accepted" }> & ReviewerAcceptedEvidence)
   | Readonly<{ source: "reviewer-agent"; type: "dispatch-started"; dispatchIdentity: string; cardinality: 1 | 2 }>
   | (Readonly<{ source: "reviewer-agent"; type: "leg-settled" }> & ReviewerLegResultEvidence)
-  | Readonly<{ source: "reviewer-runtime"; type: "fatal"; diagnostics: string; targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition }>;
+  | Readonly<{ source: "reviewer-runtime"; type: "fatal"; diagnostics: string; cause: unknown; targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition }>;
 
 export type ReviewerExecutionRecord = Readonly<{
   transportRejections: readonly Readonly<{ identity: string; violation: "schema"; started: false }>[];
@@ -89,7 +89,7 @@ export function projectReviewerDispatchOutcome(
   }
 }
 
-type FatalEvidence = { diagnostics: string; targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition };
+type FatalEvidence = { diagnostics: string; cause: unknown; targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition };
 
 function cloneFreeze<T>(value: T): T {
   if (Array.isArray(value)) return Object.freeze(value.map(cloneFreeze)) as T;
@@ -109,6 +109,7 @@ function fatal(error: unknown): FatalEvidence {
   const record = typeof error === "object" && error !== null ? error as Record<string, unknown> : undefined;
   return cloneFreeze({
     diagnostics: "infrastructure-failure",
+    cause: error,
     ...(record?.targetSnapshot === undefined ? {} : { targetSnapshot: record.targetSnapshot as ReviewerTargetSnapshot }),
     ...(record?.workspaceDisposition === undefined ? {} : { workspaceDisposition: record.workspaceDisposition as ReviewerWorkspaceDisposition }),
   });
@@ -177,6 +178,7 @@ export function createReviewerExecutionLedger(): ReviewerExecutionLedger {
     if (event.source === "reviewer-runtime" && event.type === "fatal") {
       if (infrastructureFailure === undefined) infrastructureFailure = cloneFreeze({
         diagnostics: event.diagnostics,
+        cause: event.cause,
         ...(event.targetSnapshot === undefined ? {} : { targetSnapshot: event.targetSnapshot }),
         ...(event.workspaceDisposition === undefined ? {} : { workspaceDisposition: event.workspaceDisposition }),
       });

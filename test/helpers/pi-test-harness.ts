@@ -215,6 +215,8 @@ export interface PiSubprocessResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  signal?: NodeJS.Signals | null;
+  cause?: unknown;
 }
 
 export async function runNodeSubprocess(
@@ -234,12 +236,14 @@ export async function runNodeSubprocess(
     });
     return { code: 0, stdout: result.stdout, stderr: result.stderr, timedOut: false };
   } catch (error) {
-    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: string };
+    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: NodeJS.Signals | null };
     return {
       code: typeof failure.code === "number" ? failure.code : null,
       stdout: failure.stdout ?? "",
       stderr: failure.stderr ?? failure.message ?? "",
-      timedOut: failure.killed === true || failure.signal === "SIGTERM",
+      timedOut: failure.killed === true,
+      signal: failure.signal ?? null,
+      cause: error,
     };
   }
 }
@@ -272,9 +276,9 @@ export async function runPiSubprocess(
       child.kill("SIGKILL");
     }, options.timeoutMs ?? 30_000);
     child.on("error", (error) => { clearTimeout(timeout); reject(error); });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       clearTimeout(timeout);
-      resolveResult({ code, stdout, stderr, timedOut });
+      resolveResult({ code, stdout, stderr, timedOut, signal });
     });
   });
 }
@@ -404,8 +408,11 @@ export async function withInProcessPi<T>(
       return await scenario({ faux: options.faux, provider, model, modelRuntime, loader, extensions: extensionsResult, session, sessionManager });
     },
     async () => {
-      if (options.reviewerShutdown) await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-      session.dispose();
+      try {
+        if (options.reviewerShutdown) await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      } finally {
+        session.dispose();
+      }
     },
   );
 }

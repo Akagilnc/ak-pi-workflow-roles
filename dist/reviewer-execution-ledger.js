@@ -47,6 +47,7 @@ function fatal(error) {
     const record = typeof error === "object" && error !== null ? error : undefined;
     return cloneFreeze({
         diagnostics: "infrastructure-failure",
+        cause: error,
         ...(record?.targetSnapshot === undefined ? {} : { targetSnapshot: record.targetSnapshot }),
         ...(record?.workspaceDisposition === undefined ? {} : { workspaceDisposition: record.workspaceDisposition }),
     });
@@ -119,6 +120,7 @@ export function createReviewerExecutionLedger() {
             if (infrastructureFailure === undefined)
                 infrastructureFailure = cloneFreeze({
                     diagnostics: event.diagnostics,
+                    cause: event.cause,
                     ...(event.targetSnapshot === undefined ? {} : { targetSnapshot: event.targetSnapshot }),
                     ...(event.workspaceDisposition === undefined ? {} : { workspaceDisposition: event.workspaceDisposition }),
                 });
