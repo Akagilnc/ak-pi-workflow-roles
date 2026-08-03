@@ -58,8 +58,10 @@ test("SHA-256 pins full and abbreviated commits, range, material, and ref snapsh
   await withPrimaryAwareCleanup(async () => {
     try { await git(root, "init", "--object-format=sha256"); }
     catch (error) {
-      const detail = error instanceof Error ? `${error.message} ${String((error as { stderr?: unknown }).stderr ?? "")}` : String(error);
-      if (/sha.?256|object.?format|unsupported/i.test(detail)) { t.skip(`installed Git lacks SHA-256 repository support: ${detail}`); return; }
+      if (typeof error === "object" && error !== null && (error as { code?: unknown }).code === 128) {
+        t.skip("Git rejected the SHA-256 repository capability");
+        return;
+      }
       throw error;
     }
     await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");

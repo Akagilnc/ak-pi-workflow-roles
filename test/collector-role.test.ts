@@ -2122,7 +2122,8 @@ test("F3-ambient-skills unsupported hostile sibling-extension injection", async 
       }, async ({ session, sessionManager }) => {
         try {
           await session.prompt("start");
-        } catch {
+        } catch (error) {
+          assert.ok(error !== undefined);
           // failInfrastructure throws at before_agent_start skills guard
         }
         assert.equal(process.exitCode, 1);
@@ -2213,7 +2214,8 @@ test("F3-ambient-contextFiles", async () => {
       }, async ({ session }) => {
         try {
           await session.prompt("start");
-        } catch {
+        } catch (error) {
+          assert.ok(error !== undefined);
           // expected infrastructure failure
         }
         assert.equal(process.exitCode, 1);
@@ -2293,7 +2295,8 @@ test("F3-ambient-appendSystemPrompt", async () => {
       }, async ({ session }) => {
         try {
           await session.prompt("start");
-        } catch {
+        } catch (error) {
+          assert.ok(error !== undefined);
           // expected infrastructure failure
         }
         assert.equal(process.exitCode, 1);

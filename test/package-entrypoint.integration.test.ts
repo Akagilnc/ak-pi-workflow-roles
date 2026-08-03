@@ -1198,7 +1198,10 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
             assert.equal(navigatorCalls, 1, "the settlement must retain one in-flight Navigator call");
             assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false, "no advice may appear before preparation drains");
             releasePreparation();
-            await prompt.catch(() => undefined);
+            await prompt.then(
+              () => undefined,
+              (error) => { assert.ok(error !== undefined); },
+            );
             assert.equal(promptFinished, true);
             const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
             if (outcome === "recommendation") {

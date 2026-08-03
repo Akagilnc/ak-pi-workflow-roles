@@ -214,8 +214,9 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
     assert.equal(result.code, 1);
     assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=0/);
     const traces = result.stderr.split("\n").flatMap((line) => {
-      try { const value = JSON.parse(line) as ActivationTraceRecord; return Value.Check(activationTraceRecordSchema, value) ? [value] : []; }
-      catch { return []; }
+      if (!line.trimStart().startsWith("{")) return [];
+      const value = JSON.parse(line) as ActivationTraceRecord;
+      return Value.Check(activationTraceRecordSchema, value) ? [value] : [];
     });
     assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
       { role: "fixer", stageId: "load-and-install", status: "started" },

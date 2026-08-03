@@ -21,10 +21,10 @@ async function execGit(args, options) {
 function exitCode(error) { const code = typeof error === "object" && error !== null ? error.code : undefined; return typeof code === "number" ? code : undefined; }
 async function repositoryIsAvailable(root) { try {
     await access(`${root}/.git`);
-    return true;
+    return { available: true };
 }
-catch {
-    return false;
+catch (cause) {
+    return { available: false, cause };
 } }
 const evidenceViolation = (code) => {
     const diagnostic = code === "range-invalid"
@@ -91,8 +91,8 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
     const reachableCommitIds = Object.freeze((await gitText(repositoryRoot, ["rev-list", targetHead])).split("\n").filter(Boolean));
     const refs = parseReviewerRefSnapshot(await gitText(repositoryRoot, reviewerRefSnapshotArgs()));
     const pin = immutableReviewerPin({ repositoryRoot, objectFormat, targetHead, refs });
-    const invalid = (code, diagnostic) => {
-        throw new ReviewerCorrectablePreflightError(code, diagnostic);
+    const invalid = (code, diagnostic, cause) => {
+        throw new ReviewerCorrectablePreflightError(code, diagnostic, cause === undefined ? undefined : { cause });
     };
     const symbolic = (base) => {
         const selected = Object.hasOwn(refs, base) ? base : (() => {
@@ -127,8 +127,10 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
                     commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${targetHead}${headExpression[1]}^{commit}`]);
                 }
                 catch (error) {
-                    if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot)) {
-                        invalid("base-invalid", "base revision HEAD ancestry expression must resolve to a reachable commit");
+                    if (exitCode(error) === 128) {
+                        const repository = await repositoryIsAvailable(repositoryRoot);
+                        if (repository.available)
+                            invalid("base-invalid", "base revision HEAD ancestry expression must resolve to a reachable commit", error);
                     }
                     throw error;
                 }
@@ -149,8 +151,11 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
                 commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${commit}^{commit}`]);
             }
             catch (error) {
-                if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot))
-                    invalid("base-invalid", "base revision must resolve to an existing commit");
+                if (exitCode(error) === 128) {
+                    const repository = await repositoryIsAvailable(repositoryRoot);
+                    if (repository.available)
+                        invalid("base-invalid", "base revision must resolve to an existing commit", error);
+                }
                 throw error;
             }
             try {
@@ -158,7 +163,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
             }
             catch (error) {
                 if (exitCode(error) === 1)
-                    invalid("base-invalid", "base revision must be an ancestor of the pinned target");
+                    invalid("base-invalid", "base revision must be an ancestor of the pinned target", error);
                 throw error;
             }
             return commit;
@@ -170,7 +175,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
             }
             catch (error) {
                 if (exitCode(error) === 1) {
-                    invalid("range-invalid", "review range requires a common ancestor for base and pinned target");
+                    invalid("range-invalid", "review range requires a common ancestor for base and pinned target", error);
                 }
                 throw error;
             }
@@ -202,8 +207,10 @@ export async function createReviewerPinnedGitReader(root = process.cwd()) {
                 return Uint8Array.from(stdout);
             }
             catch (error) {
-                if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot)) {
-                    invalid("material-invalid", "pinned material at materials.repositoryPath is missing from the target");
+                if (exitCode(error) === 128) {
+                    const repository = await repositoryIsAvailable(repositoryRoot);
+                    if (repository.available)
+                        invalid("material-invalid", "pinned material at materials.repositoryPath is missing from the target", error);
                 }
                 throw error;
             }

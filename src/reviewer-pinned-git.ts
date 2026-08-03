@@ -45,7 +45,7 @@ async function execGit<T extends "utf8" | "buffer">(args: readonly string[], opt
   }
 }
 function exitCode(error: unknown): number | undefined { const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined; return typeof code === "number" ? code : undefined; }
-async function repositoryIsAvailable(root: string): Promise<boolean> { try { await access(`${root}/.git`); return true; } catch { return false; } }
+async function repositoryIsAvailable(root: string): Promise<{ available: boolean; cause?: unknown }> { try { await access(`${root}/.git`); return { available: true }; } catch (cause) { return { available: false, cause }; } }
 const evidenceViolation = (code: "range-invalid"|"material-invalid"|"capability-invalid"): never => {
   const diagnostic = code === "range-invalid"
     ? "derived range must match the resolved base and pinned target with canonical command, digest, and unique commits"
@@ -89,8 +89,9 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
   const invalid = (
     code: "base-invalid" | "range-invalid" | "material-invalid",
     diagnostic: string,
+    cause?: unknown,
   ): never => {
-    throw new ReviewerCorrectablePreflightError(code, diagnostic);
+    throw new ReviewerCorrectablePreflightError(code, diagnostic, cause === undefined ? undefined : { cause });
   };
   const symbolic = (base: string): string | undefined => {
     const selected = Object.hasOwn(refs, base) ? base : (() => {
@@ -120,8 +121,9 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
         try {
           commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${targetHead}${headExpression[1]}^{commit}`]);
         } catch (error) {
-          if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot)) {
-            invalid("base-invalid", "base revision HEAD ancestry expression must resolve to a reachable commit");
+          if (exitCode(error) === 128) {
+            const repository = await repositoryIsAvailable(repositoryRoot);
+            if (repository.available) invalid("base-invalid", "base revision HEAD ancestry expression must resolve to a reachable commit", error);
           }
           throw error;
         }
@@ -133,11 +135,14 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       } else commit = symbolic(base);
       if (commit === undefined) invalid("base-invalid", "base revision must name an existing pinned ref or reachable commit");
       try { commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${commit}^{commit}`]); } catch (error) {
-        if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot)) invalid("base-invalid", "base revision must resolve to an existing commit");
+        if (exitCode(error) === 128) {
+          const repository = await repositoryIsAvailable(repositoryRoot);
+          if (repository.available) invalid("base-invalid", "base revision must resolve to an existing commit", error);
+        }
         throw error;
       }
       try { await gitText(repositoryRoot, ["merge-base", "--is-ancestor", commit, targetHead]); } catch (error) {
-        if (exitCode(error) === 1) invalid("base-invalid", "base revision must be an ancestor of the pinned target");
+        if (exitCode(error) === 1) invalid("base-invalid", "base revision must be an ancestor of the pinned target", error);
         throw error;
       }
       return commit;
@@ -148,7 +153,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
         mergeBase = await gitText(repositoryRoot, ["merge-base", base, targetHead]);
       } catch (error) {
         if (exitCode(error) === 1) {
-          invalid("range-invalid", "review range requires a common ancestor for base and pinned target");
+          invalid("range-invalid", "review range requires a common ancestor for base and pinned target", error);
         }
         throw error;
       }
@@ -173,8 +178,9 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
         const { stdout } = await execGit(["-C", repositoryRoot, "show", `${revision}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
         return Uint8Array.from(stdout);
       } catch (error) {
-        if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot)) {
-          invalid("material-invalid", "pinned material at materials.repositoryPath is missing from the target");
+        if (exitCode(error) === 128) {
+          const repository = await repositoryIsAvailable(repositoryRoot);
+          if (repository.available) invalid("material-invalid", "pinned material at materials.repositoryPath is missing from the target", error);
         }
         throw error;
       }

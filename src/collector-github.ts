@@ -344,7 +344,7 @@ export function createGhApiRunner(
         child.stdin.write(runOptions.stdin);
       }
       child.stdin.end();
-      child.on("close", (code) => {
+      child.on("close", (code, signal) => {
         settle(() => {
           // gh api --include prints: HTTP/ headers blank-line body
           const match = stdout.match(/^HTTP\/[\d.]+\s+(\d+)[^\n]*\r?\n([\s\S]*?)\r?\n\r?\n([\s\S]*)$/);
@@ -368,14 +368,11 @@ export function createGhApiRunner(
             return;
           }
           // Ambiguous: process failed without parseable HTTP response
-          reject(
-            Object.assign(
-              new Error(
-                `gh api failed without a parseable HTTP response (code=${String(code)}): ${stderr || stdout}`,
-              ),
-              { ambiguousGhFailure: true, stderr, stdout, code },
-            ),
+          const failure = new Error(
+            `gh api failed without a parseable HTTP response (code=${String(code)}): ${stderr || stdout}`,
+            { cause: { code, signal, stderr, stdout } },
           );
+          reject(Object.assign(failure, { ambiguousGhFailure: true, stderr, stdout, code, signal }));
         });
       });
     });
@@ -478,7 +475,7 @@ export function createGhCollectorGitHubTransport(
     async getAuthenticatedUser(options = {}) {
       const response = await apiGet("/user", options.signal);
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(`GitHub /user failed with HTTP ${response.status}`);
+        throw new Error(`GitHub /user failed with HTTP ${response.status}`, { cause: { endpoint: "/user", status: response.status, headers: response.headers, body: response.bodyText } });
       }
       const raw = parseJson(response.bodyText, "/user");
       return { login: requireUserLogin(raw).toLowerCase(), raw };
@@ -489,7 +486,7 @@ export function createGhCollectorGitHubTransport(
         `/repos/${input.owner}/${input.repo}/pulls/${input.prNumber}`;
       const response = await apiGet(path, input.signal);
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(`GitHub ${path} failed with HTTP ${response.status}`);
+        throw new Error(`GitHub ${path} failed with HTTP ${response.status}`, { cause: { endpoint: path, status: response.status, headers: response.headers, body: response.bodyText } });
       }
       return normalizePullRequest(parseJson(response.bodyText, path));
     },
@@ -532,6 +529,7 @@ export function createGhCollectorGitHubTransport(
             : { stdin: JSON.stringify({ body: input.body }), signal: input.signal },
         );
         if (response.status >= 200 && response.status < 300) {
+          // Contract: README.md#Collector — a successful write with unreadable response is recoverable only as an observable ambiguous result.
           // 2xx means the comment may already exist; parse/normalize failure is
           // ambiguous_loss so ledger marker recovery can resolve without repost.
           try {
@@ -563,10 +561,7 @@ export function createGhCollectorGitHubTransport(
         if (isRecord(error) && error["name"] === "AbortError") {
           throw error;
         }
-        return {
-          kind: "rejected",
-          diagnostics: error instanceof Error ? error.message : String(error),
-        };
+        throw error;
       }
     },
   };

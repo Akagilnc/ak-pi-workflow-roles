@@ -701,8 +701,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           };
           previousRoute = selected.route;
           session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selected.route });
+        // Contract: README.md#Navigator-attendance — Navigator failures become typed unavailable without invalidating the role Receipt; retain the original cause in the unavailable report.
         } catch (error) {
-          // Contract: README.md#Navigator-attendance — Navigator failures become typed unavailable without invalidating the role Receipt; retain the original cause in the unavailable report.
           report = unavailable(invocationId, error);
         }
       }

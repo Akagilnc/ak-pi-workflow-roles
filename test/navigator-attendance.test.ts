@@ -668,7 +668,7 @@ test("dispose during pending createSession drains the created session without pr
     while (!nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     nav.dispose();
     releaseCreate();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }).catch(() => undefined);
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     // Allow the in-flight initializer to observe disposed and drain.
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
     assert.equal(promptCalls, 0, "disposed attendance must not prompt");
