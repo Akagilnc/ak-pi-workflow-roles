@@ -1328,9 +1328,9 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
         { name: "session", source: "session" },
         { name: "model", source: "model" },
         { name: "thinking", source: "thinking" },
-        { name: "auth", source: "auth", statusCode: 401, code: "authentication_failed", diagnostics: ["auth key unavailable", "credential rejected with different wording"] },
-        { name: "quota", source: "quota", statusCode: 429, code: "quota_exhausted", diagnostics: ["quota exhausted", "plan limit reached with different wording"] },
-        { name: "transport", source: "transport", code: "transport_error", diagnostics: ["transport unavailable", "connection reset with different wording"] },
+        { name: "auth", source: "auth", status: 401, diagnostics: ["auth key unavailable", "credential rejected with different wording"] },
+        { name: "quota", source: "quota", status: 429, diagnostics: ["quota exhausted", "plan limit reached with different wording"] },
+        { name: "transport", source: "transport", diagnostics: ["transport unavailable", "connection reset with different wording"] },
       ] as const;
       try {
         for (const [index, scenario] of cases.entries()) {
@@ -1360,25 +1360,35 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               ? {
                 ...faux.provider,
                 getModels() { return [model]; },
-                stream(requestModel: typeof model, streamContext: Context) {
+                stream(requestModel: typeof model, streamContext: Context, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
                   const names = streamContext.tools?.map((tool) => tool.name) ?? [];
                   if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-                    return faux.provider.stream(requestModel, streamContext);
+                    return faux.provider.stream(requestModel, streamContext, options as never);
                   }
                   const stream = createAssistantMessageEventStream();
-                  const human = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
-                  const classified = Object.assign({}, human, {
-                    ...("statusCode" in scenario ? { statusCode: scenario.statusCode } : {}),
-                    ...("code" in scenario ? { code: scenario.code } : {}),
-                  });
+                  const human = scenario.name === "transport"
+                    ? {
+                      ...fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic }),
+                      diagnostics: [{
+                        type: "provider_transport_failure",
+                        timestamp: Date.now(),
+                        error: { message: diagnostic, code: "transport_error" },
+                      }],
+                    }
+                    : fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
                   queueMicrotask(() => {
-                    stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
-                    stream.push({ type: "error", reason: "error", error: classified });
+                    void (async () => {
+                      if ("status" in scenario) {
+                        await options?.onResponse?.({ status: scenario.status, headers: {} }, requestModel);
+                      }
+                      stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
+                      stream.push({ type: "error", reason: "error", error: human });
+                    })();
                   });
                   return stream;
                 },
-                streamSimple(requestModel: typeof model, streamContext: Context) {
-                  return this.stream(requestModel, streamContext);
+                streamSimple(requestModel: typeof model, streamContext: Context, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
+                  return this.stream(requestModel, streamContext, options);
                 },
               }
               : undefined;
