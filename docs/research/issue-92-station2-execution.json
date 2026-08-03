@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 92,
   "station": "2c",
-  "generatedAt": "2026-08-03T19:51:38.154890+00:00",
+  "generatedAt": "2026-08-03T19:52:05.623232+00:00",
   "baseHeadAtStart": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
   "law": "Per-entry rebuild disposition proof: executed | absorbed | deleted. A green suite alone is not proof that construction changed.",
   "totals": {
@@ -242,7 +242,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared frozen source + one parentContext; 11-row fault table without per-row repo; ledger projection moved to reviewer-execution-ledger.test.ts.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
       }
     },
     "test/reviewer-agent.test.ts::Reviewer Agent cancellation is infrastructure failure and retains its workspace": {
@@ -257,7 +258,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared frozen source; assert.rejects reads retained solely from outcome envelope.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
       }
     },
     "test/reviewer-agent.test.ts::workspace owner prepares and installs every leg without constructing a provider": {
@@ -272,7 +274,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared dual dispatch + frozen source; assert workspaces.length===2 and verified evidence; dropped workspaceOperations tautology.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
       }
     },
     "test/reviewer-agent.test.ts::Reviewer materializes shallow session snapshot refs into the workspace": {
@@ -287,7 +290,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "owner.prepare proves shallow ref materialization without full runner round-trip.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
       }
     },
     "test/reviewer-agent.test.ts::Reviewer materializes and verifies a real SHA-256 repository": {
@@ -302,7 +306,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "File-scope sha256 fixture via owner.prepare; drop runner round-trip.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
       }
     },
     "test/reviewer-agent.test.ts::child executor runs in an already-prepared workspace without Git materialization": {
@@ -317,7 +322,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Consumes shared single-leg dispatch + owner.prepare batch.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
       }
     },
     "test/reviewer-agent.test.ts::Reviewer child provider delegates class-private streams to the original receiver": {
@@ -332,7 +338,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared source; typed isError gate replaces 盯文 regex; private-provider auth fact only.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
       }
     },
     "test/reviewer-agent.test.ts::workspace shutdown does not replay pre-creation or post-creation preparation rejection": {
@@ -347,7 +354,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared source; double-shutdown + retained path; classification owned by setup-failure table.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "fe972da"
       }
     },
     "test/audit-failure-subprocess.test.ts::installed Reviewer fatal stages abort without a receipt": {
@@ -362,7 +370,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared git-clone template (cp -R); process-level audit-auth×print+json; remaining stages json-only; in-process audit-stage fail-closed carrier added.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "0f38a13"
       }
     },
     "test/audit-failure-subprocess.test.ts::unavailable canonical tdd is infrastructure failure in print and JSON": {
@@ -377,7 +386,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "ONE fixture (missing)×print+json process negative; unavailability matrix remains at canonical-skill-binding.test.ts.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "0f38a13"
       }
     },
     "test/audit-failure-subprocess.test.ts::fatal Judge audit failure drains one healthy packaged Navigator without advice": {
@@ -392,7 +402,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Retained single json subprocess — process-release evidence requires process exit boundary.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "0f38a13"
       }
     },
     "test/audit-failure-subprocess.test.ts::fatal Fixer audit infrastructure failure aborts print and JSON without a receipt": {
@@ -407,7 +418,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Kept Fixer-specific FIXER_AUDIT_FAILURE_PROVIDER_CALLS process proof (Judge survivor lacks this clause).",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "0f38a13"
       }
     },
     "test/reviewer-pinned-reader.test.ts::abbreviated bases are resolved only among commits reachable from the activation target": {
@@ -618,7 +630,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Module-level base template + git clone --local per case.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     },
     "test/merger-git-state.test.ts::production Merger Git seam accepts a clean source-only first-parent change": {
@@ -633,7 +646,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared template; asserts source-only absent from resolutionChangedPaths while present in first-parent diff.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     },
     "test/merger-git-state.test.ts::production Merger Git seam reports tampering with a clean source-side path": {
@@ -648,7 +662,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared template; distinct tamper-on-source-path input shape.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     },
     "test/merger-git-state.test.ts::production Merger Git seam reports no conflict set after a non-conflicting merge": {
@@ -663,7 +678,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Shared template + local clone; non-conflicting clean-source branch.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     },
     "test/activation-envelope-contract.test.ts::incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch": {
@@ -930,7 +946,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Assert typed violations codes instead of free-text diagnostic regexes.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     },
     "test/collector-ledger.test.ts::8 MiB snapshot boundary: measured MAX accept and MAX+1 fail": {
@@ -1381,7 +1398,8 @@
       "evidence": {
         "kind": "cheaper-carrier-or-dead-self-proof",
         "note": "Census folded into escalation-loop fixture integrity assert; standalone test deleted.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     },
     "test/fixer-contract.test.ts::every surviving Fixer rejection names its violated field or constraint": {
@@ -1396,7 +1414,8 @@
       "evidence": {
         "kind": "cheaper-carrier-or-dead-self-proof",
         "note": "Absorbed into hard-cuts table as per-row diagnostics; standalone test deleted.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     },
     "test/doctor-auditor.test.ts::Doctor audit receives the frozen evidence index without replaying large session content": {
@@ -1439,7 +1458,8 @@
       "evidence": {
         "kind": "cheaper-carrier-or-dead-self-proof",
         "note": "Deleted pure self-double-call; production double-compiles.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     },
     "test/class-contracts.test.ts::Judge class receipt enforces status, grammar, and exact-name uniqueness": {
@@ -1482,7 +1502,8 @@
       "evidence": {
         "kind": "cheaper-carrier-or-dead-self-proof",
         "note": "Moved to test/types/reviewer-materialization.type-test.ts pure typecheck fixture; runtime test() deleted.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "eed97f9"
       }
     }
   },
@@ -1565,5 +1586,13 @@
     "Package-tier entries whose Green was shared cold-install/pack are absorbed at 295e3d1 with consumer call-site evidence.",
     "deleted = cheaper carrier absorbed the contract or pure self-proof removed; contract retained elsewhere where required.",
     "Remaining unfinished keys keep contracts green under prior constructions; cheaper rebuild still owed (ADR-0050)."
-  ]
+  ],
+  "applyCommits": {
+    "reviewer-agent": "fe972da",
+    "audit-failure": "0f38a13",
+    "small": "eed97f9",
+    "ledger": "143a311",
+    "shared-fixture": "295e3d1f30a56640bef5426518ff21d0e57fed93"
+  },
+  "constructionHead": "143a3110516474a9282ea1aca93cfc5d9db7c8c5"
 }
