@@ -35,7 +35,7 @@ recipes here.
 
 ### Decisions
 
-| ID | Decision | Owner | Notes |
+| ID | Decision | 陛下 | Notes |
 | --- | --- | --- | --- |
 | D1 | | | |
 
@@ -51,7 +51,7 @@ recipes here.
 | --- | --- |
 | B1 | |
 
-### Unresolved owner choices
+### Unresolved 陛下 choices
 
 | ID | Open choice | Options | Blocking? |
 | --- | --- | --- | --- |
