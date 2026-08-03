@@ -282,7 +282,7 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
       providerCalls: number;
       navigatorCalls: number;
       siblingOrder: string;
-      navigator: { startedAt: string; completedAt: string; preparedAt: string; settledAt: string; settlementKind: string; releaseAfterDrain: boolean };
+      navigator: { startedAt: string; completedAt: string; preparedAt: string; settledAt: string; settlementKind: string; inputReleasedAt: string; releaseAfterDrain: boolean };
       role: { batchToolNames: Array<{ id: string; name: string }>; batchResultOrder: string[]; failedOutput: { toolCallId: string; toolName: string; isError: boolean; details: Record<string, unknown> }; siblingResult: { toolCallId: string; toolName: string; isError: boolean; details: Record<string, unknown> }; failedOutputAt: string; siblingResultAt: string; failedOutputCorrelation: boolean };
     };
     assert.equal(evidence.siblingOrder, siblingOrder);
@@ -297,9 +297,14 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     const completedAt = timestamp(evidence.navigator.completedAt, "preparation completion");
     const preparedAt = timestamp(evidence.navigator.preparedAt, "typed preparation persistence");
     const settledAt = timestamp(evidence.navigator.settledAt, "typed settlement");
+    const inputReleasedAt = timestamp(evidence.navigator.inputReleasedAt, "input release");
+    const processReleaseLine = result.stderr.split("\n").find((line) => line.startsWith("AUDIT_FAILURE_PROCESS_RELEASE="));
+    assert.ok(processReleaseLine, `${siblingOrder} must emit process release evidence`);
+    const processReleasedAt = timestamp((JSON.parse(processReleaseLine.slice("AUDIT_FAILURE_PROCESS_RELEASE=".length)) as { at: string }).at, "process release");
     timestamp(evidence.role.failedOutputAt, "failed output result");
     timestamp(evidence.role.siblingResultAt, "sibling result");
     assert.ok(startedAt <= completedAt && completedAt <= preparedAt && preparedAt <= settledAt, `${siblingOrder} Navigator preparation must drain before settlement`);
+    assert.ok(settledAt <= inputReleasedAt && inputReleasedAt <= processReleasedAt, `${siblingOrder} input and process release must follow the drained Navigator settlement`);
     assert.deepEqual(evidence.role.batchToolNames, siblingOrder === "sibling-first"
       ? [{ id: "navigator-sibling", name: "read" }, { id: "batch-judge", name: "ak_judge_output" }]
       : [{ id: "batch-judge", name: "ak_judge_output" }, { id: "navigator-sibling", name: "read" }]);

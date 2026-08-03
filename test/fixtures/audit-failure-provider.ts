@@ -26,6 +26,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   let navigatorCalls = 0;
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
+  let inputReleasedAt = "";
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     if (healthyNavigator && names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
@@ -91,6 +92,12 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     },
   };
   pi.registerProvider(provider);
+  pi.on("agent_end", () => {
+    inputReleasedAt = new Date().toISOString();
+  });
+  process.on("exit", () => {
+    if (healthyNavigator && !observation) console.error(`AUDIT_FAILURE_PROCESS_RELEASE=${JSON.stringify({ at: new Date().toISOString() })}`);
+  });
   pi.on("session_shutdown", async () => {
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
     if (!healthyNavigator || observation) return;
@@ -122,7 +129,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       providerCalls: faux.state.callCount,
       navigatorCalls,
       siblingOrder,
-      navigator: { startedAt: navigatorStartedAt, completedAt: navigatorCompletedAt, preparedAt: prepared?.timestamp ?? "", settledAt: settlement?.timestamp ?? "", settlementKind: settlement?.data?.kind ?? "", releaseAfterDrain: drainedBeforeSettlement },
+      navigator: { startedAt: navigatorStartedAt, completedAt: navigatorCompletedAt, preparedAt: prepared?.timestamp ?? "", settledAt: settlement?.timestamp ?? "", settlementKind: settlement?.data?.kind ?? "", inputReleasedAt, releaseAfterDrain: drainedBeforeSettlement },
       role: { batchToolNames, batchResultOrder, failedOutput, siblingResult, failedOutputAt: failedOutputEntry?.timestamp ?? "", siblingResultAt: siblingResultEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME },
     })}`);
   });
