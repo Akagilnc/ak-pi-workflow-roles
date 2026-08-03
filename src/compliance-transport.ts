@@ -176,16 +176,39 @@ export async function prepareComplianceDispatch(
   };
 }
 
-type ComplianceDecisionFacts = {
+export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
+
+export type ComplianceDecisionFacts = {
   expectedDecisionToolName: string;
   observedToolCallCount: number;
   observedToolNames: string[];
   responseStopReason: AssistantMessage["stopReason"];
-  errorMessageOrDiagnosticPresent: boolean;
+  provider: AssistantMessage["provider"];
+  model: AssistantMessage["model"];
+  responseModel: string | null;
+  errorMessage: string | null;
+  diagnostics: NonNullable<AssistantMessage["diagnostics"]>;
 };
 
+export class ComplianceDecisionContractError extends Error {
+  constructor(
+    message: string,
+    readonly details: ComplianceDecisionFacts,
+  ) {
+    super(message);
+    this.name = "ComplianceDecisionContractError";
+  }
+}
+
+export class ComplianceResponseRetentionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ComplianceResponseRetentionError";
+  }
+}
+
 type ActiveSessionResponseAppender = {
-  appendMessage(message: AssistantMessage): string;
+  appendCustomEntry(customType: string, data?: unknown): string;
 };
 
 function complianceDecisionFacts(
@@ -198,9 +221,11 @@ function complianceDecisionFacts(
     observedToolCallCount: calls.length,
     observedToolNames: calls.map((call) => call.name),
     responseStopReason: response.stopReason,
-    errorMessageOrDiagnosticPresent:
-      response.errorMessage !== undefined ||
-      (response.diagnostics?.length ?? 0) > 0,
+    provider: response.provider,
+    model: response.model,
+    responseModel: response.responseModel ?? null,
+    errorMessage: response.errorMessage ?? null,
+    diagnostics: response.diagnostics ?? [],
   };
 }
 
@@ -210,9 +235,10 @@ function malformedComplianceDecision(
   invalidLabel: string,
   reason: string,
   calls: readonly Extract<AssistantMessage["content"][number], { type: "toolCall" }>[],
-): Error {
-  return new Error(
-    `${invalidLabel}: ${reason}; ${JSON.stringify(complianceDecisionFacts(response, toolName, calls))}`,
+): ComplianceDecisionContractError {
+  return new ComplianceDecisionContractError(
+    `${invalidLabel}: ${reason}`,
+    complianceDecisionFacts(response, toolName, calls),
   );
 }
 
@@ -291,9 +317,9 @@ function validateStatusDependentDecision(
 }
 
 /**
- * Retain the provider's structured response verbatim in the active Pi session.
- * ExtensionContext exposes this manager as read-only, but the live manager still
- * owns the append operation used by the active session runtime.
+ * Retain the provider's structured response as extension state, not a
+ * conversational message. A missing or failed append is an infrastructure
+ * failure because the nested response is mandatory audit evidence.
  */
 function retainComplianceResponse(
   context: ExtensionContext,
@@ -302,8 +328,22 @@ function retainComplianceResponse(
   const sessionManager = context.sessionManager as unknown as
     | (Partial<ActiveSessionResponseAppender> & object)
     | undefined;
-  if (typeof sessionManager?.appendMessage !== "function") return;
-  sessionManager.appendMessage(response);
+  if (typeof sessionManager?.appendCustomEntry !== "function") {
+    throw new ComplianceResponseRetentionError(
+      "compliance response retention is unavailable",
+    );
+  }
+  try {
+    sessionManager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, {
+      version: 1,
+      response,
+    });
+  } catch (error) {
+    throw new ComplianceResponseRetentionError(
+      "compliance response retention failed",
+      { cause: error },
+    );
+  }
 }
 
 export function readComplianceDecision(

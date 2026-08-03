@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fauxAssistantMessage, fauxToolCall, type Context, type Model } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
 
 const input = {
@@ -14,7 +14,7 @@ const input = {
 const context = { model: { provider: "active", id: "same-model" }, modelRegistry: {
   async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
   async getApiKeyAndHeaders() { return { ok: true, apiKey: "secret" }; },
-} } as unknown as ExtensionContext;
+}, sessionManager: SessionManager.inMemory() } as unknown as ExtensionContext;
 
 test("Fixer auditor uses the active model, exact invocation inputs, and a non-overreaching fresh decision context", async () => {
   let model: Model<any> | undefined; let seen: Context | undefined;

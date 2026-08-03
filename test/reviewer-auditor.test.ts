@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -8,7 +7,7 @@ import {
   fauxToolCall,
   type Context,
 } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
   REVIEWER_AUDIT_TOOL_NAME,
@@ -47,6 +46,7 @@ const context = {
     async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
     async getApiKeyAndHeaders() { return { ok: true, apiKey: "secret" }; },
   },
+  sessionManager: SessionManager.inMemory(),
 } as unknown as ExtensionContext;
 
 test("Reviewer auditor receives complete method inputs and has only its decision tool", async () => {
@@ -73,7 +73,7 @@ test("Reviewer auditor receives complete method inputs and has only its decision
   assert.match(textOfAuditContext(seen), /"dispatchIdentity":"dispatch-1"/);
   assert.equal(
     seen?.systemPrompt,
-    await readFile(resolve(process.cwd(), "souls/reviewer-auditor.md"), "utf8"),
+    await readFile(new URL("../souls/reviewer-auditor.md", import.meta.url), "utf8"),
   );
 });
 

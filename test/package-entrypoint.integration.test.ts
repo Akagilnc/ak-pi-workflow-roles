@@ -35,6 +35,8 @@ import {
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
 import { DOCTOR_CASE_FLAG } from "../src/doctor-role.ts";
+import { isAuditEscalationResult } from "../src/audit-escalation.ts";
+import { validateAcceptedDetails } from "../src/package-contracts/terminating-tools.ts";
 import { SOUL_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
 import type { ComplianceCompletion } from "../src/compliance-transport.ts";
 import {
@@ -151,6 +153,7 @@ test("cold-installed package audits all four roles from editable Souls", async (
           async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
           async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
         },
+        sessionManager: SessionManager.inMemory(),
       } as any;
       const inputs = {
         judge: { soul: "caller judge soul", transcript: "judge record", verdict: { judgeStatus: "converged" } },
@@ -421,8 +424,11 @@ test("cold-installed role outputs run nested audits through pass, revise, and es
           conflicts: escalation.conflicts,
           decisionGate: escalation.decisionGate,
         });
-        assert.doesNotMatch(result.content[0].text, /accepted|receipt|status/i);
-        assert.throws(() => terminating.validateAcceptedDetails(acceptedNames[role], result.details), /not an accepted role receipt/);
+        assert.equal(isAuditEscalationResult(result.details), true);
+        assert.throws(
+          () => terminating.validateAcceptedDetails(acceptedNames[role], result.details),
+          (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
+        );
         assert.equal(escalated.auditCalls, 1);
       }
       });
@@ -712,11 +718,12 @@ test("packaged judge escalation terminates with one typed human decision and no 
               entry.message.role === "toolResult" &&
               entry.message.toolCallId === "escalating-judge",
           );
-        assert.ok(
-          result?.type === "message" && result.message.role === "toolResult",
-        );
-        assert.equal(result.message.isError, false);
-        assert.deepEqual(result.message.details, {
+        if (!(result?.type === "message" && result.message.role === "toolResult")) {
+          throw new Error("packaged Judge escalation tool result is missing");
+        }
+        const toolResult = result.message;
+        assert.equal(toolResult.isError, false);
+        assert.deepEqual(toolResult.details, {
           kind: "audit_escalation",
           conflicts: ["Soul authority conflicts with controlling authority"],
           decisionGate: {
@@ -724,8 +731,11 @@ test("packaged judge escalation terminates with one typed human decision and no 
             options: ["Soul", "Controlling authority"],
           },
         });
-        assert.match(textOf(result.message), /Human decision required/);
-        assert.doesNotMatch(textOf(result.message), /Judge verdict accepted/i);
+        assert.equal(isAuditEscalationResult(toolResult.details), true);
+        assert.throws(
+          () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),
+          (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
+        );
         assert.equal(faux.state.callCount, 2);
         assert.equal(faux.getPendingResponseCount(), 0);
         assert.equal(

@@ -8,7 +8,10 @@ import {
   type Context,
   type ProviderStreamOptions,
 } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  SessionManager,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
 import {
   AUDIT_ESCALATION_KIND,
@@ -46,6 +49,7 @@ const context = {
       return { ok: true as const, apiKey: "secret" };
     },
   },
+  sessionManager: SessionManager.inMemory(),
 } as unknown as ExtensionContext;
 
 const escalationArguments = {
@@ -127,7 +131,11 @@ const auditorCases = [
 ] as const;
 
 test("the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor", async () => {
-  assert.deepEqual(AUDITOR_SOUL_ROLES, ["judge", "fixer", "reviewer", "doctor"]);
+  assert.deepEqual(auditorCases.map((entry) => entry.role), AUDITOR_SOUL_ROLES);
+  assert.deepEqual(
+    auditorCases.map((entry) => entry.toolName),
+    [JUDGE_AUDIT_TOOL_NAME, FIXER_AUDIT_TOOL_NAME, REVIEWER_AUDIT_TOOL_NAME, DOCTOR_AUDIT_TOOL_NAME],
+  );
   assert.deepEqual(auditedRoleToolNames, [
     JUDGE_OUTPUT_TOOL_NAME,
     FIXER_OUTPUT_TOOL_NAME,

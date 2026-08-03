@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -14,6 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+  COMPLIANCE_RESPONSE_ENTRY_TYPE,
   complianceDecisionSchema,
   createComplianceDecisionTool,
   runComplianceAudit,
@@ -67,33 +69,29 @@ function response(
   return message;
 }
 
-async function persistedAssistant(
+function persistedResponse(
   sessionManager: SessionManager,
   responseId: string,
-): Promise<Record<string, unknown>> {
-  const sessionFile = sessionManager.getSessionFile();
-  assert.ok(sessionFile);
-  const entries = (await readFile(sessionFile, "utf8"))
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const entry = entries.find((candidate) => {
-    const message = candidate.message;
-    return (
-      candidate.type === "message" &&
-      typeof message === "object" &&
-      message !== null &&
-      (message as Record<string, unknown>).responseId === responseId
-    );
+): AssistantMessage {
+  const entry = sessionManager.getEntries().find((candidate) => {
+    if (candidate.type !== "custom" || candidate.customType !== COMPLIANCE_RESPONSE_ENTRY_TYPE) return false;
+    const data = candidate.data;
+    const response = data && typeof data === "object" && !Array.isArray(data)
+      ? (data as { response?: unknown }).response
+      : undefined;
+    return typeof response === "object" && response !== null &&
+      (response as { responseId?: unknown }).responseId === responseId;
   });
-  assert.ok(entry);
-  return entry;
+  assert.ok(entry?.type === "custom");
+  const data = entry.data as { version: number; response: AssistantMessage };
+  assert.equal(data.version, 1);
+  return data.response;
 }
 
 async function withPersistedSession<T>(
   callback: (sessionManager: SessionManager) => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(resolve("/tmp", "ak-compliance-transport-"));
+  const root = await mkdtemp(join(tmpdir(), "ak-compliance-transport-"));
   try {
     return await callback(SessionManager.create(root, resolve(root, "sessions")));
   } finally {
@@ -115,9 +113,9 @@ function audit(responseMessage: AssistantMessage, sessionManager: SessionManager
 
 function diagnosticFacts(error: unknown): Record<string, unknown> {
   assert.ok(error instanceof Error);
-  const jsonStart = error.message.indexOf("{");
-  assert.notEqual(jsonStart, -1, error.message);
-  return JSON.parse(error.message.slice(jsonStart)) as Record<string, unknown>;
+  const details = (error as Error & { details?: unknown }).details;
+  assert.ok(details && typeof details === "object" && !Array.isArray(details));
+  return details as Record<string, unknown>;
 }
 
 test("shared compliance transport retains valid nested decisions verbatim", async () => {
@@ -167,10 +165,14 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
       const decision = await audit(nested, sessionManager);
       assert.equal(decision.status, candidate.status);
 
-      const entry = await persistedAssistant(sessionManager, `valid-${index}`);
+      const persisted = persistedResponse(sessionManager, `valid-${index}`);
       assert.deepEqual(
-        (entry.message as unknown),
+        JSON.parse(JSON.stringify(persisted)),
         JSON.parse(JSON.stringify(nested)),
+      );
+      assert.equal(
+        sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "assistant" && entry.message.responseId === `valid-${index}`),
+        false,
       );
     });
   }
@@ -214,7 +216,7 @@ test("status-dependent decision combinations are validated at the shared parser 
           ]),
           sessionManager,
         ),
-        /invalid compliance decision: arguments do not match/,
+        (error: unknown) => error instanceof Error && error.name === "ComplianceDecisionContractError",
       );
     });
   }
@@ -314,24 +316,50 @@ test("malformed nested decisions retain raw responses and report typed facts", a
         thrown = error;
       }
       assert.ok(thrown instanceof Error);
-      assert.match(thrown.message, /invalid compliance decision/);
-      assert.match(thrown.message, /stopReason|expected exactly one/);
+      assert.equal(thrown.name, "ComplianceDecisionContractError");
       assert.deepEqual(diagnosticFacts(thrown), {
         expectedDecisionToolName: decisionToolName,
         observedToolCallCount: candidate.expectedCount,
         observedToolNames: candidate.expectedNames,
         responseStopReason: candidate.stopReason,
-        errorMessageOrDiagnosticPresent: candidate.errorPresent,
+        provider: "faux",
+        model: "faux-1",
+        responseModel: "audit-response-model",
+        errorMessage: candidate.errorMessage ?? null,
+        diagnostics: candidate.diagnostics ?? [],
       });
 
-      const entry = await persistedAssistant(sessionManager, candidate.id);
+      const persisted = persistedResponse(sessionManager, candidate.id);
       assert.deepEqual(
-        entry.message,
+        JSON.parse(JSON.stringify(persisted)),
         JSON.parse(JSON.stringify(nested)),
         `${candidate.id} raw response must survive malformed parsing`,
       );
     });
   }
+});
+
+test("nested response retention failures are explicit and cause-preserving", async () => {
+  const cause = new Error("session append failed");
+  await assert.rejects(
+    audit(
+      response("retention-failure", [{ type: "text", text: "provider response" }]),
+      { appendCustomEntry() { throw cause; } } as unknown as SessionManager,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, "ComplianceResponseRetentionError");
+      assert.equal(error.cause, cause);
+      return true;
+    },
+  );
+  await assert.rejects(
+    audit(
+      response("retention-unavailable", [{ type: "text", text: "provider response" }]),
+      {} as SessionManager,
+    ),
+    (error: unknown) => error instanceof Error && error.name === "ComplianceResponseRetentionError",
+  );
 });
 
 test("a provider throw without an AssistantMessage preserves its original cause", async () => {
