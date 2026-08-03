@@ -904,6 +904,54 @@ test("applyEvidenceVersionHistory first-sighting mono boundary keeps or nulls su
   assert.equal(again.authoritativeTime, null);
 });
 
+test("real observe materialization overflow latches fatal and rejects later work", async () => {
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull({ headOid: "head-c" }),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+
+  // Each observation is individually below the production 8 MiB snapshot cap,
+  // but six distinct reviews make the retained ledger exceed the production
+  // 32 MiB receipt/materialization cap.
+  const body = "x".repeat(6 * 1024 * 1024);
+  let overflow: unknown;
+  for (let id = 1; id <= 6; id++) {
+    transport.state.reviews = [sampleReview({
+      id,
+      userLogin: "codexbot",
+      state: "COMMENTED",
+      commitId: "head-c",
+      submittedAt: "2024-01-01T00:00:00Z",
+      body,
+      raw: {},
+    })];
+    try {
+      await ledger.observe(transport, clock);
+    } catch (error) {
+      overflow = error;
+      break;
+    }
+  }
+
+  assert.ok(overflow instanceof Error, "the real ledger must reject overflow");
+  assert.match(overflow.message, /invocation ledger exceeded 33554432 UTF-8 bytes/);
+  assert.equal((overflow as Error & { collectorFatal?: boolean }).collectorFatal, true);
+  assert.equal(ledger.fatal, true);
+
+  const callsAtFatal = { ...transport.calls };
+  await assert.rejects(
+    () => ledger.observe(transport, clock),
+    /invocation ledger exceeded 33554432 UTF-8 bytes/,
+  );
+  assert.deepEqual(transport.calls, callsAtFatal, "fatal ledger must reject before transport access");
+});
+
 test("snapshot byte boundary uses the real production limit", () => {
   assert.doesNotThrow(() =>
     assertCollectorByteLimit("snapshot", COLLECTOR_SNAPSHOT_MAX_BYTES, COLLECTOR_SNAPSHOT_MAX_BYTES),
