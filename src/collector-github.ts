@@ -446,7 +446,9 @@ export function createGhCollectorGitHubTransport(
         nextPath = undefined;
       } else {
         // Accept absolute or path-style next links; normalize to API path + query.
-        try {
+        if (nextUrl.startsWith("/")) {
+          nextPath = nextUrl;
+        } else {
           const url = new URL(nextUrl);
           if (url.hostname !== "api.github.com" && url.hostname !== "github.com") {
             throw new Error(`unexpected pagination host ${url.hostname}`);
@@ -454,11 +456,6 @@ export function createGhCollectorGitHubTransport(
           nextPath = `${url.pathname}${url.search}`;
           if (nextPath.startsWith("/api/v3/")) {
             nextPath = nextPath.slice("/api/v3".length);
-          }
-        } catch {
-          if (nextUrl.startsWith("/")) nextPath = nextUrl;
-          else {
-            throw new Error(`GitHub pagination returned unusable Link next: ${nextUrl}`);
           }
         }
       }
