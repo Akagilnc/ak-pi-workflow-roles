@@ -3,6 +3,12 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Value } from "typebox/value";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
+import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
+import {
+  createToolExecutionObservationFace,
+  writeToolExecutionObservationRecord,
+  type ToolExecutionObservationWriter,
+} from "./tool-execution-observation.ts";
 
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -47,6 +53,17 @@ import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-r
 
 export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
+export {
+  TOOL_EXECUTION_UPDATE_HEARTBEAT,
+  TOOL_EXECUTION_UPDATE_THROTTLE_MS,
+  TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION,
+  createToolExecutionObservationFace,
+  isProducingToolUpdate,
+  toolExecutionObservationRecordSchema,
+  validateToolExecutionObservationRecord,
+  writeToolExecutionObservationRecord,
+} from "./tool-execution-observation.ts";
+export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -204,27 +221,11 @@ export async function executeActivationStages(
   }
 }
 
-const TRACE_WRITE_RETRY_LIMIT = 100;
-
 export function writeActivationTraceRecord(
   record: ActivationTraceRecord,
   write: typeof writeSync = writeSync,
 ): void {
-  const bytes = Buffer.from(`${JSON.stringify(record)}\n`);
-  let offset = 0;
-  let retries = 0;
-  while (offset < bytes.length) {
-    try {
-      const written = write(2, bytes, offset, bytes.length - offset);
-      if (written <= 0) throw new Error("Activation trace write made no progress");
-      offset += written;
-      retries = 0;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if ((code === "EAGAIN" || code === "EINTR") && retries++ < TRACE_WRITE_RETRY_LIMIT) continue;
-      throw error;
-    }
-  }
+  writeStderrJsonlRecord(record, write);
 }
 
 export class ActivationBarrierError extends Error {
@@ -291,6 +292,11 @@ export type RoleRuntimeDependencies = {
   ): Promise<ComplianceDecision>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
+  /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
+  toolExecutionObservationClock?(): string;
+  /** Monotonic ms clock for update throttling; defaults to Date.now. */
+  toolExecutionObservationMonoNow?(): number;
+  toolExecutionObservationWriter?: ToolExecutionObservationWriter;
 };
 
 function abortContext(ctx: ExtensionContext): void {
@@ -448,6 +454,7 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
+      observationFace.reset();
     });
 
     const hostActions = {
@@ -601,10 +608,27 @@ export function createRoleRuntimeExtension(
 
     const clock = dependencies.activationClock ?? (() => new Date().toISOString());
     const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
+    const observationFace = createToolExecutionObservationFace({
+      role: () => selectedRole,
+      admitted: () => admitted,
+      clock: dependencies.toolExecutionObservationClock ?? clock,
+      monoNow: dependencies.toolExecutionObservationMonoNow ?? (() => Date.now()),
+      write: dependencies.toolExecutionObservationWriter ?? writeToolExecutionObservationRecord,
+    });
+    pi.on("tool_execution_start", async (event) => {
+      await observationFace.onStart(event);
+    });
+    pi.on("tool_execution_update", async (event) => {
+      await observationFace.onUpdate(event);
+    });
+    pi.on("tool_execution_end", async (event) => {
+      await observationFace.onEnd(event);
+    });
 
     pi.on("session_start", async (event, ctx) => {
       admitted = false;
       selectedRole = undefined;
+      observationFace.reset();
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
