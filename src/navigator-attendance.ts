@@ -437,6 +437,65 @@ export function formatNavigatorReport(report: NavigatorReport): string {
   ].join("\n");
 }
 
+export type SettlementNavigation = {
+  disposition: "recommendation";
+  route?: NavigatorRouteTarget[];
+  next: NavigatorRouteTarget;
+  reason: string;
+  command: string;
+};
+
+/** Recommendation essentials for the one mandatory last-ak_*_output extraction. */
+export function settlementNavigationFromEvent(event: NavigatorEvent): SettlementNavigation | undefined {
+  if (event.disposition !== "recommendation") return undefined;
+  if (event.next === undefined || event.reason === undefined || event.command === undefined) return undefined;
+  return {
+    disposition: "recommendation",
+    ...(event.route === undefined ? {} : { route: event.route }),
+    next: event.next,
+    reason: event.reason,
+    command: event.command,
+  };
+}
+
+type SettlementTextPart = { type: "text"; text: string };
+
+function appendNavigatorReportToContent<T extends { type: string }>(
+  content: readonly T[],
+  reportText: string,
+): Array<T | SettlementTextPart> {
+  if (reportText === "") return content.slice();
+  const parts: Array<T | SettlementTextPart> = content.slice();
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part !== undefined && part.type === "text" && typeof (part as SettlementTextPart).text === "string") {
+      parts[index] = { ...(part as object), type: "text", text: `${(part as SettlementTextPart).text}\n${reportText}` } as SettlementTextPart;
+      return parts;
+    }
+  }
+  return [...parts, { type: "text", text: reportText }];
+}
+
+/**
+ * Decorate an accepted role-output tool result so the one mandatory settlement
+ * extraction (last ak_*_output toolResult) carries recommendation essentials in
+ * content text. Receipt details stay byte-identical to the terminating-tool
+ * contract — unavailable and intentional silence leave the settlement untouched.
+ */
+export function decorateSettlementWithNavigation<T extends { type: string }>(
+  event: { content: readonly T[]; details: unknown },
+  presentation: { event: NavigatorEvent; report: NavigatorReport } | undefined,
+): { content: Array<T | SettlementTextPart>; details: unknown } | undefined {
+  if (presentation === undefined) return undefined;
+  if (settlementNavigationFromEvent(presentation.event) === undefined) return undefined;
+  const reportText = formatNavigatorReport(presentation.report);
+  if (reportText === "") return undefined;
+  return {
+    content: appendNavigatorReportToContent(event.content, reportText),
+    details: event.details,
+  };
+}
+
 export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let preparation: Promise<NavigatorCandidate[]> | undefined;
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;

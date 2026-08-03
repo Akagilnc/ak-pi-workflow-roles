@@ -23,7 +23,7 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationResult } from "./audit-escalation.ts";
 import {
@@ -423,6 +423,16 @@ export function createRoleRuntimeExtension(
         pendingNavigatorSettlement = pending;
         await pending;
       }
+      // Recommendation rides the accepted settlement record's content so the one
+      // mandatory last-ak_*_output extraction surfaces route/next/reason without
+      // a second file, grep, or nesting step. Receipt details stay contract-pure;
+      // unavailable/silence leave the settlement untouched.
+      if (event.isError) return;
+      const decorated = decorateSettlementWithNavigation(event, pendingNavigatorPresentation);
+      if (decorated === undefined) return;
+      return {
+        content: decorated.content as typeof event.content,
+      };
     });
     pi.on("agent_settled", async () => {
       if (pendingNavigatorSettlement !== undefined) {
