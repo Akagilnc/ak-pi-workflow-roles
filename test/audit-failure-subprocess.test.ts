@@ -276,27 +276,47 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     const result = await runHealthyNavigatorAuditFailureCli("json", siblingOrder);
     assert.equal(result.timedOut, false, `${siblingOrder} subprocess did not time out`);
     assert.equal(result.code, 1, `${siblingOrder} exits nonzero`);
-    assert.match(result.stderr, /NAVIGATOR_CALLS=1/);
-    assert.match(result.stderr, new RegExp(`NAVIGATOR_SIBLING_ORDER=${siblingOrder}`));
-    const timestamp = (name: string) => {
-      const value = result.stderr.match(new RegExp(`${name}=([^\\n]+)`))?.[1];
-      assert.ok(value, `${siblingOrder} must emit ${name}`);
+    const evidenceLine = result.stderr.split("\n").find((line) => line.startsWith("AUDIT_FAILURE_EVIDENCE="));
+    assert.ok(evidenceLine, `${siblingOrder} must emit typed evidence: ${result.stderr}`);
+    const evidence = JSON.parse(evidenceLine.slice("AUDIT_FAILURE_EVIDENCE=".length)) as {
+      providerCalls: number;
+      navigatorCalls: number;
+      siblingOrder: string;
+      navigator: { startedAt: string; completedAt: string; preparedAt: string; settledAt: string; settlementKind: string; releaseAfterDrain: boolean };
+      role: { batchToolNames: Array<{ id: string; name: string }>; batchResultOrder: string[]; failedOutput: { toolCallId: string; toolName: string; isError: boolean; details: Record<string, unknown> }; siblingResult: { toolCallId: string; toolName: string; isError: boolean; details: Record<string, unknown> }; failedOutputAt: string; siblingResultAt: string; failedOutputCorrelation: boolean };
+    };
+    assert.equal(evidence.siblingOrder, siblingOrder);
+    assert.equal(evidence.navigatorCalls, 1);
+    assert.equal(evidence.navigator.settlementKind, "role_infrastructure_failure");
+    const timestamp = (value: string, label: string) => {
       const parsed = Date.parse(value);
-      assert.ok(Number.isFinite(parsed), `${name} must be an ISO timestamp`);
+      assert.ok(Number.isFinite(parsed), `${siblingOrder} ${label} must be an ISO timestamp`);
       return parsed;
     };
-    const startedAt = timestamp("NAVIGATOR_STARTED_AT");
-    const completedAt = timestamp("NAVIGATOR_COMPLETED_AT");
-    const preparedAt = timestamp("NAVIGATOR_PREPARED_AT");
-    const settledAt = timestamp("NAVIGATOR_SETTLEMENT_AT");
-    assert.ok(startedAt <= completedAt, `${siblingOrder} preparation start must precede completion`);
-    assert.ok(completedAt <= preparedAt, `${siblingOrder} provider completion must precede typed preparation persistence`);
-    assert.ok(preparedAt <= settledAt, `${siblingOrder} preparation must precede settlement`);
-    assert.match(result.stderr, /NAVIGATOR_SETTLEMENT_KIND=role_infrastructure_failure/);
-    assert.match(result.stderr, /NAVIGATOR_RELEASE_AFTER_DRAIN=true/);
-    assert.doesNotMatch(result.stdout, /ak-navigator-attendance|导航不可用|路线：/);
-    assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
-    assert.match(result.stdout, /"toolName":"ak_judge_output".*"isError":true/);
+    const startedAt = timestamp(evidence.navigator.startedAt, "preparation start");
+    const completedAt = timestamp(evidence.navigator.completedAt, "preparation completion");
+    const preparedAt = timestamp(evidence.navigator.preparedAt, "typed preparation persistence");
+    const settledAt = timestamp(evidence.navigator.settledAt, "typed settlement");
+    timestamp(evidence.role.failedOutputAt, "failed output result");
+    timestamp(evidence.role.siblingResultAt, "sibling result");
+    assert.ok(startedAt <= completedAt && completedAt <= preparedAt && preparedAt <= settledAt, `${siblingOrder} Navigator preparation must drain before settlement`);
+    assert.deepEqual(evidence.role.batchToolNames, siblingOrder === "sibling-first"
+      ? [{ id: "navigator-sibling", name: "read" }, { id: "batch-judge", name: "ak_judge_output" }]
+      : [{ id: "batch-judge", name: "ak_judge_output" }, { id: "navigator-sibling", name: "read" }]);
+    assert.deepEqual(evidence.role.batchResultOrder, siblingOrder === "sibling-first"
+      ? ["navigator-sibling", "batch-judge"]
+      : ["batch-judge", "navigator-sibling"]);
+    assert.deepEqual(evidence.role.failedOutput, { toolCallId: "fatal-judge", toolName: "ak_judge_output", isError: true, details: {} });
+    assert.deepEqual(evidence.role.siblingResult, { toolCallId: "navigator-sibling", toolName: "read", isError: false, details: {} });
+    assert.equal(evidence.role.failedOutputCorrelation, true, `${siblingOrder} failure must correlate the exact Judge output call`);
+    assert.equal(evidence.navigator.releaseAfterDrain, true);
+    const events = result.stdout.split("\n").filter((line) => line.trim().startsWith("{")).map((line) => JSON.parse(line) as any);
+    const failedOutputs = events.filter((event) => event.type === "message_end" && event.message?.role === "toolResult" && event.message.toolName === "ak_judge_output" && event.message.toolCallId === "fatal-judge");
+    assert.equal(failedOutputs.length, 1, `${siblingOrder} must report exactly the failed Judge output call`);
+    assert.equal(failedOutputs[0].message.isError, true);
+    assert.equal(events.some((event) => event.type === "message_end" && event.message?.role === "assistant" && event.message.stopReason === "aborted"), true);
+    assert.equal(events.some((event) => event.type === "custom_message" && event.customType === "ak-navigator-attendance"), false, `${siblingOrder} infrastructure failure must remain typed silence`);
+    assert.equal(events.some((event) => event.type === "message_end" && event.message?.role === "toolResult" && event.message.toolCallId === "navigator-sibling"), true, `${siblingOrder} sibling result must be drained`);
   }
 });
 
