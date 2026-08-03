@@ -47,7 +47,8 @@ async function disposeTestResources(...cleanups: Array<() => Promise<void>>): Pr
   for (const cleanup of cleanups) {
     try { await cleanup(); } catch (error) { failures.push(error); }
   }
-  if (failures.length > 0) throw new AggregateError(failures, "Reviewer test cleanup failed", { cause: failures[0] });
+  // Teardown must not replace an active test failure; report cleanup failure independently.
+  if (failures.length > 0) process.emitWarning(new AggregateError(failures, "Reviewer test cleanup failed", { cause: failures[0] }), "ReviewerTestCleanupFailure");
 }
 
 async function git(cwd: string, ...args: string[]) {
