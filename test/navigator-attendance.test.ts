@@ -67,12 +67,12 @@ function sessionHarness() {
   };
 }
 
-async function attendance(path: string, harness: ReturnType<typeof sessionHarness>, events: any[]) {
+async function attendance(path: string, harness: ReturnType<typeof sessionHarness>, events: any[], loadRoleHelp: (role: string) => Promise<string> = async (role) => `pi --ak-role ${role} --help`) {
   return createNavigatorAttendance({
     context: context(), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28", sessionDir: "/repo/.ak/work/issues/28/runs/navigator/session",
     subject: "Fix issue 28", authority: "owner decision",
     loadSoul: async () => "route judgment",
-    loadRoleHelp: async (role) => `pi --ak-role ${role} --help`,
+    loadRoleHelp,
     createSession: harness.factory,
     modelSettingPath: path,
     onEvent: async (event) => { events.push(event); },
@@ -103,7 +103,41 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     assert.equal(events.length, 1);
     assert.equal(events[0].disposition, "recommendation");
     assert.deepEqual(events[0].route, candidate().candidates[0]!.route);
-    assert.deepEqual(formatNavigatorReport({ disposition: "recommendation", route: events[0].route, next: events[0].next, reason: events[0].reason, command: events[0].command }).split("\n").map((line) => line.split("：", 1)[0]), ["路线", "下一步", "理由", "命令"]);
+    const invocation = harness.entries.find((entry: any) => entry.customType === "ak-navigator-invocation");
+    const settlement = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement");
+    const route = harness.entries.find((entry: any) => entry.customType === "ak-navigator-route");
+    assert.equal((invocation as any).data.invocationId, events[0].invocationId);
+    assert.equal((settlement as any).data.invocationId, events[0].invocationId);
+    assert.equal((route as any).data.invocationId, events[0].invocationId);
+    assert.equal(formatNavigatorReport({ disposition: "recommendation", route: events[0].route, next: events[0].next, reason: events[0].reason, command: events[0].command }).includes(events[0].command), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("live help changes the next hint without a static template or fabricated task arguments", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-help-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    let help = "Usage: pi --ak-role coder --ak-coder-phase <phase>";
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, async (role) => `${help} (${role})`);
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(harness.promptText().includes("ak-coder-phase"), true);
+    await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    help = "Usage: pi --ak-role coder --ak-coder-task <file>";
+    nav.prepare();
+    while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(harness.promptText().includes("ak-coder-task"), true);
+    assert.equal(harness.promptText().includes("/repo/task.md"), false);
+    await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -175,7 +209,9 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.throws(() => parseNavigatorModelSetting("provider/model:backup"));
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { message: "correctable schema wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
+  assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { kind: "infrastructure_failure", message: "different wording" } }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
   assert.deepEqual(publicNavigatorSettlement("judge", null, { toolName: "ak_judge_output", isError: false, details: { judgeStatus: "escalate", report: "any wording" } }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
+  assert.deepEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], decisionGate: { question: "Which?", options: ["owner"] } } }), { kind: "human_decision", role: "fixer", phase: "apply", status: "audit_escalation" });
   const route = [{ role: "judge" as const, phase: null }];
   const source = candidate().candidates[0]!;
   const candidates = [{ id: source.id, matches: { role: "reviewer", phase: null, kind: "accepted" as const, statuses: ["completed", "refused"] }, route, next: route[0]!, reason: source.reason, command: source.command }];
@@ -202,11 +238,32 @@ test("persistent model edits are immediate and have no fallback", async () => {
   }
 });
 
+test("future arrival is typed and presentation-only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-arrival-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events);
+    await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "抵达" });
+    assert.equal(events[0]?.disposition, "arrival");
+    assert.equal(events[0]?.arrivalMessage, "抵达");
+    assert.equal(formatNavigatorReport({ disposition: "arrival", arrivalMessage: "抵达" }), "抵达");
+    assert.equal(harness.prompts(), 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("session placement is stable, colocated, and isolates ad hoc subjects", () => {
   const base = { cwd: "/repo", sessionManager: { getSessionDir: () => "", getSessionId: () => "x" } } as never;
   const issue = subjectPath("/repo/.ak/work/issues/28/runs/one/session", "/repo");
   assert.equal(issue, "/repo/.ak/work/issues/28");
   assert.equal(navigatorSessionDirectory(base, issue), "/repo/.ak/work/issues/28/runs/navigator");
+  const issueVariant = navigatorSessionDirectory(base, `${issue}#ad-hoc-subject`);
+  assert.equal(issueVariant.startsWith("/repo/.ak/work/issues/28/runs/navigator/"), true);
+  assert.notEqual(issueVariant, navigatorSessionDirectory(base, `${issue}#other-subject`));
   const first = navigatorSessionDirectory(base, "/repo/task-a.md");
   const second = navigatorSessionDirectory(base, "/repo/task-b.md");
   assert.notEqual(first, second);

@@ -22,6 +22,7 @@ import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
+  NAVIGATOR_EVENT_TYPE,
   navigatorSessionDirectory,
   registerNavigatorModelCommand,
   subjectPath,
@@ -55,6 +56,31 @@ function navigatorInputReference(pi: ExtensionAPI, role: string): string | undef
   return typeof value === "string" && value !== "" ? resolve(value) : undefined;
 }
 
+function navigatorAuthorityFromInput(raw: string): string | undefined {
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      if (typeof record.authority === "string" && record.authority.trim() !== "") return record.authority;
+      if (typeof record.controllingAuthority === "string" && record.controllingAuthority.trim() !== "") return record.controllingAuthority;
+      const materials = record.materials;
+      if (typeof materials === "object" && materials !== null && !Array.isArray(materials)) {
+        const authority = (materials as Record<string, unknown>).authority;
+        if (typeof authority === "object" && authority !== null && !Array.isArray(authority)) {
+          const bytesBase64 = (authority as Record<string, unknown>).bytesBase64;
+          if (typeof bytesBase64 === "string") {
+            const content = Buffer.from(bytesBase64, "base64").toString("utf8");
+            if (content.trim() !== "") return content;
+          }
+        }
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 function projectJudgeTranscriptForAudit(messages: Message[]): Message[] {
   return messages.map((message) => {
     if (message.role !== "assistant") return message;
@@ -76,8 +102,9 @@ export function transcriptFromContext(ctx: ExtensionContext): string {
     [...ctx.sessionManager.getEntries()],
     ctx.sessionManager.getLeafId(),
   );
+  const messages = context.messages.filter((message) => !(message.role === "custom" && (message as { customType?: unknown }).customType === NAVIGATOR_EVENT_TYPE));
   return serializeConversation(
-    projectJudgeTranscriptForAudit(convertToLlm(context.messages)),
+    projectJudgeTranscriptForAudit(convertToLlm(messages)),
   );
 }
 
@@ -102,13 +129,20 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     auditDoctorCompliance: createPiDoctorAuditor(),
     loadNavigatorWorkContext: async (options) => {
       const reference = navigatorInputReference(pi, options.role);
+      const input = reference === undefined || options.role === "doctor" ? undefined : await readFile(reference, "utf8");
       const subjectKey = process.env.PI_WORK_SUBJECT_KEY
         ?? subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
-      const subject = process.env.PI_WORK_SUBJECT
-        ?? (reference === undefined ? `work subject: ${subjectKey}` : await readFile(reference, "utf8"));
+      let subject = process.env.PI_WORK_SUBJECT ?? input ?? `work subject: ${subjectKey}`;
+      if (process.env.PI_WORK_SUBJECT === undefined && options.role === "doctor" && reference !== undefined) {
+        const patient = await loadDoctorCase(reference);
+        subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
+      }
       const authorityFile = process.env.PI_WORK_AUTHORITY_FILE;
       const authority = process.env.PI_WORK_AUTHORITY
-        ?? (authorityFile === undefined ? `authority reference: ${reference ?? subjectKey}` : await readFile(resolve(authorityFile), "utf8"));
+        ?? (authorityFile === undefined ? (input === undefined ? undefined : navigatorAuthorityFromInput(input)) : await readFile(resolve(authorityFile), "utf8"));
+      if (authority === undefined || authority.trim() === "") {
+        throw new Error("controlling authority content was not supplied as typed work context");
+      }
       return { subjectKey, subject, authority };
     },
     createNavigatorAttendance: (options) => {
