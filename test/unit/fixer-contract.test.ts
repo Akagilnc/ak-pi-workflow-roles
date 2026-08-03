@@ -7,22 +7,7 @@ import {
   validateFixerOutput,
   type FixerOutput,
 } from "../../src/package-contracts/fixer-output.ts";
-
-const shaA = "a".repeat(40);
-const shaB = "b".repeat(64);
-const completed = (name = "ParserCase", commitSha = shaA) => ({
-  name,
-  disposition: "completed" as const,
-  searchScope: "all parser entry points",
-  exceptions: [{ where: "legacy adapter", reason: "already correct" }],
-  commitSha,
-});
-const refused = (name = "TransportCase") => ({
-  name,
-  disposition: "refused" as const,
-  remainingScope: "provider-backed execution",
-  blocker: { cause: "prerequisite_unmet" as const, prerequisiteId: "repository.ready", evidence: "required repository is absent" },
-});
+import { completed, refused, shaA, shaB } from "../helpers/fixer-fixtures.ts";
 
 const legal: Array<{ phase: "plan" | "apply"; output: FixerOutput }> = [
   { phase: "plan", output: { status: "planned", report: "inspect and repair" } },
@@ -30,6 +15,7 @@ const legal: Array<{ phase: "plan" | "apply"; output: FixerOutput }> = [
   { phase: "apply", output: { status: "unfinished", report: "handover", remainingScope: "remaining parser cases" } },
   { phase: "apply", output: { status: "unfinished", report: "handover with completed work", remainingScope: "remaining schema cases", classResults: [completed()] } },
   { phase: "apply", output: { status: "completed", report: "settled", classResults: [completed()] } },
+  // Differently named classes may share one commitSha (absorbed from judge-role production route).
   { phase: "apply", output: { status: "completed", report: "settled both", classResults: [completed(), completed("SchemaCase", shaA)] } },
   { phase: "apply", output: { status: "refused", report: "blocked", classResults: [refused()] } },
   { phase: "apply", output: { status: "partially_completed", report: "lawful mixed settlement", classResults: [completed(), refused()] } },
@@ -67,8 +53,10 @@ test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", ()
     ["apply", { status: "completed", report: "old", commitSha: shaA }, /Fixer/],
     ["apply", { status: "completed", report: "old", classesRepaired: [] }, /Fixer/],
     ["plan", { status: "planned", report: "x", classResults: [completed()] }, /Fixer/],
+    ["plan", { status: "planned", report: "Plan only.", commitSha: "abc123" }, /Fixer/],
     ["plan", { status: "partially_completed", report: "x" }, /Fixer/],
     ["plan", { status: "unfinished", report: "x", remainingScope: "later" }, /Fixer/],
+    ["plan", { status: "completed", report: "Implemented it.", classResults: [completed()] }, /Fixer/],
     ["apply", { status: "planned", report: "x" }, /Fixer/],
     ["apply", { status: "unfinished", report: "x", remainingScope: " " }, /Fixer/],
     ["apply", { status: "unfinished", report: "x", remainingScope: "later", classResults: [] }, /Fixer/],
@@ -79,12 +67,22 @@ test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", ()
     ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }, /classResults.*name.*unique/i],
     ["apply", { status: "completed", report: "x", classResults: [completed("A", " ")] }, /classResults\[0\]\.commitSha nonblank/i],
     ["apply", { status: "completed", report: "x", classResults: [{ name: "A", disposition: "completed", searchScope: "all parser entry points", exceptions: [] }] }, /classResults\[0\]\.commitSha nonblank/i],
+    ["apply", { status: "completed", report: "x", classResults: [completed("A"), { name: "B", disposition: "completed", searchScope: "s", exceptions: [], commitSha: " " }] }, /classResults\[1\]\.commitSha nonblank/i],
+    ["apply", { status: "completed", report: "x", classResults: [completed("A"), { name: "B", disposition: "completed", searchScope: "s", exceptions: [] }] }, /classResults\[1\]\.commitSha nonblank/i],
     ["apply", { status: "partially_completed", report: "unfinished", classResults: [completed()] }, /Fixer/],
     ["apply", { status: "partially_completed", report: "unfinished", classResults: [refused()] }, /Fixer/],
     ["apply", { status: "completed", report: "mixed", classResults: [completed(), refused()] }, /Fixer/],
     ["apply", { status: "refused", report: "mixed", classResults: [completed(), refused()] }, /Fixer/],
     ["apply", { status: "completed", report: " ", classResults: [completed()] }, /report.*nonblank/i],
     ["apply", { status: "completed", report: "x", classResults: [{ name: "A" }] }, /classResults.*disposition/i],
+    // Absorbed from worker-output malformed tool-route matrix (named diagnostics).
+    ["apply", null, /Fixer output/],
+    ["apply", [], /Fixer output/],
+    ["apply", { status: "unknown", report: "report" }, /Fixer output/],
+    ["apply", { status: "completed", report: " \n" }, /Fixer output|report/i],
+    ["apply", { status: "completed", report: "report", commitSha: " \n" }, /Fixer output/],
+    ["apply", { status: "completed", report: "report", unknown: true }, /Fixer output/],
+    ["apply", { status: "completed" }, /Fixer output/],
   ];
   for (const [phase, output, diagnostic] of invalid) {
     assert.throws(() => validateFixerOutput(output, phase), diagnostic);
@@ -105,5 +103,3 @@ test("Fixer rejects branch-incompatible semantic fields while ignoring presentat
   for (const row of contradictions) assert.throws(() => validateFixerOutput(row.candidate, row.phase), row.diagnostic);
   assert.deepEqual(validateFixerOutput({ ...legal[1]!.output, presentation: { commitSha: shaA }, blocker: { ...(legal[1]!.output as any).blocker, note: "display only" } }, "plan"), legal[1]!.output);
 });
-
-
