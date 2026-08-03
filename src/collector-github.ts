@@ -74,6 +74,7 @@ export type GitHubCreateCommentResult =
   | {
       kind: "ambiguous_loss";
       diagnostics: string;
+      cause?: { name: string; message: string; evidenceId: string };
     }
   | {
       kind: "rejected";
@@ -168,9 +169,17 @@ function parseJson(text: string, label: string): unknown {
   try {
     return JSON.parse(text);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`GitHub ${label} returned malformed JSON: ${detail}`);
+    throw new Error(`GitHub ${label} returned malformed JSON`, { cause: error });
   }
+}
+
+let commentFailureEvidence = 0;
+function commentFailureCause(error: unknown) {
+  return {
+    name: error instanceof Error ? error.name : typeof error,
+    message: error instanceof Error ? error.message : String(error),
+    evidenceId: `github-comment-failure-${++commentFailureEvidence}`,
+  };
 }
 
 /** Authenticated /user requires a login; throws when absent. */
@@ -300,8 +309,9 @@ export function createGhApiRunner(
       const onAbort = () => {
         try {
           child.kill("SIGTERM");
-        } catch {
-          // ignore kill races after exit
+        } catch (error) {
+          settle(() => reject(error));
+          return;
         }
         settle(() => {
           reject(signal?.reason ?? new Error("aborted"));
@@ -334,7 +344,7 @@ export function createGhApiRunner(
         child.stdin.write(runOptions.stdin);
       }
       child.stdin.end();
-      child.on("close", (code) => {
+      child.on("close", (code, signal) => {
         settle(() => {
           // gh api --include prints: HTTP/ headers blank-line body
           const match = stdout.match(/^HTTP\/[\d.]+\s+(\d+)[^\n]*\r?\n([\s\S]*?)\r?\n\r?\n([\s\S]*)$/);
@@ -358,14 +368,11 @@ export function createGhApiRunner(
             return;
           }
           // Ambiguous: process failed without parseable HTTP response
-          reject(
-            Object.assign(
-              new Error(
-                `gh api failed without a parseable HTTP response (code=${String(code)}): ${stderr || stdout}`,
-              ),
-              { ambiguousGhFailure: true, stderr, stdout, code },
-            ),
+          const failure = new Error(
+            `gh api failed without a parseable HTTP response (code=${String(code)}): ${stderr || stdout}`,
+            { cause: { code, signal, stderr, stdout } },
           );
+          reject(Object.assign(failure, { ambiguousGhFailure: true, stderr, stdout, code, signal }));
         });
       });
     });
@@ -446,7 +453,9 @@ export function createGhCollectorGitHubTransport(
         nextPath = undefined;
       } else {
         // Accept absolute or path-style next links; normalize to API path + query.
-        try {
+        if (nextUrl.startsWith("/")) {
+          nextPath = nextUrl;
+        } else {
           const url = new URL(nextUrl);
           if (url.hostname !== "api.github.com" && url.hostname !== "github.com") {
             throw new Error(`unexpected pagination host ${url.hostname}`);
@@ -454,11 +463,6 @@ export function createGhCollectorGitHubTransport(
           nextPath = `${url.pathname}${url.search}`;
           if (nextPath.startsWith("/api/v3/")) {
             nextPath = nextPath.slice("/api/v3".length);
-          }
-        } catch {
-          if (nextUrl.startsWith("/")) nextPath = nextUrl;
-          else {
-            throw new Error(`GitHub pagination returned unusable Link next: ${nextUrl}`);
           }
         }
       }
@@ -471,7 +475,7 @@ export function createGhCollectorGitHubTransport(
     async getAuthenticatedUser(options = {}) {
       const response = await apiGet("/user", options.signal);
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(`GitHub /user failed with HTTP ${response.status}`);
+        throw new Error(`GitHub /user failed with HTTP ${response.status}`, { cause: { endpoint: "/user", status: response.status, headers: response.headers, body: response.bodyText } });
       }
       const raw = parseJson(response.bodyText, "/user");
       return { login: requireUserLogin(raw).toLowerCase(), raw };
@@ -482,7 +486,7 @@ export function createGhCollectorGitHubTransport(
         `/repos/${input.owner}/${input.repo}/pulls/${input.prNumber}`;
       const response = await apiGet(path, input.signal);
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(`GitHub ${path} failed with HTTP ${response.status}`);
+        throw new Error(`GitHub ${path} failed with HTTP ${response.status}`, { cause: { endpoint: path, status: response.status, headers: response.headers, body: response.bodyText } });
       }
       return normalizePullRequest(parseJson(response.bodyText, path));
     },
@@ -525,6 +529,7 @@ export function createGhCollectorGitHubTransport(
             : { stdin: JSON.stringify({ body: input.body }), signal: input.signal },
         );
         if (response.status >= 200 && response.status < 300) {
+          // Contract: README.md#Collector — a successful write with unreadable response is recoverable only as an observable ambiguous result.
           // 2xx means the comment may already exist; parse/normalize failure is
           // ambiguous_loss so ledger marker recovery can resolve without repost.
           try {
@@ -532,11 +537,9 @@ export function createGhCollectorGitHubTransport(
               kind: "success",
               comment: normalizeIssueComment(parseJson(response.bodyText, path)),
             };
-          } catch (error) {
-            return {
-              kind: "ambiguous_loss",
-              diagnostics: error instanceof Error ? error.message : String(error),
-            };
+            } catch (error) {
+            const cause = commentFailureCause(error);
+            return { kind: "ambiguous_loss", diagnostics: cause.message, cause };
           }
         }
         return {
@@ -551,19 +554,14 @@ export function createGhCollectorGitHubTransport(
         }
         // Non-aborted transport tag only (after signal).
         if (isRecord(error) && error["ambiguousGhFailure"] === true) {
-          return {
-            kind: "ambiguous_loss",
-            diagnostics: error instanceof Error ? error.message : String(error),
-          };
+          const cause = commentFailureCause(error);
+          return { kind: "ambiguous_loss", diagnostics: cause.message, cause };
         }
         // Non-signal AbortError belt only (after tag).
         if (isRecord(error) && error["name"] === "AbortError") {
           throw error;
         }
-        return {
-          kind: "rejected",
-          diagnostics: error instanceof Error ? error.message : String(error),
-        };
+        throw error;
       }
     },
   };

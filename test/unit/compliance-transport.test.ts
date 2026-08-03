@@ -20,6 +20,7 @@ import {
   createComplianceDecisionTool,
   runComplianceAudit,
 } from "../../src/compliance-transport.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const decisionToolName = "ak_test_compliance_decision";
 const decisionTool = createComplianceDecisionTool(
@@ -92,11 +93,10 @@ async function withPersistedSession<T>(
   callback: (sessionManager: SessionManager) => Promise<T>,
 ): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "ak-compliance-transport-"));
-  try {
-    return await callback(SessionManager.create(root, resolve(root, "sessions")));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  return await withPrimaryAwareCleanup(
+    () => callback(SessionManager.create(root, resolve(root, "sessions"))),
+    () => rm(root, { recursive: true, force: true }),
+  );
 }
 
 function audit(responseMessage: AssistantMessage, sessionManager: SessionManager) {

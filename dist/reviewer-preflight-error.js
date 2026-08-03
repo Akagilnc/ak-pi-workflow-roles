@@ -7,8 +7,8 @@ export const REVIEWER_CORRECTABLE_PREFLIGHT_CODES = [
 export class ReviewerCorrectablePreflightError extends Error {
     code;
     diagnostic;
-    constructor(code, diagnostic = `${code} constraint failed`) {
-        super(`${code}: ${diagnostic}`);
+    constructor(code, diagnostic = `${code} constraint failed`, options) {
+        super(`${code}: ${diagnostic}`, options);
         this.code = code;
         this.diagnostic = diagnostic;
         this.name = "ReviewerCorrectablePreflightError";

@@ -126,7 +126,7 @@ export type CollectorLedger = {
   readonly observedGeneration: number;
   readonly permittedBatch: PermittedBatch | undefined;
 
-  latchFatal(reason: string): Error;
+  latchFatal(reason: string, cause?: unknown): Error;
   assertNotFatal(): void;
   recordActivation(clock: CollectorClock): void;
   evaluateBatch(
@@ -377,11 +377,11 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     for (const author of leg.expectedAuthors) configuredAuthors.add(author);
   }
 
-  const latchFatal = (reason: string): Error => {
+  const latchFatal = (reason: string, cause?: unknown): Error => {
     fatal = true;
     fatalReason = reason;
     permittedBatch = undefined;
-    const error = new Error(reason);
+    const error = new Error(reason, cause === undefined ? undefined : { cause });
     Object.assign(error, { collectorFatal: true });
     return error;
   };
@@ -719,8 +719,8 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           }
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw latchFatal(`Collector observe failed: ${message}`);
+        const message = error instanceof Error ? error.message : "unknown failure";
+        throw latchFatal(`Collector observe failed: ${message}`, error);
       }
 
       // First-sighting trust must not predate actual surface observation.

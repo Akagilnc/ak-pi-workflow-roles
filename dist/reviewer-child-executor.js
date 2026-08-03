@@ -5,7 +5,7 @@ import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { createAgentSession, createBashTool, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { prepareComplianceDispatch } from "./compliance-transport.js";
 import { REVIEWER_VERIFICATION_POLICY } from "./reviewer-verification-policy.js";
-function classifiedError(error, reviewerFailure) { const wrapped = error instanceof Error ? error : new Error(String(error)); const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
+function classifiedError(error, reviewerFailure) { const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error }); const classification = "reviewerFailure" in wrapped ? wrapped.reviewerFailure : reviewerFailure; return Object.assign(wrapped, { reviewerFailure: classification }); }
 function emptyUsage() {
     return {
         input: 0,
@@ -87,6 +87,7 @@ async function createChildRuntime(context) {
 }
 export async function executeReviewerChild(workspace, leg, context, signal, fault) {
     const childConfigDir = await mkdtemp(join(tmpdir(), "ak-reviewer-child-"));
+    let outerFailure;
     try {
         const settings = SettingsManager.inMemory({
             compaction: { enabled: false },
@@ -157,6 +158,7 @@ export async function executeReviewerChild(workspace, leg, context, signal, faul
             abortChild();
         else
             signal?.addEventListener("abort", abortChild, { once: true });
+        let primaryFailure;
         try {
             const visibleTools = session.agent.state.tools.map((tool) => tool.name);
             if (JSON.stringify(visibleTools) !== JSON.stringify(leg.grant.tools)) {
@@ -176,10 +178,10 @@ export async function executeReviewerChild(workspace, leg, context, signal, faul
                 .reverse()
                 .find((message) => message.role === "assistant");
             if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
-                throw classifiedError(new Error(`Reviewer Agent provider failed: ${lastAssistant.errorMessage ?? lastAssistant.stopReason}`), "provider");
+                throw classifiedError(new Error("Reviewer Agent provider failed", { cause: lastAssistant }), "provider");
             }
             if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
-                throw classifiedError(new Error(`Reviewer Agent child failed: ${lastAssistant?.role === "assistant" ? lastAssistant.stopReason : "no assistant output"}`), "child");
+                throw classifiedError(new Error("Reviewer Agent child terminated without a report", { cause: lastAssistant ?? session.messages }), "child");
             }
             const report = session.getLastAssistantText() ?? "";
             if (report.trim().length === 0) {
@@ -188,18 +190,39 @@ export async function executeReviewerChild(workspace, leg, context, signal, faul
             return { report, usage, prompt: delivered };
         }
         catch (error) {
-            throw classifiedError(error, "child");
+            primaryFailure = classifiedError(error, "child");
+            throw primaryFailure;
         }
         finally {
             signal?.removeEventListener("abort", abortChild);
-            unsubscribe();
-            session.dispose();
+            let cleanupFailure;
+            for (const cleanup of [() => unsubscribe(), () => session.dispose()]) {
+                try {
+                    cleanup();
+                }
+                catch (failure) {
+                    cleanupFailure = cleanupFailure === undefined ? failure : new AggregateError([cleanupFailure, failure], "Reviewer child cleanup failed", { cause: cleanupFailure });
+                }
+            }
+            if (cleanupFailure !== undefined) {
+                if (primaryFailure !== undefined)
+                    throw new AggregateError([primaryFailure, cleanupFailure], "Reviewer child execution and cleanup failed", { cause: primaryFailure });
+                throw new AggregateError([cleanupFailure], "Reviewer child cleanup failed", { cause: cleanupFailure });
+            }
         }
     }
     catch (error) {
+        outerFailure = error;
         throw classifiedError(error, "child");
     }
     finally {
-        await rm(childConfigDir, { recursive: true, force: true });
+        try {
+            await rm(childConfigDir, { recursive: true, force: true });
+        }
+        catch (cleanupFailure) {
+            if (outerFailure !== undefined)
+                throw new AggregateError([outerFailure, cleanupFailure], "Reviewer child configuration cleanup failed", { cause: outerFailure });
+            throw cleanupFailure;
+        }
     }
 }

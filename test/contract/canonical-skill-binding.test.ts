@@ -6,19 +6,21 @@ import test from "node:test";
 
 import { loadCanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
+import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const originalHome = process.env.HOME;
 
 async function withHome<T>(run: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(resolve(tmpdir(), "ak-canonical-skill-"));
   process.env.HOME = home;
-  try {
-    return await run(home);
-  } finally {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    await rm(home, { recursive: true, force: true });
-  }
+  return await withPrimaryAwareCleanup(
+    () => run(home),
+    async () => {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      await rm(home, { recursive: true, force: true });
+    },
+  );
 }
 
 async function writeConfiguredSkill(

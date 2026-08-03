@@ -23,7 +23,10 @@ export const MERGER_ACCEPTED_TEXT = "Merger output accepted";
 const record = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 const exact = (v, keys) => Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const blank = (v) => typeof v !== "string" || v.trim().length === 0;
-function fail(message = "Merger input violates its exact contract") { throw new Error(message); }
+export class MergerInputContractError extends Error {
+    constructor(message = "Merger input violates its exact contract") { super(message); this.name = "MergerInputContractError"; }
+}
+function fail(message = "Merger input violates its exact contract") { throw new MergerInputContractError(message); }
 function canonicalPath(path) { return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\0") && path.split("/").every(part => part !== "" && part !== "." && part !== ".."); }
 function validatePathSet(value, label) {
     if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath))

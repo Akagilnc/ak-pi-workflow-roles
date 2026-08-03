@@ -53,6 +53,12 @@ import {
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 
+function assertAndReturnEvidenceId(value: unknown): string {
+  if (typeof value !== "string") throw new Error("activation evidence id must be a string");
+  assert.match(value, /^activation-cause-/);
+  return value;
+}
+
 function assertCollectorActivationFailure(
   traces: readonly ActivationTraceRecord[],
   expectedMessage: string,
@@ -61,7 +67,7 @@ function assertCollectorActivationFailure(
   assert.ok(failed, "Collector activation must emit a typed failed trace");
   assert.equal(failed.role, "collector");
   assert.equal(failed.stageId, "load-and-install");
-  assert.deepEqual(failed.cause, { identity: "Error", name: "Error", message: expectedMessage });
+  assert.deepEqual(failed.cause, { identity: "Error", name: "Error", message: expectedMessage, evidenceId: assertAndReturnEvidenceId(failed.cause.evidenceId) });
 }
 
 const COLLECTOR_SOUL = [

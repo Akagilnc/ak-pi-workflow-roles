@@ -14,11 +14,13 @@ const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ ro
 class NavigatorUnavailableError extends Error {
   unavailableSource;
   unavailableCause;
-  constructor(source, message, cause = source) {
+  originalCause;
+  constructor(source, message, cause = source, originalCause) {
     super(message);
     this.name = "NavigatorUnavailableError";
     this.unavailableSource = source;
     this.unavailableCause = cause;
+    this.originalCause = originalCause;
   }
 }
 function navigatorProviderFailureFromStatus(status) {
@@ -71,7 +73,7 @@ function navigatorProviderFailure(message, source, cause = source) {
 }
 function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
-  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause);
+  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause, error);
 }
 const targetSchema = Type.Object({
   role: Type.String({ minLength: 1 }),
@@ -262,6 +264,40 @@ function formatNavigatorReport(report) {
     `\u547D\u4EE4\uFF1A${oneLine(report.command ?? "")}`
   ].join("\n");
 }
+function settlementNavigationFromEvent(event) {
+  if (event.disposition !== "recommendation") return void 0;
+  if (event.next === void 0 || event.reason === void 0 || event.command === void 0) return void 0;
+  return {
+    disposition: "recommendation",
+    ...event.route === void 0 ? {} : { route: event.route },
+    next: event.next,
+    reason: event.reason,
+    command: event.command
+  };
+}
+function appendNavigatorReportToContent(content, reportText) {
+  if (reportText === "") return content.slice();
+  const parts = content.slice();
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part !== void 0 && part.type === "text" && typeof part.text === "string") {
+      parts[index] = { ...part, type: "text", text: `${part.text}
+${reportText}` };
+      return parts;
+    }
+  }
+  return [...parts, { type: "text", text: reportText }];
+}
+function decorateSettlementWithNavigation(event, presentation) {
+  if (presentation === void 0) return void 0;
+  if (settlementNavigationFromEvent(presentation.event) === void 0) return void 0;
+  const reportText = formatNavigatorReport(presentation.report);
+  if (reportText === "") return void 0;
+  return {
+    content: appendNavigatorReportToContent(event.content, reportText),
+    details: event.details
+  };
+}
 function createNavigatorAttendance(options) {
   let preparation;
   let sessionReady;
@@ -277,6 +313,8 @@ function createNavigatorAttendance(options) {
   let previousRoute;
   let outputSink;
   let settlementTail = Promise.resolve();
+  let settlementFailure;
+  let preparationFailure;
   let disposed = false;
   const unavailable = (invocationId, reason) => {
     const failure = reason instanceof NavigatorUnavailableError ? reason : navigatorUnavailableError("unknown", reason);
@@ -290,153 +328,149 @@ function createNavigatorAttendance(options) {
   const prepare = async () => {
     const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
     activeInvocationId = invocationId;
+    if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
+    let soul;
     try {
-      if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
-      let soul;
-      try {
-        soul = (await options.loadSoul()).trim();
-        if (!soul) throw new Error("Navigator soul is empty");
-      } catch (error) {
-        throw navigatorUnavailableError("context", error);
-      }
-      let modelSetting;
-      try {
-        modelSetting = await readNavigatorModelSetting(options.modelSettingPath);
-      } catch (error) {
-        throw navigatorUnavailableError("model", error);
-      }
-      let help;
-      try {
-        help = await Promise.all(NAVIGATOR_TARGETS.map(async ({ role }) => ({ role, help: await options.loadRoleHelp(role) })));
-      } catch (error) {
-        throw navigatorUnavailableError("transport", error);
-      }
-      let model;
-      try {
-        model = parseNavigatorModelSetting(modelSetting);
-      } catch (error) {
-        throw navigatorUnavailableError("model", error);
-      }
-      const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">
+      soul = (await options.loadSoul()).trim();
+      if (!soul) throw new Error("Navigator soul is empty");
+    } catch (error) {
+      throw navigatorUnavailableError("context", error);
+    }
+    let modelSetting;
+    try {
+      modelSetting = await readNavigatorModelSetting(options.modelSettingPath);
+    } catch (error) {
+      throw navigatorUnavailableError("model", error);
+    }
+    let help;
+    try {
+      help = await Promise.all(NAVIGATOR_TARGETS.map(async ({ role }) => ({ role, help: await options.loadRoleHelp(role) })));
+    } catch (error) {
+      throw navigatorUnavailableError("transport", error);
+    }
+    let model;
+    try {
+      model = parseNavigatorModelSetting(modelSetting);
+    } catch (error) {
+      throw navigatorUnavailableError("model", error);
+    }
+    const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">
 ${text}
 </role_help>`).join("\n");
-      let output;
-      outputSink = (value) => {
-        if (output !== void 0) throw new Error("Navigator preparation must submit exactly one typed candidate batch");
-        output = value;
-      };
-      const tool = createNavigatorPrepareTool((value) => {
-        outputSink?.(value);
-      });
-      if (session === void 0) {
-        sessionReady = (async () => {
-          let created;
-          try {
-            created = await options.createSession({ context: options.context, sessionDir, ...options.modelSettingPath === void 0 ? {} : { modelSettingPath: options.modelSettingPath }, tool });
-          } catch (error) {
-            throw navigatorUnavailableError("session", error);
-          }
-          if (disposed) {
-            created.dispose();
-            throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          }
-          try {
-            await created.setModel?.(modelSetting, model.thinkingLevel);
-            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-            if (created.getThinkingLevel?.() !== void 0 && created.getThinkingLevel() !== model.thinkingLevel) {
-              throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
-            }
-            created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
-            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-            session = created;
-            return created;
-          } catch (error) {
-            if (session !== created) created.dispose();
-            throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
-          }
-        })();
-        await sessionReady;
-        sessionReady = void 0;
-      } else {
+    let output;
+    outputSink = (value) => {
+      if (output !== void 0) throw new Error("Navigator preparation must submit exactly one typed candidate batch");
+      output = value;
+    };
+    const tool = createNavigatorPrepareTool((value) => {
+      outputSink?.(value);
+    });
+    if (session === void 0) {
+      sessionReady = (async () => {
+        let created;
         try {
-          await session.setModel?.(modelSetting, model.thinkingLevel);
-          if (session.getThinkingLevel?.() !== void 0 && session.getThinkingLevel() !== model.thinkingLevel) {
+          created = await options.createSession({ context: options.context, sessionDir, ...options.modelSettingPath === void 0 ? {} : { modelSettingPath: options.modelSettingPath }, tool });
+        } catch (error) {
+          throw navigatorUnavailableError("session", error);
+        }
+        if (disposed) {
+          created.dispose();
+          throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        }
+        try {
+          await created.setModel?.(modelSetting, model.thinkingLevel);
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          if (created.getThinkingLevel?.() !== void 0 && created.getThinkingLevel() !== model.thinkingLevel) {
             throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
           }
+          created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          session = created;
+          return created;
         } catch (error) {
+          if (session !== created) created.dispose();
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
         }
-        session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+      })();
+      await sessionReady;
+      sessionReady = void 0;
+    } else {
+      try {
+        await session.setModel?.(modelSetting, model.thinkingLevel);
+        if (session.getThinkingLevel?.() !== void 0 && session.getThinkingLevel() !== model.thinkingLevel) {
+          throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+        }
+      } catch (error) {
+        throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
       }
-      if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-      const activeSession = session;
-      if (activeSession === void 0) throw new Error("Navigator session was not created");
-      const prior = activeSession.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
-      if (exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
-        previousRoute = prior.route.map((target) => ({ role: target.role, phase: target.phase }));
-      }
-      const publicSettlementHistory = activeSession.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data)).slice(-8).map((entry) => entry.data);
-      const projection = {
-        subjectKey,
-        subject,
-        authority,
-        currentRole: { role: options.role, phase: options.phase },
-        priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target)) ? prior.route.map((target) => ({ role: target.role, phase: target.phase })) : null,
-        publicSettlementHistory,
-        liveRoleHelp: help
-      };
-      activeSession.appendEntry(CONTEXT_ENTRY, projection);
-      const request = [
-        "Act as the Navigator route judge. Prepare distinct typed route candidates; do not execute or invoke any role.",
-        `<navigator_soul>
+      session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+    }
+    if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+    const activeSession = session;
+    if (activeSession === void 0) throw new Error("Navigator session was not created");
+    const prior = activeSession.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
+    if (exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
+      previousRoute = prior.route.map((target) => ({ role: target.role, phase: target.phase }));
+    }
+    const publicSettlementHistory = activeSession.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data)).slice(-8).map((entry) => entry.data);
+    const projection = {
+      subjectKey,
+      subject,
+      authority,
+      currentRole: { role: options.role, phase: options.phase },
+      priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target)) ? prior.route.map((target) => ({ role: target.role, phase: target.phase })) : null,
+      publicSettlementHistory,
+      liveRoleHelp: help
+    };
+    activeSession.appendEntry(CONTEXT_ENTRY, projection);
+    const request = [
+      "Act as the Navigator route judge. Prepare distinct typed route candidates; do not execute or invoke any role.",
+      `<navigator_soul>
 ${soul}
 </navigator_soul>`,
-        `<work_subject>
+      `<work_subject>
 ${subject}
 </work_subject>`,
-        `<controlling_authority>
+      `<controlling_authority>
 ${authority}
 </controlling_authority>`,
-        `<current_role>
+      `<current_role>
 ${JSON.stringify({ role: options.role, phase: options.phase })}
 </current_role>`,
-        `<prior_route>
+      `<prior_route>
 ${JSON.stringify(prior ?? null)}
 </prior_route>`,
-        `<public_settlement_history>
+      `<public_settlement_history>
 ${JSON.stringify(projection.publicSettlementHistory)}
 </public_settlement_history>`,
-        `<live_role_help>
+      `<live_role_help>
 ${helpContext}
 </live_role_help>`,
-        `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call. The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.`
-      ].join("\n\n");
+      `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call. The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.`
+    ].join("\n\n");
+    try {
       try {
-        try {
-          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          await activeSession.prompt(request);
-        } catch (error) {
-          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
-        }
-        if (output === void 0) {
-          const nativeFailure = [...activeSession.entries()].reverse().find((entry) => {
-            if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
-            return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
-          });
-          const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : void 0;
-          const errorMessage = nativeMessage !== void 0 && typeof nativeMessage.errorMessage === "string" ? nativeMessage.errorMessage : "Navigator did not submit typed route candidates";
-          const providerFailure = activeSession.providerFailure?.();
-          const source = providerFailure?.source ?? "unknown";
-          const cause = providerFailure?.cause ?? source;
-          throw navigatorUnavailableError(source, errorMessage, cause);
-        }
-        candidates = validatePrepareOutput(output);
-        return candidates;
-      } finally {
-        outputSink = void 0;
+        if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        await activeSession.prompt(request);
+      } catch (error) {
+        throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
       }
-    } catch (error) {
-      throw error;
+      if (output === void 0) {
+        const nativeFailure = [...activeSession.entries()].reverse().find((entry) => {
+          if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
+          return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
+        });
+        const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : void 0;
+        const errorMessage = nativeMessage !== void 0 && typeof nativeMessage.errorMessage === "string" ? nativeMessage.errorMessage : "Navigator did not submit typed route candidates";
+        const providerFailure = activeSession.providerFailure?.();
+        const source = providerFailure?.source ?? "unknown";
+        const cause = providerFailure?.cause ?? source;
+        throw navigatorUnavailableError(source, errorMessage, cause);
+      }
+      candidates = validatePrepareOutput(output);
+      return candidates;
+    } finally {
+      outputSink = void 0;
     }
   };
   return {
@@ -454,15 +488,20 @@ ${helpContext}
     },
     prepare() {
       if (disposed || preparation !== void 0) return;
+      preparationFailure = void 0;
       preparation = prepare();
-      void preparation.catch(() => void 0);
+      void preparation.catch((error) => {
+        preparationFailure = error;
+      });
     },
     isPreparing() {
       return preparation !== void 0 || sessionReady !== void 0;
     },
     settle(settlement) {
       const next = settlementTail.then(() => settleOnce(settlement));
-      settlementTail = next.catch(() => void 0);
+      settlementTail = next.catch((error) => {
+        settlementFailure = error;
+      });
       return next;
     },
     dispose() {
@@ -475,15 +514,45 @@ ${helpContext}
   async function settleOnce(settlement) {
     const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
     let report;
+    let suppressEvent = false;
     if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
-      if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
-      if (preparation !== void 0) await preparation.catch(() => void 0);
+      if (sessionReady !== void 0) {
+        try {
+          await sessionReady;
+        } catch (error) {
+          preparationFailure ??= error;
+        }
+      }
+      if (preparation !== void 0) {
+        try {
+          await preparation;
+        } catch (error) {
+          preparationFailure ??= error;
+        }
+      }
       session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.kind === "human_decision" ? { status: settlement.status } : {} });
-      report = { disposition: "silence" };
+      if (preparationFailure !== void 0) {
+        report = unavailable(invocationId, preparationFailure);
+        suppressEvent = true;
+      } else {
+        report = { disposition: "silence" };
+      }
     } else if (settlement.kind === "arrival") {
-      if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
-      if (preparation !== void 0) await preparation.catch(() => void 0);
-      report = { disposition: "arrival", arrivalMessage: settlement.message ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730" };
+      if (sessionReady !== void 0) {
+        try {
+          await sessionReady;
+        } catch (error) {
+          preparationFailure ??= error;
+        }
+      }
+      if (preparation !== void 0) {
+        try {
+          await preparation;
+        } catch (error) {
+          preparationFailure ??= error;
+        }
+      }
+      report = preparationFailure === void 0 ? { disposition: "arrival", arrivalMessage: settlement.message ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730" } : unavailable(invocationId, preparationFailure);
     } else if (preparation === void 0) {
       report = unavailable(invocationId, "Navigator preparation did not start");
     } else {
@@ -523,10 +592,11 @@ ${helpContext}
       ...report.unavailableCause === void 0 ? {} : { unavailableCause: report.unavailableCause },
       ...report.arrivalMessage === void 0 ? {} : { arrivalMessage: report.arrivalMessage }
     };
-    if (report.disposition !== "silence") await options.onEvent(event, report);
+    if (report.disposition !== "silence" && !suppressEvent) await options.onEvent(event, report);
     preparation = void 0;
     sessionReady = void 0;
     candidates = void 0;
+    preparationFailure = void 0;
   }
 }
 function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
@@ -591,6 +661,13 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       delete human.navigatorFailure;
       return human;
     };
+    let providerFailureEvidenceNumber = 0;
+    let providerFailureEvidence;
+    const retainProviderFailure = (error) => {
+      const id = `navigator-provider-failure-${++providerFailureEvidenceNumber}`;
+      providerFailureEvidence = { id, error };
+      return id;
+    };
     const setupFailureMessage = (error) => ({
       role: "assistant",
       content: [],
@@ -600,6 +677,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: "error",
       errorMessage: error instanceof Error ? error.message : String(error),
+      navigatorFailureEvidenceId: retainProviderFailure(error),
       timestamp: Date.now()
     });
     const instrumentProvider = (sourceProvider) => {
@@ -788,6 +866,7 @@ export {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   createNavigatorPrepareTool,
+  decorateSettlementWithNavigation,
   formatNavigatorReport,
   navigatorModelSettingPath,
   navigatorProviderFailure,
@@ -800,6 +879,7 @@ export {
   readNavigatorModelSetting,
   registerNavigatorModelCommand,
   selectNavigatorCandidate,
+  settlementNavigationFromEvent,
   subjectPath,
   writeNavigatorModelSetting
 };
