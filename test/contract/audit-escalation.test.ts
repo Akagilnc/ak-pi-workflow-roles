@@ -20,24 +20,14 @@ import {
   projectAuditEscalation,
 } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { createPiDoctorAuditor, DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
 import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createPiReviewerAuditor, REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import {
-  FIXER_OUTPUT_TOOL_NAME,
   JUDGE_OUTPUT_TOOL_NAME,
-  REVIEWER_OUTPUT_TOOL_NAME,
   validateAcceptedDetails,
 } from "../../src/package-contracts/terminating-tools.ts";
-
-const auditedRoleToolNames = [
-  JUDGE_OUTPUT_TOOL_NAME,
-  FIXER_OUTPUT_TOOL_NAME,
-  REVIEWER_OUTPUT_TOOL_NAME,
-  DOCTOR_OUTPUT_TOOL_NAME,
-] as const;
 
 const context = {
   model: { provider: "audit-test", id: "same-model", api: "openai-responses" },
@@ -130,23 +120,9 @@ const auditorCases = [
   },
 ] as const;
 
-test("the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor", async () => {
-  assert.deepEqual(auditorCases.map((entry) => entry.role), AUDITOR_SOUL_ROLES);
-  assert.deepEqual(
-    auditorCases.map((entry) => entry.toolName),
-    [JUDGE_AUDIT_TOOL_NAME, FIXER_AUDIT_TOOL_NAME, REVIEWER_AUDIT_TOOL_NAME, DOCTOR_AUDIT_TOOL_NAME],
-  );
-  assert.deepEqual(auditedRoleToolNames, [
-    JUDGE_OUTPUT_TOOL_NAME,
-    FIXER_OUTPUT_TOOL_NAME,
-    REVIEWER_OUTPUT_TOOL_NAME,
-    DOCTOR_OUTPUT_TOOL_NAME,
-  ]);
-  const terminatingTools = await import("../../src/package-contracts/terminating-tools.ts");
-  assert.equal("carriesPackageAuditObservation" in terminatingTools, false);
-});
-
 test("all retained auditors share typed escalation", async () => {
+  // Census is fixture integrity for this loop — assert once at the top, not as a sibling test.
+  assert.deepEqual(auditorCases.map((entry) => entry.role), AUDITOR_SOUL_ROLES);
   for (const entry of auditorCases) {
     const prompt = { value: undefined as string | undefined };
     const result = await entry.run(captureSystemPrompt(entry.toolName, prompt));

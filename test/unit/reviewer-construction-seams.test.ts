@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { admitReviewerProposal, REVIEWER_CHILD_TOOLS, REVIEWER_PREREQUISITES } from "../../src/reviewer-admission.ts";
 import { acquireReviewerPinnedEvidence, type ReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
-import { constructReviewerDispatch } from "../../src/reviewer-construction.ts";
 import { parseReviewerCapabilities } from "../../src/reviewer-dispatch.ts";
 import { sha256Hex } from "../../src/sha256.ts";
 
@@ -15,4 +14,5 @@ test("mechanical admission accepts presentation extras and advisory dangling hin
 
 test("pinned evidence acquisition normalizes only after admission and preserves infrastructure errors",async()=>{let reads=0;const pin={repositoryRoot:"/r",objectFormat:"sha1" as const,targetHead:"B",refs:{}};const reader:ReviewerPinnedGitReader={pin,async snapshot(){return pin},async resolve(){reads++;return "A"},async range(){reads++;return {base:"A",target:"B",diffCommand:command,diffSha256:"1".repeat(64),commits:["B"]}},async material(){reads++;return Buffer.from("rules")}};const admitted=admitReviewerProposal(proposal,capabilities,REVIEWER_CHILD_TOOLS);const evidence=await acquireReviewerPinnedEvidence(reader,pin,admitted);assert.equal(reads,3);assert.ok(Object.isFrozen(evidence));assert.equal(evidence.materials[0]!.text,"rules");const boom=new Error("disk failed");await assert.rejects(acquireReviewerPinnedEvidence({...reader,async material(){throw boom}},pin,admitted),error=>error===boom);});
 
-test("construction is deterministic from admitted immutable inputs and frozen evidence",async()=>{const admitted=admitReviewerProposal(proposal,capabilities,REVIEWER_CHILD_TOOLS);const pin={repositoryRoot:"/r",objectFormat:"sha1" as const,targetHead:"B",refs:{}};const evidence=Object.freeze({range:Object.freeze({base:"A",target:"B",diffCommand:command,diffSha256:"1".repeat(64),commits:Object.freeze(["B"])}),materials:Object.freeze([{id:"rules",repositoryPath:"RULES.md",text:"rules",utf8Length:5,sha256:sha256Hex("rules")}])});const input={identity:"id",taskText:"task",canonicalSkill:"skill",capabilityDocument:capabilities.document,target:pin,admitted,evidence};assert.deepEqual(constructReviewerDispatch(input),constructReviewerDispatch(input));});
+// Deleted pure self-double-call determinism case (assert.deepEqual(f(x), f(x))).
+// Production already double-compiles at reviewer-construction.ts; dispatch seams own the contract.
