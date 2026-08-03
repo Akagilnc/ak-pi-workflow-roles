@@ -193,8 +193,10 @@ function subjectPath(sessionDir: string, cwd = process.cwd()): string {
   // Session placement is an implementation detail. Resolve it before deriving
   // the work identity so relative and absolute role invocations share one key.
   if (sessionDir === "") {
-    const cwdIssue = issueRoot(resolve(cwd, "."));
+    const resolvedCwd = resolve(cwd, ".");
+    const cwdIssue = issueRoot(resolvedCwd);
     if (cwdIssue !== undefined) return cwdIssue;
+    if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
   }
   const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
   const issue = issueRoot(resolvedSession);
@@ -204,7 +206,7 @@ function subjectPath(sessionDir: string, cwd = process.cwd()): string {
   // must not become a cross-role routing key.
   const runsMarker = "/runs/";
   const runsIndex = resolvedSession.indexOf(runsMarker);
-  if (runsIndex >= 0 && resolvedSession.endsWith("/session")) {
+  if (runsIndex >= 0) {
     return resolvedSession.slice(0, runsIndex);
   }
   return resolvedSession;
@@ -215,6 +217,25 @@ export function navigatorSubjectKey(subjectRoot: string, subject: string): strin
   const normalized = subject.trim().replace(/\s+/g, " ");
   if (normalized === "" || normalized === `work subject: ${subjectRoot}`) return subjectRoot;
   return `${subjectRoot}#${createHash("sha256").update(normalized).digest("hex").slice(0, 32)}`;
+}
+
+/**
+ * Role packets for one ad-hoc work item live below role-specific run folders.
+ * The folder is transport, not identity: use the path below `/runs/<role>/`
+ * so coder/task.md and reviewer/task.md resume the same Navigator subject.
+ */
+export function navigatorSubjectKeyForInput(subjectRoot: string, reference: string, cwd = process.cwd()): string {
+  if (issueRoot(subjectRoot) !== undefined || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
+  const resolvedReference = resolve(cwd, reference);
+  const marker = "/runs/";
+  const index = resolvedReference.indexOf(marker);
+  if (index >= 0) {
+    const afterRuns = resolvedReference.slice(index + marker.length);
+    const separator = afterRuns.indexOf("/");
+    const workRelativePath = separator < 0 ? afterRuns : afterRuns.slice(separator + 1);
+    if (workRelativePath !== "") return navigatorSubjectKey(subjectRoot, workRelativePath);
+  }
+  return navigatorSubjectKey(subjectRoot, resolvedReference);
 }
 
 function subjectDirectory(cwd: string, subjectKey: string): string {
