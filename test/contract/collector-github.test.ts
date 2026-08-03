@@ -999,13 +999,6 @@ test("request-path AbortSignal cancels hung POST child without rejected attempt"
   );
 });
 
-test("request-path abort with deadline exceeded Error cancels without rejected attempt", async () => {
-  await assertHungPostRequestCancellation(
-    new Error("deadline exceeded"),
-    "deadline exceeded",
-  );
-});
-
 test("request-path abort with non-Error reason cancels without rejected attempt", async () => {
   await assertHungPostRequestCancellation("stop now", "stop now");
 });

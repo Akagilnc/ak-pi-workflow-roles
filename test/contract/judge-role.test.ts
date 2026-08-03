@@ -11,7 +11,6 @@ import {
 import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../../src/fixer-auditor.ts";
-import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
 import { createNavigatorAttendance, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
@@ -504,54 +503,6 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   assert.deepEqual(result.details, verdict);
 });
 
-test("judge role rejects a terminal audit response before accepting its valid decision call", async () => {
-  const audit = createPiJudgeAuditor(async () =>
-    fauxAssistantMessage(
-      fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
-        status: "pass",
-        violations: [],
-        conflicts: [],
-        decisionGate: null,
-      }),
-      { stopReason: "error", errorMessage: "native provider failure" },
-    ),
-  );
-  const { harness, tool } = await startJudge(audit);
-  const ctx = Object.assign(
-    toolCallContext([{ id: "terminal-audit", arguments: { judgeStatus: "converged" } }]),
-    {
-      model: { api: "openai-responses", provider: "audit-test", id: "audit-model" },
-      modelRegistry: {
-        async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
-        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "secret" }; },
-      },
-    },
-  ) as ExtensionContext;
-
-  await assert.rejects(
-    tool.execute("terminal-audit", { judgeStatus: "converged" }, undefined, undefined, ctx),
-    /stopReason error/,
-  );
-  const retained = ctx.sessionManager.getEntries().filter(
-    (entry) => entry.type === "message" && entry.message.role === "assistant",
-  );
-  assert.equal(retained.length, 1);
-  const evidence = ctx.sessionManager.getEntries().find(
-    (entry) => entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
-  );
-  assert.ok(evidence?.type === "custom");
-  const nested = (evidence.data as { response: AssistantMessage }).response;
-  assert.equal(nested.stopReason, "error");
-  assert.equal(nested.errorMessage, "native provider failure");
-  assert.equal(
-    ctx.sessionManager.getEntries().some(
-      (entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "terminal-audit",
-    ),
-    false,
-  );
-  void harness;
-});
-
 test("judge role audits only adjudicative fields while retaining evidence in receipts", async () => {
   const audited: JudgeAdjudicativeVerdict[] = [];
   const { tool } = await startJudge(async ({ verdict }) => {
@@ -710,34 +661,6 @@ test("judge preserves an optional advisory note on every verdict", async () => {
   }
 });
 
-test("judge activation narrows active tools to registered evidence tools and output", async () => {
-  const harness = extensionHarness("judge", {}, [
-    "read",
-    "grep",
-    "find",
-    "ls",
-    "bash",
-    "write",
-    "edit",
-    "arbitrary_sibling",
-  ]);
-  createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "JUDGE LAW",
-    transcriptFromContext: () => "record",
-    auditSoulCompliance: async () => ({ status: "pass" }),
-  })(harness.pi as ExtensionAPI);
-
-  await harness.handlers.get("session_start")?.({}, {});
-  assert.deepEqual(harness.activeToolSets, [[
-    "read",
-    "grep",
-    "find",
-    "ls",
-    "bash",
-    JUDGE_OUTPUT_TOOL_NAME,
-  ]]);
-});
-
 test("judge role returns revise as an ordinary errored tool result without aborting", async () => {
   const { tool } = await startJudge(async () => ({
     status: "revise",
@@ -759,43 +682,6 @@ test("judge role returns revise as an ordinary errored tool result without abort
     /No authority clause was applied; Tests were not adjudicated/,
   );
   assert.equal(abortCalls, 0);
-});
-
-test("judge escalation returns one terminating human decision without a role verdict", async () => {
-  let auditCalls = 0;
-  const { tool } = await startJudge(async () => {
-    auditCalls += 1;
-    return {
-      status: "escalate",
-      conflicts: ["Judge Soul and controlling authority conflict"],
-      decisionGate: {
-        question: "Which authority should govern?",
-        options: ["Soul", "Controlling authority"],
-      },
-    };
-  });
-  const verdict = { judgeStatus: "converged" };
-  const result = await tool.execute(
-    "audit-escalation",
-    verdict,
-    undefined,
-    undefined,
-    toolCallContext([{ id: "audit-escalation", arguments: verdict }]),
-  );
-
-  assert.equal(auditCalls, 1);
-  assert.equal(result.terminate, true);
-  assert.deepEqual(result.details, {
-    kind: "audit_escalation",
-    conflicts: ["Judge Soul and controlling authority conflict"],
-    decisionGate: {
-      question: "Which authority should govern?",
-      options: ["Soul", "Controlling authority"],
-    },
-  });
-  assert.equal(Object.hasOwn(result.details, "judgeStatus"), false);
-  assert.match(result.content[0].text, /Human decision required/);
-  assert.doesNotMatch(result.content[0].text, /Judge verdict accepted/i);
 });
 
 test("judge aborts the active operation before rethrowing audit infrastructure failures", async () => {

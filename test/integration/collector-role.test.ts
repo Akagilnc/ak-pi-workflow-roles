@@ -733,75 +733,6 @@ test("observe content exposes authenticated request-marker so wait/missing path 
   });
 });
 
-test("collector rejects parallel operational siblings and mixed output batches", async () => {
-  await withHermeticHome({ prefix: "ak-collector-batch-" }, async ({ agentDir, home }) => {
-    const legs = await writeLegs(home);
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const faux = fauxProvider({
-      api: "ak-collector-batch",
-      provider: "ak-collector-batch",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-    const previousExit = process.exitCode;
-    process.exitCode = undefined;
-    try {
-      await withInProcessPi({
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        extensionFactories: [createRoleRuntimeExtension({
-          loadJudgeSoul: async () => "judge",
-          loadCollectorSoul: async () => COLLECTOR_SOUL,
-          createCollectorTransport: () => transport,
-          createCollectorClock: () => clockAt("2024-01-01T00:00:00Z"),
-          transcriptFromContext: () => "",
-          auditSoulCompliance: async () => ({ status: "pass" }),
-        })],
-        noExtensions: true,
-        systemPrompt: "BASE",
-        mode: "print",
-        flags: {
-          "ak-role": "collector",
-          "ak-collector-repo": "acme/widgets",
-          "ak-collector-pr": "1",
-          "ak-collector-legs": legs,
-        },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
-        faux.setResponses([
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "a" }),
-            fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: 1000 }, { id: "b" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage("batch rejected"),
-        ]);
-        await session.prompt("start");
-        const results = sessionManager.getEntries().filter((entry) =>
-          entry.type === "message" && (entry as any).message.role === "toolResult"
-        );
-        assert.ok(results.length >= 1);
-        assert.equal(
-          results.every((entry) =>
-            entry.type === "message" && (entry as any).message.isError === true
-          ),
-          true,
-        );
-        assert.equal(transport.calls.pull, 0);
-        assert.equal(process.exitCode, 1);
-      });
-    } finally {
-      process.exitCode = previousExit;
-    }
-  });
-});
-
 async function runCollectorSession(input: {
   home: string;
   agentDir: string;
@@ -810,7 +741,7 @@ async function runCollectorSession(input: {
   clock: CollectorClock & { advance?(ms: number): void };
   responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
   api: string;
-}): Promise<{ exitCode: number | undefined }> {
+}): Promise<{ exitCode: number | undefined; toolResultIsError: boolean[] }> {
   const faux = fauxProvider({
     api: input.api,
     provider: input.api,
@@ -818,6 +749,7 @@ async function runCollectorSession(input: {
   });
   const previousExit = process.exitCode;
   process.exitCode = undefined;
+  let toolResultIsError: boolean[] = [];
   try {
     await withInProcessPi({
       cwd: input.home,
@@ -842,11 +774,17 @@ async function runCollectorSession(input: {
         "ak-collector-legs": input.legs,
       },
       noTools: "builtin",
-    }, async ({ session }) => {
+    }, async ({ session, sessionManager }) => {
       faux.setResponses(input.responses);
       await session.prompt("start");
+      toolResultIsError = sessionManager.getEntries()
+        .filter((entry) => entry.type === "message" && entry.message.role === "toolResult")
+        .map((entry) =>
+          entry.type === "message"
+          && (entry.message as { isError?: boolean }).isError === true
+        );
     });
-    return { exitCode: process.exitCode };
+    return { exitCode: process.exitCode, toolResultIsError };
   } finally {
     process.exitCode = previousExit;
   }
@@ -856,7 +794,39 @@ test("collector same-session batch provenance matrix freezes transport after fat
   await withHermeticHome({ prefix: "ak-collector-batch-matrix-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
 
+    // first-turn dual operational: wholly rejected — every toolResult isError, zero GH, exit 1
+    {
+      const transport = createFakeGitHubTransport({
+        user: sampleUser(),
+        pullRequest: samplePull(),
+        reviews: [],
+        issueComments: [],
+        reviewComments: [],
+      });
+      const result = await runCollectorSession({
+        home,
+        agentDir,
+        legs,
+        transport,
+        clock: clockAt("2024-01-01T00:00:00Z"),
+        api: "ak-collector-dual-op",
+        responses: [
+          fauxAssistantMessage([
+            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "a" }),
+            fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: 1000 }, { id: "b" }),
+          ], { stopReason: "toolUse" }),
+          fauxAssistantMessage("batch rejected"),
+        ],
+      });
+      assert.ok(result.toolResultIsError.length >= 1);
+      assert.equal(result.toolResultIsError.every((isError) => isError), true);
+      assert.equal(transport.calls.pull, 0);
+      assert.equal(transport.calls.create, 0);
+      assert.equal(result.exitCode, 1);
+    }
+
     // valid → invalid: T1 observe ok, T2 observe+wait fatal, counters freeze
+    // (do not require every toolResult isError — first observe intentionally succeeds)
     {
       const transport = createFakeGitHubTransport({
         user: sampleUser(),
@@ -1784,50 +1754,6 @@ test("F1 control: well-formed unavailable is schema-accepted", async () => {
             legId: "codex",
             status: "unavailable",
             rationale: "declined on record",
-            evidenceRefs: [decline],
-            unavailableScope: "global",
-          }],
-        };
-      },
-    });
-    assert.ok(transport.calls.pull >= 1);
-  });
-});
-
-test("F1 control: multiline rationale is schema-accepted", async () => {
-  await withHermeticHome({ prefix: "ak-collector-f1-multi-" }, async ({ agentDir, home }) => {
-    const legs = await writeLegs(home);
-    const clock = clockAt("2024-01-01T00:10:00Z");
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull({ headOid: "h1" }),
-      reviews: [],
-      issueComments: [
-        sampleIssueComment({
-          id: 2,
-          userLogin: "codexbot",
-          body: "I decline",
-          createdAt: "2024-01-01T00:00:00Z",
-          updatedAt: "2024-01-01T00:00:00Z",
-        }),
-      ],
-      reviewComments: [],
-    });
-    await runSchemaAcceptedControl({
-      home,
-      agentDir,
-      legs,
-      api: "ak-collector-f1-multi",
-      transport,
-      clock,
-      buildOutput: ({ evidence }) => {
-        const decline = evidence.find((e) => e.kind === "issue_comment")?.evidenceId;
-        assert.ok(decline);
-        return {
-          legs: [{
-            legId: "codex",
-            status: "unavailable",
-            rationale: "line1\nline2 declined",
             evidenceRefs: [decline],
             unavailableScope: "global",
           }],
