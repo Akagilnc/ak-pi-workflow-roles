@@ -16,7 +16,8 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement } from "./navigator-attendance.ts";
+import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationResult } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -137,15 +138,22 @@ type ActivationStageDeclaration = {
   run(runtime: ActivationRuntime): Promise<void>;
 };
 
-export const ROLE_REGISTRY = [
-  { role: "judge", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.judge.activate() }] },
-  { role: "fixer", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.fixer.activate() }] },
-  { role: "coder", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.coder.activate(runtime.context) }] },
-  { role: "reviewer", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.reviewer.activate(runtime.context) }] },
-  { role: "collector", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.collector.activate(runtime.context, runtime.event) }] },
-  { role: "doctor", stages: [{ id: "load-and-install", run: async (runtime: ActivationRuntime) => runtime.doctor.activate() }] },
-  { role: "merger", stages: [{ id: "prepare-git-and-install", run: async (runtime: ActivationRuntime) => runtime.merger() }] },
-] as const satisfies readonly { role: string; stages: readonly ActivationStageDeclaration[] }[];
+function activationStage(role: PackagedRole, runtime: ActivationRuntime): ActivationStageDeclaration {
+  switch (role) {
+    case "judge": return { id: "load-and-install", run: async () => runtime.judge.activate() };
+    case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
+    case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
+    case "reviewer": return { id: "load-and-install", run: async () => runtime.reviewer.activate(runtime.context) };
+    case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
+    case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
+    case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
+  }
+}
+
+export const ROLE_REGISTRY = PACKAGED_ROLE_REGISTRY.map((entry) => ({
+  role: entry.role,
+  stages: [{ id: entry.activationStage, run: async (runtime: ActivationRuntime) => activationStage(entry.role, runtime).run(runtime) }],
+})) as readonly { role: PackagedRole; stages: readonly ActivationStageDeclaration[] }[];
 
 for (const entry of ROLE_REGISTRY) {
   const seen = new Set<string>();
@@ -227,7 +235,7 @@ export class ActivationBarrierError extends Error {
   }
 }
 
-export const WORKFLOW_ROLES = ROLE_REGISTRY.map(({ role }) => role) as Array<(typeof ROLE_REGISTRY)[number]["role"]>;
+export const WORKFLOW_ROLES = PACKAGED_ROLE_REGISTRY.map(({ role }) => role) as Array<(typeof PACKAGED_ROLE_REGISTRY)[number]["role"]>;
 export const ROLE_FLAG = {
   name: "ak-role",
   definition: {
@@ -297,21 +305,15 @@ function failInfrastructure(error: unknown, ctx: ExtensionContext): never {
 }
 
 function navigatorPhase(pi: ExtensionAPI, role: string): NavigatorPhase {
-  if (role === "coder") return pi.getFlag("ak-coder-phase") as NavigatorPhase;
-  if (role === "fixer") return pi.getFlag(FIXER_FLAG_DEFINITIONS.phase.name) as NavigatorPhase;
-  return null;
+  const metadata = packagedRoleMetadata(role);
+  if (metadata === undefined || metadata.phases[0] === null) return null;
+  const phaseFlag = packagedRolePhaseFlag(role);
+  const requested = phaseFlag === undefined ? undefined : pi.getFlag(phaseFlag);
+  return requested === "apply" ? "apply" : "plan";
 }
 
 function navigatorOutputTool(role: string): string | undefined {
-  return ({
-    judge: JUDGE_OUTPUT_TOOL_NAME,
-    fixer: FIXER_OUTPUT_TOOL_NAME,
-    coder: CODER_OUTPUT_TOOL_NAME,
-    reviewer: REVIEWER_OUTPUT_TOOL_NAME,
-    collector: COLLECTOR_OUTPUT_TOOL,
-    doctor: DOCTOR_OUTPUT_TOOL_NAME,
-    merger: MERGER_OUTPUT_TOOL_NAME,
-  } as Record<string, string>)[role];
+  return packagedRoleOutputTool(role);
 }
 
 export const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure" as const;
@@ -363,6 +365,7 @@ export function createRoleRuntimeExtension(
     let selectedRole: string | undefined;
     let navigatorAttendance: NavigatorAttendance | undefined;
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
+    let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: { subjectKey: string; subject: string; authority: string; contextError?: unknown } | undefined;
     const pendingInfrastructureToolCallIds = new Set<string>();
     pi.on("input", () => {
@@ -405,9 +408,28 @@ export function createRoleRuntimeExtension(
         navigatorPhase(pi, role),
         isRoleInfrastructureFailure ? { ...event, details: buildNavigatorInfrastructureFailureFact() } : event,
       );
-      if (settlement !== undefined) await navigatorAttendance.settle(settlement);
+      if (settlement !== undefined) {
+        const pending = navigatorAttendance.settle(settlement);
+        pendingNavigatorSettlement = pending;
+        await pending;
+      }
     });
     pi.on("agent_settled", async () => {
+      if (pendingNavigatorSettlement !== undefined) {
+        await pendingNavigatorSettlement;
+      } else if (navigatorAttendance?.isPreparing()) {
+        // A provider/network failure can settle the role without ever producing
+        // a terminating tool result. Drain this same preparation as silence;
+        // the next agent turn will prepare a new correlated invocation.
+        const pending = navigatorAttendance.settle({
+          kind: "role_infrastructure_failure",
+          role: selectedRole ?? "unknown",
+          phase: selectedRole === undefined ? null : navigatorPhase(pi, selectedRole),
+        });
+        pendingNavigatorSettlement = pending;
+        await pending;
+      }
+      pendingNavigatorSettlement = undefined;
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation === undefined) return;
@@ -422,6 +444,7 @@ export function createRoleRuntimeExtension(
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       pendingNavigatorPresentation = undefined;
+      pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
     });
 
@@ -581,6 +604,7 @@ export function createRoleRuntimeExtension(
       admitted = false;
       selectedRole = undefined;
       pendingNavigatorPresentation = undefined;
+      pendingNavigatorSettlement = undefined;
       pendingInfrastructureToolCallIds.clear();
       navigatorWorkContext = undefined;
       const rawRole = pi.getFlag(ROLE_FLAG.name);
@@ -604,7 +628,7 @@ export function createRoleRuntimeExtension(
             work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
             contextError = work.contextError;
           } catch (error) {
-            contextError = error;
+            contextError = navigatorUnavailableError("context", error);
             // A loader failure must not turn the role session directory into a
             // per-invocation Navigator identity.  Keep the stable work-root key
             // even though this attendance can only report unavailable.

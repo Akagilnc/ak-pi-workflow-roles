@@ -22,6 +22,7 @@ import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
+  navigatorUnavailableError,
   navigatorSessionDirectory,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
@@ -32,6 +33,7 @@ import {
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
+import { packagedRoleInputFlag } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
 
 const extensionPath = fileURLToPath(import.meta.url);
@@ -45,15 +47,7 @@ const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.
 const mergerSoulPath = fileURLToPath(new URL("../souls/merger.md", import.meta.url));
 
 function navigatorInputReference(pi: ExtensionAPI, role: string): string | undefined {
-  const names: Record<string, string> = {
-    fixer: "ak-fix-packet",
-    coder: "ak-coder-task",
-    reviewer: "ak-review-task",
-    collector: "ak-collector-legs",
-    doctor: "ak-doctor-case",
-    merger: "ak-merger-input",
-  };
-  const name = names[role];
+  const name = packagedRoleInputFlag(role);
   const value = name === undefined ? undefined : pi.getFlag(name);
   return typeof value === "string" && value !== "" ? resolve(value) : undefined;
 }
@@ -174,7 +168,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
       // not silently promoted to controlling authority.
       const authority = navigatorAuthorityFromInput(input ?? "") ?? authorityMaterial;
       if (authority === undefined || authority.trim() === "") {
-        throw new Error("controlling authority content was not supplied as typed work context");
+        throw navigatorUnavailableError("context", new Error("controlling authority content was not supplied as typed work context"));
       }
       return { subjectKey, subject, authority };
     },
