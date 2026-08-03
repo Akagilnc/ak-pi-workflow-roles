@@ -35,17 +35,21 @@ catch {
     throw new Error("Reviewer capabilities task digest mismatch"); if (!v.tools.every((x) => typeof x === "string" && REVIEWER_CHILD_TOOLS.includes(x)) || !v.prerequisiteOperations.every((x) => typeof x === "string" && REVIEWER_PREREQUISITES.includes(x)) || new Set(v.tools).size !== v.tools.length || new Set(v.prerequisiteOperations).size !== v.prerequisiteOperations.length)
     throw new Error("Reviewer capabilities contain unknown or duplicate values"); return Object.freeze({ version: 1, taskSha256: v.taskSha256, document: reviewerPromptIdentity(text), tools: frozen(v.tools), prerequisiteOperations: frozen(v.prerequisiteOperations) }); }
 const identity = (proposal) => { try {
-    return sha256Hex(JSON.stringify(proposal));
+    const serialized = JSON.stringify(proposal);
+    if (serialized === undefined)
+        throw new TypeError("Reviewer proposal is not serializable");
+    return sha256Hex(serialized);
 }
-catch {
-    return sha256Hex("[unserializable proposal]");
+catch (error) {
+    throw new Error("Reviewer proposal identity cannot be constructed", { cause: error });
 } };
 const preflight = (error) => error instanceof ReviewerPreflightError ? error : error instanceof ReviewerAdmissionError || error instanceof ReviewerConstructionError || error instanceof ReviewerCorrectablePreflightError ? new ReviewerPreflightError(error.code, error.diagnostic) : undefined;
 export function createReviewerDispatcher(d) {
     const task = Uint8Array.from(d.task), target = immutableReviewerPin(d.reader.pin), host = frozen(d.hostTools);
     let accepted, fatal, accepting = false;
     const rejections = [], closedAttempts = [];
-    const close = (id) => { const e = Object.freeze({ identity: id, reason: "acceptance-closed", started: false }); d.decisionEvidence?.(Object.freeze({ disposition: "closed", ...e })); closedAttempts.push(e); return Object.freeze({ status: "closed", ...e }); };
+    const close = (id, cause) => { const e = { identity: id, reason: "acceptance-closed", started: false }; if (cause !== undefined)
+        Object.defineProperty(e, "cause", { value: cause, enumerable: false }); Object.freeze(e); d.decisionEvidence?.(Object.freeze({ disposition: "closed", ...e })); closedAttempts.push(e); return Object.freeze({ status: "closed", ...e }); };
     const reject = (id, e) => { const evidence = Object.freeze({ identity: id, violations: Object.freeze([e.code]), started: false }); d.decisionEvidence?.(Object.freeze({ disposition: "rejected", ...evidence })); rejections.push(evidence); return Object.freeze({ status: "rejected", identity: id, violations: evidence.violations, diagnostic: e.diagnostic }); };
     return Object.freeze({ get rejections() { return Object.freeze([...rejections]); }, get acceptance() { return accepted; }, get closedAttempts() { return Object.freeze([...closedAttempts]); }, async propose(proposal, invocation) { const id = identity(proposal); if (fatal !== undefined)
             throw fatal; if (accepted || accepting)
@@ -63,7 +67,7 @@ export function createReviewerDispatcher(d) {
         }
         catch (error) {
             if (accepted || accepting)
-                return close(id);
+                return close(id, error);
             const p = preflight(error);
             if (p)
                 return reject(id, p);
@@ -76,7 +80,7 @@ export function createReviewerDispatcher(d) {
         }
         catch (error) {
             if (accepted || accepting)
-                return close(id);
+                return close(id, error);
             const p = preflight(error);
             if (p)
                 return reject(id, p);

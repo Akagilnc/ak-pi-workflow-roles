@@ -23,14 +23,22 @@ export type ReviewerWorkspaceOwner = {
 };
 type GitSnapshot = ReviewerTargetSnapshot & { mirrorRoot: string; mirrorPath: string };
 type CommandResult = { stdout: string; stderr: string; code: number };
+export class ReviewerProcessError extends Error {
+  constructor(readonly command: string, readonly args: readonly string[], readonly code: number | null, readonly signal: NodeJS.Signals | null, readonly timedOut: boolean, readonly aborted: boolean, readonly stderr: string, readonly stdout: string, cause?: unknown) {
+    super(`${command} ${args.join(" ")} failed`, { cause });
+    this.name = "ReviewerProcessError";
+  }
+}
 async function runCommand(command: string, args: string[], options: { cwd?: string; signal?: AbortSignal; allowedCodes?: readonly number[] } = {}): Promise<CommandResult> {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, { ...(options.cwd === undefined ? {} : { cwd: options.cwd }), stdio: ["ignore", "pipe", "pipe"], signal: options.signal });
     let stdout = "", stderr = "";
     child.stdout.setEncoding("utf8").on("data", chunk => { stdout += chunk; });
     child.stderr.setEncoding("utf8").on("data", chunk => { stderr += chunk; });
-    child.on("error", reject);
-    child.on("close", code => { const actual = code ?? 1; (options.allowedCodes ?? [0]).includes(actual) ? resolve({ stdout, stderr, code: actual }) : reject(new Error(`${command} ${args.join(" ")} failed (${actual}): ${stderr.trim() || stdout.trim()}`)); });
+    let settled = false;
+    const fail = (error: unknown, code: number | null, signal: NodeJS.Signals | null) => { if (settled) return; settled = true; reject(new ReviewerProcessError(command, args, code, signal, false, options.signal?.aborted === true, stderr, stdout, error)); };
+    child.on("error", error => fail(error, null, null));
+    child.on("close", (code, signal) => { const actual = code ?? 1; if ((options.allowedCodes ?? [0]).includes(actual)) { settled = true; resolve({ stdout, stderr, code: actual }); } else fail(undefined, code, signal); });
   });
 }
 async function git(cwd: string, args: string[], signal?: AbortSignal, allowedCodes?: readonly number[]) { return runCommand("git", ["-C", cwd, ...args], { ...(signal === undefined ? {} : { signal }), ...(allowedCodes === undefined ? {} : { allowedCodes }) }); }
@@ -43,7 +51,7 @@ async function verifySnapshot(cwd: string, snapshot: ReviewerTargetSnapshot, sig
   for (const entry of Object.values(snapshot.refs)) { await git(cwd, ["cat-file", "-e", `${entry.objectId}^{object}`], signal); if (entry.peeledCommitId !== null) await git(cwd, ["cat-file", "-e", `${entry.peeledCommitId}^{commit}`], signal); }
 }
 function workspaceError(error: unknown, failure: "snapshot" | "workspace", disposition: ReviewerWorkspaceDisposition, target: ReviewerTargetSnapshot): ReviewerWorkspaceError {
-  const wrapped = error instanceof Error ? error : new Error(String(error));
+  const wrapped = error instanceof Error ? error : new Error(String(error), { cause: error });
   return Object.assign(wrapped, { reviewerFailure: failure, workspaceDisposition: disposition, targetSnapshot: target });
 }
 async function prepareSnapshot(accepted: ReviewerTargetSnapshot, signal: AbortSignal | undefined, dependencies: ReviewerWorkspaceDependencies): Promise<GitSnapshot> {

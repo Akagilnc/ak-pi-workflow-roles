@@ -20,41 +20,74 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     tokenSize: { min: 1000, max: 1000 },
   });
   const observation = process.env.AK_NAVIGATOR_OBSERVATION === "1";
-  const healthyNavigator = process.env.AK_HEALTHY_NAVIGATOR === "1" || observation;
+  /** Canonical delivery matrix: recommendation | unavailable | silence (extends observation seam). */
+  const deliveryOutcome = process.env.AK_NAVIGATOR_DELIVERY_OUTCOME;
+  const deliveryMode = deliveryOutcome === "recommendation" || deliveryOutcome === "unavailable" || deliveryOutcome === "silence"
+    ? deliveryOutcome
+    : undefined;
+  const healthyNavigator =
+    process.env.AK_HEALTHY_NAVIGATOR === "1"
+    || observation
+    || deliveryMode === "recommendation"
+    || deliveryMode === "silence";
+  const roleScripted = observation || deliveryMode !== undefined;
   let navigatorCalls = 0;
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
   let inputReleasedAt = "";
   const response = async (context: Context) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
-    if (healthyNavigator && names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-      navigatorCalls += 1;
-      navigatorStartedAt = new Date().toISOString();
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-      navigatorCompletedAt = new Date().toISOString();
-      return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-        candidates: [{
-          id: "audit-failure-route",
-          matches: { role: "judge", phase: null, kind: "accepted" },
-          route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
-          next: { role: "reviewer", phase: null },
-          reason: "healthy in-flight Navigator preparation",
-          command: "Usage: pi --ak-role reviewer --help",
-        }],
-      }), { stopReason: "toolUse" });
+    if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+      if (deliveryMode === "unavailable") {
+        navigatorCalls += 1;
+        navigatorStartedAt = new Date().toISOString();
+        // Malformed prepare forces typed unavailable; role receipt still converges.
+        navigatorCompletedAt = new Date().toISOString();
+        return fauxAssistantMessage("NAVIGATOR PREPARE MALFORMED");
+      }
+      if (healthyNavigator) {
+        navigatorCalls += 1;
+        navigatorStartedAt = new Date().toISOString();
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        navigatorCompletedAt = new Date().toISOString();
+        return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+          candidates: [{
+            id: "audit-failure-route",
+            matches: { role: "judge", phase: null, kind: "accepted" },
+            route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+            next: { role: "reviewer", phase: null },
+            reason: "healthy in-flight Navigator preparation",
+            command: "Usage: pi --ak-role reviewer --help",
+          }],
+        }), { stopReason: "toolUse" });
+      }
     }
     if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
-      if (observation) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+      if (deliveryMode === "silence") {
+        return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+          status: "escalate",
+          violations: [],
+          conflicts: ["Soul authority conflicts with controlling authority"],
+          decisionGate: {
+            question: "Which authority governs this verdict?",
+            options: ["Soul", "Controlling authority"],
+          },
+        }), { stopReason: "toolUse" });
+      }
+      if (roleScripted) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
       return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     }
     if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
-      if (observation) return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "observed-judge" }), { stopReason: "toolUse" });
+      if (deliveryMode === "silence") {
+        return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "silence-judge" }), { stopReason: "toolUse" });
+      }
+      if (roleScripted) return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "observed-judge" }), { stopReason: "toolUse" });
       return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "fatal-judge" }), { stopReason: "toolUse" });
     }
-    if (healthyNavigator) return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
+    if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  faux.setResponses(healthyNavigator ? [response, response, response, response, response] : [
+  faux.setResponses(healthyNavigator || deliveryMode === "unavailable" ? [response, response, response, response, response] : [
     fauxAssistantMessage(
       fauxToolCall(
         JUDGE_OUTPUT_TOOL_NAME,

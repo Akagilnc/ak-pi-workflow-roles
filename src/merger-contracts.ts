@@ -30,7 +30,10 @@ export const MERGER_ACCEPTED_TEXT = "Merger output accepted";
 const record = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const exact = (v: Record<string, unknown>, keys: readonly string[]) => Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const blank = (v: unknown) => typeof v !== "string" || v.trim().length === 0;
-function fail(message = "Merger input violates its exact contract"): never { throw new Error(message); }
+export class MergerInputContractError extends Error {
+  constructor(message = "Merger input violates its exact contract") { super(message); this.name = "MergerInputContractError"; }
+}
+function fail(message = "Merger input violates its exact contract"): never { throw new MergerInputContractError(message); }
 function canonicalPath(path: unknown): path is string { return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\0") && path.split("/").every(part => part !== "" && part !== "." && part !== ".."); }
 function validatePathSet(value: unknown, label: string): string[] {
   if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath)) fail(`Merger ${label} must be a non-empty canonical path set`);

@@ -9,7 +9,7 @@ import { createReviewerWorkspaceOwner, type ReviewerWorkspaceFaultPoint } from "
 const RUNNER_PREREQUISITES = ["runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot"] as const satisfies readonly ReviewerPrerequisiteOperation[];
 type ReviewerLegRunResultCommon = Readonly<{ target: ReviewerTargetSnapshot; prompt: ReviewerPromptIdentity; workspaceDisposition: ReviewerWorkspaceDisposition }>;
 export type ReviewerSuccessfulLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "successful"; report: string; usage: ReviewerUsage; failure?: never; runtimeConstructionEvidence: MaterializedBundleEvidenceV1 }>;
-export type ReviewerFailedLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "failed"; failure: ReviewerFailureClassification; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>;
+export type ReviewerFailedLegRunResult = ReviewerLegRunResultCommon & Readonly<{ status: "failed"; failure: ReviewerFailureClassification; cause?: unknown; report?: never; usage?: never; runtimeConstructionEvidence?: MaterializedBundleEvidenceV1 }>;
 export type ReviewerLegRunResult = ReviewerSuccessfulLegRunResult | ReviewerFailedLegRunResult;
 type Envelope<L> = Readonly<{ identity: string; target: ReviewerTargetSnapshot; legs: Readonly<L> }>;
 export type ReviewerDispatchRunResult = Envelope<{ standards: ReviewerLegRunResult; spec?: never }> | Envelope<{ standards: ReviewerLegRunResult; spec: ReviewerLegRunResult }>;
@@ -18,8 +18,8 @@ export class ReviewerDispatchExecutionError extends Error { constructor(readonly
 export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
 export type ReviewerAgentFaultPoint = ReviewerWorkspaceFaultPoint | ReviewerExecutorFaultPoint;
 type Dependencies = Readonly<{ fault?(operation: ReviewerAgentFaultPoint): void }>;
-function classify(error: unknown, signal?: AbortSignal): ReviewerFailureClassification { if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error) return (error as { reviewerFailure: ReviewerFailureClassification }).reviewerFailure; return "unknown"; }
-function failed(error: unknown, target: ReviewerTargetSnapshot, prompt: ReviewerPromptIdentity, signal?: AbortSignal, retained?: string, evidence?: MaterializedBundleEvidenceV1): ReviewerFailedLegRunResult { const attached = typeof error === "object" && error !== null ? error as { targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition } : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
+function classify(error: unknown, signal?: AbortSignal): ReviewerFailureClassification { if (signal?.aborted) return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error) return (error as { reviewerFailure: ReviewerFailureClassification }).reviewerFailure; return "unknown"; }
+function failed(error: unknown, target: ReviewerTargetSnapshot, prompt: ReviewerPromptIdentity, signal?: AbortSignal, retained?: string, evidence?: MaterializedBundleEvidenceV1): ReviewerFailedLegRunResult { const attached = typeof error === "object" && error !== null ? error as { targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition } : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), cause: error, target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
 export function createReviewerAgentRunner(dependencies: Dependencies = {}): ReviewerAgentRunner {
   const workspaceOwner = createReviewerWorkspaceOwner(dependencies.fault === undefined ? {} : { fault: dependencies.fault }); let accepted = false;
   return {
@@ -41,7 +41,10 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
       const settled = await Promise.allSettled(batch.workspaces.map(async workspace => {
         const leg = dispatch.legs.find(candidate => candidate.axis === workspace.axis)!;
         try { const child = await executeReviewerChild(workspace.path, leg, options.context, options.signal, dependencies.fault); const disposition = await workspaceOwner.dispose(workspace); return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition, runtimeConstructionEvidence: workspace.evidence })] as const; }
-        catch (error) { return [leg.axis, failed(error, batch.target, leg.prompt, options.signal, workspace.path, workspace.evidence)] as const; }
+        catch (error) {
+          // Failed legs retain their workspace for the durable failure evidence and caller cleanup.
+          return [leg.axis, failed(error, batch.target, leg.prompt, options.signal, workspace.path, workspace.evidence)] as const;
+        }
       }));
       const pairs = settled.map(item => item.status === "fulfilled" ? item.value : (() => { throw item.reason; })());
       const outcome = Object.freeze({ identity: dispatch.identity, target: batch.target, legs: Object.freeze(Object.fromEntries(pairs)) }) as ReviewerDispatchRunResult;

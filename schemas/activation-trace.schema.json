@@ -80,6 +80,10 @@
             },
             "message": {
               "type": "string"
+            },
+            "evidenceId": {
+              "type": "string",
+              "minLength": 1
             }
           },
           "additionalProperties": false

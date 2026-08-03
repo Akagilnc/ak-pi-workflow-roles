@@ -23,7 +23,7 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationResult } from "./audit-escalation.ts";
 import {
@@ -423,6 +423,16 @@ export function createRoleRuntimeExtension(
         pendingNavigatorSettlement = pending;
         await pending;
       }
+      // Recommendation rides the accepted settlement record's content so the one
+      // mandatory last-ak_*_output extraction surfaces route/next/reason without
+      // a second file, grep, or nesting step. Receipt details stay contract-pure;
+      // unavailable/silence leave the settlement untouched.
+      if (event.isError) return;
+      const decorated = decorateSettlementWithNavigation(event, pendingNavigatorPresentation);
+      if (decorated === undefined) return;
+      return {
+        content: decorated.content as typeof event.content,
+      };
     });
     pi.on("agent_settled", async () => {
       if (pendingNavigatorSettlement !== undefined) {
@@ -669,10 +679,8 @@ export function createRoleRuntimeExtension(
             work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
             contextError = work.contextError;
           } catch (error) {
+            // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
             contextError = navigatorUnavailableError("context", error);
-            // A loader failure must not turn the role session directory into a
-            // per-invocation Navigator identity.  Keep the stable work-root key
-            // even though this attendance can only report unavailable.
             const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           }

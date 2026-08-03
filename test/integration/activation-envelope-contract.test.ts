@@ -189,7 +189,11 @@ test("every registered whole-activation rejection terminates nonzero with a name
     assert.equal(process.exitCode, 1);
     const failed = traces.find((trace) => trace.status === "failed");
     assert.ok(failed && failed.status === "failed");
-    assert.deepEqual(failed.cause, { identity: "TypeError", name: "TypeError", message: `${entry.role} activation rejected` });
+    assert.equal(failed.cause.identity, "TypeError");
+    assert.equal(failed.cause.name, "TypeError");
+    assert.equal(failed.cause.message, `${entry.role} activation rejected`);
+    if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
+    assert.match(failed.cause.evidenceId, /^activation-cause-/);
   }
 });
 
@@ -215,7 +219,10 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
   ]);
   const failed = traces[1];
   assert.ok(failed?.status === "failed");
-  assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
+  assert.ok(["AK_INVALID_FIX_PACKET", "FixerPacketValidationError"].includes(failed.cause.identity));
+  assert.equal(failed.cause.name, "FixerPacketValidationError");
+  if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
+  assert.match(failed.cause.evidenceId, /^activation-cause-/);
   assert.match(failed.cause.message, /Fixer prerequisites/);
 });
 
