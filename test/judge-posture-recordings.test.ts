@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -51,6 +52,76 @@ async function readJson<T>(path: string): Promise<T> {
 
 function soulDigest(soulText: string): string {
   return createHash("sha256").update(soulText).digest("hex");
+}
+
+function gitEnvironmentFailure(bundleName: string, operation: string, error: unknown): never {
+  throw new Error(
+    `${bundleName} git environment failure during ${operation}`,
+    { cause: error },
+  );
+}
+
+function assertPackagedSoulMatchesMeta(
+  meta: Record<string, unknown>,
+  bundleName: string,
+): void {
+  assert.equal(typeof meta.packageSha, "string");
+  assert.equal(typeof meta.soulDigest, "string");
+  const packageSha = meta.packageSha as string;
+  try {
+    execFileSync("git", ["rev-parse", "--git-dir"], {
+      cwd: root,
+      stdio: "ignore",
+    });
+  } catch (error) {
+    gitEnvironmentFailure(bundleName, "repository discovery", error);
+  }
+  let objectProbe: string;
+  try {
+    objectProbe = execFileSync(
+      "git",
+      ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+      { cwd: root, input: `${packageSha}\n`, encoding: "utf8" },
+    ).trim();
+  } catch (error) {
+    gitEnvironmentFailure(bundleName, "packageSha object lookup", error);
+  }
+  if (objectProbe.endsWith(" missing")) {
+    throw new Error(`${bundleName} metadata packageSha object is absent`);
+  }
+  if (!objectProbe.endsWith(" commit")) {
+    throw new Error(`${bundleName} metadata packageSha is not a commit`);
+  }
+  let packagedPath: string;
+  try {
+    packagedPath = execFileSync(
+      "git",
+      ["ls-tree", "-r", "--name-only", packageSha, "--", "souls/judge.md"],
+      { cwd: root, encoding: "utf8" },
+    ).trim();
+  } catch (error) {
+    gitEnvironmentFailure(bundleName, "packaged Soul path lookup", error);
+  }
+  if (packagedPath !== "souls/judge.md") {
+    throw new Error(
+      `${bundleName} metadata packageSha does not contain souls/judge.md`,
+    );
+  }
+  let packagedSoul: string;
+  try {
+    packagedSoul = execFileSync(
+      "git",
+      ["show", `${packageSha}:souls/judge.md`],
+      { cwd: root, encoding: "utf8", maxBuffer: 1024 * 1024 },
+    );
+  } catch (error) {
+    gitEnvironmentFailure(bundleName, "packaged Soul read", error);
+  }
+  assert.equal(
+    soulDigest(packagedSoul!),
+    meta.soulDigest,
+    `${bundleName} metadata soulDigest must match the Judge Soul packaged at packageSha`,
+  );
 }
 
 function parseJsonlLines(text: string): unknown[] {
@@ -681,6 +752,7 @@ for (const bundleName of ["r-block", "r-ready"] as const) {
 
     const digest = soulDigest(bundle.soulText);
     assert.equal(bundle.meta.soulDigest, digest);
+    assertPackagedSoulMatchesMeta(bundle.meta, bundleName);
     assert.ok(
       sessionContainsSoul(bundle.sessionText, bundle.soulText),
       `${bundleName} session must contain current bundled soul body`,
@@ -698,12 +770,25 @@ for (const bundleName of ["r-block", "r-ready"] as const) {
     // packaging: only existing verdict keys
     for (const key of Object.keys(sole.details)) {
       assert.ok(
-        ["judgeStatus", "fix", "note", "decisionGate"].includes(key),
+        ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"].includes(key),
         `unexpected verdict key ${key}`,
       );
     }
   });
 }
+
+test("posture oracle rejects metadata package SHA with mismatched packaged Judge Soul", async () => {
+  const bundle = await loadBundle("r-ready");
+  assertPackagedSoulMatchesMeta(bundle.meta, "r-ready");
+  assert.throws(
+    () =>
+      assertPackagedSoulMatchesMeta(
+        { ...bundle.meta, soulDigest: "0".repeat(64) },
+        "r-ready",
+      ),
+    /r-ready metadata soulDigest must match the Judge Soul packaged at packageSha/,
+  );
+});
 
 test("posture oracle refuses receipt-only trust without JSONL acceptance", async () => {
   const bundle = await loadBundle("r-ready");

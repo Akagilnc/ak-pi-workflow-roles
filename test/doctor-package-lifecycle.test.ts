@@ -1,0 +1,136 @@
+import assert from "node:assert/strict";
+import { mkdir, readdir, realpath, readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import test from "node:test";
+
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../src/compliance-transport.ts";
+import { validateRecordedDoctorOutput } from "../src/doctor-contracts.ts";
+import {
+  packageRoot,
+  runPiSubprocess,
+  withColdInstalledPackage,
+  withHermeticHome,
+} from "./helpers/pi-test-harness.ts";
+
+test("fresh Pi process loads the installed Doctor extension and completes one audited output", async () => {
+  await withHermeticHome(
+    { prefix: "ak-doctor-fresh-process-" },
+    async ({ home, agentDir }) => {
+      await withColdInstalledPackage(home, async ({ fixture, installedRoot }) => {
+        const runsPath = resolve(fixture, ".ak/work/issues/58/runs");
+        await mkdir(resolve(runsPath, "case/session"), { recursive: true });
+        const activatedRunsPath = await realpath(runsPath);
+        await writeFile(
+          resolve(runsPath, "case/session/retained.jsonl"),
+          `${JSON.stringify({
+            type: "session",
+            version: 3,
+            id: "doctor-case",
+            timestamp: "2026-08-03T00:00:00.000Z",
+            cwd: fixture,
+          })}\n`,
+        );
+
+        const installedEntrypoint = resolve(
+          installedRoot,
+          "extensions/role-runtime.ts",
+        );
+        const sessionDir = resolve(home, "doctor-pi-session");
+        assert.notEqual(installedRoot, packageRoot);
+        const result = await runPiSubprocess(
+          [
+            "--no-extensions",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-themes",
+            "--no-context-files",
+            "--session-dir",
+            sessionDir,
+            "-e",
+            installedEntrypoint,
+            "-e",
+            resolve(packageRoot, "test/fixtures/doctor-fresh-process-provider.ts"),
+            "--ak-role",
+            "doctor",
+            "--ak-doctor-case",
+            runsPath,
+            "--provider",
+            "ak-doctor-fresh",
+            "--model",
+            "faux-1",
+            "--mode",
+            "json",
+            "Doctor.",
+          ],
+          {
+            cwd: fixture,
+            timeoutMs: 15_000,
+            env: {
+              ...process.env,
+              HOME: home,
+              PI_CODING_AGENT_DIR: agentDir,
+              PI_OFFLINE: "1",
+              AK_DOCTOR_FRESH_CASE_PATH: activatedRunsPath,
+              AK_DOCTOR_FRESH_ISSUE: "58",
+            },
+          },
+        );
+
+        assert.equal(result.timedOut, false, result.stderr);
+        assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+        assert.match(result.stderr, /DOCTOR_FRESH_PROVIDER_CALLS=2/);
+
+        const events = result.stdout
+          .split("\n")
+          .filter((line) => line.trim().startsWith("{"))
+          .map((line) => JSON.parse(line) as any);
+        const sessionFiles = (await readdir(sessionDir))
+          .filter((name) => name.endsWith(".jsonl"));
+        assert.equal(sessionFiles.length, 1);
+        const sessionRows = (await readFile(
+          resolve(sessionDir, sessionFiles[0]!),
+          "utf8",
+        )).split("\n").filter(Boolean).map((line) => JSON.parse(line) as any);
+        const recordedToolCalls = sessionRows
+          .filter((row) => row.type === "message" && row.message?.role === "assistant")
+          .flatMap((row) => row.message.content.filter((part: any) => part.type === "toolCall"));
+        assert.equal(recordedToolCalls.length, 1);
+        const retainedAuditRows = sessionRows.filter(
+          (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
+        );
+        assert.equal(retainedAuditRows.length, 1);
+        const retainedAudit = retainedAuditRows[0].data.response;
+        assert.equal(retainedAudit.role, "assistant");
+        assert.equal(retainedAudit.stopReason, "toolUse");
+        assert.equal(
+          recordedToolCalls.filter((part: any) => part.name === "ak_doctor_output").length,
+          1,
+        );
+        const auditCalls = retainedAudit.content.filter(
+          (part: any) => part.type === "toolCall" && part.name === "ak_doctor_audit_decision",
+        );
+        assert.equal(auditCalls.length, 1);
+        assert.deepEqual(auditCalls[0].arguments, {
+          status: "pass",
+          violations: [],
+          conflicts: [],
+          decisionGate: null,
+        });
+
+        const outputResults = events.filter(
+          (event) =>
+            event.type === "message_end" &&
+            event.message?.role === "toolResult" &&
+            event.message.toolName === "ak_doctor_output",
+        );
+        assert.equal(outputResults.length, 1);
+        assert.equal(outputResults[0].message.isError, false);
+        const output = validateRecordedDoctorOutput(outputResults[0].message.details);
+        assert.equal(output.status, "completed");
+        assert.deepEqual(output.case, { issueNumber: 58, runsPath: activatedRunsPath });
+        assert.deepEqual(output.findings, []);
+        assert.ok(output.cost);
+      });
+    },
+  );
+});

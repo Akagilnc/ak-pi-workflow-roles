@@ -5,7 +5,16 @@ import { canonicalJson } from "./canonical-json.js";
 import { sha256Hex } from "./sha256.js";
 import { assistedRunDirectory } from "./assisted-ledger.js";
 import { createGitCliTransportV1 } from "./assisted-acquisition.js";
-import { isTerminatingToolName, validateAcceptedDetails, validateAcceptedLifecycle } from "./package-contracts/terminating-tools.js";
+import { isAuditEscalationResult } from "./audit-escalation.js";
+import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.js";
+import {
+  FIXER_OUTPUT_TOOL_NAME,
+  JUDGE_OUTPUT_TOOL_NAME,
+  REVIEWER_OUTPUT_TOOL_NAME,
+  isTerminatingToolName,
+  validateAcceptedDetails,
+  validateAcceptedLifecycle
+} from "./package-contracts/terminating-tools.js";
 function childFact(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("private invocation child fact malformed");
   const fact = value;
@@ -14,6 +23,9 @@ function childFact(value) {
 }
 function childFailed(child) {
   return child.signal !== null || child.exitCode !== 0;
+}
+function isAuditedRoleOutputTool(toolName) {
+  return toolName === JUDGE_OUTPUT_TOOL_NAME || toolName === FIXER_OUTPUT_TOOL_NAME || toolName === REVIEWER_OUTPUT_TOOL_NAME || toolName === DOCTOR_OUTPUT_TOOL_NAME;
 }
 async function store(path, value) {
   const text = `${canonicalJson(value)}
@@ -87,10 +99,15 @@ function acceptedReceipt(sessionText2) {
     if (!call) throw new Error("accepted tool result is orphaned or precedes its call in native session");
     if (settled.has(message.toolCallId)) throw new Error("duplicate accepted tool result in native session");
     if (call.name !== message.toolName) throw new Error("accepted tool lifecycle name mismatch in native session");
-    const details = validateAcceptedLifecycle(message.toolName, call.arguments, message.details);
+    const details = isAuditedRoleOutputTool(message.toolName) && isAuditEscalationResult(message.details) ? message.details : validateAcceptedLifecycle(message.toolName, call.arguments, message.details);
     if (accepted) throw new Error("multiple accepted role outcomes in native session");
     settled.add(message.toolCallId);
-    accepted = { artifactKind: "acceptedReceipt", details, toolCallId: message.toolCallId, toolName: message.toolName };
+    accepted = {
+      artifactKind: isAuditEscalationResult(details) ? "roleEscalation" : "acceptedReceipt",
+      details,
+      toolCallId: message.toolCallId,
+      toolName: message.toolName
+    };
   }
   if (!accepted) throw new Error("accepted role outcome missing from native session");
   return accepted;
@@ -152,7 +169,11 @@ async function existing(config, invocationId) {
   const receiptText = await readFile(join(invocationDirectory, "receipt.json"), "utf8");
   const receipt = JSON.parse(receiptText);
   if (!isTerminatingToolName(receipt.toolName) || canonicalJson(receipt) !== canonicalJson(extracted)) throw new Error("private invocation receipt mismatch");
-  validateAcceptedDetails(receipt.toolName, receipt.details);
+  if (receipt.artifactKind === "acceptedReceipt") {
+    validateAcceptedDetails(receipt.toolName, receipt.details);
+  } else if (!isAuditedRoleOutputTool(receipt.toolName) || !isAuditEscalationResult(receipt.details)) {
+    throw new Error("private invocation role escalation artifact malformed");
+  }
   return { receipt, child, evidenceRead, reference: { id: `receipt:${invocationId}`, sha256: sha256Hex(receiptText) } };
 }
 function classifyRole(config, value, beforeTarget, afterTarget) {
@@ -161,6 +182,11 @@ function classifyRole(config, value, beforeTarget, afterTarget) {
   if (!value.receipt) throw new Error("accepted role outcome missing from private invocation");
   const expected = { coder: "ak_coder_output", fixer: "ak_fixer_output", judge: "ak_judge_output", reviewer: "ak_reviewer_output", collector: "ak_collector_output", doctor: "ak_doctor_output" }[config.execution.role];
   if (value.receipt.toolName !== expected) throw new Error("selected-role tool mismatch");
+  if (value.receipt.artifactKind === "roleEscalation") {
+    const escalation = value.receipt.details;
+    if (!isAuditEscalationResult(escalation)) throw new Error("role escalation artifact malformed");
+    return { terminalClass: "role_escalation", reference: value.reference, beforeTarget, afterTarget };
+  }
   const details = value.receipt.details;
   const status = details.status;
   if (config.execution.phase === "plan" && status === "completed" || config.execution.phase === "apply" && status === "planned") throw new Error("selected-role phase mismatch");
@@ -180,6 +206,7 @@ function createAssistedInvocationTransportV1(baseEnv = process.env) {
       if (kind === "navigator") {
         if (value.child.signal || value.child.exitCode !== 0) return { kind: "infrastructure_failure", reference: value.reference };
         if (!value.receipt) throw new Error("accepted Navigator outcome missing from private invocation");
+        if (value.receipt.artifactKind !== "acceptedReceipt") throw new Error("Navigator cannot settle audit escalation");
         if (value.receipt.toolName !== "ak_navigator_output") throw new Error("Navigator tool mismatch");
         return { kind: "accepted", receipt: value.receipt.details, evidenceRead: value.evidenceRead, reference: value.reference };
       }
@@ -193,6 +220,7 @@ function createAssistedInvocationTransportV1(baseEnv = process.env) {
       const value = await invoke(config, invocationId, argv, position.snapshot, { kind: "navigator-consultation", snapshotDigest: position.snapshot.digest, positionCursor: position.snapshot.positionCursor }, baseEnv);
       if (value.child.signal || value.child.exitCode !== 0) return { kind: "infrastructure_failure", reference: value.reference };
       if (!value.receipt) throw new Error("accepted Navigator outcome missing from private invocation");
+      if (value.receipt.artifactKind !== "acceptedReceipt") throw new Error("Navigator cannot settle audit escalation");
       if (value.receipt.toolName !== "ak_navigator_output") throw new Error("Navigator tool mismatch");
       return { kind: "accepted", receipt: value.receipt.details, evidenceRead: value.evidenceRead, reference: value.reference };
     },

@@ -1,4 +1,3 @@
 {
-  "judgeStatus": "converged",
-  "note": "Plan is ready to implement. It supplies all five required facts: the observable cross-leg contamination, the Collector attempt-to-leg assembly seam as owner, a two-leg red counterexample, a green oracle covering both B's leg/report isolation and preservation of A evidence at the receipt root, and frozen envelope/marker/status scope. Helper names, fixture literals, and call syntax are local Apply details, not plan blockers. Convergence authorizes construction only; Apply must still provide executable red/green proof through the production receipt-building seam."
+  "judgeStatus": "converged"
 }

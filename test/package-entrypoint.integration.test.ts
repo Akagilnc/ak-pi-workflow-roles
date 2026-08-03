@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 
@@ -13,6 +14,7 @@ import {
 import {
   defineTool,
   parseSkillBlock,
+  SessionManager,
   stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -33,7 +35,10 @@ import {
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
 import { DOCTOR_CASE_FLAG } from "../src/doctor-role.ts";
-import { SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
+import { isAuditEscalationResult } from "../src/audit-escalation.ts";
+import { validateAcceptedDetails } from "../src/package-contracts/terminating-tools.ts";
+import { SOUL_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
+import type { ComplianceCompletion } from "../src/compliance-transport.ts";
 import {
   loadRawPackageManifest,
   packIsolatedPackage,
@@ -42,8 +47,10 @@ import {
   resolvePackageEntrypoint,
   withHermeticHome,
   withInProcessPi,
+  withColdInstalledPackage,
   writeTestSkill,
 } from "./helpers/pi-test-harness.ts";
+
 const siblingTool = defineTool({
   name: "integration_sibling",
   label: "Integration Sibling",
@@ -124,6 +131,307 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
         assert.ok(paths.has(path), `${path} must be present in the npm tarball`);
       }
       assert.equal(paths.has("packets/fixer-repair.json"), false, "removed closed packet shell must not be packed");
+    },
+  );
+});
+
+test("cold-installed package audits all four roles from editable Souls", async () => {
+  await withHermeticHome(
+    { prefix: "ak-auditor-package-" },
+    async ({ home }) => {
+      await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
+      const [judge, fixer, reviewer, doctor] = await Promise.all([
+        installed("src/judge-auditor.ts"),
+        installed("src/fixer-auditor.ts"),
+        installed("src/reviewer-auditor.ts"),
+        installed("src/doctor-auditor.ts"),
+      ]);
+
+      const context = {
+        model: { provider: "installed-auditor", id: "installed-auditor", api: "openai-responses" },
+        modelRegistry: {
+          async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+        },
+        sessionManager: SessionManager.inMemory(),
+      } as any;
+      const inputs = {
+        judge: { soul: "caller judge soul", transcript: "judge record", verdict: { judgeStatus: "converged" } },
+        fixer: { soul: "caller fixer soul", packet: { version: 1, instructions: "repair", prerequisites: [] }, phase: "apply", transcript: "fixer record", candidate: { status: "completed", report: "done", classResults: [] } },
+        reviewer: { soul: "caller reviewer soul", canonicalSkill: "skill", task: "task", record: {}, candidate: {} },
+        doctor: { soul: "caller doctor soul", patient: { version: 1, identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" }, evidence: [], cost: { invocations: { total: 0, sources: [] }, bytes: 0 } }, readRecord: [], testimony: { status: "refused", reason: "missing", missingEvidence: [] } },
+      } as const;
+      const roles = [
+        { name: "judge", toolName: judge.JUDGE_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/judge-auditor.md"), run: (completion: ComplianceCompletion) => judge.createPiJudgeAuditor(completion)(inputs.judge as never, { context }) },
+        { name: "fixer", toolName: fixer.FIXER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/fixer-auditor.md"), run: (completion: ComplianceCompletion) => fixer.createPiFixerAuditor(completion)(inputs.fixer as never, { context }) },
+        { name: "reviewer", toolName: reviewer.REVIEWER_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/reviewer-auditor.md"), run: (completion: ComplianceCompletion) => reviewer.createPiReviewerAuditor(completion)(inputs.reviewer as never, { context }) },
+        { name: "doctor", toolName: doctor.DOCTOR_AUDIT_TOOL_NAME, soulPath: resolve(installedRoot, "souls/doctor-auditor.md"), run: (completion: ComplianceCompletion) => doctor.createPiDoctorAuditor(completion)(inputs.doctor as never, { context }) },
+      ] as const;
+      const run = async (role: (typeof roles)[number]) => {
+        let calls = 0;
+        let prompt = "";
+        const completion: ComplianceCompletion = async (_model, request) => {
+          calls += 1;
+          prompt = request.systemPrompt ?? "";
+          return fauxAssistantMessage(fauxToolCall(role.toolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+        };
+        await role.run(completion);
+        assert.equal(calls, 1, `${role.name} audit must make one decision call`);
+        assert.equal(prompt, await readFile(role.soulPath, "utf8"), `${role.name} must load its installed Soul on this call`);
+        return prompt;
+      };
+
+      for (const role of roles) await run(role);
+
+      const editedSoul = "EDITED JUDGE SOUL\n";
+      const judgeSoul = roles[0].soulPath;
+      const originalJudgeSoul = await readFile(judgeSoul, "utf8");
+      await writeFile(judgeSoul, editedSoul, "utf8");
+      try {
+        const edited = await run(roles[0]);
+        assert.equal(edited, editedSoul);
+        for (const role of roles.slice(1)) {
+          const unchanged = await run(role);
+          assert.equal(unchanged, await readFile(role.soulPath, "utf8"));
+          assert.notEqual(unchanged, editedSoul);
+        }
+      } finally {
+        await writeFile(judgeSoul, originalJudgeSoul, "utf8");
+      }
+
+      for (const role of roles) {
+        const original = await readFile(role.soulPath, "utf8");
+        await rm(role.soulPath, { force: true });
+        try {
+          await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT", `${role.name} missing Soul must preserve ENOENT`);
+        } finally {
+          await writeFile(role.soulPath, original, "utf8");
+        }
+
+        await writeFile(role.soulPath, " \n", "utf8");
+        await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), new RegExp(`${role.name} auditor Soul is blank`));
+
+        await rm(role.soulPath, { force: true });
+        await mkdir(role.soulPath);
+        try {
+          await assert.rejects(role.run(async () => { throw new Error("completion must not run"); }), (error: unknown) => (error as NodeJS.ErrnoException).code === "EISDIR", `${role.name} unreadable Soul must preserve EISDIR`);
+        } finally {
+          await rm(role.soulPath, { recursive: true, force: true });
+          await writeFile(role.soulPath, original, "utf8");
+        }
+      }
+      });
+    },
+  );
+});
+
+test("cold-installed role outputs run nested audits through pass, revise, and escalation", async () => {
+  await withHermeticHome(
+    { prefix: "ak-auditor-role-lifecycle-" },
+    async ({ home }) => {
+      await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
+      const [judge, fixer, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, promptIdentity, terminating] = await Promise.all([
+        installed("src/judge-auditor.ts"),
+        installed("src/fixer-auditor.ts"),
+        installed("src/reviewer-auditor.ts"),
+        installed("src/doctor-auditor.ts"),
+        installed("src/judge-role.ts"),
+        installed("src/worker-role.ts"),
+        installed("src/reviewer-role.ts"),
+        installed("src/doctor-role.ts"),
+        installed("src/reviewer-prompt-identity.ts"),
+        installed("src/package-contracts/terminating-tools.ts"),
+      ]);
+
+      const patient = {
+        version: 1,
+        identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" },
+        evidence: [],
+        cost: { invocations: { total: 0, sources: [] }, bytes: 0 },
+      };
+      const taskBytes = new TextEncoder().encode("review task\n");
+      const capabilities = new TextEncoder().encode(JSON.stringify({
+        version: 1,
+        taskSha256: createHash("sha256").update(taskBytes).digest("hex"),
+        tools: ["read"],
+        prerequisiteOperations: ["preflight.git.pin-target"],
+      }));
+      const skill = "canonical review skill";
+      const escalation = {
+        status: "escalate" as const,
+        violations: [],
+        conflicts: ["Soul conflicts with controlling authority"],
+        decisionGate: {
+          question: "Which authority governs this submission?",
+          options: ["Soul", "Controlling authority"],
+        },
+      };
+      const revise = {
+        status: "revise" as const,
+        violations: ["one concrete procedural violation"],
+        conflicts: [],
+        decisionGate: null,
+      };
+      const pass = {
+        status: "pass" as const,
+        violations: [],
+        conflicts: [],
+        decisionGate: null,
+      };
+      const outputs = {
+        judge: { judgeStatus: "converged" },
+        fixer: { status: "completed", report: "done", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] },
+        reviewer: { status: "refused", diagnostic: "no accepted dispatch" },
+        doctor: { status: "refused", reason: "missing", missingEvidence: [{ need: "case evidence", targetKeys: ["case"] }] },
+      } as const;
+      const toolNames = {
+        judge: judge.JUDGE_AUDIT_TOOL_NAME,
+        fixer: fixer.FIXER_AUDIT_TOOL_NAME,
+        reviewer: reviewer.REVIEWER_AUDIT_TOOL_NAME,
+        doctor: doctor.DOCTOR_AUDIT_TOOL_NAME,
+      } as const;
+      const acceptedNames = {
+        judge: "ak_judge_output",
+        fixer: "ak_fixer_output",
+        reviewer: "ak_reviewer_output",
+        doctor: "ak_doctor_output",
+      } as const;
+
+      const makeHarness = (flags: Record<string, string> = {}) => {
+        const tools = new Map<string, any>();
+        const handlers = new Map<string, any>();
+        let activeTools: string[] = [];
+        const pi = {
+          registerFlag() {},
+          getFlag(name: string) { return flags[name]; },
+          registerTool(tool: any) { tools.set(tool.name, tool); },
+          getAllTools() { return [...tools.keys()].map((name) => ({ name })); },
+          setActiveTools(names: string[]) { activeTools = [...names]; },
+          getActiveTools() { return activeTools; },
+          on(name: string, handler: any) { handlers.set(name, handler); },
+        };
+        return { pi, tools, handlers };
+      };
+      const outputContext = (name: string, id: string) => {
+        const sessionManager = SessionManager.inMemory();
+        sessionManager.appendMessage({
+          role: "assistant",
+          content: [{ type: "toolCall", id, name, arguments: {} }],
+          api: "openai-responses",
+          provider: "installed-role",
+          model: "installed-role",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        });
+        return {
+          sessionManager,
+          model: { api: "openai-responses", provider: "installed-auditor", id: "installed-auditor" },
+          modelRegistry: {
+            async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
+            async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+          },
+        } as any;
+      };
+
+      const createRole = (role: keyof typeof outputs, decision: typeof pass | typeof revise | typeof escalation) => {
+        const harness = role === "fixer"
+          ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
+          : role === "reviewer"
+            ? makeHarness({ "ak-review-task": "/task", "ak-review-capabilities": "/capabilities" })
+            : role === "doctor"
+              ? makeHarness({ "ak-doctor-case": "/case" })
+              : makeHarness();
+        let auditCalls = 0;
+        let selectedDecision = decision;
+        const complete = async (_model: unknown, _request: Context) => {
+          auditCalls += 1;
+          return fauxAssistantMessage(fauxToolCall(toolNames[role], selectedDecision), { stopReason: "toolUse" });
+        };
+        const auditCompliance = (input: any, options: any) => {
+          if (role === "judge") return judge.createPiJudgeAuditor(complete)(input, options);
+          if (role === "fixer") return fixer.createPiFixerAuditor(complete)(input, options);
+          if (role === "reviewer") return reviewer.createPiReviewerAuditor(complete)(input, options);
+          return doctor.createPiDoctorAuditor(complete)(input, options);
+        };
+        let runtime: any;
+        if (role === "judge") {
+          runtime = judgeRole.createJudgeRoleRuntime(harness.pi, {
+            loadSoul: async () => "judge law",
+            transcriptFromContext: () => "judge transcript",
+            auditSoulCompliance: auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else if (role === "fixer") {
+          runtime = workerRole.createFixerRoleRuntime(harness.pi, {
+            loadSoul: async () => "fixer law",
+            loadPacket: async () => "repair packet",
+            transcriptFromContext: () => "fixer transcript",
+            auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else if (role === "doctor") {
+          runtime = doctorRole.createDoctorRoleRuntime(harness.pi, {
+            loadSoul: async () => "doctor law",
+            loadCase: async () => patient,
+            auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        } else {
+          const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
+          runtime = reviewerRole.createReviewerRoleRuntime(harness.pi, {
+            loadSoul: async () => "reviewer law",
+            loadTask: async () => taskBytes,
+            loadCapabilities: async () => capabilities,
+            loadCanonicalSkillBinding: async () => ({
+              name: "code-review",
+              snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: promptIdentity.reviewerPromptIdentity(skill) },
+              invocation: (request: string) => request,
+              captureExpansion: () => undefined,
+            }),
+            createPinnedGitReader: async () => ({ pin, snapshot: async () => pin, resolve: async () => "base", range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }), material: async () => new TextEncoder().encode("material") }),
+            hostTools: () => ["read"],
+            runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
+            auditCompliance,
+          }, { failInfrastructure(error: unknown) { throw error; } });
+        }
+        return {
+          harness,
+          runtime,
+          setDecision(next: typeof pass | typeof revise | typeof escalation) { selectedDecision = next; },
+          get auditCalls() { return auditCalls; },
+        };
+      };
+
+      for (const role of ["judge", "fixer", "reviewer", "doctor"] as const) {
+        const retriable = createRole(role, revise);
+        await retriable.runtime.activate();
+        const tool = retriable.harness.tools.get(role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME);
+        assert.ok(tool);
+        await assert.rejects(tool.execute(`${role}-revise`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-revise`)), /violation|violates its|closed contract/);
+        retriable.setDecision(pass);
+        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-pass`));
+        assert.equal(accepted.terminate, true);
+        if (role === "judge") assert.equal(accepted.details.judgeStatus, outputs[role].judgeStatus);
+        else assert.equal(accepted.details.status, outputs[role].status);
+        if (role !== "reviewer") assert.deepEqual(accepted.details, outputs[role]);
+        assert.equal(retriable.auditCalls, 2, `${role} must audit the rejected submission and its resubmission`);
+
+        const escalated = createRole(role, escalation);
+        await escalated.runtime.activate();
+        const escalationTool = escalated.harness.tools.get(tool.name);
+        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`));
+        assert.equal(result.terminate, true);
+        assert.deepEqual(result.details, {
+          kind: "audit_escalation",
+          conflicts: escalation.conflicts,
+          decisionGate: escalation.decisionGate,
+        });
+        assert.equal(isAuditEscalationResult(result.details), true);
+        assert.throws(
+          () => terminating.validateAcceptedDetails(acceptedNames[role], result.details),
+          (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
+        );
+        assert.equal(escalated.auditCalls, 1);
+      }
+      });
     },
   );
 });
@@ -274,7 +582,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
             return fauxAssistantMessage(
               fauxToolCall(
                 SOUL_AUDIT_TOOL_NAME,
-                { status: "pass", violations: [] },
+                { status: "pass", violations: [], conflicts: [], decisionGate: null },
                 { id: "audit-pass" },
               ),
               { stopReason: "toolUse" },
@@ -348,6 +656,101 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
             ).length,
           1,
           "terminate ends the real Pi lifecycle without a follow-up provider turn",
+        );
+      });
+    },
+  );
+});
+
+test("packaged judge escalation terminates with one typed human decision and no follow-up turn", async () => {
+  const manifest = await loadRawPackageManifest();
+  await withHermeticHome(
+    { prefix: "ak-judge-escalation-integration-" },
+    async ({ agentDir }) => {
+      const faux = fauxProvider({
+        api: "ak-judge-escalation-offline",
+        provider: "ak-judge-escalation-offline",
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      await withInProcessPi({
+        cwd: packageRoot,
+        agentDir,
+        faux,
+        additionalExtensionPaths: [packageEntrypoint(manifest)],
+        systemPrompt: "JUDGE ESCALATION INTEGRATION PROMPT",
+        mode: "print",
+        flags: { "ak-role": "judge" },
+        noTools: "builtin",
+      }, async ({ session, sessionManager }) => {
+        faux.setResponses([
+          fauxAssistantMessage(
+            fauxToolCall(
+              JUDGE_OUTPUT_TOOL_NAME,
+              { judgeStatus: "converged" },
+              { id: "escalating-judge" },
+            ),
+            { stopReason: "toolUse" },
+          ),
+          fauxAssistantMessage(
+            fauxToolCall(
+              SOUL_AUDIT_TOOL_NAME,
+              {
+                status: "escalate",
+                violations: [],
+                conflicts: ["Soul authority conflicts with controlling authority"],
+                decisionGate: {
+                  question: "Which authority governs this verdict?",
+                  options: ["Soul", "Controlling authority"],
+                },
+              },
+              { id: "audit-escalation" },
+            ),
+            { stopReason: "toolUse" },
+          ),
+        ]);
+        await session.prompt("Exercise packaged audit escalation.");
+
+        const result = sessionManager
+          .getEntries()
+          .find(
+            (entry) =>
+              entry.type === "message" &&
+              entry.message.role === "toolResult" &&
+              entry.message.toolCallId === "escalating-judge",
+          );
+        if (!(result?.type === "message" && result.message.role === "toolResult")) {
+          throw new Error("packaged Judge escalation tool result is missing");
+        }
+        const toolResult = result.message;
+        assert.equal(toolResult.isError, false);
+        assert.deepEqual(toolResult.details, {
+          kind: "audit_escalation",
+          conflicts: ["Soul authority conflicts with controlling authority"],
+          decisionGate: {
+            question: "Which authority governs this verdict?",
+            options: ["Soul", "Controlling authority"],
+          },
+        });
+        assert.equal(isAuditEscalationResult(toolResult.details), true);
+        assert.throws(
+          () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),
+          (error: unknown) => error instanceof Error && error.name === "AcceptedDetailsContractError",
+        );
+        assert.equal(faux.state.callCount, 2);
+        assert.equal(faux.getPendingResponseCount(), 0);
+        assert.equal(
+          sessionManager
+            .getEntries()
+            .filter(
+              (entry) =>
+                entry.type === "message" &&
+                entry.message.role === "assistant" &&
+                entry.message.content.some(
+                  (part) =>
+                    part.type === "toolCall" && part.id === "escalating-judge",
+                ),
+            ).length,
+          1,
         );
       });
     },
@@ -753,7 +1156,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
               }),
               { stopReason: "toolUse" },
             ),
-            fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [] }), { stopReason: "toolUse" }),
+            fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
           ]);
           await session.prompt(`Accept a sole Fixer output in ${phase}.`);
           const accepted = sessionManager.getEntries().find(

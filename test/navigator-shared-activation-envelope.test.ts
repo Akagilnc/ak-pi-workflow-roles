@@ -70,7 +70,6 @@ function harness(failure?: Failure) {
     loadNavigatorSoul: async () => failure === "soul" ? "   " : "NAVIGATOR LAW",
     loadNavigatorSnapshot: async () => failure === "snapshot" ? { ...snapshot, digest: "0".repeat(64) } : snapshot,
     loadNavigatorEvidence: async () => failure === "evidence" ? new Map() : new Map([["h", bytes]]),
-    auditNavigatorCompliance: async () => ({ status: "pass" }),
   })(pi as unknown as ExtensionAPI);
   const ctx = { mode: "interactive", cwd: "/r", abort() { aborts += 1; } } as unknown as ExtensionContext;
   return {

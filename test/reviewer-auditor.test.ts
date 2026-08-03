@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -6,7 +7,7 @@ import {
   fauxToolCall,
   type Context,
 } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import {
   REVIEWER_AUDIT_TOOL_NAME,
@@ -45,6 +46,7 @@ const context = {
     async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
     async getApiKeyAndHeaders() { return { ok: true, apiKey: "secret" }; },
   },
+  sessionManager: SessionManager.inMemory(),
 } as unknown as ExtensionContext;
 
 test("Reviewer auditor receives complete method inputs and has only its decision tool", async () => {
@@ -52,7 +54,7 @@ test("Reviewer auditor receives complete method inputs and has only its decision
   const audit = createPiReviewerAuditor(async (_model, request) => {
     seen = request;
     return fauxAssistantMessage(
-      fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, { status: "pass", violations: [] }),
+      fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
       { stopReason: "toolUse" },
     );
   });
@@ -69,12 +71,10 @@ test("Reviewer auditor receives complete method inputs and has only its decision
     "Inspect the pinned diff",
   ]) assert.match(serialized, new RegExp(expected));
   assert.match(textOfAuditContext(seen), /"dispatchIdentity":"dispatch-1"/);
-  assert.match(seen?.systemPrompt ?? "", /not a second substantive reviewer/i);
-  assert.match(seen?.systemPrompt ?? "", /Do not discover findings, rerank axes/i);
-  assert.match(seen?.systemPrompt ?? "", /package adapter controls.*output mechanics/i);
-  assert.match(seen?.systemPrompt ?? "", /Cross-axis material access or citation is lawful/i);
-  assert.match(seen?.systemPrompt ?? "", /revise for a second-axis assessment, finding count, conclusion, or section/i);
-  assert.match(seen?.systemPrompt ?? "", /Never apply source allowlists, parse prose mechanically/i);
+  assert.equal(
+    seen?.systemPrompt,
+    await readFile(new URL("../souls/reviewer-auditor.md", import.meta.url), "utf8"),
+  );
 });
 
 function textOfAuditContext(seen: Context | undefined): string {
@@ -108,6 +108,8 @@ test("Reviewer auditor enforces exact pass or revise decisions", async () => {
     fauxToolCall(REVIEWER_AUDIT_TOOL_NAME, {
       status: "revise",
       violations: ["Axis aggregation is not traceable"],
+      conflicts: [],
+      decisionGate: null,
     }),
     { stopReason: "toolUse" },
   ));

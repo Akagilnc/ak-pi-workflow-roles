@@ -1,13 +1,79 @@
-import { StringEnum, uuidv7, } from "@earendil-works/pi-ai";
+import { uuidv7, } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
+const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
+const decisionGateSchema = Type.Object({
+    question: nonblank,
+    options: Type.Array(nonblank, { minItems: 1 }),
+}, { additionalProperties: false });
+/**
+ * Codex requires the registered function parameters to be an object at the
+ * root. Status-dependent field combinations are checked by the shared parser
+ * below because JSON Schema cannot express this contract without a root union.
+ */
+export const complianceDecisionSchema = Type.Object({
+    status: Type.Union([
+        Type.Literal("pass"),
+        Type.Literal("revise"),
+        Type.Literal("escalate"),
+    ]),
+    violations: Type.Array(nonblank),
+    conflicts: Type.Array(nonblank),
+    decisionGate: Type.Union([decisionGateSchema, Type.Null()]),
+}, { additionalProperties: false });
+const complianceDecisionArgumentInstructions = [
+    "Call the supplied decision tool exactly once with all four required fields.",
+    'pass: {"status":"pass","violations":[],"conflicts":[],"decisionGate":null}',
+    'revise: {"status":"revise","violations":["non-blank violation"],"conflicts":[],"decisionGate":null}',
+    'escalate: {"status":"escalate","violations":[],"conflicts":["non-blank conflict"],"decisionGate":{"question":"non-blank question","options":["non-blank option"]}}',
+    "Use the neutral values shown for fields not used by the selected status.",
+].join("\n");
+function complianceToolChoice(model, toolName) {
+    switch (model.api) {
+        case "anthropic-messages":
+        case "bedrock-converse-stream":
+            return { type: "tool", name: toolName };
+        case "mistral-conversations":
+        case "openai-completions":
+        case "pi-messages":
+            return { type: "function", function: { name: toolName } };
+        case "azure-openai-responses":
+        case "openai-responses":
+            return { type: "function", name: toolName };
+        case "google-generative-ai":
+        case "google-vertex":
+            return "any";
+        case "openai-codex-responses":
+            return "required";
+        default:
+            return "required";
+    }
+}
+function singleComplianceToolCallPayload(model, toolName) {
+    switch (model.api) {
+        case "azure-openai-responses":
+        case "openai-completions":
+        case "openai-codex-responses":
+        case "openai-responses":
+            return (payload) => {
+                if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+                    return payload;
+                }
+                return {
+                    ...payload,
+                    parallel_tool_calls: false,
+                    tool_choice: complianceToolChoice(model, toolName),
+                };
+            };
+        default:
+            return undefined;
+    }
+}
 export function createComplianceDecisionTool(name, description) {
     return {
         name,
         description,
-        parameters: Type.Object({
-            status: StringEnum(["pass", "revise"]),
-            violations: Type.Array(Type.String({ minLength: 1 })),
-        }, { additionalProperties: false }),
+        parameters: complianceDecisionSchema,
         constrainedSampling: {
             type: "json_schema",
             strict: "prefer",
@@ -41,40 +107,139 @@ export async function prepareComplianceDispatch(model, context, label) {
         },
     };
 }
+export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response";
+export class ComplianceDecisionContractError extends Error {
+    details;
+    constructor(message, details) {
+        super(message);
+        this.details = details;
+        this.name = "ComplianceDecisionContractError";
+    }
+}
+export class ComplianceResponseRetentionError extends Error {
+    constructor(message, options) {
+        super(message, options);
+        this.name = "ComplianceResponseRetentionError";
+    }
+}
+function complianceDecisionFacts(response, toolName, calls) {
+    return {
+        expectedDecisionToolName: toolName,
+        observedToolCallCount: calls.length,
+        observedToolNames: calls.map((call) => call.name),
+        responseStopReason: response.stopReason,
+        provider: response.provider,
+        model: response.model,
+        responseModel: response.responseModel ?? null,
+        errorMessage: response.errorMessage ?? null,
+        diagnostics: response.diagnostics ?? [],
+    };
+}
+function malformedComplianceDecision(response, toolName, invalidLabel, reason, calls) {
+    return new ComplianceDecisionContractError(`${invalidLabel}: ${reason}`, complianceDecisionFacts(response, toolName, calls));
+}
+function isArrayOfStrings(value) {
+    return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+function validateStatusDependentDecision(decision, response, toolName, invalidLabel, calls) {
+    const reject = (reason) => {
+        throw malformedComplianceDecision(response, toolName, invalidLabel, reason, calls);
+    };
+    switch (decision.status) {
+        case "pass": {
+            const { violations, conflicts, decisionGate } = decision;
+            if (!isArrayOfStrings(violations) ||
+                !isArrayOfStrings(conflicts) ||
+                violations.length !== 0 ||
+                conflicts.length !== 0 ||
+                decisionGate !== null) {
+                reject("arguments do not match the pass decision contract");
+            }
+            return { status: "pass", violations };
+        }
+        case "revise": {
+            const { violations, conflicts, decisionGate } = decision;
+            if (!isArrayOfStrings(violations) ||
+                !isArrayOfStrings(conflicts) ||
+                violations.length === 0 ||
+                conflicts.length !== 0 ||
+                decisionGate !== null) {
+                reject("arguments do not match the revise decision contract");
+            }
+            return { status: "revise", violations };
+        }
+        case "escalate": {
+            const { violations, conflicts, decisionGate } = decision;
+            if (!isArrayOfStrings(violations) ||
+                !isArrayOfStrings(conflicts) ||
+                violations.length !== 0 ||
+                conflicts.length === 0 ||
+                decisionGate === null) {
+                reject("arguments do not match the escalate decision contract");
+            }
+            const validDecisionGate = decisionGate ?? reject("arguments do not match the escalate decision contract");
+            return { status: "escalate", conflicts, decisionGate: validDecisionGate };
+        }
+    }
+}
+/**
+ * Retain the provider's structured response as extension state, not a
+ * conversational message. A missing or failed append is an infrastructure
+ * failure because the nested response is mandatory audit evidence.
+ */
+function retainComplianceResponse(context, response) {
+    const sessionManager = context.sessionManager;
+    if (typeof sessionManager?.appendCustomEntry !== "function") {
+        throw new ComplianceResponseRetentionError("compliance response retention is unavailable");
+    }
+    try {
+        sessionManager.appendCustomEntry(COMPLIANCE_RESPONSE_ENTRY_TYPE, {
+            version: 1,
+            response,
+        });
+    }
+    catch (error) {
+        throw new ComplianceResponseRetentionError("compliance response retention failed", { cause: error });
+    }
+}
 export function readComplianceDecision(response, toolName, invalidLabel) {
     const calls = response.content.filter((part) => part.type === "toolCall");
+    if (response.stopReason === "error" || response.stopReason === "aborted") {
+        throw malformedComplianceDecision(response, toolName, invalidLabel, `provider response terminated with stopReason ${response.stopReason}`, calls);
+    }
     const call = calls[0];
     if (calls.length !== 1 ||
         call?.type !== "toolCall" ||
         call.name !== toolName) {
-        throw new Error(`${invalidLabel}: expected exactly one decision tool call`);
+        throw malformedComplianceDecision(response, toolName, invalidLabel, "expected exactly one decision tool call", calls);
     }
     const arguments_ = call.arguments;
     if (typeof arguments_ !== "object" ||
         arguments_ === null ||
         Array.isArray(arguments_)) {
-        throw new Error(`${invalidLabel}: arguments must be an object`);
+        throw malformedComplianceDecision(response, toolName, invalidLabel, "arguments must be an object", calls);
     }
-    const decision = arguments_;
-    const keys = Object.keys(decision);
-    if (keys.length !== 2 ||
-        !keys.includes("status") ||
-        !keys.includes("violations")) {
-        throw new Error(`${invalidLabel}: arguments must have exact keys`);
+    if (!Value.Check(complianceDecisionSchema, arguments_)) {
+        throw malformedComplianceDecision(response, toolName, invalidLabel, "arguments do not match the decision schema", calls);
     }
-    const status = decision["status"];
-    const violations = decision["violations"];
-    if (!Array.isArray(violations) ||
-        !violations.every((value) => typeof value === "string" && value.trim().length > 0)) {
-        throw new Error(`${invalidLabel}: violations must be non-blank strings`);
+    const decision = validateStatusDependentDecision(arguments_, response, toolName, invalidLabel, calls);
+    switch (decision.status) {
+        case "pass":
+            return { status: "pass", usage: response.usage };
+        case "revise":
+            return {
+                status: "revise",
+                violations: decision.violations,
+                usage: response.usage,
+            };
+        case "escalate":
+            return {
+                status: "escalate",
+                conflicts: decision.conflicts,
+                decisionGate: decision.decisionGate,
+                usage: response.usage,
+            };
     }
-    if (status === "pass" && violations.length === 0) {
-        return { status: "pass", usage: response.usage };
-    }
-    if (status === "revise" && violations.length > 0) {
-        return { status: "revise", violations, usage: response.usage };
-    }
-    throw new Error(`${invalidLabel}: pass requires no violations and revise requires violations`);
 }
 export async function runComplianceAudit(options) {
     const model = options.context.model;
@@ -90,12 +255,16 @@ export async function runComplianceAudit(options) {
             }
             return provider.stream(auditModel, context, request).result();
         });
+    const onPayload = singleComplianceToolCallPayload(dispatch.model, options.tool.name);
     const response = await complete(dispatch.model, {
         systemPrompt: options.systemPrompt,
         messages: [
             {
                 role: "user",
-                content: [{ type: "text", text: options.serializedInput }],
+                content: [{
+                        type: "text",
+                        text: `${options.serializedInput}\n<decision_tool_contract>\n${complianceDecisionArgumentInstructions}\n</decision_tool_contract>`,
+                    }],
                 timestamp: Date.now(),
             },
         ],
@@ -105,7 +274,10 @@ export async function runComplianceAudit(options) {
         maxTokens: 2048,
         cacheRetention: "none",
         sessionId: uuidv7(),
+        toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
+        ...(onPayload === undefined ? {} : { onPayload }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
+    retainComplianceResponse(options.context, response);
     return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
 }

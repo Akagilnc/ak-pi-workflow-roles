@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import {
@@ -138,6 +138,49 @@ export async function packIsolatedPackage(
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+export interface ColdInstalledPackage {
+  fixture: string;
+  pack: IsolatedPackResult;
+  installedRoot: string;
+  installed(relativePath: string): Promise<any>;
+}
+
+/**
+ * Pack and install the current package into a private consumer directory.
+ * This is test-only lifecycle setup; callers own the installed behavior assertions.
+ */
+export async function withColdInstalledPackage<T>(
+  home: string,
+  scenario: (fixture: ColdInstalledPackage) => Promise<T>,
+): Promise<T> {
+  const fixture = resolve(home, "consumer");
+  await mkdir(fixture, { recursive: true });
+  const pack = await packIsolatedPackage(home);
+  await writeFile(
+    resolve(fixture, "package.json"),
+    JSON.stringify({
+      private: true,
+      type: "module",
+      dependencies: {
+        "@ak/pi-workflow-roles": `file:${pack.tarball}`,
+        "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
+        "@earendil-works/pi-coding-agent": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")}`,
+        typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
+      },
+    }),
+  );
+  await execFileAsync(
+    "npm",
+    ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+    { cwd: fixture, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
+  );
+
+  const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");
+  const installed = (relativePath: string) =>
+    import(pathToFileURL(resolve(installedRoot, relativePath)).href);
+  return await scenario({ fixture, pack, installedRoot, installed });
 }
 
 export interface RawPackageManifest {
