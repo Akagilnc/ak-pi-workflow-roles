@@ -1357,8 +1357,10 @@ test("edited review after deadline cannot prove unavailable via backdated submit
 });
 
 test("receipt and ledger overflow latch fatal infrastructure failure", async () => {
+  // Injectable few-KiB materialization cap (production default stays COLLECTOR_RECEIPT_MAX_BYTES).
+  const receiptMaxBytes = 4_096;
   const clock = clockAt("2024-01-01T00:10:00Z");
-  const ledger = createCollectorLedger(baseConfig());
+  const ledger = createCollectorLedger({ ...baseConfig(), receiptMaxBytes });
   ledger.recordActivation(clock);
   const transport = createFakeGitHubTransport({
     user: sampleUser(),
@@ -1368,9 +1370,8 @@ test("receipt and ledger overflow latch fatal infrastructure failure", async () 
     reviewComments: [],
   });
 
-  // Grow ledger materialization past 32 MiB; observe must latchFatal (not model-retriable).
   let overflowed = false;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 8; i++) {
     transport.state.reviews = [
       sampleReview({
         id: 99,
@@ -1378,7 +1379,7 @@ test("receipt and ledger overflow latch fatal infrastructure failure", async () 
         state: "COMMENTED",
         commitId: "head-c",
         submittedAt: "2024-01-01T00:00:00Z",
-        body: `${"Z".repeat(2_000_000)}-${i}`,
+        body: `${"Z".repeat(800)}-${i}`,
       }),
     ];
     try {
@@ -1387,13 +1388,13 @@ test("receipt and ledger overflow latch fatal infrastructure failure", async () 
       overflowed = true;
       assert.equal(ledger.fatal, true);
       assert.ok(error instanceof Error);
-      assert.match(error.message, /32|bytes|ledger|receipt/i);
+      assert.match(error.message, new RegExp(`${receiptMaxBytes}|bytes|ledger|receipt`, "i"));
       assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
       break;
     }
   }
   assert.equal(overflowed, true);
-  assert.ok(COLLECTOR_RECEIPT_MAX_BYTES === 32 * 1024 * 1024);
+  assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
 });
 
 // ---------------------------------------------------------------------------
@@ -1725,57 +1726,8 @@ test("F2-latestRelevant-recovered-then-succeeded", async () => {
   assert.deepEqual(legB.evidenceRefs, reportB.evidenceRefs);
 });
 
-test("F2 two-leg missing contamination: request only a", async () => {
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const transport = createFakeGitHubTransport({
-    user: sampleUser("collector-bot"),
-    pullRequest: samplePull({ headOid: "head-a" }),
-    reviews: [],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(twoLegConfig());
-  ledger.recordActivation(clock);
-  const first = (await ledger.observe(transport, clock)).snapshot;
-  const req = await ledger.request(
-    { legId: "a", snapshotId: first.snapshotId },
-    transport,
-    clock,
-  ) as { status: string; commentEvidenceId?: string };
-  assert.equal(req.status, "succeeded");
-  clock.advance(16 * 60 * 1000);
-  const final = (await ledger.observe(transport, clock)).snapshot;
-  const attempt = ledger.requestAttempts().find((t) => t.legId === "a")!;
-  const receipt = buildCollectorReceipt(ledger, {
-    legs: [
-      {
-        legId: "a",
-        status: "missing",
-        rationale: "a",
-        evidenceRefs: [final.snapshotId],
-      },
-      {
-        legId: "b",
-        status: "missing",
-        rationale: "b",
-        evidenceRefs: [final.snapshotId],
-      },
-    ],
-  }, clock);
-  const legA = receipt.legs.find((l) => l.legId === "a")!;
-  const legB = receipt.legs.find((l) => l.legId === "b")!;
-  const termA = receipt.reports.find((r) =>
-    r.kind === "terminal-fact" && r.legId === "a"
-  )!;
-  const termB = receipt.reports.find((r) =>
-    r.kind === "terminal-fact" && r.legId === "b"
-  )!;
-  assert.ok(legA.evidenceRefs.includes(attempt.commentEvidenceId!));
-  assert.deepEqual(legA.evidenceRefs, termA.evidenceRefs);
-  assert.equal(legB.evidenceRefs.includes(attempt.commentEvidenceId!), false);
-  assert.equal(legB.evidenceRefs.includes(attempt.snapshotId), false);
-  assert.deepEqual(legB.evidenceRefs, termB.evidenceRefs);
-});
+// F2 two-leg missing contamination absorbed by F2-latestRelevant-recovered-then-succeeded
+// (leg-owned refs ≡ terminal-fact refs + cross-leg non-contamination).
 
 test("F2 M1-M3b missing decoys fail closed one at a time", async () => {
   const clock = clockAt("2024-01-01T00:00:00Z");
@@ -2142,133 +2094,91 @@ test("F2 U1-U5 unavailable mandated decoys fail closed one at a time", async () 
 // F3 §3.1 timestamp-less review + retention
 // ---------------------------------------------------------------------------
 
-test("F3-timestamp-less-review-state", async () => {
-  const clock = clockAt("2024-01-01T00:10:00Z");
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull({ headOid: "head-c" }),
-    reviews: [
-      sampleReview({
-        id: 1,
-        userLogin: "codexbot",
-        state: "APPROVED",
-        body: "LGTM",
-        commitId: "head-c",
-        submittedAt: "2024-01-01T00:00:00Z",
-        raw: {},
-      }),
-    ],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(baseConfig());
-  ledger.recordActivation(clock);
-  await ledger.observe(transport, clock);
-  const first = ledger.allEvidence().find((r) =>
-    r.kind === "review" && r.state === "APPROVED"
-  )!;
-  assert.equal(first.authoritativeTime, "2024-01-01T00:00:00Z");
-  assert.equal(first.windowRelation, "before");
-
-  transport.state.reviews = [
-    sampleReview({
+test("F3-timestamp-less review edit loses authoritativeTime (state and text)", async () => {
+  // One contract, 2-cell trigger matrix: state edit blocks valid; text edit blocks unavailable.
+  // Retention of prior versions is owned by dedicated F3 retention tests.
+  for (const cell of [
+    {
       id: 1,
-      userLogin: "codexbot",
-      state: "DISMISSED",
-      body: "LGTM",
-      commitId: "head-c",
-      submittedAt: "2024-01-01T00:00:00Z",
-      raw: {},
-    }),
-  ];
-  await ledger.observe(transport, clock);
-  const later = ledger.allEvidence().find((r) =>
-    r.kind === "review" && r.state === "DISMISSED"
-  )!;
-  assert.notEqual(later.versionId, first.versionId);
-  assert.equal(later.authoritativeTime, null);
-  assert.equal(later.windowRelation, "uncertain");
-  assert.ok(
-    ledger.allEvidence().some((r) =>
-      r.kind === "review" && r.versionId === first.versionId
-    ),
-  );
-  assert.throws(
-    () => buildCollectorReceipt(ledger, {
-      legs: [{
+      first: { state: "APPROVED" as const, body: "LGTM" },
+      later: { state: "DISMISSED" as const, body: "LGTM" },
+      pickFirst: (r: { kind: string; state?: string }) => r.kind === "review" && r.state === "APPROVED",
+      pickLater: (r: { kind: string; state?: string }) => r.kind === "review" && r.state === "DISMISSED",
+      claim: {
         legId: "codex",
-        status: "valid",
+        status: "valid" as const,
         rationale: "dismissed only",
-        evidenceRefs: [later.evidenceId],
-      }],
-    }, clock),
-    /qualifying|valid/i,
-  );
-});
+        evidenceRefs: [] as string[],
+      },
+      diagnostic: /qualifying|valid/i,
+      assertStableId: false,
+    },
+    {
+      id: 2,
+      first: { state: "COMMENTED" as const, body: "still looking" },
+      later: { state: "COMMENTED" as const, body: "I will not review this PR" },
+      pickFirst: (r: { kind: string; body?: string }) => r.kind === "review" && r.body === "still looking",
+      pickLater: (r: { kind: string; body?: string }) =>
+        r.kind === "review" && r.body === "I will not review this PR",
+      claim: {
+        legId: "codex",
+        status: "unavailable" as const,
+        rationale: "uncertain text",
+        evidenceRefs: [] as string[],
+        unavailableScope: "target" as const,
+      },
+      diagnostic: /unavailable|eligible|window/i,
+      assertStableId: true,
+    },
+  ]) {
+    const clock = clockAt("2024-01-01T00:10:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "head-c" }),
+      reviews: [
+        sampleReview({
+          id: cell.id,
+          userLogin: "codexbot",
+          state: cell.first.state,
+          body: cell.first.body,
+          commitId: "head-c",
+          submittedAt: "2024-01-01T00:00:00Z",
+          raw: {},
+        }),
+      ],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const ledger = createCollectorLedger(baseConfig());
+    ledger.recordActivation(clock);
+    await ledger.observe(transport, clock);
+    const first = ledger.allEvidence().find(cell.pickFirst)!;
+    assert.equal(first.authoritativeTime, "2024-01-01T00:00:00Z");
+    assert.equal(first.windowRelation, "before");
 
-test("F3-timestamp-less-review-text", async () => {
-  const clock = clockAt("2024-01-01T00:10:00Z");
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull({ headOid: "head-c" }),
-    reviews: [
+    transport.state.reviews = [
       sampleReview({
-        id: 2,
+        id: cell.id,
         userLogin: "codexbot",
-        state: "COMMENTED",
-        body: "still looking",
+        state: cell.later.state,
+        body: cell.later.body,
         commitId: "head-c",
         submittedAt: "2024-01-01T00:00:00Z",
         raw: {},
       }),
-    ],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(baseConfig());
-  ledger.recordActivation(clock);
-  await ledger.observe(transport, clock);
-  const first = ledger.allEvidence().find((r) =>
-    r.kind === "review" && r.body === "still looking"
-  )!;
-  assert.equal(first.authoritativeTime, "2024-01-01T00:00:00Z");
-  assert.equal(first.windowRelation, "before");
-
-  transport.state.reviews = [
-    sampleReview({
-      id: 2,
-      userLogin: "codexbot",
-      state: "COMMENTED",
-      body: "I will not review this PR",
-      commitId: "head-c",
-      submittedAt: "2024-01-01T00:00:00Z",
-      raw: {},
-    }),
-  ];
-  await ledger.observe(transport, clock);
-  const later = ledger.allEvidence().find((r) =>
-    r.kind === "review" && r.body === "I will not review this PR"
-  )!;
-  assert.equal(later.authoritativeTime, null);
-  assert.equal(later.windowRelation, "uncertain");
-  assert.equal(later.stableGitHubId, "review:2");
-  assert.ok(
-    ledger.allEvidence().some((r) =>
-      r.kind === "review" && r.body === "still looking"
-    ),
-  );
-  assert.throws(
-    () => buildCollectorReceipt(ledger, {
-      legs: [{
-        legId: "codex",
-        status: "unavailable",
-        rationale: "uncertain text",
-        evidenceRefs: [later.evidenceId],
-        unavailableScope: "target",
-      }],
-    }, clock),
-    /unavailable|eligible|window/i,
-  );
+    ];
+    await ledger.observe(transport, clock);
+    const later = ledger.allEvidence().find(cell.pickLater)!;
+    assert.equal(later.authoritativeTime, null);
+    assert.equal(later.windowRelation, "uncertain");
+    if (cell.assertStableId) assert.equal(later.stableGitHubId, "review:2");
+    assert.throws(
+      () => buildCollectorReceipt(ledger, {
+        legs: [{ ...cell.claim, evidenceRefs: [later.evidenceId] }],
+      }, clock),
+      cell.diagnostic,
+    );
+  }
 });
 
 test("F3 v3 before-deadline comment edit after deadline", async () => {

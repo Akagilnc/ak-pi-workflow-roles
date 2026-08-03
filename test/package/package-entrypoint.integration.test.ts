@@ -763,6 +763,8 @@ test("cold-installed live help follows the loaded extension and changes on the n
             env: process.env,
             ...(options.timeout === undefined ? {} : { timeoutMs: options.timeout }),
           });
+          assert.equal(result.timedOut, false, "cold-installed role --help must not time out");
+          assert.equal(result.code, 0, "cold-installed role --help must exit 0");
           return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr, killed: result.timedOut };
         };
         await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${firstMarker}:`));

@@ -18,7 +18,6 @@ import {
 import {
   getSharedIsolatedPack,
   packageRoot,
-  runPiSubprocess,
   withColdInstalledPackage,
   withHermeticHome,
   withInProcessPi,
@@ -191,16 +190,5 @@ exit 2
   }
 });
 
-test("packaged collector help subprocess succeeds", async () => {
-  const result = await runPiSubprocess(
-    [
-      "--no-extensions",
-      "-e",
-      resolve(packageRoot, "extensions/role-runtime.ts"),
-      "--help",
-    ],
-    { cwd: packageRoot },
-  );
-  assert.equal(result.timedOut, false, "collector help subprocess did not time out");
-  assert.equal(result.code, 0);
-});
+// packaged collector --help exit-0 absorbed into package-entrypoint cold-installed
+// live help (real runPiSubprocess --help asserts timedOut===false && code===0).

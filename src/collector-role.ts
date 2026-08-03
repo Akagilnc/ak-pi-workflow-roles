@@ -67,6 +67,8 @@ export type CollectorRoleDependencies = {
   createTransport(): CollectorGitHubTransport;
   createClock?(): CollectorClock;
   packageExtensionPath?: string;
+  /** Test-only: optional cumulative receipt/materialization ceiling. */
+  receiptMaxBytes?: number;
 };
 
 export type CollectorRoleHostActions = {
@@ -582,6 +584,9 @@ export function createCollectorRoleRuntime(
           repository,
           prNumber,
           manifest,
+          ...(dependencies.receiptMaxBytes === undefined
+            ? {}
+            : { receiptMaxBytes: dependencies.receiptMaxBytes }),
         });
 
       activation = {
