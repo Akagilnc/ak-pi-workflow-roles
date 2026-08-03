@@ -1554,8 +1554,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         authority: entry.data?.authority,
         currentRole: entry.data?.currentRole,
       })), [
-        { subjectKey: sharedSubjectKey, subject: "Concrete coder task for the same ad-hoc journey.\n", authority: "owner authority: keep the work bounded\n", currentRole: { role: "coder", phase: "plan" } },
-        { subjectKey: sharedSubjectKey, subject: "Concrete fixer packet for the same ad-hoc journey.\n", authority: "owner authority: keep the work bounded\n", currentRole: { role: "fixer", phase: "plan" } },
+        { subjectKey: sharedSubjectKey, subject: "Concrete coder task for the same ad-hoc journey.\n", authority: "Concrete coder task for the same ad-hoc journey.\n", currentRole: { role: "coder", phase: "plan" } },
+        { subjectKey: sharedSubjectKey, subject: "Concrete fixer packet for the same ad-hoc journey.\n", authority: "Concrete fixer packet for the same ad-hoc journey.\n", currentRole: { role: "fixer", phase: "plan" } },
       ]);
       const invocations = entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
       assert.deepEqual(invocations.slice(0, 2).map((entry) => ({ role: entry.data?.role, phase: entry.data?.phase, subjectKey: entry.data?.subjectKey })), [
@@ -1587,6 +1587,82 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         SessionManager.continueRecent(otherRoot, navigatorSessionDirectory({ cwd: otherRoot, sessionManager: { getSessionDir: () => "" } } as never, isolatedSubjectKey)).getSessionFile(),
       );
       if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    },
+  );
+});
+
+test("packaged role-input outside /.ak/work/ with no authority file projects exact input bytes", async () => {
+  const manifest = await loadRawPackageManifest();
+  await withHermeticHome(
+    { prefix: "ak-navigator-input-outside-work-" },
+    async ({ home, agentDir }) => {
+      const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      try {
+        const outsideRoot = resolve(home, "outside-work");
+        await mkdir(outsideRoot, { recursive: true });
+        const packetBytes = "Exact fixer packet bytes outside /.ak/work/ with no authority file.\n";
+        const packetPath = resolve(outsideRoot, "fix-packet.md");
+        await writeFile(packetPath, packetBytes, "utf8");
+        const faux = fauxProvider({
+          api: "ak-navigator-input-outside-work",
+          provider: "ak-navigator-input-outside-work",
+          tokenSize: { min: 1000, max: 1000 },
+        });
+        const model = faux.getModel();
+        await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
+        const response = (context: Context) => {
+          const names = context.tools?.map((tool) => tool.name) ?? [];
+          if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+            return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+              candidates: [{
+                id: "outside-work-route",
+                matches: { role: "fixer", phase: "plan", kind: "accepted" },
+                route: [{ role: "fixer", phase: "plan" }, { role: "reviewer", phase: null }],
+                next: { role: "reviewer", phase: null },
+                reason: "outside-work input authority",
+                command: "Usage: pi --ak-role reviewer --help",
+              }],
+            }), { stopReason: "toolUse" });
+          }
+          if (names.includes(FIXER_AUDIT_TOOL_NAME)) {
+            return fauxAssistantMessage(fauxToolCall(FIXER_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+          }
+          return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "outside-work plan" }), { stopReason: "toolUse" });
+        };
+        faux.setResponses([response, response, response]);
+        await withInProcessPi({
+          cwd: outsideRoot,
+          agentDir,
+          faux,
+          additionalExtensionPaths: [packageEntrypoint(manifest)],
+          systemPrompt: "OUTSIDE WORK ROLE INPUT",
+          mode: "json",
+          flags: { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": packetPath },
+          noTools: "builtin",
+        }, async ({ session, sessionManager }) => {
+          await session.prompt("fixer packet lives outside /.ak/work/ with no authority file");
+          const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+          assert.equal(attendance.length, 1, JSON.stringify(sessionManager.getEntries()));
+          const event = (attendance[0] as { details: { disposition: string; unavailableSource?: string } }).details;
+          assert.notEqual(event.disposition, "unavailable");
+          assert.equal(event.disposition, "recommendation");
+          assert.equal(event.unavailableSource, undefined);
+
+          const subjectKey = (attendance[0] as { details: { subjectKey: string } }).details.subjectKey;
+          const navigatorSession = SessionManager.continueRecent(
+            outsideRoot,
+            navigatorSessionDirectory({ cwd: outsideRoot, sessionManager: { getSessionDir: () => "" } } as never, subjectKey),
+          );
+          const entries = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: { authority?: string; subject?: string } });
+          const contexts = entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-context");
+          assert.ok(contexts.length >= 1, JSON.stringify(entries));
+          assert.equal(contexts[0]?.data?.authority, packetBytes);
+          assert.equal(contexts[0]?.data?.subject, packetBytes);
+        });
+      } finally {
+        if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      }
     },
   );
 });
