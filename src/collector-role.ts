@@ -70,7 +70,7 @@ export type CollectorRoleDependencies = {
 };
 
 export type CollectorRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext): never;
+  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
 type CollectorActivation = {
@@ -464,7 +464,7 @@ export function createCollectorRoleRuntime(
             error instanceof Error &&
             (error as { collectorFatal?: boolean }).collectorFatal === true
           ) {
-            hostActions.failInfrastructure(error, ctx);
+            hostActions.failInfrastructure(error, ctx, toolCallId);
           }
           throw error;
         }

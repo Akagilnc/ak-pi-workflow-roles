@@ -340,13 +340,17 @@ test("future arrival is typed and presentation-only", async () => {
 test("session placement is stable, colocated, and isolates ad hoc subjects", () => {
   const base = { cwd: "/repo", sessionManager: { getSessionDir: () => "", getSessionId: () => "x" } } as never;
   const issue = subjectPath("/repo/.ak/work/issues/28/runs/one/session", "/repo");
+  const relativeIssue = subjectPath(".ak/work/issues/28/runs/two/session", "/repo");
   assert.equal(issue, "/repo/.ak/work/issues/28");
+  assert.equal(relativeIssue, issue);
   assert.equal(navigatorSessionDirectory(base, issue), "/repo/.ak/work/issues/28/runs/navigator");
   const issueVariant = navigatorSessionDirectory(base, `${issue}#ad-hoc-subject`);
   assert.equal(issueVariant.startsWith("/repo/.ak/work/issues/28/runs/navigator/"), true);
   assert.notEqual(issueVariant, navigatorSessionDirectory(base, `${issue}#other-subject`));
   const first = navigatorSessionDirectory(base, "/repo/task-a.md");
+  const firstRelative = navigatorSessionDirectory(base, subjectPath("task-a.md", "/repo"));
   const second = navigatorSessionDirectory(base, "/repo/task-b.md");
+  assert.equal(firstRelative, first);
   assert.notEqual(first, second);
   assert.equal(first.startsWith("/repo/.ak/work/navigator/"), true);
   assert.equal(first.includes("/navigator/navigator"), false);

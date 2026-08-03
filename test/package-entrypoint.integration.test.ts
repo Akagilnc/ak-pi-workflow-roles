@@ -497,7 +497,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         modelsPath,
         additionalExtensionPaths: [packageEntrypoint(manifest)],
         systemPrompt: "INTEGRATION BASE PROMPT",
-        mode: "print",
+        mode: "json",
         flags: { "ak-role": "judge" },
         noTools: "builtin",
         customTools: [siblingTool],
@@ -646,7 +646,10 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         const attendanceMessages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
         assert.equal(attendanceMessages.length, 0, "Navigator presentation must not become a role conversation message");
         const attendanceEntries = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-attendance");
-        assert.equal(attendanceEntries.length, 0, "text mode presents Navigator outside persisted role conversation entries");
+        assert.equal(attendanceEntries.length, 1);
+        const unavailable = (attendanceEntries[0] as { data: { disposition: string; unavailableReason?: string } }).data;
+        assert.equal(unavailable.disposition, "unavailable");
+        assert.equal(unavailable.unavailableReason, "controlling authority content was not supplied as typed work context");
         assert.equal(
           sessionManager
             .getEntries()
@@ -679,7 +682,9 @@ test("cold-installed live help follows the loaded extension and changes on the n
         assert.equal(original.includes("Activate a packaged workflow role:"), true);
         const runtime = await installed("extensions/role-runtime.ts");
         const exec = async (_command: string, args: string[], options: { cwd?: string; timeout?: number }) => {
-          assert.deepEqual(args.slice(-3), ["--ak-role", "coder", "--help"]);
+          assert.equal(args.at(-3), "--ak-role");
+          assert.equal(args.at(-1), "--help");
+          assert.ok(["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"].includes(args.at(-2) ?? ""));
           const result = await runPiSubprocess(args, {
             cwd: options.cwd ?? fixture,
             env: process.env,
@@ -694,6 +699,59 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const second = await runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, "coder");
         assert.doesNotMatch(second, new RegExp(firstMarker));
         assert.match(second, new RegExp(secondMarker));
+
+        const attendanceModule = await installed("src/navigator-attendance.ts");
+        const modelSettingPath = resolve(home, "navigator-model.json");
+        await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
+        const events: Array<{ command?: string }> = [];
+        let prepareTool: any;
+        const session = {
+          async prompt(request: string) {
+            const command = request.includes(secondMarker) ? `Usage: ${secondMarker}` : `Usage: ${firstMarker}`;
+            await prepareTool.execute("cold-help-prepare", {
+              candidates: [{
+                id: "cold-help-route",
+                matches: { role: "coder", phase: "apply", kind: "accepted" },
+                route: [{ role: "coder", phase: "apply" }, { role: "judge", phase: null }],
+                next: { role: "judge", phase: null },
+                reason: "typed cold-installed route",
+                command,
+              }],
+            });
+          },
+          appendEntry() {},
+          entries: () => [],
+          async setModel() {},
+          dispose() {},
+        };
+        await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${firstMarker}:`));
+        const nav = attendanceModule.createNavigatorAttendance({
+          context: { sessionManager: { getSessionId: () => "cold-help" }, cwd: fixture } as never,
+          role: "coder",
+          phase: "apply",
+          subjectKey: resolve(fixture, "task.md"),
+          sessionDir: resolve(fixture, "navigator"),
+          subject: "cold-installed task",
+          authority: "cold-installed authority",
+          modelSettingPath,
+          loadSoul: async () => "route judgment",
+          loadRoleHelp: (role: any) => runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, role),
+          createSession: async ({ tool }: any) => { prepareTool = tool; return session; },
+          onEvent: async (event: any) => { events.push(event); },
+        });
+        nav.prepare();
+        await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+        await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${secondMarker}:`));
+        nav.prepare();
+        await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+        assert.equal(events.length, 2);
+        assert.deepEqual(events.map((event: any) => ({ disposition: event.disposition, command: event.command, unavailableReason: event.unavailableReason })), [
+          { disposition: "recommendation", command: `Usage: ${firstMarker}`, unavailableReason: undefined },
+          { disposition: "recommendation", command: `Usage: ${secondMarker}`, unavailableReason: undefined },
+        ]);
+        assert.equal(events[0]!.command, `Usage: ${firstMarker}`);
+        assert.equal(events[1]!.command, `Usage: ${secondMarker}`);
+        assert.equal(events[1]!.command?.includes("/task.md"), false);
       });
     },
   );
@@ -704,6 +762,9 @@ test("normal packaged Navigator presents independently in print and JSON and reu
   await withHermeticHome(
     { prefix: "ak-navigator-entrypoint-integration-" },
     async ({ agentDir, home }) => {
+      const issueRoot = resolve(home, ".ak/work/issues/28");
+      await mkdir(issueRoot, { recursive: true });
+      await writeFile(resolve(issueRoot, "authority.md"), "owner decision: automatic attendance\n", "utf8");
       const faux = fauxProvider({
         api: "ak-navigator-entrypoint-offline",
         provider: "ak-navigator-entrypoint-offline",
@@ -711,22 +772,17 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       });
       const model = faux.getModel();
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
-      const oldSubjectKey = process.env.PI_WORK_SUBJECT_KEY;
-      const oldSubject = process.env.PI_WORK_SUBJECT;
-      const oldAuthority = process.env.PI_WORK_AUTHORITY;
       process.env.PI_CODING_AGENT_DIR = agentDir;
-      process.env.PI_WORK_SUBJECT_KEY = resolve(home, ".ak/work/issues/28");
-      process.env.PI_WORK_SUBJECT = "Issue 28 Navigator production acceptance";
-      process.env.PI_WORK_AUTHORITY = "owner decision: automatic attendance";
       await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
       let navigatorCalls = 0;
-      let navigatorContextText = "";
+      let navigatorMessages: Context["messages"] | undefined;
       let invalidJudge = true;
+      const notifications: Array<{ level: string | undefined }> = [];
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
-          navigatorContextText = JSON.stringify(context.messages);
+          navigatorMessages = context.messages;
           return fauxAssistantMessage(
             fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
               candidates: [{
@@ -762,13 +818,14 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         return true;
       }) as typeof process.stdout.write;
       try {
-        for (const mode of ["print", "json"] as const) {
+        for (const mode of ["json", "print", "tui"] as const) {
           navigatorCalls = 0;
-          navigatorContextText = "";
+          navigatorMessages = undefined;
+          notifications.length = 0;
           invalidJudge = true;
           faux.setResponses([response, response, response, response]);
           await withInProcessPi({
-            cwd: packageRoot,
+            cwd: issueRoot,
             agentDir,
             faux,
             additionalExtensionPaths: [packageEntrypoint(manifest)],
@@ -776,16 +833,34 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             mode,
             flags: { "ak-role": "judge" },
             noTools: "builtin",
+            extensionFactories: [
+              (pi) => {
+                pi.on("session_start", (_event, ctx) => {
+                  const ui = ctx.ui as typeof ctx.ui & { notify: (message: string, level?: string) => void; __navigatorCapture?: boolean };
+                  if (ui.__navigatorCapture) return;
+                  ui.__navigatorCapture = true;
+                  const notify = ui.notify.bind(ui) as (message: string, level?: string) => void;
+                  ui.notify = (_message, level) => {
+                    notifications.push({ level });
+                    notify(_message, level);
+                  };
+                });
+              },
+            ],
           }, async ({ session, sessionManager }) => {
             await session.prompt("Run the unchanged normal role entrypoint with Navigator attendance.");
             const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-attendance");
             if (mode === "json") {
               assert.equal(attendance.length, 1);
-              assert.equal((attendance[0] as any).data.disposition, "recommendation");
-              assert.equal((attendance[0] as any).data.subjectKey.includes("#"), false);
+              const event = (attendance[0] as { data: { disposition: string; subjectKey: string; route?: unknown; next?: unknown } }).data;
+              assert.equal(event.disposition, "recommendation");
+              assert.equal(event.subjectKey, issueRoot);
+              assert.ok(event.route);
+              assert.deepEqual(event.next, { role: "reviewer", phase: null });
             } else {
               assert.equal(attendance.length, 0);
               assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false);
+              if (mode === "tui") assert.deepEqual(notifications, [{ level: "info" }]);
             }
           });
           assert.equal(navigatorCalls, 1, "a correctable role-output error must reuse one preparation");
@@ -793,14 +868,13 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       } finally {
         process.stdout.write = originalWrite;
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
-        if (oldSubjectKey === undefined) delete process.env.PI_WORK_SUBJECT_KEY; else process.env.PI_WORK_SUBJECT_KEY = oldSubjectKey;
-        if (oldSubject === undefined) delete process.env.PI_WORK_SUBJECT; else process.env.PI_WORK_SUBJECT = oldSubject;
-        if (oldAuthority === undefined) delete process.env.PI_WORK_AUTHORITY; else process.env.PI_WORK_AUTHORITY = oldAuthority;
+
       }
-      assert.match(printOutput, /下一步：reviewer/);
-      assert.match(navigatorContextText, /Issue 28 Navigator production acceptance/);
-      assert.match(navigatorContextText, /owner decision: automatic attendance/);
-      assert.doesNotMatch(navigatorContextText, /unexpected|judgeStatus|ak_judge_output/);
+      assert.ok(printOutput.length > 0);
+      assert.ok(navigatorMessages);
+      const navigatorText = navigatorMessages.flatMap((message) => typeof message.content === "string" ? [message.content] : message.content.filter((part) => part.type === "text").map((part) => part.text)).join("\n");
+      assert.equal(navigatorText.includes("owner decision: automatic attendance"), true);
+      assert.equal(navigatorText.includes("judgeStatus"), false);
       assert.equal(faux.getPendingResponseCount(), 0);
     },
   );

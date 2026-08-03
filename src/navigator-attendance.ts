@@ -102,6 +102,7 @@ export type NavigatorPreparationSession = {
 export type NavigatorSessionFactory = (options: {
   context: ExtensionContext;
   sessionDir: string;
+  modelSettingPath?: string;
   tool: ToolDefinition;
 }) => Promise<NavigatorPreparationSession>;
 
@@ -189,7 +190,14 @@ function issueRoot(value: string): string | undefined {
 }
 
 function subjectPath(sessionDir: string, cwd = process.cwd()): string {
-  return issueRoot(sessionDir) ?? (sessionDir === "" ? resolve(cwd, ".ak", "work") : sessionDir);
+  // Session placement is an implementation detail. Resolve it before deriving
+  // the work identity so relative and absolute role invocations share one key.
+  if (sessionDir === "") {
+    const cwdIssue = issueRoot(resolve(cwd, "."));
+    if (cwdIssue !== undefined) return cwdIssue;
+  }
+  const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
+  return issueRoot(resolvedSession) ?? resolvedSession;
 }
 
 function subjectDirectory(cwd: string, subjectKey: string): string {
@@ -284,6 +292,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let activeInvocationId: string | undefined;
   let previousRoute: NavigatorRouteTarget[] | undefined;
   let outputSink: ((value: PrepareOutput) => void) | undefined;
+  let settlementTail: Promise<void> = Promise.resolve();
   let disposed = false;
 
   const unavailable = (invocationId: string, reason: unknown): NavigatorReport => ({
@@ -311,7 +320,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
       if (session === undefined) {
         sessionReady = (async () => {
-          const created = await options.createSession({ context: options.context, sessionDir, tool });
+          const created = await options.createSession({ context: options.context, sessionDir, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
           try {
             await created.setModel?.(modelSetting, model.thinkingLevel);
             if (created.getThinkingLevel?.() !== undefined && created.getThinkingLevel() !== model.thinkingLevel) {
@@ -382,7 +391,21 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       preparation = prepare();
       void preparation.catch(() => undefined);
     },
-    async settle(settlement: NavigatorSettlement): Promise<void> {
+    settle(settlement: NavigatorSettlement): Promise<void> {
+      const next = settlementTail.then(() => settleOnce(settlement));
+      settlementTail = next.catch(() => undefined);
+      return next;
+    },
+    dispose(): void {
+      disposed = true;
+      sessionReady = undefined;
+      session?.dispose();
+      session = undefined;
+      activeInvocationId = undefined;
+    },
+  };
+
+  async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
       const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
       let report: NavigatorReport;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
@@ -441,22 +464,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       preparation = undefined;
       sessionReady = undefined;
       candidates = undefined;
-    },
-    dispose(): void {
-      disposed = true;
-      sessionReady = undefined;
-      session?.dispose();
-      session = undefined;
-      activeInvocationId = undefined;
-    },
-  };
+  }
 }
 
 export type NavigatorAttendance = ReturnType<typeof createNavigatorAttendance>;
 
-export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
-  return async ({ context, sessionDir, tool }) => {
-    const configured = await readNavigatorModelSetting();
+export function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()): NavigatorSessionFactory {
+  return async ({ context, sessionDir, modelSettingPath, tool }) => {
+    const configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
     const parsed = parseNavigatorModelSetting(configured);
     const model = context.modelRegistry.find(parsed.provider, parsed.model);
     const provider = context.modelRegistry.getProvider(parsed.provider);

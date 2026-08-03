@@ -92,7 +92,7 @@ function isWorkerPhase(value: unknown): value is WorkerPhase {
 }
 
 export type WorkerRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext): never;
+  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
 export type FixerAuditInput = Readonly<{ soul: string; packet: FixerInvocationInput; phase: FixerPhase; transcript: string; candidate: FixerOutput }>;
@@ -246,7 +246,7 @@ export function createFixerRoleRuntime(
             const output = deepFreeze(validateFixerOutputForPacket(parameters, phase, packet));
             if (dependencies.transcriptFromContext === undefined || dependencies.auditCompliance === undefined) {
               const error = new Error("Fixer compliance auditor is not configured");
-              if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx);
+              if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx, toolCallId);
               throw error;
             }
             let audit: ComplianceDecision;
@@ -254,7 +254,7 @@ export function createFixerRoleRuntime(
               const auditInput = Object.freeze({ soul: soul!, packet, phase, transcript: dependencies.transcriptFromContext(ctx), candidate: output });
               audit = await dependencies.auditCompliance(auditInput, { context: ctx, ...(_signal === undefined ? {} : { signal: _signal }) });
             } catch (error) {
-              if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx);
+              if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx, toolCallId);
               throw error;
             }
             return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
