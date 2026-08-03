@@ -90,6 +90,14 @@ export type ToolExecutionObservationFace = {
   reset(): void;
 };
 
+/**
+ * Production throttle clock: genuinely monotonic milliseconds.
+ * Wall-clock Date.now() is not safe — NTP/slew can compress two heartbeats under 30s.
+ */
+export function systemToolExecutionObservationMonoNow(): number {
+  return performance.now();
+}
+
 export function createToolExecutionObservationFace(options: {
   role: () => string | undefined;
   admitted: () => boolean;

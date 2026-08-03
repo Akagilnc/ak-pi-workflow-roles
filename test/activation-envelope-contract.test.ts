@@ -4,7 +4,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { fauxProvider } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
   ActivationBarrierError,
@@ -16,6 +17,7 @@ import {
   createToolExecutionObservationFace,
   executeActivationStages,
   isProducingToolUpdate,
+  systemToolExecutionObservationMonoNow,
   toolExecutionObservationRecordSchema,
   writeActivationTraceRecord,
   writeToolExecutionObservationRecord,
@@ -23,7 +25,7 @@ import {
   type ToolExecutionObservationRecord,
 } from "../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../src/activation-trace.ts";
-import { packageRoot, runPiSubprocess, withHermeticHome } from "./helpers/pi-test-harness.ts";
+import { packageRoot, runPiSubprocess, withHermeticHome, withInProcessPi } from "./helpers/pi-test-harness.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -472,7 +474,7 @@ test("default tool observation writer retries short writes on fd 2 and rejects s
   );
 });
 
-test("tool observation writer failure does not fake success", async () => {
+test("tool observation writer failure does not fake success on the face", async () => {
   const face = createToolExecutionObservationFace({
     role: () => "judge",
     admitted: () => true,
@@ -481,4 +483,95 @@ test("tool observation writer failure does not fake success", async () => {
     write: () => { throw new Error("stderr unavailable"); },
   });
   await assert.rejects(async () => face.onStart({ toolCallId: "x", toolName: "bash" }), /stderr unavailable/);
+});
+
+test("production observation mono clock is monotonic and not wall-clock Date.now", () => {
+  const samples = Array.from({ length: 32 }, () => systemToolExecutionObservationMonoNow());
+  for (let i = 1; i < samples.length; i++) {
+    assert.ok(samples[i]! >= samples[i - 1]!, `monoNow must not go backwards: ${samples[i - 1]} -> ${samples[i]}`);
+  }
+  // Date.now is epoch ms (~1e12); performance.now is process-relative ms (far smaller in tests).
+  assert.ok(samples[0]! < 1e11, `production monoNow must not default to wall-clock Date.now; got ${samples[0]}`);
+});
+
+test("observation writer failure aborts through real ExtensionRunner emit with original cause", async () => {
+  await withHermeticHome({ prefix: "ak-tool-obs-fail-" }, async ({ home, agentDir }) => {
+    const faux = fauxProvider({ api: "ak-tool-obs-fail", provider: "ak-tool-obs-fail" });
+    const writerError = new Error("stderr unavailable");
+    const priorExitCode = process.exitCode;
+    process.exitCode = undefined;
+    let aborts = 0;
+    const extensionErrors: ExtensionError[] = [];
+    try {
+      await withInProcessPi({
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noExtensions: true,
+        systemPrompt: "JUDGE",
+        mode: "print",
+        flags: { "ak-role": "judge" },
+        extensionFactories: [createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "LAW",
+          transcriptFromContext: () => "",
+          auditSoulCompliance: async () => ({ status: "pass" }),
+          activationClock: () => "2025-01-01T00:00:00.000Z",
+          activationTraceWriter: () => {},
+          toolExecutionObservationWriter: () => { throw writerError; },
+        })],
+      }, async ({ session }) => {
+        session.extensionRunner.onError((error) => { extensionErrors.push(error); });
+        // Rebind abort so the infrastructure path is observable without depending on agent internals.
+        await session.bindExtensions({
+          mode: "print",
+          abortHandler: () => { aborts += 1; },
+        });
+        // emit() swallows handler throws after emitError — termination must still have run.
+        await session.extensionRunner.emit({
+          type: "tool_execution_start",
+          toolCallId: "obs-fail-1",
+          toolName: "bash",
+          args: {},
+        });
+        assert.equal(aborts, 1, "observation failure must call ExtensionContext.abort");
+        assert.equal(process.exitCode, 1, "print mode observation failure must set nonzero exitCode");
+        assert.ok(
+          extensionErrors.some((error) => error.event === "tool_execution_start" && error.error.includes("stderr unavailable")),
+          `ExtensionRunner must retain the original cause via extension error; got ${JSON.stringify(extensionErrors)}`,
+        );
+
+        // Same termination for update and end seams.
+        aborts = 0;
+        process.exitCode = undefined;
+        extensionErrors.length = 0;
+        await session.extensionRunner.emit({
+          type: "tool_execution_update",
+          toolCallId: "obs-fail-1",
+          toolName: "bash",
+          args: {},
+          partialResult: { content: [{ type: "text", text: "chunk" }] },
+        });
+        assert.equal(aborts, 1);
+        assert.equal(process.exitCode, 1);
+        assert.ok(extensionErrors.some((error) => error.event === "tool_execution_update" && error.error.includes("stderr unavailable")));
+
+        aborts = 0;
+        process.exitCode = undefined;
+        extensionErrors.length = 0;
+        await session.extensionRunner.emit({
+          type: "tool_execution_end",
+          toolCallId: "obs-fail-1",
+          toolName: "bash",
+          isError: false,
+          result: { content: [], details: {} },
+        });
+        assert.equal(aborts, 1);
+        assert.equal(process.exitCode, 1);
+        assert.ok(extensionErrors.some((error) => error.event === "tool_execution_end" && error.error.includes("stderr unavailable")));
+      });
+    } finally {
+      process.exitCode = priorExitCode;
+    }
+  });
 });
