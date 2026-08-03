@@ -35,6 +35,7 @@ import {
   MERGER_INPUT_FLAG,
   MERGER_OUTPUT_TOOL_NAME,
   navigatorSessionDirectory,
+  navigatorProviderFailure,
   ROLE_FLAG,
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
@@ -1364,10 +1365,8 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
               if (scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport") {
-                const failure = fauxAssistantMessage("", { stopReason: "error", errorMessage: scenario.name === "auth" ? "auth key unavailable" : `${scenario.name} unavailable` }) as unknown as Record<string, unknown>;
-                failure.navigatorUnavailableSource = scenario.name;
-                failure.navigatorUnavailableCause = scenario.name;
-                return failure as never;
+                const failure = fauxAssistantMessage("", { stopReason: "error", errorMessage: scenario.name === "auth" ? "auth key unavailable" : `${scenario.name} unavailable` });
+                return navigatorProviderFailure(failure, scenario.name, scenario.name);
               }
               return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
             }

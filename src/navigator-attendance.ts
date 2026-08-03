@@ -30,6 +30,15 @@ export class NavigatorUnavailableError extends Error {
   }
 }
 
+export type NavigatorProviderFailureFact = {
+  source: NavigatorUnavailableKey;
+  cause: NavigatorUnavailableKey;
+};
+
+export function navigatorProviderFailure<T extends object>(message: T, source: NavigatorUnavailableKey, cause: NavigatorUnavailableKey = source): T & { navigatorFailure: NavigatorProviderFailureFact } {
+  return Object.assign(message, { navigatorFailure: { source, cause } });
+}
+
 export function navigatorUnavailableError(source: NavigatorUnavailableKey, error: unknown, cause: NavigatorUnavailableKey = source): NavigatorUnavailableError {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause);
@@ -492,8 +501,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
             ? nativeMessage.errorMessage
             : "Navigator did not submit typed route candidates";
-          const source = unavailableKey(nativeMessage?.navigatorUnavailableSource) ?? "unknown";
-          const cause = unavailableKey(nativeMessage?.navigatorUnavailableCause) ?? source;
+          const providerFailure = exactRecord(nativeMessage?.navigatorFailure) ? nativeMessage.navigatorFailure : undefined;
+          const source = unavailableKey(providerFailure?.source) ?? "unknown";
+          const cause = unavailableKey(providerFailure?.cause) ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
         }
         candidates = validatePrepareOutput(output);
