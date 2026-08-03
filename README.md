@@ -30,6 +30,39 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
+## Quick start: invoke the Judge from a fresh session
+
+Install once (project-local), or pass `-e /absolute/path/to/ak-pi-workflow-roles` on each invocation instead:
+
+```bash
+pi install -l /absolute/path/to/ak-pi-workflow-roles
+```
+
+**1. Feed materials through the filesystem.** Roles read files with their own tools; write what you want adjudicated into a file and name its path in the prompt.
+
+```bash
+mkdir -p /tmp/court/session
+cat > /tmp/court/packet.md <<'EOF'
+Adjudicate <what>. Evidence: <paths>. Questions: <numbered list>.
+EOF
+```
+
+**2. Ignite.** Close stdin (`</dev/null` — pi drains a non-TTY stdin to EOF before doing any work, so an unclosed background pipe parks the invocation forever; upstream earendil-works/pi#2078). Discard stdout (an unbounded JSON event stream). Keep stderr and the session directory — they are the run's records.
+
+```bash
+pi --ak-role judge --mode json --session-dir /tmp/court/session \
+  -p "Adjudicate per the packet at /tmp/court/packet.md. Read it in full first." \
+  >/dev/null 2>/tmp/court/stderr.log </dev/null
+```
+
+**3. Read the verdict from the session file, not stdout.** The authoritative receipt is the accepted `ak_judge_output` tool call recorded in `/tmp/court/session/*.jsonl`; its `arguments` carry the verdict (shape: [Verdict contract](#verdict-contract)). Plain assistant text is never a completed verdict.
+
+```bash
+grep -o '"judgeStatus":"[a-z]*"' /tmp/court/session/*.jsonl | tail -1
+```
+
+Judge needs no other flags. Roles with mandatory flags: Fixer (`--ak-fixer-phase`, `--ak-fix-packet`), Reviewer (`--ak-review-task`, `--ak-review-capabilities`), Coder (`--ak-coder-phase`, `--ak-coder-task`) — see each role's section. An ignition that cannot activate its role exits nonzero; nothing falls back to uncaged pi.
+
 ## Navigator attendance
 
 Every registered non-Navigator packaged role automatically prepares Navigator advice alongside its own work. The existing `pi --ak-role ...` invocation is unchanged. Navigator uses its own resumable Pi session, waits for that same preparation at typed role settlement, and emits an independent typed attendance event; it never invokes or enforces the recommended role.
@@ -53,31 +86,6 @@ The compliance call uses the active Pi model and credentials. It checks demonstr
 Judge infers its burden of proof from the supplied materials alone (authority completeness, plan construction-readiness, apply executable proof, or review finding adjudication).
 
 On activation, Judge narrows active tools to the registered members of this exact whitelist: `read`, `grep`, `find`, `ls`, `bash`, and `ak_judge_output`. In particular, `write`, `edit`, and arbitrary sibling tools are inactive. This is role gating to prevent accidental role drift, not a security boundary; callers that need isolation must provide a sandbox or container.
-
-## Install
-
-Project-local installation:
-
-```bash
-pi install -l /absolute/path/to/ak-pi-workflow-roles
-```
-
-Temporary invocation without installation:
-
-```bash
-pi -e /absolute/path/to/ak-pi-workflow-roles \
-  --ak-role judge \
-  --mode json \
-  -p "Judge the supplied review materials."
-```
-
-After installation:
-
-```bash
-pi --ak-role judge --mode json -p "Judge the supplied review materials."
-```
-
-The caller should treat the successful `ak_judge_output` tool result as the authoritative receipt. Plain assistant text is not a completed judge verdict.
 
 ## Fixer
 
