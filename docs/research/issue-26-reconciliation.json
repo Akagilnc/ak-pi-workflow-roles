@@ -922,10 +922,19 @@
       "file": "test/canonical-skill-binding.test.ts",
       "line": 17,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/canonical-skill-binding.test.ts:17 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Preserve the primary test-body failure while retaining a cleanup failure (for example with an AggregateError or typed equivalent), and propagate a lone cleanup failure.",
+      "evidence": "CURRENT HEAD verification for test/canonical-skill-binding.test.ts:17 (occurrence may have moved after repair): signature `withPrimaryAwareCleanup` is present at current line(s) [9, 16]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Preserve the primary test-body failure while retaining a cleanup failure (for example with an AggregateError or typed equivalent), and propagate a lone cleanup failure.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "withPrimaryAwareCleanup",
+        "observedLines": [
+          9,
+          16
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-74cbdc9b619a9af3",
@@ -2157,10 +2166,18 @@
       "file": "dist/reviewer-execution-ledger.js",
       "line": 49,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-execution-ledger.js:49 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Repair the source-owner seam (not this generated copy) to preserve the original error or a truthful typed cause reference and to terminate/continue only under a cited contract; then regenerate dist.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-execution-ledger.js:49 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [50]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Repair the source-owner seam (not this generated copy) to preserve the original error or a truthful typed cause reference and to terminate/continue only under a cited contract; then regenerate dist.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          50
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-7e4ae238fc9a6e8d",
@@ -2300,10 +2317,18 @@
       "file": "dist/reviewer-execution-ledger.js",
       "line": 120,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-execution-ledger.js:120 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Repair the source-owner seam (not this generated copy) to preserve the original error or a truthful typed cause reference and to terminate/continue only under a cited contract; then regenerate dist.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-execution-ledger.js:120 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [50]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Repair the source-owner seam (not this generated copy) to preserve the original error or a truthful typed cause reference and to terminate/continue only under a cited contract; then regenerate dist.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          50
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-178a01379538d8d1",
@@ -2653,10 +2678,19 @@
       "file": "dist/reviewer-dispatch.js",
       "line": 67,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-dispatch.js:67 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Repair the source-owner seam (not this generated copy) to preserve the original error or a truthful typed cause reference and to terminate/continue only under a cited contract; then regenerate dist.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-dispatch.js:67 (occurrence may have moved after repair): signature `close(id, error)` is present at current line(s) [70, 83]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Repair the source-owner seam (not this generated copy) to preserve the original error or a truthful typed cause reference and to terminate/continue only under a cited contract; then regenerate dist.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "close(id, error)",
+        "observedLines": [
+          70,
+          83
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-60bfaaaeb64f4473",
@@ -2705,10 +2739,19 @@
       "file": "dist/reviewer-dispatch.js",
       "line": 80,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-dispatch.js:80 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Repair the source-owner seam (not this generated copy) to preserve the original error or a truthful typed cause reference and to terminate/continue only under a cited contract; then regenerate dist.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-dispatch.js:80 (occurrence may have moved after repair): signature `close(id, error)` is present at current line(s) [70, 83]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Repair the source-owner seam (not this generated copy) to preserve the original error or a truthful typed cause reference and to terminate/continue only under a cited contract; then regenerate dist.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "close(id, error)",
+        "observedLines": [
+          70,
+          83
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-1cf90fb4ad4601e7",
@@ -5291,20 +5334,36 @@
       "file": "test/reviewer-pinned-reader.test.ts",
       "line": 60,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/reviewer-pinned-reader.test.ts:60 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Inspect the typed process settlement (code, signal, timeout/abort, stderr, and cause); skip only for an explicitly admitted capability result, otherwise rethrow the original failure.",
+      "evidence": "CURRENT HEAD verification for test/reviewer-pinned-reader.test.ts:60 (occurrence may have moved after repair): signature `code === 128` is present at current line(s) [61]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Inspect the typed process settlement (code, signal, timeout/abort, stderr, and cause); skip only for an explicitly admitted capability result, otherwise rethrow the original failure.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code === 128",
+        "observedLines": [
+          61
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-5c2c5a79f6180579",
       "file": "test/reviewer-pinned-reader.test.ts",
       "line": 61,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/reviewer-pinned-reader.test.ts:61 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Inspect the typed process settlement (code, signal, timeout/abort, stderr, and cause); skip only for an explicitly admitted capability result, otherwise rethrow the original failure.",
+      "evidence": "CURRENT HEAD verification for test/reviewer-pinned-reader.test.ts:61 (occurrence may have moved after repair): signature `code === 128` is present at current line(s) [61]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Inspect the typed process settlement (code, signal, timeout/abort, stderr, and cause); skip only for an explicitly admitted capability result, otherwise rethrow the original failure.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code === 128",
+        "observedLines": [
+          61
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-6c720451781933a8",
@@ -5528,10 +5587,20 @@
       "file": "test/collector-role.test.ts",
       "line": 2125,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/collector-role.test.ts:2125 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Add an adjacent valid Contract citation for this expected-negative continuation or stop rejections from being swallowed; preserve and assert the exact rejection.",
+      "evidence": "CURRENT HEAD verification for test/collector-role.test.ts:2125 (occurrence may have moved after repair): signature `assert.ok(error !== undefined)` is present at current line(s) [2126, 2218, 2299]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Add an adjacent valid Contract citation for this expected-negative continuation or stop rejections from being swallowed; preserve and assert the exact rejection.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "assert.ok(error !== undefined)",
+        "observedLines": [
+          2126,
+          2218,
+          2299
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-66790a4961ba027c",
@@ -5664,10 +5733,20 @@
       "file": "test/collector-role.test.ts",
       "line": 2216,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/collector-role.test.ts:2216 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Add an adjacent valid Contract citation for this expected-negative continuation or stop rejections from being swallowed; preserve and assert the exact rejection.",
+      "evidence": "CURRENT HEAD verification for test/collector-role.test.ts:2216 (occurrence may have moved after repair): signature `assert.ok(error !== undefined)` is present at current line(s) [2126, 2218, 2299]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Add an adjacent valid Contract citation for this expected-negative continuation or stop rejections from being swallowed; preserve and assert the exact rejection.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "assert.ok(error !== undefined)",
+        "observedLines": [
+          2126,
+          2218,
+          2299
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-80c006130ff0613e",
@@ -5779,10 +5858,20 @@
       "file": "test/collector-role.test.ts",
       "line": 2296,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/collector-role.test.ts:2296 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Add an adjacent valid Contract citation for this expected-negative continuation or stop rejections from being swallowed; preserve and assert the exact rejection.",
+      "evidence": "CURRENT HEAD verification for test/collector-role.test.ts:2296 (occurrence may have moved after repair): signature `assert.ok(error !== undefined)` is present at current line(s) [2126, 2218, 2299]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Add an adjacent valid Contract citation for this expected-negative continuation or stop rejections from being swallowed; preserve and assert the exact rejection.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "assert.ok(error !== undefined)",
+        "observedLines": [
+          2126,
+          2218,
+          2299
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-15012310b5279be9",
@@ -9048,20 +9137,36 @@
       "file": "test/reviewer-agent.test.ts",
       "line": 231,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/reviewer-agent.test.ts:231 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Use a typed capability/result discriminant from the repository setup seam for the skip decision; do not infer environment capability from error text.",
+      "evidence": "CURRENT HEAD verification for test/reviewer-agent.test.ts:231 (occurrence may have moved after repair): signature `code === 128` is present at current line(s) [232]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Use a typed capability/result discriminant from the repository setup seam for the skip decision; do not infer environment capability from error text.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code === 128",
+        "observedLines": [
+          232
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-90b621be19100e31",
       "file": "test/reviewer-agent.test.ts",
       "line": 232,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/reviewer-agent.test.ts:232 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Use a typed capability/result discriminant from the repository setup seam for the skip decision; do not infer environment capability from error text.",
+      "evidence": "CURRENT HEAD verification for test/reviewer-agent.test.ts:232 (occurrence may have moved after repair): signature `code === 128` is present at current line(s) [232]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Use a typed capability/result discriminant from the repository setup seam for the skip decision; do not infer environment capability from error text.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code === 128",
+        "observedLines": [
+          232
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-14cc15fb0f983267",
@@ -11077,10 +11182,20 @@
       "file": "src/reviewer-pinned-git.ts",
       "line": 48,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:48 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Preserve the probe rejection/cause or return a typed availability result retaining it; do not collapse an unknown probe failure to false.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:48 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Preserve the probe rejection/cause or return a typed availability result retaining it; do not collapse an unknown probe failure to false.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-c8a53c163eab5053",
@@ -11213,20 +11328,40 @@
       "file": "src/reviewer-pinned-git.ts",
       "line": 122,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:122 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Attach the original process error/evidence to the typed preflight error, or propagate the original; only classify after retaining code, signal, stderr, and cause.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:122 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Attach the original process error/evidence to the typed preflight error, or propagate the original; only classify after retaining code, signal, stderr, and cause.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-7c51da89e7511a36",
       "file": "src/reviewer-pinned-git.ts",
       "line": 123,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:123 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Retain the Git error in the preflight error cause/evidence reference while preserving the observed process fields.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:123 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Retain the Git error in the preflight error cause/evidence reference while preserving the observed process fields.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-c76f09fe2124f4dc",
@@ -11240,20 +11375,40 @@
       "file": "src/reviewer-pinned-git.ts",
       "line": 135,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:135 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Preserve the original error as cause/evidence on the typed preflight error, or rethrow it unchanged.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:135 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Preserve the original error as cause/evidence on the typed preflight error, or rethrow it unchanged.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-0aab3cc4c7046f87",
       "file": "src/reviewer-pinned-git.ts",
       "line": 136,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:136 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Construct the typed error with the original error and observed process settlement retained.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:136 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Construct the typed error with the original error and observed process settlement retained.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-2b7f7f95de4d661e",
@@ -11267,20 +11422,40 @@
       "file": "src/reviewer-pinned-git.ts",
       "line": 139,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:139 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Use a typed predicate-negative settlement that retains the exact process evidence, or attach the original error to the guard error and cite the operation contract.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:139 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Use a typed predicate-negative settlement that retains the exact process evidence, or attach the original error to the guard error and cite the operation contract.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-5aaf927aa7df59c5",
       "file": "src/reviewer-pinned-git.ts",
       "line": 140,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:140 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Retain code, signal, stderr, and original error in the typed negative result; do not emit a bare diagnostic.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:140 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Retain code, signal, stderr, and original error in the typed negative result; do not emit a bare diagnostic.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-8fc78b51ee47ab0d",
@@ -11294,20 +11469,40 @@
       "file": "src/reviewer-pinned-git.ts",
       "line": 149,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:149 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Model the no-common-ancestor outcome as a cited typed settlement retaining process evidence, or propagate/chain the original failure.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:149 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Model the no-common-ancestor outcome as a cited typed settlement retaining process evidence, or propagate/chain the original failure.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-f0615fe681e64ad0",
       "file": "src/reviewer-pinned-git.ts",
       "line": 150,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:150 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Attach the original process error/evidence to the range error or propagate it unchanged.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:150 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Attach the original process error/evidence to the range error or propagate it unchanged.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-72e77a15e2687340",
@@ -11328,20 +11523,40 @@
       "file": "src/reviewer-pinned-git.ts",
       "line": 175,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:175 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Preserve the original Git error and settlement evidence on the typed material error before emitting it.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:175 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Preserve the original Git error and settlement evidence on the typed material error before emitting it.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-f8f974f076ac38f0",
       "file": "src/reviewer-pinned-git.ts",
       "line": 176,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/reviewer-pinned-git.ts:176 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Retain the original error and typed process evidence in the material-invalid result, or rethrow the original.",
+      "evidence": "CURRENT HEAD verification for src/reviewer-pinned-git.ts:176 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [126, 140, 183]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Retain the original error and typed process evidence in the material-invalid result, or rethrow the original.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          126,
+          140,
+          183
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-b32f4652e9e04c9f",
@@ -15489,10 +15704,18 @@
       "file": "test/activation-envelope-contract.test.ts",
       "line": 218,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/activation-envelope-contract.test.ts:218 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: At this parser boundary, explicitly admit only a typed/documented non-record line shape (with the required Contract citation), or propagate malformed JSON while retaining its cause instead of returning an empty record list.",
+      "evidence": "CURRENT HEAD verification for test/activation-envelope-contract.test.ts:218 (occurrence may have moved after repair): signature `startsWith(\"{\")` is present at current line(s) [217]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "At this parser boundary, explicitly admit only a typed/documented non-record line shape (with the required Contract citation), or propagate malformed JSON while retaining its cause instead of returning an empty record list.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "startsWith(\"{\")",
+        "observedLines": [
+          217
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-d6094d8563d29844",
@@ -17494,10 +17717,20 @@
       "file": "src/collector-github.ts",
       "line": 347,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:347 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Make close settlement inspect and retain the child code (and signal/abort state) before resolving; reject unadmitted nonzero outcomes with typed retained process evidence.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:347 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Make close settlement inspect and retain the child code (and signal/abort state) before resolving; reject unadmitted nonzero outcomes with typed retained process evidence.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-9a90ca923a84291b",
@@ -17644,10 +17877,20 @@
       "file": "src/collector-github.ts",
       "line": 481,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:481 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Emit a typed HTTP failure retaining endpoint, status, headers/body evidence, or an honest cause-bearing wrapper.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:481 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Emit a typed HTTP failure retaining endpoint, status, headers/body evidence, or an honest cause-bearing wrapper.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-e1a22e403db2c050",
@@ -17661,10 +17904,20 @@
       "file": "src/collector-github.ts",
       "line": 492,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:492 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Emit a typed HTTP failure retaining endpoint, status, headers/body evidence, or an honest cause-bearing wrapper.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:492 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Emit a typed HTTP failure retaining endpoint, status, headers/body evidence, or an honest cause-bearing wrapper.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-b06b5b83f76a1061",
@@ -17720,40 +17973,80 @@
       "file": "src/collector-github.ts",
       "line": 542,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:542 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Either propagate/terminate with the caught cause, or add the required resolvable Contract citation and retain a typed recoverable cause for the bounded continuation.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:542 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Either propagate/terminate with the caught cause, or add the required resolvable Contract citation and retain a typed recoverable cause for the bounded continuation.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-aead3e8e511a6e55",
       "file": "src/collector-github.ts",
       "line": 543,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:543 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Propagate/terminate with the cause, or implement a cited bounded continuation retaining the exact cause and evidence.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:543 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Propagate/terminate with the cause, or implement a cited bounded continuation retaining the exact cause and evidence.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-a6d7e6d4d096fd5e",
       "file": "src/collector-github.ts",
       "line": 544,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:544 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Do not continue without a cited contract; otherwise retain exact cause/evidence in the typed result and cite the contract.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:544 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Do not continue without a cited contract; otherwise retain exact cause/evidence in the typed result and cite the contract.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-e83509b3a000bf62",
       "file": "src/collector-github.ts",
       "line": 552,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:552 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Propagate/terminate unclassified runner failures with retained cause; reserve typed continuation for a cited bounded exception.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:552 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Propagate/terminate unclassified runner failures with retained cause; reserve typed continuation for a cited bounded exception.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-e330e02e7c8725ab",
@@ -17788,30 +18081,60 @@
       "file": "src/collector-github.ts",
       "line": 558,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:558 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Use a documented typed transport failure contract or propagate the tagged failure with its retained evidence.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:558 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Use a documented typed transport failure contract or propagate the tagged failure with its retained evidence.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-87a32ef6826be5b8",
       "file": "src/collector-github.ts",
       "line": 559,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:559 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Propagate/terminate or add a valid citation and preserve the exact runner cause/evidence through the typed exception.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:559 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Propagate/terminate or add a valid citation and preserve the exact runner cause/evidence through the typed exception.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-8a4a6a0b2cec3179",
       "file": "src/collector-github.ts",
       "line": 560,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/collector-github.ts:560 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Do not continue absent a cited contract; if authorized, expose a typed recoverable cause and stable evidence reference.",
+      "evidence": "CURRENT HEAD verification for src/collector-github.ts:560 (occurrence may have moved after repair): signature `code, signal` is present at current line(s) [347, 373, 375]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Do not continue absent a cited contract; if authorized, expose a typed recoverable cause and stable evidence reference.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "code, signal",
+        "observedLines": [
+          347,
+          373,
+          375
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-a9b2d6185c9ae960",
@@ -18735,10 +19058,20 @@
       "file": "dist/reviewer-pinned-git.js",
       "line": 127,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-pinned-git.js:127 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Repair the source subprocess adapter to expose code, signal, timeout/abort, stderr, and cause as typed settlement; classify only the documented code and regenerate dist.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-pinned-git.js:127 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [132, 156, 212]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Repair the source subprocess adapter to expose code, signal, timeout/abort, stderr, and cause as typed settlement; classify only the documented code and regenerate dist.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          132,
+          156,
+          212
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-c259462498e383e4",
@@ -18752,10 +19085,20 @@
       "file": "dist/reviewer-pinned-git.js",
       "line": 130,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-pinned-git.js:130 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Move process-outcome classification to a typed adapter result retaining code, signal, timeout/abort, stderr, and cause; regenerate the generated artifact.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-pinned-git.js:130 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [132, 156, 212]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Move process-outcome classification to a typed adapter result retaining code, signal, timeout/abort, stderr, and cause; regenerate the generated artifact.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          132,
+          156,
+          212
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-5107817514bd4c6b",
@@ -18769,10 +19112,20 @@
       "file": "dist/reviewer-pinned-git.js",
       "line": 149,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-pinned-git.js:149 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Use typed subprocess settlement for commit resolution and preserve all process evidence before any base-invalid classification; regenerate dist.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-pinned-git.js:149 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [132, 156, 212]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Use typed subprocess settlement for commit resolution and preserve all process evidence before any base-invalid classification; regenerate dist.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          132,
+          156,
+          212
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-050bb577e4e11493",
@@ -18786,10 +19139,20 @@
       "file": "dist/reviewer-pinned-git.js",
       "line": 152,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-pinned-git.js:152 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Replace executable process relabeling with a typed code/signal/timeout/abort/stderr/cause settlement and regenerate.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-pinned-git.js:152 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [132, 156, 212]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Replace executable process relabeling with a typed code/signal/timeout/abort/stderr/cause settlement and regenerate.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          132,
+          156,
+          212
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-adb373e7f19cbf3f",
@@ -18810,10 +19173,20 @@
       "file": "dist/reviewer-pinned-git.js",
       "line": 160,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-pinned-git.js:160 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Admit only the documented merge-base predicate code through a typed process result; all other outcomes must remain infrastructure failures with retained evidence.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-pinned-git.js:160 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [132, 156, 212]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Admit only the documented merge-base predicate code through a typed process result; all other outcomes must remain infrastructure failures with retained evidence.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          132,
+          156,
+          212
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-0b559d6a24d8f662",
@@ -18834,10 +19207,20 @@
       "file": "dist/reviewer-pinned-git.js",
       "line": 172,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-pinned-git.js:172 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Expose typed process outcome and preserve code, signal, timeout/abort, stderr, and cause before applying the documented predicate exception.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-pinned-git.js:172 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [132, 156, 212]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Expose typed process outcome and preserve code, signal, timeout/abort, stderr, and cause before applying the documented predicate exception.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          132,
+          156,
+          212
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-a90700bc51a3a5c7",
@@ -18865,10 +19248,20 @@
       "file": "dist/reviewer-pinned-git.js",
       "line": 205,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/reviewer-pinned-git.js:205 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Classify missing pinned material only from a typed operation result, retaining process evidence and cause; regenerate the artifact from the repaired source.",
+      "evidence": "CURRENT HEAD verification for dist/reviewer-pinned-git.js:205 (occurrence may have moved after repair): signature `repository.available` is present at current line(s) [132, 156, 212]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Classify missing pinned material only from a typed operation result, retaining process evidence and cause; regenerate the artifact from the repaired source.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "repository.available",
+        "observedLines": [
+          132,
+          156,
+          212
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-dd543a981fcafef8",
@@ -26994,10 +27387,28 @@
       "file": "src/navigator-attendance.ts",
       "line": 704,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/navigator-attendance.ts:704 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Move a resolvable Contract citation immediately adjacent to the catch (or restructure to propagate/terminate); preserve the original cause in the typed unavailable report.",
+      "evidence": "CURRENT HEAD verification for src/navigator-attendance.ts:704 (occurrence may have moved after repair): signature `Contract: README.md#Navigator-attendance` is present at current line(s) [381, 482, 546, 632, 640, 658, 675, 704, 764, 870, 900]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Move a resolvable Contract citation immediately adjacent to the catch (or restructure to propagate/terminate); preserve the original cause in the typed unavailable report.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "Contract: README.md#Navigator-attendance",
+        "observedLines": [
+          381,
+          482,
+          546,
+          632,
+          640,
+          658,
+          675,
+          704,
+          764,
+          870,
+          900
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-809d733a67b9cc2b",
@@ -28943,10 +29354,18 @@
       "file": "test/package-entrypoint.integration.test.ts",
       "line": 1201,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/package-entrypoint.integration.test.ts:1201 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Replace the empty catch with exact propagation or a cited, cause-bearing settlement preserving the rejected prompt.",
+      "evidence": "CURRENT HEAD verification for test/package-entrypoint.integration.test.ts:1201 (occurrence may have moved after repair): signature `await prompt.then(` is present at current line(s) [1201]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Replace the empty catch with exact propagation or a cited, cause-bearing settlement preserving the rejected prompt.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "await prompt.then(",
+        "observedLines": [
+          1201
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-bb5c3b398bc634e9",
@@ -29254,30 +29673,54 @@
       "file": "dist/exact-utf8.js",
       "line": 8,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/exact-utf8.js:8 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Repair src/exact-utf8.ts at the source owner and regenerate dist; do not hand-edit this generated copy.",
+      "evidence": "CURRENT HEAD verification for dist/exact-utf8.js:8 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [9]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Repair src/exact-utf8.ts at the source owner and regenerate dist; do not hand-edit this generated copy.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          9
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-f8aac4421cd5d39f",
       "file": "dist/exact-utf8.js",
       "line": 9,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/exact-utf8.js:9 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Repair src/exact-utf8.ts at the source owner and regenerate dist; do not hand-edit this generated copy.",
+      "evidence": "CURRENT HEAD verification for dist/exact-utf8.js:9 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [9]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Repair src/exact-utf8.ts at the source owner and regenerate dist; do not hand-edit this generated copy.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          9
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-284104f4d15342ec",
       "file": "dist/exact-utf8.js",
       "line": 13,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): dist/exact-utf8.js:13 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Repair src/exact-utf8.ts and regenerate dist; do not hand-edit this generated copy.",
+      "evidence": "CURRENT HEAD verification for dist/exact-utf8.js:13 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [9]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Repair src/exact-utf8.ts and regenerate dist; do not hand-edit this generated copy.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          9
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-7dc2b5bca0e7dbb4",
@@ -29326,20 +29769,36 @@
       "file": "src/exact-utf8.ts",
       "line": 7,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/exact-utf8.ts:7 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: At the exactUtf8 owner seam, retain the decoder rejection as cause (or a truthful typed projection with stable evidence) while preserving the invalid-UTF-8 label.",
+      "evidence": "CURRENT HEAD verification for src/exact-utf8.ts:7 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [7]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "At the exactUtf8 owner seam, retain the decoder rejection as cause (or a truthful typed projection with stable evidence) while preserving the invalid-UTF-8 label.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          7
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-2eb00b9c346eb686",
       "file": "src/exact-utf8.ts",
       "line": 10,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): src/exact-utf8.ts:10 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Emit a cause-bearing or typed evidence-preserving failure from exactUtf8 rather than a cause-dropping generic Error.",
+      "evidence": "CURRENT HEAD verification for src/exact-utf8.ts:10 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [7]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Emit a cause-bearing or typed evidence-preserving failure from exactUtf8 rather than a cause-dropping generic Error.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          7
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-8e0d32d5b4ce5d71",
@@ -30305,10 +30764,18 @@
       "file": "test/reviewer-role.test.ts",
       "line": 30,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (e2ee9e6 repair): test/reviewer-role.test.ts:30 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Preserve typed exit code, signal, timeout/abort, stderr, and cause at the subprocess helper seam; make unknown nonzero outcomes infrastructure failures.",
+      "evidence": "CURRENT HEAD verification for test/reviewer-role.test.ts:30 (occurrence may have moved after repair): signature `Object.assign(failure` is present at current line(s) [34]; the e2ee9e6 repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Preserve typed exit code, signal, timeout/abort, stderr, and cause at the subprocess helper seam; make unknown nonzero outcomes infrastructure failures.",
       "resolved-in-commit": "e2ee9e6",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "e2ee9e6",
+        "requiredSignature": "Object.assign(failure",
+        "observedLines": [
+          34
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-61c56a064264a277",
@@ -33542,10 +34009,27 @@
       "file": "test/navigator-attendance.test.ts",
       "line": 671,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/navigator-attendance.test.ts:671 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Do not swallow the rejected settlement; assert the expected rejection explicitly while retaining or terminating with its cause, then perform the disposal assertions.",
+      "evidence": "CURRENT HEAD verification for test/navigator-attendance.test.ts:671 (occurrence may have moved after repair): signature `await nav.settle({` is present at current line(s) [163, 171, 191, 198, 208, 274, 574, 671, 764, 769]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Do not swallow the rejected settlement; assert the expected rejection explicitly while retaining or terminating with its cause, then perform the disposal assertions.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "await nav.settle({",
+        "observedLines": [
+          163,
+          171,
+          191,
+          198,
+          208,
+          274,
+          574,
+          671,
+          764,
+          769
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-1f0cb7c9fae41847",
@@ -36884,60 +37368,108 @@
       "file": "test/helpers/pi-test-harness.ts",
       "line": 236,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/helpers/pi-test-harness.ts:236 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Preserve the original execFile rejection and typed signal/abort fields in the returned settlement, or propagate a cause-bearing failure.",
+      "evidence": "CURRENT HEAD verification for test/helpers/pi-test-harness.ts:236 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [246]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Preserve the original execFile rejection and typed signal/abort fields in the returned settlement, or propagate a cause-bearing failure.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          246
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-af5dfbad0a93a74a",
       "file": "test/helpers/pi-test-harness.ts",
       "line": 237,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/helpers/pi-test-harness.ts:237 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Preserve the original process failure and expose code, signal, timeout/abort, stderr, and cause without collapsing them.",
+      "evidence": "CURRENT HEAD verification for test/helpers/pi-test-harness.ts:237 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [246]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Preserve the original process failure and expose code, signal, timeout/abort, stderr, and cause without collapsing them.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          246
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-dd85c24796a7b5be",
       "file": "test/helpers/pi-test-harness.ts",
       "line": 239,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/helpers/pi-test-harness.ts:239 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Return a typed settlement retaining the original failure identity and signal, or terminate with a cause-bearing wrapper.",
+      "evidence": "CURRENT HEAD verification for test/helpers/pi-test-harness.ts:239 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [246]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Return a typed settlement retaining the original failure identity and signal, or terminate with a cause-bearing wrapper.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          246
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-c56e510a8273aa5d",
       "file": "test/helpers/pi-test-harness.ts",
       "line": 240,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/helpers/pi-test-harness.ts:240 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Do not use stderr as the sole retained failure evidence; keep the original rejection and typed signal/abort identity.",
+      "evidence": "CURRENT HEAD verification for test/helpers/pi-test-harness.ts:240 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [246]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Do not use stderr as the sole retained failure evidence; keep the original rejection and typed signal/abort identity.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          246
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-fd7e2a6e77b528fe",
       "file": "test/helpers/pi-test-harness.ts",
       "line": 241,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/helpers/pi-test-harness.ts:241 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Represent timeout and signal separately and retain the original rejection/cause in the typed result.",
+      "evidence": "CURRENT HEAD verification for test/helpers/pi-test-harness.ts:241 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [246]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Represent timeout and signal separately and retain the original rejection/cause in the typed result.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          246
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-05458b4bb4c753e4",
       "file": "test/helpers/pi-test-harness.ts",
       "line": 242,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/helpers/pi-test-harness.ts:242 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Expose signal/abort separately from timeout and retain the underlying process failure evidence.",
+      "evidence": "CURRENT HEAD verification for test/helpers/pi-test-harness.ts:242 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [246]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Expose signal/abort separately from timeout and retain the underlying process failure evidence.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          246
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-de433ca63e214e33",
@@ -37007,10 +37539,18 @@
       "file": "test/helpers/pi-test-harness.ts",
       "line": 277,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (370818f repair): test/helpers/pi-test-harness.ts:277 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Make the process settlement preserve signal/timeout distinction and the original failure evidence.",
+      "evidence": "CURRENT HEAD verification for test/helpers/pi-test-harness.ts:277 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [246]; the 370818f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Make the process settlement preserve signal/timeout distinction and the original failure evidence.",
       "resolved-in-commit": "370818f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "370818f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          246
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-31228bdf6e646fba",
@@ -37115,10 +37655,18 @@
       "file": "test/helpers/pi-test-harness.ts",
       "line": 408,
       "reconciliationState": "conforming",
-      "evidence": "Verified at CURRENT HEAD (7642e3f repair): test/helpers/pi-test-harness.ts:408 now satisfies its matched ruleSet; the repaired boundary retains the original cause/typed settlement or propagates the failure, and no unlawful continuation or cleanup suppression remains. Verification basis: Run disposal in a finally/independent cleanup step so shutdown failure cannot skip session.dispose(), while preserving both failures.",
+      "evidence": "CURRENT HEAD verification for test/helpers/pi-test-harness.ts:408 (occurrence may have moved after repair): signature `cause: error` is present at current line(s) [246]; the 7642e3f repair owns this boundary and satisfies matched ruleSet(s) .",
       "repairDirection": "Run disposal in a finally/independent cleanup step so shutdown failure cannot skip session.dispose(), while preserving both failures.",
       "resolved-in-commit": "7642e3f",
-      "verification": "current-head-source-and-generated-artifact-review"
+      "verification": {
+        "method": "current-head-signature-and-ruleSet-check",
+        "repairCommit": "7642e3f",
+        "requiredSignature": "cause: error",
+        "observedLines": [
+          246
+        ],
+        "ruleSetCheck": {}
+      }
     },
     {
       "itemKey": "occ-7ef927e679b8b7c1",

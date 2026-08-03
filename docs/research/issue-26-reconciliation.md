@@ -22,7 +22,7 @@
 
 ## Residue verification
 
-The 58 occurrences listed in `.ak/work/issues/26/runs/final-zero/residue-58.json` were re-read at CURRENT HEAD. All are resolved; the per-item ledger records the exact repair commit. No residue was repaired in this closing leg.
+The 58 occurrences listed in `.ak/work/issues/26/runs/final-zero/residue-58.json` were re-read at CURRENT HEAD. Each per-item record includes the repair commit, required current-head signature, observed current line(s), and matched ruleSet checks. All are resolved; no residue was repaired in this closing leg.
 
 **ZERO-VIOLATION CLOSURE:** every one of the 7,367 reconciled occurrences is conforming or a cited documented exception.
 
