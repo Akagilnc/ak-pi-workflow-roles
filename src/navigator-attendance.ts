@@ -37,6 +37,21 @@ export type NavigatorProviderFailureFact = {
   cause: NavigatorUnavailableKey;
 };
 
+export type NavigatorProviderErrorShape = {
+  statusCode?: number;
+  code?: string;
+};
+
+export function navigatorProviderFailureFromError(error: unknown): NavigatorProviderFailureFact | undefined {
+  if (!exactRecord(error)) return undefined;
+  const statusCode = typeof error.statusCode === "number" ? error.statusCode : undefined;
+  const code = typeof error.code === "string" ? error.code : undefined;
+  if (statusCode === 401 || statusCode === 403 || code === "unauthorized" || code === "authentication_failed") return { source: "auth", cause: "auth" };
+  if (statusCode === 429 || code === "insufficient_quota" || code === "quota_exhausted") return { source: "quota", cause: "quota" };
+  if (code === "transport_error") return { source: "transport", cause: "transport" };
+  return undefined;
+}
+
 const navigatorProviderFailureSchema = Type.Object({
   source: Type.Union([Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"), Type.Literal("auth"), Type.Literal("quota"), Type.Literal("transport"), Type.Literal("unknown")]),
   cause: Type.Union([Type.Literal("context"), Type.Literal("session"), Type.Literal("model"), Type.Literal("thinking"), Type.Literal("auth"), Type.Literal("quota"), Type.Literal("transport"), Type.Literal("unknown")]),
@@ -511,7 +526,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
             ? nativeMessage.errorMessage
             : "Navigator did not submit typed route candidates";
-          const providerFailure = activeSession.providerFailure?.();
+          const providerFailure = activeSession.providerFailure?.() ?? navigatorProviderFailureFromError(nativeMessage);
           const retainedFailure = exactRecord(nativeMessage?.navigatorFailure) ? nativeMessage.navigatorFailure : undefined;
           const source = providerFailure?.source ?? unavailableKey(retainedFailure?.source) ?? "unknown";
           const cause = providerFailure?.cause ?? unavailableKey(retainedFailure?.cause) ?? source;
@@ -669,9 +684,14 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         try {
           for await (const event of source) {
             if (event.type === "error" && exactRecord(event.error)) {
-              const fact = event.error.navigatorFailure;
-              if (exactRecord(fact) && unavailableKey(fact.source) !== undefined && unavailableKey(fact.cause) !== undefined) {
-                providerFailure = { source: unavailableKey(fact.source)!, cause: unavailableKey(fact.cause)! };
+              const structuredFailure = navigatorProviderFailureFromError(event.error);
+              if (structuredFailure !== undefined) {
+                providerFailure = structuredFailure;
+              } else {
+                const fact = event.error.navigatorFailure;
+                if (exactRecord(fact) && unavailableKey(fact.source) !== undefined && unavailableKey(fact.cause) !== undefined) {
+                  providerFailure = { source: unavailableKey(fact.source)!, cause: unavailableKey(fact.cause)! };
+                }
               }
             }
             wrapped.push(event);
