@@ -1690,11 +1690,11 @@
     "testAll": {
       "pass": 360,
       "fail": 0,
-      "nodeDurationMs": 54796.816125,
-      "wallSeconds": 54.91,
+      "nodeDurationMs": 57491.891459,
+      "wallSeconds": 57.64,
       "command": "npm run test:all"
     },
-    "recordedAt": "2026-08-03T21:24:45.000Z",
-    "note": "Station 2g complete: shared reviewer template is quiesced, test-only Collector limit overrides are isolated behind the test seam, and the full suite is green."
+    "recordedAt": "2026-08-03T22:05:47.300Z",
+    "note": "Station 2l validation: test-only Collector limit overrides were removed entirely; the protected negative runs through production constants (commit 129252b)."
   }
 }
