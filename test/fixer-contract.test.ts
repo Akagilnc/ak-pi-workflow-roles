@@ -28,7 +28,7 @@ const legal: Array<{ phase: "plan" | "apply"; output: FixerOutput }> = [
   { phase: "plan", output: { status: "planned", report: "inspect and repair" } },
   { phase: "plan", output: { status: "refused", report: "cannot lawfully plan", remainingScope: "forbidden files", blocker: { cause: "authority_violation", evidence: "packet contradicts owner authority" } } },
   { phase: "apply", output: { status: "completed", report: "settled", classResults: [completed()] } },
-  { phase: "apply", output: { status: "completed", report: "settled both", classResults: [completed(), completed("SchemaCase", shaB)] } },
+  { phase: "apply", output: { status: "completed", report: "settled both", classResults: [completed(), completed("SchemaCase", shaA)] } },
   { phase: "apply", output: { status: "refused", report: "blocked", classResults: [refused()] } },
   { phase: "apply", output: { status: "partially_completed", report: "lawful mixed settlement", classResults: [completed(), refused()] } },
 ];
@@ -69,8 +69,8 @@ test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", ()
     ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "prerequisite_unmet", evidence: "x" } }],
     ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "safety", evidence: "x" } }],
     ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }],
-    ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("B", shaA)] }],
     ["apply", { status: "completed", report: "x", classResults: [completed("A", " ")] }],
+    ["apply", { status: "completed", report: "x", classResults: [{ name: "A", disposition: "completed", searchScope: "all parser entry points", exceptions: [] }] }],
     ["apply", { status: "partially_completed", report: "unfinished", classResults: [completed()] }],
     ["apply", { status: "partially_completed", report: "unfinished", classResults: [refused()] }],
     ["apply", { status: "completed", report: "mixed", classResults: [completed(), refused()] }],
@@ -96,6 +96,7 @@ test("Fixer rejects branch-incompatible semantic fields while ignoring presentat
 test("every surviving Fixer rejection names its violated field or constraint", () => {
   assert.throws(() => validateFixerOutput({ status: "completed", report: " ", classResults: [completed()] }, "apply"), /report.*nonblank/i);
   assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }, "apply"), /classResults.*name.*unique/i);
-  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [completed("A"), completed("B", shaA)] }, "apply"), /classResults.*commitSha.*distinct/i);
+  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [completed("A", " ")] }, "apply"), /classResults\[0\]\.commitSha nonblank/i);
+  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [{ name: "A", disposition: "completed", searchScope: "all parser entry points", exceptions: [] }] }, "apply"), /classResults\[0\]\.commitSha nonblank/i);
   assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [{ name: "A" }] }, "apply"), /classResults.*disposition/i);
 });
