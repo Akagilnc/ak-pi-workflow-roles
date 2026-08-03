@@ -262,7 +262,6 @@ function formatNavigatorReport(report) {
     `\u547D\u4EE4\uFF1A${oneLine(report.command ?? "")}`
   ].join("\n");
 }
-const SETTLEMENT_NAVIGATION_KEY = "navigation";
 function settlementNavigationFromEvent(event) {
   if (event.disposition !== "recommendation") return void 0;
   if (event.next === void 0 || event.reason === void 0 || event.command === void 0) return void 0;
@@ -289,13 +288,12 @@ ${reportText}` };
 }
 function decorateSettlementWithNavigation(event, presentation) {
   if (presentation === void 0) return void 0;
-  const navigation = settlementNavigationFromEvent(presentation.event);
-  if (navigation === void 0) return void 0;
-  const detailsBase = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details) ? event.details : {};
-  if (Object.hasOwn(detailsBase, SETTLEMENT_NAVIGATION_KEY)) return void 0;
+  if (settlementNavigationFromEvent(presentation.event) === void 0) return void 0;
+  const reportText = formatNavigatorReport(presentation.report);
+  if (reportText === "") return void 0;
   return {
-    content: appendNavigatorReportToContent(event.content, formatNavigatorReport(presentation.report)),
-    details: { ...detailsBase, [SETTLEMENT_NAVIGATION_KEY]: navigation }
+    content: appendNavigatorReportToContent(event.content, reportText),
+    details: event.details
   };
 }
 function createNavigatorAttendance(options) {
@@ -821,7 +819,6 @@ export {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NAVIGATOR_TARGETS,
   NavigatorUnavailableError,
-  SETTLEMENT_NAVIGATION_KEY,
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   createNavigatorPrepareTool,

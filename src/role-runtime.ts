@@ -423,15 +423,15 @@ export function createRoleRuntimeExtension(
         pendingNavigatorSettlement = pending;
         await pending;
       }
-      // Recommendation rides the accepted settlement record itself so the one
+      // Recommendation rides the accepted settlement record's content so the one
       // mandatory last-ak_*_output extraction surfaces route/next/reason without
-      // a second file, grep, or nesting step. Unavailable/silence stay absent.
+      // a second file, grep, or nesting step. Receipt details stay contract-pure;
+      // unavailable/silence leave the settlement untouched.
       if (event.isError) return;
       const decorated = decorateSettlementWithNavigation(event, pendingNavigatorPresentation);
       if (decorated === undefined) return;
       return {
         content: decorated.content as typeof event.content,
-        details: decorated.details,
       };
     });
     pi.on("agent_settled", async () => {

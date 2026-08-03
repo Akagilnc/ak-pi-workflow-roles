@@ -13,7 +13,6 @@ import {
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NavigatorUnavailableError,
-  SETTLEMENT_NAVIGATION_KEY,
   settlementNavigationFromEvent,
   writeNavigatorModelSetting,
   NAVIGATOR_TARGETS,
@@ -582,11 +581,20 @@ test("settlement decoration carries recommendation only; unavailable and silence
     },
   });
   assert.ok(decorated);
-  assert.deepEqual(decorated.details, {
-    judgeStatus: "converged",
-    [SETTLEMENT_NAVIGATION_KEY]: settlementNavigationFromEvent(recommendationEvent),
+  // Receipt details remain contract-pure (same reference / deep-equal shape).
+  assert.equal(decorated.details, base.details);
+  assert.deepEqual(decorated.details, { judgeStatus: "converged" });
+  const text = (decorated.content[0] as { text: string }).text;
+  assert.match(text, /下一步：reviewer/);
+  assert.match(text, /理由：needs review/);
+  assert.match(text, /命令：Usage: pi --ak-role reviewer --help/);
+  assert.deepEqual(settlementNavigationFromEvent(recommendationEvent), {
+    disposition: "recommendation",
+    route: recommendationEvent.route,
+    next: recommendationEvent.next,
+    reason: recommendationEvent.reason,
+    command: recommendationEvent.command,
   });
-  assert.match((decorated.content[0] as { text: string }).text, /下一步：reviewer/);
   assert.equal(
     decorateSettlementWithNavigation(base, {
       event: { ...recommendationEvent, disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" },
