@@ -97,7 +97,9 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     console.error(`NAVIGATOR_PREPARED_AT=${prepared?.timestamp ?? ""}`);
     console.error(`NAVIGATOR_STARTED_AT=${navigatorStartedAt}`);
     console.error(`NAVIGATOR_COMPLETED_AT=${navigatorCompletedAt}`);
+    const drainedBeforeSettlement = navigatorCompletedAt !== "" && typeof settlement?.timestamp === "string" && Date.parse(navigatorCompletedAt) <= Date.parse(settlement.timestamp);
     console.error(`NAVIGATOR_SETTLEMENT_AT=${settlement?.timestamp ?? ""}`);
     console.error(`NAVIGATOR_SETTLEMENT_KIND=${settlement?.data?.kind ?? ""}`);
+    console.error(`NAVIGATOR_RELEASE_AFTER_DRAIN=${drainedBeforeSettlement}`);
   });
 }
