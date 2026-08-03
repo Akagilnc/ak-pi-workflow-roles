@@ -20,10 +20,12 @@
       "ledgerProjectedMs": 14862.7,
       "owningSeam": "src/audit-escalation.ts + per-role auditor modules (installed entrypoint boundary)",
       "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/package-entrypoint.integration.test.ts :: \"cold-installed role outputs run nested audits through pass, revise, and escalation\". Former survivor ",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Source-tree imports + fake harness; revise/pass/escalate per role retained; cold-install boundary stays in neighbour install tests.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/package-entrypoint.integration.test.ts::cold-installed package audits all four roles from editable Souls": {
@@ -79,10 +81,12 @@
       "ledgerProjectedMs": 3071.43,
       "owningSeam": "src/navigator-attendance.ts failure classification + packaged role-runtime attendance boundary",
       "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/package-entrypoint.integration.test.ts :: \"normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the caus",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "One diagnostic per cause; prose independence owned by navigator-attendance seam.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/package-entrypoint.integration.test.ts::normal packaged Navigator presents independently in print and JSON and reuses one subject session": {
@@ -93,10 +97,12 @@
       "ledgerProjectedMs": 3654.84,
       "owningSeam": "test/helpers/pi-test-harness.ts shared cold-install/pack fixture + installed package loader boundary",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/package-entrypoint.integration.test.ts. Cheaper construction: one session per mode (3 total), assert route-only-on-first + navigatorCalls===1 + the persisted-log count",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "One session per mode (3) + revised route; dropped decorative rate/latency over deterministic replays.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/package-entrypoint.integration.test.ts::fresh packaged processes resume cross-role Navigator route memory and isolate subjects": {
@@ -107,10 +113,12 @@
       "ledgerProjectedMs": 6735.66,
       "owningSeam": "test/helpers/pi-test-harness.ts shared cold-install/pack fixture + installed package loader boundary",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/package-entrypoint.integration.test.ts. Cheaper construction: drop the third subprocess and its two asserts (1669-1671); the isolation contract keeps its single home a",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Two process-boundary legs only; isolation stays in-process neighbour.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/package-entrypoint.integration.test.ts::ordinary Navigator attendance is absent at the pinned pre-Issue-28 baseline and present after Issue 28": {
@@ -121,10 +129,12 @@
       "ledgerProjectedMs": 3663.06,
       "owningSeam": "test/helpers/pi-test-harness.ts shared cold-install/pack fixture + installed package loader boundary",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/package-entrypoint.integration.test.ts:150. Cheaper construction: one `pi` subprocess against the current entrypoint, keeping lines 165-183 verbatim; delete the `basel",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Dropped rotting baseline archive arm; live ordering/latency contract retained.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/package-entrypoint.integration.test.ts::packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion": {
@@ -135,10 +145,12 @@
       "ledgerProjectedMs": 14.93,
       "owningSeam": "src/canonical-skill-binding.ts + packaged coder apply path via src/role-runtime.ts",
       "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/package-entrypoint.integration.test.ts :: \"packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion\". Former survivo",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Two-row table with canonical /skill:tdd on shared fixture.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-package-lifecycle.test.ts::installed npm tarball collector runs default gh transport end-to-end in print and json": {
@@ -1604,12 +1616,6 @@
     "test/navigator-attendance.test.ts::model settings are exact and typed settlement projection ignores prose and correctable errors",
     "test/navigator-attendance.test.ts::native provider stream seam classifies auth/quota/transport after setModel without message metadata oracle",
     "test/navigator-attendance.test.ts::typed subject provenance replaces prose prefix branching",
-    "test/package-entrypoint.integration.test.ts::cold-installed role outputs run nested audits through pass, revise, and escalation",
-    "test/package-entrypoint.integration.test.ts::fresh packaged processes resume cross-role Navigator route memory and isolate subjects",
-    "test/package-entrypoint.integration.test.ts::normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the cause matrix",
-    "test/package-entrypoint.integration.test.ts::normal packaged Navigator presents independently in print and JSON and reuses one subject session",
-    "test/package-entrypoint.integration.test.ts::ordinary Navigator attendance is absent at the pinned pre-Issue-28 baseline and present after Issue 28",
-    "test/package-entrypoint.integration.test.ts::packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion",
     "test/reviewer-bundle-materializer.test.ts::materializer rejects digest and manifest mutation atomically",
     "test/reviewer-bundle-materializer.test.ts::materializer rejects traversal, absolute paths, collisions, and symlink parents",
     "test/reviewer-pinned-reader.test.ts::abbreviated bases are resolved only among commits reachable from the activation target",
@@ -1622,7 +1628,8 @@
     "Remaining unfinished keys keep contracts green under prior constructions; cheaper rebuild still owed (ADR-0050).",
     "judge-role family + class-contracts rebuilt onto cheaper carriers (station 2d).",
     "collector-ledger family rebuilt with injectable snapshotMaxBytes (station 2d).",
-    "collector-github family rebuilt: in-process abort/recovery, few-KiB R10, 1MiB EPIPE, one real kill (station 2d)."
+    "collector-github family rebuilt: in-process abort/recovery, few-KiB R10, 1MiB EPIPE, one real kill (station 2d).",
+    "package-entrypoint family rebuilt: drop baseline, 3 presentation modes, source nested audits, thinner failure matrix (station 2d)."
   ],
   "applyCommits": {
     "reviewer-agent": "fe972da",
@@ -1633,7 +1640,8 @@
     "judge-role": "63d67a9",
     "class-contracts": "63d67a9",
     "collector-ledger": "e52cf71",
-    "collector-github": "3ac8800"
+    "collector-github": "3ac8800",
+    "package-entrypoint": "(pending)"
   },
   "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
   "validation": {
