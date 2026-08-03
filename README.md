@@ -297,7 +297,7 @@ Judge's legal status-dependent shapes are:
 ```json
 {"judgeStatus":"converged"}
 {"judgeStatus":"continue","fix":{"summary":"non-empty repair summary"},"classes":[{"name":"ClassName","owner":"owning seam","boundary":"bounded scope","disposition":"adjudication"}]}
-{"judgeStatus":"escalate","decisionGate":{"question":"non-empty owner question","options":["non-empty option"]}}
+{"judgeStatus":"escalate","decisionGate":{"question":"non-empty 陛下 question","options":["non-empty option"]}}
 {"judgeStatus":"converged","evidence":{"checks":[{"name":"verification","passed":true}]}}
 ```
 
