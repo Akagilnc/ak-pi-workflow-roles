@@ -1351,7 +1351,7 @@ test("fixer plan phase accepts plans but rejects construction receipts", async (
   );
 });
 
-test("Fixer audits every structurally valid attempt freshly and revise permits corrected resubmission", async () => {
+test("Fixer audits unfinished attempts through the production route and revise permits corrected resubmission", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" });
   const seen: unknown[] = [];
   createRoleRuntimeExtension({
@@ -1361,7 +1361,7 @@ test("Fixer audits every structurally valid attempt freshly and revise permits c
   })(harness.pi as ExtensionAPI);
   await harness.handlers.get("session_start")?.({}, {});
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
-  const candidate = { status: "completed", report: "settled", classResults: [{ name: "Parser", disposition: "completed", searchScope: "all parsers", exceptions: [], commitSha: "a".repeat(40) }] };
+  const candidate = { status: "unfinished", report: "The first implementation is not fully settled.", remainingScope: "the unimplemented adapter branch" };
   await assert.rejects(tool.execute("first", candidate, undefined, undefined, toolCallContext([{ id: "first", name: FIXER_OUTPUT_TOOL_NAME }])), /violates its law/);
   const accepted = await tool.execute("second", candidate, undefined, undefined, toolCallContext([{ id: "second", name: FIXER_OUTPUT_TOOL_NAME }]));
   assert.equal(seen.length, 2);
