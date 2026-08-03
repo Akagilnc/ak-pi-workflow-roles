@@ -55,6 +55,8 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 **票面先过判官庭再开工；决策问题上呈 owner。**
 
+丞相编排建议：御史台 findings 宜经大理寺裁决后再派修理腿（劾→判→修）。
+
 没有绑定直接 owner 原话与明确 decision keys，不得标作 owner authority。
 
 ## 修订通道
