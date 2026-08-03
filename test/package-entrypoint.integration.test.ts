@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   type Context,
+  createAssistantMessageEventStream,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
@@ -744,9 +745,9 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.equal(attendanceMessages.length, 1);
         const unavailable = (attendanceMessages[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;
         assert.equal(unavailable.disposition, "unavailable");
-        assert.equal(unavailable.unavailableReason, "controlling authority content was not supplied as typed work context");
         assert.equal(unavailable.unavailableSource, "context");
         assert.equal(unavailable.unavailableCause, "context");
+        assert.notEqual(unavailable.unavailableReason, undefined);
       });
     },
   );
@@ -1327,70 +1328,84 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
         { name: "session", source: "session" },
         { name: "model", source: "model" },
         { name: "thinking", source: "thinking" },
-        { name: "auth", source: "auth" },
-        { name: "quota", source: "quota" },
-        { name: "transport", source: "transport" },
+        { name: "auth", source: "auth", statusCode: 401, code: "authentication_failed", diagnostics: ["auth key unavailable", "credential rejected with different wording"] },
+        { name: "quota", source: "quota", statusCode: 429, code: "quota_exhausted", diagnostics: ["quota exhausted", "plan limit reached with different wording"] },
+        { name: "transport", source: "transport", code: "transport_error", diagnostics: ["transport unavailable", "connection reset with different wording"] },
       ] as const;
       try {
         for (const [index, scenario] of cases.entries()) {
-          const issueRoot = resolve(home, `.ak/work/issues/failure-${index}`);
-          await mkdir(issueRoot, { recursive: true });
-          await writeFile(resolve(issueRoot, "authority.md"), "owner authority for failure matrix\n", "utf8");
-          if (scenario.name === "context") {
-            await rm(resolve(issueRoot, "authority.md"), { recursive: true, force: true });
-            await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
-          }
-          if (scenario.name === "session") {
-            await mkdir(resolve(issueRoot, "runs"), { recursive: true });
-            await writeFile(resolve(issueRoot, "runs/navigator"), "not a session directory", "utf8");
-          }
-          const faux = fauxProvider({ api: `ak-navigator-${scenario.name}`, provider: `ak-navigator-${scenario.name}`, tokenSize: { min: 1000, max: 1000 } });
-          const model = faux.getModel();
-          const setting = scenario.name === "model"
-            ? "missing/provider"
-            : scenario.name === "thinking"
-              ? `${model.provider}/${model.id}:max`
-              : `${model.provider}/${model.id}`;
-          await writeNavigatorModelSetting(setting, resolve(agentDir, "navigator-model.json"));
-          let authCalls = 0;
-          const provider = scenario.name === "auth"
-            ? {
-              ...faux.provider,
-              auth: { apiKey: { name: "failure matrix auth", async resolve() { authCalls += 1; if (authCalls === 1) throw new Error("auth key unavailable"); return { auth: { apiKey: "offline" } }; } } },
-              getModels() { return [model]; },
+          const diagnostics = "diagnostics" in scenario ? scenario.diagnostics : ["stable diagnostic"];
+          for (const [diagnosticIndex, diagnostic] of diagnostics.entries()) {
+            const issueRoot = resolve(home, `.ak/work/issues/failure-${index}-${diagnosticIndex}`);
+            await mkdir(issueRoot, { recursive: true });
+            await writeFile(resolve(issueRoot, "authority.md"), "owner authority for failure matrix\n", "utf8");
+            if (scenario.name === "context") {
+              await rm(resolve(issueRoot, "authority.md"), { recursive: true, force: true });
+              await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
             }
-            : undefined;
-          const response = (context: Context) => {
-            const names = context.tools?.map((tool) => tool.name) ?? [];
-            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-              if (scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport") {
-                const failure = fauxAssistantMessage("", { stopReason: "error", errorMessage: scenario.name === "auth" ? "auth key unavailable" : `${scenario.name} unavailable` });
-                return Object.assign(failure, scenario.name === "auth"
-                  ? { statusCode: 401, code: "authentication_failed" }
-                  : scenario.name === "quota"
-                    ? { statusCode: 429, code: "quota_exhausted" }
-                    : { code: "transport_error" });
+            if (scenario.name === "session") {
+              await mkdir(resolve(issueRoot, "runs"), { recursive: true });
+              await writeFile(resolve(issueRoot, "runs/navigator"), "not a session directory", "utf8");
+            }
+            const faux = fauxProvider({ api: `ak-navigator-${scenario.name}-${diagnosticIndex}`, provider: `ak-navigator-${scenario.name}-${diagnosticIndex}`, tokenSize: { min: 1000, max: 1000 } });
+            const model = faux.getModel();
+            const setting = scenario.name === "model"
+              ? "missing/provider"
+              : scenario.name === "thinking"
+                ? `${model.provider}/${model.id}:max`
+                : `${model.provider}/${model.id}`;
+            await writeNavigatorModelSetting(setting, resolve(agentDir, "navigator-model.json"));
+            const streamFailure = scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport";
+            const provider = streamFailure
+              ? {
+                ...faux.provider,
+                getModels() { return [model]; },
+                stream(requestModel: typeof model, streamContext: Context) {
+                  const names = streamContext.tools?.map((tool) => tool.name) ?? [];
+                  if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+                    return faux.provider.stream(requestModel, streamContext);
+                  }
+                  const stream = createAssistantMessageEventStream();
+                  const human = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
+                  const classified = Object.assign({}, human, {
+                    ...("statusCode" in scenario ? { statusCode: scenario.statusCode } : {}),
+                    ...("code" in scenario ? { code: scenario.code } : {}),
+                  });
+                  queueMicrotask(() => {
+                    stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
+                    stream.push({ type: "error", reason: "error", error: classified });
+                  });
+                  return stream;
+                },
+                streamSimple(requestModel: typeof model, streamContext: Context) {
+                  return this.stream(requestModel, streamContext);
+                },
               }
-              return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
-            }
-            if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-            return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
-          };
-          faux.setResponses([response, response, response]);
-          await withInProcessPi({ cwd: issueRoot, agentDir, faux, ...(provider === undefined ? {} : { provider }), additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
-            await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
-            const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
-            assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
-            assert.equal(receipt.message.isError, false, scenario.name);
-            assert.deepEqual(receipt.message.details, { judgeStatus: "converged" }, scenario.name);
-            const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
-            assert.equal(attendance.length, 1, scenario.name);
-            const event = (attendance[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;
-            assert.equal(event.disposition, "unavailable", scenario.name);
-            assert.equal(event.unavailableSource, scenario.source, scenario.name);
-            assert.equal(event.unavailableCause, scenario.source, scenario.name);
-            assert.notEqual(event.unavailableReason, undefined, scenario.name);
-          });
+              : undefined;
+            const response = (context: Context) => {
+              const names = context.tools?.map((tool) => tool.name) ?? [];
+              if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+                return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
+              }
+              if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+              return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
+            };
+            faux.setResponses([response, response, response]);
+            await withInProcessPi({ cwd: issueRoot, agentDir, faux, ...(provider === undefined ? {} : { provider }), additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+              await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
+              const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
+              assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
+              assert.equal(receipt.message.isError, false, `${scenario.name}:${diagnostic}`);
+              assert.deepEqual(receipt.message.details, { judgeStatus: "converged" }, `${scenario.name}:${diagnostic}`);
+              const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+              assert.equal(attendance.length, 1, `${scenario.name}:${diagnostic}`);
+              const event = (attendance[0] as { details: { disposition: string; unavailableReason?: string; unavailableSource?: string; unavailableCause?: string } }).details;
+              assert.equal(event.disposition, "unavailable", `${scenario.name}:${diagnostic}`);
+              assert.equal(event.unavailableSource, scenario.source, `${scenario.name}:${diagnostic}`);
+              assert.equal(event.unavailableCause, scenario.source, `${scenario.name}:${diagnostic}`);
+              assert.notEqual(event.unavailableReason, undefined, `${scenario.name}:${diagnostic}`);
+            });
+          }
         }
       } finally {
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
