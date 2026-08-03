@@ -72,7 +72,7 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
   if (phase === "plan") fail("status phase constraint: plan permits planned or refused");
   if (value.status !== "completed" && value.status !== "refused" && value.status !== "partially_completed") fail("status allowed-values constraint");
   if (!Array.isArray(value.classResults) || value.classResults.length === 0) fail("classResults nonempty array constraint");
-  const names = new Set<string>(), commits = new Set<string>();
+  const names = new Set<string>();
   let completed = 0, refused = 0;
   const classResults: FixerClassResult[] = value.classResults.map((item, index) => {
     const path = `classResults[${index}]`;
@@ -92,8 +92,7 @@ export function validateFixerOutput(value: unknown, phase?: FixerPhase): FixerOu
         return { where: entry.where, reason: entry.reason };
       });
       if (!nonblank(item.commitSha)) fail(`${path}.commitSha nonblank constraint`);
-      if (commits.has(item.commitSha)) fail("classResults completed commitSha distinct constraint");
-      commits.add(item.commitSha); completed++;
+      completed++;
       return { name: item.name, disposition: "completed", searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
     }
     if (item.disposition === "refused") {
