@@ -87,6 +87,7 @@ async function createChildRuntime(context) {
 }
 export async function executeReviewerChild(workspace, leg, context, signal, fault) {
     const childConfigDir = await mkdtemp(join(tmpdir(), "ak-reviewer-child-"));
+    let outerFailure;
     try {
         const settings = SettingsManager.inMemory({
             compaction: { enabled: false },
@@ -211,9 +212,17 @@ export async function executeReviewerChild(workspace, leg, context, signal, faul
         }
     }
     catch (error) {
+        outerFailure = error;
         throw classifiedError(error, "child");
     }
     finally {
-        await rm(childConfigDir, { recursive: true, force: true });
+        try {
+            await rm(childConfigDir, { recursive: true, force: true });
+        }
+        catch (cleanupFailure) {
+            if (outerFailure !== undefined)
+                throw new AggregateError([outerFailure, cleanupFailure], "Reviewer child configuration cleanup failed", { cause: outerFailure });
+            throw cleanupFailure;
+        }
     }
 }
