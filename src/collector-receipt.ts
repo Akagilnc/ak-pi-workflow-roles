@@ -89,8 +89,8 @@ export type CollectorReceipt = {
   evidenceRecords: CollectorEvidenceRecord[];
 };
 
-function fail(message: string): never {
-  throw new Error(message);
+function fail(message: string, cause?: unknown): never {
+  throw new Error(message, cause === undefined ? undefined : { cause });
 }
 
 export function parseCollectorOutputCandidate(
@@ -463,7 +463,7 @@ export function buildCollectorReceipt(
     try {
       ledger.assertOutputObservationLaw(candidate, clock);
     } catch (error) {
-      fail(error instanceof Error ? error.message : String(error));
+      fail(error instanceof Error ? error.message : "unknown failure", error);
     }
   } else {
     // Backward-compatible path for pure unit tests without a clock: still enforce dirty-clear.

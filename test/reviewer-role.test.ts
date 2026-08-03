@@ -26,7 +26,11 @@ const pin = { repositoryRoot: "/repo", objectFormat: "sha1" as const, targetHead
 const request = { tools: ["read", "bash"] as const, prerequisiteOperations: operations };
 const exec = promisify(execFile);
 async function git(root: string, ...args: string[]): Promise<string> {
-  return (await exec("git", ["-C", root, ...args])).stdout.trim();
+  try {
+    return (await exec("git", ["-C", root, ...args])).stdout.trim();
+  } catch (error) {
+    throw new Error(`git ${args[0] ?? "command"} failed`, { cause: error });
+  }
 }
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, materials: established ? [{ id: "rules", repositoryPath: "RULES.md" }, { id: "spec", repositoryPath: "SPEC.md" }] : [{ id: "rules", repositoryPath: "RULES.md" }, { id: "absence", repositoryPath: "README.md" }], spec: established ? { state: "established" } : { state: "not-established" }, required: established ? { standards: request, spec: request } : { standards: request } }; }
 function constructionEvidence(dispatch: AcceptedReviewerExecution, leg: AcceptedReviewerLeg) { return { leg: leg.axis, workspaceIdentity: `${leg.axis}-workspace`, manifestSha256: dispatch.bundle.manifestSha256, entries: dispatch.bundle.entries.map(({id,relativeClonePath,utf8Length,sha256})=>({id,relativeClonePath,utf8Length,sha256,verified:true as const})) }; }

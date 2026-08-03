@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { withPrimaryAwareCleanup } from "./primary-aware-cleanup.ts";
 
 import {
   type FauxProviderHandle,
@@ -117,27 +118,13 @@ export async function packIsolatedPackage(
 ): Promise<IsolatedPackResult> {
   await mkdir(packDestination, { recursive: true });
   const root = await mkdtemp(resolve(tmpdir(), "ak-pack-mat-"));
-  try {
+  return await withPrimaryAwareCleanup(async () => {
     await materializePackageTree(root, { nodeModules: true });
-    const { stdout } = await execFileAsync(
-      "npm",
-      ["pack", "--json", "--pack-destination", packDestination],
-      { cwd: root, maxBuffer: 10 * 1024 * 1024 },
-    );
-    const pack = JSON.parse(stdout) as Array<{
-      filename: string;
-      files: Array<{ path: string }>;
-    }>;
+    const { stdout } = await execFileAsync("npm", ["pack", "--json", "--pack-destination", packDestination], { cwd: root, maxBuffer: 10 * 1024 * 1024 });
+    const pack = JSON.parse(stdout) as Array<{ filename: string; files: Array<{ path: string }> }>;
     const entry = pack[0]!;
-    return {
-      root,
-      tarball: resolve(packDestination, entry.filename),
-      filename: entry.filename,
-      files: entry.files,
-    };
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    return { root, tarball: resolve(packDestination, entry.filename), filename: entry.filename, files: entry.files };
+  }, async () => rm(root, { recursive: true, force: true }));
 }
 
 export interface ColdInstalledPackage {
@@ -180,7 +167,10 @@ export async function withColdInstalledPackage<T>(
   const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");
   const installed = (relativePath: string) =>
     import(pathToFileURL(resolve(installedRoot, relativePath)).href);
-  return await scenario({ fixture, pack, installedRoot, installed });
+  return await withPrimaryAwareCleanup(
+    () => scenario({ fixture, pack, installedRoot, installed }),
+    () => rm(fixture, { recursive: true, force: true }),
+  );
 }
 
 export interface RawPackageManifest {
@@ -210,13 +200,14 @@ export async function withHermeticHome<T>(
   await mkdir(agentDir, { recursive: true });
   const previousHome = process.env.HOME;
   process.env.HOME = home;
-  try {
-    return await scenario({ home, agentDir });
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    await rm(home, { recursive: true, force: true });
-  }
+  return await withPrimaryAwareCleanup(
+    () => scenario({ home, agentDir }),
+    async () => {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await rm(home, { recursive: true, force: true });
+    },
+  );
 }
 
 export interface PiSubprocessResult {
@@ -404,33 +395,19 @@ export async function withInProcessPi<T>(
       ? {}
       : { customTools: options.customTools }),
   });
-  try {
-    for (const [name, value] of Object.entries(options.flags)) {
-      session.extensionRunner.setFlagValue(name, value);
-    }
-    await session.bindExtensions({ mode: options.mode });
-    return await scenario({
-      faux: options.faux,
-      provider,
-      model,
-      modelRuntime,
-      loader,
-      extensions: extensionsResult,
-      session,
-      sessionManager,
-    });
-  } finally {
-    try {
-      if (options.reviewerShutdown) {
-        await session.extensionRunner.emit({
-          type: "session_shutdown",
-          reason: "quit",
-        });
+  return await withPrimaryAwareCleanup(
+    async () => {
+      for (const [name, value] of Object.entries(options.flags)) {
+        session.extensionRunner.setFlagValue(name, value);
       }
-    } finally {
+      await session.bindExtensions({ mode: options.mode });
+      return await scenario({ faux: options.faux, provider, model, modelRuntime, loader, extensions: extensionsResult, session, sessionManager });
+    },
+    async () => {
+      if (options.reviewerShutdown) await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       session.dispose();
-    }
-  }
+    },
+  );
 }
 
 export async function writeTestSkill(
