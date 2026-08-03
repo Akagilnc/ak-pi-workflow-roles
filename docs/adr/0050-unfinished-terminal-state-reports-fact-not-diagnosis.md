@@ -14,7 +14,7 @@ Owner 直接决定。原话逐字如下（含原有换行与原有的单侧引�
 
 明确 decision keys：**该终态必须存在**；**两个 worker 角色都要有**。
 
-其余形状（命名、落位、剩余范围要求、同批修订范围）不属 owner authority，由 [issue #72](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/72) 的判官庭裁决，末轮判词 `converged`。施工归 [#75](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/75) 与 [#76](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/76)。
+其余形状（命名、落位、剩余范围要求、同批修订范围）不属 陛下 authority，由 [issue #72](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/72) 的大理寺裁决，末轮判词 `converged`。施工归 [#75](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/75) 与 [#76](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/76)。
 
 ## Decision
 
