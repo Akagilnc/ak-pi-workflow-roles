@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
@@ -83,6 +84,99 @@ function packageEntrypoint(manifest: RawPackageManifest): string {
   assert.deepEqual(manifest.pi?.extensions, ["./extensions/role-runtime.ts"]);
   return resolvePackageEntrypoint(manifest);
 }
+
+const ISSUE_28_BASELINE = "17f20615967d83c2d6d6b70924be70e54c01d9ab";
+
+type PersistedEntry = { type?: string; timestamp?: string; customType?: string; message?: Record<string, any> };
+
+async function readLatestSession(directory: string): Promise<PersistedEntry[]> {
+  const files = (await readdir(directory)).filter((file) => file.endsWith(".jsonl")).sort();
+  assert.ok(files.length > 0, `expected a persisted session in ${directory}`);
+  return (await readFile(join(directory, files.at(-1)!), "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as PersistedEntry);
+}
+
+async function runOrdinaryNavigatorObservation(extensionPath: string, baseline: boolean) {
+  return withHermeticHome(
+    { prefix: baseline ? "ak-navigator-baseline-" : "ak-navigator-current-" },
+    async ({ home, agentDir }) => {
+      let ordinaryExtensionPath = extensionPath;
+      if (baseline) {
+        execFileSync("git", ["cat-file", "-e", `${ISSUE_28_BASELINE}^{commit}`], { cwd: packageRoot });
+        const baselineRoot = await mkdtemp(resolve(home, "issue-28-baseline-"));
+        const archive = execFileSync("git", ["archive", ISSUE_28_BASELINE], { cwd: packageRoot, maxBuffer: 128 * 1024 * 1024 });
+        execFileSync("tar", ["-xf", "-", "-C", baselineRoot], { input: archive });
+        await symlink(resolve(packageRoot, "node_modules"), resolve(baselineRoot, "node_modules"), "dir");
+        ordinaryExtensionPath = resolve(baselineRoot, "extensions/role-runtime.ts");
+      }
+      const issueRoot = resolve(home, ".ak/work/issues/28");
+      const sessionDirectory = resolve(issueRoot, "runs/judge/session");
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(resolve(issueRoot, "authority.md"), "owner authority for ordinary Navigator observation\n", "utf8");
+      await writeFile(resolve(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-audit-failure/faux-1" }), "utf8");
+      const args = [
+        "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files",
+        "--session-dir", sessionDirectory,
+        "-e", ordinaryExtensionPath,
+        "-e", resolve(packageRoot, "test/fixtures/audit-failure-provider.ts"),
+        "--ak-role", "judge", "--provider", "ak-audit-failure", "--model", "faux-1", "--mode", "json", "Judge.",
+      ];
+      const result = await runPiSubprocess(args, {
+        cwd: issueRoot,
+        env: {
+          ...process.env,
+          HOME: home,
+          PI_CODING_AGENT_DIR: agentDir,
+          AK_NAVIGATOR_OBSERVATION: "1",
+          PI_OFFLINE: "1",
+        },
+      });
+      const roleEntries = await readLatestSession(sessionDirectory);
+      const navigatorDirectory = resolve(issueRoot, "runs/navigator");
+      const navigatorEntries = baseline ? [] : await readLatestSession(navigatorDirectory);
+      return { result, roleEntries, navigatorEntries };
+    },
+  );
+}
+
+test("ordinary Navigator attendance is absent at the pinned pre-Issue-28 baseline and present after Issue 28", async () => {
+  const manifest = await loadRawPackageManifest();
+  const current = await runOrdinaryNavigatorObservation(packageEntrypoint(manifest), false);
+  const baseline = await runOrdinaryNavigatorObservation(packageEntrypoint(manifest), true);
+  for (const [label, run] of [["baseline", baseline], ["current", current]] as const) {
+    assert.equal(run.result.timedOut, false, `${label} ordinary invocation must finish`);
+    assert.equal(run.result.code, 0, `${label} ordinary invocation must succeed: ${run.result.stderr}`);
+    const accepted = run.roleEntries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
+    assert.equal(accepted.length, 1, `${label} must persist the accepted Judge output result`);
+    assert.deepEqual(accepted[0]?.message?.details, { judgeStatus: "converged" });
+  }
+  const baselineVisible = baseline.roleEntries.filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+  assert.equal(baselineVisible.length, 0, "pinned pre-Issue-28 ordinary invocation must have no Navigator attendance");
+  assert.equal(baseline.navigatorEntries.length, 0, "pinned pre-Issue-28 ordinary invocation must have no Navigator session");
+
+  const currentPreparation = current.navigatorEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message.isError === false);
+  const currentSettlement = current.navigatorEntries.find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
+  const currentVisible = current.roleEntries.find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+  const currentAccepted = current.roleEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
+  assert.ok(currentPreparation?.timestamp, "current invocation must persist Navigator preparation completion");
+  assert.ok(currentSettlement?.timestamp, "current invocation must persist Navigator settlement");
+  assert.ok(currentVisible?.timestamp, "current invocation must persist the visible custom message");
+  assert.ok(currentAccepted?.timestamp, "current invocation must persist the actual accepted role output result");
+  const preparationAt = Date.parse(currentPreparation.timestamp!);
+  const settlementAt = Date.parse(currentSettlement.timestamp!);
+  const visibleAt = Date.parse(currentVisible.timestamp!);
+  const acceptedAt = Date.parse(currentAccepted.timestamp!);
+  assert.ok(Number.isFinite(preparationAt) && Number.isFinite(settlementAt) && Number.isFinite(visibleAt) && Number.isFinite(acceptedAt));
+  assert.ok(preparationAt <= acceptedAt, "Navigator preparation must finish before the actual accepted role-output/tool-result settlement");
+  assert.ok(visibleAt >= acceptedAt, "persisted visible custom-message must follow the actual accepted role-output/tool-result settlement");
+  assert.ok(visibleAt >= settlementAt, "persisted visible custom-message must follow Navigator settlement");
+  assert.ok(visibleAt - acceptedAt <= 1000, `persisted visible custom-message must follow accepted settlement within 1s (actual ${visibleAt - acceptedAt}ms)`);
+  const currentEvents = current.result.stdout.split("\n").filter((line) => line.trim().startsWith("{")).map((line) => JSON.parse(line) as any);
+  assert.equal(currentEvents.some((event) => event.type === "message_end" && event.message?.role === "custom" && event.message.customType === "ak-navigator-attendance"), true, "current ordinary invocation must display the typed attendance event");
+});
 
 test("packed package includes Doctor role, evidence flag, and runtime dependencies", async () => {
   const manifest = await loadRawPackageManifest();
@@ -880,8 +974,6 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       const preparedLatencyMs: number[] = [];
       let followUpObservations = 0;
       let attendanceSamples = 0;
-      let ordinaryBefore: unknown;
-      let ordinaryAfter: unknown;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
@@ -952,9 +1044,6 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.deepEqual(event.next, revisedRoute
               ? { role: "fixer", phase: "apply" }
               : { role: "reviewer", phase: null });
-            const ordinary = { disposition: event.disposition, subjectKey: event.subjectKey, next: event.next };
-            if (sample === 0) ordinaryBefore = ordinary;
-            if (sample === presentationSamples.length - 1) ordinaryAfter = ordinary;
           });
           const displayedAt = performance.now();
           preparedLatencyMs.push(displayedAt - preparedAt);
@@ -990,7 +1079,6 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         assert.ok(Math.max(...preparedLatencyMs) <= 1000, "prepared Navigator presentation must remain near one second");
         const followUpRate = attendanceSamples === 0 ? 0 : followUpObservations / attendanceSamples;
         assert.ok(followUpRate < 0.1, `observed follow-up rate ${(followUpRate * 100).toFixed(1)}% must remain below 10%`);
-        assert.deepEqual(ordinaryAfter, ordinaryBefore, "ordinary normal-entrypoint attendance remains frozen before/after presentation sampling");
         process.stderr.write(`[navigator observation] prepared_ms_max=${Math.max(...preparedLatencyMs).toFixed(1)} samples=${attendanceSamples} follow_up_rate=${(followUpRate * 100).toFixed(1)}%\n`);
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorSession = SessionManager.continueRecent(issueRoot, navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot));
