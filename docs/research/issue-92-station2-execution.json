@@ -756,10 +756,10 @@
         "commit": "8050b81"
       }
     },
-    "test/collector-ledger.test.ts::real observe materialization overflow latches fatal and rejects later work": {
-      "ledgerFile": "test/collector-ledger.test.ts",
+    "test/collector-receipt.test.ts::receipt and ledger overflow latch fatal infrastructure failure": {
+      "ledgerFile": "test/collector-receipt.test.ts",
       "currentFile": "test/contract/collector-ledger.test.ts",
-      "test": "real observe materialization overflow latches fatal and rejects later work",
+      "test": "receipt and ledger overflow latch fatal infrastructure failure",
       "ledgerDurationMs": 1337.5,
       "ledgerProjectedMs": 133.75,
       "owningSeam": "src/collector-ledger.ts observe() production receipt/materialization limit",
