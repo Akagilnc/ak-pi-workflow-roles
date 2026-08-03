@@ -230,7 +230,7 @@ export function createFixerRoleRuntime(
           promptGuidelines: [
             `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
             `${FIXER_OUTPUT_TOOL_NAME} reports only lawful assignment blockers; infrastructure failures abort.`,
-            "plan permits planned|refused; apply permits completed|refused|partially_completed.",
+            "plan permits planned|refused; apply permits completed|refused|partially_completed|unfinished.",
           ],
           parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
