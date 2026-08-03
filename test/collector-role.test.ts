@@ -2624,7 +2624,7 @@ test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async (
         ]);
         try {
           await session.prompt("start");
-        } catch (error) {
+        } catch (error) { // Contract: docs/adr/0016-tests-follow-logic-not-format.md#Tests-follow-logic-not-format — this typed expected-negative assertion retains the exact rejection for the assertions below.
           // The expected contract failure must remain observable to this assertion.
           assert.ok(error instanceof Error);
         }
