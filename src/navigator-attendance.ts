@@ -437,9 +437,6 @@ export function formatNavigatorReport(report: NavigatorReport): string {
   ].join("\n");
 }
 
-/** Optional typed field on accepted role-output toolResult details (settlement extraction view). */
-export const SETTLEMENT_NAVIGATION_KEY = "navigation" as const;
-
 export type SettlementNavigation = {
   disposition: "recommendation";
   route?: NavigatorRouteTarget[];
@@ -448,6 +445,7 @@ export type SettlementNavigation = {
   command: string;
 };
 
+/** Recommendation essentials for the one mandatory last-ak_*_output extraction. */
 export function settlementNavigationFromEvent(event: NavigatorEvent): SettlementNavigation | undefined {
   if (event.disposition !== "recommendation") return undefined;
   if (event.next === undefined || event.reason === undefined || event.command === undefined) return undefined;
@@ -480,24 +478,21 @@ function appendNavigatorReportToContent<T extends { type: string }>(
 
 /**
  * Decorate an accepted role-output tool result so the one mandatory settlement
- * extraction (last ak_*_output toolResult) carries recommendation essentials.
- * Unavailable and intentional silence leave details untouched.
+ * extraction (last ak_*_output toolResult) carries recommendation essentials in
+ * content text. Receipt details stay byte-identical to the terminating-tool
+ * contract — unavailable and intentional silence leave the settlement untouched.
  */
 export function decorateSettlementWithNavigation<T extends { type: string }>(
   event: { content: readonly T[]; details: unknown },
   presentation: { event: NavigatorEvent; report: NavigatorReport } | undefined,
 ): { content: Array<T | SettlementTextPart>; details: unknown } | undefined {
   if (presentation === undefined) return undefined;
-  const navigation = settlementNavigationFromEvent(presentation.event);
-  if (navigation === undefined) return undefined;
-  const detailsBase =
-    typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
-      ? event.details as Record<string, unknown>
-      : {};
-  if (Object.hasOwn(detailsBase, SETTLEMENT_NAVIGATION_KEY)) return undefined;
+  if (settlementNavigationFromEvent(presentation.event) === undefined) return undefined;
+  const reportText = formatNavigatorReport(presentation.report);
+  if (reportText === "") return undefined;
   return {
-    content: appendNavigatorReportToContent(event.content, formatNavigatorReport(presentation.report)),
-    details: { ...detailsBase, [SETTLEMENT_NAVIGATION_KEY]: navigation },
+    content: appendNavigatorReportToContent(event.content, reportText),
+    details: event.details,
   };
 }
 
