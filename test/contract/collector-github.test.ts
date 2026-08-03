@@ -16,7 +16,6 @@ import {
 } from "../../src/collector-github.ts";
 import { createCollectorLedger } from "../../src/collector-ledger.ts";
 import {
-  COLLECTOR_SNAPSHOT_MAX_BYTES,
   createSnapshotByteBudget,
   normalizeAuthenticatedUserEvidence,
   normalizePullRequestEvidence,
@@ -191,198 +190,21 @@ test("final-page HTTP 429 fails pagination loudly", async () => {
 });
 
 test("default createGhApiRunner spawns executable gh on PATH hermetically", async () => {
+  // Real spawn once for argv + --include frame parse; scenario matrix lives in-process elsewhere.
   const logPath = join(await mkdtemp(join(tmpdir(), "ak-gh-log-")), "args.log");
   const script = `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}
-# Parse a minimal --include HTTP response
-path=""
-method="GET"
-prev=""
-for arg in "$@"; do
-  if [[ "$prev" == "-X" ]]; then method="$arg"; fi
-  if [[ "$arg" == /* || "$arg" == https://* ]]; then path="$arg"; fi
-  prev="$arg"
-done
-if [[ "$method" == "POST" ]]; then
-  body=$(cat || true)
-  if [[ "$body" == *\"force-reject\"* ]]; then
-    printf 'HTTP/1.1 422 Unprocessable\\r\\ncontent-type: application/json\\r\\n\\r\\n{\"message\":\"no\"}'
-    exit 0
-  fi
-  if [[ "\${AMBIGUOUS:-}" == "1" ]]; then
-    echo "network exploded" >&2
-    exit 1
-  fi
-  printf 'HTTP/1.1 201 Created\\r\\ncontent-type: application/json\\r\\n\\r\\n{\"id\":55,\"user\":{\"login\":\"collector-bot\"},\"body\":\"posted\",\"created_at\":\"2024-01-01T00:00:00Z\",\"updated_at\":\"2024-01-01T00:00:00Z\",\"html_url\":\"https://github.com/a/b/pull/1#issuecomment-55\"}'
-  exit 0
-fi
-if [[ "$path" == *"/user" ]]; then
-  printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{\"login\":\"collector-bot\"}'
-  exit 0
-fi
-if [[ "$path" == *"/pulls/1/reviews"* ]]; then
-  if [[ "$path" == *"page=2"* ]]; then
-    printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n[]'
-    exit 0
-  fi
-  printf 'HTTP/1.1 200 OK\\r\\nlink: <https://api.github.com/repos/a/b/pulls/1/reviews?page=2>; rel="next"\\r\\ncontent-type: application/json\\r\\n\\r\\n[]'
-  exit 0
-fi
-if [[ "$path" == *"/pulls/1/comments"* || "$path" == *"/issues/1/comments"* ]]; then
-  printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n[]'
-  exit 0
-fi
-if [[ "$path" == *"/pulls/1"* ]]; then
-  printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{\"number\":1,\"state\":\"open\",\"head\":{\"sha\":\"abc\"},\"html_url\":\"https://github.com/a/b/pull/1\"}'
-  exit 0
-fi
-echo "unexpected $*" >&2
-exit 2
+printf '%s\n' "$*" >> ${JSON.stringify(logPath)}
+printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{"login":"collector-bot"}'
 `;
   await withPathGhStub(script, async () => {
-    // Real default spawn — no spawnImpl injection
     const runner = createGhApiRunner();
     const transport = createGhCollectorGitHubTransport(runner);
-
     const user = await transport.getAuthenticatedUser();
     assert.equal(user.login, "collector-bot");
-
-    const pr = await transport.getPullRequest({ owner: "a", repo: "b", prNumber: 1 });
-    assert.equal(pr.headOid, "abc");
-
-    const reviews = await transport.listPullRequestReviews({
-      owner: "a",
-      repo: "b",
-      prNumber: 1,
-    });
-    assert.equal(reviews.pages.length, 2);
-
-    const created = await transport.createIssueComment({
-      owner: "a",
-      repo: "b",
-      prNumber: 1,
-      body: "hello marker",
-    });
-    assert.equal(created.kind, "success");
-
-    const rejected = await transport.createIssueComment({
-      owner: "a",
-      repo: "b",
-      prNumber: 1,
-      body: "force-reject",
-    });
-    assert.equal(rejected.kind, "rejected");
-
-    process.env.AMBIGUOUS = "1";
-    try {
-      const lost = await transport.createIssueComment({
-        owner: "a",
-        repo: "b",
-        prNumber: 1,
-        body: "maybe lost",
-      });
-      assert.equal(lost.kind, "ambiguous_loss");
-    } finally {
-      delete process.env.AMBIGUOUS;
-    }
-
     const log = await (await import("node:fs/promises")).readFile(logPath, "utf8");
     assert.match(log, /api --hostname github.com --include/);
     assert.doesNotMatch(log, / \| |&&/);
-  });
-});
-
-test("PATH gh recovery through ledger request+observe sets recoverySnapshotId", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "ak-gh-recovery-"));
-  const markerPath = join(stateDir, "marker.txt");
-  const script = `#!/usr/bin/env bash
-set -euo pipefail
-path=""; method="GET"; prev=""
-for arg in "$@"; do
-  if [[ "$prev" == "-X" ]]; then method="$arg"; fi
-  if [[ "$arg" == /* ]]; then path="$arg"; fi
-  prev="$arg"
-done
-http() {
-  local body="$1"
-  printf 'HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n%s' "$body"
-}
-if [[ "$method" == "POST" ]]; then
-  cat >/dev/null || true
-  echo "spawn failure without http" >&2
-  exit 1
-fi
-if [[ "$path" == *"/user" ]]; then
-  http '{"login":"collector-bot"}'; exit 0
-fi
-if [[ "$path" == *"/pulls/1"* && "$path" != *reviews* && "$path" != *comments* ]]; then
-  http '{"number":1,"state":"open","head":{"sha":"head-a"},"html_url":"https://github.com/acme/widgets/pull/1"}'; exit 0
-fi
-if [[ "$path" == *"/reviews"* ]]; then
-  http '[]'; exit 0
-fi
-if [[ "$path" == *"/issues/1/comments"* ]]; then
-  if [[ -f ${JSON.stringify(markerPath)} ]]; then
-    marker=$(cat ${JSON.stringify(markerPath)})
-    body=$(MARKER="$marker" python3 - <<'PY'
-import json, os
-print(json.dumps([{
-  "id": 99,
-  "user": {"login": "collector-bot"},
-  "body": "Please review.\\n" + os.environ["MARKER"] + "\\n",
-  "created_at": "2024-01-01T00:00:00Z",
-  "updated_at": "2024-01-01T00:00:00Z",
-  "html_url": "https://github.com/acme/widgets/pull/1#issuecomment-99",
-}]))
-PY
-)
-    http "$body"; exit 0
-  fi
-  http '[]'; exit 0
-fi
-if [[ "$path" == *"/pulls/1/comments"* ]]; then
-  http '[]'; exit 0
-fi
-echo "unexpected $*" >&2; exit 2
-`;
-  await withPathGhStub(script, async () => {
-    const runner = createGhApiRunner();
-    const transport = createGhCollectorGitHubTransport(runner);
-    const ledger = createCollectorLedger({
-      repository: {
-        display: "Acme/Widgets",
-        canonical: "acme/widgets",
-        owner: "acme",
-        repo: "widgets",
-      },
-      prNumber: 1,
-      manifest: {
-        version: 1,
-        legs: [{
-          id: "codex",
-          expectedAuthors: ["codexbot"],
-          requestBody: "Please review.",
-        }],
-        canonicalJson: "{}\n",
-        digest: "c".repeat(64),
-        sourcePath: "/tmp/legs.json",
-      },
-    });
-    const clock = clockAt("2024-01-01T00:00:00Z");
-    ledger.recordActivation(clock);
-    const first = await ledger.observe(transport, clock);
-    const req = await ledger.request(
-      { legId: "codex", snapshotId: first.snapshot.snapshotId },
-      transport,
-      clock,
-    ) as { status: string; marker: string };
-    assert.equal(req.status, "ambiguous_loss");
-    await writeFile(markerPath, req.marker, "utf8");
-    const second = await ledger.observe(transport, clock);
-    const attempt = ledger.requestAttempts().find((item) => item.status === "recovered");
-    assert.ok(attempt);
-    assert.equal(attempt.recoverySnapshotId, second.snapshot.snapshotId);
   });
 });
 
@@ -639,76 +461,38 @@ test("R8 authenticated_user retained raw is login+id only", () => {
 
 test("R10 multi-page pagination stops before retaining oversize normalized budget", async () => {
   let pagesFetched = 0;
-  // Body sized so each page alone is under budget, but page1+page2 cumulative
-  // normalized records (body + raw.body) exceed the shared 8 MiB gate.
-  const fat = "x".repeat(Math.floor(COLLECTOR_SNAPSHOT_MAX_BYTES * 0.3));
+  // Billing point is before next page; bound size is irrelevant — use few-KiB bodies.
+  const bound = 4_096;
+  const fat = "x".repeat(1_500);
   const observedAt = "2024-01-01T00:00:00.000Z";
-  const budget = createSnapshotByteBudget();
+  const budget = createSnapshotByteBudget(bound);
   budget.retain([
     normalizeAuthenticatedUserEvidence(sampleUser(), observedAt),
     normalizePullRequestEvidence(samplePull(), observedAt),
   ]);
+  const page = (id: number, next?: number) => ({
+    status: 200,
+    headers: next === undefined
+      ? {}
+      : { link: `<https://api.github.com/repos/a/b/pulls/1/reviews?page=${next}>; rel="next"` },
+    bodyText: JSON.stringify([{
+      id,
+      user: { login: String(id) },
+      state: "COMMENTED",
+      body: fat,
+      commit_id: "h",
+      submitted_at: "2024-01-01T00:00:00Z",
+      html_url: `https://example.test/${id}`,
+    }]),
+  });
   const runner = async (args: string[]) => {
     if (!args.some((arg) => arg.includes("/reviews"))) {
       return { status: 200, headers: {}, bodyText: "[]" };
     }
     pagesFetched += 1;
-    if (pagesFetched === 1) {
-      return {
-        status: 200,
-        headers: {
-          link:
-            '<https://api.github.com/repos/a/b/pulls/1/reviews?page=2>; rel="next"',
-        },
-        bodyText: JSON.stringify([
-          {
-            id: 1,
-            user: { login: "a" },
-            state: "COMMENTED",
-            body: fat,
-            commit_id: "h",
-            submitted_at: "2024-01-01T00:00:00Z",
-            html_url: "https://example.test/1",
-          },
-        ]),
-      };
-    }
-    if (pagesFetched === 2) {
-      return {
-        status: 200,
-        headers: {
-          link:
-            '<https://api.github.com/repos/a/b/pulls/1/reviews?page=3>; rel="next"',
-        },
-        bodyText: JSON.stringify([
-          {
-            id: 2,
-            user: { login: "b" },
-            state: "COMMENTED",
-            body: fat,
-            commit_id: "h",
-            submitted_at: "2024-01-01T00:00:00Z",
-            html_url: "https://example.test/2",
-          },
-        ]),
-      };
-    }
-    // Must not reach page 3.
-    return {
-      status: 200,
-      headers: {},
-      bodyText: JSON.stringify([
-        {
-          id: 3,
-          user: { login: "c" },
-          state: "COMMENTED",
-          body: fat,
-          commit_id: "h",
-          submitted_at: "2024-01-01T00:00:00Z",
-          html_url: "https://example.test/3",
-        },
-      ]),
-    };
+    if (pagesFetched === 1) return page(1, 2);
+    if (pagesFetched === 2) return page(2, 3);
+    return page(3);
   };
   const transport = createGhCollectorGitHubTransport(runner);
   await assert.rejects(
@@ -723,7 +507,7 @@ test("R10 multi-page pagination stops before retaining oversize normalized budge
           );
         },
       }),
-    /snapshot exceeded|UTF-8 bytes|8/i,
+    /Collector snapshot exceeded 4096 UTF-8 bytes/,
   );
   assert.ok(pagesFetched <= 2, `stopped before all pages; fetched=${pagesFetched}`);
   assert.equal(pagesFetched < 3, true);
@@ -866,148 +650,113 @@ test("2xx parse ambiguous_loss recovers via marker observe without second POST",
   ) as { status: string };
   assert.equal(req.status, "ambiguous_loss");
   assert.equal(postCount, 1);
-  await ledger.observe(transport, clock);
+  const second = await ledger.observe(transport, clock);
   const attempt = ledger.requestAttempts().find((item) => item.status === "recovered");
   assert.ok(attempt);
+  assert.equal(attempt.recoverySnapshotId, second.snapshot.snapshotId);
   assert.equal(postCount, 1, "recovery must not repost");
 });
 
-async function assertHungPostRequestCancellation(abortReason: unknown, reasonText: string) {
-  const stateDir = await mkdtemp(join(tmpdir(), "ak-gh-post-abort-"));
-  const pidFile = join(stateDir, "pid.txt");
-  const script = `#!/usr/bin/env bash
-set -euo pipefail
-prev=""
-is_post=0
-for arg in "$@"; do
-  if [[ "$prev" == "-X" && "$arg" == "POST" ]]; then
-    is_post=1
-  fi
-  prev="$arg"
-done
-if [[ "$is_post" -eq 1 ]]; then
-  echo "$$" > ${JSON.stringify(pidFile)}
-  sleep 30
-  printf 'HTTP/1.1 201 Created\\r\\ncontent-type: application/json\\r\\n\\r\\n{"id":1}'
-  exit 0
-fi
-path=""
-for arg in "$@"; do
-  if [[ "$arg" == /* ]]; then path="$arg"; fi
-done
-http() {
-  local body="$1"
-  printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n%s' "$body"
+function collectorLedgerFixture(digestChar = "f") {
+  return createCollectorLedger({
+    repository: {
+      display: "Acme/Widgets",
+      canonical: "acme/widgets",
+      owner: "acme",
+      repo: "widgets",
+    },
+    prNumber: 1,
+    manifest: {
+      version: 1,
+      legs: [{
+        id: "codex",
+        expectedAuthors: ["codexbot"],
+        requestBody: "Please review.",
+      }],
+      canonicalJson: "{}\n",
+      digest: digestChar.repeat(64),
+      sourcePath: "/tmp/legs.json",
+    },
+  });
 }
-if [[ "$path" == *"/user" ]]; then
-  http '{"login":"collector-bot"}'; exit 0
-fi
-if [[ "$path" == *"/pulls/1"* && "$path" != *reviews* && "$path" != *comments* ]]; then
-  http '{"number":1,"state":"open","head":{"sha":"head-a"},"html_url":"https://github.com/acme/widgets/pull/1"}'; exit 0
-fi
-if [[ "$path" == *"/reviews"* || "$path" == *"/comments"* ]]; then
-  http '[]'; exit 0
-fi
-echo "unexpected $*" >&2; exit 2
-`;
-  await withPathGhStub(script, async () => {
-    const runner = createGhApiRunner();
-    const transport = createGhCollectorGitHubTransport(runner);
-    const ledger = createCollectorLedger({
-      repository: {
-        display: "Acme/Widgets",
-        canonical: "acme/widgets",
-        owner: "acme",
-        repo: "widgets",
-      },
-      prNumber: 1,
-      manifest: {
-        version: 1,
-        legs: [{
-          id: "codex",
-          expectedAuthors: ["codexbot"],
-          requestBody: "Please review.",
-        }],
-        canonicalJson: "{}\n",
-        digest: "f".repeat(64),
-        sourcePath: "/tmp/legs.json",
-      },
-    });
-    const clock = clockAt("2024-01-01T00:00:00Z");
-    ledger.recordActivation(clock);
-    const first = await ledger.observe(transport, clock);
-    const controller = new AbortController();
-    const pending = ledger.request(
+
+function hangUntilAbortedRunner(signal?: AbortSignal) {
+  return new Promise<never>((_resolve, reject) => {
+    if (signal === undefined) return;
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+}
+
+async function assertInProcessRequestAbort(abortReason: unknown) {
+  const runner = async (
+    args: string[],
+    options?: { signal?: AbortSignal; stdin?: string },
+  ) => {
+    const joined = args.join(" ");
+    if (args.includes("POST") || /\s-X\s+POST\b/.test(` ${joined} `)) {
+      return hangUntilAbortedRunner(options?.signal);
+    }
+    const path = args.find((arg) => arg.startsWith("/")) ?? "";
+    if (path === "/user") {
+      return { status: 200, headers: {}, bodyText: JSON.stringify({ login: "collector-bot" }) };
+    }
+    if (path.includes("/pulls/1") && !path.includes("reviews") && !path.includes("comments")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          number: 1,
+          state: "open",
+          head: { sha: "head-a" },
+          html_url: "https://github.com/acme/widgets/pull/1",
+        }),
+      };
+    }
+    if (path.includes("/reviews") || path.includes("/comments")) {
+      return { status: 200, headers: {}, bodyText: "[]" };
+    }
+    throw new Error(`unexpected path ${path}`);
+  };
+  const transport = createGhCollectorGitHubTransport(runner);
+  const ledger = collectorLedgerFixture();
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  ledger.recordActivation(clock);
+  const first = await ledger.observe(transport, clock);
+  const controller = new AbortController();
+  const pending = ledger.request(
+    { legId: "codex", snapshotId: first.snapshot.snapshotId },
+    transport,
+    clock,
+    controller.signal,
+  );
+  queueMicrotask(() => controller.abort(abortReason));
+  await assert.rejects(
+    () => pending,
+    (error: unknown) => Object.is(error, abortReason),
+  );
+  const attempts = ledger.requestAttempts();
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0]?.status, "started");
+  await assert.rejects(
+    () => ledger.request(
       { legId: "codex", snapshotId: first.snapshot.snapshotId },
       transport,
       clock,
-      controller.signal,
-    );
-    // Wait until POST child records its PID.
-    let pid = 0;
-    for (let i = 0; i < 50; i += 1) {
-      try {
-        const text = await (await import("node:fs/promises")).readFile(pidFile, "utf8");
-        pid = Number(text.trim());
-        if (Number.isSafeInteger(pid) && pid > 0) break;
-      } catch {
-        // not yet
-      }
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.ok(pid > 0, "POST child recorded pid");
-    controller.abort(abortReason);
-    // Exact abort-reason identity (Error, tagged Error, or non-Error).
-    await assert.rejects(
-      () => pending,
-      (error: unknown) => {
-        assert.ok(
-          Object.is(error, abortReason),
-          `must rethrow exact abort reason identity (${reasonText})`,
-        );
-        return true;
-      },
-    );
-    // Child must be dead; ESRCH means gone.
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    let alive = true;
-    try {
-      process.kill(pid, 0);
-    } catch {
-      alive = false;
-    }
-    assert.equal(alive, false, "POST child must be killed");
-    const attempts = ledger.requestAttempts();
-    assert.equal(attempts.length, 1);
-    assert.equal(attempts[0]?.status, "started");
-    // Process-local one-shot retained: second request at same HEAD fails.
-    await assert.rejects(
-      () => ledger.request(
-        { legId: "codex", snapshotId: first.snapshot.snapshotId },
-        transport,
-        clock,
-      ),
-      /already used|process-local/i,
-    );
-  });
+    ),
+    /already used|process-local/i,
+  );
 }
 
-test("request-path AbortSignal cancels hung POST child without rejected attempt", async () => {
-  await assertHungPostRequestCancellation(
-    new Error("request canceled"),
-    "request canceled",
-  );
-});
-
-test("request-path abort with non-Error reason cancels without rejected attempt", async () => {
-  await assertHungPostRequestCancellation("stop now", "stop now");
-});
-
-test("request-path abort with tagged ambiguousGhFailure reason preserves identity over ambiguous_loss", async () => {
-  const abortReason = Object.assign(new Error("deadline exceeded"), {
-    ambiguousGhFailure: true,
-  });
-  await assertHungPostRequestCancellation(abortReason, "deadline exceeded");
+test("request-path AbortSignal cancels hung POST without rejected attempt", async () => {
+  // In-process reason-identity matrix; real child kill is owned by R11 hung-gh test.
+  const tagged = Object.assign(new Error("deadline exceeded"), { ambiguousGhFailure: true });
+  for (const reason of [new Error("request canceled"), "stop now", tagged] as const) {
+    await assertInProcessRequestAbort(reason);
+  }
 });
 
 test("non-aborted AbortError+ambiguousGhFailure remains ambiguous_loss", async () => {
@@ -1028,9 +777,9 @@ test("non-aborted AbortError+ambiguousGhFailure remains ambiguous_loss", async (
   assert.equal(result.kind, "ambiguous_loss");
 });
 
-test("createGhApiRunner stdin EPIPE settles once without uncaughtException", async () => {
-  // Child exits immediately without reading stdin; large write must not crash
-  // the process via uncaught write EPIPE.
+test("createGhApiRunner stdin EPIPE settles once and createIssueComment is ambiguous_loss", async () => {
+  // 1 MiB still exceeds typical pipe buffer; 32 MiB was pure cost.
+  const fat = "x".repeat(1 << 20);
   const script = `#!/usr/bin/env bash
 exit 1
 `;
@@ -1046,7 +795,7 @@ exit 1
         () =>
           runner(
             ["api", "--hostname", "github.com", "--include", "-X", "POST", "/repos/a/b/issues/1/comments", "--input", "-"],
-            { stdin: "x".repeat(32 << 20) },
+            { stdin: fat },
           ),
         (error: unknown) => {
           assert.ok(error instanceof Error);
@@ -1057,33 +806,12 @@ exit 1
           return true;
         },
       );
-      // Allow any deferred stream errors a tick to surface if unhandled.
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(uncaught, 0);
-    } finally {
-      process.off("uncaughtException", onUncaught);
-    }
-  });
-});
-
-test("createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss", async () => {
-  const script = `#!/usr/bin/env bash
-exit 1
-`;
-  await withPathGhStub(script, async () => {
-    let uncaught = 0;
-    const onUncaught = () => {
-      uncaught += 1;
-    };
-    process.on("uncaughtException", onUncaught);
-    try {
-      const runner = createGhApiRunner();
       const transport = createGhCollectorGitHubTransport(runner);
       const result = await transport.createIssueComment({
         owner: "a",
         repo: "b",
         prNumber: 1,
-        body: "x".repeat(32 << 20),
+        body: fat,
       });
       assert.equal(result.kind, "ambiguous_loss");
       await new Promise((resolve) => setImmediate(resolve));
@@ -1095,12 +823,14 @@ exit 1
 });
 
 test("R11 hung gh child aborted through runner settles once and kills child", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "ak-gh-hang-"));
+  const pidFile = join(stateDir, "pid.txt");
   const script = `#!/usr/bin/env bash
 set -euo pipefail
-# Hang until killed — owned-child cancellation fixture.
-sleep 30
-printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{"login":"late"}'
-`
+echo "$$" > ${JSON.stringify(pidFile)}
+# exec so SIGTERM from the runner hits the hung process directly.
+exec sleep 30
+`;
   await withPathGhStub(script, async () => {
     const runner = createGhApiRunner();
     const controller = new AbortController();
@@ -1108,59 +838,49 @@ printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{"login":
       ["api", "--hostname", "github.com", "--include", "-X", "GET", "/user"],
       { signal: controller.signal },
     );
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    let pid = 0;
+    for (let i = 0; i < 50; i += 1) {
+      try {
+        const text = await (await import("node:fs/promises")).readFile(pidFile, "utf8");
+        pid = Number(text.trim());
+        if (Number.isSafeInteger(pid) && pid > 0) break;
+      } catch {
+        // not yet
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(pid > 0, "hung child recorded pid");
     controller.abort(new Error("observe canceled"));
     await assert.rejects(() => pending, /abort|cancel/i);
+    let alive = true;
+    for (let i = 0; i < 50; i += 1) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      } catch {
+        alive = false;
+        break;
+      }
+    }
+    assert.equal(alive, false, "hung gh child must be killed");
   });
 });
 
 test("R11 observe abort through ledger does not certify a snapshot", async () => {
-  const script = `#!/usr/bin/env bash
-set -euo pipefail
-path=""; prev=""
-for arg in "$@"; do
-  if [[ "$arg" == /* ]]; then path="$arg"; fi
-  prev="$arg"
-done
-if [[ "$path" == *"/user" ]]; then
-  sleep 30
-  printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{"login":"collector-bot"}'
-  exit 0
-fi
-printf 'HTTP/1.1 200 OK\\r\\ncontent-type: application/json\\r\\n\\r\\n{}'
-exit 0
-`
-  await withPathGhStub(script, async () => {
-    const runner = createGhApiRunner();
-    const transport = createGhCollectorGitHubTransport(runner);
-    const ledger = createCollectorLedger({
-      repository: {
-        display: "A/B",
-        canonical: "a/b",
-        owner: "a",
-        repo: "b",
-      },
-      prNumber: 1,
-      manifest: {
-        version: 1,
-        legs: [{
-          id: "codex",
-          expectedAuthors: ["codexbot"],
-          requestBody: "Please review.",
-        }],
-        canonicalJson: "{}\n",
-        digest: "e".repeat(64),
-        sourcePath: "/tmp/legs.json",
-      },
-    });
-    const clock = clockAt("2024-01-01T00:00:00Z");
-    ledger.recordActivation(clock);
-    const controller = new AbortController();
-    const pending = ledger.observe(transport, clock, controller.signal);
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    controller.abort(new Error("observe canceled"));
-    await assert.rejects(() => pending, /observe failed|abort|cancel/i);
-    assert.equal(ledger.latestCompleteSnapshotId, undefined);
-    assert.equal(ledger.allSnapshots().length, 0);
-  });
+  // Ledger-state contract; hang is an in-process unresolved /user promise.
+  const runner = async (args: string[], options?: { signal?: AbortSignal }) => {
+    const path = args.find((arg) => arg.startsWith("/")) ?? "";
+    if (path === "/user") return hangUntilAbortedRunner(options?.signal);
+    return { status: 200, headers: {}, bodyText: "{}" };
+  };
+  const transport = createGhCollectorGitHubTransport(runner);
+  const ledger = collectorLedgerFixture("e");
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  ledger.recordActivation(clock);
+  const controller = new AbortController();
+  const pending = ledger.observe(transport, clock, controller.signal);
+  queueMicrotask(() => controller.abort(new Error("observe canceled")));
+  await assert.rejects(() => pending, /observe failed|abort|cancel/i);
+  assert.equal(ledger.latestCompleteSnapshotId, undefined);
+  assert.equal(ledger.allSnapshots().length, 0);
 });

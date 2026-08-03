@@ -486,10 +486,12 @@
       "ledgerProjectedMs": 433.21,
       "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:875. Cheaper construction: 保留 ①③④ 断言；「真子进程被杀」只在 :1104 证一次。本条同时是 :1002 的并入目的地。 Ledger projectedMs≈433.21.",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "In-process abort-reason matrix (Error/non-Error/tagged); child kill owned by R11.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::PATH gh recovery through ledger request+observe sets recoverySnapshotId": {
@@ -500,10 +502,12 @@
       "ledgerProjectedMs": 377.508,
       "owningSeam": "src/collector-github.ts ambiguous_loss recovery + src/collector-ledger.ts recoverySnapshotId",
       "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-github.test.ts :: \"PATH gh recovery through ledger request+observe sets recoverySnapshotId\". Former survivor mapping failed open-body ",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "recoverySnapshotId asserted on in-process marker recovery carrier; PATH spawn twin deleted.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::request-path abort with non-Error reason cancels without rejected attempt": {
@@ -514,10 +518,12 @@
       "ledgerProjectedMs": 346.7,
       "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1010. Cheaper construction: 并入 :995 重建后的进程内 abort-reason 参数化矩阵（Error / 非 Error / tagged 三例共用一条 in-process 夹具），耗时 ~1ms。 Ledger projectedMs≈346.",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Row of in-process abort-reason matrix.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::default createGhApiRunner spawns executable gh on PATH hermetically": {
@@ -528,10 +534,12 @@
       "ledgerProjectedMs": 341.52,
       "owningSeam": "src/collector-github.ts",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:195. Cheaper construction: Rebuild at cheaper seam: ②：真 spawn 那一小块非贵不可证（不可逆地需要真子进程），但本测把 6 个已在别处便宜证过的场景全塞进同一个 bash 脚本，贵在冗余场景而非贵在契约。 Ledger pro",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "One real spawn: GET /user + argv log; scenario matrix stays in-process.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::request-path abort with tagged ambiguousGhFailure reason preserves identity over ambiguous_loss": {
@@ -542,10 +550,12 @@
       "ledgerProjectedMs": 335.25,
       "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1020. Cheaper construction: Rebuild at cheaper seam: ②：这是四变体里信息量最高的一条（钉住 catch 分支的先后次序），但仍不需要真子进程。 Ledger projectedMs≈335.25.",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Row of in-process abort-reason matrix.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss": {
@@ -556,10 +566,12 @@
       "ledgerProjectedMs": 215.056,
       "owningSeam": "src/collector-github.ts createGhApiRunner EPIPE / ambiguous_loss",
       "greenSummary": "Green (rebuild class): reconstruct cheapest carrier that asserts the absorbed contract for test/collector-github.test.ts :: \"createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss\". Former survivor mapping failed open-bo",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Folded into EPIPE carrier as second assertion on same runner.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::createGhApiRunner stdin EPIPE settles once without uncaughtException": {
@@ -570,10 +582,12 @@
       "ledgerProjectedMs": 161.21,
       "owningSeam": "src/collector-github.ts createGhApiRunner EPIPE / ambiguous_loss",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1056. Cheaper construction: 并入目的地。 Ledger projectedMs≈161.21.",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "1 MiB stdin; shared with createIssueComment ambiguous_loss on same stub.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::R10 multi-page pagination stops before retaining oversize normalized budget": {
@@ -584,10 +598,12 @@
       "ledgerProjectedMs": 34.36,
       "owningSeam": "src/collector-github.ts",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:644. Cheaper construction: Rebuild at cheaper seam: ②：契约是「计费点在取下一页之前」，与 8 MiB 这个具体数字无关；现构造为了撑爆真实 8 MiB 常量而 `\"x\".repeat(2.4M)` 造两条巨型 body 并反复 J",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "createSnapshotByteBudget(4096) + 1.5KB bodies; pagesFetched<3 unchanged.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::R11 observe abort through ledger does not certify a snapshot": {
@@ -598,10 +614,12 @@
       "ledgerProjectedMs": 23.67,
       "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1125. Cheaper construction: Rebuild at cheaper seam: ②：契约纯属 ledger 层状态不变式，与真不真 spawn 无关；现构造却靠 bash `sleep 30` 制造挂起，还配 40ms 固定等待。 Ledger projec",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "In-process hang-until-aborted /user runner; ledger state asserts only.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/collector-github.test.ts::R11 hung gh child aborted through runner settles once and kills child": {
@@ -612,10 +630,12 @@
       "ledgerProjectedMs": 18.3,
       "owningSeam": "src/collector-github.ts request-path AbortSignal cancellation",
       "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-github.test.ts:1118. Cheaper construction: Rebuild at cheaper seam: ②：这是全卷证明「真子进程真的被杀」的最便宜位置（只 spawn 一个 hang 住的 child，36ms），但它现在只断言 rejects、根本没验尸——名不副实，逼得 :9",
-      "state": "unfinished",
+      "state": "executed",
       "evidence": {
-        "kind": "not-yet-reconstructed",
-        "note": "Title still present under prior construction; Green cheaper rebuild not executed at this HEAD. Shared fixture alone does not settle this entry."
+        "kind": "construction-rebuild",
+        "note": "Sole real-child kill proof: pidfile + ESRCH poll after abort; exec sleep.",
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commitPending": true
       }
     },
     "test/merger-git-state.test.ts::production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit": {
@@ -1558,16 +1578,6 @@
   "unfinishedKeys": [
     "test/activation-envelope-contract.test.ts::default tool observation writer retries short writes on fd 2 and rejects schema-invalid records",
     "test/activation-envelope-contract.test.ts::incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch",
-    "test/collector-github.test.ts::PATH gh recovery through ledger request+observe sets recoverySnapshotId",
-    "test/collector-github.test.ts::R10 multi-page pagination stops before retaining oversize normalized budget",
-    "test/collector-github.test.ts::R11 hung gh child aborted through runner settles once and kills child",
-    "test/collector-github.test.ts::R11 observe abort through ledger does not certify a snapshot",
-    "test/collector-github.test.ts::createGhApiRunner stdin EPIPE settles once without uncaughtException",
-    "test/collector-github.test.ts::createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss",
-    "test/collector-github.test.ts::default createGhApiRunner spawns executable gh on PATH hermetically",
-    "test/collector-github.test.ts::request-path AbortSignal cancels hung POST child without rejected attempt",
-    "test/collector-github.test.ts::request-path abort with non-Error reason cancels without rejected attempt",
-    "test/collector-github.test.ts::request-path abort with tagged ambiguousGhFailure reason preserves identity over ambiguous_loss",
     "test/collector-package-lifecycle.test.ts::packaged collector help subprocess succeeds",
     "test/collector-receipt.test.ts::F2 two-leg missing contamination: request only a",
     "test/collector-receipt.test.ts::F3-timestamp-less-review-text",
@@ -1611,7 +1621,8 @@
     "deleted = cheaper carrier absorbed the contract or pure self-proof removed; contract retained elsewhere where required.",
     "Remaining unfinished keys keep contracts green under prior constructions; cheaper rebuild still owed (ADR-0050).",
     "judge-role family + class-contracts rebuilt onto cheaper carriers (station 2d).",
-    "collector-ledger family rebuilt with injectable snapshotMaxBytes (station 2d)."
+    "collector-ledger family rebuilt with injectable snapshotMaxBytes (station 2d).",
+    "collector-github family rebuilt: in-process abort/recovery, few-KiB R10, 1MiB EPIPE, one real kill (station 2d)."
   ],
   "applyCommits": {
     "reviewer-agent": "fe972da",
@@ -1621,7 +1632,8 @@
     "shared-fixture": "295e3d1f30a56640bef5426518ff21d0e57fed93",
     "judge-role": "63d67a9",
     "class-contracts": "63d67a9",
-    "collector-ledger": "e52cf71"
+    "collector-ledger": "e52cf71",
+    "collector-github": "(pending)"
   },
   "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
   "validation": {
