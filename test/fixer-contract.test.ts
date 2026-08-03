@@ -27,6 +27,8 @@ const refused = (name = "TransportCase") => ({
 const legal: Array<{ phase: "plan" | "apply"; output: FixerOutput }> = [
   { phase: "plan", output: { status: "planned", report: "inspect and repair" } },
   { phase: "plan", output: { status: "refused", report: "cannot lawfully plan", remainingScope: "forbidden files", blocker: { cause: "authority_violation", evidence: "packet contradicts owner authority" } } },
+  { phase: "apply", output: { status: "unfinished", report: "handover", remainingScope: "remaining parser cases" } },
+  { phase: "apply", output: { status: "unfinished", report: "handover with completed work", remainingScope: "remaining schema cases", classResults: [completed()] } },
   { phase: "apply", output: { status: "completed", report: "settled", classResults: [completed()] } },
   { phase: "apply", output: { status: "completed", report: "settled both", classResults: [completed(), completed("SchemaCase", shaA)] } },
   { phase: "apply", output: { status: "refused", report: "blocked", classResults: [refused()] } },
@@ -64,7 +66,11 @@ test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", ()
     ["apply", { status: "completed", report: "old", classesRepaired: [] }],
     ["plan", { status: "planned", report: "x", classResults: [completed()] }],
     ["plan", { status: "partially_completed", report: "x" }],
+    ["plan", { status: "unfinished", report: "x", remainingScope: "later" }],
     ["apply", { status: "planned", report: "x" }],
+    ["apply", { status: "unfinished", report: "x", remainingScope: " " }],
+    ["apply", { status: "unfinished", report: "x", remainingScope: "later", classResults: [] }],
+    ["apply", { status: "unfinished", report: "x", remainingScope: "later", classResults: [refused()] }],
     ["plan", { status: "refused", report: "x", remainingScope: " ", blocker: { cause: "prerequisite_unmet", prerequisiteId: "repository.ready", evidence: "x" } }],
     ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "prerequisite_unmet", evidence: "x" } }],
     ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "safety", evidence: "x" } }],
@@ -84,6 +90,7 @@ test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", ()
 test("Fixer rejects branch-incompatible semantic fields while ignoring presentation decoration", () => {
   const contradictions = [
     { candidate: { ...legal[1]!.output, classResults: [refused()] }, phase: "plan", diagnostic: /plan\/apply semantic-field combination/ },
+    { candidate: { status: "unfinished", report: "x", remainingScope: "later", blocker: { cause: "authority_violation", evidence: "x" } }, phase: "apply", diagnostic: /unfinished semantic-field combination/ },
     { candidate: { status: "completed", report: "x", commitSha: shaA, classResults: [completed()] }, phase: "apply", diagnostic: /removed top-level commit semantic-field/ },
     { candidate: { ...legal[1]!.output, blocker: { cause: "authority_violation", evidence: "x", prerequisiteId: "repository.ready" } }, phase: "plan", diagnostic: /authority_violation prerequisiteId semantic-field/ },
     { candidate: { status: "completed", report: "x", classResults: [{ ...completed(), remainingScope: "contradiction" }] }, phase: "apply", diagnostic: /completed\/refused semantic-field combination/ },

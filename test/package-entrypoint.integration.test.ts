@@ -1323,7 +1323,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
   );
 });
 
-test("packaged coder apply proves the immediately following canonical native tdd expansion", async () => {
+test("packaged coder apply proves canonical native tdd expansion and unfinished receipt", async () => {
   const manifest = await loadRawPackageManifest();
   const coderSoul =
     (await readFile(resolve(packageRoot, "souls/coder.md"), "utf8")).trim();
@@ -1373,9 +1373,9 @@ test("packaged coder apply proves the immediately following canonical native tdd
 
         let coderContext: Context | undefined;
         const output = {
-          status: "completed",
-          report:
-            "TDD red/green evidence; same-pattern, introduced-regression, and behavior-fact checks complete.",
+          status: "unfinished",
+          report: "The first implementation is not fully settled.",
+          remainingScope: "the unimplemented adapter branch",
         };
         faux.setResponses([
           (context) => {
@@ -1687,10 +1687,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
 
           const output = phase === "plan"
             ? { status: "planned", report: "Repair plan ready." }
-            : { status: "completed", report: "Repaired and verified.", classResults: [
-              { name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
-              { name: "Audit", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
-            ] };
+            : { status: "unfinished", report: "The adapter is not fully settled.", remainingScope: "the remaining adapter branch" };
           faux.setResponses([
             fauxAssistantMessage(
               [
