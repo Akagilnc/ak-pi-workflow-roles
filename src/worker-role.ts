@@ -51,12 +51,22 @@ function matchFixerBashForbiddenLiteral(
   );
 }
 
-const workerOutputFields = {
-  status: StringEnum(["planned", "completed", "refused"] as const),
-  report: Type.String({ minLength: 1 }),
-  commitSha: Type.Optional(Type.String({ minLength: 1 })),
-};
-const coderOutputSchema = Type.Object(workerOutputFields, { additionalProperties: false });
+const coderOutputSchema = Type.Union([
+  Type.Object({
+    status: StringEnum(["planned"] as const),
+    report: Type.String({ minLength: 1 }),
+  }, { additionalProperties: false }),
+  Type.Object({
+    status: StringEnum(["completed", "refused"] as const),
+    report: Type.String({ minLength: 1 }),
+    commitSha: Type.Optional(Type.String({ minLength: 1 })),
+  }, { additionalProperties: false }),
+  Type.Object({
+    status: StringEnum(["unfinished"] as const),
+    report: Type.String({ minLength: 1 }),
+    remainingScope: Type.String({ minLength: 1 }),
+  }, { additionalProperties: false }),
+]);
 type WorkerOutputParameters = Static<typeof coderOutputSchema> | FixerOutput;
 export type { FixerOutput, CoderOutput };
 export const FIXER_FLAG_DEFINITIONS = {
@@ -137,11 +147,11 @@ export function validateWorkerOutput(
 ): WorkerOutput {
   if (roleLabel === "Fixer") return validateFixerOutput(output, phase);
   const accepted = validateAcceptedWorkerDetails(output, "Coder") as CoderOutput;
-  if (phase === "plan" && accepted.status === "completed") {
+  if (phase === "plan" && accepted.status !== "planned" && accepted.status !== "refused") {
     throw new Error("Coder plan phase permits only planned or refused");
   }
   if (phase === "apply" && accepted.status === "planned") {
-    throw new Error("Coder apply phase permits only completed or refused");
+    throw new Error("Coder apply phase permits only completed, unfinished, or refused");
   }
   return accepted;
 }
@@ -225,12 +235,12 @@ export function createFixerRoleRuntime(
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "Fixer Output",
           description:
-            "Submit the plan refusal or per-finding apply settlement for compliance audit.",
+            "Submit the plan refusal, apply settlement, or honest unfinished handover for compliance audit.",
           promptSnippet: "Submit the final fixer report",
           promptGuidelines: [
             `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
             `${FIXER_OUTPUT_TOOL_NAME} reports only lawful assignment blockers; infrastructure failures abort.`,
-            "plan permits planned|refused; apply permits completed|refused|partially_completed.",
+            "plan permits planned|refused; apply permits completed|refused|partially_completed|unfinished.",
           ],
           parameters: fixerOutputSchema,
           async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
@@ -362,12 +372,12 @@ export function createCoderRoleRuntime(
           name: CODER_OUTPUT_TOOL_NAME,
           label: "Coder Output",
           description:
-            "Submit a plan, completion, or evidence-bearing refusal for the active coder phase. commitSha is advisory evidence for the caller.",
+            "Submit a plan, completion, unfinished handoff, or evidence-bearing refusal for the active coder phase.",
           promptSnippet: "Submit the final coder report",
           promptGuidelines: [
             `Use ${CODER_OUTPUT_TOOL_NAME} as the final action for the coder role.`,
             `${CODER_OUTPUT_TOOL_NAME} never escalates; explain authority or task conflicts in report for the caller to dispose.`,
-            "plan permits planned|refused; apply permits completed|refused.",
+            "plan permits planned|refused; apply permits completed|unfinished|refused. unfinished requires a non-blank remainingScope.",
             "A completed apply report must preserve evidence for TDD, the same-pattern check, introduced-regression check, and behavior-fact check.",
           ],
           parameters: coderOutputSchema,
