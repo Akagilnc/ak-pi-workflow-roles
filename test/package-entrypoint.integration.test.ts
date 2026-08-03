@@ -1327,8 +1327,8 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
         { name: "session", source: "session" },
         { name: "model", source: "model" },
         { name: "thinking", source: "thinking" },
-        { name: "auth", source: "transport" },
-        { name: "quota", source: "transport" },
+        { name: "auth", source: "auth" },
+        { name: "quota", source: "quota" },
         { name: "transport", source: "transport" },
       ] as const;
       try {
@@ -1363,7 +1363,12 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
           const response = (context: Context) => {
             const names = context.tools?.map((tool) => tool.name) ?? [];
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-              if (scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport") return fauxAssistantMessage("", { stopReason: "error", errorMessage: scenario.name === "auth" ? "auth key unavailable" : `${scenario.name} unavailable` });
+              if (scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport") {
+                const failure = fauxAssistantMessage("", { stopReason: "error", errorMessage: scenario.name === "auth" ? "auth key unavailable" : `${scenario.name} unavailable` }) as unknown as Record<string, unknown>;
+                failure.navigatorUnavailableSource = scenario.name;
+                failure.navigatorUnavailableCause = scenario.name;
+                return failure as never;
+              }
               return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
             }
             if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
