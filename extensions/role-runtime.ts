@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 
@@ -39,6 +40,20 @@ const collectorSoulPath = fileURLToPath(new URL("../souls/collector.md", import.
 const doctorSoulPath = fileURLToPath(new URL("../souls/doctor.md", import.meta.url));
 const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.meta.url));
 const mergerSoulPath = fileURLToPath(new URL("../souls/merger.md", import.meta.url));
+
+function navigatorInputReference(pi: ExtensionAPI, role: string): string | undefined {
+  const names: Record<string, string> = {
+    fixer: "ak-fix-packet",
+    coder: "ak-coder-task",
+    reviewer: "ak-review-task",
+    collector: "ak-collector-legs",
+    doctor: "ak-doctor-case",
+    merger: "ak-merger-input",
+  };
+  const name = names[role];
+  const value = name === undefined ? undefined : pi.getFlag(name);
+  return typeof value === "string" && value !== "" ? resolve(value) : undefined;
+}
 
 function projectJudgeTranscriptForAudit(messages: Message[]): Message[] {
   return messages.map((message) => {
@@ -85,19 +100,31 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorSoul: () => readFile(doctorSoulPath, "utf8"),
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
+    loadNavigatorWorkContext: async (options) => {
+      const reference = navigatorInputReference(pi, options.role);
+      const subjectKey = process.env.PI_WORK_SUBJECT_KEY
+        ?? subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
+      const subject = process.env.PI_WORK_SUBJECT
+        ?? (reference === undefined ? `work subject: ${subjectKey}` : await readFile(reference, "utf8"));
+      const authorityFile = process.env.PI_WORK_AUTHORITY_FILE;
+      const authority = process.env.PI_WORK_AUTHORITY
+        ?? (authorityFile === undefined ? `authority reference: ${reference ?? subjectKey}` : await readFile(resolve(authorityFile), "utf8"));
+      return { subjectKey, subject, authority };
+    },
     createNavigatorAttendance: (options) => {
-      const sessionDir = navigatorSessionDirectory(options.context);
+      const sessionDir = navigatorSessionDirectory(options.context, options.subjectKey);
       return createNavigatorAttendance({
         context: options.context,
         role: options.role,
         phase: options.phase,
-        subjectKey: subjectPath(sessionDir),
+        subjectKey: options.subjectKey,
         sessionDir,
+        sessionDirectory: (subjectKey) => navigatorSessionDirectory(options.context, subjectKey),
         subject: options.subject,
         authority: options.authority,
         loadSoul: () => readFile(navigatorSoulPath, "utf8"),
         loadRoleHelp: async (role) => {
-          const result = await pi.exec("pi", ["--ak-role", role, "--help"], { cwd: options.context.cwd, timeout: 5000 });
+          const result = await pi.exec("pi", ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "-e", extensionPath, "--ak-role", role, "--help"], { cwd: options.context.cwd, timeout: 5000 });
           if (result.code !== 0) throw new Error(`live help unavailable for ${role}: ${result.stderr || result.stdout}`);
           return result.stdout || result.stderr;
         },

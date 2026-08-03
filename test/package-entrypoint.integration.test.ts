@@ -638,8 +638,15 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         assert.deepEqual(acceptedResult.message.details, {
           judgeStatus: "converged",
         });
-        assert.equal(faux.state.callCount, 5);
+        assert.equal(faux.state.callCount, 4, "Navigator presentation does not start a second role turn");
         assert.equal(faux.getPendingResponseCount(), 0);
+        const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+        assert.equal(attendance.length, 1);
+        assert.equal(attendance[0]?.type, "custom_message");
+        if (attendance[0]?.type === "custom_message") {
+          assert.equal(typeof attendance[0].details, "object");
+          assert.equal((attendance[0].details as { disposition?: string }).disposition, "unavailable");
+        }
         assert.equal(
           sessionManager
             .getEntries()
