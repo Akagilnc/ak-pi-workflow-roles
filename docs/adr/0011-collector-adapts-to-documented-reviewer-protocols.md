@@ -1,6 +1,6 @@
 # 0011 — Collector adapts to documented reviewer protocols
 
-Status: accepted（owner 2026-07-28 拍定）
+Status: accepted（陛下 2026-07-28 拍定）
 Date: 2026-07-28
 
 ## Decision

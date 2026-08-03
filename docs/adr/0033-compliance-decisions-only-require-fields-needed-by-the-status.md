@@ -1,4 +1,4 @@
-# 合规审计各状态只要求自身必需字段
+# 审刑院各状态只要求自身必需字段
 
 Status: accepted（authority/provenance: ADR 0019）
 
