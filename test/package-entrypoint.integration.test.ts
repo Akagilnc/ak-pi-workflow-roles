@@ -764,16 +764,24 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const secondMarker = "COLD_INSTALLED_LIVE_HELP_TWO";
         assert.equal(original.includes("Activate a packaged workflow role:"), true);
         const runtime = await installed("extensions/role-runtime.ts");
+        // Cold-start budget is explicit and finite — not the prepared-path presentation latency.
+        assert.equal(typeof runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS, "number");
+        assert.ok(Number.isFinite(runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS));
+        assert.ok(runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS > 5_000);
+        assert.ok(runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS <= 60_000);
+        const observedHelpTimeouts: number[] = [];
         const exec = async (_command: string, args: string[], options: { cwd?: string; timeout?: number }) => {
           assert.equal(args.at(-3), "--ak-role");
           assert.equal(args.at(-1), "--help");
           assert.ok(["judge", "fixer", "coder", "reviewer", "collector", "doctor", "merger"].includes(args.at(-2) ?? ""));
+          assert.equal(options.timeout, runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS);
+          observedHelpTimeouts.push(options.timeout as number);
           const result = await runPiSubprocess(args, {
             cwd: options.cwd ?? fixture,
             env: process.env,
             ...(options.timeout === undefined ? {} : { timeoutMs: options.timeout }),
           });
-          return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr };
+          return { code: result.code ?? 1, stdout: result.stdout, stderr: result.stderr, killed: result.timedOut };
         };
         await writeFile(runtimePath, original.replace("Activate a packaged workflow role:", `${firstMarker}:`));
         const first = await runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, "coder");
@@ -782,6 +790,10 @@ test("cold-installed live help follows the loaded extension and changes on the n
         const second = await runtime.loadNavigatorRoleHelp({ exec } as never, resolve(installedRoot, "extensions/role-runtime.ts"), fixture, "coder");
         assert.doesNotMatch(second, new RegExp(firstMarker));
         assert.match(second, new RegExp(secondMarker));
+        assert.deepEqual(observedHelpTimeouts, [
+          runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS,
+          runtime.NAVIGATOR_LIVE_HELP_TIMEOUT_MS,
+        ]);
 
         const attendanceModule = await installed("src/navigator-attendance.ts");
         const modelSettingPath = resolve(home, "navigator-model.json");

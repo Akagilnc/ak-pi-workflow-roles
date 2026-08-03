@@ -52,13 +52,20 @@ function navigatorInputReference(pi: ExtensionAPI, role: string): string | undef
   return typeof value === "string" && value !== "" ? resolve(value) : undefined;
 }
 
+// Cold `pi -e <extension> --help` must cover installed-package process startup under CI load.
+// This bound is process-startup budget only — not settlement-to-visible presentation latency.
+export const NAVIGATOR_LIVE_HELP_TIMEOUT_MS = 30_000;
+
 export async function loadNavigatorRoleHelp(
   pi: Pick<ExtensionAPI, "exec">,
   extensionPath: string,
   cwd: string,
   role: NavigatorTargetRole,
 ): Promise<string> {
-  const result = await pi.exec("pi", ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "-e", extensionPath, "--ak-role", role, "--help"], { cwd, timeout: 5000 });
+  const result = await pi.exec("pi", ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "-e", extensionPath, "--ak-role", role, "--help"], { cwd, timeout: NAVIGATOR_LIVE_HELP_TIMEOUT_MS });
+  if (result.killed) {
+    throw new Error(`live help unavailable for ${role}: timed out after ${NAVIGATOR_LIVE_HELP_TIMEOUT_MS}ms`);
+  }
   if (result.code !== 0) throw new Error(`live help unavailable for ${role}: ${result.stderr || result.stdout}`);
   return result.stdout || result.stderr;
 }
