@@ -193,14 +193,23 @@ test("stable factory registers the complete typed role flag set and stays inert 
   for (const [name, options] of harness.flags) {
     assert.equal((options as { type?: unknown }).type, "string", name);
   }
-  assert.deepEqual(new Set(harness.handlers.keys()), new Set(["input", "before_agent_start", "session_start", "tool_result", "agent_settled", "session_shutdown"]));
+  assert.deepEqual(new Set(harness.handlers.keys()), new Set([
+    "input",
+    "before_agent_start",
+    "session_start",
+    "tool_result",
+    "agent_settled",
+    "session_shutdown",
+    "tool_execution_start",
+    "tool_execution_update",
+    "tool_execution_end",
+  ]));
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
   assert.deepEqual([...harness.tools], []);
   assert.deepEqual(harness.activeToolSets, []);
-  for (const event of [
-    "tool_execution_start", "tool_execution_end", "tool_call",
-  ]) assert.equal(harness.handlers.has(event), false, event);
+  // Observation handlers are registered but stay inert without --ak-role admission.
+  assert.equal(harness.handlers.has("tool_call"), false, "tool_call");
 });
 
 test("unsupported role fails with the frozen diagnostic before any loader runs", async () => {
