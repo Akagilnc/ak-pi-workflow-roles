@@ -107,6 +107,7 @@ export async function executeReviewerChild(
   fault?: (operation: ReviewerExecutorFaultPoint) => void,
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptIdentity }> {
   const childConfigDir = await mkdtemp(join(tmpdir(), "ak-reviewer-child-"));
+  let outerFailure: unknown;
   try {
   const settings = SettingsManager.inMemory({
     compaction: { enabled: false },
@@ -221,9 +222,15 @@ export async function executeReviewerChild(
     }
   }
   } catch (error) {
+    outerFailure = error;
     throw classifiedError(error, "child");
   } finally {
-    await rm(childConfigDir, { recursive: true, force: true });
+    try {
+      await rm(childConfigDir, { recursive: true, force: true });
+    } catch (cleanupFailure) {
+      if (outerFailure !== undefined) throw new AggregateError([outerFailure, cleanupFailure], "Reviewer child configuration cleanup failed", { cause: outerFailure });
+      throw cleanupFailure;
+    }
   }
 }
 
