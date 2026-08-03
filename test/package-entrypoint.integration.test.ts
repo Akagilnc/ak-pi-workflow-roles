@@ -35,7 +35,6 @@ import {
   MERGER_INPUT_FLAG,
   MERGER_OUTPUT_TOOL_NAME,
   navigatorSessionDirectory,
-  navigatorProviderFailure,
   ROLE_FLAG,
   WORKFLOW_ROLES,
 } from "../src/role-runtime.ts";
@@ -1366,7 +1365,11 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
             if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
               if (scenario.name === "auth" || scenario.name === "quota" || scenario.name === "transport") {
                 const failure = fauxAssistantMessage("", { stopReason: "error", errorMessage: scenario.name === "auth" ? "auth key unavailable" : `${scenario.name} unavailable` });
-                return navigatorProviderFailure(failure, scenario.name, scenario.name);
+                return Object.assign(failure, scenario.name === "auth"
+                  ? { statusCode: 401, code: "authentication_failed" }
+                  : scenario.name === "quota"
+                    ? { statusCode: 429, code: "quota_exhausted" }
+                    : { code: "transport_error" });
               }
               return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, { candidates: [{ id: "matrix-route", matches: { role: "judge", phase: null, kind: "accepted" }, route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }], next: { role: "reviewer", phase: null }, reason: "matrix route", command: "Usage: pi --ak-role reviewer --help" }] }), { stopReason: "toolUse" });
             }
