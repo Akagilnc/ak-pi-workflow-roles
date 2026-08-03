@@ -42,6 +42,13 @@ async function dispatch(root: string, prompts: readonly string[], tools: readonl
 }
 
 const exec = promisify(execFile);
+async function disposeTestResources(...cleanups: Array<() => Promise<void>>): Promise<void> {
+  const failures: unknown[] = [];
+  for (const cleanup of cleanups) {
+    try { await cleanup(); } catch (error) { failures.push(error); }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, "Reviewer test cleanup failed", { cause: failures[0] });
+}
 
 async function git(cwd: string, ...args: string[]) {
   return (await exec("git", ["-C", cwd, ...args])).stdout.trim();
@@ -161,8 +168,8 @@ test("workspace owner prepares and installs every leg without constructing a pro
       await owner.dispose(workspace);
     }
   } finally {
-    await owner.shutdown();
-    await rm(source.root, { recursive: true, force: true });
+    await disposeTestResources(() => owner.shutdown());
+    await disposeTestResources(() => rm(source.root, { recursive: true, force: true }));
   }
 });
 
@@ -180,8 +187,8 @@ test("child executor runs in an already-prepared workspace without Git materiali
     assert.deepEqual(operations, ["child.reload", "child.session"]);
     await owner.dispose(workspace);
   } finally {
-    await owner.shutdown();
-    await rm(source.root, { recursive: true, force: true });
+    await disposeTestResources(() => owner.shutdown());
+    await disposeTestResources(() => rm(source.root, { recursive: true, force: true }));
   }
 });
 
@@ -227,18 +234,22 @@ test("Reviewer materializes shallow session snapshot refs into the workspace", a
       assert.equal(result.target.refs["refs/remotes/upstream/fixed"]?.objectId, tip);
       for (const [name, sha] of Object.entries(sourceRefs)) assert.equal(result.target.refs[name]?.objectId, sha);
     } finally {
-      await runner.shutdown();
+      await disposeTestResources(() => runner.shutdown());
     }
   } finally {
-    await rm(shallowRoot, { recursive: true, force: true });
-    await rm(seed.root, { recursive: true, force: true });
+    await disposeTestResources(() => rm(shallowRoot, { recursive: true, force: true }));
+    await disposeTestResources(() => rm(seed.root, { recursive: true, force: true }));
   }
 });
 
 test("Reviewer materializes and verifies a real SHA-256 repository", async (t) => {
   let source: Awaited<ReturnType<typeof repository>>;
   try { source = await repository("sha256"); }
-  catch (error) { t.skip(`installed Git lacks SHA-256 repository support: ${error instanceof Error ? error.message : String(error)}`); return; }
+  catch (error) {
+    const detail = error instanceof Error ? `${error.message} ${String((error as { stderr?: unknown }).stderr ?? "")}` : String(error);
+    if (/sha.?256|object.?format|unsupported/i.test(detail)) { t.skip(`installed Git lacks SHA-256 repository support: ${detail}`); return; }
+    throw error;
+  }
   try {
     const { context } = await parentContext(source.root, async () => {}, 1);
     const runner = createReviewerAgentRunner();
@@ -247,8 +258,8 @@ test("Reviewer materializes and verifies a real SHA-256 repository", async (t) =
       assert.equal(result.target.objectFormat, "sha256");
       assert.match(result.target.targetHead, /^[0-9a-f]{64}$/);
       assert.equal(result.legs.standards.status, "successful");
-    } finally { await runner.shutdown(); }
-  } finally { await rm(source.root, { recursive: true, force: true }); }
+    } finally { await disposeTestResources(() => runner.shutdown()); }
+  } finally { await disposeTestResources(() => rm(source.root, { recursive: true, force: true })); }
 });
 
 test("two Reviewer Agent legs overlap in isolated clones with one pinned ref snapshot", async () => {
@@ -327,8 +338,8 @@ test("two Reviewer Agent legs overlap in isolated clones with one pinned ref sna
       status: await git(source.root, "status", "--porcelain"),
     }, before);
   } finally {
-    await runner.shutdown();
-    await rm(source.root, { recursive: true, force: true });
+    await disposeTestResources(() => runner.shutdown());
+    await disposeTestResources(() => rm(source.root, { recursive: true, force: true }));
   }
 });
 
@@ -426,8 +437,8 @@ test("Reviewer child provider delegates class-private streams to the original re
       env: { PRIVATE_TENANT: "test" },
     })));
   } finally {
-    await runner.shutdown();
-    await rm(source.root, { recursive: true, force: true });
+    await disposeTestResources(() => runner.shutdown());
+    await disposeTestResources(() => rm(source.root, { recursive: true, force: true }));
   }
 });
 
@@ -452,12 +463,12 @@ test("workspace shutdown does not replay pre-creation or post-creation preparati
         }
         return true;
       });
-      await owner.shutdown();
-      await owner.shutdown();
+      await disposeTestResources(() => owner.shutdown());
+      await disposeTestResources(() => owner.shutdown());
       if (retained !== undefined) await access(retained);
     } finally {
-      if (retained !== undefined) await rm(retained, { recursive: true, force: true });
-      await rm(source.root, { recursive: true, force: true });
+      if (retained !== undefined) await disposeTestResources(() => rm(retained!, { recursive: true, force: true }));
+      await disposeTestResources(() => rm(source.root, { recursive: true, force: true }));
     }
   }
 });
@@ -518,9 +529,9 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
       const scratchAfter = (await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name));
       assert.deepEqual(scratchAfter, [], `${fault} leaked credential scratch`);
     } finally {
-      await runner.shutdown();
-      if (retained !== undefined) await rm(retained, { recursive: true, force: true });
-      await rm(source.root, { recursive: true, force: true });
+      await disposeTestResources(() => runner.shutdown());
+      if (retained !== undefined) await disposeTestResources(() => rm(retained!, { recursive: true, force: true }));
+      await disposeTestResources(() => rm(source.root, { recursive: true, force: true }));
     }
   }
 });
@@ -563,10 +574,10 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     await access(retained);
     assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name)), []);
   } finally {
-    await runner.shutdown();
+    await disposeTestResources(() => runner.shutdown());
     if (retained !== undefined) {
-      await rm(retained, { recursive: true, force: true });
+      await disposeTestResources(() => rm(retained!, { recursive: true, force: true }));
     }
-    await rm(source.root, { recursive: true, force: true });
+    await disposeTestResources(() => rm(source.root, { recursive: true, force: true }));
   }
 });
