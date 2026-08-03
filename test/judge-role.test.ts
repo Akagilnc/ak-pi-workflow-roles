@@ -14,6 +14,7 @@ import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-audito
 import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../src/compliance-transport.ts";
 import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
+import { createNavigatorAttendance, type NavigatorPreparationSession } from "../src/navigator-attendance.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
   createCoderRoleRuntime,
@@ -800,20 +801,58 @@ test("judge aborts the active operation before rethrowing audit infrastructure f
 test("packaged infrastructure failure silence correlates the exact output call in either sibling order", async () => {
   for (const order of ["failure-first", "sibling-first"] as const) {
     const harness = extensionHarness("judge");
-    const settlements: unknown[] = [];
+    const previousExitCode = process.exitCode;
+    const events: unknown[] = [];
+    const entries: unknown[] = [];
+    let navigatorTool: Tool | undefined;
+    let releasePreparation!: () => void;
+    let preparationStarted!: () => void;
+    let preparationReady!: () => void;
+    const preparationStartedPromise = new Promise<void>((resolve) => { preparationStarted = resolve; });
+    const preparationReadyPromise = new Promise<void>((resolve) => { preparationReady = resolve; });
+    const preparationGate = new Promise<void>((resolve) => { releasePreparation = resolve; });
+    const navigatorSession: NavigatorPreparationSession = {
+      async prompt() {
+        preparationStarted();
+        await preparationGate;
+      },
+      appendEntry(customType, data) {
+        entries.push({ type: "custom", customType, data });
+      },
+      entries: () => entries,
+      dispose() {},
+    };
+    let navigator: ReturnType<typeof createNavigatorAttendance> | undefined;
     const extension = createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "record",
       auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
-      createNavigatorAttendance: async () => ({
-        prepare() {},
-        async settle(settlement: unknown) { settlements.push(settlement); },
-        dispose() {},
-      } as never),
+      loadNavigatorWorkContext: async () => ({ subjectKey: "/repo/.ak/work/issues/28", subject: "issue 28", authority: "owner authority" }),
+      createNavigatorAttendance: async (options) => {
+        navigator = createNavigatorAttendance({
+          ...options,
+          sessionDir: "/repo/.ak/work/issues/28/runs/navigator",
+          modelSettingPath: "/missing/navigator-model.json",
+          loadSoul: async () => "route law",
+          loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
+          createSession: async ({ tool }) => {
+            navigatorTool = tool as Tool;
+            preparationReady();
+            return navigatorSession;
+          },
+          onEvent: async (event) => { events.push(event); },
+        });
+        return navigator;
+      },
     });
     extension(harness.pi as ExtensionAPI);
     const ctx = { sessionManager: SessionManager.inMemory(), cwd: "/repo", mode: "print" } as any;
     await harness.handlers.get("session_start")?.({}, ctx);
+    assert.ok(navigator);
+    navigator.prepare();
+    await preparationReadyPromise;
+    await preparationStartedPromise;
+    assert.ok(navigatorTool);
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
     assert.ok(tool);
     const verdict = { judgeStatus: "converged" };
@@ -825,11 +864,35 @@ test("packaged infrastructure failure silence correlates the exact output call i
     const failure = { toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "failed-output", isError: true, details: { message: "native provider wording" } };
     const wrong = { ...failure, toolCallId: "other-output" };
     await harness.handlers.get("tool_result")?.(wrong, ctx);
-    for (const event of order === "failure-first" ? [failure, sibling] : [sibling, failure]) {
-      await harness.handlers.get("tool_result")?.(event, ctx);
+    let failureSettlement: unknown;
+    if (order === "failure-first") {
+      failureSettlement = harness.handlers.get("tool_result")?.(failure, ctx);
+      await harness.handlers.get("tool_result")?.(sibling, ctx);
+    } else {
+      await harness.handlers.get("tool_result")?.(sibling, ctx);
+      failureSettlement = harness.handlers.get("tool_result")?.(failure, ctx);
     }
-    assert.deepEqual(settlements, [{ kind: "role_infrastructure_failure", role: "judge", phase: null }]);
+    let drained = false;
+    void Promise.resolve(failureSettlement).then(() => { drained = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(drained, false, "in-flight healthy preparation must hold the output settlement");
+    assert.deepEqual(events, [], "infrastructure failure must not publish advice");
+    releasePreparation();
+    await failureSettlement;
+    assert.equal(drained, true);
+    const settlement = entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
+    assert.ok(settlement?.data);
+    const { invocationId, ...typedSettlement } = settlement.data;
+    assert.equal(typeof invocationId, "string");
+    assert.deepEqual(typedSettlement, {
+      subjectKey: "/repo/.ak/work/issues/28",
+      role: "judge",
+      phase: null,
+      kind: "role_infrastructure_failure",
+    });
+    assert.equal(events.length, 0, "no late Navigator message may follow infrastructure silence");
     await harness.handlers.get("agent_settled")?.({}, ctx);
+    process.exitCode = previousExitCode;
   }
 });
 
