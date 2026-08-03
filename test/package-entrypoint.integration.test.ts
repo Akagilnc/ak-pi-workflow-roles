@@ -1554,8 +1554,8 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
         authority: entry.data?.authority,
         currentRole: entry.data?.currentRole,
       })), [
-        { subjectKey: sharedSubjectKey, subject: "Concrete coder task for the same ad-hoc journey.\n", authority: "owner authority: keep the work bounded\n", currentRole: { role: "coder", phase: "plan" } },
-        { subjectKey: sharedSubjectKey, subject: "Concrete fixer packet for the same ad-hoc journey.\n", authority: "owner authority: keep the work bounded\n", currentRole: { role: "fixer", phase: "plan" } },
+        { subjectKey: sharedSubjectKey, subject: "Concrete coder task for the same ad-hoc journey.\n", authority: "Concrete coder task for the same ad-hoc journey.\n", currentRole: { role: "coder", phase: "plan" } },
+        { subjectKey: sharedSubjectKey, subject: "Concrete fixer packet for the same ad-hoc journey.\n", authority: "Concrete fixer packet for the same ad-hoc journey.\n", currentRole: { role: "fixer", phase: "plan" } },
       ]);
       const invocations = entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
       assert.deepEqual(invocations.slice(0, 2).map((entry) => ({ role: entry.data?.role, phase: entry.data?.phase, subjectKey: entry.data?.subjectKey })), [

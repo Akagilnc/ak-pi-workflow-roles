@@ -87,6 +87,19 @@ export function navigatorAuthorityFromRoleInput(role: string, raw: string): stri
   }
 }
 
+/**
+ * Role-input document bytes win verbatim over work-root file authority when non-empty.
+ * Absent or whitespace-only input yields to fileAuthority; neither remains undefined.
+ */
+export function resolveNavigatorAuthorityMaterial(
+  roleInput: string | undefined,
+  fileAuthority: string | undefined,
+): string | undefined {
+  if (roleInput !== undefined && roleInput.trim() !== "") return roleInput;
+  if (fileAuthority !== undefined && fileAuthority.trim() !== "") return fileAuthority;
+  return undefined;
+}
+
 function projectJudgeTranscriptForAudit(messages: Message[]): Message[] {
   return messages.map((message) => {
     if (message.role !== "assistant") return message;
@@ -113,6 +126,51 @@ export function transcriptFromContext(ctx: ExtensionContext): string {
   );
 }
 
+export async function loadNavigatorWorkContext(
+  pi: Pick<ExtensionAPI, "getFlag">,
+  options: { context: ExtensionContext; role: string },
+): Promise<{ subjectKey: string; subject: string; authority: string; subjectProvenance: NavigatorSubjectProvenance }> {
+  const reference = navigatorInputReference(pi as ExtensionAPI, options.role);
+  const input = reference === undefined || options.role === "doctor" ? undefined : await readFile(reference, "utf8");
+  const subjectRoot = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
+  const subjectKey = reference === undefined
+    ? subjectRoot
+    : navigatorSubjectKeyForInput(subjectRoot, reference, options.context.cwd);
+  const workRoot = subjectRoot.includes("/.ak/work/") ? subjectRoot : undefined;
+  const authorityFiles = workRoot === undefined ? [] : [
+    resolve(workRoot, "authority.md"),
+    resolve(workRoot, "authority.txt"),
+    resolve(workRoot, "design-v2/owner-direction.md"),
+  ];
+  let authorityMaterial: string | undefined;
+  for (const path of authorityFiles) {
+    try {
+      const content = await readFile(path, "utf8");
+      if (content.trim() !== "") {
+        authorityMaterial = content;
+        break;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  let subject = input ?? `work subject: ${subjectKey}`;
+  let subjectProvenance: NavigatorSubjectProvenance = input === undefined ? "placeholder" : "role_input";
+  if (options.role === "doctor" && reference !== undefined) {
+    const patient = await loadDoctorCase(reference);
+    subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
+    subjectProvenance = "role_input";
+  }
+  // Non-empty role-input document bytes are authority material verbatim and
+  // win over work-root files (closest per-dispatch provenance). Absent or
+  // whitespace-only input yields to the existing file fallback.
+  const authority = resolveNavigatorAuthorityMaterial(input, authorityMaterial);
+  if (authority === undefined) {
+    throw navigatorUnavailableError("context", new Error("controlling authority content was not supplied as typed work context"));
+  }
+  return { subjectKey, subject, authority, subjectProvenance };
+}
+
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner();
   registerNavigatorModelCommand(pi);
@@ -132,47 +190,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorSoul: () => readFile(doctorSoulPath, "utf8"),
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
-    loadNavigatorWorkContext: async (options) => {
-      const reference = navigatorInputReference(pi, options.role);
-      const input = reference === undefined || options.role === "doctor" ? undefined : await readFile(reference, "utf8");
-      const subjectRoot = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
-      const subjectKey = reference === undefined
-        ? subjectRoot
-        : navigatorSubjectKeyForInput(subjectRoot, reference, options.context.cwd);
-      const workRoot = subjectRoot.includes("/.ak/work/") ? subjectRoot : undefined;
-      const authorityFiles = workRoot === undefined ? [] : [
-        resolve(workRoot, "authority.md"),
-        resolve(workRoot, "authority.txt"),
-        resolve(workRoot, "design-v2/owner-direction.md"),
-      ];
-      let authorityMaterial: string | undefined;
-      for (const path of authorityFiles) {
-        try {
-          const content = await readFile(path, "utf8");
-          if (content.trim() !== "") {
-            authorityMaterial = content;
-            break;
-          }
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-      }
-      let subject = input ?? `work subject: ${subjectKey}`;
-      let subjectProvenance: NavigatorSubjectProvenance = input === undefined ? "placeholder" : "role_input";
-      if (options.role === "doctor" && reference !== undefined) {
-        const patient = await loadDoctorCase(reference);
-        subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
-        subjectProvenance = "role_input";
-      }
-      // Assigned task/packet/review bytes are the production work seam.  The
-      // authority must remain a separately bounded field; opaque task JSON alone
-      // is never promoted over the separate authority seam.
-      const authority = navigatorAuthorityFromRoleInput(options.role, input ?? "") ?? authorityMaterial;
-      if (authority === undefined || authority.trim() === "") {
-        throw navigatorUnavailableError("context", new Error("controlling authority content was not supplied as typed work context"));
-      }
-      return { subjectKey, subject, authority, subjectProvenance };
-    },
+    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
     createNavigatorAttendance: (options) => {
       const sessionDir = navigatorSessionDirectory(options.context, options.subjectKey);
       return createNavigatorAttendance({
