@@ -491,7 +491,7 @@
         "kind": "construction-rebuild",
         "note": "In-process abort-reason matrix (Error/non-Error/tagged); child kill owned by R11.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::PATH gh recovery through ledger request+observe sets recoverySnapshotId": {
@@ -507,7 +507,7 @@
         "kind": "construction-rebuild",
         "note": "recoverySnapshotId asserted on in-process marker recovery carrier; PATH spawn twin deleted.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::request-path abort with non-Error reason cancels without rejected attempt": {
@@ -523,7 +523,7 @@
         "kind": "construction-rebuild",
         "note": "Row of in-process abort-reason matrix.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::default createGhApiRunner spawns executable gh on PATH hermetically": {
@@ -539,7 +539,7 @@
         "kind": "construction-rebuild",
         "note": "One real spawn: GET /user + argv log; scenario matrix stays in-process.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::request-path abort with tagged ambiguousGhFailure reason preserves identity over ambiguous_loss": {
@@ -555,7 +555,7 @@
         "kind": "construction-rebuild",
         "note": "Row of in-process abort-reason matrix.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss": {
@@ -571,7 +571,7 @@
         "kind": "construction-rebuild",
         "note": "Folded into EPIPE carrier as second assertion on same runner.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::createGhApiRunner stdin EPIPE settles once without uncaughtException": {
@@ -587,7 +587,7 @@
         "kind": "construction-rebuild",
         "note": "1 MiB stdin; shared with createIssueComment ambiguous_loss on same stub.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::R10 multi-page pagination stops before retaining oversize normalized budget": {
@@ -603,7 +603,7 @@
         "kind": "construction-rebuild",
         "note": "createSnapshotByteBudget(4096) + 1.5KB bodies; pagesFetched<3 unchanged.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::R11 observe abort through ledger does not certify a snapshot": {
@@ -619,7 +619,7 @@
         "kind": "construction-rebuild",
         "note": "In-process hang-until-aborted /user runner; ledger state asserts only.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/collector-github.test.ts::R11 hung gh child aborted through runner settles once and kills child": {
@@ -635,7 +635,7 @@
         "kind": "construction-rebuild",
         "note": "Sole real-child kill proof: pidfile + ESRCH poll after abort; exec sleep.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "3ac8800"
       }
     },
     "test/merger-git-state.test.ts::production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit": {
@@ -1633,7 +1633,7 @@
     "judge-role": "63d67a9",
     "class-contracts": "63d67a9",
     "collector-ledger": "e52cf71",
-    "collector-github": "(pending)"
+    "collector-github": "3ac8800"
   },
   "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
   "validation": {
