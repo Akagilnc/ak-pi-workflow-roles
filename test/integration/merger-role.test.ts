@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -11,7 +11,7 @@ import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { runNodeSubprocess, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 
 const oid = (c: string) => c.repeat(40);
 const mat = (s: string) => ({ bytesBase64: Buffer.from(s).toString("base64"), sha256: sha256Hex(s) });
@@ -20,16 +20,56 @@ function harness(flag: unknown = "/input.json") { const flags = new Map<string, 
 function context(id: string, args: Record<string, unknown>, calls = 1, abort = () => {}): ExtensionContext { const sessionManager = SessionManager.inMemory(); const content = Array.from({ length: calls }, (_, i) => ({ type: "toolCall" as const, id: i ? `sibling-${i}` : id, name: i ? "bash" : MERGER_OUTPUT_TOOL_NAME, arguments: i ? {} : args })); const message: AssistantMessage = { role: "assistant", content, api: "x", provider: "x", model: "x", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 0 }; sessionManager.appendMessage(message); return { sessionManager, abort, mode: "json" } as unknown as ExtensionContext; }
 function setup(overrides: any = {}) { const h = harness(); let completedCalls = 0; const runtime = createMergerRoleRuntime(h.pi as unknown as ExtensionAPI, { loadSoul: async () => "MERGER LAW", loadInput: async () => input, gitState: { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async (id: string, tree: string) => { completedCalls++; assert.equal(tree, oid("d")); return { mergeCommitId: id, parentObjectIds: [oid("a"), oid("b")], unmergedPaths: [], worktreeClean: true, resolutionChangedPaths: ["same.txt"] }; } }, ...overrides }, { failInfrastructure(error: unknown, ctx: ExtensionContext): never { ctx.abort(); throw error; } }); return { ...h, runtime, completedCalls: () => completedCalls }; }
 
+
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+/** One conflicted-repo template per process; cases clone locally. */
+let conflictedTemplateMemo: Promise<{ root: string; source: string; target: string }> | undefined;
+async function conflictedTemplate() {
+  conflictedTemplateMemo ??= (async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "ak-merger-conflict-template-"));
+    git(root, "init", "-b", "main");
+    git(root, "config", "user.name", "Merger Test");
+    git(root, "config", "user.email", "merger@test.local");
+    await writeFile(resolve(root, "same.txt"), "base\n");
+    git(root, "add", ".");
+    git(root, "commit", "-m", "base");
+    git(root, "checkout", "-b", "source");
+    await writeFile(resolve(root, "same.txt"), "source\n");
+    git(root, "commit", "-am", "source");
+    const source = git(root, "rev-parse", "HEAD");
+    git(root, "checkout", "main");
+    await writeFile(resolve(root, "same.txt"), "target\n");
+    git(root, "commit", "-am", "target");
+    const target = git(root, "rev-parse", "HEAD");
+    return { root, source, target };
+  })();
+  return conflictedTemplateMemo;
+}
+
+async function materializeConflictedRepo() {
+  const template = await conflictedTemplate();
+  const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-session-b-"));
+  execFileSync("git", ["clone", "--local", "--quiet", template.root, cwd], { stdio: "ignore" });
+  git(cwd, "config", "user.name", "Merger Test");
+  git(cwd, "config", "user.email", "merger@test.local");
+  git(cwd, "branch", "source", "origin/source");
+  assert.throws(() => git(cwd, "merge", "--no-edit", "source"));
+  return {
+    cwd,
+    source: git(cwd, "rev-parse", "source"),
+    target: git(cwd, "rev-parse", "HEAD"),
+  };
+}
+
 test("production extension observes session repository B, not ambient repository A, through activation and completion", async () => {
-  const repositoryB = await mkdtemp(resolve(tmpdir(), "ak-merger-session-b-"));
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: repositoryB, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const fixture = await materializeConflictedRepo();
+  const repositoryB = fixture.cwd;
   const env = { ...process.env, GIT_AUTHOR_DATE: "2026-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2026-01-01T00:00:00Z" };
   try {
-    git("init", "-b", "main"); git("config", "user.name", "Merger Test"); git("config", "user.email", "merger@test.local");
-    await writeFile(resolve(repositoryB, "same.txt"), "base\n"); git("add", "."); git("commit", "-m", "base");
-    git("checkout", "-b", "source"); await writeFile(resolve(repositoryB, "same.txt"), "source\n"); git("commit", "-am", "source"); const source = git("rev-parse", "HEAD");
-    git("checkout", "main"); await writeFile(resolve(repositoryB, "same.txt"), "target\n"); git("commit", "-am", "target"); const target = git("rev-parse", "HEAD");
-    assert.throws(() => git("merge", "--no-edit", source));
+    const source = fixture.source;
+    const target = fixture.target;
     const resolutionBlob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: repositoryB, input: "resolved\n", encoding: "utf8" }).trim();
     const temporaryIndex = resolve(repositoryB, "expected-index");
     execFileSync("git", ["read-tree", "AUTO_MERGE^{tree}"], { cwd: repositoryB, env: { ...process.env, GIT_INDEX_FILE: temporaryIndex } });
@@ -156,12 +196,11 @@ test("Pi transports malformed Merger candidates to the fatal validator while val
         }
         assert.equal(faux.getPendingResponseCount(), 0);
       });
-      if (process.env.AK_MERGER_FATAL_CHILD !== "1") process.exitCode = priorExitCode;
+      process.exitCode = priorExitCode;
     }
-    if (process.env.AK_MERGER_FATAL_CHILD === "1") process.exit(process.exitCode ?? 0);
-    const { NODE_TEST_CONTEXT: _nodeTestContext, ...childEnv } = process.env;
-    const child = spawnSync(process.execPath, ["--import", "tsx", "--test", fileURLToPath(import.meta.url)], { env: { ...childEnv, AK_MERGER_FATAL_CHILD: "1" }, encoding: "utf8" });
-    assert.equal(child.status, 1);
+    const childPath = fileURLToPath(new URL("../fixtures/merger-fatal-child.ts", import.meta.url));
+    const child = await runNodeSubprocess(["--import", "tsx", childPath], { cwd: home, timeoutMs: 30_000 });
+    assert.equal(child.code, 1);
   });
 });
 
