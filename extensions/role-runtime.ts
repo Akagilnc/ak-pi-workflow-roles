@@ -32,7 +32,7 @@ import {
 } from "../src/navigator-attendance.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
-import { validateMergerInput } from "../src/merger-contracts.ts";
+import { MergerInputContractError, validateMergerInput } from "../src/merger-contracts.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { packagedRoleInputFlag } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
@@ -83,7 +83,7 @@ export function navigatorAuthorityFromRoleInput(role: string, raw: string): stri
   try {
     input = validateMergerInput(JSON.parse(raw) as unknown);
   } catch (error) {
-    if (error instanceof Error) return undefined;
+    if (error instanceof MergerInputContractError) return undefined;
     throw error;
   }
   const content = Buffer.from(input.materials.authority.bytesBase64, "base64").toString("utf8");

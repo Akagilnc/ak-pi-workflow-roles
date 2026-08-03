@@ -188,7 +188,11 @@ test("every registered whole-activation rejection terminates nonzero with a name
     assert.equal(process.exitCode, 1);
     const failed = traces.find((trace) => trace.status === "failed");
     assert.ok(failed && failed.status === "failed");
-    assert.deepEqual(failed.cause, { identity: "TypeError", name: "TypeError", message: `${entry.role} activation rejected` });
+    assert.equal(failed.cause.identity, "TypeError");
+    assert.equal(failed.cause.name, "TypeError");
+    assert.equal(failed.cause.message, `${entry.role} activation rejected`);
+    if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
+    assert.match(failed.cause.evidenceId, /^activation-cause-/);
   }
 });
 
@@ -236,7 +240,13 @@ test("a rejected registered activation fails closed with a structured named caus
   for (const trace of h.traces) assert.equal(Value.Check(activationTraceRecordSchema, trace), true);
   const failure = h.traces[1]!;
   assert.equal(failure.status, "failed");
-  if (failure.status === "failed") assert.deepEqual(failure.cause, { identity: "TypeError", name: "TypeError", message: "soul unavailable" });
+  if (failure.status === "failed") {
+    assert.equal(failure.cause.identity, "TypeError");
+    assert.equal(failure.cause.name, "TypeError");
+    assert.equal(failure.cause.message, "soul unavailable");
+    if (typeof failure.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
+    assert.match(failure.cause.evidenceId, /^activation-cause-/);
+  }
   await assert.rejects(async () => h.handler("before_agent_start")({}, h.ctx), (error: unknown) => error instanceof ActivationBarrierError && error.code === "AK_ACTIVATION_NOT_ADMITTED");
 });
 
