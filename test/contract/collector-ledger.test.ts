@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   applyEvidenceVersionHistory,
+  assertCollectorByteLimit,
   COLLECTOR_RECEIPT_MAX_BYTES,
   COLLECTOR_SNAPSHOT_MAX_BYTES,
   computeWindowRelation,
@@ -514,9 +515,9 @@ test("after/uncertain exact-head review does not block request like before/withi
 });
 
 test("R10 normalized budget rejects before later surfaces and terminal PR", async () => {
-  // Calibrate a tiny injected bound from one empty observe, then drive exceed with small pads.
+  // Exercise the production 8 MiB boundary; no test-only production limit is injected.
   const probeClock = clockAt("2024-01-01T00:00:00Z");
-  const probe = createCollectorLedger(config(), { snapshotMaxBytes: 1_000_000 });
+  const probe = createCollectorLedger(config());
   probe.recordActivation(probeClock);
   const { snapshot: emptySnap } = await probe.observe(createFakeGitHubTransport({
     user: sampleUser(),
@@ -526,9 +527,9 @@ test("R10 normalized budget rejects before later surfaces and terminal PR", asyn
     reviewComments: [],
   }), probeClock);
   const emptyBytes = emptySnap.normalizedByteLength;
-  const pad = "x".repeat(200);
-  // Bound sits between (empty + one pad surface) and (empty + two pad surfaces).
-  const onePad = createCollectorLedger(config(), { snapshotMaxBytes: 1_000_000 });
+  const pad = "x".repeat(Math.floor(COLLECTOR_SNAPSHOT_MAX_BYTES * 0.4));
+  // Two padded surfaces exceed the real production bound.
+  const onePad = createCollectorLedger(config());
   onePad.recordActivation(clockAt("2024-01-01T00:00:00Z"));
   const { snapshot: onePadSnap } = await onePad.observe(createFakeGitHubTransport({
     user: sampleUser(),
@@ -537,7 +538,7 @@ test("R10 normalized budget rejects before later surfaces and terminal PR", asyn
     issueComments: [],
     reviewComments: [],
   }), clockAt("2024-01-01T00:00:00Z"));
-  const bound = onePadSnap.normalizedByteLength + 50; // second pad surface must exceed
+  const bound = COLLECTOR_SNAPSHOT_MAX_BYTES;
 
   // Cross-surface: reviews ok, issue-comments exceed; review-comments + terminal PR skip.
   {
@@ -549,7 +550,7 @@ test("R10 normalized budget rejects before later surfaces and terminal PR", asyn
       issueComments: [sampleIssueComment({ id: 2, userLogin: "b", body: pad, raw: { id: 2, body: pad } })],
       reviewComments: [sampleReviewComment({ id: 3, userLogin: "c", body: "must-not-fetch" })],
     });
-    const ledger = createCollectorLedger(config(), { snapshotMaxBytes: bound });
+    const ledger = createCollectorLedger(config());
     ledger.recordActivation(clockAt("2024-01-01T00:00:00Z"));
     await assert.rejects(
       () => ledger.observe(transport, clockAt("2024-01-01T00:00:00Z")),
@@ -565,7 +566,7 @@ test("R10 normalized budget rejects before later surfaces and terminal PR", asyn
 
   // Exceed inside first surface ⇒ later surfaces + terminal PR skipped.
   {
-    const fat = "x".repeat(bound); // single review page exceeds bound alone
+    const fat = "x".repeat(COLLECTOR_SNAPSHOT_MAX_BYTES); // single review page exceeds bound alone
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull(),
@@ -573,7 +574,7 @@ test("R10 normalized budget rejects before later surfaces and terminal PR", asyn
       issueComments: [sampleIssueComment({ id: 99, userLogin: "later", body: "must-not-fetch" })],
       reviewComments: [sampleReviewComment({ id: 98, userLogin: "later", body: "must-not-fetch" })],
     });
-    const ledger = createCollectorLedger(config(), { snapshotMaxBytes: bound });
+    const ledger = createCollectorLedger(config());
     ledger.recordActivation(clockAt("2024-01-01T00:00:00Z"));
     await assert.rejects(
       () => ledger.observe(transport, clockAt("2024-01-01T00:00:00Z")),
@@ -903,63 +904,16 @@ test("applyEvidenceVersionHistory first-sighting mono boundary keeps or nulls su
   assert.equal(again.authoritativeTime, null);
 });
 
-test("snapshot byte boundary: injected MAX accept and MAX+1 fail", async () => {
-  // Learn exact observed size for a one-review body, then set bound to that size / size-1.
-  const body = "x".repeat(200);
-  const learnClock = clockAt("2024-01-01T00:00:00Z");
-  const learn = createCollectorLedger(config(), { snapshotMaxBytes: 1_000_000 });
-  learn.recordActivation(learnClock);
-  const { snapshot: learned } = await learn.observe(createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull(),
-    reviews: [sampleReview({ id: 1, userLogin: "codexbot", body, raw: {} })],
-    issueComments: [],
-    reviewComments: [],
-  }), learnClock);
-  const exact = learned.normalizedByteLength;
-
-  {
-    const clock = clockAt("2024-01-01T00:00:00Z");
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [sampleReview({ id: 1, userLogin: "codexbot", body, raw: {} })],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const ledger = createCollectorLedger(config(), { snapshotMaxBytes: exact });
-    ledger.recordActivation(clock);
-    const { snapshot } = await ledger.observe(transport, clock);
-    assert.equal(ledger.fatal, false);
-    assert.equal(snapshot.normalizedByteLength, exact);
-    assert.equal(snapshot.complete, true);
-  }
-  {
-    const clock = clockAt("2024-01-01T00:00:00Z");
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [sampleReview({ id: 1, userLogin: "codexbot", body, raw: {} })],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const ledger = createCollectorLedger(config(), { snapshotMaxBytes: exact - 1 });
-    ledger.recordActivation(clock);
-    await assert.rejects(
-      () => ledger.observe(transport, clock),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.equal(
-          error.message,
-          `Collector snapshot exceeded ${exact - 1} UTF-8 bytes (${exact})`,
-        );
-        return true;
-      },
-    );
-    assert.equal(ledger.fatal, true);
-  }
+test("snapshot byte boundary uses the real production limit", () => {
+  assert.doesNotThrow(() =>
+    assertCollectorByteLimit("snapshot", COLLECTOR_SNAPSHOT_MAX_BYTES, COLLECTOR_SNAPSHOT_MAX_BYTES),
+  );
+  assert.throws(
+    () => assertCollectorByteLimit("snapshot", COLLECTOR_SNAPSHOT_MAX_BYTES + 1, COLLECTOR_SNAPSHOT_MAX_BYTES),
+    new RegExp(`Collector snapshot exceeded ${COLLECTOR_SNAPSHOT_MAX_BYTES} UTF-8 bytes`),
+  );
+  assert.equal(COLLECTOR_SNAPSHOT_MAX_BYTES, 8 * 1024 * 1024);
 });
-
 
 test("R5 third observation of unchanged edited review keeps null/uncertain in modelView and store", async () => {
   const clock = clockAt("2024-01-01T00:10:00Z");

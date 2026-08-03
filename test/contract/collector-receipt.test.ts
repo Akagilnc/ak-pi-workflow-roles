@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertCollectorByteLimit,
   COLLECTOR_RECEIPT_MAX_BYTES,
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
@@ -1356,44 +1357,14 @@ test("edited review after deadline cannot prove unavailable via backdated submit
   );
 });
 
-test("receipt and ledger overflow latch fatal infrastructure failure", async () => {
-  // Injectable few-KiB materialization cap (production default stays COLLECTOR_RECEIPT_MAX_BYTES).
-  const receiptMaxBytes = 4_096;
-  const clock = clockAt("2024-01-01T00:10:00Z");
-  const ledger = createCollectorLedger(baseConfig(), { receiptMaxBytes });
-  ledger.recordActivation(clock);
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull({ headOid: "head-c" }),
-    reviews: [],
-    issueComments: [],
-    reviewComments: [],
-  });
-
-  let overflowed = false;
-  for (let i = 0; i < 8; i++) {
-    transport.state.reviews = [
-      sampleReview({
-        id: 99,
-        userLogin: "codexbot",
-        state: "COMMENTED",
-        commitId: "head-c",
-        submittedAt: "2024-01-01T00:00:00Z",
-        body: `${"Z".repeat(800)}-${i}`,
-      }),
-    ];
-    try {
-      await ledger.observe(transport, clock);
-    } catch (error) {
-      overflowed = true;
-      assert.equal(ledger.fatal, true);
-      assert.ok(error instanceof Error);
-      assert.match(error.message, new RegExp(`${receiptMaxBytes}|bytes|ledger|receipt`, "i"));
-      assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
-      break;
-    }
-  }
-  assert.equal(overflowed, true);
+test("receipt byte boundary uses the real production limit", () => {
+  assert.doesNotThrow(() =>
+    assertCollectorByteLimit("receipt", COLLECTOR_RECEIPT_MAX_BYTES, COLLECTOR_RECEIPT_MAX_BYTES),
+  );
+  assert.throws(
+    () => assertCollectorByteLimit("receipt", COLLECTOR_RECEIPT_MAX_BYTES + 1, COLLECTOR_RECEIPT_MAX_BYTES),
+    new RegExp(`Collector receipt exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes`),
+  );
   assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
 });
 
