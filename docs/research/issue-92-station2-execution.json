@@ -1594,5 +1594,16 @@
     "ledger": "143a311",
     "shared-fixture": "295e3d1f30a56640bef5426518ff21d0e57fed93"
   },
-  "constructionHead": "143a3110516474a9282ea1aca93cfc5d9db7c8c5"
+  "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
+  "validation": {
+    "typecheck": "pass",
+    "testAll": {
+      "pass": 403,
+      "fail": 0,
+      "nodeDurationMs": 69206.167458,
+      "wallSeconds": 69.29,
+      "command": "npm run test:all"
+    },
+    "recordedAt": "2026-08-03T19:53:26.676326+00:00"
+  }
 }
