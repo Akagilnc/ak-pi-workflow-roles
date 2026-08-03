@@ -1360,7 +1360,7 @@ test("receipt and ledger overflow latch fatal infrastructure failure", async () 
   // Injectable few-KiB materialization cap (production default stays COLLECTOR_RECEIPT_MAX_BYTES).
   const receiptMaxBytes = 4_096;
   const clock = clockAt("2024-01-01T00:10:00Z");
-  const ledger = createCollectorLedger({ ...baseConfig(), receiptMaxBytes });
+  const ledger = createCollectorLedger(baseConfig(), { receiptMaxBytes });
   ledger.recordActivation(clock);
   const transport = createFakeGitHubTransport({
     user: sampleUser(),

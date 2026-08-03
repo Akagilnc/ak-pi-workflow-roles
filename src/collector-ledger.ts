@@ -104,10 +104,6 @@ export type CollectorConfigState = {
   repository: CollectorRepository;
   prNumber: number;
   manifest: CollectorManifest;
-  /** Optional observe/snapshot byte ceiling; defaults to COLLECTOR_SNAPSHOT_MAX_BYTES. */
-  snapshotMaxBytes?: number;
-  /** Optional cumulative materialization/receipt ceiling; defaults to COLLECTOR_RECEIPT_MAX_BYTES. */
-  receiptMaxBytes?: number;
 };
 
 export type CollectorLedger = {
@@ -349,9 +345,17 @@ export function classifyCollectorBatch(
   };
 }
 
-export function createCollectorLedger(config: CollectorConfigState): CollectorLedger {
-  const snapshotMaxBytes = config.snapshotMaxBytes ?? COLLECTOR_SNAPSHOT_MAX_BYTES;
-  const receiptMaxBytes = config.receiptMaxBytes ?? COLLECTOR_RECEIPT_MAX_BYTES;
+export type CollectorLedgerTestLimits = {
+  snapshotMaxBytes?: number;
+  receiptMaxBytes?: number;
+};
+
+export function createCollectorLedger(
+  config: CollectorConfigState,
+  testLimits?: CollectorLedgerTestLimits,
+): CollectorLedger {
+  const snapshotMaxBytes = testLimits?.snapshotMaxBytes ?? COLLECTOR_SNAPSHOT_MAX_BYTES;
+  const receiptMaxBytes = testLimits?.receiptMaxBytes ?? COLLECTOR_RECEIPT_MAX_BYTES;
   let fatal = false;
   let fatalReason: string | undefined;
   let outputAccepted = false;
