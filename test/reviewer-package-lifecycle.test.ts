@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { type Context, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
 import { packageRoot, packIsolatedPackage, withHermeticHome, withInProcessPi, writeTestSkill } from "./helpers/pi-test-harness.ts";
+import { withPrimaryAwareCleanup } from "./helpers/primary-aware-cleanup.ts";
 
 const exec = promisify(execFile);
 const Agent = "Agent";
@@ -127,7 +128,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
 
     const originalCwd = process.cwd();
     process.chdir(nestedCwd);
-    try {
+    await withPrimaryAwareCleanup(async () => {
     await withInProcessPi({ cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(fixture, "node_modules/@ak/pi-workflow-roles/extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
       assert.deepEqual(loader.getExtensions().errors, []);
       const before = await readFile(resolve(fixture, "consumer.txt"), "utf8");
@@ -212,8 +213,6 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.deepEqual(output.message.details.outcomes, {});
       installedContracts.projectReviewerIntentToReceipt({ status: "refused", diagnostic: "No review can be started." }, output.message.details);
     });
-    } finally {
-      process.chdir(originalCwd);
-    }
+    }, async () => process.chdir(originalCwd));
   });
 });

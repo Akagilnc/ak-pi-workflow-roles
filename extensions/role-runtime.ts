@@ -64,9 +64,9 @@ export async function loadNavigatorRoleHelp(
 ): Promise<string> {
   const result = await pi.exec("pi", ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "-e", extensionPath, "--ak-role", role, "--help"], { cwd, timeout: NAVIGATOR_LIVE_HELP_TIMEOUT_MS });
   if (result.killed) {
-    throw new Error(`live help unavailable for ${role}: timed out after ${NAVIGATOR_LIVE_HELP_TIMEOUT_MS}ms`);
+    throw new Error(`live help unavailable for ${role}: process did not settle`, { cause: result });
   }
-  if (result.code !== 0) throw new Error(`live help unavailable for ${role}: ${result.stderr || result.stdout}`);
+  if (result.code !== 0) throw new Error(`live help unavailable for ${role}: process exited with code ${result.code}`, { cause: result });
   return result.stdout || result.stderr;
 }
 
@@ -146,7 +146,7 @@ export async function loadNavigatorWorkContext(
         break;
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) throw error;
     }
   }
   // Absent or whitespace-only input yields to the existing file fallback.
