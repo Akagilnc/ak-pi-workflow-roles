@@ -21,7 +21,10 @@
     "generate:tool-execution-observation-schema": "tsx scripts/generate-tool-execution-observation-schema.ts",
     "build": "npm run generate:activation-trace-schema && npm run generate:tool-execution-observation-schema && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
     "prepack": "npm run build",
-    "test": "node --import tsx --test test/**/*.test.ts",
+    "test": "npm run test:all",
+    "test:fast": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
+    "test:integration": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
+    "test:all": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts test/package/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "pi": {

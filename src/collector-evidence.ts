@@ -11,6 +11,16 @@ import type {
 
 export const COLLECTOR_SNAPSHOT_MAX_BYTES = 8 * 1024 * 1024;
 export const COLLECTOR_RECEIPT_MAX_BYTES = 32 * 1024 * 1024;
+
+export function assertCollectorByteLimit(
+  label: string,
+  bytes: number,
+  maxBytes: number,
+): void {
+  if (bytes > maxBytes) {
+    throw new Error(`Collector ${label} exceeded ${maxBytes} UTF-8 bytes (${bytes})`);
+  }
+}
 export const COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1000;
 
 export type WindowRelation = "before" | "within" | "after" | "uncertain";

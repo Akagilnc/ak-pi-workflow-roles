@@ -1,0 +1,205 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readdirSync, statSync } from "node:fs";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import test from "node:test";
+import { tmpdir } from "node:os";
+
+import {
+  constructionProvenance,
+  getSharedIsolatedPack,
+  packageRoot,
+  runPiSubprocess,
+  withHermeticHome,
+  withProcessCwd,
+} from "../helpers/pi-test-harness.ts";
+
+test("subprocess timeouts are explicit instead of looking like natural no-code closes", async () => {
+  const result = await runPiSubprocess(["--help"], {
+    cwd: packageRoot,
+    timeoutMs: 0,
+  });
+  assert.equal(result.timedOut, true);
+  assert.equal(result.code, null);
+});
+
+test("hermetic HOME restores the exact prior value and recursively cleans up after a throw", async () => {
+  const originalHome = process.env.HOME;
+  const priorHome = "/preserved/home/value";
+  const sentinel = { reason: "callback sentinel" };
+  let allocatedHome: string | undefined;
+
+  process.env.HOME = priorHome;
+  try {
+    await assert.rejects(
+      withHermeticHome({ prefix: "ak-harness-cleanup-" }, async ({ home }) => {
+        allocatedHome = home;
+        assert.equal(process.env.HOME, home);
+        await mkdir(resolve(home, "nested", "tree"), { recursive: true });
+        await writeFile(
+          resolve(home, "nested", "tree", "evidence.txt"),
+          "evidence",
+        );
+        throw sentinel;
+      }),
+      (error) => {
+        assert.equal(error, sentinel);
+        return true;
+      },
+    );
+    assert.equal(process.env.HOME, priorHome);
+    assert.ok(allocatedHome);
+    await assert.rejects(access(allocatedHome), { code: "ENOENT" });
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  }
+});
+
+test("withProcessCwd restores the prior working directory after a throw", async () => {
+  const prior = process.cwd();
+  const target = await realpathMkdir();
+  const sentinel = { reason: "cwd sentinel" };
+  await assert.rejects(
+    withProcessCwd(target, async () => {
+      assert.equal(process.cwd(), target);
+      throw sentinel;
+    }),
+    (error) => {
+      assert.equal(error, sentinel);
+      return true;
+    },
+  );
+  assert.equal(process.cwd(), prior);
+});
+
+async function realpathMkdir(): Promise<string> {
+  return await realpath(await mkdtemp(resolve(tmpdir(), "ak-cwd-scope-")));
+}
+
+interface DistSnapshotEntry {
+  size: number;
+  mtimeMs: number;
+  sha256: string;
+}
+
+type DistSnapshot = Map<string, DistSnapshotEntry>;
+
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, name.name);
+      if (name.isDirectory()) stack.push(full);
+      else if (name.isFile() || name.isSymbolicLink()) out.push(full);
+    }
+  }
+  return out.sort();
+}
+
+async function snapshotDistTree(distRoot: string): Promise<DistSnapshot> {
+  const snapshot: DistSnapshot = new Map();
+  for (const full of walkFiles(distRoot)) {
+    const rel = relative(distRoot, full).split("\\").join("/");
+    const st = statSync(full);
+    const body = await readFile(full);
+    snapshot.set(rel, {
+      size: st.size,
+      mtimeMs: st.mtimeMs,
+      sha256: createHash("sha256").update(body).digest("hex"),
+    });
+  }
+  return snapshot;
+}
+
+function assertDistSnapshotUnchanged(
+  before: DistSnapshot,
+  after: DistSnapshot,
+): void {
+  assert.deepEqual(
+    [...after.keys()],
+    [...before.keys()],
+    "shared dist inventory must be unchanged by isolated packs",
+  );
+  for (const [rel, prior] of before) {
+    const next = after.get(rel);
+    assert.ok(next, `missing shared dist entry after packs: ${rel}`);
+    assert.deepEqual(
+      next,
+      prior,
+      `shared dist entry mutated during isolated packs: ${rel}`,
+    );
+  }
+}
+
+async function exerciseSharedPackageContracts(): Promise<void> {
+  // Previously-failing chain: terminating-tools imports judge-output from shared dist.
+  const terminatingUrl = pathToFileURL(
+    resolve(packageRoot, "dist/package-contracts/terminating-tools.js"),
+  ).href;
+  // Cache-bust so each iteration re-reads from disk (race class is partial rewrite).
+  const mod = await import(`${terminatingUrl}?t=${Date.now()}-${Math.random()}`);
+  assert.equal(typeof mod.isTerminatingToolName, "function");
+  assert.equal(typeof mod.acceptedTextFor, "function");
+  assert.equal(typeof mod.validateAcceptedDetails, "function");
+  assert.equal(mod.isTerminatingToolName(mod.JUDGE_OUTPUT_TOOL_NAME), true);
+  assert.equal(
+    mod.acceptedTextFor(mod.JUDGE_OUTPUT_TOOL_NAME),
+    mod.JUDGE_ACCEPTED_TEXT,
+  );
+  // Touch judge-output leaf through the same graph.
+  const judgeUrl = pathToFileURL(
+    resolve(packageRoot, "dist/package-contracts/judge-output.js"),
+  ).href;
+  const judge = await import(`${judgeUrl}?t=${Date.now()}-${Math.random()}`);
+  assert.equal(judge.JUDGE_OUTPUT_TOOL_NAME, mod.JUDGE_OUTPUT_TOOL_NAME);
+  assert.equal(typeof judge.validateAcceptedJudgeDetails, "function");
+}
+
+test("isolated packs leave shared dist identity stable under concurrent contract imports", async () => {
+  const distRoot = resolve(packageRoot, "dist");
+  const before = await snapshotDistTree(distRoot);
+  assert.ok(
+    before.has("package-contracts/terminating-tools.js"),
+    "shared terminating-tools.js must exist before stress",
+  );
+  assert.ok(
+    before.has("package-contracts/judge-output.js"),
+    "shared judge-output.js must exist before stress",
+  );
+
+  // Structural invariant: one private pack (shared fixture) never rewrites packageRoot/dist.
+  const shared = await getSharedIsolatedPack();
+  assert.notEqual(shared.root, packageRoot);
+  assert.ok(shared.root.startsWith(tmpdir()) || shared.cacheDir.includes("ak-pi-workflow-roles-cold-fixtures"));
+  await access(shared.tarball);
+  const paths = shared.files.map((file) => file.path);
+  assert.ok(paths.includes("dist/package-contracts/terminating-tools.js"));
+  assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
+  assert.ok(paths.includes("dist/navigator-attendance.js"));
+  assert.ok(!paths.some((path) => path.includes("recorder")));
+
+  // Provenance must bind the fixture to the current construction HEAD.
+  const live = constructionProvenance();
+  assert.equal(shared.provenance.head, live.head);
+  assert.equal(shared.provenance.fingerprint, live.fingerprint);
+
+  // Keep reading the shared contract chain after the private pack completes.
+  for (let i = 0; i < 8; i++) {
+    await exerciseSharedPackageContracts();
+  }
+
+  const after = await snapshotDistTree(distRoot);
+  assertDistSnapshotUnchanged(before, after);
+});

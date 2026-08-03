@@ -3,6 +3,7 @@ import Value from "typebox/value";
 import type { CollectorManifest, CollectorRepository } from "./collector-config.ts";
 import {
   applyEvidenceVersionHistory,
+  assertCollectorByteLimit,
   assignWindowRelations,
   COLLECTOR_ELIGIBILITY_MS,
   COLLECTOR_RECEIPT_MAX_BYTES,
@@ -424,10 +425,10 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
 
   const assertMaterializationWithinBound = (label: string): void => {
     const bytes = materializationByteLength();
-    if (bytes > COLLECTOR_RECEIPT_MAX_BYTES) {
-      throw latchFatal(
-        `Collector ${label} exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes (${bytes})`,
-      );
+    try {
+      assertCollectorByteLimit(label, bytes, COLLECTOR_RECEIPT_MAX_BYTES);
+    } catch (error) {
+      throw latchFatal(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -444,7 +445,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     const prNumber = config.prNumber;
     const signalOpt = signal === undefined ? {} : { signal };
     // One observation-attempt budget; resets on PR-identity retry.
-    const budget = createSnapshotByteBudget();
+    const budget = createSnapshotByteBudget(COLLECTOR_SNAPSHOT_MAX_BYTES);
     const user = await transport.getAuthenticatedUser(signalOpt);
     budget.retain([normalizeAuthenticatedUserEvidence(user, observedAt)]);
     const prInitial = await transport.getPullRequest({
@@ -762,10 +763,14 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       assignWindowRelations(pendingRecords, activationTime, deadlineTime);
 
       const normalizedByteLength = measureNormalizedBytes(pendingRecords);
-      if (normalizedByteLength > COLLECTOR_SNAPSHOT_MAX_BYTES) {
-        throw latchFatal(
-          `Collector snapshot exceeded ${COLLECTOR_SNAPSHOT_MAX_BYTES} UTF-8 bytes (${normalizedByteLength})`,
+      try {
+        assertCollectorByteLimit(
+          "snapshot",
+          normalizedByteLength,
+          COLLECTOR_SNAPSHOT_MAX_BYTES,
         );
+      } catch (error) {
+        throw latchFatal(error instanceof Error ? error.message : String(error));
       }
 
       // Commit only after complete surfaces validated.
