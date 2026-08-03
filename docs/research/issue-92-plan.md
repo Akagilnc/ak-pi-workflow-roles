@@ -30,12 +30,13 @@ contract remains represented in its assigned tier.
 
 ## Station 2 — rebuild and merge
 
-1. Apply the 72 rebuild dispositions and 41 independently validated merge dispositions in the
+1. Apply the 103 rebuild dispositions and 10 independently validated merge dispositions in the
    ledger; former merges whose opened survivor test does not cover the absorbed
    contract are explicit rebuilds with cited coverageFailure.
 
-2. For every merge, use its machine-checkable `mergeInto` target or shared
-   oracle key; do not infer a target from prose.
+2. For every merge, use its machine-checkable `mergeInto` / `survivor` direct
+   key in the ledger `mergeMapping`; the historical `mergeOracles` registry is
+   non-governing. Do not infer a target from prose.
 3. Rebuild expensive package fixtures around one shared cold-install/pack
    fixture or an equivalent CI prebuilt artifact. The fixture-design ruling
    permits either architecture; choose one during implementation and measure
