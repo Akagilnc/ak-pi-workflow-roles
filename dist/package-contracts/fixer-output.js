@@ -77,7 +77,7 @@ export function validateFixerOutput(value, phase) {
         fail("status allowed-values constraint");
     if (!Array.isArray(value.classResults) || value.classResults.length === 0)
         fail("classResults nonempty array constraint");
-    const names = new Set(), commits = new Set();
+    const names = new Set();
     let completed = 0, refused = 0;
     const classResults = value.classResults.map((item, index) => {
         const path = `classResults[${index}]`;
@@ -107,9 +107,6 @@ export function validateFixerOutput(value, phase) {
             });
             if (!nonblank(item.commitSha))
                 fail(`${path}.commitSha nonblank constraint`);
-            if (commits.has(item.commitSha))
-                fail("classResults completed commitSha distinct constraint");
-            commits.add(item.commitSha);
             completed++;
             return { name: item.name, disposition: "completed", searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
         }
