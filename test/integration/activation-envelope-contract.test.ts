@@ -25,7 +25,8 @@ import {
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../../src/activation-trace.ts";
-import { packageRoot, runPiSubprocess, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
+import { packageRoot, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -193,35 +194,29 @@ test("every registered whole-activation rejection terminates nonzero with a name
 });
 
 test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch", async () => {
-  await withHermeticHome({ prefix: "ak-fixer-activation-incident-" }, async ({ home, agentDir }) => {
-    const instructions = resolve(home, "instructions.md");
-    const prerequisites = resolve(home, "prerequisites.json");
-    await writeFile(instructions, "Apply the assigned repair.\n");
-    await writeFile(prerequisites, JSON.stringify({ prerequisites: [] }));
-    const result = await runPiSubprocess([
-      "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-session",
-      "-e", resolve(packageRoot, "extensions/role-runtime.ts"),
-      "-e", resolve(packageRoot, "test/fixtures/fixer-audit-failure-provider.ts"),
-      "--ak-role", "fixer", "--ak-fixer-phase", "apply", "--ak-fix-packet", instructions,
-      "--ak-fixer-prerequisites", prerequisites,
-      "--provider", "ak-fixer-audit-failure", "--model", "faux-1", "-p", "Apply.",
-    ], { cwd: packageRoot, timeoutMs: 15_000, env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" } });
-    assert.equal(result.timedOut, false, "malformed prerequisites subprocess did not time out");
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=0/);
-    const traces = result.stderr.split("\n").flatMap((line) => {
-      try { const value = JSON.parse(line) as ActivationTraceRecord; return Value.Check(activationTraceRecordSchema, value) ? [value] : []; }
-      catch { return []; }
-    });
-    assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
-      { role: "fixer", stageId: "load-and-install", status: "started" },
-      { role: "fixer", stageId: "load-and-install", status: "failed" },
-    ]);
-    const failed = traces[1];
-    assert.ok(failed?.status === "failed");
-    assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
-    assert.match(failed.cause.message, /Fixer prerequisites/);
+  // Shared CLI harness with audit-failure-subprocess (same extension pair + provider + hermetic home).
+  const result = await runFixerAuditFailureCli({
+    packet: "Apply the assigned repair.\n",
+    prerequisites: { prerequisites: [] },
+    noSession: true,
+    timeoutMs: 15_000,
+    prefix: "ak-fixer-activation-incident-",
   });
+  assert.equal(result.timedOut, false, "malformed prerequisites subprocess did not time out");
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=0/);
+  const traces = result.stderr.split("\n").flatMap((line) => {
+    try { const value = JSON.parse(line) as ActivationTraceRecord; return Value.Check(activationTraceRecordSchema, value) ? [value] : []; }
+    catch { return []; }
+  });
+  assert.deepEqual(traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
+    { role: "fixer", stageId: "load-and-install", status: "started" },
+    { role: "fixer", stageId: "load-and-install", status: "failed" },
+  ]);
+  const failed = traces[1];
+  assert.ok(failed?.status === "failed");
+  assert.equal(failed.cause.identity, "AK_INVALID_FIX_PACKET");
+  assert.match(failed.cause.message, /Fixer prerequisites/);
 });
 
 for (const failure of ["clock", "writer"] as const) {
@@ -268,23 +263,58 @@ test("failed trace emission cannot mask the activation cause or skip termination
 });
 
 
-test("default trace writer retries transient and short writes until one complete JSONL record", () => {
+function assertRetryingJsonlWriter(input: {
+  write: (record: never, writeSync: typeof import("node:fs").writeSync) => void;
+  record: unknown;
+  schema: unknown;
+  chunkSize: number;
+  expectedFd?: number;
+  invalidRecord?: unknown;
+}): void {
   const chunks: Buffer[] = [];
   let calls = 0;
-  writeActivationTraceRecord(
-    { role: "judge", stageId: "load", status: "started", timestamp: "2025-01-01T00:00:00.000Z" },
+  input.write(
+    input.record as never,
     ((_fd: number, buffer: Uint8Array, offset: number, length: number) => {
+      if (input.expectedFd !== undefined) assert.equal(_fd, input.expectedFd);
       calls += 1;
       if (calls === 1) throw Object.assign(new Error("busy"), { code: "EAGAIN" });
-      const count = Math.min(7, length);
+      const count = Math.min(input.chunkSize, length);
       chunks.push(Buffer.from(buffer.subarray(offset, offset + count)));
       return count;
     }) as typeof import("node:fs").writeSync,
   );
   const line = Buffer.concat(chunks).toString();
   assert.equal(line.endsWith("\n"), true);
-  assert.equal(Value.Check(activationTraceRecordSchema, JSON.parse(line)), true);
+  assert.equal(Value.Check(input.schema as never, JSON.parse(line)), true);
   assert.ok(calls > 2);
+  if (input.invalidRecord !== undefined) {
+    assert.throws(() => input.write(input.invalidRecord as never, (() => 0) as never), /closed contract/);
+  }
+}
+
+test("default trace and tool observation writers retry short writes and reject schema-invalid records", () => {
+  assertRetryingJsonlWriter({
+    write: writeActivationTraceRecord as never,
+    record: { role: "judge", stageId: "load", status: "started", timestamp: "2025-01-01T00:00:00.000Z" },
+    schema: activationTraceRecordSchema,
+    chunkSize: 7,
+  });
+  assertRetryingJsonlWriter({
+    write: writeToolExecutionObservationRecord as never,
+    record: {
+      schemaVersion: 1,
+      event: "tool_execution_start",
+      role: "judge",
+      toolCallId: "t1",
+      toolName: "bash",
+      timestamp: "2025-01-01T00:00:00.000Z",
+    },
+    schema: toolExecutionObservationRecordSchema,
+    chunkSize: 9,
+    expectedFd: 2,
+    invalidRecord: { event: "nope" },
+  });
 });
 
 test("executor rejects schema-invalid dependency output without emitting it", async () => {
@@ -475,30 +505,6 @@ test("shared role runtime registers tool observation only after admitted activat
     { event: "tool_execution_update", toolCallId: "post", toolName: "bash", role: "judge" },
     { event: "tool_execution_end", toolCallId: "post", toolName: "bash", role: "judge", isError: true },
   ]);
-});
-
-test("default tool observation writer retries short writes on fd 2 and rejects schema-invalid records", () => {
-  const chunks: Buffer[] = [];
-  let calls = 0;
-  writeToolExecutionObservationRecord(
-    { schemaVersion: 1, event: "tool_execution_start", role: "judge", toolCallId: "t1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z" },
-    ((_fd: number, buffer: Uint8Array, offset: number, length: number) => {
-      assert.equal(_fd, 2);
-      calls += 1;
-      if (calls === 1) throw Object.assign(new Error("busy"), { code: "EAGAIN" });
-      const count = Math.min(9, length);
-      chunks.push(Buffer.from(buffer.subarray(offset, offset + count)));
-      return count;
-    }) as typeof import("node:fs").writeSync,
-  );
-  const line = Buffer.concat(chunks).toString();
-  assert.equal(line.endsWith("\n"), true);
-  assert.equal(Value.Check(toolExecutionObservationRecordSchema, JSON.parse(line)), true);
-  assert.ok(calls > 2);
-  assert.throws(
-    () => writeToolExecutionObservationRecord({ event: "nope" } as never),
-    /closed contract/,
-  );
 });
 
 test("tool observation writer failure does not fake success on the face", async () => {
