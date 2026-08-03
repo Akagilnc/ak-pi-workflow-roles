@@ -4,18 +4,28 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { fauxProvider } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
   ActivationBarrierError,
   ROLE_REGISTRY,
+  TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION,
+  TOOL_EXECUTION_UPDATE_HEARTBEAT,
+  TOOL_EXECUTION_UPDATE_THROTTLE_MS,
   createRoleRuntimeExtension,
+  createToolExecutionObservationFace,
   executeActivationStages,
+  isProducingToolUpdate,
+  systemToolExecutionObservationMonoNow,
+  toolExecutionObservationRecordSchema,
   writeActivationTraceRecord,
+  writeToolExecutionObservationRecord,
   type ActivationStage,
+  type ToolExecutionObservationRecord,
 } from "../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../src/activation-trace.ts";
-import { packageRoot, runPiSubprocess, withHermeticHome } from "./helpers/pi-test-harness.ts";
+import { packageRoot, runPiSubprocess, withHermeticHome, withInProcessPi } from "./helpers/pi-test-harness.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -310,3 +320,301 @@ for (const [mode, expected] of [["print", 1], ["json", 1], ["tui", undefined], [
     assert.equal(process.exitCode, expected);
   });
 }
+
+test("tool-execution observation contract is versioned, closed, and output-driven", () => {
+  assert.equal(TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION, 1);
+  assert.equal(TOOL_EXECUTION_UPDATE_THROTTLE_MS, 30_000);
+  assert.equal(TOOL_EXECUTION_UPDATE_HEARTBEAT, "output-driven");
+  assert.equal(isProducingToolUpdate({ content: [], details: undefined }), false);
+  assert.equal(isProducingToolUpdate({ content: [{ type: "text", text: "" }] }), false);
+  assert.equal(isProducingToolUpdate({ content: [{ type: "text", text: "chunk" }] }), true);
+  for (const record of [
+    { schemaVersion: 1, event: "tool_execution_start", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z" },
+    { schemaVersion: 1, event: "tool_execution_update", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:30.000Z" },
+    { schemaVersion: 1, event: "tool_execution_end", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:01:00.000Z", isError: false },
+  ] as const) {
+    assert.equal(Value.Check(toolExecutionObservationRecordSchema, record), true);
+  }
+  assert.equal(Value.Check(toolExecutionObservationRecordSchema, {
+    schemaVersion: 1, event: "tool_execution_end", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z",
+  }), false);
+  assert.equal(Value.Check(toolExecutionObservationRecordSchema, {
+    schemaVersion: 1, event: "tool_execution_start", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z", extra: true,
+  }), false);
+});
+
+test("observation face emits start/end always, throttles producing updates per toolCallId, and ignores non-admitted sessions", async () => {
+  const records: ToolExecutionObservationRecord[] = [];
+  let admitted = true;
+  let mono = 0;
+  const face = createToolExecutionObservationFace({
+    role: () => "fixer",
+    admitted: () => admitted,
+    clock: () => new Date(1_700_000_000_000 + mono).toISOString(),
+    monoNow: () => mono,
+    write: (record) => { records.push(record); },
+  });
+
+  await face.onStart({ toolCallId: "a", toolName: "bash" });
+  await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [] } });
+  await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [{ type: "text", text: "one" }] } });
+  mono = 10_000;
+  await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [{ type: "text", text: "two" }] } });
+  mono = 30_000;
+  await face.onUpdate({ toolCallId: "a", toolName: "bash", partialResult: { content: [{ type: "text", text: "three" }] } });
+  await face.onEnd({ toolCallId: "a", toolName: "bash", isError: false });
+
+  await face.onStart({ toolCallId: "b", toolName: "read" });
+  await face.onStart({ toolCallId: "c", toolName: "bash" });
+  await face.onUpdate({ toolCallId: "b", toolName: "read", partialResult: { content: [{ type: "text", text: "b-out" }] } });
+  await face.onUpdate({ toolCallId: "c", toolName: "bash", partialResult: { content: [{ type: "text", text: "c-out" }] } });
+  await face.onEnd({ toolCallId: "b", toolName: "read", isError: true });
+  await face.onEnd({ toolCallId: "c", toolName: "bash", isError: false });
+
+  admitted = false;
+  const before = records.length;
+  await face.onStart({ toolCallId: "d", toolName: "bash" });
+  await face.onUpdate({ toolCallId: "d", toolName: "bash", partialResult: { content: [{ type: "text", text: "nope" }] } });
+  await face.onEnd({ toolCallId: "d", toolName: "bash", isError: false });
+  assert.equal(records.length, before);
+
+  assert.deepEqual(records.map((record) => (
+    record.event === "tool_execution_end"
+      ? { event: record.event, toolCallId: record.toolCallId, isError: record.isError }
+      : { event: record.event, toolCallId: record.toolCallId }
+  )), [
+    { event: "tool_execution_start", toolCallId: "a" },
+    { event: "tool_execution_update", toolCallId: "a" },
+    { event: "tool_execution_update", toolCallId: "a" },
+    { event: "tool_execution_end", toolCallId: "a", isError: false },
+    { event: "tool_execution_start", toolCallId: "b" },
+    { event: "tool_execution_start", toolCallId: "c" },
+    { event: "tool_execution_update", toolCallId: "b" },
+    { event: "tool_execution_update", toolCallId: "c" },
+    { event: "tool_execution_end", toolCallId: "b", isError: true },
+    { event: "tool_execution_end", toolCallId: "c", isError: false },
+  ]);
+  for (const record of records) {
+    assert.equal(Value.Check(toolExecutionObservationRecordSchema, record), true);
+    assert.equal(record.role, "fixer");
+    assert.equal(record.schemaVersion, 1);
+  }
+});
+
+test("observation face rejects throttleMs override at the typed call site and ignores it at runtime", async () => {
+  // Typed surface has no throttleMs — excess key must not type-check.
+  const faceOptions = {
+    role: () => "fixer" as string | undefined,
+    admitted: () => true,
+    clock: () => "2025-01-01T00:00:00.000Z",
+    monoNow: () => 0,
+    write: (_record: ToolExecutionObservationRecord) => {},
+  };
+  type FaceOptions = Parameters<typeof createToolExecutionObservationFace>[0];
+  type HasThrottleMs = "throttleMs" extends keyof FaceOptions ? true : false;
+  const throttleMsOnFaceOptions: HasThrottleMs = false;
+  assert.equal(throttleMsOnFaceOptions, false);
+
+  // Runtime: smuggled throttleMs: 0 must not disable the 30s coalesce.
+  const records: ToolExecutionObservationRecord[] = [];
+  let mono = 0;
+  const face = createToolExecutionObservationFace({
+    ...faceOptions,
+    throttleMs: 0,
+    monoNow: () => mono,
+    write: (record) => { records.push(record); },
+  } as FaceOptions);
+
+  await face.onStart({ toolCallId: "t", toolName: "bash" });
+  await face.onUpdate({
+    toolCallId: "t",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "first" }] },
+  });
+  mono = 10_000; // < TOOL_EXECUTION_UPDATE_THROTTLE_MS
+  await face.onUpdate({
+    toolCallId: "t",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "second" }] },
+  });
+
+  assert.deepEqual(records.map((r) => r.event), [
+    "tool_execution_start",
+    "tool_execution_update",
+  ]);
+});
+
+test("shared role runtime registers tool observation only after admitted activation and never writes stdout", async () => {
+  const observations: ToolExecutionObservationRecord[] = [];
+  type Handler = (event: Record<string, unknown>, ctx?: ExtensionContext) => unknown;
+  const handlers = new Map<string, Handler[]>();
+  const pi = {
+    registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
+    getFlag(name: string) { return name === "ak-role" ? "judge" : undefined; },
+    on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+  } as unknown as ExtensionAPI;
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "LAW",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+    activationClock: () => "2025-01-01T00:00:00.000Z",
+    activationTraceWriter: () => {},
+    toolExecutionObservationWriter: (record) => { observations.push(record); },
+  })(pi);
+
+  const startHandler = handlers.get("tool_execution_start")?.[0];
+  const updateHandler = handlers.get("tool_execution_update")?.[0];
+  const endHandler = handlers.get("tool_execution_end")?.[0];
+  assert.ok(startHandler && updateHandler && endHandler);
+
+  await startHandler({ toolCallId: "pre", toolName: "bash" });
+  await updateHandler({ toolCallId: "pre", toolName: "bash", partialResult: { content: [{ type: "text", text: "x" }] } });
+  await endHandler({ toolCallId: "pre", toolName: "bash", isError: false });
+  assert.equal(observations.length, 0);
+
+  const sessionStart = handlers.get("session_start")?.[0];
+  assert.ok(sessionStart);
+  await sessionStart({ reason: "startup" }, { mode: "print", abort() {} } as unknown as ExtensionContext);
+
+  await startHandler({ toolCallId: "post", toolName: "bash" });
+  await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [] } });
+  await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [{ type: "text", text: "hello" }] } });
+  await endHandler({ toolCallId: "post", toolName: "bash", isError: true });
+  assert.deepEqual(observations.map((record) => ({
+    event: record.event,
+    toolCallId: record.toolCallId,
+    toolName: record.toolName,
+    role: record.role,
+    ...(record.event === "tool_execution_end" ? { isError: record.isError } : {}),
+  })), [
+    { event: "tool_execution_start", toolCallId: "post", toolName: "bash", role: "judge" },
+    { event: "tool_execution_update", toolCallId: "post", toolName: "bash", role: "judge" },
+    { event: "tool_execution_end", toolCallId: "post", toolName: "bash", role: "judge", isError: true },
+  ]);
+});
+
+test("default tool observation writer retries short writes on fd 2 and rejects schema-invalid records", () => {
+  const chunks: Buffer[] = [];
+  let calls = 0;
+  writeToolExecutionObservationRecord(
+    { schemaVersion: 1, event: "tool_execution_start", role: "judge", toolCallId: "t1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z" },
+    ((_fd: number, buffer: Uint8Array, offset: number, length: number) => {
+      assert.equal(_fd, 2);
+      calls += 1;
+      if (calls === 1) throw Object.assign(new Error("busy"), { code: "EAGAIN" });
+      const count = Math.min(9, length);
+      chunks.push(Buffer.from(buffer.subarray(offset, offset + count)));
+      return count;
+    }) as typeof import("node:fs").writeSync,
+  );
+  const line = Buffer.concat(chunks).toString();
+  assert.equal(line.endsWith("\n"), true);
+  assert.equal(Value.Check(toolExecutionObservationRecordSchema, JSON.parse(line)), true);
+  assert.ok(calls > 2);
+  assert.throws(
+    () => writeToolExecutionObservationRecord({ event: "nope" } as never),
+    /closed contract/,
+  );
+});
+
+test("tool observation writer failure does not fake success on the face", async () => {
+  const face = createToolExecutionObservationFace({
+    role: () => "judge",
+    admitted: () => true,
+    clock: () => "2025-01-01T00:00:00.000Z",
+    monoNow: () => 0,
+    write: () => { throw new Error("stderr unavailable"); },
+  });
+  await assert.rejects(async () => face.onStart({ toolCallId: "x", toolName: "bash" }), /stderr unavailable/);
+});
+
+test("production observation mono clock is monotonic and not wall-clock Date.now", () => {
+  const samples = Array.from({ length: 32 }, () => systemToolExecutionObservationMonoNow());
+  for (let i = 1; i < samples.length; i++) {
+    assert.ok(samples[i]! >= samples[i - 1]!, `monoNow must not go backwards: ${samples[i - 1]} -> ${samples[i]}`);
+  }
+  // Date.now is epoch ms (~1e12); performance.now is process-relative ms (far smaller in tests).
+  assert.ok(samples[0]! < 1e11, `production monoNow must not default to wall-clock Date.now; got ${samples[0]}`);
+});
+
+test("observation writer failure aborts through real ExtensionRunner emit with original cause", async () => {
+  await withHermeticHome({ prefix: "ak-tool-obs-fail-" }, async ({ home, agentDir }) => {
+    const faux = fauxProvider({ api: "ak-tool-obs-fail", provider: "ak-tool-obs-fail" });
+    const writerError = new Error("stderr unavailable");
+    const priorExitCode = process.exitCode;
+    process.exitCode = undefined;
+    let aborts = 0;
+    const extensionErrors: ExtensionError[] = [];
+    try {
+      await withInProcessPi({
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noExtensions: true,
+        systemPrompt: "JUDGE",
+        mode: "print",
+        flags: { "ak-role": "judge" },
+        extensionFactories: [createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "LAW",
+          transcriptFromContext: () => "",
+          auditSoulCompliance: async () => ({ status: "pass" }),
+          activationClock: () => "2025-01-01T00:00:00.000Z",
+          activationTraceWriter: () => {},
+          toolExecutionObservationWriter: () => { throw writerError; },
+        })],
+      }, async ({ session }) => {
+        session.extensionRunner.onError((error) => { extensionErrors.push(error); });
+        // Rebind abort so the infrastructure path is observable without depending on agent internals.
+        await session.bindExtensions({
+          mode: "print",
+          abortHandler: () => { aborts += 1; },
+        });
+        // emit() swallows handler throws after emitError — termination must still have run.
+        await session.extensionRunner.emit({
+          type: "tool_execution_start",
+          toolCallId: "obs-fail-1",
+          toolName: "bash",
+          args: {},
+        });
+        assert.equal(aborts, 1, "observation failure must call ExtensionContext.abort");
+        assert.equal(process.exitCode, 1, "print mode observation failure must set nonzero exitCode");
+        assert.ok(
+          extensionErrors.some((error) => error.event === "tool_execution_start" && error.error.includes("stderr unavailable")),
+          `ExtensionRunner must retain the original cause via extension error; got ${JSON.stringify(extensionErrors)}`,
+        );
+
+        // Same termination for update and end seams.
+        aborts = 0;
+        process.exitCode = undefined;
+        extensionErrors.length = 0;
+        await session.extensionRunner.emit({
+          type: "tool_execution_update",
+          toolCallId: "obs-fail-1",
+          toolName: "bash",
+          args: {},
+          partialResult: { content: [{ type: "text", text: "chunk" }] },
+        });
+        assert.equal(aborts, 1);
+        assert.equal(process.exitCode, 1);
+        assert.ok(extensionErrors.some((error) => error.event === "tool_execution_update" && error.error.includes("stderr unavailable")));
+
+        aborts = 0;
+        process.exitCode = undefined;
+        extensionErrors.length = 0;
+        await session.extensionRunner.emit({
+          type: "tool_execution_end",
+          toolCallId: "obs-fail-1",
+          toolName: "bash",
+          isError: false,
+          result: { content: [], details: {} },
+        });
+        assert.equal(aborts, 1);
+        assert.equal(process.exitCode, 1);
+        assert.ok(extensionErrors.some((error) => error.event === "tool_execution_end" && error.error.includes("stderr unavailable")));
+      });
+    } finally {
+      process.exitCode = priorExitCode;
+    }
+  });
+});
