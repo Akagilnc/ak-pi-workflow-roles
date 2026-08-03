@@ -210,13 +210,18 @@ ${text}
       if (session === void 0) {
         sessionReady = (async () => {
           const created = await options.createSession({ context: options.context, sessionDir, tool });
-          session = created;
-          await created.setModel?.(modelSetting, model.thinkingLevel);
-          if (created.getThinkingLevel?.() !== void 0 && created.getThinkingLevel() !== model.thinkingLevel) {
-            throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+          try {
+            await created.setModel?.(modelSetting, model.thinkingLevel);
+            if (created.getThinkingLevel?.() !== void 0 && created.getThinkingLevel() !== model.thinkingLevel) {
+              throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+            }
+            created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+            session = created;
+            return created;
+          } catch (error) {
+            created.dispose();
+            throw error;
           }
-          created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
-          return created;
         })();
         await sessionReady;
         sessionReady = void 0;
@@ -293,16 +298,19 @@ ${helpContext}
       let report;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
         if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
+        if (preparation !== void 0) await preparation.catch(() => void 0);
         session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.kind === "human_decision" ? { status: settlement.status } : {} });
         report = { disposition: "silence" };
       } else if (settlement.kind === "arrival") {
+        if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
+        if (preparation !== void 0) await preparation.catch(() => void 0);
         report = { disposition: "arrival", arrivalMessage: settlement.message ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730" };
       } else if (preparation === void 0) {
         report = unavailable(invocationId, "Navigator preparation did not start");
       } else {
-        if (sessionReady !== void 0) await sessionReady;
-        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
         try {
+          if (sessionReady !== void 0) await sessionReady;
+          session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
           const prepared = await preparation;
           const selected = selectNavigatorCandidate(prepared, settlement);
           if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");

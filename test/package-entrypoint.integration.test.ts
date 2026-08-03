@@ -29,6 +29,8 @@ import {
   parseFixerPrerequisites,
   validateFixerOutputForPacket,
   JUDGE_OUTPUT_TOOL_NAME,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  writeNavigatorModelSetting,
   MERGER_INPUT_FLAG,
   MERGER_OUTPUT_TOOL_NAME,
   ROLE_FLAG,
@@ -660,6 +662,107 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
           "terminate ends the real Pi lifecycle without a follow-up provider turn",
         );
       });
+    },
+  );
+});
+
+test("normal packaged Navigator presents independently in print and JSON and reuses one subject session", async () => {
+  const manifest = await loadRawPackageManifest();
+  await withHermeticHome(
+    { prefix: "ak-navigator-entrypoint-integration-" },
+    async ({ agentDir, home }) => {
+      const faux = fauxProvider({
+        api: "ak-navigator-entrypoint-offline",
+        provider: "ak-navigator-entrypoint-offline",
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      const model = faux.getModel();
+      const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const oldSubjectKey = process.env.PI_WORK_SUBJECT_KEY;
+      const oldSubject = process.env.PI_WORK_SUBJECT;
+      const oldAuthority = process.env.PI_WORK_AUTHORITY;
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env.PI_WORK_SUBJECT_KEY = resolve(home, ".ak/work/issues/28");
+      process.env.PI_WORK_SUBJECT = "Issue 28 Navigator production acceptance";
+      process.env.PI_WORK_AUTHORITY = "owner decision: automatic attendance";
+      await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
+      let navigatorCalls = 0;
+      let invalidJudge = true;
+      const response = (context: Context) => {
+        const names = context.tools?.map((tool) => tool.name) ?? [];
+        if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+          navigatorCalls += 1;
+          return fauxAssistantMessage(
+            fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+              candidates: [{
+                id: "production-route",
+                matches: { role: "judge", phase: null, kind: "accepted" },
+                route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+                next: { role: "reviewer", phase: null },
+                reason: "The current work needs an independent review next.",
+                command: "Usage: pi --ak-role reviewer --help",
+              }],
+            }, { id: `navigator-${faux.state.callCount}` }),
+            { stopReason: "toolUse" },
+          );
+        }
+        if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+          return fauxAssistantMessage(
+            fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }, { id: `audit-${faux.state.callCount}` }),
+            { stopReason: "toolUse" },
+          );
+        }
+        const judgeArguments = invalidJudge
+          ? (invalidJudge = false, { judgeStatus: "converged", unexpected: true })
+          : { judgeStatus: "converged" };
+        return fauxAssistantMessage(
+          fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, judgeArguments, { id: `judge-${faux.state.callCount}` }),
+          { stopReason: "toolUse" },
+        );
+      };
+      let printOutput = "";
+      const originalWrite = process.stdout.write;
+      process.stdout.write = ((chunk: string | Uint8Array) => {
+        printOutput += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+        return true;
+      }) as typeof process.stdout.write;
+      try {
+        for (const mode of ["print", "json"] as const) {
+          navigatorCalls = 0;
+          invalidJudge = true;
+          faux.setResponses([response, response, response, response]);
+          await withInProcessPi({
+            cwd: packageRoot,
+            agentDir,
+            faux,
+            additionalExtensionPaths: [packageEntrypoint(manifest)],
+            systemPrompt: "NAVIGATOR ENTRYPOINT ACCEPTANCE",
+            mode,
+            flags: { "ak-role": "judge" },
+            noTools: "builtin",
+          }, async ({ session, sessionManager }) => {
+            await session.prompt("Run the unchanged normal role entrypoint with Navigator attendance.");
+            const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-attendance");
+            if (mode === "json") {
+              assert.equal(attendance.length, 1);
+              assert.equal((attendance[0] as any).data.disposition, "recommendation");
+              assert.equal((attendance[0] as any).data.subjectKey.includes("#"), false);
+            } else {
+              assert.equal(attendance.length, 0);
+              assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false);
+            }
+          });
+          assert.equal(navigatorCalls, 1, "a correctable role-output error must reuse one preparation");
+        }
+      } finally {
+        process.stdout.write = originalWrite;
+        if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+        if (oldSubjectKey === undefined) delete process.env.PI_WORK_SUBJECT_KEY; else process.env.PI_WORK_SUBJECT_KEY = oldSubjectKey;
+        if (oldSubject === undefined) delete process.env.PI_WORK_SUBJECT; else process.env.PI_WORK_SUBJECT = oldSubject;
+        if (oldAuthority === undefined) delete process.env.PI_WORK_AUTHORITY; else process.env.PI_WORK_AUTHORITY = oldAuthority;
+      }
+      assert.match(printOutput, /下一步：reviewer/);
+      assert.equal(faux.getPendingResponseCount(), 0);
     },
   );
 });
