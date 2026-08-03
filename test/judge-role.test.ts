@@ -362,7 +362,7 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
         promptGuidelines: [
           `Use ${FIXER_OUTPUT_TOOL_NAME} as the final action for the fixer role.`,
           `${FIXER_OUTPUT_TOOL_NAME} reports only lawful assignment blockers; infrastructure failures abort.`,
-          "plan permits planned|refused; apply permits completed|refused|partially_completed.",
+          "plan permits planned|refused; apply permits completed|refused|partially_completed|unfinished.",
         ],
       },
       output: { status: "completed", report: "done", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] },
@@ -379,12 +379,12 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
       name: CODER_OUTPUT_TOOL_NAME,
       metadata: {
         label: "Coder Output",
-        description: "Submit a plan, completion, or evidence-bearing refusal for the active coder phase. commitSha is advisory evidence for the caller.",
+        description: "Submit a plan, completion, unfinished handoff, or evidence-bearing refusal for the active coder phase.",
         promptSnippet: "Submit the final coder report",
         promptGuidelines: [
           `Use ${CODER_OUTPUT_TOOL_NAME} as the final action for the coder role.`,
           `${CODER_OUTPUT_TOOL_NAME} never escalates; explain authority or task conflicts in report for the caller to dispose.`,
-          "plan permits planned|refused; apply permits completed|refused.",
+          "plan permits planned|refused; apply permits completed|unfinished|refused. unfinished requires a non-blank remainingScope.",
           "A completed apply report must preserve evidence for TDD, the same-pattern check, introduced-regression check, and behavior-fact check.",
         ],
       },
@@ -415,13 +415,17 @@ test("named Judge and worker tools preserve exact metadata, schema leaves, and r
         promptSnippet: tool.promptSnippet,
         promptGuidelines: tool.promptGuidelines,
       }, fixture.metadata);
-      assert.equal(tool.parameters.additionalProperties, false);
-      assert.deepEqual(
-        Object.keys(tool.parameters.properties),
-        fixture.role === "judge"
-          ? ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"]
-          : ["status", "report", "commitSha"],
-      );
+      if (fixture.role === "judge") {
+        assert.equal(tool.parameters.additionalProperties, false);
+        assert.deepEqual(Object.keys(tool.parameters.properties), ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"]);
+      } else {
+        assert.ok(Array.isArray(tool.parameters.anyOf));
+        assert.deepEqual(tool.parameters.anyOf.map((branch: { properties: Record<string, unknown> }) => Object.keys(branch.properties)), [
+          ["status", "report"],
+          ["status", "report", "commitSha"],
+          ["status", "report", "remainingScope"],
+        ]);
+      }
     }
     const result = await tool.execute(
       "receipt",
@@ -910,6 +914,55 @@ test("coder plan loads its task without construction skill and returns planned",
     ),
     /Coder plan phase permits only planned or refused/,
   );
+  await assert.rejects(
+    tool.execute(
+      "coder-unfinished-plan",
+      { status: "unfinished", report: "Not finished.", remainingScope: "the implementation" },
+      undefined,
+      undefined,
+      toolCallContext([{ id: "coder-unfinished-plan", name: CODER_OUTPUT_TOOL_NAME }]),
+    ),
+    /Coder plan phase permits only planned or refused/,
+  );
+});
+
+test("coder apply accepts an unfinished handoff with typed remaining scope", async () => {
+  const harness = extensionHarness("coder", {
+    "ak-coder-task": "/materials/approved.md",
+    "ak-coder-phase": "apply",
+  });
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "JUDGE LAW",
+    loadCoderSoul: async () => "CODER LAW",
+    loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
+    loadCanonicalSkillBinding: async () => tddBinding(),
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(harness.pi as ExtensionAPI);
+  await harness.handlers.get("session_start")?.({}, {});
+  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
+  assert.ok(tool);
+  const unfinished = {
+    status: "unfinished" as const,
+    report: "The first implementation is not fully settled.",
+    remainingScope: "the unimplemented adapter branch",
+  };
+  assert.deepEqual(
+    (await tool.execute("unfinished", unfinished, undefined, undefined, toolCallContext([{ id: "unfinished", name: CODER_OUTPUT_TOOL_NAME }]))).details,
+    unfinished,
+  );
+  const invalids = [
+    { status: "unfinished", report: "still working" },
+    { status: "unfinished", report: "still working", remainingScope: " " },
+    { status: "unfinished", report: "still working", remainingScope: "scope", commitSha: "abc" },
+  ];
+  for (const [index, invalid] of invalids.entries()) {
+    const id = `invalid-${index}`;
+    await assert.rejects(
+      tool.execute(id, invalid, undefined, undefined, toolCallContext([{ id, name: CODER_OUTPUT_TOOL_NAME }])),
+      /Coder unfinished output|additional property|remainingScope/i,
+    );
+  }
 });
 
 test("coder apply binds completion to the immediately following canonical tdd expansion", async () => {
@@ -1094,7 +1147,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       undefined,
       toolCallContext([{ id: "coder-planned", name: CODER_OUTPUT_TOOL_NAME }]),
     ),
-    /Coder apply phase permits only completed or refused/,
+    /Coder apply phase permits only completed, unfinished, or refused/,
   );
   await assert.rejects(
     refusalTool.execute(
@@ -1332,7 +1385,7 @@ test("fixer plan phase accepts plans but rejects construction receipts", async (
   );
 });
 
-test("Fixer audits every structurally valid attempt freshly and revise permits corrected resubmission", async () => {
+test("Fixer audits unfinished attempts through the production route and revise permits corrected resubmission", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" });
   const seen: unknown[] = [];
   createRoleRuntimeExtension({
@@ -1342,7 +1395,7 @@ test("Fixer audits every structurally valid attempt freshly and revise permits c
   })(harness.pi as ExtensionAPI);
   await harness.handlers.get("session_start")?.({}, {});
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
-  const candidate = { status: "completed", report: "settled", classResults: [{ name: "Parser", disposition: "completed", searchScope: "all parsers", exceptions: [], commitSha: "a".repeat(40) }] };
+  const candidate = { status: "unfinished", report: "The first implementation is not fully settled.", remainingScope: "the unimplemented adapter branch" };
   await assert.rejects(tool.execute("first", candidate, undefined, undefined, toolCallContext([{ id: "first", name: FIXER_OUTPUT_TOOL_NAME }])), /violates its law/);
   const accepted = await tool.execute("second", candidate, undefined, undefined, toolCallContext([{ id: "second", name: FIXER_OUTPUT_TOOL_NAME }]));
   assert.equal(seen.length, 2);
