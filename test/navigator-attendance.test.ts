@@ -48,11 +48,11 @@ function sessionHarness() {
   const modelSettings: Array<{ model: string; thinkingLevel: string }> = [];
   let tool: any;
   let prompts = 0;
-  let promptText = "";
+  let promptProjection: any;
   let releasePrompt: (() => void) | undefined;
   const session: NavigatorPreparationSession = {
-    async prompt(text) {
-      promptText = text;
+    async prompt(_text, projection) {
+      promptProjection = projection;
       prompts += 1;
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
     },
@@ -66,7 +66,7 @@ function sessionHarness() {
     tool: () => tool,
     release: () => releasePrompt?.(),
     prompts: () => prompts,
-    promptText: () => promptText,
+    promptProjection: () => promptProjection,
     entries,
     modelSettings,
   };
@@ -95,9 +95,10 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(harness.prompts(), 1);
-    assert.equal(harness.promptText().includes("<work_subject>\nFix issue 28"), true);
-    assert.equal(harness.promptText().includes("<controlling_authority>\nowner decision"), true);
-    assert.equal(harness.promptText().includes("<current_prompt>"), false);
+    assert.deepEqual(harness.promptProjection().currentRole, { role: "coder", phase: "apply" });
+    assert.equal(harness.promptProjection().subject, "Fix issue 28");
+    assert.equal(harness.promptProjection().authority, "owner decision");
+    assert.equal(harness.promptProjection().subjectKey, "/repo/.ak/work/issues/28");
     let settled = false;
     const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }).then(() => { settled = true; });
     await Promise.resolve();
@@ -131,15 +132,15 @@ test("live help changes the next hint without a static template or fabricated ta
     const nav = await attendance(setting, harness, events, async (role) => `${help} (${role})`);
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(harness.promptText().includes("ak-coder-phase"), true);
+    assert.match(harness.promptProjection().liveRoleHelp.find((entry: any) => entry.role === "coder").help, /ak-coder-phase/);
     await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     help = "Usage: pi --ak-role coder --ak-coder-task <file>";
     nav.prepare();
     while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(harness.promptText().includes("ak-coder-task"), true);
-    assert.equal(harness.promptText().includes("/repo/task.md"), false);
+    assert.match(harness.promptProjection().liveRoleHelp.find((entry: any) => entry.role === "coder").help, /ak-coder-task/);
+    assert.equal(harness.promptProjection().liveRoleHelp.some((entry: any) => entry.help.includes("/repo/task.md")), false);
     await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
@@ -366,10 +367,15 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", () 
     navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/reviewer/task.md", "/repo"),
     "role-specific run folders must not split one ad-hoc subject",
   );
-  assert.notEqual(
+  assert.equal(
     navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/other-task.md", "/repo"),
     navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/reviewer/task.md", "/repo"),
-    "different ad-hoc input subjects remain isolated",
+    "natural role-specific filenames remain one work subject",
+  );
+  assert.notEqual(
+    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"),
+    navigatorSubjectKeyForInput("/repo/.ak/work/other-ad-hoc", "/repo/.ak/work/other-ad-hoc/runs/reviewer/fix-packet.json", "/repo"),
+    "distinct work roots remain isolated",
   );
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
   assert.equal(first.startsWith("/repo/.ak/work/navigator/"), true);

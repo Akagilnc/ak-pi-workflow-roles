@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
 
-const entries = ["navigator-attendance"];
+const entries = ["packaged-role-registry", "navigator-attendance"];
 await build({
   entryPoints: entries.map((name) => `src/${name}.ts`),
   outdir: "dist",

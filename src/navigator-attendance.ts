@@ -1,27 +1,39 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
+import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
+
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
 export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
 
-export const NAVIGATOR_TARGETS = [
-  { role: "judge", phases: [null] },
-  { role: "fixer", phases: ["plan", "apply"] },
-  { role: "coder", phases: ["plan", "apply"] },
-  { role: "reviewer", phases: [null] },
-  { role: "collector", phases: [null] },
-  { role: "doctor", phases: [null] },
-  { role: "merger", phases: [null] },
-] as const;
+export const NAVIGATOR_TARGETS = PACKAGED_ROLE_REGISTRY.map(({ role, phases }) => ({ role, phases }));
 
-export type NavigatorTargetRole = typeof NAVIGATOR_TARGETS[number]["role"];
+export type NavigatorTargetRole = PackagedRole;
 export type NavigatorPhase = "plan" | "apply" | null;
+export type NavigatorUnavailableKey = "context" | "session" | "model" | "thinking" | "auth" | "quota" | "transport" | "unknown";
+
+export class NavigatorUnavailableError extends Error {
+  readonly unavailableSource: NavigatorUnavailableKey;
+  readonly unavailableCause: NavigatorUnavailableKey;
+
+  constructor(source: NavigatorUnavailableKey, message: string, cause: NavigatorUnavailableKey = source) {
+    super(message);
+    this.name = "NavigatorUnavailableError";
+    this.unavailableSource = source;
+    this.unavailableCause = cause;
+  }
+}
+
+export function navigatorUnavailableError(source: NavigatorUnavailableKey, error: unknown, cause: NavigatorUnavailableKey = source): NavigatorUnavailableError {
+  const message = error instanceof Error ? error.message : String(error);
+  return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause);
+}
 export type NavigatorSettlement =
   | { kind: "accepted"; role: string; phase: NavigatorPhase; status?: string }
   | { kind: "human_decision"; role: string; phase: NavigatorPhase; status: string }
@@ -52,6 +64,8 @@ export type NavigatorReport = {
   reason?: string;
   command?: string;
   unavailableReason?: string;
+  unavailableSource?: NavigatorUnavailableKey;
+  unavailableCause?: NavigatorUnavailableKey;
   arrivalMessage?: string;
 };
 
@@ -67,7 +81,20 @@ export type NavigatorEvent = {
   reason?: string;
   command?: string;
   unavailableReason?: string;
+  unavailableSource?: NavigatorUnavailableKey;
+  unavailableCause?: NavigatorUnavailableKey;
   arrivalMessage?: string;
+};
+
+export type NavigatorSettlementFact = NavigatorSettlement & { invocationId: string; subjectKey: string };
+export type NavigatorContextProjection = {
+  subjectKey: string;
+  subject: string;
+  authority: string;
+  currentRole: { role: string; phase: NavigatorPhase };
+  priorRoute: NavigatorRouteTarget[] | null;
+  publicSettlementHistory: NavigatorSettlementFact[];
+  liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
 
 const targetSchema = Type.Object({
@@ -91,7 +118,7 @@ const prepareSchema = Type.Object({ candidates: Type.Array(candidateSchema, { mi
 type PrepareOutput = Static<typeof prepareSchema>;
 
 export type NavigatorPreparationSession = {
-  prompt(text: string): Promise<void>;
+  prompt(text: string, projection?: NavigatorContextProjection): Promise<void>;
   appendEntry(customType: string, data: unknown): void;
   entries(): readonly unknown[];
   setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
@@ -124,6 +151,7 @@ export type NavigatorAttendanceOptions = {
 };
 
 const ROUTE_ENTRY = "ak-navigator-route";
+const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = "ak-navigator-invocation";
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
 const targetRoles = new Set<string>(NAVIGATOR_TARGETS.map(({ role }) => role));
@@ -132,9 +160,9 @@ function exactRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function targetIsValid(value: unknown): value is NavigatorRouteTarget {
-  return exactRecord(value) && targetRoles.has(String(value.role)) &&
-    (value.phase === null || value.phase === "plan" || value.phase === "apply") &&
-    (value.role === "coder" || value.role === "fixer" ? value.phase !== null : value.phase === null);
+  if (!exactRecord(value) || !targetRoles.has(String(value.role))) return false;
+  const metadata = packagedRoleMetadata(String(value.role));
+  return metadata !== undefined && metadata.phases.includes(value.phase as never);
 }
 function validateCandidate(value: unknown): NavigatorCandidate {
   const next = exactRecord(value) ? value.next : undefined;
@@ -220,20 +248,18 @@ export function navigatorSubjectKey(subjectRoot: string, subject: string): strin
 }
 
 /**
- * Role packets for one ad-hoc work item live below role-specific run folders.
- * The folder is transport, not identity: use the path below `/runs/<role>/`
- * so coder/task.md and reviewer/task.md resume the same Navigator subject.
+ * Role inputs for one ad-hoc work item live below role-specific run folders.
+ * The folder and filename are transport, not identity: the shared work root
+ * keeps task.md, fix-packet.json, and other natural inputs on one subject.
  */
 export function navigatorSubjectKeyForInput(subjectRoot: string, reference: string, cwd = process.cwd()): string {
   if (issueRoot(subjectRoot) !== undefined || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
   const resolvedReference = resolve(cwd, reference);
   const marker = "/runs/";
-  const index = resolvedReference.indexOf(marker);
-  if (index >= 0) {
-    const afterRuns = resolvedReference.slice(index + marker.length);
-    const separator = afterRuns.indexOf("/");
-    const workRelativePath = separator < 0 ? afterRuns : afterRuns.slice(separator + 1);
-    if (workRelativePath !== "") return navigatorSubjectKey(subjectRoot, workRelativePath);
+  if (resolvedReference.includes(marker)) {
+    // The work root, not task.md/fix-packet.json/etc., is the stable subject.
+    // Different roots remain isolated without inventing a filename convention.
+    return subjectRoot;
   }
   return navigatorSubjectKey(subjectRoot, resolvedReference);
 }
@@ -333,22 +359,47 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let settlementTail: Promise<void> = Promise.resolve();
   let disposed = false;
 
-  const unavailable = (invocationId: string, reason: unknown): NavigatorReport => ({
-    disposition: "unavailable",
-    unavailableReason: reason instanceof Error ? reason.message : String(reason),
-  });
+  const unavailable = (invocationId: string, reason: unknown): NavigatorReport => {
+    const failure = reason instanceof NavigatorUnavailableError
+      ? reason
+      : navigatorUnavailableError("unknown", reason);
+    return {
+      disposition: "unavailable",
+      unavailableReason: failure.message,
+      unavailableSource: failure.unavailableSource,
+      unavailableCause: failure.unavailableCause,
+    };
+  };
   const prepare = async (): Promise<NavigatorCandidate[]> => {
     const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
     activeInvocationId = invocationId;
     try {
-      if (contextError !== undefined) throw contextError;
-      const soul = (await options.loadSoul()).trim();
-      if (!soul) throw new Error("Navigator soul is empty");
-      const [modelSetting, ...help] = await Promise.all([
-        readNavigatorModelSetting(options.modelSettingPath),
-        ...NAVIGATOR_TARGETS.map(async ({ role }) => ({ role, help: await options.loadRoleHelp(role) })),
-      ]);
-      const model = parseNavigatorModelSetting(modelSetting);
+      if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
+      let soul: string;
+      try {
+        soul = (await options.loadSoul()).trim();
+        if (!soul) throw new Error("Navigator soul is empty");
+      } catch (error) {
+        throw navigatorUnavailableError("context", error);
+      }
+      let modelSetting: string;
+      try {
+        modelSetting = await readNavigatorModelSetting(options.modelSettingPath);
+      } catch (error) {
+        throw navigatorUnavailableError("model", error);
+      }
+      let help: Array<{ role: NavigatorTargetRole; help: string }>;
+      try {
+        help = await Promise.all(NAVIGATOR_TARGETS.map(async ({ role }) => ({ role, help: await options.loadRoleHelp(role) })));
+      } catch (error) {
+        throw navigatorUnavailableError("transport", error);
+      }
+      let model: ReturnType<typeof parseNavigatorModelSetting>;
+      try {
+        model = parseNavigatorModelSetting(modelSetting);
+      } catch (error) {
+        throw navigatorUnavailableError("model", error);
+      }
       const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">\n${text}\n</role_help>`).join("\n");
       let output: PrepareOutput | undefined;
       outputSink = (value) => {
@@ -358,18 +409,23 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
       if (session === undefined) {
         sessionReady = (async () => {
-          const created = await options.createSession({ context: options.context, sessionDir, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
+          let created: NavigatorPreparationSession;
+          try {
+            created = await options.createSession({ context: options.context, sessionDir, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
+          } catch (error) {
+            throw navigatorUnavailableError("session", error);
+          }
           try {
             await created.setModel?.(modelSetting, model.thinkingLevel);
             if (created.getThinkingLevel?.() !== undefined && created.getThinkingLevel() !== model.thinkingLevel) {
-              throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+              throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
             }
             created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
             session = created;
             return created;
           } catch (error) {
             created.dispose();
-            throw error;
+            throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
           }
         })();
         await sessionReady;
@@ -387,6 +443,22 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
         previousRoute = prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }));
       }
+      const publicSettlementHistory = activeSession.entries()
+        .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
+        .slice(-8)
+        .map((entry) => entry.data as NavigatorSettlementFact);
+      const projection: NavigatorContextProjection = {
+        subjectKey,
+        subject,
+        authority,
+        currentRole: { role: options.role, phase: options.phase },
+        priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))
+          ? prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }))
+          : null,
+        publicSettlementHistory,
+        liveRoleHelp: help,
+      };
+      activeSession.appendEntry(CONTEXT_ENTRY, projection);
       const request = [
         "Act as the Navigator route judge. Prepare distinct typed route candidates; do not execute or invoke any role.",
         `<navigator_soul>\n${soul}\n</navigator_soul>`,
@@ -394,12 +466,16 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
         `<prior_route>\n${JSON.stringify(prior ?? null)}\n</prior_route>`,
-        `<public_settlement_history>\n${JSON.stringify(activeSession.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY).slice(-8))}\n</public_settlement_history>`,
+        `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
         `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call. The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.`,
       ].join("\n\n");
       try {
-        await activeSession.prompt(request);
+        try {
+          await activeSession.prompt(request, projection);
+        } catch (error) {
+          throw navigatorUnavailableError("transport", error);
+        }
         if (output === undefined) {
           const nativeFailure = [...activeSession.entries()].reverse().find((entry: unknown) => {
             if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
@@ -408,7 +484,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const errorMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) && typeof nativeFailure.message.errorMessage === "string"
             ? nativeFailure.message.errorMessage
             : "Navigator did not submit typed route candidates";
-          throw new Error(errorMessage);
+          throw navigatorUnavailableError("transport", errorMessage);
         }
         candidates = validatePrepareOutput(output);
         return candidates;
@@ -437,6 +513,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (disposed || preparation !== undefined) return;
       preparation = prepare();
       void preparation.catch(() => undefined);
+    },
+    isPreparing(): boolean {
+      return preparation !== undefined || sessionReady !== undefined;
     },
     settle(settlement: NavigatorSettlement): Promise<void> {
       const next = settlementTail.then(() => settleOnce(settlement));
@@ -505,6 +584,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.reason === undefined ? {} : { reason: report.reason }),
         ...(report.command === undefined ? {} : { command: report.command }),
         ...(report.unavailableReason === undefined ? {} : { unavailableReason: report.unavailableReason }),
+        ...(report.unavailableSource === undefined ? {} : { unavailableSource: report.unavailableSource }),
+        ...(report.unavailableCause === undefined ? {} : { unavailableCause: report.unavailableCause }),
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
       if (report.disposition !== "silence") await options.onEvent(event, report);
@@ -518,16 +599,47 @@ export type NavigatorAttendance = ReturnType<typeof createNavigatorAttendance>;
 
 export function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()): NavigatorSessionFactory {
   return async ({ context, sessionDir, modelSettingPath, tool }) => {
-    const configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
-    const parsed = parseNavigatorModelSetting(configured);
+    let configured: string;
+    try {
+      configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
+    } catch (error) {
+      throw navigatorUnavailableError("model", error);
+    }
+    let parsed: ReturnType<typeof parseNavigatorModelSetting>;
+    try {
+      parsed = parseNavigatorModelSetting(configured);
+    } catch (error) {
+      throw navigatorUnavailableError("model", error);
+    }
     const model = context.modelRegistry.find(parsed.provider, parsed.model);
     const provider = context.modelRegistry.getProvider(parsed.provider);
-    if (model === undefined || provider === undefined) throw new Error(`Navigator model is unavailable: ${configured}`);
-    const auth = await context.modelRegistry.getApiKeyAndHeaders(model);
-    if (!auth.ok) throw new Error(auth.error);
-    const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
-    modelRuntime.registerNativeProvider(provider);
-    const created = await createAgentSession({
+    if (model === undefined || provider === undefined) throw new NavigatorUnavailableError("model", `Navigator model is unavailable: ${configured}`);
+    let auth: Awaited<ReturnType<typeof context.modelRegistry.getApiKeyAndHeaders>>;
+    try {
+      auth = await context.modelRegistry.getApiKeyAndHeaders(model);
+    } catch (error) {
+      throw navigatorUnavailableError("auth", error);
+    }
+    if (!auth.ok) throw new NavigatorUnavailableError("auth", auth.error);
+    try {
+      const sessionInfo = await stat(sessionDir);
+      if (!sessionInfo.isDirectory()) throw new NavigatorUnavailableError("session", `Navigator session path is not a directory: ${sessionDir}`);
+    } catch (error) {
+      if (error instanceof NavigatorUnavailableError) throw error;
+      if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) {
+        throw navigatorUnavailableError("session", error);
+      }
+    }
+    let modelRuntime: Awaited<ReturnType<typeof ModelRuntime.create>>;
+    try {
+      modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
+      modelRuntime.registerNativeProvider(provider);
+    } catch (error) {
+      throw navigatorUnavailableError("session", error);
+    }
+    let created: Awaited<ReturnType<typeof createAgentSession>>;
+    try {
+      created = await createAgentSession({
       cwd: context.cwd,
       model,
       modelRuntime,
@@ -538,26 +650,49 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       tools: [NAVIGATOR_PREPARE_TOOL_NAME],
       customTools: [tool],
     });
+    } catch (error) {
+      throw navigatorUnavailableError("session", error);
+    }
     if (created.session.thinkingLevel !== parsed.thinkingLevel) {
       created.session.dispose();
-      throw new Error(`Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
+      throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
     }
     return {
-      prompt: (text) => created.session.prompt(text),
+      prompt: async (text) => {
+        try {
+          await created.session.prompt(text);
+        } catch (error) {
+          throw navigatorUnavailableError("transport", error);
+        }
+      },
       appendEntry: (customType, data) => { created.session.sessionManager.appendCustomEntry(customType, data); },
       entries: () => created.session.sessionManager.getEntries(),
       setModel: async (next, thinkingLevel) => {
-        const nextParsed = parseNavigatorModelSetting(next);
+        let nextParsed: ReturnType<typeof parseNavigatorModelSetting>;
+        try {
+          nextParsed = parseNavigatorModelSetting(next);
+        } catch (error) {
+          throw navigatorUnavailableError("model", error);
+        }
         const nextModel = context.modelRegistry.find(nextParsed.provider, nextParsed.model);
         const nextProvider = context.modelRegistry.getProvider(nextParsed.provider);
-        if (nextModel === undefined || nextProvider === undefined) throw new Error(`Navigator model is unavailable: ${next}`);
-        const nextAuth = await context.modelRegistry.getApiKeyAndHeaders(nextModel);
-        if (!nextAuth.ok) throw new Error(nextAuth.error);
-        modelRuntime.registerNativeProvider(nextProvider);
-        await created.session.setModel(nextModel);
-        created.session.setThinkingLevel(thinkingLevel);
+        if (nextModel === undefined || nextProvider === undefined) throw new NavigatorUnavailableError("model", `Navigator model is unavailable: ${next}`);
+        let nextAuth: Awaited<ReturnType<typeof context.modelRegistry.getApiKeyAndHeaders>>;
+        try {
+          nextAuth = await context.modelRegistry.getApiKeyAndHeaders(nextModel);
+        } catch (error) {
+          throw navigatorUnavailableError("auth", error);
+        }
+        if (!nextAuth.ok) throw new NavigatorUnavailableError("auth", nextAuth.error);
+        try {
+          modelRuntime.registerNativeProvider(nextProvider);
+          await created.session.setModel(nextModel);
+          created.session.setThinkingLevel(thinkingLevel);
+        } catch (error) {
+          throw navigatorUnavailableError("session", error);
+        }
         if (created.session.thinkingLevel !== nextParsed.thinkingLevel || created.session.thinkingLevel !== thinkingLevel) {
-          throw new Error(`Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
+          throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
         }
       },
       getThinkingLevel: () => created.session.thinkingLevel,
