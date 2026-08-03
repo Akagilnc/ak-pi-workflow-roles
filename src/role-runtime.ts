@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
@@ -17,7 +16,7 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement } from "./navigator-attendance.ts";
 import { isAuditEscalationResult } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -322,12 +321,30 @@ function navigatorOutputTool(role: string): string | undefined {
   } as Record<string, string>)[role];
 }
 
+export const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure" as const;
+export type NavigatorInfrastructureFailureFact = {
+  kind: typeof NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND;
+  source: "shared-role-lifecycle";
+  reasonCode: "host_failure";
+};
+
+export function buildNavigatorInfrastructureFailureFact(): NavigatorInfrastructureFailureFact {
+  return { kind: NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND, source: "shared-role-lifecycle", reasonCode: "host_failure" };
+}
+
+function isNavigatorInfrastructureFailureFact(value: unknown): value is NavigatorInfrastructureFailureFact {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.kind === NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND &&
+    record.source === "shared-role-lifecycle" && record.reasonCode === "host_failure";
+}
+
 export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError: boolean; details: unknown }): NavigatorSettlement | undefined {
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
   const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
     ? event.details as Record<string, unknown>
     : {};
-  if (details.kind === "infrastructure_failure" || details.terminal === "infrastructure_failure") {
+  if (isNavigatorInfrastructureFailureFact(event.details)) {
     return { kind: "role_infrastructure_failure", role, phase };
   }
   if (event.isError) return undefined;
@@ -355,11 +372,9 @@ export function createRoleRuntimeExtension(
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let navigatorPresentationMode: ExtensionContext["mode"] = "tui";
     let navigatorWorkContext: { subjectKey: string; subject: string; authority: string; contextError?: unknown } | undefined;
-    let navigatorSubjectBase: string | undefined;
-    let lastUserInput: string | undefined;
-    pi.on("input", (event) => {
+    let pendingInfrastructureToolCallId: string | undefined;
+    pi.on("input", () => {
       const role = pi.getFlag(ROLE_FLAG.name);
-      if (role !== undefined) lastUserInput = event.text;
       if (role !== undefined && !admitted) return { action: "handled" as const };
       return { action: "continue" as const };
     });
@@ -369,18 +384,19 @@ export function createRoleRuntimeExtension(
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
       }
-      if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorSubjectBase !== undefined && lastUserInput !== undefined) {
-        const subjectIdentity = `${navigatorSubjectBase}#${createHash("sha256").update(lastUserInput).digest("hex").slice(0, 32)}`;
-        navigatorWorkContext = { ...navigatorWorkContext, subjectKey: subjectIdentity, subject: lastUserInput };
-        navigatorAttendance.setWorkContext(navigatorWorkContext);
-      }
       navigatorAttendance?.prepare();
     });
     pi.on("context", (event) => ({ messages: withoutNavigatorMessages(event.messages) }));
     pi.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined || navigatorAttendance === undefined) return;
-      const settlement = publicNavigatorSettlement(role, navigatorPhase(pi, role), event);
+      const isRoleInfrastructureFailure = pendingInfrastructureToolCallId === event.toolCallId;
+      if (isRoleInfrastructureFailure) pendingInfrastructureToolCallId = undefined;
+      const settlement = publicNavigatorSettlement(
+        role,
+        navigatorPhase(pi, role),
+        isRoleInfrastructureFailure ? { ...event, details: buildNavigatorInfrastructureFailureFact() } : event,
+      );
       if (settlement !== undefined) await navigatorAttendance.settle(settlement);
     });
     pi.on("agent_settled", async (_event, ctx) => {
@@ -400,9 +416,19 @@ export function createRoleRuntimeExtension(
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       pendingNavigatorPresentation = undefined;
+      pendingInfrastructureToolCallId = undefined;
     });
 
-    const hostActions = { failInfrastructure };
+    const hostActions = {
+      failInfrastructure(error: unknown, ctx: ExtensionContext): never {
+        const leaf = ctx.sessionManager.getLeafEntry();
+        if (leaf?.type === "message" && leaf.message.role === "assistant") {
+          const call = leaf.message.content.find((part) => part.type === "toolCall");
+          if (call !== undefined) pendingInfrastructureToolCallId = call.id;
+        }
+        failInfrastructure(error, ctx);
+      },
+    };
     const judge = createJudgeRoleRuntime(
       pi,
       {
@@ -551,9 +577,8 @@ export function createRoleRuntimeExtension(
       admitted = false;
       selectedRole = undefined;
       pendingNavigatorPresentation = undefined;
+      pendingInfrastructureToolCallId = undefined;
       navigatorWorkContext = undefined;
-      navigatorSubjectBase = undefined;
-      lastUserInput = undefined;
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = ROLE_REGISTRY.find(({ role }) => role === rawRole);
@@ -568,20 +593,22 @@ export function createRoleRuntimeExtension(
         let work: { subjectKey: string; subject: string; authority: string };
         let contextError: unknown;
         if (dependencies.loadNavigatorWorkContext === undefined) {
-          const fallbackSubjectKey = ctx.sessionManager.getSessionDir() || "workspace";
+          const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
           contextError = new Error("Navigator work context loader is not configured");
-          work = { subjectKey: fallbackSubjectKey, subject: "", authority: "" };
+          work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "" };
         } else {
           try {
             work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
           } catch (error) {
             contextError = error;
-            const fallbackSubjectKey = ctx.sessionManager.getSessionDir() || "workspace";
-            work = { subjectKey: fallbackSubjectKey, subject: "", authority: "" };
+            // A loader failure must not turn the role session directory into a
+            // per-invocation Navigator identity.  Keep the stable work-root key
+            // even though this attendance can only report unavailable.
+            const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "" };
           }
         }
         navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
-        navigatorSubjectBase = work.subject.startsWith("work subject:") ? work.subjectKey : undefined;
         navigatorAttendance = await dependencies.createNavigatorAttendance({
           context: ctx,
           role: entry.role,

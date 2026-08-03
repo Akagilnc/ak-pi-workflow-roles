@@ -312,13 +312,18 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (session === undefined) {
         sessionReady = (async () => {
           const created = await options.createSession({ context: options.context, sessionDir, tool });
-          session = created;
-          await created.setModel?.(modelSetting, model.thinkingLevel);
-          if (created.getThinkingLevel?.() !== undefined && created.getThinkingLevel() !== model.thinkingLevel) {
-            throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+          try {
+            await created.setModel?.(modelSetting, model.thinkingLevel);
+            if (created.getThinkingLevel?.() !== undefined && created.getThinkingLevel() !== model.thinkingLevel) {
+              throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+            }
+            created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+            session = created;
+            return created;
+          } catch (error) {
+            created.dispose();
+            throw error;
           }
-          created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
-          return created;
         })();
         await sessionReady;
         sessionReady = undefined;
@@ -381,17 +386,23 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
       let report: NavigatorReport;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
+        // Silence is a presentation choice, not permission to abandon the in-flight
+        // preparation.  The next driver input must not start a second prompt on the
+        // same native session while this one is still running.
         if (sessionReady !== undefined) await sessionReady.catch(() => undefined);
+        if (preparation !== undefined) await preparation.catch(() => undefined);
         session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.kind === "human_decision" ? { status: settlement.status } : {}) });
         report = { disposition: "silence" };
       } else if (settlement.kind === "arrival") {
+        if (sessionReady !== undefined) await sessionReady.catch(() => undefined);
+        if (preparation !== undefined) await preparation.catch(() => undefined);
         report = { disposition: "arrival", arrivalMessage: settlement.message ?? "已到达目的地" };
       } else if (preparation === undefined) {
         report = unavailable(invocationId, "Navigator preparation did not start");
       } else {
-        if (sessionReady !== undefined) await sessionReady;
-        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
         try {
+          if (sessionReady !== undefined) await sessionReady;
+          session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
           const prepared = await preparation;
           const selected = selectNavigatorCandidate(prepared, settlement);
           if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");
@@ -406,6 +417,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           previousRoute = selected.route;
           session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selected.route });
         } catch (error) {
+          // Session creation, model/auth resolution, quota, transport, and prompt
+          // failures are Navigator failures.  They must become a typed unavailable
+          // presentation without changing the role's own Receipt lifecycle.
           report = unavailable(invocationId, error);
         }
       }

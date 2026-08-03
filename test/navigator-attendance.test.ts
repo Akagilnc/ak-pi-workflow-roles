@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fauxProvider } from "@earendil-works/pi-ai";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
+  createNavigatorPrepareTool,
   formatNavigatorReport,
   NAVIGATOR_DEFAULT_MODEL,
   writeNavigatorModelSetting,
@@ -16,7 +19,7 @@ import {
   selectNavigatorCandidate,
   subjectPath,
 } from "../src/navigator-attendance.ts";
-import { publicNavigatorSettlement } from "../src/role-runtime.ts";
+import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../src/role-runtime.ts";
 
 function context() {
   return {
@@ -194,10 +197,49 @@ test("typed owner-decision and role-infrastructure outcomes remain silent", asyn
     const events: any[] = [];
     const nav = await attendance(setting, harness, events);
     nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     const owner = nav.settle({ kind: "human_decision", role: "coder", phase: "apply", status: "escalate" });
+    await harness.tool().execute("silent-owner", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await owner;
+    nav.prepare();
+    while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
     const infra = nav.settle({ kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
-    await Promise.all([owner, infra]);
+    await harness.tool().execute("silent-infra", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await infra;
     assert.deepEqual(events, []);
+    assert.equal(harness.prompts(), 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Navigator session creation failures become unavailable without rejecting settlement", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-unavailable-"));
+  try {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const events: any[] = [];
+    const nav = createNavigatorAttendance({
+      context: context(),
+      role: "coder",
+      phase: "apply",
+      subjectKey: "/repo/.ak/work/issues/28",
+      sessionDir: "/repo/.ak/work/issues/28/runs/navigator",
+      subject: "Fix issue 28",
+      authority: "owner decision",
+      loadSoul: async () => "route judgment",
+      loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+      modelSettingPath: setting,
+      createSession: async () => { throw new Error("provider auth down"); },
+      onEvent: async (event) => { events.push(event); },
+    });
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].disposition, "unavailable");
+    assert.equal(events[0].unavailableReason, "provider auth down");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -208,8 +250,8 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.deepEqual(parseNavigatorModelSetting("provider/model"), { provider: "provider", model: "model", thinkingLevel: "off" });
   assert.throws(() => parseNavigatorModelSetting("provider/model:backup"));
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { message: "correctable schema wording" } }), undefined);
-  assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
-  assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { kind: "infrastructure_failure", message: "different wording" } }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
+  assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: buildNavigatorInfrastructureFailureFact() }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
+  assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("judge", null, { toolName: "ak_judge_output", isError: false, details: { judgeStatus: "escalate", report: "any wording" } }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
   assert.deepEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], decisionGate: { question: "Which?", options: ["owner"] } } }), { kind: "human_decision", role: "fixer", phase: "apply", status: "audit_escalation" });
   const route = [{ role: "judge" as const, phase: null }];
@@ -217,6 +259,45 @@ test("model settings are exact and typed settlement projection ignores prose and
   const candidates = [{ id: source.id, matches: { role: "reviewer", phase: null, kind: "accepted" as const, statuses: ["completed", "refused"] }, route, next: route[0]!, reason: source.reason, command: source.command }];
   assert.equal(selectNavigatorCandidate(candidates, { kind: "accepted", role: "reviewer", phase: null, status: "completed" })?.id, candidates[0]!.id);
   assert.equal(selectNavigatorCandidate(candidates, { kind: "accepted", role: "reviewer", phase: null, status: "refused" })?.id, candidates[0]!.id);
+});
+
+test("native session uses the saved model exactly and rejects unsupported thinking without fallback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-native-model-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  try {
+    process.env.PI_CODING_AGENT_DIR = root;
+    const faux = fauxProvider({ provider: "native-model", api: "native-model" });
+    const model = faux.getModel();
+    const setting = join(root, "navigator-model.json");
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}:max` }));
+    const nativeContext = {
+      cwd: root,
+      modelRegistry: {
+        find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
+        getProvider: (provider: string) => provider === model.provider ? faux.provider : undefined,
+        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+      },
+    } as never;
+    const factory = createNativeNavigatorSessionFactory();
+    const tool = createNavigatorPrepareTool(() => {});
+    await assert.rejects(
+      factory({ context: nativeContext, sessionDir: join(root, "session"), tool }),
+      /thinking level|max.*unavailable/i,
+    );
+    await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+    const session = await factory({ context: nativeContext, sessionDir: join(root, "session"), tool });
+    assert.equal(session.getThinkingLevel?.(), "off");
+    session.dispose();
+    await writeFile(setting, JSON.stringify({ model: "missing/provider" }));
+    await assert.rejects(
+      factory({ context: nativeContext, sessionDir: join(root, "session"), tool }),
+      /unavailable/i,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("persistent model edits are immediate and have no fallback", async () => {
