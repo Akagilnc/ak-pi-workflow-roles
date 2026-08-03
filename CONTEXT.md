@@ -14,9 +14,9 @@
 - **边界 Schema 真源(Boundary schema owner)**:定义单个工具输入或输出形状的唯一 Schema。规范见 [ADR 0023](docs/adr/0023-judge-and-merger-use-one-output-schema-owner.md)。
 - **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。自报可留在叙事报告供人参考,不得伪装成 commit、Git 状态、计时等机械事实或进入统计真源。
 - **Judge(判官)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。
-- **Fixer(修复工)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`；另有只表示本次调用未结清的 `unfinished` 交棒，定义见 README Fixer。
-- **unfinished**:见 README Fixer 的公共定义；它不是失败、诊断或处置建议。
+- **Fixer(修复工)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`，不是未完进度；另有只表示本次调用未结清的 `unfinished` 交棒，定义见 README Fixer。
 - **Coder(实现者)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 经 Pi 原生 `/skill:tdd` 调用 canonical Matt TDD;自查三连证据留在 report 供调用方处置,两者都不进入 Soul。apply 可用 `unfinished` 携带非空 typed `remainingScope` 交出未结清范围；这是可续交棒而非失败,不豁免验收。Coder 回执不以新 commit 为无条件前提,拒绝可零 commit 直接交调用方处置。
+- **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态,只陈述「本次角色调用未结清」这一事实——不诊断原因,不规定调用者的下一步。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 已接受新增,须到 #75/#76 施工才落地。
 - **Reviewer(评审者)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。经 Pi 原生 `/skill:code-review` 使用外部 canonical 方法,回执只表达 `completed` 或 `refused`,不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
 - **Collector(证据收集者)**:单次调用内独立观察外部 GitHub PR 评审腿、可选请求、判定收集终态并提交自包含回执的角色;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`,无默认腿清单。
