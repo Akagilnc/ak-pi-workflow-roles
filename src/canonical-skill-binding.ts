@@ -36,6 +36,14 @@ export type AnyCanonicalSkillBinding =
   | CanonicalSkillBinding<"tdd">
   | CanonicalSkillBinding<"code-review">;
 
+export class CanonicalSkillUnavailableError extends Error {
+  readonly code = "canonical-skill-unavailable" as const;
+  constructor(readonly skillName: CanonicalSkillName, path: string, cause: unknown) {
+    super(`Canonical ${skillName} Skill is unavailable at ${path}`, { cause });
+    this.name = "CanonicalSkillUnavailableError";
+  }
+}
+
 export async function loadCanonicalSkillBinding(
   name: CanonicalSkillName,
 ): Promise<AnyCanonicalSkillBinding> {
@@ -49,11 +57,7 @@ export async function loadCanonicalSkillBinding(
     path = await realpath(configuredPath);
     raw = await readFile(path, "utf8");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Canonical ${name} Skill is unavailable at ${configuredPath}: ${message}`,
-      { cause: error },
-    );
+    throw new CanonicalSkillUnavailableError(name, configuredPath, error);
   }
   const body = stripFrontmatter(raw).trim();
   if (body.length === 0) {

@@ -33,7 +33,15 @@ export async function materializeMechanicalBundle(workspace: string, leg: "stand
       try { await lstat(destination); throw new Error("Mechanical bundle destination collision"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       const temporary = join(parent, `.ak-reviewer-${randomUUID()}.tmp`);
       const handle = await open(temporary, "wx", 0o600);
-      try { await handle.writeFile(item.bytes, "utf8"); await handle.sync(); } finally { await handle.close(); }
+      let primary: unknown;
+      try { await handle.writeFile(item.bytes, "utf8"); await handle.sync(); }
+      catch (error) { primary = error; }
+      try { await handle.close(); }
+      catch (error) {
+        if (primary !== undefined) throw new AggregateError([primary, error], "Bundle write and close failed", { cause: primary });
+        throw error;
+      }
+      if (primary !== undefined) throw primary;
       staged.push({ temporary, destination });
     }
     for (const item of staged) await rename(item.temporary, item.destination);

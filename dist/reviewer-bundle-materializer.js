@@ -39,13 +39,24 @@ export async function materializeMechanicalBundle(workspace, leg, bundle) {
             }
             const temporary = join(parent, `.ak-reviewer-${randomUUID()}.tmp`);
             const handle = await open(temporary, "wx", 0o600);
+            let primary;
             try {
                 await handle.writeFile(item.bytes, "utf8");
                 await handle.sync();
             }
-            finally {
+            catch (error) {
+                primary = error;
+            }
+            try {
                 await handle.close();
             }
+            catch (error) {
+                if (primary !== undefined)
+                    throw new AggregateError([primary, error], "Bundle write and close failed", { cause: primary });
+                throw error;
+            }
+            if (primary !== undefined)
+                throw primary;
             staged.push({ temporary, destination });
         }
         for (const item of staged)
