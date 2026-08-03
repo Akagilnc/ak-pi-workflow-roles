@@ -142,7 +142,7 @@ test("the typed audited-role census retains exactly Judge, Fixer, Reviewer, and 
     REVIEWER_OUTPUT_TOOL_NAME,
     DOCTOR_OUTPUT_TOOL_NAME,
   ]);
-  const terminatingTools = await import("../src/package-contracts/terminating-tools.ts");
+  const terminatingTools = await import("../../src/package-contracts/terminating-tools.ts");
   assert.equal("carriesPackageAuditObservation" in terminatingTools, false);
 });
 
