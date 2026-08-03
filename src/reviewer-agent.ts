@@ -42,8 +42,7 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
         const leg = dispatch.legs.find(candidate => candidate.axis === workspace.axis)!;
         try { const child = await executeReviewerChild(workspace.path, leg, options.context, options.signal, dependencies.fault); const disposition = await workspaceOwner.dispose(workspace); return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition, runtimeConstructionEvidence: workspace.evidence })] as const; }
         catch (error) {
-          try { await workspaceOwner.dispose(workspace); }
-          catch (cleanupError) { error = new AggregateError([error, cleanupError], "Reviewer workspace cleanup failed", { cause: error }); }
+          // Failed legs retain their workspace for the durable failure evidence and caller cleanup.
           return [leg.axis, failed(error, batch.target, leg.prompt, options.signal, workspace.path, workspace.evidence)] as const;
         }
       }));
