@@ -90,7 +90,12 @@ function issueRoot(value) {
   return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
-  return issueRoot(sessionDir) ?? (sessionDir === "" ? resolve(cwd, ".ak", "work") : sessionDir);
+  if (sessionDir === "") {
+    const cwdIssue = issueRoot(resolve(cwd, "."));
+    if (cwdIssue !== void 0) return cwdIssue;
+  }
+  const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
+  return issueRoot(resolvedSession) ?? resolvedSession;
 }
 function subjectDirectory(cwd, subjectKey) {
   const issue = issueRoot(subjectKey);
@@ -179,6 +184,7 @@ function createNavigatorAttendance(options) {
   let activeInvocationId;
   let previousRoute;
   let outputSink;
+  let settlementTail = Promise.resolve();
   let disposed = false;
   const unavailable = (invocationId, reason) => ({
     disposition: "unavailable",
@@ -209,7 +215,7 @@ ${text}
       });
       if (session === void 0) {
         sessionReady = (async () => {
-          const created = await options.createSession({ context: options.context, sessionDir, tool });
+          const created = await options.createSession({ context: options.context, sessionDir, ...options.modelSettingPath === void 0 ? {} : { modelSettingPath: options.modelSettingPath }, tool });
           try {
             await created.setModel?.(modelSetting, model.thinkingLevel);
             if (created.getThinkingLevel?.() !== void 0 && created.getThinkingLevel() !== model.thinkingLevel) {
@@ -293,59 +299,10 @@ ${helpContext}
       preparation = prepare();
       void preparation.catch(() => void 0);
     },
-    async settle(settlement) {
-      const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
-      let report;
-      if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
-        if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
-        if (preparation !== void 0) await preparation.catch(() => void 0);
-        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.kind === "human_decision" ? { status: settlement.status } : {} });
-        report = { disposition: "silence" };
-      } else if (settlement.kind === "arrival") {
-        if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
-        if (preparation !== void 0) await preparation.catch(() => void 0);
-        report = { disposition: "arrival", arrivalMessage: settlement.message ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730" };
-      } else if (preparation === void 0) {
-        report = unavailable(invocationId, "Navigator preparation did not start");
-      } else {
-        try {
-          if (sessionReady !== void 0) await sessionReady;
-          session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
-          const prepared = await preparation;
-          const selected = selectNavigatorCandidate(prepared, settlement);
-          if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");
-          const routeChanged = !routeEqual(previousRoute, selected.route);
-          report = {
-            disposition: "recommendation",
-            ...routeChanged ? { route: selected.route } : {},
-            next: selected.next,
-            reason: oneLine(selected.reason),
-            command: oneLine(selected.command)
-          };
-          previousRoute = selected.route;
-          session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selected.route });
-        } catch (error) {
-          report = unavailable(invocationId, error);
-        }
-      }
-      const event = {
-        version: 1,
-        disposition: report.disposition,
-        invocationId,
-        role: options.role,
-        phase: options.phase,
-        subjectKey,
-        ...report.route === void 0 ? {} : { route: report.route },
-        ...report.next === void 0 ? {} : { next: report.next },
-        ...report.reason === void 0 ? {} : { reason: report.reason },
-        ...report.command === void 0 ? {} : { command: report.command },
-        ...report.unavailableReason === void 0 ? {} : { unavailableReason: report.unavailableReason },
-        ...report.arrivalMessage === void 0 ? {} : { arrivalMessage: report.arrivalMessage }
-      };
-      if (report.disposition !== "silence") await options.onEvent(event, report);
-      preparation = void 0;
-      sessionReady = void 0;
-      candidates = void 0;
+    settle(settlement) {
+      const next = settlementTail.then(() => settleOnce(settlement));
+      settlementTail = next.catch(() => void 0);
+      return next;
     },
     dispose() {
       disposed = true;
@@ -355,10 +312,64 @@ ${helpContext}
       activeInvocationId = void 0;
     }
   };
+  async function settleOnce(settlement) {
+    const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
+    let report;
+    if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
+      if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
+      if (preparation !== void 0) await preparation.catch(() => void 0);
+      session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.kind === "human_decision" ? { status: settlement.status } : {} });
+      report = { disposition: "silence" };
+    } else if (settlement.kind === "arrival") {
+      if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
+      if (preparation !== void 0) await preparation.catch(() => void 0);
+      report = { disposition: "arrival", arrivalMessage: settlement.message ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730" };
+    } else if (preparation === void 0) {
+      report = unavailable(invocationId, "Navigator preparation did not start");
+    } else {
+      try {
+        if (sessionReady !== void 0) await sessionReady;
+        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
+        const prepared = await preparation;
+        const selected = selectNavigatorCandidate(prepared, settlement);
+        if (!selected) throw new Error("Navigator prepared no candidate for the typed settlement");
+        const routeChanged = !routeEqual(previousRoute, selected.route);
+        report = {
+          disposition: "recommendation",
+          ...routeChanged ? { route: selected.route } : {},
+          next: selected.next,
+          reason: oneLine(selected.reason),
+          command: oneLine(selected.command)
+        };
+        previousRoute = selected.route;
+        session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selected.route });
+      } catch (error) {
+        report = unavailable(invocationId, error);
+      }
+    }
+    const event = {
+      version: 1,
+      disposition: report.disposition,
+      invocationId,
+      role: options.role,
+      phase: options.phase,
+      subjectKey,
+      ...report.route === void 0 ? {} : { route: report.route },
+      ...report.next === void 0 ? {} : { next: report.next },
+      ...report.reason === void 0 ? {} : { reason: report.reason },
+      ...report.command === void 0 ? {} : { command: report.command },
+      ...report.unavailableReason === void 0 ? {} : { unavailableReason: report.unavailableReason },
+      ...report.arrivalMessage === void 0 ? {} : { arrivalMessage: report.arrivalMessage }
+    };
+    if (report.disposition !== "silence") await options.onEvent(event, report);
+    preparation = void 0;
+    sessionReady = void 0;
+    candidates = void 0;
+  }
 }
-function createNativeNavigatorSessionFactory() {
-  return async ({ context, sessionDir, tool }) => {
-    const configured = await readNavigatorModelSetting();
+function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
+  return async ({ context, sessionDir, modelSettingPath, tool }) => {
+    const configured = await readNavigatorModelSetting(modelSettingPath ?? defaultModelSettingPath);
     const parsed = parseNavigatorModelSetting(configured);
     const model = context.modelRegistry.find(parsed.provider, parsed.model);
     const provider = context.modelRegistry.getProvider(parsed.provider);

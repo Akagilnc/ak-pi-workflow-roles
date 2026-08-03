@@ -142,16 +142,34 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadNavigatorWorkContext: async (options) => {
       const reference = navigatorInputReference(pi, options.role);
       const input = reference === undefined || options.role === "doctor" ? undefined : await readFile(reference, "utf8");
-      const subjectKey = process.env.PI_WORK_SUBJECT_KEY
-        ?? subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
-      let subject = process.env.PI_WORK_SUBJECT ?? input ?? `work subject: ${subjectKey}`;
-      if (process.env.PI_WORK_SUBJECT === undefined && options.role === "doctor" && reference !== undefined) {
+      const subjectKey = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
+      const issueRoot = subjectKey.includes("/.ak/work/issues/") ? subjectKey : undefined;
+      const issueFiles = issueRoot === undefined ? [] : [
+        resolve(issueRoot, "authority.md"),
+        resolve(issueRoot, "authority.txt"),
+        resolve(issueRoot, "design-v2/owner-direction.md"),
+      ];
+      let issueMaterial: string | undefined;
+      for (const path of issueFiles) {
+        try {
+          const content = await readFile(path, "utf8");
+          if (content.trim() !== "") {
+            issueMaterial = content;
+            break;
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+      let subject = input ?? issueMaterial ?? `work subject: ${subjectKey}`;
+      if (options.role === "doctor" && reference !== undefined) {
         const patient = await loadDoctorCase(reference);
         subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
       }
-      const authorityFile = process.env.PI_WORK_AUTHORITY_FILE;
-      const authority = process.env.PI_WORK_AUTHORITY
-        ?? (authorityFile === undefined ? (input === undefined ? undefined : navigatorAuthorityFromInput(input)) : await readFile(resolve(authorityFile), "utf8"));
+      // Assigned task/packet/review bytes are the production work seam.  If the
+      // seam carries an explicit authority field use it; otherwise preserve the
+      // admitted bytes as the Navigator's bounded controlling context.
+      const authority = navigatorAuthorityFromInput(input ?? "") ?? input ?? issueMaterial;
       if (authority === undefined || authority.trim() === "") {
         throw new Error("controlling authority content was not supplied as typed work context");
       }
@@ -171,6 +189,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         loadSoul: () => readFile(navigatorSoulPath, "utf8"),
         loadRoleHelp: (role) => loadNavigatorRoleHelp(pi, extensionPath, options.context.cwd, role),
         createSession: navigatorSessionFactory,
+        contextError: options.contextError,
         onEvent: options.onEvent,
       });
     },

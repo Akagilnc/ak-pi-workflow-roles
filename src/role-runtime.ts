@@ -259,7 +259,7 @@ export type RoleRuntimeDependencies = {
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
   createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance | Promise<NavigatorAttendance>;
-  loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<{ subjectKey: string; subject: string; authority: string }>;
+  loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<{ subjectKey: string; subject: string; authority: string; contextError?: unknown }>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -420,11 +420,9 @@ export function createRoleRuntimeExtension(
     });
 
     const hostActions = {
-      failInfrastructure(error: unknown, ctx: ExtensionContext): never {
-        const leaf = ctx.sessionManager.getLeafEntry();
-        if (leaf?.type === "message" && leaf.message.role === "assistant") {
-          const call = leaf.message.content.find((part) => part.type === "toolCall");
-          if (call !== undefined) pendingInfrastructureToolCallId = call.id;
+      failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never {
+        if (toolCallId !== undefined) {
+          pendingInfrastructureToolCallId = toolCallId;
         }
         failInfrastructure(error, ctx);
       },
@@ -590,7 +588,7 @@ export function createRoleRuntimeExtension(
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       if (dependencies.createNavigatorAttendance !== undefined) {
-        let work: { subjectKey: string; subject: string; authority: string };
+        let work: { subjectKey: string; subject: string; authority: string; contextError?: unknown };
         let contextError: unknown;
         if (dependencies.loadNavigatorWorkContext === undefined) {
           const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
@@ -599,6 +597,7 @@ export function createRoleRuntimeExtension(
         } else {
           try {
             work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
+            contextError = work.contextError;
           } catch (error) {
             contextError = error;
             // A loader failure must not turn the role session directory into a
