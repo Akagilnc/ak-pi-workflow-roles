@@ -1684,17 +1684,18 @@
     "collector-role-receipt": "61d59f9",
     "station-2e": "61d59f9"
   },
-  "constructionHead": "b5926b70e6b0ce2cd0b9fee8fa92fea857e4c210",
+  "constructionHead": "8a3da8bf1f5bf662a10c2e56b33b3137d8d0183d",
   "validation": {
+    "testedHead": "8a3da8bf1f5bf662a10c2e56b33b3137d8d0183d",
     "typecheck": "pass",
     "testAll": {
       "pass": 359,
       "fail": 0,
-      "nodeDurationMs": 55253.193167,
-      "wallSeconds": 55.4,
+      "nodeDurationMs": 59806.666209,
+      "wallSeconds": 59.92,
       "command": "npm run test:all"
     },
-    "recordedAt": "2026-08-03T20:58:10.859Z",
-    "note": "Station 2e complete: final 23 rebuild keys executed; unfinishedKeys=[]; full suite green."
+    "recordedAt": "2026-08-03T21:24:45.000Z",
+    "note": "Station 2g complete: shared reviewer template is quiesced, test-only Collector limit overrides are isolated behind the test seam, and the full suite is green."
   }
 }
