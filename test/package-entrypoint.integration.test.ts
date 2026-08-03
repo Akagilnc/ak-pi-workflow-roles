@@ -859,9 +859,9 @@ test("cold-installed live help follows the loaded extension and changes on the n
 
         // Cross the installed package entrypoint with the bundled Luna Max default,
         // then edit and restore the same setting without permitting a fallback.
+        // Independent presentation is proven by observable typed attendance events,
+        // one Navigator call, <=1s prepared latency, and repeated <10% follow-up below.
         const installedNavigator = await installed("src/navigator-attendance.ts");
-        const installedRuntime = await readFile(runtimePath, "utf8");
-        assert.match(installedRuntime, /triggerTurn:\s*false/);
         const issueRoot = resolve(fixture, ".ak/work/issues/28");
         await mkdir(issueRoot, { recursive: true });
         await writeFile(resolve(issueRoot, "authority.md"), "cold-installed owner authority\n", "utf8");

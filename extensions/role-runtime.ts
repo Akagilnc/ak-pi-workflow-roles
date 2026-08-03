@@ -24,14 +24,15 @@ import {
   createNavigatorAttendance,
   navigatorUnavailableError,
   navigatorSessionDirectory,
-  navigatorSubjectKey,
   navigatorSubjectKeyForInput,
   registerNavigatorModelCommand,
   subjectPath,
+  type NavigatorSubjectProvenance,
   type NavigatorTargetRole,
 } from "../src/navigator-attendance.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
+import { validateMergerInput } from "../src/merger-contracts.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { packagedRoleInputFlag } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
@@ -70,29 +71,20 @@ export async function loadNavigatorRoleHelp(
   return result.stdout || result.stderr;
 }
 
-function navigatorAuthorityFromInput(raw: string): string | undefined {
+/**
+ * Authority may come only from a role-owned validated typed contract leaf.
+ * Opaque task/packet JSON top-level fields never override the separate authority seam.
+ * Merger is the current contract owner via materials.authority.
+ */
+export function navigatorAuthorityFromRoleInput(role: string, raw: string): string | undefined {
+  if (role !== "merger" || raw.trim() === "") return undefined;
   try {
-    const value = JSON.parse(raw) as unknown;
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const record = value as Record<string, unknown>;
-      if (typeof record.authority === "string" && record.authority.trim() !== "") return record.authority;
-      if (typeof record.controllingAuthority === "string" && record.controllingAuthority.trim() !== "") return record.controllingAuthority;
-      const materials = record.materials;
-      if (typeof materials === "object" && materials !== null && !Array.isArray(materials)) {
-        const authority = (materials as Record<string, unknown>).authority;
-        if (typeof authority === "object" && authority !== null && !Array.isArray(authority)) {
-          const bytesBase64 = (authority as Record<string, unknown>).bytesBase64;
-          if (typeof bytesBase64 === "string") {
-            const content = Buffer.from(bytesBase64, "base64").toString("utf8");
-            if (content.trim() !== "") return content;
-          }
-        }
-      }
-    }
+    const input = validateMergerInput(JSON.parse(raw) as unknown);
+    const content = Buffer.from(input.materials.authority.bytesBase64, "base64").toString("utf8");
+    return content.trim() === "" ? undefined : content;
   } catch {
     return undefined;
   }
-  return undefined;
 }
 
 function projectJudgeTranscriptForAudit(messages: Message[]): Message[] {
@@ -166,18 +158,20 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         }
       }
       let subject = input ?? `work subject: ${subjectKey}`;
+      let subjectProvenance: NavigatorSubjectProvenance = input === undefined ? "placeholder" : "role_input";
       if (options.role === "doctor" && reference !== undefined) {
         const patient = await loadDoctorCase(reference);
         subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
+        subjectProvenance = "role_input";
       }
       // Assigned task/packet/review bytes are the production work seam.  The
-      // authority must remain a separately bounded field; task bytes alone are
-      // not silently promoted to controlling authority.
-      const authority = navigatorAuthorityFromInput(input ?? "") ?? authorityMaterial;
+      // authority must remain a separately bounded field; opaque task JSON alone
+      // is never promoted over the separate authority seam.
+      const authority = navigatorAuthorityFromRoleInput(options.role, input ?? "") ?? authorityMaterial;
       if (authority === undefined || authority.trim() === "") {
         throw navigatorUnavailableError("context", new Error("controlling authority content was not supplied as typed work context"));
       }
-      return { subjectKey, subject, authority };
+      return { subjectKey, subject, authority, subjectProvenance };
     },
     createNavigatorAttendance: (options) => {
       const sessionDir = navigatorSessionDirectory(options.context, options.subjectKey);

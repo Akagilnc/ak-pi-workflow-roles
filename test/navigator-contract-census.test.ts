@@ -35,5 +35,12 @@ test("Navigator Soul keeps route judgment and omits transport mechanics in both 
   assert.match(soul, /authority/);
   assert.match(soul, /路线/);
   assert.match(soul, /建议/);
-  assert.doesNotMatch(soul, /schema|CLI|session|model|tool|failure|JSON/i);
+  // Whole-word alternatives (intentional optional plurals) reject real transport terms
+  // while admitting ordinary words that only share a substring (modeling/tooling/client).
+  const forbiddenTerm = /\bschemas?\b|\bCLIs?\b|\bsessions?\b|\bmodels?\b|\btools?\b|\bfailures?\b|\bJSON\b/i;
+  assert.doesNotMatch(soul, forbiddenTerm);
+  assert.doesNotMatch("modeling tooling client", forbiddenTerm);
+  for (const term of ["schema", "schemas", "CLI", "CLIs", "session", "sessions", "model", "models", "tool", "tools", "failure", "failures", "JSON"]) {
+    assert.match(term, forbiddenTerm, `${term} must remain a forbidden whole-word term`);
+  }
 });

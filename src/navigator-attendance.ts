@@ -115,10 +115,13 @@ export type NavigatorSettlement =
   | { kind: "role_infrastructure_failure"; role: string; phase: NavigatorPhase }
   | { kind: "arrival"; role: "lander"; phase: null; message?: string };
 
+export type NavigatorSubjectProvenance = "placeholder" | "role_input" | "user_prompt";
+
 export type NavigatorWorkContext = {
   subjectKey: string;
   subject: string;
   authority: string;
+  subjectProvenance: NavigatorSubjectProvenance;
   contextError?: unknown;
 };
 
@@ -323,10 +326,15 @@ function subjectPath(sessionDir: string, cwd = process.cwd()): string {
   return resolvedSession;
 }
 
-export function navigatorSubjectKey(subjectRoot: string, subject: string): string {
+export function navigatorSubjectKey(
+  subjectRoot: string,
+  subject: string,
+  provenance: NavigatorSubjectProvenance = "role_input",
+): string {
   if (issueRoot(subjectRoot) !== undefined || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
+  if (provenance === "placeholder") return subjectRoot;
   const normalized = subject.trim().replace(/\s+/g, " ");
-  if (normalized === "" || normalized === `work subject: ${subjectRoot}`) return subjectRoot;
+  if (normalized === "") return subjectRoot;
   return `${subjectRoot}#${createHash("sha256").update(normalized).digest("hex").slice(0, 32)}`;
 }
 
@@ -406,11 +414,15 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
 
 export function selectNavigatorCandidate(candidates: readonly NavigatorCandidate[], settlement: NavigatorSettlement): NavigatorCandidate | undefined {
   if (settlement.kind !== "accepted") return undefined;
-  return candidates.find((candidate) => {
-    if (candidate.matches.role !== settlement.role || candidate.matches.phase !== settlement.phase) return false;
-    if (candidate.matches.statuses !== undefined && (settlement.status === undefined || !candidate.matches.statuses.includes(settlement.status))) return false;
-    return true;
-  });
+  const rolePhaseMatches = candidates.filter((candidate) =>
+    candidate.matches.role === settlement.role && candidate.matches.phase === settlement.phase,
+  );
+  // Status-specific candidates outrank role/phase generics regardless of declaration order.
+  if (settlement.status !== undefined) {
+    const statusSpecific = rolePhaseMatches.find((candidate) => candidate.matches.statuses?.includes(settlement.status!) === true);
+    if (statusSpecific !== undefined) return statusSpecific;
+  }
+  return rolePhaseMatches.find((candidate) => candidate.matches.statuses === undefined);
 }
 
 export function formatNavigatorReport(report: NavigatorReport): string {
@@ -498,28 +510,39 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           } catch (error) {
             throw navigatorUnavailableError("session", error);
           }
+          if (disposed) {
+            created.dispose();
+            throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          }
           try {
             await created.setModel?.(modelSetting, model.thinkingLevel);
+            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
             if (created.getThinkingLevel?.() !== undefined && created.getThinkingLevel() !== model.thinkingLevel) {
               throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
             }
             created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
             session = created;
             return created;
           } catch (error) {
-            created.dispose();
+            if (session !== created) created.dispose();
             throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
           }
         })();
         await sessionReady;
         sessionReady = undefined;
       } else {
-        await session.setModel?.(modelSetting, model.thinkingLevel);
-        if (session.getThinkingLevel?.() !== undefined && session.getThinkingLevel() !== model.thinkingLevel) {
-          throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+        try {
+          await session.setModel?.(modelSetting, model.thinkingLevel);
+          if (session.getThinkingLevel?.() !== undefined && session.getThinkingLevel() !== model.thinkingLevel) {
+            throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+          }
+        } catch (error) {
+          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
         }
         session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
       }
+      if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
       const activeSession = session;
       if (activeSession === undefined) throw new Error("Navigator session was not created");
       const prior = activeSession.entries().filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
@@ -555,9 +578,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       ].join("\n\n");
       try {
         try {
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
           await activeSession.prompt(request);
         } catch (error) {
-          throw navigatorUnavailableError("transport", error);
+          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
         }
         if (output === undefined) {
           const nativeFailure = [...activeSession.entries()].reverse().find((entry: unknown) => {
@@ -613,7 +637,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     },
     dispose(): void {
       disposed = true;
-      sessionReady = undefined;
+      // Leave sessionReady so an in-flight createSession observes disposed and drains exactly once.
       session?.dispose();
       session = undefined;
       activeInvocationId = undefined;
