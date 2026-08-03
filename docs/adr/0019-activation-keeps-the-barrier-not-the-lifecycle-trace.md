@@ -4,11 +4,11 @@ Status: accepted（下述 authority/provenance；收窄 ADR 0018）
 
 ## Authority and provenance
 
-Owner-authored [issue #58](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/58) 提供直接统领句：
+[issue #58](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/58) authored by 陛下 提供直接统领句：
 
 > 只验证必须有的；除此之外不管。
 
-ADR 0019、0021–0045 绑定并使用该 issue 的明确 decision keys：category rows、numbered retained contracts、deletion contracts、special boundaries，以及 class-wide acceptance method。ADR 0021–0045 的 accepted status 统一引用本节，不另行声称未绑定的 owner ruling。
+ADR 0019、0021–0045 绑定并使用该 issue 的明确 decision keys：category rows、numbered retained contracts、deletion contracts、special boundaries，以及 class-wide acceptance method。ADR 0021–0045 的 accepted status 统一引用本节，不另行声称未绑定的 陛下 ruling。
 
 ## Decision
 
