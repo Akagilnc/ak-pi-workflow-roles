@@ -1,3 +1,5 @@
+> Historical record: this ADR predates Issue #28 Navigator attendance and is retained only for provenance.
+
 # UUIDv7 小写格式不是全车间通用契约
 
 Status: accepted（authority/provenance: ADR 0019）

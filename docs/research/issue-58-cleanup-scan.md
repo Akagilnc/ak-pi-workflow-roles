@@ -1,3 +1,5 @@
+> Historical research: this scan records pre-Issue #28 surfaces and is not a current implementation inventory.
+
 # #58 大扫除：不完全证据索引
 
 ## 身份与边界

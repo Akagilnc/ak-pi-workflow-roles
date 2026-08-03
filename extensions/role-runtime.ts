@@ -1,7 +1,6 @@
-import { constants } from "node:fs";
-import { open, readFile, realpath } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 
@@ -20,10 +19,22 @@ import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
 import { createPiReviewerAuditor } from "../src/reviewer-auditor.ts";
 import { createPiFixerAuditor } from "../src/fixer-auditor.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
-import type { CurrentPositionSnapshotV1 } from "../src/navigator-contracts.ts";
+import {
+  createNativeNavigatorSessionFactory,
+  createNavigatorAttendance,
+  navigatorUnavailableError,
+  navigatorSessionDirectory,
+  navigatorSubjectKeyForInput,
+  registerNavigatorModelCommand,
+  subjectPath,
+  type NavigatorSubjectProvenance,
+  type NavigatorTargetRole,
+} from "../src/navigator-attendance.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
+import { validateMergerInput } from "../src/merger-contracts.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
+import { packagedRoleInputFlag } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
 
 const extensionPath = fileURLToPath(import.meta.url);
@@ -35,6 +46,46 @@ const collectorSoulPath = fileURLToPath(new URL("../souls/collector.md", import.
 const doctorSoulPath = fileURLToPath(new URL("../souls/doctor.md", import.meta.url));
 const navigatorSoulPath = fileURLToPath(new URL("../souls/navigator.md", import.meta.url));
 const mergerSoulPath = fileURLToPath(new URL("../souls/merger.md", import.meta.url));
+
+function navigatorInputReference(pi: ExtensionAPI, role: string): string | undefined {
+  const name = packagedRoleInputFlag(role);
+  const value = name === undefined ? undefined : pi.getFlag(name);
+  return typeof value === "string" && value !== "" ? resolve(value) : undefined;
+}
+
+// Cold `pi -e <extension> --help` must cover installed-package process startup under CI load.
+// This bound is process-startup budget only — not settlement-to-visible presentation latency.
+export const NAVIGATOR_LIVE_HELP_TIMEOUT_MS = 30_000;
+
+export async function loadNavigatorRoleHelp(
+  pi: Pick<ExtensionAPI, "exec">,
+  extensionPath: string,
+  cwd: string,
+  role: NavigatorTargetRole,
+): Promise<string> {
+  const result = await pi.exec("pi", ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "-e", extensionPath, "--ak-role", role, "--help"], { cwd, timeout: NAVIGATOR_LIVE_HELP_TIMEOUT_MS });
+  if (result.killed) {
+    throw new Error(`live help unavailable for ${role}: timed out after ${NAVIGATOR_LIVE_HELP_TIMEOUT_MS}ms`);
+  }
+  if (result.code !== 0) throw new Error(`live help unavailable for ${role}: ${result.stderr || result.stdout}`);
+  return result.stdout || result.stderr;
+}
+
+/**
+ * Authority may come only from a role-owned validated typed contract leaf.
+ * Opaque task/packet JSON top-level fields never override the separate authority seam.
+ * Merger is the current contract owner via materials.authority.
+ */
+export function navigatorAuthorityFromRoleInput(role: string, raw: string): string | undefined {
+  if (role !== "merger" || raw.trim() === "") return undefined;
+  try {
+    const input = validateMergerInput(JSON.parse(raw) as unknown);
+    const content = Buffer.from(input.materials.authority.bytesBase64, "base64").toString("utf8");
+    return content.trim() === "" ? undefined : content;
+  } catch {
+    return undefined;
+  }
+}
 
 function projectJudgeTranscriptForAudit(messages: Message[]): Message[] {
   return messages.map((message) => {
@@ -62,44 +113,10 @@ export function transcriptFromContext(ctx: ExtensionContext): string {
   );
 }
 
-export const MAX_NAVIGATOR_EVIDENCE_ITEMS = 256;
-export const MAX_NAVIGATOR_EVIDENCE_BYTES = 32 * 1024 * 1024;
-const MAX_NAVIGATOR_EVIDENCE_ITEM_BYTES = 8 * 1024 * 1024;
-
-export async function loadNavigatorEvidence(snapshot: CurrentPositionSnapshotV1): Promise<Map<string, Uint8Array>> {
-  if (snapshot.evidence.length > MAX_NAVIGATOR_EVIDENCE_ITEMS) {
-    throw new Error("Navigator evidence item count exceeds bound");
-  }
-  const root = await realpath(join(snapshot.subject.repositoryRoot, ".ak", "work", "issues", String(snapshot.subject.parent.number), "assisted", snapshot.runId, "evidence"));
-  const loaded = new Map<string, Uint8Array>();
-  let totalBytes = 0;
-  for (const item of snapshot.evidence) {
-    const path = await realpath(item.handle);
-    const rel = relative(root, path);
-    if (rel.startsWith("..") || rel === "" || rel.includes("/../")) throw new Error("evidence handle escapes admitted capability");
-    const fd = await open(path, constants.O_RDONLY | ("O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0));
-    try {
-      const stat = await fd.stat();
-      if (!stat.isFile() || stat.size > MAX_NAVIGATOR_EVIDENCE_ITEM_BYTES) throw new Error("invalid bounded evidence handle");
-      totalBytes += stat.size;
-      if (totalBytes > MAX_NAVIGATOR_EVIDENCE_BYTES) throw new Error("Navigator evidence aggregate byte budget exceeded");
-      const bytes = new Uint8Array(stat.size);
-      let offset = 0;
-      while (offset < bytes.length) {
-        const result = await fd.read(bytes, offset, bytes.length - offset, offset);
-        if (!result.bytesRead) throw new Error("evidence changed while loading");
-        offset += result.bytesRead;
-      }
-      loaded.set(item.handle, bytes);
-    } finally {
-      await fd.close();
-    }
-  }
-  return loaded;
-}
-
 export default function roleRuntime(pi: ExtensionAPI): void {
   const reviewerAgent = createReviewerAgentRunner();
+  registerNavigatorModelCommand(pi);
+  const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   createRoleRuntimeExtension({
     loadJudgeSoul: () => readFile(judgeSoulPath, "utf8"),
     loadFixerSoul: () => readFile(fixerSoulPath, "utf8"),
@@ -115,9 +132,65 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadDoctorSoul: () => readFile(doctorSoulPath, "utf8"),
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
-    loadNavigatorSoul: () => readFile(navigatorSoulPath, "utf8"),
-    loadNavigatorSnapshot: async (path) => JSON.parse(await readFile(path, "utf8")),
-    loadNavigatorEvidence,
+    loadNavigatorWorkContext: async (options) => {
+      const reference = navigatorInputReference(pi, options.role);
+      const input = reference === undefined || options.role === "doctor" ? undefined : await readFile(reference, "utf8");
+      const subjectRoot = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
+      const subjectKey = reference === undefined
+        ? subjectRoot
+        : navigatorSubjectKeyForInput(subjectRoot, reference, options.context.cwd);
+      const workRoot = subjectRoot.includes("/.ak/work/") ? subjectRoot : undefined;
+      const authorityFiles = workRoot === undefined ? [] : [
+        resolve(workRoot, "authority.md"),
+        resolve(workRoot, "authority.txt"),
+        resolve(workRoot, "design-v2/owner-direction.md"),
+      ];
+      let authorityMaterial: string | undefined;
+      for (const path of authorityFiles) {
+        try {
+          const content = await readFile(path, "utf8");
+          if (content.trim() !== "") {
+            authorityMaterial = content;
+            break;
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+      let subject = input ?? `work subject: ${subjectKey}`;
+      let subjectProvenance: NavigatorSubjectProvenance = input === undefined ? "placeholder" : "role_input";
+      if (options.role === "doctor" && reference !== undefined) {
+        const patient = await loadDoctorCase(reference);
+        subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
+        subjectProvenance = "role_input";
+      }
+      // Assigned task/packet/review bytes are the production work seam.  The
+      // authority must remain a separately bounded field; opaque task JSON alone
+      // is never promoted over the separate authority seam.
+      const authority = navigatorAuthorityFromRoleInput(options.role, input ?? "") ?? authorityMaterial;
+      if (authority === undefined || authority.trim() === "") {
+        throw navigatorUnavailableError("context", new Error("controlling authority content was not supplied as typed work context"));
+      }
+      return { subjectKey, subject, authority, subjectProvenance };
+    },
+    createNavigatorAttendance: (options) => {
+      const sessionDir = navigatorSessionDirectory(options.context, options.subjectKey);
+      return createNavigatorAttendance({
+        context: options.context,
+        role: options.role,
+        phase: options.phase,
+        subjectKey: options.subjectKey,
+        sessionDir,
+        sessionDirectory: (subjectKey) => navigatorSessionDirectory(options.context, subjectKey),
+        subject: options.subject,
+        authority: options.authority,
+        loadSoul: () => readFile(navigatorSoulPath, "utf8"),
+        loadRoleHelp: (role) => loadNavigatorRoleHelp(pi, extensionPath, options.context.cwd, role),
+        createSession: navigatorSessionFactory,
+        contextError: options.contextError,
+        onEvent: options.onEvent,
+      });
+    },
     loadMergerSoul: () => readFile(mergerSoulPath, "utf8"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     createMergerGitState: (repositoryRoot) =>

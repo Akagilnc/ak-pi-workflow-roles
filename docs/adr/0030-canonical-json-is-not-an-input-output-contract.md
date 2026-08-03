@@ -1,3 +1,5 @@
+> Historical record: this ADR predates Issue #28 Navigator attendance and is retained only for provenance.
+
 # Canonical JSON 不是输入输出格式契约
 
 Status: accepted（authority/provenance: ADR 0019）

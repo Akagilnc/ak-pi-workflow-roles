@@ -82,7 +82,7 @@ export type JudgeRoleDependencies = {
 };
 
 export type JudgeRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: ExtensionContext): never;
+  failInfrastructure(error: unknown, ctx: ExtensionContext, toolCallId?: string): never;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -185,7 +185,7 @@ export function createJudgeRoleRuntime(
                   : { context: ctx, signal },
               );
             } catch (error) {
-              hostActions.failInfrastructure(error, ctx);
+              hostActions.failInfrastructure(error, ctx, toolCallId);
             }
             return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
               pass: (usage) => ({
