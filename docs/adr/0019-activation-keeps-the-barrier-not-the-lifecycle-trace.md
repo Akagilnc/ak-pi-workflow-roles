@@ -4,7 +4,7 @@ Status: accepted（下述 authority/provenance；收窄 ADR 0018）
 
 ## Authority and provenance
 
-Owner-authored [issue #58](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/58) 提供直接统领句：
+[issue #58](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/58) authored by 陛下 提供直接统领句：
 
 > 只验证必须有的；除此之外不管。
 

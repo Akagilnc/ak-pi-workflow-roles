@@ -26,7 +26,7 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 
 **merge 按钮归调用者**，没有任何角色握不可逆权限：门下省把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
 
-上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；合规审计也并非只跟在大理寺之后，Judge、Fixer、Reviewer、Doctor 各自都有一次。
+上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，Judge、Fixer、Reviewer、Doctor 各自都有一次。
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
@@ -96,7 +96,7 @@ Repair the caller-assigned findings and preserve all unrelated behavior.
 ```
 
 ```json
-[{"id":"owner.choice","requirement":"The controlling owner decision exists."}]
+[{"id":"owner.choice","requirement":"The controlling 陛下 decision exists."}]
 ```
 
 Instruction prose is rejected at activation when empty or trim-blank, is not machine-parsed, and admitted instruction bytes are preserved exactly. Prerequisite declarations are exported as `fixerPrerequisitesSchema`, `parseFixerPrerequisites`, and `validateFixerPrerequisites`; IDs are case-sensitive, attachment-unique, and match `^[A-Za-z0-9][A-Za-z0-9._-]*$`. The admitted prose and declarations are frozen together for the invocation. There is no frontmatter parser or automatic carry-forward.
@@ -305,7 +305,7 @@ A `continue` receipt requires non-empty `classes` with unique comma-free nonblan
 
 - `converged` — relative to the material under judgment (for a plan: construction authorization only)
 - `continue` — further repair is warranted
-- `escalate` — an owner decision is required
+- `escalate` — a 陛下 decision is required
 
 Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields (including apply obligations attached to a construction-ready plan). It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
 
