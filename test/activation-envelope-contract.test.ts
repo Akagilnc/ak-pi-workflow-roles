@@ -401,6 +401,49 @@ test("observation face emits start/end always, throttles producing updates per t
   }
 });
 
+test("observation face rejects throttleMs override at the typed call site and ignores it at runtime", async () => {
+  // Typed surface has no throttleMs — excess key must not type-check.
+  const faceOptions = {
+    role: () => "fixer" as string | undefined,
+    admitted: () => true,
+    clock: () => "2025-01-01T00:00:00.000Z",
+    monoNow: () => 0,
+    write: (_record: ToolExecutionObservationRecord) => {},
+  };
+  type FaceOptions = Parameters<typeof createToolExecutionObservationFace>[0];
+  type HasThrottleMs = "throttleMs" extends keyof FaceOptions ? true : false;
+  const throttleMsOnFaceOptions: HasThrottleMs = false;
+  assert.equal(throttleMsOnFaceOptions, false);
+
+  // Runtime: smuggled throttleMs: 0 must not disable the 30s coalesce.
+  const records: ToolExecutionObservationRecord[] = [];
+  let mono = 0;
+  const face = createToolExecutionObservationFace({
+    ...faceOptions,
+    throttleMs: 0,
+    monoNow: () => mono,
+    write: (record) => { records.push(record); },
+  } as FaceOptions);
+
+  await face.onStart({ toolCallId: "t", toolName: "bash" });
+  await face.onUpdate({
+    toolCallId: "t",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "first" }] },
+  });
+  mono = 10_000; // < TOOL_EXECUTION_UPDATE_THROTTLE_MS
+  await face.onUpdate({
+    toolCallId: "t",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "second" }] },
+  });
+
+  assert.deepEqual(records.map((r) => r.event), [
+    "tool_execution_start",
+    "tool_execution_update",
+  ]);
+});
+
 test("shared role runtime registers tool observation only after admitted activation and never writes stdout", async () => {
   const observations: ToolExecutionObservationRecord[] = [];
   type Handler = (event: Record<string, unknown>, ctx?: ExtensionContext) => unknown;

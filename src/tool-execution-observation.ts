@@ -104,9 +104,7 @@ export function createToolExecutionObservationFace(options: {
   clock(): string;
   monoNow(): number;
   write(record: ToolExecutionObservationRecord): void | Promise<void>;
-  throttleMs?: number;
 }): ToolExecutionObservationFace {
-  const throttleMs = options.throttleMs ?? TOOL_EXECUTION_UPDATE_THROTTLE_MS;
   const states = new Map<string, CallObservationState>();
 
   async function emit(record: unknown): Promise<void> {
@@ -144,7 +142,7 @@ export function createToolExecutionObservationFace(options: {
       const state = states.get(event.toolCallId) ?? { lastUpdateEmitMonoMs: undefined };
       if (
         state.lastUpdateEmitMonoMs !== undefined
-        && now - state.lastUpdateEmitMonoMs < throttleMs
+        && now - state.lastUpdateEmitMonoMs < TOOL_EXECUTION_UPDATE_THROTTLE_MS
       ) {
         return;
       }
