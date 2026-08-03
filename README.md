@@ -128,9 +128,9 @@ Coder handles first implementation in two explicit phases:
 | `--ak-coder-phase` | Meaning | Legal success status |
 | --- | --- | --- |
 | `plan` | Inspect the task and propose an implementation plan; do not edit or commit | `planned` |
-| `apply` | Execute the approved plan and verify the first implementation | `completed` |
+| `apply` | Execute the approved plan and verify the first implementation | `completed` or `unfinished` |
 
-Either phase may return `refused` with authority and current-code evidence. A refusal does not require a commit and returns to the caller for disposition; Coder never emits `escalate`.
+Either phase may return `refused` with authority and current-code evidence. During `apply`, Coder may also return `unfinished` with a nonblank typed `remainingScope` when this invocation has not settled the task; this is a resumable handoff, not a failure, and it does not waive any acceptance. A refusal does not require a commit and returns to the caller for disposition; Coder never emits `escalate`.
 
 ```bash
 pi --ak-role coder \
@@ -150,11 +150,12 @@ Coder terminates through `ak_coder_output` with the same thin worker envelope:
 
 ```json
 {"status":"planned|completed|refused","report":"Markdown report","commitSha":"optional self-report"}
+{"status":"unfinished","report":"Markdown report","remainingScope":"nonblank typed remaining scope"}
 ```
 
 During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd`. Use `--no-skills --skill ~/.agents/skills/tdd/SKILL.md` to bind the canonical Matt TDD skill without name collisions. A `completed` receipt is rejected unless the immediately following prompt proves Pi's exact native expansion of the complete canonical TDD Skill and original request; an evidence-bearing `refused` receipt does not require that proof or a commit.
 
-The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the caller. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate.
+The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the caller. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate. An unfinished receipt carries only its nonblank typed `remainingScope`; it does not carry commit identity or waive acceptance.
 
 ## Reviewer
 
