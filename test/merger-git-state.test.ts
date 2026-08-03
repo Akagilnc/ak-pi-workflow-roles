@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { createProductionMergerGitState } from "../src/merger-git-state.ts";
+import { withPrimaryAwareCleanup } from "./helpers/primary-aware-cleanup.ts";
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 async function conflictedRepo() {
@@ -19,7 +20,7 @@ async function conflictedRepo() {
 
 test("production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit", async () => {
   const fixture = await conflictedRepo();
-  try {
+  await withPrimaryAwareCleanup(async () => {
     const state = createProductionMergerGitState(fixture.cwd);
     const active = await state.activeMerge();
     assert.deepEqual(active, {
@@ -42,36 +43,36 @@ test("production Merger Git seam freezes the exact automatic merge tree and repo
     });
     await writeFile(resolve(fixture.cwd, "untracked.txt"), "dirty\n");
     assert.equal((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).worktreeClean, false);
-  } finally { await rm(fixture.cwd, { recursive: true, force: true }); }
+  }, () => rm(fixture.cwd, { recursive: true, force: true }));
 });
 
 test("production Merger Git seam accepts a clean source-only first-parent change", async () => {
   const fixture = await conflictedRepo();
-  try {
+  await withPrimaryAwareCleanup(async () => {
     const state = createProductionMergerGitState(fixture.cwd); const active = await state.activeMerge();
     await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n"); git(fixture.cwd, "add", "conflict.txt"); git(fixture.cwd, "commit", "-m", "resolve assigned merge");
     const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
     assert.deepEqual((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths, ["conflict.txt"]);
     assert.match(git(fixture.cwd, "diff", "--name-only", `${mergeCommitId}^1`, mergeCommitId), /source-only\.txt/);
-  } finally { await rm(fixture.cwd, { recursive: true, force: true }); }
+  }, () => rm(fixture.cwd, { recursive: true, force: true }));
 });
 
 test("production Merger Git seam reports tampering with a clean source-side path", async () => {
   const fixture = await conflictedRepo();
-  try {
+  await withPrimaryAwareCleanup(async () => {
     const state = createProductionMergerGitState(fixture.cwd); const active = await state.activeMerge();
     await writeFile(resolve(fixture.cwd, "conflict.txt"), "target and source\n"); await writeFile(resolve(fixture.cwd, "source-only.txt"), "tampered\n"); git(fixture.cwd, "add", "."); git(fixture.cwd, "commit", "-m", "resolve assigned merge");
     const mergeCommitId = git(fixture.cwd, "rev-parse", "HEAD");
     assert.deepEqual((await state.completedMerge(mergeCommitId, active.automaticMergeTreeId)).resolutionChangedPaths, ["conflict.txt", "source-only.txt"]);
-  } finally { await rm(fixture.cwd, { recursive: true, force: true }); }
+  }, () => rm(fixture.cwd, { recursive: true, force: true }));
 });
 
 test("production Merger Git seam reports no conflict set after a non-conflicting merge", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ak-merger-clean-"));
-  try {
+  await withPrimaryAwareCleanup(async () => {
     git(cwd, "init", "-b", "main"); git(cwd, "config", "user.name", "Test"); git(cwd, "config", "user.email", "test@test.local");
     await writeFile(resolve(cwd, "base"), "base\n"); git(cwd, "add", "."); git(cwd, "commit", "-m", "base"); git(cwd, "checkout", "-b", "source"); await writeFile(resolve(cwd, "source"), "source\n"); git(cwd, "add", "."); git(cwd, "commit", "-m", "source"); const source = git(cwd, "rev-parse", "HEAD"); git(cwd, "checkout", "main");
     git(cwd, "merge", "--no-commit", "--no-ff", source);
     assert.deepEqual((await createProductionMergerGitState(cwd).activeMerge()).unmergedPaths, []);
-  } finally { await rm(cwd, { recursive: true, force: true }); }
+  }, () => rm(cwd, { recursive: true, force: true }));
 });
