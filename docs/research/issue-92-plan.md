@@ -14,21 +14,25 @@ is the machine-readable work list.
 1. Add `test:fast`, `test:integration`, and `test:all` npm scripts.
 2. Move the 46 files according to the ledger's mechanical `tierAssignments`:
    19 unit, 18 contract, 4 integration, and 5 package files.
-3. Keep `test:fast` limited to the unit and contract tiers; reserve integration
-   and package lifecycle work for their named suites.
+3. The command composition is cumulative and normative: `test:fast` runs unit +
+   contract tiers; `test:integration` runs `test:fast` plus the integration tiers
+   (the cumulative pre-submit boundary); and `test:all` runs everything,
+   including package lifecycle tiers, as the CI gate.
 4. Delete the 16 frozen 盯文/Soul-wording dispositions while doing the moves.
    This is not a performance exemption: the ledger records that no runtime
    reject depends on them.
 5. Verify suite membership by paths/configuration, not by test display text.
 
 The regular development loop is `test:fast`; `test:integration` is the
-pre-submit boundary; `test:all` is the CI gate. Coverage semantics are not
-reduced: the tier changes only when a test runs, and every retained contract
-remains represented in its assigned tier.
+cumulative pre-submit boundary; `test:all` is the CI gate. Coverage semantics
+are not reduced: the tier changes only when a test runs, and every retained
+contract remains represented in its assigned tier.
 
 ## Station 2 — rebuild and merge
 
-1. Apply the 62 rebuild and 51 merge dispositions in the ledger.
+1. Apply the 100 rebuild and 13 semantically mapped merge dispositions in the
+   ledger; the remaining former merge rows are explicit rebuilds where their
+   old oracle did not cover the absorbed contract.
 2. For every merge, use its machine-checkable `mergeInto` target or shared
    oracle key; do not infer a target from prose.
 3. Rebuild expensive package fixtures around one shared cold-install/pack
@@ -52,5 +56,6 @@ remains represented in its assigned tier.
   full gate retains coverage rather than deleting tests outside the frozen
   16-entry delete list.
 - The measured result and any remaining evidence gaps are recorded before
-  closing ADR-0050; if construction is not complete, leave it explicitly
-  unfinished with named remainder.
+  closing the issue-92 campaign; ADR-0050 governs the honest unfinished
+  terminal and is not closed by this campaign. If construction is not complete,
+  leave it explicitly unfinished with a named remainder.
