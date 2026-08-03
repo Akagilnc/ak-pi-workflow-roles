@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { access, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -747,6 +747,109 @@ test("cold-installed live help follows the loaded extension and changes on the n
         assert.equal(events[0]!.command, `Usage: ${firstMarker}`);
         assert.equal(events[1]!.command, `Usage: ${secondMarker}`);
         assert.equal(events[1]!.command?.includes("/task.md"), false);
+
+        // Cross the installed package entrypoint with the bundled Luna Max default,
+        // then edit and restore the same setting without permitting a fallback.
+        const installedNavigator = await installed("src/navigator-attendance.ts");
+        const installedRuntime = await readFile(runtimePath, "utf8");
+        assert.match(installedRuntime, /triggerTurn:\s*false/);
+        const issueRoot = resolve(fixture, ".ak/work/issues/28");
+        await mkdir(issueRoot, { recursive: true });
+        await writeFile(resolve(issueRoot, "authority.md"), "cold-installed owner authority\n", "utf8");
+        const luna = fauxProvider({
+          api: "openai-responses",
+          provider: "openai-codex",
+          models: [{ id: "gpt-5.6-luna", reasoning: true }],
+          tokenSize: { min: 1000, max: 1000 },
+        });
+        const lunaModel = luna.getModel("gpt-5.6-luna");
+        assert.ok(lunaModel);
+        Object.assign(lunaModel, { reasoning: true, thinkingLevelMap: { max: "max" } });
+        const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+        const coldAgentDir = resolve(home, ".cold-installed-agent");
+        process.env.PI_CODING_AGENT_DIR = coldAgentDir;
+        await mkdir(coldAgentDir, { recursive: true });
+        const configuredPath = resolve(coldAgentDir, "navigator-model.json");
+        assert.equal(await installedNavigator.readNavigatorModelSetting(configuredPath), installedNavigator.NAVIGATOR_DEFAULT_MODEL);
+        const modelRequests: string[] = [];
+        const lifecycle: Array<{ label: string; event: any; timestamps?: { preparedAt: string; settledAt: string; persistedVisibleAt: string } }> = [];
+        const invoke = async (label: string) => {
+          const response = (context: Context, _options: unknown, _state: unknown, requestModel: { provider: string; id: string }) => {
+            const names = context.tools?.map((tool) => tool.name) ?? [];
+            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+              modelRequests.push(`${requestModel.provider}/${requestModel.id}`);
+              return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+                candidates: [{
+                  id: "cold-luna-route",
+                  matches: { role: "judge", phase: null, kind: "accepted" },
+                  route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+                  next: { role: "reviewer", phase: null },
+                  reason: "cold-installed typed route",
+                  command: "Usage: pi --ak-role reviewer --help",
+                }],
+              }), { stopReason: "toolUse" });
+            }
+            if (names.includes(SOUL_AUDIT_TOOL_NAME)) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+            return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
+          };
+          luna.setResponses([response, response, response]);
+          let event: any;
+          let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
+          await withInProcessPi({
+            cwd: issueRoot,
+            agentDir: coldAgentDir,
+            faux: luna,
+            model: lunaModel,
+            additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")],
+            systemPrompt: `COLD INSTALLED ${label}`,
+            mode: "json",
+            flags: { "ak-role": "judge" },
+            noTools: "builtin",
+          }, async ({ session, sessionManager }) => {
+            await session.prompt(`ordinary cold-installed attendance ${label}`);
+            const visible = sessionManager.getEntries().find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+            event = visible?.type === "custom_message" ? visible.details : undefined;
+            if (event?.disposition !== "recommendation") return;
+            const navigatorDirectory = installedNavigator.navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, resolve(issueRoot));
+            const navigatorFiles = (await readdir(navigatorDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
+            assert.ok(navigatorFiles.length > 0, `${label} must persist a Navigator session (${JSON.stringify({ event, modelRequests, navigatorDirectory })})`);
+            const persisted = (await readFile(join(navigatorDirectory, navigatorFiles.at(-1)!), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
+            const prepared = [...persisted].reverse().find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === NAVIGATOR_PREPARE_TOOL_NAME);
+            const settled = [...persisted].reverse().find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
+            const preparedAt = prepared?.timestamp;
+            const settledAt = settled?.timestamp;
+            const persistedVisibleAt = visible?.timestamp;
+            if (typeof preparedAt !== "string" || typeof settledAt !== "string" || typeof persistedVisibleAt !== "string") {
+              throw new Error(`${label} must persist typed preparation, settlement, and visible timestamps: ${JSON.stringify({ preparedAt, settledAt, persistedVisibleAt, event, persistedTypes: persisted.map((entry) => ({ type: entry.type, customType: entry.customType, timestamp: entry.timestamp })) })}`);
+            }
+            timestamps = { preparedAt, settledAt, persistedVisibleAt };
+            assert.ok(Date.parse(preparedAt) <= Date.parse(settledAt), `${label} preparation must complete before settlement`);
+            if (event?.disposition === "recommendation") assert.ok(Date.parse(persistedVisibleAt) - Date.parse(settledAt) <= 1000, `${label} settlement-to-visible latency exceeded 1s`);
+          });
+          lifecycle.push({ label, event, ...(timestamps === undefined ? {} : { timestamps }) });
+        };
+        try {
+          await invoke("default-luna-max");
+          await installedNavigator.writeNavigatorModelSetting("openai-codex/gpt-5.6-luna", configuredPath);
+          await invoke("edited-luna-off");
+          await installedNavigator.writeNavigatorModelSetting(installedNavigator.NAVIGATOR_DEFAULT_MODEL, configuredPath);
+          await invoke("restored-luna-max");
+          await installedNavigator.writeNavigatorModelSetting("missing/provider", configuredPath);
+          await invoke("unsupported-no-fallback");
+        } finally {
+          if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        }
+        assert.deepEqual(modelRequests, [
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+          "openai-codex/gpt-5.6-luna",
+        ], "unsupported configuration must not fall back or dispatch another model");
+        assert.equal(lifecycle[0]?.event.disposition, "recommendation");
+        assert.equal(lifecycle[1]?.event.disposition, "recommendation");
+        assert.equal(lifecycle[2]?.event.disposition, "recommendation");
+        assert.equal(lifecycle[3]?.event.disposition, "unavailable");
+        assert.match(lifecycle[3]?.event.unavailableReason ?? "", /unavailable|missing/i);
+        process.stderr.write(`[cold Navigator lifecycle] ${JSON.stringify(lifecycle.map(({ label, event, timestamps }) => ({ label, disposition: event?.disposition, timestamps }))) }\n`);
       });
     },
   );
@@ -777,6 +880,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       const preparedLatencyMs: number[] = [];
       let followUpObservations = 0;
       let attendanceSamples = 0;
+      let ordinaryBefore: unknown;
+      let ordinaryAfter: unknown;
       const response = (context: Context) => {
         const names = context.tools?.map((tool) => tool.name) ?? [];
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
@@ -847,6 +952,9 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.deepEqual(event.next, revisedRoute
               ? { role: "fixer", phase: "apply" }
               : { role: "reviewer", phase: null });
+            const ordinary = { disposition: event.disposition, subjectKey: event.subjectKey, next: event.next };
+            if (sample === 0) ordinaryBefore = ordinary;
+            if (sample === presentationSamples.length - 1) ordinaryAfter = ordinary;
           });
           const displayedAt = performance.now();
           preparedLatencyMs.push(displayedAt - preparedAt);
@@ -882,6 +990,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         assert.ok(Math.max(...preparedLatencyMs) <= 1000, "prepared Navigator presentation must remain near one second");
         const followUpRate = attendanceSamples === 0 ? 0 : followUpObservations / attendanceSamples;
         assert.ok(followUpRate < 0.1, `observed follow-up rate ${(followUpRate * 100).toFixed(1)}% must remain below 10%`);
+        assert.deepEqual(ordinaryAfter, ordinaryBefore, "ordinary normal-entrypoint attendance remains frozen before/after presentation sampling");
         process.stderr.write(`[navigator observation] prepared_ms_max=${Math.max(...preparedLatencyMs).toFixed(1)} samples=${attendanceSamples} follow_up_rate=${(followUpRate * 100).toFixed(1)}%\n`);
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorSession = SessionManager.continueRecent(issueRoot, navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot));
@@ -901,6 +1010,102 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       assert.ok(routes.every((entry) => (entry as { data: { subjectKey: string; route: unknown } }).data.subjectKey === issueRoot));
       assert.deepEqual((routes.at(-1) as { data: { route: unknown } }).data.route, [{ role: "judge", phase: null }, { role: "fixer", phase: "apply" }, { role: "reviewer", phase: null }]);
       assert.ok(settlements.every((entry) => (entry as { data: { kind: string; role: string; phase: null } }).data.kind === "accepted"));
+    },
+  );
+});
+
+test("normal packaged Navigator drains one healthy preparation across recommendation and silent settlements", async () => {
+  const manifest = await loadRawPackageManifest();
+  await withHermeticHome(
+    { prefix: "ak-navigator-drain-matrix-" },
+    async ({ home, agentDir }) => {
+      const issueRoot = resolve(home, ".ak/work/issues/28");
+      await mkdir(issueRoot, { recursive: true });
+      await writeFile(resolve(issueRoot, "authority.md"), "owner authority: drain one Navigator call\n", "utf8");
+      const faux = fauxProvider({
+        api: "openai-responses",
+        provider: "ak-navigator-drain-offline",
+        models: [{ id: "gpt-5.6-luna", reasoning: true }],
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      const model = faux.getModel("gpt-5.6-luna");
+      assert.ok(model);
+      Object.assign(model, { reasoning: true, thinkingLevelMap: { max: "max" } });
+      const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const oldExitCode = process.exitCode;
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      await writeNavigatorModelSetting(`${model.provider}/${model.id}:max`, resolve(agentDir, "navigator-model.json"));
+      try {
+        const outcomes = ["recommendation", "human_decision", "infrastructure"] as const;
+        for (const outcome of outcomes) {
+          let navigatorCalls = 0;
+          let roleOutputReturned = false;
+          let releasePreparation!: () => void;
+          let navigatorStarted!: () => void;
+          const navigatorStartedPromise = new Promise<void>((resolve) => { navigatorStarted = resolve; });
+          const preparationGate = new Promise<void>((resolve) => { releasePreparation = resolve; });
+          let promptFinished = false;
+          const response = (context: Context) => {
+            const names = context.tools?.map((tool) => tool.name) ?? [];
+            if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+              navigatorCalls += 1;
+              navigatorStarted();
+              return preparationGate.then(() => fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+                candidates: [{
+                  id: `drain-${outcome}`,
+                  matches: { role: "judge", phase: null, kind: "accepted" },
+                  route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
+                  next: { role: "reviewer", phase: null },
+                  reason: "healthy in-flight preparation",
+                  command: "Usage: pi --ak-role reviewer --help",
+                }],
+              }), { stopReason: "toolUse" }));
+            }
+            if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+              if (outcome === "infrastructure") return fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider quota exhausted" });
+              return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+            }
+            roleOutputReturned = true;
+            const verdict = outcome === "human_decision" ? { judgeStatus: "escalate", decisionGate: { question: "owner choice", options: ["owner"] } } : { judgeStatus: "converged" };
+            return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, verdict), { stopReason: "toolUse" });
+          };
+          faux.setResponses([response, response, response, response, response]);
+          await withInProcessPi({
+            cwd: issueRoot,
+            agentDir,
+            faux,
+            model,
+            additionalExtensionPaths: [packageEntrypoint(manifest)],
+            systemPrompt: `NAVIGATOR DRAIN ${outcome}`,
+            mode: "json",
+            flags: { "ak-role": "judge" },
+            noTools: "builtin",
+          }, async ({ session, sessionManager }) => {
+            const prompt = session.prompt(`Exercise ${outcome} settlement while Navigator preparation is in flight.`);
+            await navigatorStartedPromise;
+            while (!roleOutputReturned) await new Promise<void>((resolve) => setImmediate(resolve));
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            assert.equal(promptFinished, false);
+            prompt.then(() => { promptFinished = true; }, () => { promptFinished = true; });
+            assert.equal(navigatorCalls, 1, "the settlement must retain one in-flight Navigator call");
+            assert.equal(sessionManager.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance"), false, "no advice may appear before preparation drains");
+            releasePreparation();
+            await prompt.catch(() => undefined);
+            assert.equal(promptFinished, true);
+            const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+            if (outcome === "recommendation") {
+              assert.equal(attendance.length, 1);
+              assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
+            } else {
+              assert.equal(attendance.length, 0, `${outcome} must remain typed silence`);
+            }
+            assert.equal(navigatorCalls, 1, "no late or overlapping Navigator call may occur after release");
+          });
+        }
+      } finally {
+        if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+        process.exitCode = oldExitCode;
+      }
     },
   );
 });
