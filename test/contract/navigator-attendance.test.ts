@@ -345,7 +345,7 @@ test("native provider stream seam classifies auth/quota/transport after setModel
       const model = faux.getModel();
       const setting = join(root, "navigator-model.json");
       await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
-      let currentDiagnostic = scenario.diagnostics[0]!;
+      let currentDiagnostic: string = scenario.diagnostics[0]!;
       const observedCallbacks: number[] = [];
       const failingProvider = {
         ...faux.provider,
