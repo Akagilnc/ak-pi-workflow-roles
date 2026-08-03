@@ -756,20 +756,19 @@
         "commit": "8050b81"
       }
     },
-    "test/collector-receipt.test.ts::receipt and ledger overflow latch fatal infrastructure failure": {
-      "ledgerFile": "test/collector-receipt.test.ts",
-      "currentFile": "test/contract/collector-receipt.test.ts",
-      "test": "receipt and ledger overflow latch fatal infrastructure failure",
+    "test/collector-ledger.test.ts::real observe materialization overflow latches fatal and rejects later work": {
+      "ledgerFile": "test/collector-ledger.test.ts",
+      "currentFile": "test/contract/collector-ledger.test.ts",
+      "test": "real observe materialization overflow latches fatal and rejects later work",
       "ledgerDurationMs": 1337.5,
       "ledgerProjectedMs": 133.75,
-      "owningSeam": "src/collector-receipt.ts COLLECTOR_RECEIPT_MAX_BYTES bound",
-      "greenSummary": "Green (rebuild class): same contract passes after reconstruction at test/collector-ledger.test.ts:534. Cheaper construction: (a) zero-cost — give the ledger a test-injectable materialization cap (the value is a bare module const, src/collec",
+      "owningSeam": "src/collector-ledger.ts observe() production receipt/materialization limit",
+      "greenSummary": "Green (restored gate-negative): six distinct 6 MiB reviews pass through the real observe() construction; each snapshot stays below the production 8 MiB limit, retained materialization exceeds the production 32 MiB receipt limit, and fatal state rejects later work before transport access.",
       "state": "executed",
       "evidence": {
-        "kind": "construction-rebuild",
-        "note": "Injectable receiptMaxBytes few-KiB cap trips materialization bound without multi-MiB stringify ladder.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commit": "61d59f9"
+        "kind": "production-limit-observe-construction",
+        "note": "Real production limits: six distinct 6 MiB reviews through observe(), asserting the 33554432-byte receipt overflow and fail-fast fatal latch.",
+        "commit": "129252b"
       }
     },
     "test/collector-receipt.test.ts::F2 two-leg missing contamination: request only a": {
@@ -1684,15 +1683,15 @@
     "collector-role-receipt": "61d59f9",
     "station-2e": "61d59f9"
   },
-  "constructionHead": "8a3da8bf1f5bf662a10c2e56b33b3137d8d0183d",
+  "constructionHead": "129252b",
   "validation": {
-    "testedHead": "8a3da8bf1f5bf662a10c2e56b33b3137d8d0183d",
+    "testedHead": "129252b",
     "typecheck": "pass",
     "testAll": {
-      "pass": 359,
+      "pass": 360,
       "fail": 0,
-      "nodeDurationMs": 59806.666209,
-      "wallSeconds": 59.92,
+      "nodeDurationMs": 54796.816125,
+      "wallSeconds": 54.91,
       "command": "npm run test:all"
     },
     "recordedAt": "2026-08-03T21:24:45.000Z",
