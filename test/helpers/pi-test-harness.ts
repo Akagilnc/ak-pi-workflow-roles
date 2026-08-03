@@ -241,7 +241,7 @@ export async function runNodeSubprocess(
       code: typeof failure.code === "number" ? failure.code : null,
       stdout: failure.stdout ?? "",
       stderr: failure.stderr ?? failure.message ?? "",
-      timedOut: failure.killed === true,
+      timedOut: failure.killed === true || failure.signal === "SIGTERM",
       signal: failure.signal ?? null,
       cause: error,
     };
