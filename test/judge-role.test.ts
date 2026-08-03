@@ -1164,7 +1164,7 @@ test("declared plan refusal, apply refusal, and partial apply each reach exactly
   assert.equal(new Set(auditInputs).size, 3);
 });
 
-test("Fixer apply accepts one multi-class settlement once on first attempt and rejects duplicate commits", async () => {
+test("Fixer apply accepts differently named classes with a shared commit and rejects duplicate names or missing pointers", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/repair.md", "ak-fixer-phase": "apply" });
   let audits = 0;
   createRoleRuntimeExtension({
@@ -1174,17 +1174,21 @@ test("Fixer apply accepts one multi-class settlement once on first attempt and r
   })(harness.pi as ExtensionAPI);
   await harness.handlers.get("session_start")?.({}, {});
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
-  const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: "reviewer-commit" };
-  const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: "fixer-commit" };
+  const sharedCommit = "shared-commit";
+  const classA = { name: "Reviewer diagnostics", disposition: "completed" as const, searchScope: "reviewer admission and dispatch", exceptions: [], commitSha: sharedCommit };
+  const classB = { name: "Fixer projection", disposition: "completed" as const, searchScope: "fixer output branches", exceptions: [], commitSha: sharedCommit };
   const accepted = await tool.execute("single", { status: "completed", report: "Both classes settled.", classResults: [classA, classB] }, undefined, undefined, toolCallContext([{ id: "single", name: FIXER_OUTPUT_TOOL_NAME }]));
   assert.equal(accepted.terminate, true); assert.deepEqual(accepted.details.classResults, [classA, classB]); assert.equal(audits, 1);
 
-  const duplicateHarness = extensionHarness("fixer", { "ak-fix-packet": "/repair.md", "ak-fixer-phase": "apply" });
-  let duplicateAudits = 0;
-  createRoleRuntimeExtension({ loadJudgeSoul: async()=>"judge", loadFixerSoul: async()=>"fixer", loadFixPacket: async()=>"Repair both admitted classes.", transcriptFromContext:()=>"duplicate", auditSoulCompliance:async()=>({status:"pass"}), auditFixerCompliance:async()=>{duplicateAudits++;return {status:"pass"};} })(duplicateHarness.pi as ExtensionAPI);
-  await duplicateHarness.handlers.get("session_start")?.({}, {}); const duplicateTool=duplicateHarness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(duplicateTool);
-  await assert.rejects(duplicateTool.execute("duplicate", { status:"completed", report:"invalid", classResults:[classA,{...classB,commitSha:classA.commitSha}] }, undefined, undefined, toolCallContext([{id:"duplicate",name:FIXER_OUTPUT_TOOL_NAME}])), /commitSha distinct constraint/);
-  assert.equal(duplicateAudits,0);
+  const rejectionHarness = extensionHarness("fixer", { "ak-fix-packet": "/repair.md", "ak-fixer-phase": "apply" });
+  let rejectionAudits = 0;
+  createRoleRuntimeExtension({ loadJudgeSoul: async()=>"judge", loadFixerSoul: async()=>"fixer", loadFixPacket: async()=>"Repair both admitted classes.", transcriptFromContext:()=>"rejections", auditSoulCompliance:async()=>({status:"pass"}), auditFixerCompliance:async()=>{rejectionAudits++;return {status:"pass"};} })(rejectionHarness.pi as ExtensionAPI);
+  await rejectionHarness.handlers.get("session_start")?.({}, {}); const rejectionTool=rejectionHarness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(rejectionTool);
+  const call = (id: string, candidate: unknown) => rejectionTool.execute(id, candidate, undefined, undefined, toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]));
+  await assert.rejects(call("duplicate-name", { status:"completed", report:"invalid", classResults:[classA,{...classB,name:classA.name}] }), /classResults name unique constraint/);
+  await assert.rejects(call("blank-commit", { status:"completed", report:"invalid", classResults:[classA,{...classB,commitSha:" "}] }), /classResults\[1\]\.commitSha nonblank constraint/);
+  await assert.rejects(call("missing-commit", { status:"completed", report:"invalid", classResults:[classA,{ name: classB.name, disposition: "completed" as const, searchScope: classB.searchScope, exceptions: [] }] }), /classResults\[1\]\.commitSha nonblank constraint/);
+  assert.equal(rejectionAudits, 0);
 });
 
 test("fixer role loads opaque instructions and returns a thin report envelope", async () => {
