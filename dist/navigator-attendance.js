@@ -91,15 +91,17 @@ function issueRoot(value) {
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
-    const cwdIssue = issueRoot(resolve(cwd, "."));
+    const resolvedCwd = resolve(cwd, ".");
+    const cwdIssue = issueRoot(resolvedCwd);
     if (cwdIssue !== void 0) return cwdIssue;
+    if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
   }
   const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
   const issue = issueRoot(resolvedSession);
   if (issue !== void 0) return issue;
   const runsMarker = "/runs/";
   const runsIndex = resolvedSession.indexOf(runsMarker);
-  if (runsIndex >= 0 && resolvedSession.endsWith("/session")) {
+  if (runsIndex >= 0) {
     return resolvedSession.slice(0, runsIndex);
   }
   return resolvedSession;
@@ -109,6 +111,19 @@ function navigatorSubjectKey(subjectRoot, subject) {
   const normalized = subject.trim().replace(/\s+/g, " ");
   if (normalized === "" || normalized === `work subject: ${subjectRoot}`) return subjectRoot;
   return `${subjectRoot}#${createHash("sha256").update(normalized).digest("hex").slice(0, 32)}`;
+}
+function navigatorSubjectKeyForInput(subjectRoot, reference, cwd = process.cwd()) {
+  if (issueRoot(subjectRoot) !== void 0 || !subjectRoot.includes("/.ak/work/")) return subjectRoot;
+  const resolvedReference = resolve(cwd, reference);
+  const marker = "/runs/";
+  const index = resolvedReference.indexOf(marker);
+  if (index >= 0) {
+    const afterRuns = resolvedReference.slice(index + marker.length);
+    const separator = afterRuns.indexOf("/");
+    const workRelativePath = separator < 0 ? afterRuns : afterRuns.slice(separator + 1);
+    if (workRelativePath !== "") return navigatorSubjectKey(subjectRoot, workRelativePath);
+  }
+  return navigatorSubjectKey(subjectRoot, resolvedReference);
 }
 function subjectDirectory(cwd, subjectKey) {
   const issue = issueRoot(subjectKey);
@@ -456,6 +471,7 @@ export {
   navigatorModelSettingPath,
   navigatorSessionDirectory,
   navigatorSubjectKey,
+  navigatorSubjectKeyForInput,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
   registerNavigatorModelCommand,

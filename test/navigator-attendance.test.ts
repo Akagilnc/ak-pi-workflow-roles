@@ -15,6 +15,7 @@ import {
   type NavigatorPreparationSession,
   navigatorSessionDirectory,
   navigatorSubjectKey,
+  navigatorSubjectKeyForInput,
   parseNavigatorModelSetting,
   readNavigatorModelSetting,
   selectNavigatorCandidate,
@@ -355,9 +356,21 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", () 
   assert.notEqual(first, second);
   assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/coder/session", "/repo"), "/repo/.ak/work/ad-hoc");
   assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/reviewer/session", "/repo"), "/repo/.ak/work/ad-hoc");
+  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"), "/repo/.ak/work/ad-hoc");
+  assert.equal(subjectPath("/repo/.ak/work/ad-hoc/runs/reviewer/task.md", "/repo"), "/repo/.ak/work/ad-hoc");
   const adHocRoot = "/repo/.ak/work/ad-hoc";
   assert.equal(navigatorSubjectKey(adHocRoot, "same concrete task"), navigatorSubjectKey(adHocRoot, "same   concrete task"));
   assert.notEqual(navigatorSubjectKey(adHocRoot, "same concrete task"), navigatorSubjectKey(adHocRoot, "different task"));
+  assert.equal(
+    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/task.md", "/repo"),
+    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/reviewer/task.md", "/repo"),
+    "role-specific run folders must not split one ad-hoc subject",
+  );
+  assert.notEqual(
+    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/coder/other-task.md", "/repo"),
+    navigatorSubjectKeyForInput(adHocRoot, "/repo/.ak/work/ad-hoc/runs/reviewer/task.md", "/repo"),
+    "different ad-hoc input subjects remain isolated",
+  );
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
   assert.equal(first.startsWith("/repo/.ak/work/navigator/"), true);
   assert.equal(first.includes("/navigator/navigator"), false);

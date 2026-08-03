@@ -687,6 +687,15 @@ test("cold-installed live help follows the loaded extension and changes on the n
 
         const attendanceModule = await installed("src/navigator-attendance.ts");
         const modelSettingPath = resolve(home, "navigator-model.json");
+        assert.equal(await attendanceModule.readNavigatorModelSetting(resolve(home, "missing-navigator-model.json")), attendanceModule.NAVIGATOR_DEFAULT_MODEL);
+        await attendanceModule.writeNavigatorModelSetting("provider/one:max", modelSettingPath);
+        assert.equal(await attendanceModule.readNavigatorModelSetting(modelSettingPath), "provider/one:max");
+        await attendanceModule.writeNavigatorModelSetting("provider/two", modelSettingPath);
+        assert.equal(await attendanceModule.readNavigatorModelSetting(modelSettingPath), "provider/two");
+        await attendanceModule.writeNavigatorModelSetting("provider/one:max", modelSettingPath);
+        assert.equal(await attendanceModule.readNavigatorModelSetting(modelSettingPath), "provider/one:max");
+        await writeFile(modelSettingPath, JSON.stringify({ model: "provider/one:backup" }), "utf8");
+        assert.throws(() => attendanceModule.parseNavigatorModelSetting("provider/one:backup"), /:max|thinking suffix/);
         await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
         const events: Array<{ command?: string }> = [];
         let prepareTool: any;
@@ -762,6 +771,8 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       let navigatorCalls = 0;
       let roleModelCalls = 0;
       let invalidJudge = true;
+      let revisedRoute = false;
+      let preparedAt = 0;
       const preparedLatencyMs: number[] = [];
       let followUpObservations = 0;
       let attendanceSamples = 0;
@@ -769,15 +780,22 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         const names = context.tools?.map((tool) => tool.name) ?? [];
         if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
           navigatorCalls += 1;
+          preparedAt = performance.now();
+          const route = revisedRoute
+            ? [{ role: "judge" as const, phase: null }, { role: "fixer" as const, phase: "apply" as const }, { role: "reviewer" as const, phase: null }]
+            : [{ role: "judge" as const, phase: null }, { role: "reviewer" as const, phase: null }];
+          const next = revisedRoute
+            ? { role: "fixer" as const, phase: "apply" as const }
+            : { role: "reviewer" as const, phase: null };
           return fauxAssistantMessage(
             fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
               candidates: [{
-                id: "production-route",
+                id: revisedRoute ? "revised-production-route" : "production-route",
                 matches: { role: "judge", phase: null, kind: "accepted" },
-                route: [{ role: "judge", phase: null }, { role: "reviewer", phase: null }],
-                next: { role: "reviewer", phase: null },
-                reason: "The current work needs an independent review next.",
-                command: "Usage: pi --ak-role reviewer --help",
+                route,
+                next,
+                reason: revisedRoute ? "New evidence requires a controlled repair." : "The current work needs an independent review next.",
+                command: revisedRoute ? "Usage: pi --ak-role fixer --help" : "Usage: pi --ak-role reviewer --help",
               }],
             }, { id: `navigator-${faux.state.callCount}` }),
             { stopReason: "toolUse" },
@@ -804,7 +822,6 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           roleModelCalls = 0;
           invalidJudge = true;
           faux.setResponses([response, response, response, response]);
-          const preparedStart = performance.now();
           await withInProcessPi({
             cwd: issueRoot,
             agentDir,
@@ -826,14 +843,44 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.equal(event.subjectKey, issueRoot);
             if (sample === 0) assert.ok(event.route);
             else assert.equal(event.route, undefined);
-            assert.deepEqual(event.next, { role: "reviewer", phase: null });
+            assert.deepEqual(event.next, revisedRoute
+              ? { role: "fixer", phase: "apply" }
+              : { role: "reviewer", phase: null });
           });
-          preparedLatencyMs.push(performance.now() - preparedStart);
+          const displayedAt = performance.now();
+          preparedLatencyMs.push(displayedAt - preparedAt);
           attendanceSamples += 1;
           if (roleModelCalls > 2) followUpObservations += 1;
           assert.equal(navigatorCalls, 1, "a correctable role-output error must reuse one Navigator model call");
         }
+        revisedRoute = true;
+        navigatorCalls = 0;
+        roleModelCalls = 0;
+        invalidJudge = false;
+        faux.setResponses([response, response, response]);
+        await withInProcessPi({
+          cwd: issueRoot,
+          agentDir,
+          faux,
+          additionalExtensionPaths: [packageEntrypoint(manifest)],
+          systemPrompt: "NAVIGATOR ENTRYPOINT ACCEPTANCE ROUTE REVISION",
+          mode: "print",
+          flags: { "ak-role": "judge" },
+          noTools: "builtin",
+        }, async ({ session, sessionManager }) => {
+          await session.prompt("Exercise a revised route through the unchanged entrypoint.");
+          const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+          assert.equal(attendance.length, 1);
+          const event = (attendance[0] as { details: { route?: unknown; next?: unknown } }).details;
+          assert.deepEqual(event.route, [{ role: "judge", phase: null }, { role: "fixer", phase: "apply" }, { role: "reviewer", phase: null }]);
+          assert.deepEqual(event.next, { role: "fixer", phase: "apply" });
+        });
+        const revisedDisplayedAt = performance.now();
+        assert.ok(revisedDisplayedAt - preparedAt <= 1000, `prepared Navigator presentation took ${revisedDisplayedAt - preparedAt}ms`);
+        assert.equal(navigatorCalls, 1);
+        assert.ok(Math.max(...preparedLatencyMs) <= 1000, "prepared Navigator presentation must remain near one second");
         const followUpRate = attendanceSamples === 0 ? 0 : followUpObservations / attendanceSamples;
+        assert.ok(followUpRate < 0.1, `observed follow-up rate ${(followUpRate * 100).toFixed(1)}% must remain below 10%`);
         process.stderr.write(`[navigator observation] prepared_ms_max=${Math.max(...preparedLatencyMs).toFixed(1)} samples=${attendanceSamples} follow_up_rate=${(followUpRate * 100).toFixed(1)}%\n`);
         if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       const navigatorSession = SessionManager.continueRecent(issueRoot, navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, issueRoot));
@@ -841,9 +888,9 @@ test("normal packaged Navigator presents independently in print and JSON and reu
       const invocations = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
       const settlements = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
       const routes = navigatorEntries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-route");
-      assert.equal(invocations.length, 10);
-      assert.equal(settlements.length, 10);
-      assert.equal(routes.length, 10);
+      assert.equal(invocations.length, 11);
+      assert.equal(settlements.length, 11);
+      assert.equal(routes.length, 11);
       assert.deepEqual((invocations[0] as { data: { role: string; phase: null; subjectKey: string } }).data, {
         invocationId: (routes[0] as { data: { invocationId: string } }).data.invocationId,
         role: "judge",
@@ -851,7 +898,190 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         subjectKey: issueRoot,
       });
       assert.ok(routes.every((entry) => (entry as { data: { subjectKey: string; route: unknown } }).data.subjectKey === issueRoot));
+      assert.deepEqual((routes.at(-1) as { data: { route: unknown } }).data.route, [{ role: "judge", phase: null }, { role: "fixer", phase: "apply" }, { role: "reviewer", phase: null }]);
       assert.ok(settlements.every((entry) => (entry as { data: { kind: string; role: string; phase: null } }).data.kind === "accepted"));
+    },
+  );
+});
+
+test("normal packaged context-loader failure is typed unavailable and preserves the role Receipt", async () => {
+  const manifest = await loadRawPackageManifest();
+  await withHermeticHome(
+    { prefix: "ak-navigator-context-loader-failure-" },
+    async ({ home, agentDir }) => {
+      const issueRoot = resolve(home, ".ak/work/issues/28");
+      await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
+      const faux = fauxProvider({ api: "ak-navigator-context-failure", provider: "ak-navigator-context-failure", tokenSize: { min: 1000, max: 1000 } });
+      await withInProcessPi({
+        cwd: issueRoot,
+        agentDir,
+        faux,
+        additionalExtensionPaths: [packageEntrypoint(manifest)],
+        systemPrompt: "CONTEXT LOADER FAILURE",
+        mode: "json",
+        flags: { "ak-role": "judge" },
+        noTools: "builtin",
+      }, async ({ session, sessionManager }) => {
+        faux.setResponses([
+          fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "context-failure-judge" }), { stopReason: "toolUse" }),
+          fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
+        ]);
+        await session.prompt("The role must still settle when Navigator context loading throws.");
+        const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "context-failure-judge");
+        assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
+        assert.equal(receipt.message.isError, false);
+        assert.deepEqual(receipt.message.details, { judgeStatus: "converged" });
+        const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+        assert.equal(attendance.length, 1);
+        const event = (attendance[0] as { details: { disposition: string; unavailableReason?: string } }).details;
+        assert.equal(event.disposition, "unavailable");
+        assert.match(event.unavailableReason ?? "", /EISDIR|directory/i);
+      });
+    },
+  );
+});
+
+test("normal packaged roles retain typed cross-role Navigator continuity and isolate subjects", async () => {
+  const manifest = await loadRawPackageManifest();
+  await withHermeticHome(
+    { prefix: "ak-navigator-cross-role-integration-" },
+    async ({ home, agentDir }) => {
+      const issueRoot = resolve(home, ".ak/work/ad-hoc");
+      const otherRoot = resolve(home, ".ak/work/other-ad-hoc");
+      await mkdir(resolve(issueRoot, "runs/coder"), { recursive: true });
+      await mkdir(resolve(issueRoot, "runs/fixer"), { recursive: true });
+      await mkdir(resolve(otherRoot, "runs/coder"), { recursive: true });
+      await writeFile(resolve(issueRoot, "authority.md"), "owner authority: keep the work bounded\n", "utf8");
+      await writeFile(resolve(otherRoot, "authority.md"), "other owner authority\n", "utf8");
+      const coderTask = resolve(issueRoot, "runs/coder/task.md");
+      const fixerPacket = resolve(issueRoot, "runs/fixer/task.md");
+      const otherTask = resolve(otherRoot, "runs/coder/task.md");
+      await writeFile(coderTask, "Concrete coder task for the same ad-hoc journey.\n", "utf8");
+      await writeFile(fixerPacket, "Concrete fixer packet for the same ad-hoc journey.\n", "utf8");
+      await writeFile(otherTask, "Different ad-hoc task.\n", "utf8");
+      const faux = fauxProvider({
+        api: "ak-navigator-cross-role-offline",
+        provider: "ak-navigator-cross-role-offline",
+        tokenSize: { min: 1000, max: 1000 },
+      });
+      const model = faux.getModel();
+      const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      await writeNavigatorModelSetting(`${model.provider}/${model.id}`, resolve(agentDir, "navigator-model.json"));
+      let sharedSubjectKey: string | undefined;
+      let isolatedSubjectKey: string | undefined;
+      let navigatorPrompt = "";
+      const response = (context: Context) => {
+        const names = context.tools?.map((tool) => tool.name) ?? [];
+        const prompt = context.messages.map((message) => typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n")).join("\n");
+        if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
+          navigatorPrompt = prompt;
+          const fixer = prompt.includes('"role":"fixer"');
+          const route = fixer
+            ? [{ role: "fixer" as const, phase: "plan" as const }, { role: "reviewer" as const, phase: null }]
+            : [{ role: "coder" as const, phase: "plan" as const }, { role: "fixer" as const, phase: "plan" as const }];
+          const next = fixer
+            ? { role: "reviewer" as const, phase: null }
+            : { role: "fixer" as const, phase: "plan" as const };
+          return fauxAssistantMessage(fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
+            candidates: [{
+              id: fixer ? "fixer-plan-route" : "coder-plan-route",
+              matches: { role: fixer ? "fixer" : "coder", phase: "plan", kind: "accepted" },
+              route,
+              next,
+              reason: "typed cross-role route",
+              command: fixer ? "Usage: pi --ak-role reviewer --help" : "Usage: pi --ak-role fixer --ak-fixer-phase plan --help",
+            }],
+          }), { stopReason: "toolUse" });
+        }
+        if (names.includes(SOUL_AUDIT_TOOL_NAME) || names.includes(FIXER_AUDIT_TOOL_NAME)) {
+          const auditTool = names.includes(FIXER_AUDIT_TOOL_NAME) ? FIXER_AUDIT_TOOL_NAME : SOUL_AUDIT_TOOL_NAME;
+          return fauxAssistantMessage(fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
+        }
+        if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
+          return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
+        }
+        if (names.includes(FIXER_OUTPUT_TOOL_NAME)) {
+          return fauxAssistantMessage(fauxToolCall(FIXER_OUTPUT_TOOL_NAME, { status: "planned", report: "typed plan" }), { stopReason: "toolUse" });
+        }
+        return fauxAssistantMessage(fauxToolCall(CODER_OUTPUT_TOOL_NAME, { status: "planned", report: "typed plan" }), { stopReason: "toolUse" });
+      };
+
+      faux.setResponses([response, response]);
+      await withInProcessPi({
+        cwd: issueRoot,
+        agentDir,
+        faux,
+        additionalExtensionPaths: [packageEntrypoint(manifest)],
+        systemPrompt: "CROSS ROLE CODER",
+        mode: "json",
+        flags: { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": coderTask },
+        noTools: "builtin",
+      }, async ({ session, sessionManager }) => {
+        await session.prompt("coder starts the same ad-hoc journey");
+        const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+        assert.equal(messages.length, 1);
+        const event = (messages[0] as { details: { subjectKey: string; next?: unknown } }).details;
+        sharedSubjectKey = event.subjectKey;
+        assert.ok(sharedSubjectKey.includes(issueRoot));
+        assert.deepEqual(event.next, { role: "fixer", phase: "plan" }, JSON.stringify(event));
+        assert.match(navigatorPrompt, /<work_subject>\nConcrete coder task/);
+        assert.match(navigatorPrompt, /<controlling_authority>\nowner authority: keep the work bounded/);
+        assert.doesNotMatch(navigatorPrompt, /typed plan|ak_coder_output/);
+      });
+
+      faux.setResponses([response, response, response]);
+      await withInProcessPi({
+        cwd: issueRoot,
+        agentDir,
+        faux,
+        additionalExtensionPaths: [packageEntrypoint(manifest)],
+        systemPrompt: "CROSS ROLE FIXER",
+        mode: "json",
+        flags: { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": fixerPacket },
+        noTools: "builtin",
+      }, async ({ session, sessionManager }) => {
+        await session.prompt("fixer continues the same ad-hoc journey");
+        const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+        assert.equal(messages.length, 1, JSON.stringify(sessionManager.getEntries()));
+        const event = (messages[0] as { details: { subjectKey: string; next?: unknown } }).details;
+        assert.equal(event.subjectKey, sharedSubjectKey);
+        assert.deepEqual(event.next, { role: "reviewer", phase: null });
+      });
+
+      assert.ok(sharedSubjectKey);
+      const navigatorSession = SessionManager.continueRecent(issueRoot, navigatorSessionDirectory({ cwd: issueRoot, sessionManager: { getSessionDir: () => "" } } as never, sharedSubjectKey));
+      const entries = (await readFile(navigatorSession.getSessionFile()!, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: { role?: string; phase?: string | null; subjectKey?: string } });
+      const invocations = entries.filter((entry) => entry.type === "custom" && entry.customType === "ak-navigator-invocation");
+      assert.deepEqual(invocations.slice(0, 2).map((entry) => ({ role: entry.data?.role, phase: entry.data?.phase, subjectKey: entry.data?.subjectKey })), [
+        { role: "coder", phase: "plan", subjectKey: sharedSubjectKey },
+        { role: "fixer", phase: "plan", subjectKey: sharedSubjectKey },
+      ]);
+
+      faux.setResponses([response, response, response]);
+      await withInProcessPi({
+        cwd: otherRoot,
+        agentDir,
+        faux,
+        additionalExtensionPaths: [packageEntrypoint(manifest)],
+        systemPrompt: "ISOLATED SUBJECT JUDGE",
+        mode: "json",
+        flags: { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": otherTask },
+        noTools: "builtin",
+      }, async ({ session, sessionManager }) => {
+        await session.prompt("coder starts a different subject");
+        const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+        assert.equal(messages.length, 1);
+        const event = (messages[0] as { details: { subjectKey: string; next?: unknown } }).details;
+        isolatedSubjectKey = event.subjectKey;
+        assert.notEqual(isolatedSubjectKey, sharedSubjectKey);
+        assert.deepEqual(event.next, { role: "fixer", phase: "plan" });
+      });
+      assert.notEqual(
+        navigatorSession.getSessionFile(),
+        SessionManager.continueRecent(otherRoot, navigatorSessionDirectory({ cwd: otherRoot, sessionManager: { getSessionDir: () => "" } } as never, isolatedSubjectKey)).getSessionFile(),
+      );
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     },
   );
 });

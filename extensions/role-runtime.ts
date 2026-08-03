@@ -24,6 +24,7 @@ import {
   createNavigatorAttendance,
   navigatorSessionDirectory,
   navigatorSubjectKey,
+  navigatorSubjectKeyForInput,
   registerNavigatorModelCommand,
   subjectPath,
   type NavigatorTargetRole,
@@ -141,19 +142,22 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadNavigatorWorkContext: async (options) => {
       const reference = navigatorInputReference(pi, options.role);
       const input = reference === undefined || options.role === "doctor" ? undefined : await readFile(reference, "utf8");
-      const subjectKey = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
-      const issueRoot = subjectKey.includes("/.ak/work/issues/") ? subjectKey : undefined;
-      const issueFiles = issueRoot === undefined ? [] : [
-        resolve(issueRoot, "authority.md"),
-        resolve(issueRoot, "authority.txt"),
-        resolve(issueRoot, "design-v2/owner-direction.md"),
+      const subjectRoot = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
+      const subjectKey = reference === undefined
+        ? subjectRoot
+        : navigatorSubjectKeyForInput(subjectRoot, reference, options.context.cwd);
+      const workRoot = subjectRoot.includes("/.ak/work/") ? subjectRoot : undefined;
+      const authorityFiles = workRoot === undefined ? [] : [
+        resolve(workRoot, "authority.md"),
+        resolve(workRoot, "authority.txt"),
+        resolve(workRoot, "design-v2/owner-direction.md"),
       ];
-      let issueMaterial: string | undefined;
-      for (const path of issueFiles) {
+      let authorityMaterial: string | undefined;
+      for (const path of authorityFiles) {
         try {
           const content = await readFile(path, "utf8");
           if (content.trim() !== "") {
-            issueMaterial = content;
+            authorityMaterial = content;
             break;
           }
         } catch (error) {
@@ -168,7 +172,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
       // Assigned task/packet/review bytes are the production work seam.  The
       // authority must remain a separately bounded field; task bytes alone are
       // not silently promoted to controlling authority.
-      const authority = navigatorAuthorityFromInput(input ?? "") ?? issueMaterial;
+      const authority = navigatorAuthorityFromInput(input ?? "") ?? authorityMaterial;
       if (authority === undefined || authority.trim() === "") {
         throw new Error("controlling authority content was not supplied as typed work context");
       }

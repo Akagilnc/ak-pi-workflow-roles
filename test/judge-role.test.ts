@@ -793,6 +793,42 @@ test("judge aborts the active operation before rethrowing audit infrastructure f
   assert.equal(abortCalls, 1);
 });
 
+test("packaged infrastructure failure silence correlates the exact output call in either sibling order", async () => {
+  for (const order of ["failure-first", "sibling-first"] as const) {
+    const harness = extensionHarness("judge");
+    const settlements: unknown[] = [];
+    const extension = createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "JUDGE LAW",
+      transcriptFromContext: () => "record",
+      auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
+      createNavigatorAttendance: async () => ({
+        prepare() {},
+        async settle(settlement: unknown) { settlements.push(settlement); },
+        dispose() {},
+      } as never),
+    });
+    extension(harness.pi as ExtensionAPI);
+    const ctx = { sessionManager: SessionManager.inMemory(), cwd: "/repo", mode: "print" } as any;
+    await harness.handlers.get("session_start")?.({}, ctx);
+    const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    const verdict = { judgeStatus: "converged" };
+    await assert.rejects(
+      tool.execute("failed-output", verdict, undefined, undefined, toolCallContext([{ id: "failed-output", arguments: verdict }])),
+      /provider quota exhausted/,
+    );
+    const sibling = { toolName: "read", toolCallId: "sibling", isError: false, details: {} };
+    const failure = { toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "failed-output", isError: true, details: { message: "native provider wording" } };
+    const wrong = { ...failure, toolCallId: "other-output" };
+    await harness.handlers.get("tool_result")?.(wrong, ctx);
+    for (const event of order === "failure-first" ? [failure, sibling] : [sibling, failure]) {
+      await harness.handlers.get("tool_result")?.(event, ctx);
+    }
+    assert.deepEqual(settlements, [{ kind: "role_infrastructure_failure", role: "judge", phase: null }]);
+    await harness.handlers.get("agent_settled")?.({}, ctx);
+  }
+});
+
 test("judge role fails before adjudication when its soul is empty", async () => {
   const harness = extensionHarness("judge");
   const extension = createRoleRuntimeExtension({
