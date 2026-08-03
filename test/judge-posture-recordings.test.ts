@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -51,6 +52,31 @@ async function readJson<T>(path: string): Promise<T> {
 
 function soulDigest(soulText: string): string {
   return createHash("sha256").update(soulText).digest("hex");
+}
+
+function assertPackagedSoulMatchesMeta(
+  meta: Record<string, unknown>,
+  bundleName: string,
+): void {
+  assert.equal(typeof meta.packageSha, "string");
+  assert.equal(typeof meta.soulDigest, "string");
+  let packagedSoul: string;
+  try {
+    packagedSoul = execFileSync(
+      "git",
+      ["show", `${meta.packageSha}:souls/judge.md`],
+      { cwd: root, encoding: "utf8", maxBuffer: 1024 * 1024 },
+    );
+  } catch (error) {
+    assert.fail(
+      `${bundleName} metadata packageSha does not expose packaged souls/judge.md: ${String(error)}`,
+    );
+  }
+  assert.equal(
+    soulDigest(packagedSoul!),
+    meta.soulDigest,
+    `${bundleName} metadata soulDigest must match the Judge Soul packaged at packageSha`,
+  );
 }
 
 function parseJsonlLines(text: string): unknown[] {
@@ -681,6 +707,7 @@ for (const bundleName of ["r-block", "r-ready"] as const) {
 
     const digest = soulDigest(bundle.soulText);
     assert.equal(bundle.meta.soulDigest, digest);
+    assertPackagedSoulMatchesMeta(bundle.meta, bundleName);
     assert.ok(
       sessionContainsSoul(bundle.sessionText, bundle.soulText),
       `${bundleName} session must contain current bundled soul body`,
@@ -698,12 +725,24 @@ for (const bundleName of ["r-block", "r-ready"] as const) {
     // packaging: only existing verdict keys
     for (const key of Object.keys(sole.details)) {
       assert.ok(
-        ["judgeStatus", "fix", "note", "decisionGate"].includes(key),
+        ["judgeStatus", "fix", "classes", "note", "evidence", "decisionGate"].includes(key),
         `unexpected verdict key ${key}`,
       );
     }
   });
 }
+
+test("posture oracle rejects metadata package SHA with mismatched packaged Judge Soul", async () => {
+  const bundle = await loadBundle("r-ready");
+  assert.throws(
+    () =>
+      assertPackagedSoulMatchesMeta(
+        { ...bundle.meta, soulDigest: "0".repeat(64) },
+        "r-ready",
+      ),
+    /packaged at packageSha|soulDigest/i,
+  );
+});
 
 test("posture oracle refuses receipt-only trust without JSONL acceptance", async () => {
   const bundle = await loadBundle("r-ready");

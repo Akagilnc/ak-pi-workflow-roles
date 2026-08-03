@@ -1,6 +1,41 @@
 {
   "judgeStatus": "continue",
   "fix": {
-    "summary": "The plan is not construction-ready. It omits both required behavior oracles and narrows the accepted authority. Amend it with: (1) Behavior covering every cross-leg case—not only a destination leg with no local request/recovery evidence—so evidence owned by leg A cannot enter leg B’s terminal report even when B has its own local evidence; (2) an explicit Red counterexample at the production `buildCollectorReceipt` attempt-to-leg join, using at least two configured legs and leg-A request/recovery proof, that identifies the currently failing observable (leg B’s terminal-report evidence references or their resolved/transitive evidence closure contain leg-A proof); and (3) an explicit Green oracle that leg B’s terminal report contains only evidence admissible for B, excludes leg A’s request comment/attempt and recovery snapshot proof both directly and through referenced snapshots, while leg A retains its own proof and the frozen envelope, markers, and statuses remain unchanged. The stated owner and scope are adequate; helper names, fixture shapes, and library details may remain Apply decisions."
+    "summary": "Add the missing Red counterexample: before the fix, with two configured legs where request/recovery evidence belongs only to leg A and leg B has no local request or recovery evidence, leg A’s evidence appears in leg B’s terminal report. This must be the test’s pre-fix failing observation."
+  },
+  "classes": [
+    {
+      "name": "Missing Red oracle",
+      "owner": "Plan author",
+      "boundary": "Collector receipt attempt-to-leg evidence join",
+      "disposition": "Blocking: state the concrete pre-fix cross-leg terminal-report failure with distinct evidence-owning and contaminated legs."
+    },
+    {
+      "name": "Green behavior",
+      "owner": "Collector receipt attempt-to-leg evidence join",
+      "boundary": "Leg-local request/recovery evidence isolation in terminal reports",
+      "disposition": "Satisfied by the stated behavior: stop such evidence from contaminating a leg with no local evidence; no duplicate Green heading is required."
+    },
+    {
+      "name": "Implementation detail deferral",
+      "owner": "Apply/construction",
+      "boundary": "Helper names, fixture shapes, and library-call choices inside the owning seam",
+      "disposition": "Non-blocking: properly deferred to construction."
+    }
+  ],
+  "note": "Owner and scope are explicit, and current code confirms the owning seam in src/collector-receipt.ts. The accepted authority supplies the isolation rule, while the plan’s Behavior supplies the observable post-fix result. No authority conflict, owner decision, forbidden expansion, or feasibility blocker is evident. The sole start-readiness blocker is the absent pre-fix failing counterexample.",
+  "evidence": {
+    "materials": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/tmp.aztdR62CO2/case-b215ff95/materials.md",
+    "code": [
+      "src/collector-receipt.ts:344-380",
+      "src/collector-receipt.ts:649-692"
+    ],
+    "fiveFacts": {
+      "Behavior": "Present",
+      "Owner": "Present",
+      "Red": "Missing",
+      "Green": "Present in Behavior",
+      "Scope": "Present"
+    }
   }
 }
