@@ -4,9 +4,13 @@ Status: accepted
 
 ## Authority and provenance
 
-Owner 直接决定，2026-08-03 交互 session 原话：
+Owner 直接决定。原话逐字如下（含原有换行与原有的单侧引号）：
 
-> 「我干不动」的格位，这个要加。coder和fixer都应该有。立票
+> 我干不动」的格位，
+>
+> 这个要加。coder和fixer都应该有。立票
+
+出处可核验：Claude Code session `a44e5084-52ea-47d9-90c1-b0863ee81733`，记录 `2026-08-03T01:56:04.202Z`，条目类型 `attachment` / `queued_command`，`origin.kind: "human"`，entrypoint `claude-desktop`。该条是排队提交的人类输入，**不是 `role: "user"` 的消息**，按 role 检索不到。76 秒后 [issue #72](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/72) 被创建（`2026-08-03T01:57:20Z`），可交叉印证。
 
 明确 decision keys：**该终态必须存在**；**两个 worker 角色都要有**。
 
@@ -14,7 +18,7 @@ Owner 直接决定，2026-08-03 交互 session 原话：
 
 ## Decision
 
-Fixer 与 Coder 真干了活、但本次调用干不完时，回执上没有一句能说的真话。Fixer 的合法 blocker 只有 `prerequisite_unmet` 与 `authority_violation`，两者都在断言派单方有毛病；Coder 的 `refused` 连结构都没有。实测中两家厂商的模型走出同一条逃逸路径——先编一个未声明的 prerequisite ID（被 runtime 正确拒收），撞墙后退到无从核对的 `authority_violation`，其 evidence 可被同一修理包、同一考场、更高档位直接证伪。同模型不经角色包的裸调用反而说了实话。**是契约形状把一句诚实的话逼成了假话**，违反本仓失败诚实宪法。
+Fixer 与 Coder 真干了活、但本次调用干不完时，回执上没有一句能说的真话。Fixer 的合法 blocker 只有 `prerequisite_unmet` 与 `authority_violation`，两者都在断言派单方有毛病；Coder 的 `refused` 连结构都没有。于是模型去挑一个能过形状的标签。两家厂商的模型**共有的**只是终点——都落到无从核对的 `authority_violation`。路径并不相同：人造考场的两次独立调用先编了一个未声明的 prerequisite ID（被 runtime 正确拒收）再退到该标签，而生产票 `post-merge-gate-fixer`（sol@low）首次交卷直接就是 `refused` + `authority_violation`。其中一次的 evidence 可被同一修理包、同一考场、更高档位直接证伪。同模型不经角色包的裸调用反而说了实话。**是契约形状把一句诚实的话逼成了假话**，违反本仓失败诚实宪法。
 
 因此新增 `unfinished`，作为交卷回执的 **status 枚举值**，仅在施工阶段合法，要求非空报告与非空的 typed 顶层剩余范围。它只陈述一个事实：本次角色调用未结清。已完成部分保持已提交状态；该终态不诊断原因，也不规定调用者的下一步——后续处置完全归调用者（ADR 0010）。
 
@@ -34,4 +38,4 @@ Fixer 与 Coder 真干了活、但本次调用干不完时，回执上没有一�
 
 ## 不做什么
 
-不新增机械校验、常驻 gate、scanner 或统计机制。不为 Coder 补合规审计——[#77](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/77) 已因无可复现 Red、且与「不新增 gate」相抵而关闭。不改 `partially_completed`、`refused`、`completed`、`planned` 任一既有状态的语义。
+不新增机械校验**去判定「是否真的干不动」**——runtime 已正确拒收过自编的前置条件 ID，闸没坏，是词表缺一格；再加闸只会把模型推向下一个无从核对的格位。这不豁免形状校验：非空 typed 剩余范围、施工阶段限定等仍由边界 Schema 机械拒收。不新增常驻 gate、scanner 或统计机制。不为 Coder 补合规审计——[#77](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/77) 已因无可复现 Red、且与「不新增 gate」相抵而关闭。不改 `partially_completed`、`refused`、`completed`、`planned` 任一既有状态的语义。
