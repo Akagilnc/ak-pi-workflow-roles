@@ -52,6 +52,18 @@ test("private native session rejects invalid accepted tool lifecycles", async t 
   }
 });
 
+test("Coder unfinished receipt survives accepted lifecycle validation", () => {
+  const unfinished = {
+    status: "unfinished",
+    report: "The adapter is not fully settled.",
+    remainingScope: "the remaining adapter branch",
+  };
+  assert.deepEqual(
+    validateAcceptedLifecycle("ak_coder_output", unfinished, unfinished),
+    unfinished,
+  );
+});
+
 test("one exact ordered call/result lifecycle is accepted and recoverable", async () => {
   const f = await fixture("exact"), transport = createAssistedInvocationTransportV1();
   const live = await transport.invokeRole({ config: f.config, invocationId, piArgv: [f.child], beforeTarget: f.head });
