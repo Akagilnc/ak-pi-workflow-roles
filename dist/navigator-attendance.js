@@ -262,6 +262,42 @@ function formatNavigatorReport(report) {
     `\u547D\u4EE4\uFF1A${oneLine(report.command ?? "")}`
   ].join("\n");
 }
+const SETTLEMENT_NAVIGATION_KEY = "navigation";
+function settlementNavigationFromEvent(event) {
+  if (event.disposition !== "recommendation") return void 0;
+  if (event.next === void 0 || event.reason === void 0 || event.command === void 0) return void 0;
+  return {
+    disposition: "recommendation",
+    ...event.route === void 0 ? {} : { route: event.route },
+    next: event.next,
+    reason: event.reason,
+    command: event.command
+  };
+}
+function appendNavigatorReportToContent(content, reportText) {
+  if (reportText === "") return content.slice();
+  const parts = content.slice();
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part !== void 0 && part.type === "text" && typeof part.text === "string") {
+      parts[index] = { ...part, type: "text", text: `${part.text}
+${reportText}` };
+      return parts;
+    }
+  }
+  return [...parts, { type: "text", text: reportText }];
+}
+function decorateSettlementWithNavigation(event, presentation) {
+  if (presentation === void 0) return void 0;
+  const navigation = settlementNavigationFromEvent(presentation.event);
+  if (navigation === void 0) return void 0;
+  const detailsBase = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details) ? event.details : {};
+  if (Object.hasOwn(detailsBase, SETTLEMENT_NAVIGATION_KEY)) return void 0;
+  return {
+    content: appendNavigatorReportToContent(event.content, formatNavigatorReport(presentation.report)),
+    details: { ...detailsBase, [SETTLEMENT_NAVIGATION_KEY]: navigation }
+  };
+}
 function createNavigatorAttendance(options) {
   let preparation;
   let sessionReady;
@@ -785,9 +821,11 @@ export {
   NAVIGATOR_PREPARE_TOOL_NAME,
   NAVIGATOR_TARGETS,
   NavigatorUnavailableError,
+  SETTLEMENT_NAVIGATION_KEY,
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   createNavigatorPrepareTool,
+  decorateSettlementWithNavigation,
   formatNavigatorReport,
   navigatorModelSettingPath,
   navigatorProviderFailure,
@@ -800,6 +838,7 @@ export {
   readNavigatorModelSetting,
   registerNavigatorModelCommand,
   selectNavigatorCandidate,
+  settlementNavigationFromEvent,
   subjectPath,
   writeNavigatorModelSetting
 };

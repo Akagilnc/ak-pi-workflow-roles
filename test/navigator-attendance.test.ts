@@ -8,10 +8,13 @@ import {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   createNavigatorPrepareTool,
+  decorateSettlementWithNavigation,
   formatNavigatorReport,
   NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NavigatorUnavailableError,
+  SETTLEMENT_NAVIGATION_KEY,
+  settlementNavigationFromEvent,
   writeNavigatorModelSetting,
   NAVIGATOR_TARGETS,
   type NavigatorCandidate,
@@ -549,6 +552,56 @@ test("future arrival is typed and presentation-only", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("settlement decoration carries recommendation only; unavailable and silence stay absent", () => {
+  const base = {
+    content: [{ type: "text" as const, text: "Judge verdict accepted" }],
+    details: { judgeStatus: "converged" },
+  };
+  const recommendationEvent = {
+    version: 1 as const,
+    disposition: "recommendation" as const,
+    invocationId: "i1",
+    role: "judge",
+    phase: null,
+    subjectKey: "/repo",
+    route: [{ role: "judge" as const, phase: null }, { role: "reviewer" as const, phase: null }],
+    next: { role: "reviewer" as const, phase: null },
+    reason: "needs review",
+    command: "Usage: pi --ak-role reviewer --help",
+  };
+  const decorated = decorateSettlementWithNavigation(base, {
+    event: recommendationEvent,
+    report: {
+      disposition: "recommendation",
+      route: recommendationEvent.route,
+      next: recommendationEvent.next,
+      reason: recommendationEvent.reason,
+      command: recommendationEvent.command,
+    },
+  });
+  assert.ok(decorated);
+  assert.deepEqual(decorated.details, {
+    judgeStatus: "converged",
+    [SETTLEMENT_NAVIGATION_KEY]: settlementNavigationFromEvent(recommendationEvent),
+  });
+  assert.match((decorated.content[0] as { text: string }).text, /下一步：reviewer/);
+  assert.equal(
+    decorateSettlementWithNavigation(base, {
+      event: { ...recommendationEvent, disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" },
+      report: { disposition: "unavailable", unavailableReason: "x", unavailableSource: "model", unavailableCause: "model" },
+    }),
+    undefined,
+  );
+  assert.equal(decorateSettlementWithNavigation(base, undefined), undefined);
+  assert.equal(
+    decorateSettlementWithNavigation(base, {
+      event: { ...recommendationEvent, disposition: "silence" },
+      report: { disposition: "silence" },
+    }),
+    undefined,
+  );
 });
 
 test("session placement is stable, colocated, and isolates ad hoc subjects", () => {

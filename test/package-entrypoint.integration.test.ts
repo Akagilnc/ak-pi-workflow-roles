@@ -156,7 +156,10 @@ test("ordinary Navigator attendance is absent at the pinned pre-Issue-28 baselin
     assert.equal(run.result.code, 0, `${label} ordinary invocation must succeed: ${run.result.stderr}`);
     const accepted = run.roleEntries.filter((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
     assert.equal(accepted.length, 1, `${label} must persist the accepted Judge output result`);
-    assert.deepEqual(accepted[0]?.message?.details, { judgeStatus: "converged" });
+    assert.equal(accepted[0]?.message?.details?.judgeStatus, "converged");
+    if (label === "baseline") {
+      assert.deepEqual(accepted[0]?.message?.details, { judgeStatus: "converged" });
+    }
   }
   const baselineVisible = baseline.roleEntries.filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
   assert.equal(baselineVisible.length, 0, "pinned pre-Issue-28 ordinary invocation must have no Navigator attendance");
@@ -165,11 +168,29 @@ test("ordinary Navigator attendance is absent at the pinned pre-Issue-28 baselin
   const currentPreparation = current.navigatorEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === NAVIGATOR_PREPARE_TOOL_NAME && entry.message.isError === false);
   const currentSettlement = current.navigatorEntries.find((entry) => entry.type === "custom" && entry.customType === "ak-navigator-settlement");
   const currentVisible = current.roleEntries.find((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
-  const currentAccepted = current.roleEntries.find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
+  const currentAccepted = [...current.roleEntries].reverse().find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME && entry.message.isError === false);
   assert.ok(currentPreparation?.timestamp, "current invocation must persist Navigator preparation completion");
   assert.ok(currentSettlement?.timestamp, "current invocation must persist Navigator settlement");
   assert.ok(currentVisible?.timestamp, "current invocation must persist the visible custom message");
   assert.ok(currentAccepted?.timestamp, "current invocation must persist the actual accepted role output result");
+  // Canonical last-ak_*_output extraction (stdout discarded by runPiSubprocess capture only for status):
+  // recommendation must ride the settlement record itself.
+  const visibleDisposition = (currentVisible as { details?: { disposition?: string; next?: unknown; reason?: string } })?.details?.disposition;
+  const settlementDetails = currentAccepted?.message?.details as {
+    judgeStatus?: string;
+    navigation?: { disposition?: string; next?: unknown; reason?: string; command?: string; route?: unknown };
+  };
+  assert.equal(settlementDetails?.judgeStatus, "converged");
+  if (visibleDisposition === "recommendation") {
+    assert.equal(settlementDetails?.navigation?.disposition, "recommendation");
+    assert.deepEqual(settlementDetails?.navigation?.next, (currentVisible as { details?: { next?: unknown } }).details?.next);
+    assert.equal(typeof settlementDetails?.navigation?.reason, "string");
+    assert.equal(typeof settlementDetails?.navigation?.command, "string");
+  } else {
+    // unavailable / silence: navigation field absent; Receipt otherwise pure
+    assert.equal(Object.hasOwn(settlementDetails ?? {}, "navigation"), false);
+    assert.deepEqual(settlementDetails, { judgeStatus: "converged" });
+  }
   const preparationAt = Date.parse(currentPreparation.timestamp!);
   const settlementAt = Date.parse(currentSettlement.timestamp!);
   const visibleAt = Date.parse(currentVisible.timestamp!);
@@ -1064,6 +1085,31 @@ test("normal packaged Navigator presents independently in print and JSON and reu
             assert.deepEqual(event.next, revisedRoute
               ? { role: "fixer", phase: "apply" }
               : { role: "reviewer", phase: null });
+            // One mandatory extraction: last accepted ak_*_output settlement carries navigation.
+            const lastSettlement = [...sessionManager.getEntries()].reverse().find((entry) =>
+              entry.type === "message"
+              && entry.message.role === "toolResult"
+              && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME
+              && entry.message.isError === false);
+            assert.ok(lastSettlement?.type === "message" && lastSettlement.message.role === "toolResult");
+            const settlementMessage = lastSettlement.message;
+            const settlementDetails = settlementMessage.details as {
+              judgeStatus?: string;
+              navigation?: { disposition?: string; route?: unknown; next?: unknown; reason?: string; command?: string };
+            };
+            assert.equal(settlementDetails.judgeStatus, "converged");
+            assert.equal(settlementDetails.navigation?.disposition, "recommendation");
+            assert.deepEqual(settlementDetails.navigation?.next, event.next);
+            if (sample === 0) assert.ok(settlementDetails.navigation?.route);
+            else assert.equal(settlementDetails.navigation?.route, undefined);
+            assert.equal(typeof settlementDetails.navigation?.reason, "string");
+            assert.equal(typeof settlementDetails.navigation?.command, "string");
+            const settlementText = settlementMessage.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.type === "text" ? part.text : "")
+              .join("\n");
+            assert.match(settlementText, /下一步：/);
+            assert.match(settlementText, /理由：/);
           });
           const displayedAt = performance.now();
           preparedLatencyMs.push(displayedAt - preparedAt);
@@ -1092,6 +1138,15 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           const event = (attendance[0] as { details: { route?: unknown; next?: unknown } }).details;
           assert.deepEqual(event.route, [{ role: "judge", phase: null }, { role: "fixer", phase: "apply" }, { role: "reviewer", phase: null }]);
           assert.deepEqual(event.next, { role: "fixer", phase: "apply" });
+          const lastSettlement = [...sessionManager.getEntries()].reverse().find((entry) =>
+            entry.type === "message"
+            && entry.message.role === "toolResult"
+            && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME
+            && entry.message.isError === false);
+          assert.ok(lastSettlement?.type === "message" && lastSettlement.message.role === "toolResult");
+          const navigation = (lastSettlement.message.details as { navigation?: { route?: unknown; next?: unknown } }).navigation;
+          assert.deepEqual(navigation?.route, event.route);
+          assert.deepEqual(navigation?.next, event.next);
         });
         const revisedDisplayedAt = performance.now();
         assert.ok(revisedDisplayedAt - preparedAt <= 1000, `prepared Navigator presentation took ${revisedDisplayedAt - preparedAt}ms`);
@@ -1201,11 +1256,22 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
             await prompt.catch(() => undefined);
             assert.equal(promptFinished, true);
             const attendance = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
+            const lastOutput = [...sessionManager.getEntries()].reverse().find((entry) =>
+              entry.type === "message"
+              && entry.message.role === "toolResult"
+              && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
             if (outcome === "recommendation") {
               assert.equal(attendance.length, 1);
               assert.equal((attendance[0] as { details: { disposition: string } }).details.disposition, "recommendation");
+              assert.ok(lastOutput?.type === "message" && lastOutput.message.role === "toolResult" && lastOutput.message.isError === false);
+              const navigation = (lastOutput.message.details as { navigation?: { disposition?: string; next?: unknown } }).navigation;
+              assert.equal(navigation?.disposition, "recommendation");
+              assert.deepEqual(navigation?.next, { role: "reviewer", phase: null });
             } else {
               assert.equal(attendance.length, 0, `${outcome} must remain typed silence`);
+              if (lastOutput?.type === "message" && lastOutput.message.role === "toolResult") {
+                assert.equal(Object.hasOwn((lastOutput.message.details as object | undefined) ?? {}, "navigation"), false, `${outcome} settlement must omit navigation`);
+              }
             }
             assert.equal(navigatorCalls, 1, "no late or overlapping Navigator call may occur after release");
           });
@@ -1818,6 +1884,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
             options: ["Soul", "Controlling authority"],
           },
         });
+        assert.equal(Object.hasOwn(toolResult.details as object, "navigation"), false, "intentional silence must omit settlement navigation");
         assert.equal(isAuditEscalationResult(toolResult.details), true);
         assert.throws(
           () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),
