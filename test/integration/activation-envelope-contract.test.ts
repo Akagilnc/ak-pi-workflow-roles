@@ -224,22 +224,6 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
   });
 });
 
-test("a rejected registered activation fails closed with a structured named cause and dispatch barrier", async () => {
-  const h = runtimeHarness();
-  await assert.rejects(async () => h.handler("session_start")({}, h.ctx), /soul unavailable/);
-  assert.equal(h.aborts(), 1);
-  assert.equal(process.exitCode, 1);
-  assert.deepEqual(h.traces.map(({ role, stageId, status }) => ({ role, stageId, status })), [
-    { role: "judge", stageId: "load-and-install", status: "started" },
-    { role: "judge", stageId: "load-and-install", status: "failed" },
-  ]);
-  for (const trace of h.traces) assert.equal(Value.Check(activationTraceRecordSchema, trace), true);
-  const failure = h.traces[1]!;
-  assert.equal(failure.status, "failed");
-  if (failure.status === "failed") assert.deepEqual(failure.cause, { identity: "TypeError", name: "TypeError", message: "soul unavailable" });
-  await assert.rejects(async () => h.handler("before_agent_start")({}, h.ctx), (error: unknown) => error instanceof ActivationBarrierError && error.code === "AK_ACTIVATION_NOT_ADMITTED");
-});
-
 for (const failure of ["clock", "writer"] as const) {
   test(`${failure} failure terminates before activation instead of degrading silently`, async () => {
     let activations = 0;

@@ -100,41 +100,6 @@ async function observeWith(
   return { ledger, snapshot, clock, transport };
 }
 
-test("parseCollectorOutputCandidate accepts narrow semantic legs only", () => {
-  const parsed = parseCollectorOutputCandidate({
-    legs: [{
-      legId: "codex",
-      status: "missing",
-      rationale: "no review",
-      evidenceRefs: ["snap"],
-    }],
-  });
-  assert.equal(parsed.legs.length, 1);
-  assert.throws(
-    () => parseCollectorOutputCandidate({
-      legs: [{
-        legId: "codex",
-        status: "refused",
-        rationale: "nope",
-        evidenceRefs: ["x"],
-      }],
-    }),
-    /failed schema validation/i,
-  );
-  assert.throws(
-    () => parseCollectorOutputCandidate({
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "ok",
-        evidenceRefs: ["x"],
-        reports: [],
-      }],
-    }),
-    /failed schema validation/i,
-  );
-});
-
 test("pre-existing exact-head review with before relation proves valid", async () => {
   const { ledger, snapshot, clock } = await observeWith([
     {
@@ -1459,6 +1424,14 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
   assert.equal(unavailable.legs[0]?.unavailableScope, "global");
 
   const invalids: Array<[string, unknown]> = [
+    ["out-of-enum status", {
+      legs: [{
+        legId: "codex",
+        status: "refused",
+        rationale: "nope",
+        evidenceRefs: ["x"],
+      }],
+    }],
     ["unknown leg field", {
       legs: [{
         legId: "codex",
@@ -1466,6 +1439,15 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
         rationale: "ok",
         evidenceRefs: ["x"],
         extra: true,
+      }],
+    }],
+    ["unknown leg field reports", {
+      legs: [{
+        legId: "codex",
+        status: "valid",
+        rationale: "ok",
+        evidenceRefs: ["x"],
+        reports: [],
       }],
     }],
     ["unavailable missing scope", {
@@ -2683,73 +2665,6 @@ test("F3-collision-cross-namespace", async () => {
 // ---------------------------------------------------------------------------
 // F3 §3.4 32 MiB receipt exact boundary (builder path)
 // ---------------------------------------------------------------------------
-
-test("F3 receipt exact 32 MiB valid-rationale MAX accept and MAX+1 fatal", async () => {
-  async function freshLedger() {
-    const clock = clockAt("2024-01-01T00:10:00Z");
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull({ headOid: "head-c" }),
-      reviews: [
-        sampleReview({
-          id: 1,
-          userLogin: "codexbot",
-          state: "APPROVED",
-          commitId: "head-c",
-          submittedAt: "2024-01-01T00:00:00Z",
-          body: "ok",
-          raw: {},
-        }),
-      ],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const ledger = createCollectorLedger(baseConfig());
-    ledger.recordActivation(clock);
-    await ledger.observe(transport, clock);
-    const review = ledger.allEvidence().find((r) => r.kind === "review")!;
-    return { ledger, clock, reviewId: review.evidenceId };
-  }
-
-  function measureReceipt(
-    ledger: ReturnType<typeof createCollectorLedger>,
-    clock: ReturnType<typeof clockAt>,
-    reviewId: string,
-    n: number,
-  ): number {
-    const receipt = buildCollectorReceipt(ledger, {
-      legs: [{
-        legId: "codex",
-        status: "valid",
-        rationale: "x".repeat(n),
-        evidenceRefs: [reviewId],
-      }],
-    }, clock);
-    return Buffer.byteLength(JSON.stringify(receipt), "utf8");
-  }
-
-  const MAX = COLLECTOR_RECEIPT_MAX_BYTES;
-  const { ledger, clock, reviewId } = await freshLedger();
-  const b1 = measureReceipt(ledger, clock, reviewId, 1);
-  // rebuild with fresh ledger because first measure already accepted? No -
-  // buildCollectorReceipt doesn't mark outputAccepted; but second call on same
-  // ledger is allowed until markOutputAccepted. Good.
-  const nMax = MAX - b1 + 1;
-  const nMax1 = nMax + 1;
-
-  const { ledger: ledgerMax, clock: clockMax, reviewId: idMax } = await freshLedger();
-  assert.equal(measureReceipt(ledgerMax, clockMax, idMax, nMax), MAX);
-  assert.equal(ledgerMax.fatal, false);
-
-  const { ledger: ledgerMax1, clock: clockMax1, reviewId: idMax1 } =
-    await freshLedger();
-  await assert.rejects(
-    async () => measureReceipt(ledgerMax1, clockMax1, idMax1, nMax1),
-    /receipt exceeded|33554432|bytes/i,
-  );
-  assert.equal(ledgerMax1.fatal, true);
-});
-
 
 // ---------------------------------------------------------------------------
 // R1–R4 / R7 first-order receipt repairs

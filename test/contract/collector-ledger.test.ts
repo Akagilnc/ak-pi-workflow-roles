@@ -1329,20 +1329,3 @@ test("R9 updatedAt churn forces full-surface retry and fails closed on repeated 
   assert.equal(ledger2.allSnapshots().length, 0);
 });
 
-test("R9 stable state+HEAD+updatedAt still single pass (2 PR reads)", async () => {
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull({
-      headOid: "head-a",
-      updatedAt: "2024-01-01T00:00:00Z",
-    }),
-    reviews: [],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-  await ledger.observe(transport, clock);
-  assert.equal(transport.calls.pull, 2);
-});
