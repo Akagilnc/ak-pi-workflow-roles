@@ -75,19 +75,22 @@ test("preflight rejection can be corrected, starts no rejected runner, and accep
 });
 
 test("registered Agent rejection text names the violated proposal or pinned-evidence constraint", async()=>{
-  const cases: Array<{ expected: RegExp; candidate?: ReviewerProposalV1; overrides?: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> }> = [
-    { expected: /base\.revision must be a nonempty string/, candidate: { ...proposal(), base: { revision: "" } } },
-    { expected: /materials entry requires a safe id/, candidate: { ...proposal(), materials: [{ id: "bad id", repositoryPath: "RULES.md" }] } },
-    { expected: /required\.tools\/prerequisiteOperations/, candidate: { ...proposal(), required: { standards: { tools: ["write"], prerequisiteOperations: operations } } as any } },
-    { expected: /missing preflight\.git\.derive-range/, overrides: { loadCapabilities: async()=>new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash"],prerequisiteOperations:operations.filter(x=>x!=="preflight.git.derive-range")})) } },
-    { expected: /derived range must match the resolved base and pinned target/, overrides: { createPinnedGitReader: async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"wrong",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}) } },
-    { expected: /repeated prompt compilation must produce the same prompt identity/, overrides: { compilePrompt: (()=>{let pass=0;return (text:string)=>reviewerPromptIdentity(`${text}${++pass===1?"":"changed"}`);})() } },
-    { expected: /pinned target snapshot changed before child execution/, overrides: { createPinnedGitReader: async()=>{let observations=0;return {pin,snapshot:async()=>++observations===1?{...pin,targetHead:"other"}:pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}} } },
+  // Typed codes are the contract owner; free-text diagnostic wording is presentation.
+  const cases: Array<{ code: string; candidate?: ReviewerProposalV1; overrides?: Partial<Parameters<typeof createReviewerRoleRuntime>[1]> }> = [
+    { code: "base-invalid", candidate: { ...proposal(), base: { revision: "" } } },
+    { code: "material-invalid", candidate: { ...proposal(), materials: [{ id: "bad id", repositoryPath: "RULES.md" }] } },
+    { code: "capability-invalid", candidate: { ...proposal(), required: { standards: { tools: ["write"], prerequisiteOperations: operations } } as any } },
+    { code: "prerequisite-missing", overrides: { loadCapabilities: async()=>new TextEncoder().encode(JSON.stringify({version:1,taskSha256:digest,tools:["read","bash"],prerequisiteOperations:operations.filter(x=>x!=="preflight.git.derive-range")})) } },
+    { code: "range-invalid", overrides: { createPinnedGitReader: async()=>({pin,snapshot:async()=>pin,resolve:async()=>"base",range:async()=>({base:"wrong",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}) } },
+    { code: "prompt-identity-mismatch", overrides: { compilePrompt: (()=>{let pass=0;return (text:string)=>reviewerPromptIdentity(`${text}${++pass===1?"":"changed"}`);})() } },
+    { code: "target-drift", overrides: { createPinnedGitReader: async()=>{let observations=0;return {pin,snapshot:async()=>++observations===1?{...pin,targetHead:"other"}:pin,resolve:async()=>"base",range:async()=>({base:"base",target:"target",diffCommand,diffSha256:"1".repeat(64),commits:["target"]}),material:async path=>new TextEncoder().encode(path)}} } },
   ];
   for (const row of cases) {
     const reviewerHarness=setup(row.overrides); await reviewerHarness.runtime.activate();
     const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("bad",row.candidate??proposal(),undefined,undefined,{} as ExtensionContext);
-    assert.equal(result.details.status,"rejected"); assert.match(result.content[0].text,row.expected); assert.equal(reviewerHarness.starts,0);
+    assert.equal(result.details.status,"rejected");
+    assert.deepEqual(result.details.violations, [row.code]);
+    assert.equal(reviewerHarness.starts,0);
   }
 });
 

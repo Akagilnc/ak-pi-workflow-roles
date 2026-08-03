@@ -61,31 +61,37 @@ test("Fixer projects semantic settlements despite presentation trivia", () => {
 });
 
 test("Fixer hard-cuts legacy leaves and enforces semantic plan/apply unions", () => {
-  const invalid = [
-    ["apply", { status: "completed", report: "old", commitSha: shaA }],
-    ["apply", { status: "completed", report: "old", classesRepaired: [] }],
-    ["plan", { status: "planned", report: "x", classResults: [completed()] }],
-    ["plan", { status: "partially_completed", report: "x" }],
-    ["plan", { status: "unfinished", report: "x", remainingScope: "later" }],
-    ["apply", { status: "planned", report: "x" }],
-    ["apply", { status: "unfinished", report: "x", remainingScope: " " }],
-    ["apply", { status: "unfinished", report: "x", remainingScope: "later", classResults: [] }],
-    ["apply", { status: "unfinished", report: "x", remainingScope: "later", classResults: [refused()] }],
-    ["plan", { status: "refused", report: "x", remainingScope: " ", blocker: { cause: "prerequisite_unmet", prerequisiteId: "repository.ready", evidence: "x" } }],
-    ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "prerequisite_unmet", evidence: "x" } }],
-    ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "safety", evidence: "x" } }],
-    ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }],
-    ["apply", { status: "completed", report: "x", classResults: [completed("A", " ")] }],
-    ["apply", { status: "completed", report: "x", classResults: [{ name: "A", disposition: "completed", searchScope: "all parser entry points", exceptions: [] }] }],
-    ["apply", { status: "partially_completed", report: "unfinished", classResults: [completed()] }],
-    ["apply", { status: "partially_completed", report: "unfinished", classResults: [refused()] }],
-    ["apply", { status: "completed", report: "mixed", classResults: [completed(), refused()] }],
-    ["apply", { status: "refused", report: "mixed", classResults: [completed(), refused()] }],
-  ] as const;
-  for (const [phase, output] of invalid) {
-    assert.throws(() => validateFixerOutput(output, phase), /Fixer/);
+  // Per-row diagnostics name the violated field/constraint (absorbed from the
+  // former standalone "every surviving Fixer rejection names..." carrier).
+  const invalid: Array<readonly ["plan" | "apply", unknown, RegExp]> = [
+    ["apply", { status: "completed", report: "old", commitSha: shaA }, /Fixer/],
+    ["apply", { status: "completed", report: "old", classesRepaired: [] }, /Fixer/],
+    ["plan", { status: "planned", report: "x", classResults: [completed()] }, /Fixer/],
+    ["plan", { status: "partially_completed", report: "x" }, /Fixer/],
+    ["plan", { status: "unfinished", report: "x", remainingScope: "later" }, /Fixer/],
+    ["apply", { status: "planned", report: "x" }, /Fixer/],
+    ["apply", { status: "unfinished", report: "x", remainingScope: " " }, /Fixer/],
+    ["apply", { status: "unfinished", report: "x", remainingScope: "later", classResults: [] }, /Fixer/],
+    ["apply", { status: "unfinished", report: "x", remainingScope: "later", classResults: [refused()] }, /Fixer/],
+    ["plan", { status: "refused", report: "x", remainingScope: " ", blocker: { cause: "prerequisite_unmet", prerequisiteId: "repository.ready", evidence: "x" } }, /Fixer/],
+    ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "prerequisite_unmet", evidence: "x" } }, /Fixer/],
+    ["plan", { status: "refused", report: "x", remainingScope: "x", blocker: { cause: "safety", evidence: "x" } }, /Fixer/],
+    ["apply", { status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }, /classResults.*name.*unique/i],
+    ["apply", { status: "completed", report: "x", classResults: [completed("A", " ")] }, /classResults\[0\]\.commitSha nonblank/i],
+    ["apply", { status: "completed", report: "x", classResults: [{ name: "A", disposition: "completed", searchScope: "all parser entry points", exceptions: [] }] }, /classResults\[0\]\.commitSha nonblank/i],
+    ["apply", { status: "partially_completed", report: "unfinished", classResults: [completed()] }, /Fixer/],
+    ["apply", { status: "partially_completed", report: "unfinished", classResults: [refused()] }, /Fixer/],
+    ["apply", { status: "completed", report: "mixed", classResults: [completed(), refused()] }, /Fixer/],
+    ["apply", { status: "refused", report: "mixed", classResults: [completed(), refused()] }, /Fixer/],
+    ["apply", { status: "completed", report: " ", classResults: [completed()] }, /report.*nonblank/i],
+    ["apply", { status: "completed", report: "x", classResults: [{ name: "A" }] }, /classResults.*disposition/i],
+  ];
+  for (const [phase, output, diagnostic] of invalid) {
+    assert.throws(() => validateFixerOutput(output, phase), diagnostic);
   }
 });
+
+// Absorbed: field-naming negatives now live as diagnostic rows in the hard-cuts table above.
 
 test("Fixer rejects branch-incompatible semantic fields while ignoring presentation decoration", () => {
   const contradictions = [
@@ -100,10 +106,4 @@ test("Fixer rejects branch-incompatible semantic fields while ignoring presentat
   assert.deepEqual(validateFixerOutput({ ...legal[1]!.output, presentation: { commitSha: shaA }, blocker: { ...(legal[1]!.output as any).blocker, note: "display only" } }, "plan"), legal[1]!.output);
 });
 
-test("every surviving Fixer rejection names its violated field or constraint", () => {
-  assert.throws(() => validateFixerOutput({ status: "completed", report: " ", classResults: [completed()] }, "apply"), /report.*nonblank/i);
-  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [completed("A"), completed("A", shaB)] }, "apply"), /classResults.*name.*unique/i);
-  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [completed("A", " ")] }, "apply"), /classResults\[0\]\.commitSha nonblank/i);
-  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [{ name: "A", disposition: "completed", searchScope: "all parser entry points", exceptions: [] }] }, "apply"), /classResults\[0\]\.commitSha nonblank/i);
-  assert.throws(() => validateFixerOutput({ status: "completed", report: "x", classResults: [{ name: "A" }] }, "apply"), /classResults.*disposition/i);
-});
+
