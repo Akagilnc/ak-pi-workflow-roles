@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, type ExtensionContext, type ExtensionAPI, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
@@ -25,6 +26,13 @@ export type NavigatorSettlement =
   | { kind: "accepted"; role: string; phase: NavigatorPhase; status?: string }
   | { kind: "human_decision"; role: string; phase: NavigatorPhase; status: string }
   | { kind: "role_infrastructure_failure"; role: string; phase: NavigatorPhase };
+
+export type NavigatorWorkContext = {
+  subjectKey: string;
+  subject: string;
+  authority: string;
+  contextError?: unknown;
+};
 
 export type NavigatorRouteTarget = { role: NavigatorTargetRole; phase: NavigatorPhase };
 export type NavigatorCandidate = {
@@ -83,7 +91,7 @@ export type NavigatorPreparationSession = {
   prompt(text: string): Promise<void>;
   appendEntry(customType: string, data: unknown): void;
   entries(): readonly unknown[];
-  setModel?(model: string): Promise<void>;
+  setModel?(model: string, thinkingLevel: "off" | "max"): Promise<void>;
   dispose(): void;
 };
 
@@ -105,11 +113,14 @@ export type NavigatorAttendanceOptions = {
   modelSettingPath?: string;
   subject: string;
   authority: string;
+  contextError?: unknown;
+  sessionDirectory?: (subjectKey: string) => string;
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
 };
 
 const ROUTE_ENTRY = "ak-navigator-route";
 const INVOCATION_ENTRY = "ak-navigator-invocation";
+const SETTLEMENT_ENTRY = "ak-navigator-settlement";
 const targetRoles = new Set<string>(NAVIGATOR_TARGETS.map(({ role }) => role));
 
 function exactRecord(value: unknown): value is Record<string, unknown> {
@@ -164,16 +175,24 @@ function targetText(target: NavigatorRouteTarget): string {
 function oneLine(value: string): string {
   return value.split(/\r?\n/, 1)[0]!.trim();
 }
-function subjectPath(sessionDir: string): string {
-  const marker = `${join(".ak", "work", "issues")}${"/"}`;
-  const normalized = sessionDir.replaceAll("\\", "/");
+function issueRoot(value: string): string | undefined {
+  const normalized = value.replaceAll("\\", "/");
+  const marker = ".ak/work/issues/";
   const index = normalized.indexOf(marker);
-  if (index >= 0) {
-    const rest = normalized.slice(index + marker.length);
-    const issue = rest.split("/")[0];
-    if (issue) return normalized.slice(0, index + marker.length) + issue;
-  }
-  return sessionDir;
+  if (index < 0) return undefined;
+  const issue = normalized.slice(index + marker.length).split("/")[0];
+  return issue === undefined || issue === "" ? undefined : normalized.slice(0, index + marker.length) + issue;
+}
+
+function subjectPath(sessionDir: string, cwd = process.cwd()): string {
+  return issueRoot(sessionDir) ?? (sessionDir === "" ? resolve(cwd, ".ak", "work") : sessionDir);
+}
+
+function subjectDirectory(cwd: string, subjectKey: string): string {
+  const issue = issueRoot(subjectKey);
+  if (issue !== undefined) return join(issue, "runs", "navigator");
+  const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
+  return join(resolve(cwd, ".ak", "work", "navigator"), digest);
 }
 
 export function navigatorModelSettingPath(): string {
@@ -190,18 +209,22 @@ export async function readNavigatorModelSetting(path = navigatorModelSettingPath
   }
 }
 export async function writeNavigatorModelSetting(model: string, path = navigatorModelSettingPath()): Promise<void> {
-  if (model.trim() === "" || !model.includes("/")) throw new Error("Navigator model must be provider/model");
+  const normalized = model.trim();
+  parseNavigatorModelSetting(normalized);
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify({ model: model.trim() }) + "\n", "utf8");
+  await writeFile(path, JSON.stringify({ model: normalized }) + "\n", "utf8");
 }
-function parseModelSetting(value: string): { provider: string; model: string; thinkingLevel: "max" | undefined } {
+export function parseNavigatorModelSetting(value: string): { provider: string; model: string; thinkingLevel: "off" | "max" } {
   const slash = value.indexOf("/");
-  if (slash <= 0 || slash === value.length - 1) throw new Error("Navigator model setting must be provider/model");
+  if (slash <= 0 || slash === value.length - 1) throw new Error("Navigator model setting must be provider/model[:max]");
   const provider = value.slice(0, slash);
   const modelWithThinking = value.slice(slash + 1);
   const colon = modelWithThinking.lastIndexOf(":");
-  const thinkingLevel = colon >= 0 && modelWithThinking.slice(colon + 1) === "max" ? "max" : undefined;
-  return { provider, model: colon >= 0 ? modelWithThinking.slice(0, colon) : modelWithThinking, thinkingLevel };
+  const suffix = colon < 0 ? undefined : modelWithThinking.slice(colon + 1);
+  if (suffix !== undefined && suffix !== "max") throw new Error("Navigator model setting must use :max or omit the thinking suffix");
+  const model = colon < 0 ? modelWithThinking : modelWithThinking.slice(0, colon);
+  if (model === "") throw new Error("Navigator model setting must include a model");
+  return { provider, model, thinkingLevel: suffix === "max" ? "max" : "off" };
 }
 
 export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => void): ToolDefinition {
@@ -240,6 +263,11 @@ export function formatNavigatorReport(report: NavigatorReport): string {
 export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let preparation: Promise<NavigatorCandidate[]> | undefined;
   let session: NavigatorPreparationSession | undefined;
+  let subjectKey = options.subjectKey;
+  let subject = options.subject;
+  let authority = options.authority;
+  let contextError = options.contextError;
+  let sessionDir = options.sessionDir;
   let candidates: NavigatorCandidate[] | undefined;
   let invocationNumber = 0;
   let previousRoute: NavigatorRouteTarget[] | undefined;
@@ -250,16 +278,17 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     disposition: "unavailable",
     unavailableReason: reason instanceof Error ? reason.message : String(reason),
   });
-  const prepare = async (prompt: string): Promise<NavigatorCandidate[]> => {
+  const prepare = async (): Promise<NavigatorCandidate[]> => {
     const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
     try {
+      if (contextError !== undefined) throw contextError;
       const soul = (await options.loadSoul()).trim();
       if (!soul) throw new Error("Navigator soul is empty");
       const [modelSetting, ...help] = await Promise.all([
         readNavigatorModelSetting(options.modelSettingPath),
         ...NAVIGATOR_TARGETS.map(async ({ role }) => ({ role, help: await options.loadRoleHelp(role) })),
       ]);
-      const model = parseModelSetting(modelSetting);
+      const model = parseNavigatorModelSetting(modelSetting);
       const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">\n${text}\n</role_help>`).join("\n");
       let output: PrepareOutput | undefined;
       outputSink = (value) => {
@@ -267,25 +296,24 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         output = value;
       };
       const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
-      session ??= await options.createSession({ context: options.context, sessionDir: options.sessionDir, tool });
-      await session.setModel?.(modelSetting);
+      session ??= await options.createSession({ context: options.context, sessionDir, tool });
+      await session.setModel?.(modelSetting, model.thinkingLevel);
       session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase });
-      const prior = session.entries().filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === options.subjectKey).at(-1)?.data;
+      const prior = session.entries().filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
       if (exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
         previousRoute = prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }));
       }
       const request = [
         "Act as the Navigator route judge. Prepare distinct typed route candidates; do not execute or invoke any role.",
         `<navigator_soul>\n${soul}\n</navigator_soul>`,
-        `<work_subject>\n${options.subject}\n</work_subject>`,
-        `<controlling_authority>\n${options.authority}\n</controlling_authority>`,
+        `<work_subject>\n${subject}\n</work_subject>`,
+        `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
         `<prior_route>\n${JSON.stringify(prior ?? null)}\n</prior_route>`,
-        `<current_prompt>\n${prompt}\n</current_prompt>`,
+        `<public_settlement_history>\n${JSON.stringify(session?.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY).slice(-8) ?? [])}\n</public_settlement_history>`,
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
         `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call. The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.`,
       ].join("\n\n");
-      void model;
       try {
         await session.prompt(request);
         if (output === undefined) throw new Error("Navigator did not submit typed route candidates");
@@ -300,19 +328,33 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   };
 
   return {
-    prepare(prompt: string): void {
+    setWorkContext(next: NavigatorWorkContext): void {
+      if (next.subjectKey !== subjectKey && session !== undefined) {
+        session.dispose();
+        session = undefined;
+        previousRoute = undefined;
+      }
+      subjectKey = next.subjectKey;
+      subject = next.subject;
+      authority = next.authority;
+      contextError = next.contextError;
+      sessionDir = options.sessionDirectory?.(next.subjectKey) ?? options.sessionDir;
+    },
+    prepare(): void {
       if (disposed || preparation !== undefined) return;
-      preparation = prepare(prompt);
+      preparation = prepare();
       void preparation.catch(() => undefined);
     },
     async settle(settlement: NavigatorSettlement): Promise<void> {
       const invocationId = `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
       let report: NavigatorReport;
       if (settlement.kind !== "accepted") {
+        session?.appendEntry(SETTLEMENT_ENTRY, { subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.kind === "human_decision" ? { status: settlement.status } : {}) });
         report = { disposition: "silence" };
       } else if (preparation === undefined) {
         report = unavailable(invocationId, "Navigator preparation did not start");
       } else {
+        session?.appendEntry(SETTLEMENT_ENTRY, { subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
         try {
           const prepared = await preparation;
           const selected = selectNavigatorCandidate(prepared, settlement);
@@ -326,7 +368,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             command: oneLine(selected.command),
           };
           previousRoute = selected.route;
-          session?.appendEntry(ROUTE_ENTRY, { subjectKey: options.subjectKey, route: selected.route });
+          session?.appendEntry(ROUTE_ENTRY, { subjectKey, route: selected.route });
         } catch (error) {
           report = unavailable(invocationId, error);
         }
@@ -337,7 +379,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         invocationId,
         role: options.role,
         phase: options.phase,
-        subjectKey: options.subjectKey,
+        subjectKey,
         ...(report.route === undefined ? {} : { route: report.route }),
         ...(report.next === undefined ? {} : { next: report.next }),
         ...(report.reason === undefined ? {} : { reason: report.reason }),
@@ -361,7 +403,7 @@ export type NavigatorAttendance = ReturnType<typeof createNavigatorAttendance>;
 export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
   return async ({ context, sessionDir, tool }) => {
     const configured = await readNavigatorModelSetting();
-    const parsed = parseModelSetting(configured);
+    const parsed = parseNavigatorModelSetting(configured);
     const model = context.modelRegistry.find(parsed.provider, parsed.model);
     const provider = context.modelRegistry.getProvider(parsed.provider);
     if (model === undefined || provider === undefined) throw new Error(`Navigator model is unavailable: ${configured}`);
@@ -373,7 +415,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
       cwd: context.cwd,
       model,
       modelRuntime,
-      ...(parsed.thinkingLevel === undefined ? {} : { thinkingLevel: parsed.thinkingLevel }),
+      thinkingLevel: parsed.thinkingLevel,
       sessionManager: SessionManager.continueRecent(context.cwd, sessionDir),
       settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
       noTools: "all",
@@ -384,8 +426,8 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
       prompt: (text) => created.session.prompt(text),
       appendEntry: (customType, data) => { created.session.sessionManager.appendCustomEntry(customType, data); },
       entries: () => created.session.sessionManager.getEntries(),
-      setModel: async (next) => {
-        const nextParsed = parseModelSetting(next);
+      setModel: async (next, thinkingLevel) => {
+        const nextParsed = parseNavigatorModelSetting(next);
         const nextModel = context.modelRegistry.find(nextParsed.provider, nextParsed.model);
         const nextProvider = context.modelRegistry.getProvider(nextParsed.provider);
         if (nextModel === undefined || nextProvider === undefined) throw new Error(`Navigator model is unavailable: ${next}`);
@@ -393,6 +435,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         if (!nextAuth.ok) throw new Error(nextAuth.error);
         modelRuntime.registerNativeProvider(nextProvider);
         await created.session.setModel(nextModel);
+        created.session.setThinkingLevel(thinkingLevel);
       },
       dispose: () => created.session.dispose(),
     };
@@ -408,9 +451,10 @@ export function registerNavigatorModelCommand(pi: ExtensionAPI, path = navigator
   });
 }
 
-export function navigatorSessionDirectory(context: ExtensionContext): string {
+export function navigatorSessionDirectory(context: ExtensionContext, subjectKey?: string): string {
   const current = context.sessionManager.getSessionDir();
-  return join(dirname(dirname(current)), "navigator");
+  const key = subjectKey ?? subjectPath(current, context.cwd);
+  return subjectDirectory(context.cwd, key);
 }
 
 export { subjectPath };

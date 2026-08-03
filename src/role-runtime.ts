@@ -249,7 +249,8 @@ export type RoleRuntimeDependencies = {
   auditDoctorCompliance?(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   collectorPackageExtensionPath?: string;
-  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subject: string; authority: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance;
+  createNavigatorAttendance?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; sessionDirectory?: (subjectKey: string) => string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendance | Promise<NavigatorAttendance>;
+  loadNavigatorWorkContext?(options: { context: ExtensionContext; role: string; phase: NavigatorPhase }): Promise<{ subjectKey: string; subject: string; authority: string }>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
@@ -304,9 +305,16 @@ function navigatorOutputTool(role: string): string | undefined {
   } as Record<string, string>)[role];
 }
 
-function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError: boolean; details: unknown }): NavigatorSettlement | undefined {
+export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError: boolean; details: unknown }): NavigatorSettlement | undefined {
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
-  if (event.isError) return { kind: "role_infrastructure_failure", role, phase };
+  if (event.isError) {
+    const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
+      ? event.details as Record<string, unknown>
+      : {};
+    return details.terminal === "infrastructure_failure"
+      ? { kind: "role_infrastructure_failure", role, phase }
+      : undefined;
+  }
   const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
     ? event.details as Record<string, unknown>
     : {};
@@ -328,18 +336,28 @@ export function createRoleRuntimeExtension(
     let admitted = false;
     let selectedRole: string | undefined;
     let navigatorAttendance: NavigatorAttendance | undefined;
-    pi.on("input", () => {
+    let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
+    let navigatorPresentationMode: ExtensionContext["mode"] = "tui";
+    let navigatorWorkContext: { subjectKey: string; subject: string; authority: string; contextError?: unknown } | undefined;
+    let navigatorSubjectBase: string | undefined;
+    let lastUserInput: string | undefined;
+    pi.on("input", (event) => {
       const role = pi.getFlag(ROLE_FLAG.name);
+      if (role !== undefined) lastUserInput = event.text;
       if (role !== undefined && !admitted) return { action: "handled" as const };
       return { action: "continue" as const };
     });
-    pi.on("before_agent_start", (event, ctx) => {
+    pi.on("before_agent_start", (_event, ctx) => {
       const role = pi.getFlag(ROLE_FLAG.name);
       if (role === undefined) return;
       if (!admitted || selectedRole !== role) {
         failInfrastructure(new ActivationBarrierError(role), ctx);
       }
-      navigatorAttendance?.prepare(event.prompt);
+      if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorSubjectBase !== undefined && lastUserInput !== undefined) {
+        navigatorWorkContext = { ...navigatorWorkContext, subjectKey: `${navigatorSubjectBase}#${lastUserInput}`, subject: lastUserInput };
+        navigatorAttendance.setWorkContext(navigatorWorkContext);
+      }
+      navigatorAttendance?.prepare();
     });
     pi.on("tool_result", async (event) => {
       const role = selectedRole;
@@ -347,9 +365,22 @@ export function createRoleRuntimeExtension(
       const settlement = publicNavigatorSettlement(role, navigatorPhase(pi, role), event);
       if (settlement !== undefined) await navigatorAttendance.settle(settlement);
     });
+    pi.on("agent_settled", async () => {
+      const presentation = pendingNavigatorPresentation;
+      pendingNavigatorPresentation = undefined;
+      if (presentation === undefined) return;
+      const content = navigatorPresentationMode === "json" ? "" : formatNavigatorReport(presentation.report);
+      pi.sendMessage({
+        customType: "ak-navigator-attendance",
+        content,
+        display: true,
+        details: presentation.event,
+      }, { triggerTurn: false });
+    });
     pi.on("session_shutdown", () => {
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
+      pendingNavigatorPresentation = undefined;
     });
 
     const hostActions = { failInfrastructure };
@@ -500,6 +531,10 @@ export function createRoleRuntimeExtension(
     pi.on("session_start", async (event, ctx) => {
       admitted = false;
       selectedRole = undefined;
+      pendingNavigatorPresentation = undefined;
+      navigatorWorkContext = undefined;
+      navigatorSubjectBase = undefined;
+      lastUserInput = undefined;
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
       const entry = ROLE_REGISTRY.find(({ role }) => role === rawRole);
@@ -507,28 +542,38 @@ export function createRoleRuntimeExtension(
         failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
+      navigatorPresentationMode = ctx.mode;
       navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
       if (dependencies.createNavigatorAttendance !== undefined) {
-        try {
-          navigatorAttendance = dependencies.createNavigatorAttendance({
-            context: ctx,
-            role: entry.role,
-            phase: navigatorPhase(pi, entry.role),
-            subject: ctx.cwd,
-            authority: `packaged role ${entry.role}`,
-            onEvent: (navigatorEvent) => {
-              pi.sendMessage({
-                customType: "ak-navigator-attendance",
-                content: formatNavigatorReport(navigatorEvent),
-                display: true,
-                details: navigatorEvent,
-              });
-            },
-          });
-        } catch {
-          navigatorAttendance = undefined;
+        let work: { subjectKey: string; subject: string; authority: string };
+        let contextError: unknown;
+        if (dependencies.loadNavigatorWorkContext === undefined) {
+          const fallbackSubjectKey = ctx.sessionManager.getSessionDir() || "workspace";
+          work = { subjectKey: fallbackSubjectKey, subject: `workspace subject: ${fallbackSubjectKey}`, authority: "controlling authority supplied by caller" };
+        } else {
+          try {
+            work = await dependencies.loadNavigatorWorkContext({ context: ctx, role: entry.role, phase: navigatorPhase(pi, entry.role) });
+          } catch (error) {
+            contextError = error;
+            const fallbackSubjectKey = ctx.sessionManager.getSessionDir() || "workspace";
+            work = { subjectKey: fallbackSubjectKey, subject: `work subject unavailable for ${entry.role}`, authority: "controlling authority unavailable" };
+          }
         }
+        navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
+        navigatorSubjectBase = work.subject.startsWith("work subject:") ? work.subjectKey : undefined;
+        navigatorAttendance = await dependencies.createNavigatorAttendance({
+          context: ctx,
+          role: entry.role,
+          phase: navigatorPhase(pi, entry.role),
+          subjectKey: work.subjectKey,
+          subject: work.subject,
+          authority: work.authority,
+          ...(contextError === undefined ? {} : { contextError }),
+          onEvent: async (navigatorEvent, report) => {
+            pendingNavigatorPresentation = { event: navigatorEvent, report };
+          },
+        });
       }
       const runtime: ActivationRuntime = {
         event,
