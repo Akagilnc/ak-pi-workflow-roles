@@ -86,7 +86,7 @@ function issueRoot(value) {
   const marker = ".ak/work/issues/";
   const index = normalized.indexOf(marker);
   if (index < 0) return void 0;
-  const issue = normalized.slice(index + marker.length).split("/")[0];
+  const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
   return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
@@ -94,7 +94,12 @@ function subjectPath(sessionDir, cwd = process.cwd()) {
 }
 function subjectDirectory(cwd, subjectKey) {
   const issue = issueRoot(subjectKey);
-  if (issue !== void 0) return join(issue, "runs", "navigator");
+  if (issue !== void 0) {
+    const base = join(issue, "runs", "navigator");
+    if (subjectKey === issue) return base;
+    const digest2 = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
+    return join(base, digest2);
+  }
   const digest = createHash("sha256").update(subjectKey).digest("hex").slice(0, 32);
   return join(resolve(cwd, ".ak", "work", "navigator"), digest);
 }
@@ -152,6 +157,7 @@ function selectNavigatorCandidate(candidates, settlement) {
 function formatNavigatorReport(report) {
   if (report.disposition === "silence") return "";
   if (report.disposition === "unavailable") return `\u5BFC\u822A\u4E0D\u53EF\u7528\uFF1A${oneLine(report.unavailableReason ?? "\u672A\u80FD\u5B8C\u6210\u5BFC\u822A\u51C6\u5907")}`;
+  if (report.disposition === "arrival") return oneLine(report.arrivalMessage ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730");
   return [
     ...report.route === void 0 ? [] : [`\u8DEF\u7EBF\uFF1A${routeText(report.route)}`],
     `\u4E0B\u4E00\u6B65\uFF1A${targetText(report.next)}`,
@@ -161,6 +167,7 @@ function formatNavigatorReport(report) {
 }
 function createNavigatorAttendance(options) {
   let preparation;
+  let sessionReady;
   let session;
   let subjectKey = options.subjectKey;
   let subject = options.subject;
@@ -169,6 +176,7 @@ function createNavigatorAttendance(options) {
   let sessionDir = options.sessionDir;
   let candidates;
   let invocationNumber = 0;
+  let activeInvocationId;
   let previousRoute;
   let outputSink;
   let disposed = false;
@@ -178,6 +186,7 @@ function createNavigatorAttendance(options) {
   });
   const prepare = async () => {
     const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
+    activeInvocationId = invocationId;
     try {
       if (contextError !== void 0) throw contextError;
       const soul = (await options.loadSoul()).trim();
@@ -198,10 +207,29 @@ ${text}
       const tool = createNavigatorPrepareTool((value) => {
         outputSink?.(value);
       });
-      session ??= await options.createSession({ context: options.context, sessionDir, tool });
-      await session.setModel?.(modelSetting, model.thinkingLevel);
-      session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase });
-      const prior = session.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
+      if (session === void 0) {
+        sessionReady = (async () => {
+          const created = await options.createSession({ context: options.context, sessionDir, tool });
+          session = created;
+          await created.setModel?.(modelSetting, model.thinkingLevel);
+          if (created.getThinkingLevel?.() !== void 0 && created.getThinkingLevel() !== model.thinkingLevel) {
+            throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+          }
+          created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+          return created;
+        })();
+        await sessionReady;
+        sessionReady = void 0;
+      } else {
+        await session.setModel?.(modelSetting, model.thinkingLevel);
+        if (session.getThinkingLevel?.() !== void 0 && session.getThinkingLevel() !== model.thinkingLevel) {
+          throw new Error(`Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
+        }
+        session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+      }
+      const activeSession = session;
+      if (activeSession === void 0) throw new Error("Navigator session was not created");
+      const prior = activeSession.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
       if (exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
         previousRoute = prior.route.map((target) => ({ role: target.role, phase: target.phase }));
       }
@@ -223,7 +251,7 @@ ${JSON.stringify({ role: options.role, phase: options.phase })}
 ${JSON.stringify(prior ?? null)}
 </prior_route>`,
         `<public_settlement_history>
-${JSON.stringify(session?.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY).slice(-8) ?? [])}
+${JSON.stringify(activeSession.entries().filter((entry) => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY).slice(-8))}
 </public_settlement_history>`,
         `<live_role_help>
 ${helpContext}
@@ -231,7 +259,7 @@ ${helpContext}
         `Use model setting ${JSON.stringify(modelSetting)} for this call. Return exactly one ${NAVIGATOR_PREPARE_TOOL_NAME} call. The command field is only a short Usage hint; never fill task-specific paths, prompts, packets, or Skill bindings.`
       ].join("\n\n");
       try {
-        await session.prompt(request);
+        await activeSession.prompt(request);
         if (output === void 0) throw new Error("Navigator did not submit typed route candidates");
         candidates = validatePrepareOutput(output);
         return candidates;
@@ -261,15 +289,19 @@ ${helpContext}
       void preparation.catch(() => void 0);
     },
     async settle(settlement) {
-      const invocationId = `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
+      const invocationId = activeInvocationId ?? `${options.context.sessionManager.getSessionId()}:${invocationNumber || 1}`;
       let report;
-      if (settlement.kind !== "accepted") {
-        session?.appendEntry(SETTLEMENT_ENTRY, { subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.kind === "human_decision" ? { status: settlement.status } : {} });
+      if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
+        if (sessionReady !== void 0) await sessionReady.catch(() => void 0);
+        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.kind === "human_decision" ? { status: settlement.status } : {} });
         report = { disposition: "silence" };
+      } else if (settlement.kind === "arrival") {
+        report = { disposition: "arrival", arrivalMessage: settlement.message ?? "\u5DF2\u5230\u8FBE\u76EE\u7684\u5730" };
       } else if (preparation === void 0) {
         report = unavailable(invocationId, "Navigator preparation did not start");
       } else {
-        session?.appendEntry(SETTLEMENT_ENTRY, { subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
+        if (sessionReady !== void 0) await sessionReady;
+        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...settlement.status === void 0 ? {} : { status: settlement.status } });
         try {
           const prepared = await preparation;
           const selected = selectNavigatorCandidate(prepared, settlement);
@@ -283,7 +315,7 @@ ${helpContext}
             command: oneLine(selected.command)
           };
           previousRoute = selected.route;
-          session?.appendEntry(ROUTE_ENTRY, { subjectKey, route: selected.route });
+          session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selected.route });
         } catch (error) {
           report = unavailable(invocationId, error);
         }
@@ -299,16 +331,20 @@ ${helpContext}
         ...report.next === void 0 ? {} : { next: report.next },
         ...report.reason === void 0 ? {} : { reason: report.reason },
         ...report.command === void 0 ? {} : { command: report.command },
-        ...report.unavailableReason === void 0 ? {} : { unavailableReason: report.unavailableReason }
+        ...report.unavailableReason === void 0 ? {} : { unavailableReason: report.unavailableReason },
+        ...report.arrivalMessage === void 0 ? {} : { arrivalMessage: report.arrivalMessage }
       };
       if (report.disposition !== "silence") await options.onEvent(event, report);
       preparation = void 0;
+      sessionReady = void 0;
       candidates = void 0;
     },
     dispose() {
       disposed = true;
+      sessionReady = void 0;
       session?.dispose();
       session = void 0;
+      activeInvocationId = void 0;
     }
   };
 }
@@ -334,6 +370,10 @@ function createNativeNavigatorSessionFactory() {
       tools: [NAVIGATOR_PREPARE_TOOL_NAME],
       customTools: [tool]
     });
+    if (created.session.thinkingLevel !== parsed.thinkingLevel) {
+      created.session.dispose();
+      throw new Error(`Navigator thinking level ${parsed.thinkingLevel} is unavailable for ${configured}`);
+    }
     return {
       prompt: (text) => created.session.prompt(text),
       appendEntry: (customType, data) => {
@@ -350,7 +390,11 @@ function createNativeNavigatorSessionFactory() {
         modelRuntime.registerNativeProvider(nextProvider);
         await created.session.setModel(nextModel);
         created.session.setThinkingLevel(thinkingLevel);
+        if (created.session.thinkingLevel !== nextParsed.thinkingLevel || created.session.thinkingLevel !== thinkingLevel) {
+          throw new Error(`Navigator thinking level ${thinkingLevel} is unavailable for ${next}`);
+        }
       },
+      getThinkingLevel: () => created.session.thinkingLevel,
       dispose: () => created.session.dispose()
     };
   };
