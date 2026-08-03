@@ -254,23 +254,30 @@ export async function runPiSubprocess(
     cwd: string;
     env?: NodeJS.ProcessEnv;
     timeoutMs?: number;
+    /** Canonical headless pattern discards stdout; default retains a pipe. */
+    stdout?: "pipe" | "ignore";
   },
 ): Promise<PiSubprocessResult> {
   return await new Promise((resolveResult, reject) => {
+    const stdoutMode = options.stdout ?? "pipe";
     const child = spawn(piCli, args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", stdoutMode, "pipe"],
     });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => {
-      stderr += chunk;
-    });
+    if (stdoutMode === "pipe" && child.stdout) {
+      child.stdout.setEncoding("utf8").on("data", (chunk) => {
+        stdout += chunk;
+      });
+    }
+    if (child.stderr) {
+      child.stderr.setEncoding("utf8").on("data", (chunk) => {
+        stderr += chunk;
+      });
+    }
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");

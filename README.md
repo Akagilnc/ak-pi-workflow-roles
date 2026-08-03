@@ -4,7 +4,7 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 
 ## 班子（唐宋官署命名）
 
-角色按唐宋官署／官职命名，判据与被否方案见 [ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md)。**朝廷对应：皇帝＝owner，宰相＝调用者，百官＝各角色。** 工厂没有政事堂——中枢是 owner。
+角色按唐宋官署／官职命名，判据与被否方案见 [ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md)。**朝廷对应：皇帝＝陛下，宰相＝调用者，百官＝各角色。** 工厂没有政事堂——中枢是陛下。
 
 **只是名字。** `--ak-role <name>` 的标识符、CLI 参数、工具名与 schema 字段一律不变，永远是下表左列的英文名；中文名是称谓，属呈现层，不触发任何迁移，既有调用方零改动。
 
@@ -26,7 +26,7 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 
 **merge 按钮归调用者**，没有任何角色握不可逆权限：门下省把收证这件苦活做完并报收集终态，人（或 AI）自己判断、自己点，点完想调主簿就调、不调也可以。
 
-上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；合规审计也并非只跟在判官之后，Judge、Fixer、Reviewer、Doctor 各自都有一次。
+上表**不规定调用顺序**——组合、顺序、重复次数归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。御史台／大理寺／审刑院是**职责分立的类比，不是必经链**；审刑院也并非只跟在大理寺之后，Judge、Fixer、Reviewer、Doctor 各自都有一次。
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
@@ -66,6 +66,8 @@ Judge needs no other flags. Roles with mandatory flags: Fixer (`--ak-fixer-phase
 ## Navigator attendance
 
 Every registered non-Navigator packaged role automatically prepares Navigator advice alongside its own work. The existing `pi --ak-role ...` invocation is unchanged. Navigator uses its own resumable Pi session, waits for that same preparation at typed role settlement, and emits an independent typed attendance event; it never invokes or enforces the recommended role.
+
+When settlement is accepted and Navigator prepared a recommendation, the **accepted `ak_*_output` toolResult** in the role session appends the advice essentials (`路线` when the route changed, `下一步`, `理由`, `命令`) to the toolResult **content text**. Receipt `details` stay exactly the role's terminating-tool contract shape—no extra keys, no nesting, no parallel navigation object. Canonical headless callers that extract only the last `ak_*_output` settlement record therefore see the advice in that one read—no second grep, no sibling file, no extra level beyond the settlement record they already open. Unavailable and intentional silence (human-decision / role-infrastructure) leave the settlement content and details untouched; the role Receipt remains valid and otherwise unchanged. A sibling top-level `ak-navigator-attendance` custom_message and stdout typed events remain for interactive surfaces; they are not required for the headless extraction path.
 
 The first attendance shows the concise role/phase route, one next step, a short reason, and one live-help-based Usage hint. Later attendance omits an unchanged route. Human-decision and role-infrastructure outcomes are silent; Navigator failures are reported honestly as unavailable and never invalidate the role Receipt.
 
@@ -297,7 +299,7 @@ Judge's legal status-dependent shapes are:
 ```json
 {"judgeStatus":"converged"}
 {"judgeStatus":"continue","fix":{"summary":"non-empty repair summary"},"classes":[{"name":"ClassName","owner":"owning seam","boundary":"bounded scope","disposition":"adjudication"}]}
-{"judgeStatus":"escalate","decisionGate":{"question":"non-empty owner question","options":["non-empty option"]}}
+{"judgeStatus":"escalate","decisionGate":{"question":"non-empty 陛下 question","options":["non-empty option"]}}
 {"judgeStatus":"converged","evidence":{"checks":[{"name":"verification","passed":true}]}}
 ```
 
@@ -305,7 +307,7 @@ A `continue` receipt requires non-empty `classes` with unique comma-free nonblan
 
 - `converged` — relative to the material under judgment (for a plan: construction authorization only)
 - `continue` — further repair is warranted
-- `escalate` — an owner decision is required
+- `escalate` — a 陛下 decision is required
 
 Any verdict may additionally carry an optional non-empty `note` Markdown string. It is an advisory addendum for important information or requirements that should remain separate from the status-specific fields (including apply obligations attached to a construction-ready plan). It has no built-in routing or execution semantics, and callers may ignore it without changing the existing verdict flow.
 

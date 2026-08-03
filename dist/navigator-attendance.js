@@ -264,6 +264,40 @@ function formatNavigatorReport(report) {
     `\u547D\u4EE4\uFF1A${oneLine(report.command ?? "")}`
   ].join("\n");
 }
+function settlementNavigationFromEvent(event) {
+  if (event.disposition !== "recommendation") return void 0;
+  if (event.next === void 0 || event.reason === void 0 || event.command === void 0) return void 0;
+  return {
+    disposition: "recommendation",
+    ...event.route === void 0 ? {} : { route: event.route },
+    next: event.next,
+    reason: event.reason,
+    command: event.command
+  };
+}
+function appendNavigatorReportToContent(content, reportText) {
+  if (reportText === "") return content.slice();
+  const parts = content.slice();
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part !== void 0 && part.type === "text" && typeof part.text === "string") {
+      parts[index] = { ...part, type: "text", text: `${part.text}
+${reportText}` };
+      return parts;
+    }
+  }
+  return [...parts, { type: "text", text: reportText }];
+}
+function decorateSettlementWithNavigation(event, presentation) {
+  if (presentation === void 0) return void 0;
+  if (settlementNavigationFromEvent(presentation.event) === void 0) return void 0;
+  const reportText = formatNavigatorReport(presentation.report);
+  if (reportText === "") return void 0;
+  return {
+    content: appendNavigatorReportToContent(event.content, reportText),
+    details: event.details
+  };
+}
 function createNavigatorAttendance(options) {
   let preparation;
   let sessionReady;
@@ -832,6 +866,7 @@ export {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   createNavigatorPrepareTool,
+  decorateSettlementWithNavigation,
   formatNavigatorReport,
   navigatorModelSettingPath,
   navigatorProviderFailure,
@@ -844,6 +879,7 @@ export {
   readNavigatorModelSetting,
   registerNavigatorModelCommand,
   selectNavigatorCandidate,
+  settlementNavigationFromEvent,
   subjectPath,
   writeNavigatorModelSetting
 };
