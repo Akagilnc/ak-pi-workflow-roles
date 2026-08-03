@@ -1,6 +1,6 @@
 # 0010 — 调用者拥有角色组合与重复
 
-Status: accepted（owner 2026-07-28 拍定）
+Status: accepted（陛下 2026-07-28 拍定）
 Date: 2026-07-28
 
 ## Decision
