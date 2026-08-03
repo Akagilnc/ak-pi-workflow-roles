@@ -1,9 +1,13 @@
-import { StringEnum, type Usage } from "@earendil-works/pi-ai";
+import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
+  AgentToolResult,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+
+import { disposeComplianceDecision } from "./audit-escalation.ts";
+import type { ComplianceDecision } from "./compliance-transport.ts";
 
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -66,9 +70,7 @@ export type SoulAuditInput = {
   verdict: JudgeAdjudicativeVerdict;
 };
 
-export type SoulAuditResult =
-  | { status: "pass"; usage?: Usage }
-  | { status: "revise"; violations: readonly string[]; usage?: Usage };
+export type SoulAuditResult = ComplianceDecision;
 
 export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
@@ -166,7 +168,7 @@ export function createJudgeRoleRuntime(
             `Use ${JUDGE_OUTPUT_TOOL_NAME} as the final action for the judge role.`,
           ],
           parameters: judgeVerdictSchema,
-          async execute(toolCallId, parameters, signal, _onUpdate, ctx) {
+          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (soul === undefined) throw new Error("Judge soul was not loaded");
             requireSingletonSubmissionCall(toolCallId, ctx);
             const verdict = validateVerdict(parameters);
@@ -185,17 +187,20 @@ export function createJudgeRoleRuntime(
             } catch (error) {
               hostActions.failInfrastructure(error, ctx);
             }
-            if (audit.status === "revise") {
-              throw new Error(
-                `Judge verdict violates its soul: ${audit.violations.join("; ")}`,
-              );
-            }
-            return {
-              content: [{ type: "text" as const, text: "Judge verdict accepted" }],
-              details: verdict,
-              terminate: true as const,
-              ...(audit.usage === undefined ? {} : { usage: audit.usage }),
-            };
+            return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
+              pass: (usage) => ({
+                content: [{ type: "text" as const, text: "Judge verdict accepted" }],
+                details: verdict,
+                terminate: true as const,
+                ...(usage === undefined ? {} : { usage }),
+              }),
+              revise: (violations) => {
+                throw new Error(
+                  `Judge verdict violates its soul: ${violations.join("; ")}`,
+                );
+              },
+              escalate: (result) => result,
+            });
           },
         });
         pi.on("before_agent_start", (event) => {

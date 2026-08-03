@@ -2,8 +2,10 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
+  AgentToolResult,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { disposeComplianceDecision } from "./audit-escalation.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 
 import type {
@@ -231,7 +233,7 @@ export function createFixerRoleRuntime(
             "plan permits planned|refused; apply permits completed|refused|partially_completed.",
           ],
           parameters: fixerOutputSchema,
-          async execute(toolCallId, parameters, _signal, _onUpdate, ctx) {
+          async execute(toolCallId, parameters, _signal, _onUpdate, ctx): Promise<AgentToolResult<unknown>> {
             if (packet === undefined || phase === undefined) {
               throw new Error("Fixer repair packet and phase were not loaded");
             }
@@ -255,13 +257,18 @@ export function createFixerRoleRuntime(
               if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx);
               throw error;
             }
-            if (audit.status === "revise") throw new Error(`Fixer output violates its law: ${audit.violations.join("; ")}`);
-            return {
-              content: [{ type: "text" as const, text: "Fixer report accepted" }],
-              details: output,
-              terminate: true as const,
-              ...(audit.usage === undefined ? {} : { usage: audit.usage }),
-            };
+            return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
+              pass: (usage) => ({
+                content: [{ type: "text" as const, text: "Fixer report accepted" }],
+                details: output,
+                terminate: true as const,
+                ...(usage === undefined ? {} : { usage }),
+              }),
+              revise: (violations) => {
+                throw new Error(`Fixer output violates its law: ${violations.join("; ")}`);
+              },
+              escalate: (result) => result,
+            });
           },
         });
         pi.on("tool_call", (event) => {

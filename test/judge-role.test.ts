@@ -11,7 +11,8 @@ import {
 import { transcriptFromContext as productionTranscriptFromContext } from "../extensions/role-runtime.ts";
 import type { CanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { createPiFixerAuditor, FIXER_AUDIT_TOOL_NAME } from "../src/fixer-auditor.ts";
-import { createPiSoulAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/soul-auditor.ts";
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../src/compliance-transport.ts";
+import { createPiJudgeAuditor, SOUL_AUDIT_TOOL_NAME } from "../src/judge-auditor.ts";
 import { createJudgeRoleRuntime } from "../src/judge-role.ts";
 import { reviewerPromptIdentity } from "../src/reviewer-prompt-identity.ts";
 import {
@@ -475,6 +476,54 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
   assert.deepEqual(result.details, verdict);
 });
 
+test("judge role rejects a terminal audit response before accepting its valid decision call", async () => {
+  const audit = createPiJudgeAuditor(async () =>
+    fauxAssistantMessage(
+      fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
+        status: "pass",
+        violations: [],
+        conflicts: [],
+        decisionGate: null,
+      }),
+      { stopReason: "error", errorMessage: "native provider failure" },
+    ),
+  );
+  const { harness, tool } = await startJudge(audit);
+  const ctx = Object.assign(
+    toolCallContext([{ id: "terminal-audit", arguments: { judgeStatus: "converged" } }]),
+    {
+      model: { api: "openai-responses", provider: "audit-test", id: "audit-model" },
+      modelRegistry: {
+        async getProviderAuth() { return { auth: { apiKey: "secret" } }; },
+        async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "secret" }; },
+      },
+    },
+  ) as ExtensionContext;
+
+  await assert.rejects(
+    tool.execute("terminal-audit", { judgeStatus: "converged" }, undefined, undefined, ctx),
+    /stopReason error/,
+  );
+  const retained = ctx.sessionManager.getEntries().filter(
+    (entry) => entry.type === "message" && entry.message.role === "assistant",
+  );
+  assert.equal(retained.length, 1);
+  const evidence = ctx.sessionManager.getEntries().find(
+    (entry) => entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
+  );
+  assert.ok(evidence?.type === "custom");
+  const nested = (evidence.data as { response: AssistantMessage }).response;
+  assert.equal(nested.stopReason, "error");
+  assert.equal(nested.errorMessage, "native provider failure");
+  assert.equal(
+    ctx.sessionManager.getEntries().some(
+      (entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "terminal-audit",
+    ),
+    false,
+  );
+  void harness;
+});
+
 test("judge role audits only adjudicative fields while retaining evidence in receipts", async () => {
   const audited: JudgeAdjudicativeVerdict[] = [];
   const { tool } = await startJudge(async ({ verdict }) => {
@@ -533,10 +582,10 @@ test("judge role audits only adjudicative fields while retaining evidence in rec
 
 test("production Judge-to-Soul audit projection ignores opaque evidence and preserves receipt details", async () => {
   const auditRequests: Context[] = [];
-  const auditor = createPiSoulAuditor(async (_model, request) => {
+  const auditor = createPiJudgeAuditor(async (_model, request) => {
     auditRequests.push(request);
     return fauxAssistantMessage(
-      fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [] }),
+      fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
       { stopReason: "toolUse" },
     );
   });
@@ -682,6 +731,43 @@ test("judge role returns revise as an ordinary errored tool result without abort
     /No authority clause was applied; Tests were not adjudicated/,
   );
   assert.equal(abortCalls, 0);
+});
+
+test("judge escalation returns one terminating human decision without a role verdict", async () => {
+  let auditCalls = 0;
+  const { tool } = await startJudge(async () => {
+    auditCalls += 1;
+    return {
+      status: "escalate",
+      conflicts: ["Judge Soul and controlling authority conflict"],
+      decisionGate: {
+        question: "Which authority should govern?",
+        options: ["Soul", "Controlling authority"],
+      },
+    };
+  });
+  const verdict = { judgeStatus: "converged" };
+  const result = await tool.execute(
+    "audit-escalation",
+    verdict,
+    undefined,
+    undefined,
+    toolCallContext([{ id: "audit-escalation", arguments: verdict }]),
+  );
+
+  assert.equal(auditCalls, 1);
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, {
+    kind: "audit_escalation",
+    conflicts: ["Judge Soul and controlling authority conflict"],
+    decisionGate: {
+      question: "Which authority should govern?",
+      options: ["Soul", "Controlling authority"],
+    },
+  });
+  assert.equal(Object.hasOwn(result.details, "judgeStatus"), false);
+  assert.match(result.content[0].text, /Human decision required/);
+  assert.doesNotMatch(result.content[0].text, /Judge verdict accepted/i);
 });
 
 test("judge aborts the active operation before rethrowing audit infrastructure failures", async () => {
@@ -1229,9 +1315,9 @@ test("Fixer audits every structurally valid attempt freshly and revise permits c
 test("Fixer prospective prerequisite decisions survive the production submission lifecycle unchanged", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   const decisions = [
-    { status: "revise", violations: ["completed work was retrospectively relabeled as blocked"] },
-    { status: "pass", violations: [] },
-    { status: "pass", violations: [] },
+    { status: "revise", violations: ["completed work was retrospectively relabeled as blocked"], conflicts: [], decisionGate: null },
+    { status: "pass", violations: [], conflicts: [], decisionGate: null },
+    { status: "pass", violations: [], conflicts: [], decisionGate: null },
   ] as const;
   let auditCalls = 0;
   const auditInputs: Context[] = [];

@@ -5,8 +5,8 @@
   ],
   "provider": "openai-codex",
   "model": "gpt-5.6-sol",
-  "packageSha": "0546c8bdbadfa4f27c2ea2fafa9b9ae4cde9e372",
-  "recordedAt": "2026-07-28T17:54:49Z",
-  "soulDigest": "8f292429c4237598c93b92e191d6a76b18c69f2d4c1f6655aab0951f95a70339",
-  "note": "JSONL trust root is session.jsonl mode-json stream; receipt is cross-check only. Recorded from opaque workspace without direction-labeled fixture paths."
+  "recordedAt": "2026-08-03T02:40:10.547Z",
+  "soulDigest": "f43cd37e662b7a23925b86921a5a1a9adba46af41dc77397e4bda95052be7439",
+  "note": "JSONL trust root is session.jsonl mode-json stream; receipt is cross-check only. Recorded from a detached opaque workspace without direction-labeled fixture paths.",
+  "packageSha": "46d070078b06822780ec4cc493dd14cc255bf5aa"
 }

@@ -2,7 +2,6 @@ import { readFile, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
 
 const entries = [
-  "navigator-auditor",
   "navigator-contracts",
   "navigator-evidence",
   "navigator-role",

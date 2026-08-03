@@ -15,7 +15,7 @@ function singleton(toolCallId, ctx) {
   const calls = leaf.message.content.filter((part) => part.type === "toolCall");
   if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== NAVIGATOR_OUTPUT_TOOL_NAME) throw new Error("Navigator output must be the sole final tool call");
 }
-function createNavigatorToolDefinitions(dependencies, activeState, host) {
+function createNavigatorToolDefinitions(activeState) {
   return [
     {
       name: NAVIGATOR_EVIDENCE_TOOL_NAME,
@@ -39,21 +39,10 @@ function createNavigatorToolDefinitions(dependencies, activeState, host) {
         if (!active) throw new Error("Navigator not activated");
         singleton(id, ctx);
         const output = validateNavigatorReceiptV1(params, active.snapshot, active.store.readRecord());
-        let audit;
-        try {
-          audit = await dependencies.auditCompliance(
-            { soul: active.soul, snapshot: active.snapshot, readRecord: active.store.readRecord(), output },
-            signal === void 0 ? { context: ctx } : { context: ctx, signal }
-          );
-        } catch (error) {
-          host.failInfrastructure(error, ctx);
-        }
-        if (audit.status === "revise") throw new Error(`Navigator output violates its soul: ${audit.violations.join("; ")}`);
         return {
           content: [{ type: "text", text: "Navigator output accepted" }],
           details: output,
-          terminate: true,
-          ...audit.usage === void 0 ? {} : { usage: audit.usage }
+          terminate: true
         };
       }
     }

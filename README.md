@@ -4,7 +4,7 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 
 ## Navigator and Assisted Runner
 
-Navigator advises the least-cost safe **single next process** from a frozen, digest-bound current-position snapshot. It has exactly two active tools: a bounded admitted-evidence reader and terminating `ak_navigator_output`. A fresh same-active-model compliance call audits the typed output. Navigator never invokes roles, Agent, shell, Git/GitHub, filesystems, or Runner; its ordinary advice is not authorization and callers may deviate.
+Navigator advises the least-cost safe **single next process** from a frozen, digest-bound current-position snapshot. It has exactly two active tools: a bounded admitted-evidence reader and terminating `ak_navigator_output`. Judge, Fixer, Reviewer, and Doctor each receive one fresh same-active-model compliance audit of their candidate output; Navigator does not receive a compliance audit. Navigator never invokes roles, Agent, shell, Git/GitHub, filesystems, or Runner; its ordinary advice is not authorization and callers may deviate.
 
 Assisted Runner is a separate package capability. It persistently wraps exactly one caller-selected packaged non-Navigator role, automatically consulting Navigator before launch and again after settlement. It never selects or automatically dispatches the recommended role, manages worktrees, or continues a workflow. Its private direct child/session adapter keeps settlement evidence only inside the Assisted run; the caller still owns role/phase/argv/cwd, evidence declarations, retries, budgets, worktrees, and whether to end assisted mode.
 
@@ -31,14 +31,16 @@ The judge role:
 1. loads the bundled [`souls/judge.md`](souls/judge.md) into the system prompt;
 2. lets the active Pi model adjudicate with normal tools;
 3. accepts a final verdict only through `ak_judge_output`;
-4. runs a separate Soul-compliance model call before accepting the verdict;
-5. returns a terminating structured tool result only after the audit passes.
+4. runs a separate Soul-compliance model call before settling the verdict;
+5. returns a terminating structured tool result after the audit passes or produces a typed audit escalation.
 
 The compliance call uses the active Pi model and credentials. It checks demonstrated procedural compliance with the Soul; it does not replace the judge's substantive finding decisions.
 
 Judge infers its burden of proof from the supplied materials alone (authority completeness, plan construction-readiness, apply executable proof, or review finding adjudication).
 
 On activation, Judge narrows active tools to the registered members of this exact whitelist: `read`, `grep`, `find`, `ls`, `bash`, and `ak_judge_output`. In particular, `write`, `edit`, and arbitrary sibling tools are inactive. This is role gating to prevent accidental role drift, not a security boundary; callers that need isolation must provide a sandbox or container.
+
+`audit_escalation` is a successful terminating typed human-decision result from a compliance audit. It carries `conflicts` and a `decisionGate`; it is never a role Receipt or role status. Callers must validate accepted details against the relevant role contract and must not treat every successful role-output tool result as an authoritative Receipt.
 
 ## Install
 
@@ -63,7 +65,7 @@ After installation:
 pi --ak-role judge --mode json -p "Judge the supplied review materials."
 ```
 
-The caller should treat the successful `ak_judge_output` tool result as the authoritative receipt. Plain assistant text is not a completed judge verdict.
+Accepted Judge details, not plain assistant text, constitute a completed judge verdict.
 
 ## Fixer
 
