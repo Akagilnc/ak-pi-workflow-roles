@@ -177,6 +177,7 @@ export async function executeReviewerChild(
   const abortChild = () => { void session.abort(); };
   if (signal?.aborted) abortChild();
   else signal?.addEventListener("abort", abortChild, { once: true });
+  let primaryFailure: unknown;
   try {
     const visibleTools = session.agent.state.tools.map((tool) => tool.name);
     if (JSON.stringify(visibleTools) !== JSON.stringify(leg.grant.tools)) {
@@ -195,10 +196,10 @@ export async function executeReviewerChild(
       .reverse()
       .find((message) => message.role === "assistant");
     if (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "error") {
-      throw classifiedError(new Error(`Reviewer Agent provider failed: ${lastAssistant.errorMessage ?? lastAssistant.stopReason}`), "provider");
+      throw classifiedError(new Error("Reviewer Agent provider failed", { cause: lastAssistant }), "provider");
     }
     if (lastAssistant?.role !== "assistant" || lastAssistant.stopReason === "aborted") {
-      throw classifiedError(new Error(`Reviewer Agent child failed: ${lastAssistant?.role === "assistant" ? lastAssistant.stopReason : "no assistant output"}`), "child");
+      throw classifiedError(new Error("Reviewer Agent child terminated without a report", { cause: lastAssistant ?? session.messages }), "child");
     }
     const report = session.getLastAssistantText() ?? "";
     if (report.trim().length === 0) {
@@ -206,11 +207,18 @@ export async function executeReviewerChild(
     }
     return { report, usage, prompt: delivered };
   } catch (error) {
-    throw classifiedError(error, "child");
+    primaryFailure = classifiedError(error, "child");
+    throw primaryFailure;
   } finally {
     signal?.removeEventListener("abort", abortChild);
-    unsubscribe();
-    session.dispose();
+    let cleanupFailure: unknown;
+    for (const cleanup of [() => unsubscribe(), () => session.dispose()]) {
+      try { cleanup(); } catch (failure) { cleanupFailure = cleanupFailure === undefined ? failure : new AggregateError([cleanupFailure, failure], "Reviewer child cleanup failed", { cause: cleanupFailure }); }
+    }
+    if (cleanupFailure !== undefined) {
+      if (primaryFailure !== undefined) throw new AggregateError([primaryFailure, cleanupFailure], "Reviewer child execution and cleanup failed", { cause: primaryFailure });
+      throw new AggregateError([cleanupFailure], "Reviewer child cleanup failed", { cause: cleanupFailure });
+    }
   }
   } catch (error) {
     throw classifiedError(error, "child");

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { immutableReviewerRefs, parseReviewerRefSnapshot, reviewerRefSnapshotArgs, type ReviewerRefMap } from "./reviewer-git-snapshot.ts";
@@ -34,6 +34,18 @@ export type ReviewerPinnedGitReader = {
 };
 
 const execFileAsync = promisify(execFile);
+type GitProcessError = Error & Readonly<{ code: number | string | null; signal: NodeJS.Signals | null; timedOut: boolean; aborted: boolean; stderr: string; stdout: string }>;
+async function execGit<T extends "utf8" | "buffer">(args: readonly string[], options: { encoding: T; maxBuffer?: number }): Promise<{ stdout: T extends "buffer" ? Buffer : string; stderr: string }> {
+  try { return await execFileAsync("git", args, options) as unknown as { stdout: T extends "buffer" ? Buffer : string; stderr: string }; }
+  catch (error) {
+    const source = error as Partial<GitProcessError>;
+    const wrapped = new Error("git process failed", { cause: error }) as GitProcessError;
+    Object.assign(wrapped, { code: source.code ?? null, signal: source.signal ?? null, timedOut: (source as { killed?: unknown }).killed === true && source.signal === "SIGTERM", aborted: source.name === "AbortError", stderr: String(source.stderr ?? ""), stdout: String(source.stdout ?? "") });
+    throw wrapped;
+  }
+}
+function exitCode(error: unknown): number | undefined { const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined; return typeof code === "number" ? code : undefined; }
+async function repositoryIsAvailable(root: string): Promise<boolean> { try { await access(`${root}/.git`); return true; } catch { return false; } }
 const evidenceViolation = (code: "range-invalid"|"material-invalid"|"capability-invalid"): never => {
   const diagnostic = code === "range-invalid"
     ? "derived range must match the resolved base and pinned target with canonical command, digest, and unique commits"
@@ -59,7 +71,7 @@ export const immutableReviewerPin = (pin: ReviewerPinnedTarget): ReviewerPinnedT
   repositoryRoot: pin.repositoryRoot, objectFormat: pin.objectFormat, targetHead: pin.targetHead, refs: immutableReviewerRefs(pin.refs),
 });
 async function gitText(root: string, args: readonly string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", root, ...args], { encoding: "utf8" });
+  const { stdout } = await execGit(["-C", root, ...args], { encoding: "utf8" });
   return stdout.trim();
 }
 
@@ -108,8 +120,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
         try {
           commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${targetHead}${headExpression[1]}^{commit}`]);
         } catch (error) {
-          const stderr = String((error as { stderr?: unknown }).stderr ?? "");
-          if (typeof (error as { code?: unknown }).code === "number" && /Needed a single revision|unknown revision|bad object|not a valid object name/i.test(stderr)) {
+          if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot)) {
             invalid("base-invalid", "base revision HEAD ancestry expression must resolve to a reachable commit");
           }
           throw error;
@@ -122,12 +133,11 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       } else commit = symbolic(base);
       if (commit === undefined) invalid("base-invalid", "base revision must name an existing pinned ref or reachable commit");
       try { commit = await gitText(repositoryRoot, ["rev-parse", "--verify", `${commit}^{commit}`]); } catch (error) {
-        const stderr = String((error as { stderr?: unknown }).stderr ?? "");
-        if (typeof (error as { code?: unknown }).code === "number" && /Needed a single revision|unknown revision|bad object|not a valid object name/i.test(stderr)) invalid("base-invalid", "base revision must resolve to an existing commit");
+        if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot)) invalid("base-invalid", "base revision must resolve to an existing commit");
         throw error;
       }
       try { await gitText(repositoryRoot, ["merge-base", "--is-ancestor", commit, targetHead]); } catch (error) {
-        if ((error as { code?: unknown }).code === 1) invalid("base-invalid", "base revision must be an ancestor of the pinned target");
+        if (exitCode(error) === 1) invalid("base-invalid", "base revision must be an ancestor of the pinned target");
         throw error;
       }
       return commit;
@@ -137,7 +147,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       try {
         mergeBase = await gitText(repositoryRoot, ["merge-base", base, targetHead]);
       } catch (error) {
-        if ((error as { code?: unknown }).code === 1) {
+        if (exitCode(error) === 1) {
           invalid("range-invalid", "review range requires a common ancestor for base and pinned target");
         }
         throw error;
@@ -145,7 +155,7 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
       if (!mergeBase) invalid("range-invalid", "review range requires a common ancestor for base and pinned target");
       const diffCommand = `git diff ${mergeBase}...${targetHead}`;
       const [{ stdout: diff }, commitsText] = await Promise.all([
-        execFileAsync("git", ["-C", repositoryRoot, "diff", `${mergeBase}...${targetHead}`], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 }),
+        execGit(["-C", repositoryRoot, "diff", `${mergeBase}...${targetHead}`], { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 }),
         gitText(repositoryRoot, ["rev-list", "--reverse", `${mergeBase}..${targetHead}`]),
       ]);
       if (diff.length === 0) invalid("range-invalid", "review range must contain a non-empty diff between base and pinned target");
@@ -160,11 +170,10 @@ export async function createReviewerPinnedGitReader(root = process.cwd()): Promi
         invalid("material-invalid", "materials.repositoryPath must not contain empty, current-directory, or parent-directory segments");
       }
       try {
-        const { stdout } = await execFileAsync("git", ["-C", repositoryRoot, "show", `${revision}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
+        const { stdout } = await execGit(["-C", repositoryRoot, "show", `${revision}:${path}`], { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
         return Uint8Array.from(stdout);
       } catch (error) {
-        const stderr = String((error as { stderr?: unknown }).stderr ?? "");
-        if (typeof (error as { code?: unknown }).code === "number" && /does not exist in|exists on disk, but not in|path .* not in/i.test(stderr)) {
+        if (exitCode(error) === 128 && await repositoryIsAvailable(repositoryRoot)) {
           invalid("material-invalid", "pinned material at materials.repositoryPath is missing from the target");
         }
         throw error;
