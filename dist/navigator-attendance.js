@@ -19,6 +19,9 @@ class NavigatorUnavailableError extends Error {
     this.unavailableCause = cause;
   }
 }
+function navigatorProviderFailure(message, source, cause = source) {
+  return Object.assign(message, { navigatorFailure: { source, cause } });
+}
 function navigatorUnavailableError(source, error, cause = source) {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof NavigatorUnavailableError ? error : new NavigatorUnavailableError(source, message, cause);
@@ -359,8 +362,9 @@ ${helpContext}
           });
           const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : void 0;
           const errorMessage = nativeMessage !== void 0 && typeof nativeMessage.errorMessage === "string" ? nativeMessage.errorMessage : "Navigator did not submit typed route candidates";
-          const source = unavailableKey(nativeMessage?.navigatorUnavailableSource) ?? "unknown";
-          const cause = unavailableKey(nativeMessage?.navigatorUnavailableCause) ?? source;
+          const providerFailure = exactRecord(nativeMessage?.navigatorFailure) ? nativeMessage.navigatorFailure : void 0;
+          const source = unavailableKey(providerFailure?.source) ?? "unknown";
+          const cause = unavailableKey(providerFailure?.cause) ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
         }
         candidates = validatePrepareOutput(output);
@@ -592,6 +596,7 @@ export {
   createNavigatorPrepareTool,
   formatNavigatorReport,
   navigatorModelSettingPath,
+  navigatorProviderFailure,
   navigatorSessionDirectory,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
