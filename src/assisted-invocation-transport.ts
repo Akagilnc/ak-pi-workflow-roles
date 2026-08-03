@@ -9,7 +9,15 @@ import type { AssistedCallConfigV1, AssistedTerminalClass } from "./assisted-con
 import type { NavigatorReceiptV1 } from "./navigator-contracts.ts";
 import { createGitCliTransportV1 } from "./assisted-acquisition.ts";
 import { isAuditEscalationResult, type AuditEscalationResult } from "./audit-escalation.ts";
-import { isTerminatingToolName, validateAcceptedDetails, validateAcceptedLifecycle } from "./package-contracts/terminating-tools.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
+import {
+  FIXER_OUTPUT_TOOL_NAME,
+  JUDGE_OUTPUT_TOOL_NAME,
+  REVIEWER_OUTPUT_TOOL_NAME,
+  isTerminatingToolName,
+  validateAcceptedDetails,
+  validateAcceptedLifecycle,
+} from "./package-contracts/terminating-tools.ts";
 
 type LocalReceipt = {
   artifactKind: "acceptedReceipt" | "roleEscalation";
@@ -28,6 +36,13 @@ function childFact(value: unknown): ChildFact {
 }
 
 function childFailed(child: ChildFact) { return child.signal !== null || child.exitCode !== 0; }
+
+function isAuditedRoleOutputTool(toolName: string): boolean {
+  return toolName === JUDGE_OUTPUT_TOOL_NAME ||
+    toolName === FIXER_OUTPUT_TOOL_NAME ||
+    toolName === REVIEWER_OUTPUT_TOOL_NAME ||
+    toolName === DOCTOR_OUTPUT_TOOL_NAME;
+}
 
 async function store(path: string, value: unknown) {
   const text = `${canonicalJson(value)}\n`;
@@ -106,7 +121,7 @@ function acceptedReceipt(sessionText: string): LocalReceipt {
     if (!call) throw new Error("accepted tool result is orphaned or precedes its call in native session");
     if (settled.has(message.toolCallId)) throw new Error("duplicate accepted tool result in native session");
     if (call.name !== message.toolName) throw new Error("accepted tool lifecycle name mismatch in native session");
-    const details = isAuditEscalationResult(message.details)
+    const details = isAuditedRoleOutputTool(message.toolName) && isAuditEscalationResult(message.details)
       ? message.details
       : validateAcceptedLifecycle(message.toolName, call.arguments, message.details);
     if (accepted) throw new Error("multiple accepted role outcomes in native session");
@@ -179,7 +194,10 @@ async function existing(config: AssistedCallConfigV1, invocationId: string): Pro
   if (!isTerminatingToolName(receipt.toolName) || canonicalJson(receipt) !== canonicalJson(extracted)) throw new Error("private invocation receipt mismatch");
   if (receipt.artifactKind === "acceptedReceipt") {
     validateAcceptedDetails(receipt.toolName, receipt.details);
-  } else if (!isAuditEscalationResult(receipt.details)) {
+  } else if (
+    !isAuditedRoleOutputTool(receipt.toolName) ||
+    !isAuditEscalationResult(receipt.details)
+  ) {
     throw new Error("private invocation role escalation artifact malformed");
   }
   return { receipt, child, evidenceRead, reference: { id: `receipt:${invocationId}`, sha256: sha256Hex(receiptText) } };
@@ -216,6 +234,7 @@ export function createAssistedInvocationTransportV1(baseEnv: NodeJS.ProcessEnv =
       if (kind === "navigator") {
         if (value.child.signal || value.child.exitCode !== 0) return { kind: "infrastructure_failure", reference: value.reference };
         if (!value.receipt) throw new Error("accepted Navigator outcome missing from private invocation");
+        if (value.receipt.artifactKind !== "acceptedReceipt") throw new Error("Navigator cannot settle audit escalation");
         if (value.receipt.toolName !== "ak_navigator_output") throw new Error("Navigator tool mismatch");
         return { kind: "accepted", receipt: value.receipt.details as NavigatorReceiptV1, evidenceRead: value.evidenceRead, reference: value.reference };
       }
@@ -229,6 +248,7 @@ export function createAssistedInvocationTransportV1(baseEnv: NodeJS.ProcessEnv =
       const value = await invoke(config, invocationId, argv, position.snapshot, { kind: "navigator-consultation", snapshotDigest: position.snapshot.digest, positionCursor: position.snapshot.positionCursor }, baseEnv);
       if (value.child.signal || value.child.exitCode !== 0) return { kind: "infrastructure_failure", reference: value.reference };
       if (!value.receipt) throw new Error("accepted Navigator outcome missing from private invocation");
+      if (value.receipt.artifactKind !== "acceptedReceipt") throw new Error("Navigator cannot settle audit escalation");
       if (value.receipt.toolName !== "ak_navigator_output") throw new Error("Navigator tool mismatch");
       return { kind: "accepted", receipt: value.receipt.details as NavigatorReceiptV1, evidenceRead: value.evidenceRead, reference: value.reference };
     },
