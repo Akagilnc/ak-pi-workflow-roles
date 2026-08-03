@@ -10,23 +10,16 @@ import { promisify } from "node:util";
 import { isReviewerPromptIdentity, reviewerPromptIdentity } from "../src/reviewer-dispatch.ts";
 import { createReviewerPinnedGitReader } from "../src/reviewer-pinned-git.ts";
 import { immutableReviewerRefs, sameReviewerRefs } from "../src/reviewer-git-snapshot.ts";
+import { withPrimaryAwareCleanup } from "./helpers/primary-aware-cleanup.ts";
 
 const exec = promisify(execFile);
-async function disposeTestResources(...cleanups: Array<() => Promise<void>>): Promise<void> {
-  const failures: unknown[] = [];
-  for (const cleanup of cleanups) {
-    try { await cleanup(); } catch (error) { failures.push(error); }
-  }
-  // Teardown must not replace an active test failure; report cleanup failure independently.
-  if (failures.length > 0) process.emitWarning(new AggregateError(failures, "Pinned-reader test cleanup failed", { cause: failures[0] }), "PinnedReaderTestCleanupFailure");
-}
 async function git(root: string, ...args: string[]): Promise<string> {
   return (await exec("git", ["-C", root, ...args])).stdout.trim();
 }
 
 test("pinned base resolution ignores moved refs and accepts reachable full commits", async () => {
   const root = await mkdtemp(join(tmpdir(), "reviewer-pin-"));
-  try {
+  await withPrimaryAwareCleanup(async () => {
     await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
     await writeFile(join(root, "file"), "base\n"); await git(root, "add", "."); await git(root, "commit", "-m", "base");
     const base = await git(root, "rev-parse", "HEAD"); await git(root, "branch", "review-base", base);
@@ -57,12 +50,12 @@ test("pinned base resolution ignores moved refs and accepts reachable full commi
     const withAliases = await createReviewerPinnedGitReader(root);
     await assert.rejects(withAliases.resolve("same"), /base revision is ambiguous across pinned refs/);
     await assert.rejects(ambiguous.resolve("HEAD:evil"), /base revision syntax is invalid or uses a forbidden revision form/);
-  } finally { await disposeTestResources(() => rm(root, { recursive: true, force: true })); }
+  }, () => rm(root, { recursive: true, force: true }));
 });
 
 test("SHA-256 pins full and abbreviated commits, range, material, and ref snapshots", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "reviewer-sha256-"));
-  try {
+  await withPrimaryAwareCleanup(async () => {
     try { await git(root, "init", "--object-format=sha256"); }
     catch (error) {
       const detail = error instanceof Error ? `${error.message} ${String((error as { stderr?: unknown }).stderr ?? "")}` : String(error);
@@ -85,12 +78,12 @@ test("SHA-256 pins full and abbreviated commits, range, material, and ref snapsh
     assert.equal(Buffer.from(await reader.material("file", reader.pin.targetHead)).toString(), "target\n");
     assert.deepEqual(await reader.snapshot(), reader.pin);
     assert.equal(reader.pin.refs["refs/heads/review-base"]?.peeledCommitId, base);
-  } finally { await disposeTestResources(() => rm(root, { recursive: true, force: true })); }
+  }, () => rm(root, { recursive: true, force: true }));
 });
 
 test("abbreviated bases are resolved only among commits reachable from the activation target", async () => {
   const root = await mkdtemp(join(tmpdir(), "reviewer-prefix-"));
-  try {
+  await withPrimaryAwareCleanup(async () => {
     await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
     await writeFile(join(root, "file"), "base\n"); await git(root, "add", "."); await git(root, "commit", "-m", "base");
     const base = await git(root, "rev-parse", "HEAD");
@@ -125,7 +118,7 @@ test("abbreviated bases are resolved only among commits reachable from the activ
     await git(root, "update-ref", "HEAD", parent);
     const ambiguousReader = await createReviewerPinnedGitReader(root);
     await assert.rejects(ambiguousReader.resolve(ambiguousPrefix), /base-invalid/);
-  } finally { await disposeTestResources(() => rm(root, { recursive: true, force: true })); }
+  }, () => rm(root, { recursive: true, force: true }));
 });
 
 test("pinning discovers and canonicalizes the worktree root from nested and symlinked cwd", async () => {
@@ -133,7 +126,7 @@ test("pinning discovers and canonicalizes the worktree root from nested and syml
   const root = join(temporary, "repository");
   const nested = join(root, "nested", "directory");
   const linked = join(temporary, "linked-repository");
-  try {
+  await withPrimaryAwareCleanup(async () => {
     await mkdir(nested, { recursive: true });
     await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
     await writeFile(join(root, "file"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "initial");
@@ -141,22 +134,22 @@ test("pinning discovers and canonicalizes the worktree root from nested and syml
     const canonicalRoot = await realpath(root);
     assert.equal((await createReviewerPinnedGitReader(nested)).pin.repositoryRoot, canonicalRoot);
     assert.equal((await createReviewerPinnedGitReader(join(linked, "nested"))).pin.repositoryRoot, canonicalRoot);
-  } finally { await disposeTestResources(() => rm(temporary, { recursive: true, force: true })); }
+  }, () => rm(temporary, { recursive: true, force: true }));
 });
 
 test("pinning rejects non-repositories and bare repositories", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "reviewer-root-reject-"));
   const bare = join(temporary, "bare.git");
-  try {
+  await withPrimaryAwareCleanup(async () => {
     await assert.rejects(createReviewerPinnedGitReader(temporary));
     await git(temporary, "init", "--bare", bare);
     await assert.rejects(createReviewerPinnedGitReader(bare));
-  } finally { await disposeTestResources(() => rm(temporary, { recursive: true, force: true })); }
+  }, () => rm(temporary, { recursive: true, force: true }));
 });
 
 test("material path safety rejects unsafe Git object paths at the concrete read seam", async () => {
   const root = await mkdtemp(join(tmpdir(), "reviewer-material-path-"));
-  try {
+  await withPrimaryAwareCleanup(async () => {
     await git(root, "init"); await git(root, "config", "user.email", "test@example.com"); await git(root, "config", "user.name", "Test");
     await writeFile(join(root, "safe"), "content\n"); await git(root, "add", "."); await git(root, "commit", "-m", "initial");
     const reader = await createReviewerPinnedGitReader(root);
@@ -172,7 +165,7 @@ test("material path safety rejects unsafe Git object paths at the concrete read 
     }
     await assert.rejects(reader.material("missing", reader.pin.targetHead), /pinned material at materials\.repositoryPath is missing from the target/);
     assert.equal(Buffer.from(await reader.material("safe", reader.pin.targetHead)).toString(), "content\n");
-  } finally { await disposeTestResources(() => rm(root, { recursive: true, force: true })); }
+  }, () => rm(root, { recursive: true, force: true }));
 });
 
 test("shared ref snapshot helper canonicalizes immutably and compares order-independently", () => {
