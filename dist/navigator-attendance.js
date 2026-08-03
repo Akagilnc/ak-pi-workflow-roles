@@ -368,7 +368,7 @@ ${helpContext}
       ].join("\n\n");
       try {
         try {
-          await activeSession.prompt(request, projection);
+          await activeSession.prompt(request);
         } catch (error) {
           throw navigatorUnavailableError("transport", error);
         }
@@ -379,10 +379,9 @@ ${helpContext}
           });
           const nativeMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) ? nativeFailure.message : void 0;
           const errorMessage = nativeMessage !== void 0 && typeof nativeMessage.errorMessage === "string" ? nativeMessage.errorMessage : "Navigator did not submit typed route candidates";
-          const providerFailure = activeSession.providerFailure?.() ?? navigatorProviderFailureFromError(nativeMessage);
-          const retainedFailure = exactRecord(nativeMessage?.navigatorFailure) ? nativeMessage.navigatorFailure : void 0;
-          const source = providerFailure?.source ?? unavailableKey(retainedFailure?.source) ?? "unknown";
-          const cause = providerFailure?.cause ?? unavailableKey(retainedFailure?.cause) ?? source;
+          const providerFailure = activeSession.providerFailure?.();
+          const source = providerFailure?.source ?? "unknown";
+          const cause = providerFailure?.cause ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
         }
         candidates = validatePrepareOutput(output);
@@ -519,45 +518,86 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       }
     }
     let providerFailure;
-    const wrapProviderStream = (source) => {
-      const wrapped = createAssistantMessageEventStream();
-      void (async () => {
-        let result;
-        try {
-          for await (const event of source) {
-            if (event.type === "error" && exactRecord(event.error)) {
-              const structuredFailure = navigatorProviderFailureFromError(event.error);
-              if (structuredFailure !== void 0) {
-                providerFailure = structuredFailure;
-              } else {
-                const fact = event.error.navigatorFailure;
-                if (exactRecord(fact) && unavailableKey(fact.source) !== void 0 && unavailableKey(fact.cause) !== void 0) {
-                  providerFailure = { source: unavailableKey(fact.source), cause: unavailableKey(fact.cause) };
-                }
-              }
-            }
-            wrapped.push(event);
-          }
-          result = await source.result();
-        } finally {
-          wrapped.end(result);
-        }
-      })();
-      return wrapped;
-    };
-    const instrumentedProvider = {
-      ...provider,
-      stream(model2, context2, options) {
-        return wrapProviderStream(provider.stream(model2, context2, options));
-      },
-      streamSimple(model2, context2, options) {
-        return wrapProviderStream(provider.streamSimple(model2, context2, options));
+    const classifyProviderStreamError = (error) => {
+      const structuredFailure = navigatorProviderFailureFromError(error);
+      if (structuredFailure !== void 0) {
+        providerFailure = structuredFailure;
+        return;
       }
+      if (!exactRecord(error)) return;
+      const fact = error.navigatorFailure;
+      if (exactRecord(fact) && unavailableKey(fact.source) !== void 0 && unavailableKey(fact.cause) !== void 0) {
+        providerFailure = { source: unavailableKey(fact.source), cause: unavailableKey(fact.cause) };
+      }
+    };
+    const humanProviderError = (error) => {
+      const human = { ...error };
+      delete human.statusCode;
+      delete human.code;
+      delete human.navigatorFailure;
+      return human;
+    };
+    const instrumentProvider = (sourceProvider) => {
+      const wrapProviderStream = (source) => {
+        const wrapped = createAssistantMessageEventStream();
+        void (async () => {
+          providerFailure = void 0;
+          let result;
+          let sawTerminal = false;
+          try {
+            for await (const event of source) {
+              if (event.type === "done" || event.type === "error") sawTerminal = true;
+              if (event.type === "error" && exactRecord(event.error)) {
+                classifyProviderStreamError(event.error);
+                wrapped.push({ ...event, error: humanProviderError(event.error) });
+                continue;
+              }
+              wrapped.push(event);
+            }
+            result = await source.result();
+            if (exactRecord(result)) result = humanProviderError(result);
+          } catch (error) {
+            classifyProviderStreamError(error);
+            if (providerFailure === void 0) providerFailure = { source: "transport", cause: "transport" };
+            if (!sawTerminal) {
+              const message = {
+                role: "assistant",
+                content: [],
+                api: "unknown",
+                provider: "unknown",
+                model: "unknown",
+                usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+                stopReason: "error",
+                errorMessage: error instanceof Error ? error.message : String(error),
+                timestamp: Date.now()
+              };
+              wrapped.push({ type: "error", reason: "error", error: message });
+              result = message;
+              sawTerminal = true;
+            }
+          } finally {
+            if (!sawTerminal && providerFailure === void 0) {
+              providerFailure = { source: "transport", cause: "transport" };
+            }
+            wrapped.end(result);
+          }
+        })();
+        return wrapped;
+      };
+      return {
+        ...sourceProvider,
+        stream(model2, streamContext, options) {
+          return wrapProviderStream(sourceProvider.stream(model2, streamContext, options));
+        },
+        streamSimple(model2, streamContext, options) {
+          return wrapProviderStream(sourceProvider.streamSimple(model2, streamContext, options));
+        }
+      };
     };
     let modelRuntime;
     try {
       modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
-      modelRuntime.registerNativeProvider(instrumentedProvider);
+      modelRuntime.registerNativeProvider(instrumentProvider(provider));
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
@@ -612,7 +652,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
         }
         if (!nextAuth.ok) throw new NavigatorUnavailableError("auth", nextAuth.error);
         try {
-          modelRuntime.registerNativeProvider(nextProvider);
+          modelRuntime.registerNativeProvider(instrumentProvider(nextProvider));
           await created.session.setModel(nextModel);
           created.session.setThinkingLevel(thinkingLevel);
         } catch (error) {

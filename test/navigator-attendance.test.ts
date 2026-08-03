@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fauxProvider } from "@earendil-works/pi-ai";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import {
   createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   createNavigatorPrepareTool,
   formatNavigatorReport,
   NAVIGATOR_DEFAULT_MODEL,
+  NAVIGATOR_PREPARE_TOOL_NAME,
+  NavigatorUnavailableError,
   writeNavigatorModelSetting,
   NAVIGATOR_TARGETS,
   type NavigatorPreparationSession,
@@ -48,11 +50,9 @@ function sessionHarness() {
   const modelSettings: Array<{ model: string; thinkingLevel: string }> = [];
   let tool: any;
   let prompts = 0;
-  let promptProjection: any;
   let releasePrompt: (() => void) | undefined;
   const session: NavigatorPreparationSession = {
-    async prompt(_text, projection) {
-      promptProjection = projection;
+    async prompt(_text) {
       prompts += 1;
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
     },
@@ -66,7 +66,11 @@ function sessionHarness() {
     tool: () => tool,
     release: () => releasePrompt?.(),
     prompts: () => prompts,
-    promptProjection: () => promptProjection,
+    /** Production-retained typed context fact (ak-navigator-context), not a prompt metadata channel. */
+    retainedContext: () => {
+      const entry = [...entries].reverse().find((item: any) => item?.customType === "ak-navigator-context");
+      return (entry as { data?: unknown } | undefined)?.data as any;
+    },
     entries,
     modelSettings,
   };
@@ -95,10 +99,10 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(harness.prompts(), 1);
-    assert.deepEqual(harness.promptProjection().currentRole, { role: "coder", phase: "apply" });
-    assert.equal(harness.promptProjection().subject, "Fix issue 28");
-    assert.equal(harness.promptProjection().authority, "owner decision");
-    assert.equal(harness.promptProjection().subjectKey, "/repo/.ak/work/issues/28");
+    assert.deepEqual(harness.retainedContext().currentRole, { role: "coder", phase: "apply" });
+    assert.equal(harness.retainedContext().subject, "Fix issue 28");
+    assert.equal(harness.retainedContext().authority, "owner decision");
+    assert.equal(harness.retainedContext().subjectKey, "/repo/.ak/work/issues/28");
     let settled = false;
     const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }).then(() => { settled = true; });
     await Promise.resolve();
@@ -132,15 +136,15 @@ test("live help changes the next hint without a static template or fabricated ta
     const nav = await attendance(setting, harness, events, async (role) => `${help} (${role})`);
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.match(harness.promptProjection().liveRoleHelp.find((entry: any) => entry.role === "coder").help, /ak-coder-phase/);
+    assert.equal(harness.retainedContext().liveRoleHelp.find((entry: any) => entry.role === "coder").help.includes("ak-coder-phase"), true);
     await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     help = "Usage: pi --ak-role coder --ak-coder-task <file>";
     nav.prepare();
     while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.match(harness.promptProjection().liveRoleHelp.find((entry: any) => entry.role === "coder").help, /ak-coder-task/);
-    assert.equal(harness.promptProjection().liveRoleHelp.some((entry: any) => entry.help.includes("/repo/task.md")), false);
+    assert.equal(harness.retainedContext().liveRoleHelp.find((entry: any) => entry.role === "coder").help.includes("ak-coder-task"), true);
+    assert.equal(harness.retainedContext().liveRoleHelp.some((entry: any) => entry.help.includes("/repo/task.md")), false);
     await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
@@ -223,26 +227,30 @@ test("Navigator session creation failures become unavailable without rejecting s
   try {
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-    const events: any[] = [];
-    const nav = createNavigatorAttendance({
-      context: context(),
-      role: "coder",
-      phase: "apply",
-      subjectKey: "/repo/.ak/work/issues/28",
-      sessionDir: "/repo/.ak/work/issues/28/runs/navigator",
-      subject: "Fix issue 28",
-      authority: "owner decision",
-      loadSoul: async () => "route judgment",
-      loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
-      modelSettingPath: setting,
-      createSession: async () => { throw new Error("provider auth down"); },
-      onEvent: async (event) => { events.push(event); },
-    });
-    nav.prepare();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(events.length, 1);
-    assert.equal(events[0].disposition, "unavailable");
-    assert.equal(events[0].unavailableReason, "provider auth down");
+    for (const diagnostic of ["provider auth down", "session open failed with different wording"]) {
+      const events: any[] = [];
+      const nav = createNavigatorAttendance({
+        context: context(),
+        role: "coder",
+        phase: "apply",
+        subjectKey: "/repo/.ak/work/issues/28",
+        sessionDir: "/repo/.ak/work/issues/28/runs/navigator",
+        subject: "Fix issue 28",
+        authority: "owner decision",
+        loadSoul: async () => "route judgment",
+        loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+        modelSettingPath: setting,
+        createSession: async () => { throw new Error(diagnostic); },
+        onEvent: async (event) => { events.push(event); },
+      });
+      nav.prepare();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].disposition, "unavailable");
+      assert.equal(events[0].unavailableSource, "session");
+      assert.equal(events[0].unavailableCause, "session");
+      assert.notEqual(events[0].unavailableReason, undefined);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -285,7 +293,9 @@ test("native session uses the saved model exactly and rejects unsupported thinki
     const tool = createNavigatorPrepareTool(() => {});
     await assert.rejects(
       factory({ context: nativeContext, sessionDir: join(root, "session"), tool }),
-      /thinking level|max.*unavailable/i,
+      (error: unknown) => error instanceof NavigatorUnavailableError
+        && error.unavailableSource === "thinking"
+        && error.unavailableCause === "thinking",
     );
     await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
     const session = await factory({ context: nativeContext, sessionDir: join(root, "session"), tool });
@@ -294,8 +304,77 @@ test("native session uses the saved model exactly and rejects unsupported thinki
     await writeFile(setting, JSON.stringify({ model: "missing/provider" }));
     await assert.rejects(
       factory({ context: nativeContext, sessionDir: join(root, "session"), tool }),
-      /unavailable/i,
+      (error: unknown) => error instanceof NavigatorUnavailableError
+        && error.unavailableSource === "model"
+        && error.unavailableCause === "model",
     );
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("native provider stream seam classifies auth/quota/transport after setModel without message metadata oracle", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-native-stream-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  try {
+    process.env.PI_CODING_AGENT_DIR = root;
+    const cases = [
+      { name: "auth", source: "auth" as const, statusCode: 401, code: "authentication_failed", diagnostics: ["auth key unavailable", "login expired differently"] },
+      { name: "quota", source: "quota" as const, statusCode: 429, code: "quota_exhausted", diagnostics: ["quota exhausted", "billing limit reached differently"] },
+      { name: "transport", source: "transport" as const, code: "transport_error", diagnostics: ["transport unavailable", "socket reset differently"] },
+    ] as const;
+    for (const scenario of cases) {
+      for (const diagnostic of scenario.diagnostics) {
+        const faux = fauxProvider({ provider: `native-stream-${scenario.name}`, api: `native-stream-${scenario.name}` });
+        const model = faux.getModel();
+        const setting = join(root, "navigator-model.json");
+        await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+        const failingProvider = {
+          ...faux.provider,
+          stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }) {
+            const names = streamContext.tools?.map((tool) => tool.name) ?? [];
+            if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never);
+            const stream = createAssistantMessageEventStream();
+            const human = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
+            const classified = Object.assign({}, human, {
+              ...("statusCode" in scenario ? { statusCode: scenario.statusCode } : {}),
+              ...("code" in scenario ? { code: scenario.code } : {}),
+            });
+            queueMicrotask(() => {
+              stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
+              stream.push({ type: "error", reason: "error", error: classified });
+            });
+            return stream;
+          },
+          streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }) {
+            return this.stream(requestModel, streamContext);
+          },
+        };
+        const nativeContext = {
+          cwd: root,
+          modelRegistry: {
+            find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
+            getProvider: (provider: string) => provider === model.provider ? failingProvider : undefined,
+            async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+          },
+        } as never;
+        const factory = createNativeNavigatorSessionFactory();
+        const tool = createNavigatorPrepareTool(() => {});
+        const session = await factory({ context: nativeContext, sessionDir: join(root, `session-${scenario.name}-${diagnostic.length}`), tool });
+        // Production order: setModel replaces the registered provider before prompt.
+        await session.setModel?.(`${model.provider}/${model.id}`, "off");
+        await session.prompt("prepare routes");
+        assert.deepEqual(session.providerFailure?.(), { source: scenario.source, cause: scenario.source }, `${scenario.name}:${diagnostic}`);
+        const assistant = [...session.entries()].reverse().find((entry: any) => entry?.type === "message" && entry?.message?.role === "assistant") as any;
+        assert.equal(assistant?.message?.errorMessage, diagnostic, `${scenario.name}:${diagnostic}`);
+        assert.equal(assistant?.message?.statusCode, undefined, `${scenario.name}:${diagnostic}`);
+        assert.equal(assistant?.message?.code, undefined, `${scenario.name}:${diagnostic}`);
+        assert.equal(assistant?.message?.navigatorFailure, undefined, `${scenario.name}:${diagnostic}`);
+        session.dispose();
+      }
+    }
   } finally {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previous;

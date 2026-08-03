@@ -151,7 +151,7 @@ const prepareSchema = Type.Object({ candidates: Type.Array(candidateSchema, { mi
 type PrepareOutput = Static<typeof prepareSchema>;
 
 export type NavigatorPreparationSession = {
-  prompt(text: string, projection?: NavigatorContextProjection): Promise<void>;
+  prompt(text: string): Promise<void>;
   appendEntry(customType: string, data: unknown): void;
   entries(): readonly unknown[];
   providerFailure?(): NavigatorProviderFailureFact | undefined;
@@ -513,7 +513,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       ].join("\n\n");
       try {
         try {
-          await activeSession.prompt(request, projection);
+          await activeSession.prompt(request);
         } catch (error) {
           throw navigatorUnavailableError("transport", error);
         }
@@ -526,10 +526,11 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const errorMessage = nativeMessage !== undefined && typeof nativeMessage.errorMessage === "string"
             ? nativeMessage.errorMessage
             : "Navigator did not submit typed route candidates";
-          const providerFailure = activeSession.providerFailure?.() ?? navigatorProviderFailureFromError(nativeMessage);
-          const retainedFailure = exactRecord(nativeMessage?.navigatorFailure) ? nativeMessage.navigatorFailure : undefined;
-          const source = providerFailure?.source ?? unavailableKey(retainedFailure?.source) ?? "unknown";
-          const cause = providerFailure?.cause ?? unavailableKey(retainedFailure?.cause) ?? source;
+          // Classification originates only at the native provider stream seam.
+          // AssistantMessage metadata is a human diagnostic surface, not an acceptance oracle.
+          const providerFailure = activeSession.providerFailure?.();
+          const source = providerFailure?.source ?? "unknown";
+          const cause = providerFailure?.cause ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
         }
         candidates = validatePrepareOutput(output);
@@ -677,45 +678,88 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
       }
     }
     let providerFailure: NavigatorProviderFailureFact | undefined;
-    const wrapProviderStream = (source: ReturnType<typeof provider.stream>) => {
-      const wrapped = createAssistantMessageEventStream();
-      void (async () => {
-        let result: Awaited<ReturnType<typeof source.result>> | undefined;
-        try {
-          for await (const event of source) {
-            if (event.type === "error" && exactRecord(event.error)) {
-              const structuredFailure = navigatorProviderFailureFromError(event.error);
-              if (structuredFailure !== undefined) {
-                providerFailure = structuredFailure;
-              } else {
-                const fact = event.error.navigatorFailure;
-                if (exactRecord(fact) && unavailableKey(fact.source) !== undefined && unavailableKey(fact.cause) !== undefined) {
-                  providerFailure = { source: unavailableKey(fact.source)!, cause: unavailableKey(fact.cause)! };
-                }
-              }
-            }
-            wrapped.push(event);
-          }
-          result = await source.result();
-        } finally {
-          wrapped.end(result);
-        }
-      })();
-      return wrapped;
+    const classifyProviderStreamError = (error: unknown): void => {
+      const structuredFailure = navigatorProviderFailureFromError(error);
+      if (structuredFailure !== undefined) {
+        providerFailure = structuredFailure;
+        return;
+      }
+      if (!exactRecord(error)) return;
+      const fact = error.navigatorFailure;
+      if (exactRecord(fact) && unavailableKey(fact.source) !== undefined && unavailableKey(fact.cause) !== undefined) {
+        providerFailure = { source: unavailableKey(fact.source)!, cause: unavailableKey(fact.cause)! };
+      }
     };
-    const instrumentedProvider = {
-      ...provider,
-      stream(model: Parameters<typeof provider.stream>[0], context: Parameters<typeof provider.stream>[1], options: Parameters<typeof provider.stream>[2]) {
-        return wrapProviderStream(provider.stream(model, context, options));
-      },
-      streamSimple(model: Parameters<typeof provider.streamSimple>[0], context: Parameters<typeof provider.streamSimple>[1], options: Parameters<typeof provider.streamSimple>[2]) {
-        return wrapProviderStream(provider.streamSimple(model, context, options));
-      },
-    } as typeof provider;
+    const humanProviderError = <T extends Record<string, unknown>>(error: T): T => {
+      const human = { ...error };
+      delete human.statusCode;
+      delete human.code;
+      delete human.navigatorFailure;
+      return human;
+    };
+    const instrumentProvider = (sourceProvider: typeof provider): typeof provider => {
+      const wrapProviderStream = (source: ReturnType<typeof provider.stream>) => {
+        const wrapped = createAssistantMessageEventStream();
+        void (async () => {
+          // Reset per call so a prior auth/quota/transport fact cannot contaminate a later unknown failure.
+          providerFailure = undefined;
+          let result: Awaited<ReturnType<typeof source.result>> | undefined;
+          let sawTerminal = false;
+          try {
+            for await (const event of source) {
+              if (event.type === "done" || event.type === "error") sawTerminal = true;
+              if (event.type === "error" && exactRecord(event.error)) {
+                classifyProviderStreamError(event.error);
+                wrapped.push({ ...event, error: humanProviderError(event.error) as typeof event.error });
+                continue;
+              }
+              wrapped.push(event);
+            }
+            result = await source.result();
+            if (exactRecord(result)) result = humanProviderError(result) as typeof result;
+          } catch (error) {
+            classifyProviderStreamError(error);
+            if (providerFailure === undefined) providerFailure = { source: "transport", cause: "transport" };
+            if (!sawTerminal) {
+              const message = {
+                role: "assistant" as const,
+                content: [],
+                api: "unknown",
+                provider: "unknown",
+                model: "unknown",
+                usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+                stopReason: "error" as const,
+                errorMessage: error instanceof Error ? error.message : String(error),
+                timestamp: Date.now(),
+              };
+              wrapped.push({ type: "error", reason: "error", error: message });
+              result = message;
+              sawTerminal = true;
+            }
+          } finally {
+            // No terminal stream event means the provider produced no response.
+            if (!sawTerminal && providerFailure === undefined) {
+              providerFailure = { source: "transport", cause: "transport" };
+            }
+            wrapped.end(result);
+          }
+        })();
+        return wrapped;
+      };
+      return {
+        ...sourceProvider,
+        stream(model: Parameters<typeof provider.stream>[0], streamContext: Parameters<typeof provider.stream>[1], options: Parameters<typeof provider.stream>[2]) {
+          return wrapProviderStream(sourceProvider.stream(model, streamContext, options));
+        },
+        streamSimple(model: Parameters<typeof provider.streamSimple>[0], streamContext: Parameters<typeof provider.streamSimple>[1], options: Parameters<typeof provider.streamSimple>[2]) {
+          return wrapProviderStream(sourceProvider.streamSimple(model, streamContext, options));
+        },
+      } as typeof provider;
+    };
     let modelRuntime: Awaited<ReturnType<typeof ModelRuntime.create>>;
     try {
       modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
-      modelRuntime.registerNativeProvider(instrumentedProvider);
+      modelRuntime.registerNativeProvider(instrumentProvider(provider));
     } catch (error) {
       throw navigatorUnavailableError("session", error);
     }
@@ -768,7 +812,8 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
         }
         if (!nextAuth.ok) throw new NavigatorUnavailableError("auth", nextAuth.error);
         try {
-          modelRuntime.registerNativeProvider(nextProvider);
+          // setModel replaces the registered provider id; keep the stream seam instrumented.
+          modelRuntime.registerNativeProvider(instrumentProvider(nextProvider));
           await created.session.setModel(nextModel);
           created.session.setThinkingLevel(thinkingLevel);
         } catch (error) {
