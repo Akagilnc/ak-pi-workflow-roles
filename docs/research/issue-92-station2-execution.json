@@ -447,7 +447,7 @@
         "kind": "construction-rebuild",
         "note": "git fast-import single stream for reachable chain (~13s→~0.5s).",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/reviewer-pinned-reader.test.ts::pinned base resolution ignores moved refs and accepts reachable full commits": {
@@ -925,7 +925,7 @@
         "kind": "construction-rebuild",
         "note": "One session per source × two diagnostics (6→3 sessions).",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/navigator-attendance.test.ts::model settings are exact and typed settlement projection ignores prose and correctable errors": {
@@ -941,7 +941,7 @@
         "kind": "construction-rebuild",
         "note": "Kept parse/settlement asserts; selectNavigatorCandidate statuses moved to status-specific table via candidate() builder.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/navigator-attendance.test.ts::typed subject provenance replaces prose prefix branching": {
@@ -957,7 +957,7 @@
         "kind": "construction-rebuild",
         "note": "Provenance clauses folded into session placement carrier.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/navigator-attendance.test.ts::NAVIGATOR_TARGETS preserves packaged registry order": {
@@ -973,7 +973,7 @@
         "kind": "construction-rebuild",
         "note": "Folded into registry output tools constants assert against PACKAGED_ROLE_REGISTRY order.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/reviewer-role.test.ts::registered Agent rejection text names the violated proposal or pinned-evidence constraint": {
@@ -1265,7 +1265,7 @@
         "kind": "construction-rebuild",
         "note": "Hostile paths via compileMechanicalBundle material id; specific confined message; shared roots.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/reviewer-bundle-materializer.test.ts::materializer rejects digest and manifest mutation atomically": {
@@ -1281,7 +1281,7 @@
         "kind": "construction-rebuild",
         "note": "No tmpdir; assert specific digest/manifest mismatch message.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/judge-role.test.ts::named Judge and worker tools preserve exact metadata, schema leaves, and receipts": {
@@ -1521,7 +1521,7 @@
         "kind": "construction-rebuild",
         "note": "Shrunk secret content payload; frozenEvidenceIndex still omits content at 50MB byteLength.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/judge-soul.test.ts::Judge Soul excludes process, schema, transport, platform, and issue carriers": {
@@ -1537,7 +1537,7 @@
         "kind": "construction-rebuild",
         "note": "Shared denylist table over all souls/*.md; wording fossils dropped.",
         "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
-        "commitPending": true
+        "commit": "48283e3"
       }
     },
     "test/reviewer-construction-seams.test.ts::construction is deterministic from admitted immutable inputs and frozen evidence": {
@@ -1652,7 +1652,7 @@
     "collector-ledger": "e52cf71",
     "collector-github": "3ac8800",
     "package-entrypoint": "488281f",
-    "navigator-tail-small": "(pending)"
+    "navigator-tail-small": "48283e3"
   },
   "constructionHead": "fffe9ac519e07ccd4268c08e8b22003789e0ed73",
   "validation": {
