@@ -9,14 +9,23 @@ const exact = (value, keys) => Object.keys(value).length === keys.length && keys
 export function validateAcceptedCoderDetails(output) {
     if (!record(output))
         throw new Error("Coder output must be an object");
+    const status = output.status;
+    if (status === "unfinished") {
+        if (!exact(output, ["status", "report", "remainingScope"]) ||
+            typeof output.report !== "string" || output.report.trim().length === 0 ||
+            typeof output.remainingScope !== "string" || output.remainingScope.trim().length === 0) {
+            throw new Error("Coder unfinished output requires a non-blank report and remainingScope");
+        }
+        return { status, report: output.report, remainingScope: output.remainingScope };
+    }
     const keys = ["status", "report", ...(output.commitSha === undefined ? [] : ["commitSha"])];
-    if (!exact(output, keys) || (output.status !== "planned" && output.status !== "completed" && output.status !== "refused") ||
+    if (!exact(output, keys) || (status !== "planned" && status !== "completed" && status !== "refused") ||
         typeof output.report !== "string" || output.report.trim().length === 0 ||
         (output.commitSha !== undefined && (typeof output.commitSha !== "string" || output.commitSha.trim().length === 0)) ||
-        (output.status === "planned" && output.commitSha !== undefined)) {
+        (status === "planned" && output.commitSha !== undefined)) {
         throw new Error("Coder output requires planned|completed|refused, a non-blank report, and a lawful optional commitSha");
     }
-    return { status: output.status, report: output.report, ...(output.commitSha === undefined ? {} : { commitSha: output.commitSha }) };
+    return { status, report: output.report, ...(output.commitSha === undefined ? {} : { commitSha: output.commitSha }) };
 }
 /** Structural production validator for an accepted current leaf. */
 export function validateAcceptedWorkerDetails(output, roleLabel = "Coder") {
