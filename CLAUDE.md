@@ -53,10 +53,12 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 **机器只咬契约，不咬呈现**：对自由文本的正则/措辞/表头机械依赖、对图像的像素机械依赖，视同缺陷；机器要消费的信息必须以键、typed 字段或 schema 提供。呈现为人服务，随时可重排。
 
-**票面先过判官庭再开工；决策问题上呈 owner。**
+**票面先过大理寺再开工；决策问题上呈陛下。**
 
-没有绑定直接 owner 原话与明确 decision keys，不得标作 owner authority。
+丞相编排建议：御史台 findings 宜经大理寺裁决后再派修理腿（劾→判→修）。
+
+没有绑定直接陛下原话与明确 decision keys，不得标作陛下 authority。
 
 ## 修订通道
 
-Soul 与本文件（CLAUDE.md）的修订走 owner 直改通道（全文过目直落主线），不走工厂流程，且负持续精进义务；工厂只供修订素材，不拥有动笔权。
+Soul 与本文件（CLAUDE.md）的修订走陛下直改通道（全文过目直落主线），不走工厂流程，且负持续精进义务；工厂只供修订素材，不拥有动笔权。
