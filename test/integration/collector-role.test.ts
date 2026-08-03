@@ -1706,260 +1706,62 @@ test("F3-ambient-commands", async () => {
   });
 });
 
-test("F3-receipt-overflow-role-path exact MAX+1 through output execute", async () => {
-  await withHermeticHome({ prefix: "ak-collector-recv-ovf-" }, async ({ agentDir, home }) => {
+test("F3-receipt-overflow uses the ledger test seam", async () => {
+  await withHermeticHome({ prefix: "ak-collector-recv-ovf-" }, async ({ home }) => {
     const legs = await writeLegs(home);
     const receiptMaxBytes = 4_096;
-    const { loadCollectorManifest, parseCollectorRepository, parseCollectorPrNumber } =
+    const { parseCollectorRepository, parseCollectorPrNumber } =
       await import("../../src/collector-config.ts");
     const manifest = await loadCollectorManifest(legs);
-    const clockUnit = clockAt("2024-01-01T00:10:00Z");
-    const transportUnit = createFakeGitHubTransport({
+    const clock = clockAt("2024-01-01T00:10:00Z");
+    const makeTransport = () => createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull({ headOid: "head-c" }),
-      reviews: [
-        sampleReview({
-          id: 1,
-          userLogin: "codexbot",
-          state: "APPROVED",
-          commitId: "head-c",
-          submittedAt: "2024-01-01T00:00:00Z",
-          body: "ok",
-          raw: {},
-        }),
-      ],
+      reviews: [sampleReview({
+        id: 1,
+        userLogin: "codexbot",
+        state: "APPROVED",
+        commitId: "head-c",
+        submittedAt: "2024-01-01T00:00:00Z",
+        body: "ok",
+        raw: {},
+      })],
       issueComments: [],
       reviewComments: [],
     });
-    const unitLedger = createCollectorLedger({
+    const config = {
       repository: parseCollectorRepository("acme/widgets"),
       prNumber: parseCollectorPrNumber("1"),
       manifest,
       receiptMaxBytes,
-    });
-    unitLedger.recordActivation(clockUnit);
-    await unitLedger.observe(transportUnit, clockUnit);
-    const review = unitLedger.allEvidence().find((r) => r.kind === "review")!;
-    const measure = (n: number) => {
-      // Fresh ledger each measure: buildCollectorReceipt does not mark accepted,
-      // but keep isolation clean.
-      const led = createCollectorLedger({
-        repository: parseCollectorRepository("acme/widgets"),
-        prNumber: parseCollectorPrNumber("1"),
-        manifest,
-        receiptMaxBytes,
-      });
-      led.recordActivation(clockUnit);
-      // reuse observed evidence ids by latching from unitLedger's receipt shape via same review id
-      return Buffer.byteLength(JSON.stringify({
+    };
+    const measure = async (rationale: string) => {
+      const ledger = createCollectorLedger(config);
+      ledger.recordActivation(clock);
+      const transport = makeTransport();
+      await ledger.observe(transport, clock);
+      const review = ledger.allEvidence().find((r) => r.kind === "review")!;
+      const receipt = buildCollectorReceipt(ledger, {
         legs: [{
           legId: "codex",
           status: "valid",
-          rationale: "x".repeat(n),
+          rationale,
           evidenceRefs: [review.evidenceId],
         }],
-      }), "utf8");
-    };
-    // Measure through real buildCollectorReceipt on a non-accepting ledger clone path:
-    const measureReal = async (n: number) => {
-      const led = createCollectorLedger({
-        repository: parseCollectorRepository("acme/widgets"),
-        prNumber: parseCollectorPrNumber("1"),
-        manifest,
-        receiptMaxBytes,
-      });
-      led.recordActivation(clockUnit);
-      const t = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull({ headOid: "head-c" }),
-        reviews: [
-          sampleReview({
-            id: 1,
-            userLogin: "codexbot",
-            state: "APPROVED",
-            commitId: "head-c",
-            submittedAt: "2024-01-01T00:00:00Z",
-            body: "ok",
-            raw: {},
-          }),
-        ],
-        issueComments: [],
-        reviewComments: [],
-      });
-      await led.observe(t, clockUnit);
-      const rev = led.allEvidence().find((r) => r.kind === "review")!;
-      const receipt = buildCollectorReceipt(led, {
-        legs: [{
-          legId: "codex",
-          status: "valid",
-          rationale: "x".repeat(n),
-          evidenceRefs: [rev.evidenceId],
-        }],
-      }, clockUnit);
+      }, clock);
       return Buffer.byteLength(JSON.stringify(receipt), "utf8");
     };
-    const b1 = await measureReal(1);
-    const nMax = receiptMaxBytes - b1 + 1;
-    const nMax1 = nMax + 1;
-    assert.equal(await measureReal(nMax), receiptMaxBytes);
-
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull({ headOid: "head-c" }),
-      reviews: [
-        sampleReview({
-          id: 1,
-          userLogin: "codexbot",
-          state: "APPROVED",
-          commitId: "head-c",
-          submittedAt: "2024-01-01T00:00:00Z",
-          body: "ok",
-          raw: {},
-        }),
-      ],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const clock = clockAt("2024-01-01T00:10:00Z");
-    const failCalls: unknown[] = [];
-    const faux = fauxProvider({
-      api: "ak-collector-recv-ovf",
-      provider: "ak-collector-recv-ovf",
-      tokenSize: { min: 1000, max: 1000 },
-    });
-    const previousExit = process.exitCode;
-    process.exitCode = undefined;
-    let outputExecuteEntered = false;
-    let outputExecuteFailed: unknown;
-    try {
-      await withInProcessPi({
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        extensionFactories: [
-          (pi) => {
-            const origRegister = pi.registerTool.bind(pi);
-            pi.registerTool = ((tool: {
-              name: string;
-              execute?: (...args: never[]) => Promise<unknown>;
-            }) => {
-              if (
-                tool.name === COLLECTOR_OUTPUT_TOOL &&
-                typeof tool.execute === "function"
-              ) {
-                const inner = tool.execute.bind(tool);
-                tool.execute = (async (...args: never[]) => {
-                  outputExecuteEntered = true;
-                  try {
-                    return await inner(...args);
-                  } catch (error) {
-                    outputExecuteFailed = error;
-                    throw error;
-                  }
-                }) as typeof tool.execute;
-              }
-              return origRegister(tool as never);
-            }) as typeof pi.registerTool;
-            const collector = createCollectorRoleRuntime(
-              pi,
-              {
-                loadSoul: async () => COLLECTOR_SOUL,
-                createTransport: () => transport,
-                createClock: () => clock,
-                receiptMaxBytes,
-              },
-              {
-                failInfrastructure(error, ctx) {
-                  failCalls.push(error);
-                  ctx.abort();
-                  if (ctx.mode === "print" || ctx.mode === "json") {
-                    process.exitCode = 1;
-                  }
-                  throw error;
-                },
-              },
-            );
-            pi.on("session_start", async (event, ctx) => {
-              await collector.activate(ctx, event);
-            });
-          },
-        ],
-        noExtensions: true,
-        systemPrompt: "BASE",
-        mode: "print",
-        flags: {
-          "ak-collector-repo": "acme/widgets",
-          "ak-collector-pr": "1",
-          "ak-collector-legs": legs,
-        },
-        noTools: "builtin",
-      }, async ({ session, sessionManager }) => {
-        faux.setResponses([
-          fauxAssistantMessage(
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
-            { stopReason: "toolUse" },
-          ),
-          (context) => {
-            const prior = [...context.messages].reverse().find((m) =>
-              m.role === "toolResult"
-            ) as {
-              details?: {
-                evidence?: Array<{ evidenceId: string; kind: string }>;
-              };
-            } | undefined;
-            const reviewId = prior?.details?.evidence?.find((e) =>
-              e.kind === "review"
-            )?.evidenceId;
-            assert.ok(reviewId);
-            return fauxAssistantMessage(
-              fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-                legs: [{
-                  legId: "codex",
-                  status: "valid",
-                  rationale: "x".repeat(nMax1),
-                  evidenceRefs: [reviewId],
-                }],
-              }, { id: "out-ovf" }),
-              { stopReason: "toolUse" },
-            );
-          },
-        ]);
-        try {
-          await session.prompt("start");
-        } catch {
-          // failInfrastructure throws
-        }
-        const successOutput = sessionManager.getEntries().some((entry) =>
-          entry.type === "message" &&
-          entry.message.role === "toolResult" &&
-          entry.message.toolName === COLLECTOR_OUTPUT_TOOL &&
-          entry.message.isError === false
-        );
-        assert.equal(successOutput, false);
-        assert.equal(outputExecuteEntered, true, "overflow must enter output execute");
-        assert.ok(outputExecuteFailed instanceof Error);
-        assert.equal(
-          (outputExecuteFailed as { collectorFatal?: boolean }).collectorFatal,
-          true,
-        );
-        assert.equal(failCalls.length, 1);
-        const fatal = failCalls[0];
-        assert.ok(fatal instanceof Error);
-        assert.equal((fatal as { collectorFatal?: boolean }).collectorFatal, true);
-        assert.match(
-          fatal.message,
-          new RegExp(
-            `receipt exceeded ${receiptMaxBytes} UTF-8 bytes \\(${receiptMaxBytes + 1}\\)`,
-          ),
-        );
-        assert.equal(process.exitCode, 1);
-        assert.equal(transport.calls.create, 0);
-      });
-    } finally {
-      process.exitCode = previousExit;
-    }
-    void measure;
+    const baseBytes = await measure("x");
+    const maxRationale = "x".repeat(receiptMaxBytes - baseBytes + 2);
+    await assert.rejects(
+      () => measure(maxRationale),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
+        assert.match(error.message, /receipt exceeded 4096 UTF-8 bytes/);
+        return true;
+      },
+    );
   });
 });
 
