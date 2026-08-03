@@ -104,6 +104,8 @@ export type CollectorConfigState = {
   repository: CollectorRepository;
   prNumber: number;
   manifest: CollectorManifest;
+  /** Optional observe/snapshot byte ceiling; defaults to COLLECTOR_SNAPSHOT_MAX_BYTES. */
+  snapshotMaxBytes?: number;
 };
 
 export type CollectorLedger = {
@@ -346,6 +348,7 @@ export function classifyCollectorBatch(
 }
 
 export function createCollectorLedger(config: CollectorConfigState): CollectorLedger {
+  const snapshotMaxBytes = config.snapshotMaxBytes ?? COLLECTOR_SNAPSHOT_MAX_BYTES;
   let fatal = false;
   let fatalReason: string | undefined;
   let outputAccepted = false;
@@ -444,7 +447,7 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     const prNumber = config.prNumber;
     const signalOpt = signal === undefined ? {} : { signal };
     // One observation-attempt budget; resets on PR-identity retry.
-    const budget = createSnapshotByteBudget();
+    const budget = createSnapshotByteBudget(snapshotMaxBytes);
     const user = await transport.getAuthenticatedUser(signalOpt);
     budget.retain([normalizeAuthenticatedUserEvidence(user, observedAt)]);
     const prInitial = await transport.getPullRequest({
@@ -762,9 +765,9 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       assignWindowRelations(pendingRecords, activationTime, deadlineTime);
 
       const normalizedByteLength = measureNormalizedBytes(pendingRecords);
-      if (normalizedByteLength > COLLECTOR_SNAPSHOT_MAX_BYTES) {
+      if (normalizedByteLength > snapshotMaxBytes) {
         throw latchFatal(
-          `Collector snapshot exceeded ${COLLECTOR_SNAPSHOT_MAX_BYTES} UTF-8 bytes (${normalizedByteLength})`,
+          `Collector snapshot exceeded ${snapshotMaxBytes} UTF-8 bytes (${normalizedByteLength})`,
         );
       }
 

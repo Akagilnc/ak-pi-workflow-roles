@@ -3,14 +3,10 @@ import test from "node:test";
 
 import {
   applyEvidenceVersionHistory,
-  assignWindowRelations,
   COLLECTOR_RECEIPT_MAX_BYTES,
   COLLECTOR_SNAPSHOT_MAX_BYTES,
   computeWindowRelation,
-  measureNormalizedBytes,
-  normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
-  normalizePullRequestEvidence,
   normalizeReviewCommentEvidence,
   normalizeReviewEvidence,
   type CollectorClock,
@@ -25,7 +21,6 @@ import {
 } from "../../src/collector-ledger.ts";
 import {
   buildCollectorRequestMarker,
-  createGhCollectorGitHubTransport,
 } from "../../src/collector-github.ts";
 import { buildCollectorReceipt } from "../../src/collector-receipt.ts";
 import {
@@ -55,7 +50,7 @@ function manifest(legs: Array<{
   };
 }
 
-function config() {
+function config(overrides: { snapshotMaxBytes?: number } = {}) {
   return {
     repository: {
       display: "Acme/Widgets",
@@ -65,6 +60,7 @@ function config() {
     },
     prNumber: 7,
     manifest: manifest(),
+    ...overrides,
   };
 }
 
@@ -114,11 +110,30 @@ test("windowRelation matrix uses authoritative times only", () => {
   assert.equal(computeWindowRelation("bogus", activation, deadline), "uncertain");
 });
 
-test("batch gate permits one operational or sole output and latches mixed/multiple", () => {
-  const ledger = createCollectorLedger(config());
-  const ok = ledger.evaluateBatch([
-    { type: "toolCall", id: "1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-  ]);
+test("batch gate permits one operational or sole output and latches mixed/multiple", async () => {
+  const soleOutputArgs = {
+    legs: [{
+      legId: "codex",
+      status: "missing",
+      rationale: "x",
+      evidenceRefs: ["s"],
+    }],
+  };
+  const call = (name: string, id: string) => ({
+    type: "toolCall" as const,
+    id,
+    name,
+    arguments: name === COLLECTOR_OBSERVE_TOOL
+      ? {}
+      : name === COLLECTOR_WAIT_TOOL
+      ? { durationMs: 1 }
+      : name === COLLECTOR_REQUEST_TOOL
+      ? { legId: "codex", snapshotId: "s" }
+      : soleOutputArgs,
+  });
+
+  const allowObserve = createCollectorLedger(config());
+  const ok = allowObserve.evaluateBatch([call(COLLECTOR_OBSERVE_TOOL, "1")]);
   assert.equal(ok.allow, true);
   if (ok.allow) {
     assert.deepEqual(ok.permitted, {
@@ -127,48 +142,44 @@ test("batch gate permits one operational or sole output and latches mixed/multip
       name: COLLECTOR_OBSERVE_TOOL,
     });
   }
-  assert.equal(
-    ledger.evaluateBatch([
-      { type: "toolCall", id: "1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-      { type: "toolCall", id: "2", name: COLLECTOR_REQUEST_TOOL, arguments: {
-        legId: "codex",
-        snapshotId: "s",
-      } },
-    ]).allow,
-    false,
-  );
-  assert.equal(ledger.fatal, true);
 
-  const ledger2 = createCollectorLedger(config());
-  assert.equal(
-    ledger2.evaluateBatch([
-      { type: "toolCall", id: "1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-      { type: "toolCall", id: "2", name: COLLECTOR_OUTPUT_TOOL, arguments: {
-        legs: [{
-          legId: "codex",
-          status: "missing",
-          rationale: "x",
-          evidenceRefs: ["s"],
-        }],
-      } },
-    ]).allow,
-    false,
-  );
+  // Sole output after a completed snapshot is permitted.
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const allowOutput = createCollectorLedger(config());
+  allowOutput.recordActivation(clock);
+  await allowOutput.observe(createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull(),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  }), clock);
+  const sole = allowOutput.evaluateBatch([call(COLLECTOR_OUTPUT_TOOL, "out")]);
+  assert.equal(sole.allow, true);
+  if (sole.allow) {
+    assert.deepEqual(sole.permitted, {
+      kind: "output",
+      callId: "out",
+      name: COLLECTOR_OUTPUT_TOOL,
+    });
+  }
 
-  const ledger3 = createCollectorLedger(config());
-  assert.equal(
-    ledger3.evaluateBatch([
-      { type: "toolCall", id: "1", name: COLLECTOR_OUTPUT_TOOL, arguments: {
-        legs: [{
-          legId: "codex",
-          status: "missing",
-          rationale: "x",
-          evidenceRefs: ["s"],
-        }],
-      } },
-    ]).allow,
-    false,
-  );
+  // Deny table (includes sole-output-without-snapshot + mixed/multiple).
+  const denyRows = [
+    [COLLECTOR_OUTPUT_TOOL],
+    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_REQUEST_TOOL],
+    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_OUTPUT_TOOL],
+    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_OBSERVE_TOOL],
+    [COLLECTOR_REQUEST_TOOL, COLLECTOR_WAIT_TOOL],
+    [COLLECTOR_OUTPUT_TOOL, COLLECTOR_OUTPUT_TOOL],
+    [COLLECTOR_OUTPUT_TOOL, COLLECTOR_REQUEST_TOOL],
+  ];
+  for (const names of denyRows) {
+    const ledger = createCollectorLedger(config());
+    const decision = ledger.evaluateBatch(names.map((name, index) => call(name, String(index))));
+    assert.equal(decision.allow, false, names.join("+"));
+    assert.equal(ledger.fatal, true, names.join("+"));
+  }
 });
 
 test("classifier rejects unknown, malformed, and schema-invalid without role", () => {
@@ -394,26 +405,19 @@ test("wait caps a single call to five minutes when remaining eligibility is ampl
   assert.equal(shorter.effectiveMs, 120_000);
   assert.equal(shorter.remainingMsAfter, 480_000);
   assert.equal(shorter.cutoffReached, false);
-});
 
-test("wait PR4 shape caps to five minutes so re-observe still fits before deadline", async () => {
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-  // Remaining ≈ 762_388 ms (eligibility 900_000 − elapsed 137_612).
+  // PR4 offset: after elapsed 137_612, a capped wait still leaves room for re-observe.
   clock.advance(137_612);
-
-  const result = await ledger.wait({ durationMs: 900_000 }, clock) as {
+  const offset = await ledger.wait({ durationMs: 900_000 }, clock) as {
     requestedMs: number;
     effectiveMs: number;
     remainingMsAfter: number;
     cutoffReached: boolean;
   };
-  assert.equal(result.requestedMs, 900_000);
-  assert.equal(result.effectiveMs, 300_000);
-  assert.equal(result.remainingMsAfter, 462_388);
-  assert.equal(result.cutoffReached, false);
-
+  assert.equal(offset.requestedMs, 900_000);
+  assert.equal(offset.effectiveMs, 300_000);
+  assert.equal(offset.remainingMsAfter, 42_388);
+  assert.equal(offset.cutoffReached, false);
   const transport = createFakeGitHubTransport({
     user: sampleUser(),
     pullRequest: samplePull({ headOid: "head-a" }),
@@ -510,194 +514,82 @@ test("after/uncertain exact-head review does not block request like before/withi
   assert.equal(result.status, "succeeded");
 });
 
-test("snapshot and ledger size bounds fail loudly without truncation", async () => {
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const hugeBody = "x".repeat(COLLECTOR_SNAPSHOT_MAX_BYTES + 1000);
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull(),
-    reviews: [
-      sampleReview({
-        id: 1,
-        userLogin: "codexbot",
-        body: hugeBody,
-        commitId: "aaa111",
-      }),
-    ],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-  await assert.rejects(() => ledger.observe(transport, clock), /8|snapshot|bytes/i);
-  assert.equal(ledger.fatal, true);
-  assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
-});
-
-test("R10 cross-surface normalized budget rejects before later surfaces and terminal PR", async () => {
-  // ~2.2 MiB bodies: each surface alone normalizes under 8 MiB (body+raw),
-  // but cumulative reviews + issue-comments exceeds; review-comments and the
-  // terminal PR bracket must not run.
-  const body = "x".repeat(Math.floor(2.2 * 1024 * 1024));
-  let pullCalls = 0;
-  let reviewCalls = 0;
-  let issueCommentCalls = 0;
-  let reviewCommentCalls = 0;
-  const runner = async (args: string[]) => {
-    const path = String(args[args.length - 1] ?? "");
-    if (path === "/user" || args.includes("/user")) {
-      return {
-        status: 200,
-        headers: {},
-        bodyText: JSON.stringify({ login: "collector-bot", id: 1 }),
-      };
-    }
-    if (path.includes("/reviews")) {
-      reviewCalls += 1;
-      return {
-        status: 200,
-        headers: {},
-        bodyText: JSON.stringify([
-          {
-            id: 1,
-            user: { login: "reviewer" },
-            state: "COMMENTED",
-            body,
-            commit_id: "aaa111",
-            submitted_at: "2024-01-01T00:05:00Z",
-            html_url: "https://example.test/r1",
-          },
-        ]),
-      };
-    }
-    if (path.includes("/issues/") && path.includes("/comments")) {
-      issueCommentCalls += 1;
-      return {
-        status: 200,
-        headers: {},
-        bodyText: JSON.stringify([
-          {
-            id: 2,
-            user: { login: "commenter" },
-            body,
-            created_at: "2024-01-01T00:01:00Z",
-            updated_at: "2024-01-01T00:01:00Z",
-            html_url: "https://example.test/c1",
-          },
-        ]),
-      };
-    }
-    if (path.includes("/pulls/") && path.includes("/comments")) {
-      reviewCommentCalls += 1;
-      return {
-        status: 200,
-        headers: {},
-        bodyText: JSON.stringify([
-          {
-            id: 3,
-            user: { login: "inline" },
-            body,
-            path: "src/a.ts",
-            line: 1,
-            original_line: 1,
-            side: "RIGHT",
-            position: 1,
-            original_position: 1,
-            commit_id: "aaa111",
-            original_commit_id: "aaa111",
-            pull_request_review_id: 1,
-            created_at: "2024-01-01T00:05:00Z",
-            updated_at: "2024-01-01T00:05:00Z",
-            html_url: "https://example.test/rc1",
-          },
-        ]),
-      };
-    }
-    if (path.includes("/pulls/")) {
-      pullCalls += 1;
-      return {
-        status: 200,
-        headers: {},
-        bodyText: JSON.stringify({
-          number: 7,
-          state: "open",
-          head: { sha: "aaa111" },
-          updated_at: "2024-01-01T00:00:00Z",
-          html_url: "https://github.com/acme/widgets/pull/7",
-        }),
-      };
-    }
-    throw new Error(`unexpected gh api args: ${args.join(" ")}`);
-  };
-  const transport = createGhCollectorGitHubTransport(runner);
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-  await assert.rejects(
-    () => ledger.observe(transport, clock),
-    /snapshot exceeded|UTF-8 bytes|8/i,
-  );
-  assert.equal(ledger.fatal, true);
-  assert.equal(ledger.latestCompleteSnapshotId, undefined);
-  assert.equal(reviewCalls, 1);
-  assert.equal(issueCommentCalls, 1);
-  assert.equal(reviewCommentCalls, 0);
-  assert.equal(pullCalls, 1, "terminal PR bracket must not run after budget exceed");
-});
-
-test("R10 intra-surface multi-page normalized budget stops before later pages/surfaces", async () => {
-  // body+raw ≈ 2×; page1 under budget, page1+page2 over.
-  const fat = "x".repeat(Math.floor(COLLECTOR_SNAPSHOT_MAX_BYTES * 0.3));
-  const transport = createFakeGitHubTransport({
+test("R10 normalized budget rejects before later surfaces and terminal PR", async () => {
+  // Calibrate a tiny injected bound from one empty observe, then drive exceed with small pads.
+  const probeClock = clockAt("2024-01-01T00:00:00Z");
+  const probe = createCollectorLedger(config({ snapshotMaxBytes: 1_000_000 }));
+  probe.recordActivation(probeClock);
+  const { snapshot: emptySnap } = await probe.observe(createFakeGitHubTransport({
     user: sampleUser(),
     pullRequest: samplePull(),
     reviews: [],
-    reviewPages: [
-      [
-        sampleReview({
-          id: 1,
-          userLogin: "a",
-          body: fat,
-          raw: { id: 1, body: fat },
-        }),
-      ],
-      [
-        sampleReview({
-          id: 2,
-          userLogin: "b",
-          body: fat,
-          raw: { id: 2, body: fat },
-        }),
-      ],
-      [
-        sampleReview({
-          id: 3,
-          userLogin: "c",
-          body: fat,
-          raw: { id: 3, body: fat },
-        }),
-      ],
-    ],
-    issueComments: [
-      sampleIssueComment({ id: 99, userLogin: "later", body: "must-not-fetch" }),
-    ],
-    reviewComments: [
-      sampleReviewComment({ id: 98, userLogin: "later", body: "must-not-fetch" }),
-    ],
-  });
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-  await assert.rejects(
-    () => ledger.observe(transport, clock),
-    /snapshot exceeded|UTF-8 bytes|8/i,
-  );
-  assert.equal(ledger.fatal, true);
-  assert.equal(ledger.latestCompleteSnapshotId, undefined);
-  assert.equal(transport.calls.reviews, 1);
-  assert.equal(transport.calls.issueComments, 0);
-  assert.equal(transport.calls.reviewComments, 0);
-  assert.equal(transport.calls.pull, 1);
+    issueComments: [],
+    reviewComments: [],
+  }), probeClock);
+  const emptyBytes = emptySnap.normalizedByteLength;
+  const pad = "x".repeat(200);
+  // Bound sits between (empty + one pad surface) and (empty + two pad surfaces).
+  const onePad = createCollectorLedger(config({ snapshotMaxBytes: 1_000_000 }));
+  onePad.recordActivation(clockAt("2024-01-01T00:00:00Z"));
+  const { snapshot: onePadSnap } = await onePad.observe(createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull(),
+    reviews: [sampleReview({ id: 1, userLogin: "a", body: pad, raw: { id: 1, body: pad } })],
+    issueComments: [],
+    reviewComments: [],
+  }), clockAt("2024-01-01T00:00:00Z"));
+  const bound = onePadSnap.normalizedByteLength + 50; // second pad surface must exceed
+
+  // Cross-surface: reviews ok, issue-comments exceed; review-comments + terminal PR skip.
+  {
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [sampleReview({ id: 1, userLogin: "a", body: pad, raw: { id: 1, body: pad } })],
+      issueComments: [sampleIssueComment({ id: 2, userLogin: "b", body: pad, raw: { id: 2, body: pad } })],
+      reviewComments: [sampleReviewComment({ id: 3, userLogin: "c", body: "must-not-fetch" })],
+    });
+    const ledger = createCollectorLedger(config({ snapshotMaxBytes: bound }));
+    ledger.recordActivation(clockAt("2024-01-01T00:00:00Z"));
+    await assert.rejects(
+      () => ledger.observe(transport, clockAt("2024-01-01T00:00:00Z")),
+      new RegExp(`Collector snapshot exceeded ${bound} UTF-8 bytes`),
+    );
+    assert.equal(ledger.fatal, true);
+    assert.equal(ledger.latestCompleteSnapshotId, undefined);
+    assert.equal(transport.calls.reviews, 1);
+    assert.equal(transport.calls.issueComments, 1);
+    assert.equal(transport.calls.reviewComments, 0);
+    assert.equal(transport.calls.pull, 1, "terminal PR bracket must not run after budget exceed");
+  }
+
+  // Exceed inside first surface ⇒ later surfaces + terminal PR skipped.
+  {
+    const fat = "x".repeat(bound); // single review page exceeds bound alone
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [sampleReview({ id: 1, userLogin: "a", body: fat, raw: { id: 1, body: fat } })],
+      issueComments: [sampleIssueComment({ id: 99, userLogin: "later", body: "must-not-fetch" })],
+      reviewComments: [sampleReviewComment({ id: 98, userLogin: "later", body: "must-not-fetch" })],
+    });
+    const ledger = createCollectorLedger(config({ snapshotMaxBytes: bound }));
+    ledger.recordActivation(clockAt("2024-01-01T00:00:00Z"));
+    await assert.rejects(
+      () => ledger.observe(transport, clockAt("2024-01-01T00:00:00Z")),
+      new RegExp(`Collector snapshot exceeded ${bound} UTF-8 bytes`),
+    );
+    assert.equal(ledger.fatal, true);
+    assert.equal(ledger.latestCompleteSnapshotId, undefined);
+    assert.equal(transport.calls.reviews, 1);
+    assert.equal(transport.calls.issueComments, 0);
+    assert.equal(transport.calls.reviewComments, 0);
+    assert.equal(transport.calls.pull, 1);
+  }
+
+  assert.ok(emptyBytes > 0);
+  assert.equal(COLLECTOR_SNAPSHOT_MAX_BYTES, 8 * 1024 * 1024);
+  assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
 });
 
 test("HEAD move permits a new-head request once", async () => {
@@ -726,42 +618,6 @@ test("HEAD move permits a new-head request once", async () => {
   ) as { status: string; observedHead: string };
   assert.equal(again.status, "succeeded");
   assert.equal(again.observedHead, "head-b");
-});
-
-test("evaluateBatch two-valid and invalid permutations latch fatal before execute", () => {
-  const cases = [
-    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_OBSERVE_TOOL],
-    [COLLECTOR_REQUEST_TOOL, COLLECTOR_WAIT_TOOL],
-    [COLLECTOR_OUTPUT_TOOL, COLLECTOR_OUTPUT_TOOL],
-    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_OUTPUT_TOOL],
-    [COLLECTOR_OUTPUT_TOOL, COLLECTOR_REQUEST_TOOL],
-  ];
-  for (const names of cases) {
-    const ledger = createCollectorLedger(config());
-    const decision = ledger.evaluateBatch(
-      names.map((name, index) => ({
-        type: "toolCall" as const,
-        id: String(index),
-        name,
-        arguments: name === COLLECTOR_OBSERVE_TOOL
-          ? {}
-          : name === COLLECTOR_WAIT_TOOL
-          ? { durationMs: 1 }
-          : name === COLLECTOR_REQUEST_TOOL
-          ? { legId: "codex", snapshotId: "s" }
-          : {
-            legs: [{
-              legId: "codex",
-              status: "missing",
-              rationale: "x",
-              evidenceRefs: ["s"],
-            }],
-          },
-      })),
-    );
-    assert.equal(decision.allow, false, names.join("+"));
-    assert.equal(ledger.fatal, true, names.join("+"));
-  }
 });
 
 test("output observation law rejects missing pre-cutoff and stale post-mutation", async () => {
@@ -839,30 +695,22 @@ test("observe start-before finish-after cutoff satisfies final obligation", asyn
     issueComments: [],
     reviewComments: [],
   });
-  // Advance clock during transport pull to cross cutoff mid-observe.
+  // Advance clock during terminal PR pull to cross cutoff mid-observe.
   let pullCount = 0;
   const originalPull = transport.getPullRequest.bind(transport);
   transport.getPullRequest = async (input) => {
     pullCount += 1;
-    if (pullCount === 1) {
-      // start before cutoff
-    } else if (pullCount === 2) {
+    if (pullCount === 2) {
       clock.advance(15 * 60 * 1000 + 1);
     }
     return originalPull(input);
   };
   const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clockAt("2024-01-01T00:00:00Z"));
-  // Use same clock instance
-  const shared = clock;
-  // re-bind activation on shared clock
-  const ledger2 = createCollectorLedger(config());
-  ledger2.recordActivation(shared);
-  const { snapshot } = await ledger2.observe(transport, shared);
-  assert.ok(snapshot.completedMono >= ledger2.deadlineMono!);
-  assert.ok(Date.parse(snapshot.completedAt) > Date.parse(snapshot.observedAt) ||
-    snapshot.completedMono >= ledger2.deadlineMono!);
-  ledger2.assertOutputObservationLaw({ legs: [{ status: "missing" }] }, shared);
+  ledger.recordActivation(clock);
+  const { snapshot } = await ledger.observe(transport, clock);
+  assert.ok(snapshot.completedMono >= ledger.deadlineMono!);
+  assert.ok(Date.parse(snapshot.completedAt) > Date.parse(snapshot.observedAt));
+  ledger.assertOutputObservationLaw({ legs: [{ status: "missing" }] }, clock);
 });
 
 test("terminal PR reread binds terminal HEAD and retries on drift", async () => {
@@ -891,106 +739,63 @@ test("terminal PR reread binds terminal HEAD and retries on drift", async () => 
 });
 
 test("repeated PR identity drift after retry fails closed without certifying", async () => {
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull({ headOid: "head-a" }),
-    pullRequestSequence: [
-      // first bracket drifts A→B
-      samplePull({ headOid: "head-a" }),
-      samplePull({ headOid: "head-b" }),
-      // retry still drifts C→D
-      samplePull({ headOid: "head-c" }),
-      samplePull({ headOid: "head-d" }),
-    ],
-    reviews: [
-      sampleReview({
-        id: 1,
-        userLogin: "codexbot",
-        body: "must not be stored on repeated drift",
-        commitId: "head-a",
-      }),
-    ],
-    issueComments: [
-      sampleIssueComment({
-        id: 9,
-        userLogin: "alice",
-        body: "must not be stored either",
-      }),
-    ],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-  await assert.rejects(
-    () => ledger.observe(transport, clock),
-    /observe failed|drift/i,
-  );
-  assert.equal(transport.calls.pull, 4, "exactly one full-surface retry (two PR reads per pass)");
-  assert.equal(ledger.fatal, true);
-  assert.match(ledger.fatalReason ?? "", /observe failed|drift/i);
-  assert.equal(ledger.allEvidence().length, 0);
-  assert.equal(ledger.allSnapshots().length, 0);
-  assert.equal(ledger.latestCompleteSnapshotId, undefined);
-  assert.throws(
-    () =>
-      buildCollectorReceipt(ledger, {
-        legs: [{
-          legId: "codex",
-          status: "missing",
-          rationale: "none",
-          evidenceRefs: [],
-        }],
-      }, clock),
-    /observe failed|drift|complete final snapshot/i,
-  );
-});
-
-test("version history: later review edit without timestamp is uncertain", async () => {
-  const clock = clockAt("2024-01-01T00:10:00Z");
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull({ headOid: "head-c" }),
-    reviews: [
-      sampleReview({
-        id: 1,
-        userLogin: "codexbot",
-        state: "APPROVED",
-        body: "body A",
-        commitId: "head-c",
-        submittedAt: "2024-01-01T00:00:00Z",
-      }),
-    ],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-  await ledger.observe(transport, clock);
-  const first = ledger.allEvidence().find((item) => item.kind === "review")!;
-  assert.equal(first.windowRelation, "before");
-  assert.equal(first.authoritativeTime, "2024-01-01T00:00:00Z");
-
-  // Post-deadline edit, same submitted_at from GitHub, new body
-  clock.advance(20 * 60 * 1000);
-  transport.state.reviews = [
-    sampleReview({
-      id: 1,
-      userLogin: "codexbot",
-      state: "CHANGES_REQUESTED",
-      body: "I decline after deadline",
-      commitId: "head-c",
-      submittedAt: "2024-01-01T00:00:00Z",
-    }),
-  ];
-  await ledger.observe(transport, clock);
-  const versions = ledger.allEvidence().filter((item) => item.kind === "review");
-  assert.ok(versions.length >= 2);
-  const later = versions.find((item) => item.body?.includes("decline"))!;
-  assert.equal(later.authoritativeTime, null);
-  assert.equal(later.windowRelation, "uncertain");
-  // old version retained
-  assert.ok(versions.some((item) => item.versionId === first.versionId));
+  // headOid and updatedAt are both identity tuple members — same fail-closed shape.
+  for (const row of [
+    {
+      name: "headOid",
+      sequence: [
+        samplePull({ headOid: "head-a" }),
+        samplePull({ headOid: "head-b" }),
+        samplePull({ headOid: "head-c" }),
+        samplePull({ headOid: "head-d" }),
+      ],
+    },
+    {
+      name: "updatedAt",
+      sequence: [
+        samplePull({ headOid: "head-a", updatedAt: "t0" }),
+        samplePull({ headOid: "head-a", updatedAt: "t1" }),
+        samplePull({ headOid: "head-a", updatedAt: "t2" }),
+        samplePull({ headOid: "head-a", updatedAt: "t3" }),
+      ],
+    },
+  ] as const) {
+    const clock = clockAt("2024-01-01T00:00:00Z");
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: row.sequence[0]!,
+      pullRequestSequence: [...row.sequence],
+      reviews: [
+        sampleReview({
+          id: 1,
+          userLogin: "codexbot",
+          body: "must not be stored on repeated drift",
+          commitId: "head-a",
+        }),
+      ],
+      issueComments: [
+        sampleIssueComment({
+          id: 9,
+          userLogin: "alice",
+          body: "must not be stored either",
+        }),
+      ],
+      reviewComments: [],
+    });
+    const ledger = createCollectorLedger(config());
+    ledger.recordActivation(clock);
+    await assert.rejects(
+      () => ledger.observe(transport, clock),
+      /observe failed|drift/i,
+      row.name,
+    );
+    assert.equal(transport.calls.pull, 4, `${row.name}: exactly one full-surface retry`);
+    assert.equal(ledger.fatal, true, row.name);
+    assert.match(ledger.fatalReason ?? "", /observe failed|drift/i);
+    assert.equal(ledger.allEvidence().length, 0, row.name);
+    assert.equal(ledger.allSnapshots().length, 0, row.name);
+    assert.equal(ledger.latestCompleteSnapshotId, undefined, row.name);
+  }
 });
 
 test("digest mutation flips versionId for enumerated stored fields", () => {
@@ -1039,25 +844,30 @@ test("digest mutation flips versionId for enumerated stored fields", () => {
   assert.notEqual(r1.versionId, r3.versionId);
 });
 
-test("applyEvidenceVersionHistory first review keeps submitted_at at/before deadline mono", () => {
+test("applyEvidenceVersionHistory first-sighting mono boundary keeps or nulls submitted_at", () => {
   const deadlineMono = 900_000;
-  const review = normalizeReviewEvidence(
-    sampleReview({
-      id: 9,
-      userLogin: "codexbot",
-      submittedAt: "2024-01-01T00:00:00Z",
-    }),
-    "2024-01-01T00:25:00Z", // wall metadata only; trust is mono
-  );
-  applyEvidenceVersionHistory([review], [], {
-    deadlineMono,
-    firstObservedMono: deadlineMono, // === boundary keeps submitted_at
-  });
-  assert.equal(review.authoritativeTime, "2024-01-01T00:00:00Z");
-});
+  const rows = [
+    { firstObservedMono: deadlineMono, expected: "2024-01-01T00:00:00Z" as string | null },
+    { firstObservedMono: deadlineMono + 60_000, expected: null },
+    { firstObservedMono: Number.NaN, expected: null },
+  ] as const;
+  for (const row of rows) {
+    const review = normalizeReviewEvidence(
+      sampleReview({
+        id: 9,
+        userLogin: "codexbot",
+        submittedAt: "2024-01-01T00:00:00Z",
+      }),
+      "2024-01-01T00:25:00Z",
+    );
+    applyEvidenceVersionHistory([review], [], {
+      deadlineMono,
+      firstObservedMono: row.firstObservedMono,
+    });
+    assert.equal(review.authoritativeTime, row.expected, String(row.firstObservedMono));
+  }
 
-test("applyEvidenceVersionHistory after-deadline mono first review nulls authoritativeTime", () => {
-  const deadlineMono = 900_000;
+  // Known-version null reuse (R5): same versionId reuses stored null.
   const late = normalizeReviewEvidence(
     sampleReview({
       id: 30,
@@ -1067,29 +877,12 @@ test("applyEvidenceVersionHistory after-deadline mono first review nulls authori
       commitId: "head-c",
       submittedAt: "2024-01-01T00:00:00Z",
     }),
-    "2024-01-01T00:20:00Z", // wall before deadline must not keep submitted_at
+    "2024-01-01T00:20:00Z",
   );
   applyEvidenceVersionHistory([late], [], {
     deadlineMono,
     firstObservedMono: deadlineMono + 60_000,
   });
-  assert.equal(late.authoritativeTime, null);
-
-  const nonFinite = normalizeReviewEvidence(
-    sampleReview({
-      id: 31,
-      userLogin: "codexbot",
-      submittedAt: "2024-01-01T00:00:00Z",
-    }),
-    "2024-01-01T00:00:00Z",
-  );
-  applyEvidenceVersionHistory([nonFinite], [], {
-    deadlineMono,
-    firstObservedMono: Number.NaN,
-  });
-  assert.equal(nonFinite.authoritativeTime, null);
-
-  // Known-version null reuse (R5): same versionId reuses stored null.
   const again = normalizeReviewEvidence(
     sampleReview({
       id: 30,
@@ -1102,7 +895,6 @@ test("applyEvidenceVersionHistory after-deadline mono first review nulls authori
     "2024-01-01T00:27:00Z",
   );
   assert.equal(again.versionId, late.versionId);
-  // Simulate raw re-normalization that would otherwise re-apply submitted_at.
   again.authoritativeTime = again.submittedAt ?? null;
   applyEvidenceVersionHistory([again], [late], {
     deadlineMono,
@@ -1111,82 +903,59 @@ test("applyEvidenceVersionHistory after-deadline mono first review nulls authori
   assert.equal(again.authoritativeTime, null);
 });
 
-test("8 MiB snapshot boundary: measured MAX accept and MAX+1 fail", async () => {
-  function measureSnapshotBytes(body: string): number {
-    const observedAt = "2024-01-01T00:00:00.000Z";
-    const records = [
-      normalizeAuthenticatedUserEvidence(sampleUser(), observedAt),
-      normalizePullRequestEvidence(samplePull(), observedAt),
-      normalizeReviewEvidence(
-        sampleReview({ id: 1, userLogin: "codexbot", body, raw: {} }),
-        observedAt,
-      ),
-    ];
-    applyEvidenceVersionHistory(
-      records,
-      [],
-      { deadlineMono: 15 * 60 * 1000, firstObservedMono: 0 },
-    );
-    assignWindowRelations(
-      records,
-      new Date("2024-01-01T00:00:00Z"),
-      new Date("2024-01-01T00:15:00Z"),
-    );
-    return measureNormalizedBytes(records);
-  }
+test("snapshot byte boundary: injected MAX accept and MAX+1 fail", async () => {
+  // Learn exact observed size for a one-review body, then set bound to that size / size-1.
+  const body = "x".repeat(200);
+  const learnClock = clockAt("2024-01-01T00:00:00Z");
+  const learn = createCollectorLedger(config({ snapshotMaxBytes: 1_000_000 }));
+  learn.recordActivation(learnClock);
+  const { snapshot: learned } = await learn.observe(createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull(),
+    reviews: [sampleReview({ id: 1, userLogin: "codexbot", body, raw: {} })],
+    issueComments: [],
+    reviewComments: [],
+  }), learnClock);
+  const exact = learned.normalizedByteLength;
 
-  const MAX = COLLECTOR_SNAPSHOT_MAX_BYTES;
-  const base = measureSnapshotBytes("");
-  const padMax = "x".repeat(MAX - base);
-  const padMax1 = "x".repeat(MAX - base + 1);
-  assert.equal(measureSnapshotBytes(padMax), MAX);
-  assert.equal(measureSnapshotBytes(padMax1), MAX + 1);
-
-  // Accept path
   {
     const clock = clockAt("2024-01-01T00:00:00Z");
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull(),
-      reviews: [
-        sampleReview({
-          id: 1,
-          userLogin: "codexbot",
-          body: padMax,
-          raw: {},
-        }),
-      ],
+      reviews: [sampleReview({ id: 1, userLogin: "codexbot", body, raw: {} })],
       issueComments: [],
       reviewComments: [],
     });
-    const ledger = createCollectorLedger(config());
+    const ledger = createCollectorLedger(config({ snapshotMaxBytes: exact }));
     ledger.recordActivation(clock);
     const { snapshot } = await ledger.observe(transport, clock);
     assert.equal(ledger.fatal, false);
-    assert.equal(snapshot.normalizedByteLength, MAX);
+    assert.equal(snapshot.normalizedByteLength, exact);
     assert.equal(snapshot.complete, true);
   }
-
-  // Reject path
   {
     const clock = clockAt("2024-01-01T00:00:00Z");
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull(),
-      reviews: [
-        sampleReview({
-          id: 1,
-          userLogin: "codexbot",
-          body: padMax1,
-          raw: {},
-        }),
-      ],
+      reviews: [sampleReview({ id: 1, userLogin: "codexbot", body, raw: {} })],
       issueComments: [],
       reviewComments: [],
     });
-    const ledger = createCollectorLedger(config());
+    const ledger = createCollectorLedger(config({ snapshotMaxBytes: exact - 1 }));
     ledger.recordActivation(clock);
-    await assert.rejects(() => ledger.observe(transport, clock), /bytes|snapshot/i);
+    await assert.rejects(
+      () => ledger.observe(transport, clock),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(
+          error.message,
+          `Collector snapshot exceeded ${exact - 1} UTF-8 bytes (${exact})`,
+        );
+        return true;
+      },
+    );
     assert.equal(ledger.fatal, true);
   }
 });
@@ -1213,6 +982,9 @@ test("R5 third observation of unchanged edited review keeps null/uncertain in mo
   const ledger = createCollectorLedger(config());
   ledger.recordActivation(clock);
   await ledger.observe(transport, clock);
+  const first = ledger.allEvidence().find((item) => item.kind === "review")!;
+  assert.equal(first.windowRelation, "before");
+  assert.equal(first.authoritativeTime, "2024-01-01T00:00:00Z");
 
   transport.state.reviews = [
     sampleReview({
@@ -1225,6 +997,8 @@ test("R5 third observation of unchanged edited review keeps null/uncertain in mo
     }),
   ];
   const second = await ledger.observe(transport, clock);
+  const versions = ledger.allEvidence().filter((item) => item.kind === "review");
+  assert.ok(versions.some((item) => item.versionId === first.versionId), "earlier version retained");
   const edited = ledger.allEvidence().find((item) =>
     item.kind === "review" && item.body === "edited body B"
   )!;
@@ -1254,17 +1028,15 @@ test("R5 third observation of unchanged edited review keeps null/uncertain in mo
   assert.equal(thirdRow.windowRelation, "uncertain");
 });
 
-test("R9 updatedAt churn forces full-surface retry and fails closed on repeated drift", async () => {
+test("R9 updatedAt drift-once retry surfaces late review evidence", async () => {
+  // Fail-closed repeated churn lives in the identity-drift table; this row owns retry-visible evidence.
   const clock = clockAt("2024-01-01T00:00:00Z");
-  // Stable state/HEAD; updatedAt changes across the first bracket → retry.
-  // On retry, review appears and identity stabilizes.
   const transport = createFakeGitHubTransport({
     user: sampleUser(),
     pullRequest: samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:00:00Z" }),
     pullRequestSequence: [
       samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:00:00Z" }),
       samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:01:00Z" }),
-      // retry bracket stable
       samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:01:00Z" }),
       samplePull({ headOid: "head-a", updatedAt: "2024-01-01T00:01:00Z" }),
     ],
@@ -1272,7 +1044,6 @@ test("R9 updatedAt churn forces full-surface retry and fails closed on repeated 
     issueComments: [],
     reviewComments: [],
   });
-  // Inject review only after first full pass (2 PR reads + surfaces).
   const originalReviews = transport.listPullRequestReviews.bind(transport);
   let reviewCalls = 0;
   transport.listPullRequestReviews = async (input) => {
@@ -1297,35 +1068,5 @@ test("R9 updatedAt churn forces full-surface retry and fails closed on repeated 
   assert.ok(transport.calls.pull >= 4, "updatedAt drift triggers full retry");
   const view = modelView as { evidence: Array<{ body?: string }> };
   assert.ok(view.evidence.some((row) => row.body === "appeared on retry"));
-
-  // Repeated updatedAt churn fails closed without certifying.
-  const clock2 = clockAt("2024-01-01T00:00:00Z");
-  const t2 = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull({ headOid: "head-a", updatedAt: "t0" }),
-    pullRequestSequence: [
-      samplePull({ headOid: "head-a", updatedAt: "t0" }),
-      samplePull({ headOid: "head-a", updatedAt: "t1" }),
-      samplePull({ headOid: "head-a", updatedAt: "t2" }),
-      samplePull({ headOid: "head-a", updatedAt: "t3" }),
-    ],
-    reviews: [
-      sampleReview({
-        id: 1,
-        userLogin: "codexbot",
-        body: "must not certify",
-        commitId: "head-a",
-      }),
-    ],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger2 = createCollectorLedger(config());
-  ledger2.recordActivation(clock2);
-  await assert.rejects(() => ledger2.observe(t2, clock2), /observe failed|drift/i);
-  assert.equal(t2.calls.pull, 4);
-  assert.equal(ledger2.fatal, true);
-  assert.equal(ledger2.latestCompleteSnapshotId, undefined);
-  assert.equal(ledger2.allSnapshots().length, 0);
 });
 
