@@ -21,8 +21,6 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   });
   const observation = process.env.AK_NAVIGATOR_OBSERVATION === "1";
   const healthyNavigator = process.env.AK_HEALTHY_NAVIGATOR === "1" || observation;
-  const siblingOrder = process.env.AK_NAVIGATOR_SIBLING_ORDER ?? "none";
-  let roleTurns = 0;
   let navigatorCalls = 0;
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
@@ -47,17 +45,10 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     }
     if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
       if (observation) return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-      if (healthyNavigator && siblingOrder === "sibling-first") await new Promise<void>((resolve) => setTimeout(resolve, 150));
       return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     }
     if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
-      roleTurns += 1;
       if (observation) return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "observed-judge" }), { stopReason: "toolUse" });
-      if (healthyNavigator && roleTurns === 1) {
-        const sibling = fauxToolCall("read", { path: "authority.md" }, { id: "navigator-sibling" });
-        const output = fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "batch-judge" });
-        return fauxAssistantMessage(siblingOrder === "sibling-first" ? [sibling, output] : [output, sibling], { stopReason: "toolUse" });
-      }
       return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "fatal-judge" }), { stopReason: "toolUse" });
     }
     if (healthyNavigator) return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
@@ -118,19 +109,13 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       .filter((entry) => entry.type === "message" && entry.message?.role === "toolResult")
       .map((entry) => ({ toolCallId: entry.message.toolCallId, toolName: entry.message.toolName, isError: entry.message.isError === true, details: entry.message.details ?? {} }));
     const failedOutput = roleResults.find((entry) => entry.toolCallId === "fatal-judge");
-    const siblingResult = roleResults.find((entry) => entry.toolCallId === "navigator-sibling");
-    const batch = [...rolePersisted].find((entry) => entry.type === "message" && entry.message?.role === "assistant" && Array.isArray(entry.message.content) && entry.message.content.some((part: any) => part.type === "toolCall" && part.id === "batch-judge") && entry.message.content.some((part: any) => part.type === "toolCall" && part.id === "navigator-sibling"));
-    const batchToolNames = batch?.message?.content?.filter((part: any) => part.type === "toolCall").map((part: any) => ({ id: part.id, name: part.name })) ?? [];
-    const batchResultOrder = roleResults.filter((entry) => entry.toolCallId === "batch-judge" || entry.toolCallId === "navigator-sibling").map((entry) => entry.toolCallId);
     const failedOutputEntry = [...rolePersisted].find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolCallId === "fatal-judge");
-    const siblingResultEntry = [...rolePersisted].find((entry) => entry.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolCallId === "navigator-sibling");
     const drainedBeforeSettlement = navigatorCompletedAt !== "" && typeof settlement?.timestamp === "string" && Date.parse(navigatorCompletedAt) <= Date.parse(settlement.timestamp);
     console.error(`AUDIT_FAILURE_EVIDENCE=${JSON.stringify({
       providerCalls: faux.state.callCount,
       navigatorCalls,
-      siblingOrder,
       navigator: { startedAt: navigatorStartedAt, completedAt: navigatorCompletedAt, preparedAt: prepared?.timestamp ?? "", settledAt: settlement?.timestamp ?? "", settlementKind: settlement?.data?.kind ?? "", inputReleasedAt, releaseAfterDrain: drainedBeforeSettlement },
-      role: { batchToolNames, batchResultOrder, failedOutput, siblingResult, failedOutputAt: failedOutputEntry?.timestamp ?? "", siblingResultAt: siblingResultEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME },
+      role: { failedOutput, failedOutputAt: failedOutputEntry?.timestamp ?? "", failedOutputCorrelation: failedOutput?.toolCallId === "fatal-judge" && failedOutput?.toolName === JUDGE_OUTPUT_TOOL_NAME },
     })}`);
   });
 }
