@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { promisify } from "node:util";
 
 import {
   type Context,
@@ -48,9 +45,9 @@ import {
   resolvePackageEntrypoint,
   withHermeticHome,
   withInProcessPi,
+  withColdInstalledPackage,
   writeTestSkill,
 } from "./helpers/pi-test-harness.ts";
-const exec = promisify(execFile);
 
 const siblingTool = defineTool({
   name: "integration_sibling",
@@ -140,27 +137,7 @@ test("cold-installed package audits all four roles from editable Souls", async (
   await withHermeticHome(
     { prefix: "ak-auditor-package-" },
     async ({ home }) => {
-      const fixture = resolve(home, "consumer");
-      await mkdir(fixture, { recursive: true });
-      const pack = await packIsolatedPackage(home);
-      await writeFile(
-        resolve(fixture, "package.json"),
-        JSON.stringify({
-          private: true,
-          type: "module",
-          dependencies: {
-            "@ak/pi-workflow-roles": `file:${pack.tarball}`,
-            "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
-            "@earendil-works/pi-coding-agent": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")}`,
-            typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
-          },
-        }),
-      );
-      await exec("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: fixture });
-
-      const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");
-      const installed = (relativePath: string) =>
-        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
+      await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
       const [judge, fixer, reviewer, doctor] = await Promise.all([
         installed("src/judge-auditor.ts"),
         installed("src/fixer-auditor.ts"),
@@ -240,6 +217,7 @@ test("cold-installed package audits all four roles from editable Souls", async (
           await writeFile(role.soulPath, original, "utf8");
         }
       }
+      });
     },
   );
 });
@@ -248,27 +226,7 @@ test("cold-installed role outputs run nested audits through pass, revise, and es
   await withHermeticHome(
     { prefix: "ak-auditor-role-lifecycle-" },
     async ({ home }) => {
-      const fixture = resolve(home, "consumer");
-      await mkdir(fixture, { recursive: true });
-      const pack = await packIsolatedPackage(home);
-      await writeFile(
-        resolve(fixture, "package.json"),
-        JSON.stringify({
-          private: true,
-          type: "module",
-          dependencies: {
-            "@ak/pi-workflow-roles": `file:${pack.tarball}`,
-            "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
-            "@earendil-works/pi-coding-agent": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")}`,
-            typebox: `file:${resolve(packageRoot, "node_modules/typebox")}`,
-          },
-        }),
-      );
-      await exec("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: fixture });
-
-      const installedRoot = resolve(fixture, "node_modules/@ak/pi-workflow-roles");
-      const installed = (relativePath: string) =>
-        import(pathToFileURL(resolve(installedRoot, relativePath)).href);
+      await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
       const [judge, fixer, reviewer, doctor, judgeRole, workerRole, reviewerRole, doctorRole, promptIdentity, terminating] = await Promise.all([
         installed("src/judge-auditor.ts"),
         installed("src/fixer-auditor.ts"),
@@ -467,6 +425,7 @@ test("cold-installed role outputs run nested audits through pass, revise, and es
         assert.throws(() => terminating.validateAcceptedDetails(acceptedNames[role], result.details), /not an accepted role receipt/);
         assert.equal(escalated.auditCalls, 1);
       }
+      });
     },
   );
 });
