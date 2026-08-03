@@ -199,13 +199,16 @@ The authoritative capability contract and validation live in the exported TypeSc
 
 The authoritative `Agent` input contract is the exported runtime `reviewerProposalSchema` in [`src/reviewer-role.ts`](src/reviewer-role.ts), with its corresponding TypeScript proposal type in `reviewer-dispatch.ts`. Proposals name a semantic base and materials, not a resolved commit or shell command; the runtime derives and pins those facts. Callers should derive validation and proposal construction from those exports rather than this invocation guide.
 
-Reviewer terminates with this exact receipt:
+Reviewer terminates in two layers. The model submits only a **thin intent** through `ak_reviewer_output`:
 
 ```json
-{"status":"completed|refused","report":"non-empty Markdown"}
+{"status":"completed"}
+{"status":"refused","diagnostic":"non-empty reason"}
 ```
 
-`completed` means the requested review was completed; it says nothing about findings, approval, routing, mergeability, or the next role. `refused` is an evidenced inability to establish the review target, authority, or factual premise. Infrastructure failures instead abort the action and exit nonzero. Both statuses undergo a separate active-model, no-operational-tool method-compliance audit; `revise` permits corrected resubmission.
+The authoritative receipt is the **runtime-assembled V2 receipt returned in that tool call's result** (`details`), validated by `validateRuntimeReviewerReceipt` in [`src/package-contracts/reviewer-output.ts`](src/package-contracts/reviewer-output.ts): it carries `reports.standards` / `reports.spec` as byte-identified Markdown (`{text, utf8Length, sha256}`) plus outcomes and content identities. **Findings live in those reports — read the tool-result details (persisted in the session record), not the thin intent.** A caller that reads only the intent sees `{"status":"completed"}` and no findings; that is the intent by design, not the receipt.
+
+`completed` means the requested review was completed; it says nothing about approval, routing, mergeability, or the next role — consult the reports for findings. `refused` is an evidenced inability to establish the review target, authority, or factual premise. Infrastructure failures instead abort the action and exit nonzero. Both statuses undergo a separate active-model, no-operational-tool method-compliance audit; `revise` permits corrected resubmission.
 
 `reviewer-cmr` is reserved terminology for a possible future AK CMR cross-model-panel role. It is not implemented and Reviewer exposes no panel or model-selection machinery.
 
