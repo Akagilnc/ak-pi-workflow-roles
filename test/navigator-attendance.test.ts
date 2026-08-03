@@ -321,9 +321,9 @@ test("native provider stream seam classifies auth/quota/transport after setModel
   try {
     process.env.PI_CODING_AGENT_DIR = root;
     const cases = [
-      { name: "auth", source: "auth" as const, statusCode: 401, code: "authentication_failed", diagnostics: ["auth key unavailable", "login expired differently"] },
-      { name: "quota", source: "quota" as const, statusCode: 429, code: "quota_exhausted", diagnostics: ["quota exhausted", "billing limit reached differently"] },
-      { name: "transport", source: "transport" as const, code: "transport_error", diagnostics: ["transport unavailable", "socket reset differently"] },
+      { name: "auth", source: "auth" as const, status: 401, diagnostics: ["auth key unavailable", "login expired differently"] },
+      { name: "quota", source: "quota" as const, status: 429, diagnostics: ["quota exhausted", "billing limit reached differently"] },
+      { name: "transport", source: "transport" as const, diagnostics: ["transport unavailable", "socket reset differently"] },
     ] as const;
     for (const scenario of cases) {
       for (const diagnostic of scenario.diagnostics) {
@@ -331,25 +331,38 @@ test("native provider stream seam classifies auth/quota/transport after setModel
         const model = faux.getModel();
         const setting = join(root, "navigator-model.json");
         await writeFile(setting, JSON.stringify({ model: `${model.provider}/${model.id}` }));
+        const observedCallbacks: number[] = [];
         const failingProvider = {
           ...faux.provider,
-          stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }) {
+          stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
             const names = streamContext.tools?.map((tool) => tool.name) ?? [];
-            if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never);
+            if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never, options as never);
             const stream = createAssistantMessageEventStream();
-            const human = fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
-            const classified = Object.assign({}, human, {
-              ...("statusCode" in scenario ? { statusCode: scenario.statusCode } : {}),
-              ...("code" in scenario ? { code: scenario.code } : {}),
-            });
+            const human = scenario.source === "transport"
+              ? {
+                ...fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic }),
+                diagnostics: [{
+                  type: "provider_transport_failure",
+                  timestamp: Date.now(),
+                  error: { message: diagnostic, code: "transport_error" },
+                }],
+              }
+              : fauxAssistantMessage("", { stopReason: "error", errorMessage: diagnostic });
             queueMicrotask(() => {
-              stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
-              stream.push({ type: "error", reason: "error", error: classified });
+              void (async () => {
+                if ("status" in scenario) {
+                  // Contract path: typed ProviderResponse.status via StreamOptions.onResponse.
+                  await options?.onResponse?.({ status: scenario.status, headers: {} }, requestModel);
+                  observedCallbacks.push(scenario.status);
+                }
+                stream.push({ type: "start", partial: { ...human, content: [], stopReason: "pending" } });
+                stream.push({ type: "error", reason: "error", error: human });
+              })();
             });
             return stream;
           },
-          streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }) {
-            return this.stream(requestModel, streamContext);
+          streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
+            return this.stream(requestModel, streamContext, options);
           },
         };
         const nativeContext = {
@@ -372,8 +385,114 @@ test("native provider stream seam classifies auth/quota/transport after setModel
         assert.equal(assistant?.message?.statusCode, undefined, `${scenario.name}:${diagnostic}`);
         assert.equal(assistant?.message?.code, undefined, `${scenario.name}:${diagnostic}`);
         assert.equal(assistant?.message?.navigatorFailure, undefined, `${scenario.name}:${diagnostic}`);
+        if ("status" in scenario) {
+          assert.deepEqual(observedCallbacks, [scenario.status], `${scenario.name}:${diagnostic}`);
+        }
         session.dispose();
       }
+    }
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("native provider stream seam resets per call and classifies terminal-less completion", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-native-reset-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  try {
+    process.env.PI_CODING_AGENT_DIR = root;
+
+    // Sequential contamination: quota then synchronous setup transport through factory → setModel → prompt.
+    {
+      const faux = fauxProvider({ provider: "native-reset-sync", api: "native-reset-sync" });
+      const model = faux.getModel();
+      await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      let calls = 0;
+      const provider = {
+        ...faux.provider,
+        stream(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
+          const names = streamContext.tools?.map((tool) => tool.name) ?? [];
+          if (!names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) return faux.provider.stream(requestModel, streamContext as never, options as never);
+          calls += 1;
+          if (calls === 1) {
+            const stream = createAssistantMessageEventStream();
+            const human = fauxAssistantMessage("", { stopReason: "error", errorMessage: "opaque quota wording" });
+            queueMicrotask(() => {
+              void (async () => {
+                await options?.onResponse?.({ status: 429, headers: {} }, requestModel);
+                stream.push({ type: "error", reason: "error", error: human });
+              })();
+            });
+            return stream;
+          }
+          throw new Error("second setup transport");
+        },
+        streamSimple(requestModel: typeof model, streamContext: { tools?: Array<{ name: string }> }, options?: { onResponse?: (response: { status: number; headers: Record<string, string> }, model: typeof requestModel) => void | Promise<void> }) {
+          return this.stream(requestModel, streamContext, options);
+        },
+      };
+      const nativeContext = {
+        cwd: root,
+        modelRegistry: {
+          find: (providerName: string, id: string) => providerName === model.provider && id === model.id ? model : undefined,
+          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+        },
+      } as never;
+      const session = await createNativeNavigatorSessionFactory()({
+        context: nativeContext,
+        sessionDir: join(root, "session-reset"),
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      await session.setModel?.(`${model.provider}/${model.id}`, "off");
+      await session.prompt("first");
+      assert.deepEqual(session.providerFailure?.(), { source: "quota", cause: "quota" });
+      await session.setModel?.(`${model.provider}/${model.id}`, "off");
+      await session.prompt("second");
+      assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+      assert.equal(calls, 2);
+      session.dispose();
+    }
+
+    // Terminal-less completion must classify no-response transport without hanging on result().
+    {
+      const faux = fauxProvider({ provider: "native-no-terminal", api: "native-no-terminal" });
+      const model = faux.getModel();
+      await writeFile(join(root, "navigator-model.json"), JSON.stringify({ model: `${model.provider}/${model.id}` }));
+      const provider = {
+        ...faux.provider,
+        stream() {
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(() => stream.end());
+          return stream;
+        },
+        streamSimple() {
+          return this.stream();
+        },
+      };
+      const nativeContext = {
+        cwd: root,
+        modelRegistry: {
+          find: (providerName: string, id: string) => providerName === model.provider && id === model.id ? model : undefined,
+          getProvider: (providerName: string) => providerName === model.provider ? provider : undefined,
+          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
+        },
+      } as never;
+      const session = await createNativeNavigatorSessionFactory()({
+        context: nativeContext,
+        sessionDir: join(root, "session-no-terminal"),
+        tool: createNavigatorPrepareTool(() => {}),
+      });
+      await session.setModel?.(`${model.provider}/${model.id}`, "off");
+      const outcome = await Promise.race([
+        session.prompt("no terminal").then(() => "resolved" as const, () => "rejected" as const),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 200)),
+      ]);
+      assert.equal(outcome, "resolved");
+      assert.deepEqual(session.providerFailure?.(), { source: "transport", cause: "transport" });
+      session.dispose();
     }
   } finally {
     if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;

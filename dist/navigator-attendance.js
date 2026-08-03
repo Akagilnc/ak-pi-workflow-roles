@@ -21,13 +21,43 @@ class NavigatorUnavailableError extends Error {
     this.unavailableCause = cause;
   }
 }
+function navigatorProviderFailureFromStatus(status) {
+  if (status === 401 || status === 403) return { source: "auth", cause: "auth" };
+  if (status === 429) return { source: "quota", cause: "quota" };
+  return void 0;
+}
+function navigatorProviderFailureFromCode(code) {
+  if (typeof code === "number") {
+    return navigatorProviderFailureFromStatus(code);
+  }
+  if (typeof code !== "string") return void 0;
+  if (code === "unauthorized" || code === "authentication_failed") return { source: "auth", cause: "auth" };
+  if (code === "insufficient_quota" || code === "quota_exhausted") return { source: "quota", cause: "quota" };
+  if (code === "transport_error") return { source: "transport", cause: "transport" };
+  return void 0;
+}
 function navigatorProviderFailureFromError(error) {
   if (!exactRecord(error)) return void 0;
-  const statusCode = typeof error.statusCode === "number" ? error.statusCode : void 0;
-  const code = typeof error.code === "string" ? error.code : void 0;
-  if (statusCode === 401 || statusCode === 403 || code === "unauthorized" || code === "authentication_failed") return { source: "auth", cause: "auth" };
-  if (statusCode === 429 || code === "insufficient_quota" || code === "quota_exhausted") return { source: "quota", cause: "quota" };
-  if (code === "transport_error") return { source: "transport", cause: "transport" };
+  const statusCode = typeof error.statusCode === "number" ? error.statusCode : typeof error.status === "number" ? error.status : void 0;
+  return navigatorProviderFailureFromStatus(statusCode) ?? navigatorProviderFailureFromCode(error.code);
+}
+function navigatorProviderFailureFromDiagnostics(diagnostics) {
+  if (!Array.isArray(diagnostics)) return void 0;
+  for (const diagnostic of diagnostics) {
+    if (!exactRecord(diagnostic)) continue;
+    if (diagnostic.type === "provider_transport_failure") return { source: "transport", cause: "transport" };
+    if (exactRecord(diagnostic.error)) {
+      const fromCode = navigatorProviderFailureFromCode(diagnostic.error.code);
+      if (fromCode !== void 0) return fromCode;
+    }
+    if (exactRecord(diagnostic.details)) {
+      const status = typeof diagnostic.details.status === "number" ? diagnostic.details.status : typeof diagnostic.details.statusCode === "number" ? diagnostic.details.statusCode : void 0;
+      const fromStatus = navigatorProviderFailureFromStatus(status);
+      if (fromStatus !== void 0) return fromStatus;
+      const fromCode = navigatorProviderFailureFromCode(diagnostic.details.code);
+      if (fromCode !== void 0) return fromCode;
+    }
+  }
   return void 0;
 }
 const navigatorProviderFailureSchema = Type.Object({
@@ -518,17 +548,26 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       }
     }
     let providerFailure;
+    const assignProviderFailure = (fact) => {
+      if (fact !== void 0) providerFailure = fact;
+    };
     const classifyProviderStreamError = (error) => {
-      const structuredFailure = navigatorProviderFailureFromError(error);
-      if (structuredFailure !== void 0) {
-        providerFailure = structuredFailure;
+      if (!exactRecord(error)) {
+        assignProviderFailure(navigatorProviderFailureFromError(error));
         return;
       }
-      if (!exactRecord(error)) return;
-      const fact = error.navigatorFailure;
-      if (exactRecord(fact) && unavailableKey(fact.source) !== void 0 && unavailableKey(fact.cause) !== void 0) {
-        providerFailure = { source: unavailableKey(fact.source), cause: unavailableKey(fact.cause) };
+      assignProviderFailure(navigatorProviderFailureFromDiagnostics(error.diagnostics));
+      if (providerFailure !== void 0) return;
+      if (error.role !== "assistant") assignProviderFailure(navigatorProviderFailureFromError(error));
+    };
+    const classifyProviderResponseStatus = (status) => {
+      if (status >= 200 && status < 300) {
+        if (providerFailure?.source === "auth" || providerFailure?.source === "quota") {
+          providerFailure = void 0;
+        }
+        return;
       }
+      assignProviderFailure(navigatorProviderFailureFromStatus(status));
     };
     const humanProviderError = (error) => {
       const human = { ...error };
@@ -537,60 +576,105 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
       delete human.navigatorFailure;
       return human;
     };
+    const setupFailureMessage = (error) => ({
+      role: "assistant",
+      content: [],
+      api: "unknown",
+      provider: "unknown",
+      model: "unknown",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "error",
+      errorMessage: error instanceof Error ? error.message : String(error),
+      timestamp: Date.now()
+    });
     const instrumentProvider = (sourceProvider) => {
+      const instrumentStreamOptions = (options) => {
+        const record = exactRecord(options) ? options : {};
+        const previous = typeof record.onResponse === "function" ? record.onResponse : void 0;
+        return {
+          ...record,
+          onResponse: async (response, model2) => {
+            classifyProviderResponseStatus(response.status);
+            await previous?.(response, model2);
+          }
+        };
+      };
       const wrapProviderStream = (source) => {
         const wrapped = createAssistantMessageEventStream();
         void (async () => {
-          providerFailure = void 0;
           let result;
           let sawTerminal = false;
           try {
             for await (const event of source) {
-              if (event.type === "done" || event.type === "error") sawTerminal = true;
-              if (event.type === "error" && exactRecord(event.error)) {
-                classifyProviderStreamError(event.error);
-                wrapped.push({ ...event, error: humanProviderError(event.error) });
-                continue;
+              if (event.type === "done" || event.type === "error") {
+                sawTerminal = true;
+                if (event.type === "done" && exactRecord(event.message)) {
+                  assignProviderFailure(navigatorProviderFailureFromDiagnostics(event.message.diagnostics));
+                  result = humanProviderError(event.message);
+                  wrapped.push({ ...event, message: result });
+                  continue;
+                }
+                if (event.type === "error" && exactRecord(event.error)) {
+                  classifyProviderStreamError(event.error);
+                  result = humanProviderError(event.error);
+                  wrapped.push({ ...event, error: result });
+                  continue;
+                }
               }
               wrapped.push(event);
             }
-            result = await source.result();
-            if (exactRecord(result)) result = humanProviderError(result);
+            if (sawTerminal) {
+              const terminal = await source.result();
+              if (result === void 0 && exactRecord(terminal)) result = humanProviderError(terminal);
+              else if (result === void 0) result = terminal;
+            }
           } catch (error) {
             classifyProviderStreamError(error);
             if (providerFailure === void 0) providerFailure = { source: "transport", cause: "transport" };
             if (!sawTerminal) {
-              const message = {
-                role: "assistant",
-                content: [],
-                api: "unknown",
-                provider: "unknown",
-                model: "unknown",
-                usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-                stopReason: "error",
-                errorMessage: error instanceof Error ? error.message : String(error),
-                timestamp: Date.now()
-              };
+              const message = setupFailureMessage(error);
               wrapped.push({ type: "error", reason: "error", error: message });
               result = message;
               sawTerminal = true;
             }
           } finally {
-            if (!sawTerminal && providerFailure === void 0) {
-              providerFailure = { source: "transport", cause: "transport" };
+            if (!sawTerminal) {
+              if (providerFailure === void 0) providerFailure = { source: "transport", cause: "transport" };
+              const message = setupFailureMessage(new Error("Navigator provider produced no response"));
+              wrapped.push({ type: "error", reason: "error", error: message });
+              result = message;
+              sawTerminal = true;
             }
             wrapped.end(result);
           }
         })();
         return wrapped;
       };
+      const invokeInstrumentedStream = (invoke) => {
+        providerFailure = void 0;
+        try {
+          return wrapProviderStream(invoke());
+        } catch (error) {
+          classifyProviderStreamError(error);
+          if (providerFailure === void 0) providerFailure = { source: "transport", cause: "transport" };
+          const wrapped = createAssistantMessageEventStream();
+          const message = setupFailureMessage(error);
+          queueMicrotask(() => {
+            wrapped.push({ type: "error", reason: "error", error: message });
+            wrapped.end(message);
+          });
+          return wrapped;
+        }
+      };
       return {
         ...sourceProvider,
         stream(model2, streamContext, options) {
-          return wrapProviderStream(sourceProvider.stream(model2, streamContext, options));
+          const instrumented = instrumentStreamOptions(options);
+          return invokeInstrumentedStream(() => sourceProvider.stream(model2, streamContext, instrumented));
         },
         streamSimple(model2, streamContext, options) {
-          return wrapProviderStream(sourceProvider.streamSimple(model2, streamContext, options));
+          const instrumented = instrumentStreamOptions(options);
+          return invokeInstrumentedStream(() => sourceProvider.streamSimple(model2, streamContext, instrumented));
         }
       };
     };
