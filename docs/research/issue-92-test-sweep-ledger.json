@@ -69,7 +69,7 @@
           "contract": "Each role's output tool routes through its nested auditor: revise -> errored result + resubmission permitted, pass -> terminating accepted receipt, escalate -> typed audit_escalation that is not an accepted receipt.",
           "grounds": "法条② (与其他测试同根，同一契约重复证明)",
           "factRef": "fact-fbebc8711120",
-          "mergeInto": "oracle-merge-8035551a817d"
+          "mergeInto": "oracle:issue-92:class:1"
         },
         {
           "test": "cold-installed package audits all four roles from editable Souls",
@@ -106,7 +106,7 @@
           "contract": "Every Navigator failure cause (context/session/model/thinking/auth/quota/transport) maps to a typed unavailable with the correct native source+cause and never damages the role Receipt; classification is not keyed on diagnostic prose.",
           "grounds": "法条② (同根：分类契约已在 seam 层证明) + 法条② (最便宜构造 = 纯函数矩阵 + 一条 tracer)",
           "factRef": "fact-043de3e11714",
-          "mergeInto": "oracle-merge-52d835d10ffc"
+          "mergeInto": "oracle:issue-92:class:1"
         },
         {
           "test": "normal packaged Navigator presents independently in print and JSON and reuses one subject session",
@@ -199,7 +199,7 @@
           "contract": "A colliding prefix `/skill:tddfoo` still expands to exactly one canonical tdd block, with the raw text preserved as userMessage.",
           "grounds": "法条④ (同形状夹具第二份)",
           "factRef": "fact-476e4406d112",
-          "mergeInto": "oracle-merge-5b88a07fa815"
+          "mergeInto": "oracle:issue-92:class:1"
         },
         {
           "test": "normal packaged context-loader failure is typed unavailable and preserves the role Receipt",
@@ -267,7 +267,7 @@
           "projectedMs": 369.6,
           "contract": "The packaged entrypoint boots inside a real `pi` subprocess and answers --help with exit code 0 without timing out.",
           "grounds": "法条②（与其他测试同根：同一契约重复证明→merge，注明并入谁）。",
-          "mergeInto": "oracle-merge-89da4634da5f",
+          "mergeInto": "oracle:issue-92:class:1",
           "factRef": "fact-18b746a78ee3"
         }
       ]
@@ -423,7 +423,7 @@
           "projectedMs": 900.0,
           "contract": "Materialization preserves the pinned target snapshot (targetHead + every branch/tag/remote ref) even when the session repository is a shallow clone.",
           "grounds": "法条② 同根（同一契约重复证明）+ 法条② 现构造贵于最便宜构造",
-          "mergeInto": "oracle-merge-ea453277ad2a",
+          "mergeInto": "oracle:issue-92:class:13",
           "factRef": "fact-a652be579664"
         },
         {
@@ -522,7 +522,7 @@
           "contract": "Same process-level contract as :252 with role=Fixer — exit 1, no 'Fixer report accepted', in print and json — plus one role-specific fact: the audit retried exactly 3 times (FIXER_AUDIT_FAILURE_PROVIDER_CALLS=3).",
           "grounds": "法条② 同根 — merge into 'fatal Judge audit infrastructure failure aborts print and JSON CLI actions' (test/audit-failure-subprocess.test.ts:252). The abort path is shared runtime (failInfrastructure); role is a parameter, and print-vs-json is one rendering contract, not a per-role one. 法条③ respected: the must-reject case survives inside the merged table, nothing is deleted.",
           "factRef": "fact-009962b7ee47",
-          "mergeInto": "oracle-merge-cd0bb36c7cda"
+          "mergeInto": "oracle:issue-92:class:3"
         }
       ]
     },
@@ -722,7 +722,7 @@
           "projectedMs": 226.13,
           "contract": "与 :995 逐字同一契约，只是 abort reason 的 message 换成 \"deadline exceeded\"。",
           "grounds": "②同根 + ④同形夹具第二份：被测代码从不读 reason 的 message。",
-          "mergeInto": "oracle-merge-4aee19d6e8f2",
+          "mergeInto": "oracle:issue-92:class:10",
           "factRef": "fact-c0ae1e127e88"
         },
         {
@@ -741,7 +741,7 @@
           "projectedMs": 0.0,
           "contract": "request 得到 ambiguous_loss 后，下一次 observe 通过 marker 认领自己的评论，把 attempt 标为 recovered 并绑定 recoverySnapshotId。",
           "grounds": "②同根：同一契约被证第三遍，且这一遍是最贵的一遍。",
-          "mergeInto": "oracle-merge-f6413fe691dc",
+          "mergeInto": "oracle:issue-92:class:10",
           "factRef": "fact-ae39aa0c65f0"
         },
         {
@@ -778,7 +778,7 @@
           "projectedMs": 0.0,
           "contract": "同一 EPIPE 情形经 createIssueComment 包一层后返回 ambiguous_loss。",
           "grounds": "②同根：EPIPE→标记 已由 :1038 证，标记→ambiguous_loss 已由 :1020 证，本测只是把两段已证链条再跑一遍，还第二次付了 32 MiB 的钱。",
-          "mergeInto": "oracle-merge-a53089e66553",
+          "mergeInto": "oracle:issue-92:class:10",
           "factRef": "fact-6ac851dd2185"
         },
         {
@@ -930,7 +930,7 @@
           "projectedMs": 225.1,
           "contract": "resolutionChangedPaths 以「自动合并树」为基线、不以第一父为基线——source 独有且未被改动的路径不得被报成解决改动。",
           "grounds": "法条②（与其他测试同根：同一契约重复证明→merge，并入 t1「freezes the exact automatic merge tree…」）。",
-          "mergeInto": "oracle-merge-d4fa7acac10d",
+          "mergeInto": "oracle:issue-92:class:fallback-d4fa7acac1",
           "factRef": "fact-4df0aa56cf4a"
         },
         {
@@ -940,7 +940,7 @@
           "projectedMs": 215.05,
           "contract": "被篡改的 source 侧干净路径必须出现在 resolutionChangedPaths。",
           "grounds": "法条②（同根：与 t1 同一契约同一代码路径）+ 法条④（同形状夹具第二份＝病）。",
-          "mergeInto": "oracle-merge-0ffd1e984268",
+          "mergeInto": "oracle:issue-92:class:fallback-0ffd1e9842",
           "factRef": "fact-5c9820645f1c"
         },
         {
@@ -1026,7 +1026,7 @@
           "contract": "Same law as test 4, instantiated for the judge role only: rejection -> throw, abort, exitCode 1, [started, failed] traces, deepEqual named cause, before_agent_start throws ActivationBarrierError with code AK_ACTIVATION_NOT_ADMITTED.",
           "grounds": "法条② — 与其他测试同根：同一契约重复证明。Test 4 already loops ROLE_REGISTRY, which includes judge, and already asserts throw + abort + exitCode 1 + failed-trace named cause + the barrier.",
           "factRef": "fact-222c6e21fe42",
-          "mergeInto": "oracle-merge-9d35b663aedb"
+          "mergeInto": "oracle:issue-92:class:12"
         },
         {
           "test": "the shared executor runs every declared stage in order",
@@ -1198,7 +1198,7 @@
           "projectedMs": 0.0,
           "contract": "buildCollectorReceipt accepts a receipt of exactly COLLECTOR_RECEIPT_MAX_BYTES and latches fatal at MAX+1 (off-by-one boundary, src/collector-receipt.ts:804-809).",
           "grounds": "法②同根（同一契约重复证明）+ 法⑤①（一个独立外部行为契约最多一条最短 tracer bullet）+ 法⑤②（同根共用一条贯穿真实入口的测试）。法③保护的 MAX+1 负向案在并入方存活，不丢。",
-          "mergeInto": "oracle-merge-39b2a310b444",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-b91ad29fc013"
         },
         {
@@ -1208,7 +1208,7 @@
           "projectedMs": 0.0,
           "contract": "parseCollectorOutputCandidate accepts only the narrow leg shape (legId/status/rationale/evidenceRefs) and rejects out-of-enum status and unknown leg fields.",
           "grounds": "法②同根（同一 schema 契约在两处证明）+ 法⑤①（一契约一条最短 tracer bullet）。",
-          "mergeInto": "oracle-merge-90c1b8557234",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-a4a6e91ef3fc"
         },
         {
@@ -1378,7 +1378,7 @@
           "projectedMs": 0.0,
           "contract": "A leg's own request-attempt ids auto-join that leg's evidenceRefs and never leak into the sibling leg; leg refs ≡ that leg's terminal-fact refs.",
           "grounds": "法②同根（严格被覆盖）+ 法⑤①。",
-          "mergeInto": "oracle-merge-d05e14681b39",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-f4e61622ebe7"
         },
         {
@@ -1428,7 +1428,7 @@
           "projectedMs": 0.0,
           "contract": "A review version whose authoritative timestamp is lost by an edit becomes windowRelation 'uncertain' and cannot terminate a leg.",
           "grounds": "法②同根（同一规则的两个触发器各写一份 60 行夹具）+ 法⑤②（同根问题共用一条测试）+ 法④（同形状夹具第二份）。",
-          "mergeInto": "oracle-merge-df89cfea260a",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-0efbcc2b7457"
         },
         {
@@ -1595,7 +1595,7 @@
           "contract": "Batch gate: an assistant turn carrying two operational tool calls is wholly rejected — every toolResult isError, zero GitHub, exit 1.",
           "grounds": "② 同根 — the same batch-gate clause is re-proved by the matrix at line 855, whose first block (L875-885) is the identical observe+wait sibling batch. Merge into line 855.",
           "factRef": "fact-a29a0d559edc",
-          "mergeInto": "oracle-merge-bcd7f590a738"
+          "mergeInto": "oracle:issue-92:class:9"
         },
         {
           "test": "collector replaces first input entirely, strips images, and rejects later input",
@@ -1663,7 +1663,7 @@
           "contract": "Happy path: observe → output(valid) is accepted and the receipt carries targetHead / snapshots / evidenceRecords.",
           "grounds": "② 同一契约重复证明 → merge into 'observe content exposes exact-head qualifying review for content-only valid path' (line 458), which is a strict superset of the same scenario.",
           "factRef": "fact-4341be3837cc",
-          "mergeInto": "oracle-merge-25cd8ec728f0"
+          "mergeInto": "oracle:issue-92:class:9"
         },
         {
           "test": "F3-ambient-skills unsupported hostile sibling-extension injection",
@@ -1690,7 +1690,7 @@
           "contract": "A rationale containing a newline is not rejected.",
           "grounds": "② 同根 (same contract, same construction, one literal apart) + ④ 同形状夹具第二份. Merge into line 1753 by making that test's rationale multiline — zero added cost, one fewer session.",
           "factRef": "fact-480256a6195d",
-          "mergeInto": "oracle-merge-25675ac92fd8"
+          "mergeInto": "oracle:issue-92:class:9"
         },
         {
           "test": "F3-ambient-contextFiles",
@@ -1880,7 +1880,7 @@
           "contract": "三件事捆在一起：(a) parseNavigatorModelSetting 精确解析且拒 :backup；(b) publicNavigatorSettlement 只认 typed 事实、忽略措辞与可纠正错误；(c) selectNavigatorCandidate 的 statuses 列表成员匹配。",
           "grounds": "法条④（同形状夹具第二/第三份）＋法条②：(c) 段与 #15「status-specific route candidates outrank generics」证的是同一函数的同一契约族，却在此处第三次手搭 candidate 字面量。并入 #15，由一处拥有 selectNavigatorCandidate 契约；(a)(b) 留在本测试。",
           "factRef": "fact-166fe48c6782",
-          "mergeInto": "oracle-merge-fd3f8b6872eb"
+          "mergeInto": "oracle:issue-92:class:2"
         },
         {
           "test": "registry output tools are the contract-owned constants",
@@ -1898,7 +1898,7 @@
           "contract": "subject key 的替换语义只由 typed provenance（placeholder/role_input/user_prompt）决定，不由散文前缀触发；合法但恰好以旧前缀开头的真任务仍被哈希成独立 subject。",
           "grounds": "法条④（同形状夹具第二份）：与 #12 是同一个函数（navigatorSubjectKey/ForInput）、同一个 `/repo/.ak/work/ad-hoc` 夹具字面量、同一条 subject key 推导契约的相邻条款，分两处各自搭台。",
           "factRef": "fact-65ce007e554d",
-          "mergeInto": "oracle-merge-8230e0533be6"
+          "mergeInto": "oracle:issue-92:class:2"
         },
         {
           "test": "status-specific route candidates outrank generics regardless of declaration order",
@@ -1916,7 +1916,7 @@
           "contract": "NAVIGATOR_TARGETS 按 PACKAGED_ROLE_REGISTRY 原序暴露七个角色。",
           "grounds": "法条④（同一事实证两遍）：#18「registry output tools are the contract-owned constants」已经把同一份七角色顺序字面量断言了一遍，且顺带绑定 outputTool；本测试的断言是它的真子集。",
           "factRef": "fact-da42b6071e4c",
-          "mergeInto": "oracle-merge-4c52fe1e0db3"
+          "mergeInto": "oracle:issue-92:class:2"
         }
       ]
     },
@@ -2138,7 +2138,7 @@
           "projectedMs": 0.0,
           "contract": "Claimed: budget exceeded mid-pagination abandons later pages and later surfaces. Actually proven here: budget exceeded while charging the reviews surface ⇒ later surfaces and the terminal PR are not fetched, fatal latches, nothing certified.",
           "grounds": "法条② 同根 — after the rebuild both tests prove one law ('exceed ⇒ stop charging, fetch nothing further, certify nothing'), differing only in where in the loop the exceed happens; the genuine page-loop early-stop is proven elsewhere.",
-          "mergeInto": "oracle-merge-c7898e06b1b4",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-635cd09ffce4"
         },
         {
@@ -2148,7 +2148,7 @@
           "projectedMs": 0.0,
           "contract": "An over-budget observe rejects loudly and latches fatal rather than truncating; plus an echo of the receipt byte constant.",
           "grounds": "法条② 同根 — 'over budget ⇒ reject + fatal' is exactly the reject half already proven at test/collector-ledger.test.ts:1170-1191. 法条④ — the trailing constant assertion is a tautology (it restates src/collector-evidence.ts:13 and is duplicated verbatim at test/collector-receipt.test.ts:1431), while the real receipt-bound enforcement is covered at src/collector-receipt.ts:805 via test/collector-role.test.ts:2452/2644 and test/collector-receipt.test.ts:2731.",
-          "mergeInto": "oracle-merge-d5960285c6dc",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-9e5ab6ec3d48"
         },
         {
@@ -2183,7 +2183,7 @@
           "projectedMs": 0.0,
           "contract": "Batch admission gate: exactly one operational call is permitted (returns the permitted descriptor); mixed operational+request, operational+output, and a sole output without a completed operational/snapshot are denied and latch fatal.",
           "grounds": "法条② 同根 (同一契约重复证明) + 法条④ 同形状夹具第二份. 法条③ preserved: the must-reject rows survive the merge, none are deleted.",
-          "mergeInto": "oracle-merge-5c967bfe576d",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-c83bd9c6f0f5"
         },
         {
@@ -2201,7 +2201,7 @@
           "projectedMs": 0.0,
           "contract": "Same cap branch as the previous test, with elapsed time offset, plus: a subsequent observe still completes strictly before deadlineMono.",
           "grounds": "法条② 同根 — the cap arithmetic (requested 900_000 → effective 300_000, remaining debited) is the same branch already proven at line 377-380; only the elapsed offset differs. 法条④ 同形状夹具第二份.",
-          "mergeInto": "oracle-merge-fb59ea37264d",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-5e1b7e32c7b0"
         },
         {
@@ -2275,7 +2275,7 @@
           "projectedMs": 0.0,
           "contract": "updatedAt is part of the PR identity tuple: churn across the bracket forces the same full-surface retry (retry-visible evidence appears in the model view), and churn that persists fails closed without certifying.",
           "grounds": "法条② 同根 — the retry law and the fail-closed law are already proven for the headOid key; this proves the identical two laws for the updatedAt key. 法条④ 同形状夹具第二份 (identical pullRequestSequence scripting, identical assertions).",
-          "mergeInto": "oracle-merge-d4a2eee0d2a6",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-c662d19455b7"
         },
         {
@@ -2301,7 +2301,7 @@
           "projectedMs": 0.0,
           "contract": "A post-deadline edit that GitHub still reports with the original submitted_at becomes a new version with authoritativeTime null / windowRelation uncertain, and the earlier version is retained.",
           "grounds": "法条② 同根 — the line-1195 test's second observe (test/collector-ledger.test.ts:1217-1239) proves the identical claim (edited body ⇒ authoritativeTime null, windowRelation uncertain) and then goes further to the third observe and the modelView projection. 法条④ 同形状夹具第二份 (same transport fixture, same review edit script).",
-          "mergeInto": "oracle-merge-a0b85fe860e5",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-e4fca40392b9"
         },
         {
@@ -2335,7 +2335,7 @@
           "projectedMs": 0.0,
           "contract": "No identity drift ⇒ no retry: exactly two PR reads (the terminal-reread bracket) for one observe.",
           "grounds": "法条② 同根 — this exact assertion already exists inside another test, and standing alone it duplicates a single equality.",
-          "mergeInto": "oracle-merge-02bd2029d3fd",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-4815761e40c9"
         },
         {
@@ -2353,7 +2353,7 @@
           "projectedMs": 0.0,
           "contract": "Boundary: a first sighting whose firstObservedMono === deadlineMono keeps GitHub's submitted_at as authoritativeTime (mono is the trust axis, wall metadata is not).",
           "grounds": "法条④ 同形状夹具第二份 + 法条② — both tests are the same three-line shape (normalizeReviewEvidence(sampleReview(...)) → applyEvidenceVersionHistory(...) → assert authoritativeTime) over the same single boundary; one row table is the cheapest form.",
-          "mergeInto": "oracle-merge-1fbed90a1eba",
+          "mergeInto": "oracle:issue-92:class:9",
           "factRef": "fact-8bdc59d15573"
         }
       ]
@@ -2407,7 +2407,7 @@
           "projectedMs": 0.0,
           "contract": "The two posture bundle directories exist on disk.",
           "grounds": "法条② merge（与其他测试同根：同一契约重复证明）+ 法条② delete 子款（答不出契约）for the README half",
-          "mergeInto": "oracle-merge-bd0f930ae440",
+          "mergeInto": "oracle:issue-92:class:11",
           "factRef": "fact-5bac02edfa19"
         },
         {
@@ -2417,7 +2417,7 @@
           "projectedMs": 0.0,
           "contract": "Claimed: a self-asserted receipt with no JSONL acceptance bind is refused. Actually proved: a terminal whose content text is not the accepted marker is ignored.",
           "grounds": "法条② merge（与其他测试同根：同一契约重复证明），且本条是同根两者中较弱的一份",
-          "mergeInto": "oracle-merge-456b089216db",
+          "mergeInto": "oracle:issue-92:class:11",
           "factRef": "fact-d4f503401f4f"
         },
         {
@@ -2451,7 +2451,7 @@
           "projectedMs": 0.0,
           "contract": "The static input/materials.md must byte-equal the materials body the model actually read in the JSONL — a swapped/coached body is refused.",
           "grounds": "法条④（同形状夹具第二份）+ 法条② merge（同一 gate 的同根证明）",
-          "mergeInto": "oracle-merge-355155ea0bec",
+          "mergeInto": "oracle:issue-92:class:11",
           "factRef": "fact-9fda3eb12b2b"
         },
         {
@@ -2469,7 +2469,7 @@
           "projectedMs": 0.0,
           "contract": "A materials path carrying the oracle's direction label (r-block / r-ready) on a model-visible surface is refused.",
           "grounds": "法条④（同形状夹具第三份）+ 法条② merge（同一 gate 的同根证明）",
-          "mergeInto": "oracle-merge-fdaca9bbe74b",
+          "mergeInto": "oracle:issue-92:class:11",
           "factRef": "fact-6ad8948668e9"
         },
         {
@@ -2799,7 +2799,7 @@
           "contract": "An auditor response carrying a well-formed decision call but stopReason:\"error\" is rejected; the raw nested response is retained as compliance evidence and no toolResult is appended for the output call.",
           "grounds": "②同根: this is the shared compliance transport's contract, not the judge's, and it is already proved at the transport seam with a broader case matrix. ②construction-costlier-than-cheapest: reaching it through the judge extension costs a full activation plus createPiJudgeAuditor plus hand-stubbed model/modelRegistry.",
           "factRef": "fact-4e3aa184236c",
-          "mergeInto": "oracle-merge-cafa7ae9765f"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "Fixer prospective prerequisite decisions survive the production submission lifecycle unchanged",
@@ -2834,7 +2834,7 @@
           "contract": "Each role's system-prompt envelope is exact bytes: soul trimmed, phase/task/packet/prerequisites wrapped in their named tags in a fixed order.",
           "grounds": "②同根 (same contract proved twice) + ②construction-costlier-than-cheapest: the factory is a pure delegator (src/role-runtime.ts:470/479/502), so routing through it to assert per-role prompt bytes builds three full extensions to re-prove what the three per-role tests already build anyway.",
           "factRef": "fact-680ce1d6a2f7",
-          "mergeInto": "oracle-merge-90ae018d2f23"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "stable factory registers the complete typed role flag set and stays inert without a role",
@@ -2870,7 +2870,7 @@
           "contract": "Three lawful declared-blocker shapes (plan refusal, apply refusal, partially_completed) each produce exactly one audit input, and the three inputs are distinct objects rather than a shared/reused one.",
           "grounds": "②同根: the shape-legality half is fixer-contract.test.ts's job (all three shapes appear verbatim in its `legal` table), and the freshness/identity half is the same claim already asserted at :1294 and :1475.",
           "factRef": "fact-2b0c04ab26bf",
-          "mergeInto": "oracle-merge-841a22a54bf3"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "judge role audits only adjudicative fields while retaining evidence in receipts",
@@ -2880,7 +2880,7 @@
           "contract": "The verdict handed to the auditor is projected down to adjudicative fields only (evidence stripped) on all three judge statuses, while the receipt retains evidence verbatim.",
           "grounds": "②同根 with the production-route test below, which proves the same projection end-to-end and byte-exactly. ②construction-costlier-than-cheapest: `projectJudgeVerdictForAudit` is an exported pure function (src/judge-role.ts:105) with zero direct unit test — a 3-row table over it is microseconds, versus three tool executions through the extension here.",
           "factRef": "fact-d9d04f049780",
-          "mergeInto": "oracle-merge-dcb68d1c4f9e"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "Fixer apply accepts differently named classes with a shared commit and rejects duplicate names or missing pointers",
@@ -2890,7 +2890,7 @@
           "contract": "Two differently named class results may share one commitSha; duplicate class names, blank commitSha and missing commitSha are rejected; rejections never reach the auditor while acceptance audits exactly once.",
           "grounds": "②同根: all three rejections already exist, with the same diagnostics, at the validator. ②construction-costlier-than-cheapest: two full fixer extensions built to re-run validator rows.",
           "factRef": "fact-b12d8325724a",
-          "mergeInto": "oracle-merge-2de0d9a5afdd"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "judge preserves an optional advisory note on every verdict",
@@ -2900,7 +2900,7 @@
           "contract": "The optional `note` field survives acceptance unchanged on converged, continue and escalate verdicts.",
           "grounds": "②construction-costlier-than-cheapest: pure field-passthrough of the accepted-details validator, proved here by standing up a judge extension and executing three audited tool calls. The validator's own test file already owns exactly this shape of proof.",
           "factRef": "fact-188952e8f3e1",
-          "mergeInto": "oracle-merge-72fc3c857398"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "worker output rejects malformed, unknown, blank, and non-object values",
@@ -2910,7 +2910,7 @@
           "contract": "Seven malformed worker outputs (null, array, unknown status, blank report, blank commitSha, unknown extra key, missing report) are all rejected with a `Fixer output` diagnostic.",
           "grounds": "②construction-costlier-than-cheapest: pure `validateFixerOutput` rows driven through a full fixer extension activation. ②同根 with the validator's own rejection tables.",
           "factRef": "fact-cbfa5cd3dfbe",
-          "mergeInto": "oracle-merge-c9b73c584ae0"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "Fixer activation rejects empty or trim-blank instructions before installing its tool",
@@ -2920,7 +2920,7 @@
           "contract": "A blank or whitespace-only fix packet rejects activation with `Fixer instructions must be nonblank`, installs no output tool, and runs zero audits.",
           "grounds": "②同根 + ④同形状夹具: byte-for-byte the same construction, same loop shape, same three post-conditions as the prerequisite-attachment test immediately above; only the injected bad input and the expected diagnostic differ.",
           "factRef": "fact-5c116d5c3662",
-          "mergeInto": "oracle-merge-7a64da1ab7ad"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "judge escalation returns one terminating human decision without a role verdict",
@@ -2930,7 +2930,7 @@
           "contract": "An escalate audit decision projects to a terminating human-decision receipt carrying kind/conflicts/decisionGate, with no judgeStatus and no acceptance prose.",
           "grounds": "②同根: `disposeComplianceDecision` / `projectAuditEscalation` own this projection for all four audited roles, and it is already proved directly against them.",
           "factRef": "fact-ee7947ab3e68",
-          "mergeInto": "oracle-merge-b6e58e8069f6"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "fixer output must be the sole call in its assistant batch",
@@ -2988,7 +2988,7 @@
           "contract": "On judge activation the active tool set is narrowed to read/grep/find/ls/bash plus the output tool — write, edit and arbitrary sibling tools are dropped.",
           "grounds": "②同根: the same narrowing assertion already exists at :250 with a poorer registry. One contract, two constructions.",
           "factRef": "fact-0ae029ecf76e",
-          "mergeInto": "oracle-merge-41f871b527d5"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "coder plan loads its task without construction skill and returns planned",
@@ -3046,7 +3046,7 @@
           "contract": "A revise audit decision rejects the submission with `violates its law`, an unchanged resubmission then passes, and the two audits receive distinct input objects.",
           "grounds": "②同根: the revise→reject→resubmit lifecycle is proved again, through the *actual* production auditor, by the prerequisite-lifecycle test below.",
           "factRef": "fact-34525c8589ed",
-          "mergeInto": "oracle-merge-9eca667bce18"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "focused Fixer and Coder controllers own their flags and distinct lifecycle hooks",
@@ -3064,7 +3064,7 @@
           "contract": "In plan phase `planned` is accepted while `completed` and a commit-bearing plan are rejected — the fixer cannot report construction it was not authorized to do.",
           "grounds": "②同根: the two rejections are plan/apply union rules owned by `validateFixerOutput`; the residue (that the tool reads its phase from the flag) is one row, not a whole extension.",
           "factRef": "fact-51e282eeed1b",
-          "mergeInto": "oracle-merge-12fff7bdd5e1"
+          "mergeInto": "oracle:issue-92:class:4"
         },
         {
           "test": "fixer activation leaves its tool surface unchanged",
@@ -3475,7 +3475,7 @@
           "projectedMs": 0.0,
           "contract": "Mixed. One real clause: the test file's own auditorCases fixture covers every role in the production AUDITOR_SOUL_ROLES census (a coverage guard for the loop tests below). Three clauses prove nothing.",
           "grounds": "法条②（同根：它守的是下面循环测试的夹具完整性，属同一契约）＋法条④（死代码断言）。",
-          "mergeInto": "oracle-merge-13c4df17cc04",
+          "mergeInto": "oracle:issue-92:class:8",
           "factRef": "fact-27d16544a28b"
         },
         {
@@ -3609,7 +3609,7 @@
           "contract": "Same contract as the rejection table above — invalid output rejects with a diagnostic naming the violated field. It proves it a second time via a separate construction.",
           "grounds": "法② 同根 (同一契约重复证明) + 法④ (死重复夹具). Merge into the rejection table at fixer-contract.test.ts:63, upgrading that table's rows from bare /Fixer/ to per-row diagnostics (the shape already used at :90). Net effect: strictly stronger assertions, one table instead of three, one fewer test.",
           "factRef": "fact-5a4bc9491c68",
-          "mergeInto": "oracle-merge-76fa4b23bdae"
+          "mergeInto": "oracle:issue-92:class:fallback-76fa4b23bd"
         },
         {
           "test": "Fixer rejects branch-incompatible semantic fields while ignoring presentation decoration",
@@ -3834,7 +3834,7 @@
           "contract": "REAL, and the only real one in this file: per ADR 0005, the packaged Soul carries generic adjudication law only — host/institution carriers (Ming, 容器, stationReceiptContracts, ADR numbers, CLI flags, orchestrator vocabulary) must not creep back in. Silent-failure surface in ADR 0016's sense: a regression here ships a host-coupled Soul with nothing else complaining.",
           "grounds": "法② 同根 (同一契约重复证明) + 法④ (同形状夹具第二份). Merge into ONE table-driven soul-carrier-purity check over souls/*.md, absorbing test/reviewer-soul.test.ts:'Reviewer Soul does not copy schema, runtime, or canonical Skill mechanics' and test/collector-soul.test.ts:'Collector Soul excludes CLI, schema, tools, timers, Flow, and Skill mechanics' — three files today prove the same contract for three of twelve souls, each with a bespoke hand-rolled pattern pile. Shared denylist + per-soul extra rows; the other nine souls get covered for free.",
           "factRef": "fact-a22ec309c7d7",
-          "mergeInto": "oracle-merge-e2943be830dd"
+          "mergeInto": "oracle:issue-92:class:0"
         },
         {
           "test": "Judge Soul infers burden from materials only and names four postures",
@@ -4020,7 +4020,7 @@
           "projectedMs": 0.0,
           "contract": "constructReviewerDispatch is deterministic — identical admitted inputs plus frozen evidence produce identical dispatch bytes.",
           "grounds": "法条② merge 款 (同一契约重复证明) + 法条④ (只测内部结构)",
-          "mergeInto": "oracle-merge-11217fdfd451",
+          "mergeInto": "oracle:issue-92:class:15",
           "factRef": "fact-3187f3d88948"
         },
         {
@@ -4138,7 +4138,7 @@
           "contract": "validateAcceptedJudgeDetails: continue+fix+classes round-trips exactly; rejects continue-without-classes, converged-with-classes, non-canonical class name grammar, and duplicate class names.",
           "grounds": "法条② — 与其他测试同根（同一契约重复证明）→ merge; 法条④ — two files owning one validator's contract is the DRY disease. Merge INTO test/judge-output-contract.test.ts (which already owns validateAcceptedJudgeDetails and proves the shared facets strictly better).",
           "factRef": "fact-b15eaad0f393",
-          "mergeInto": "oracle-merge-c1181a912429"
+          "mergeInto": "oracle:issue-92:class:11"
         },
         {
           "test": "current Fixer settlement is independent while Coder remains byte-compatible and closed",
@@ -6516,413 +6516,17 @@
   "actionableDispositionCount": 129,
   "mergeOracles": [
     {
-      "key": "oracle-merge-02bd2029d3fd",
-      "survivingOracle": "the drift table formed at line 868 (as its no-drift control row)",
-      "source": {
-        "file": "test/collector-ledger.test.ts",
-        "test": "R9 stable state+HEAD+updatedAt still single pass (2 PR reads)",
-        "grounds": "法条② 同根 — this exact assertion already exists inside another test, and standing alone it duplicates a single equality."
-      }
-    },
-    {
-      "key": "oracle-merge-0ffd1e984268",
-      "survivingOracle": "production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit",
-      "source": {
-        "file": "test/merger-git-state.test.ts",
-        "test": "production Merger Git seam reports tampering with a clean source-side path",
-        "grounds": "法条②（同根：与 t1 同一契约同一代码路径）+ 法条④（同形状夹具第二份＝病）。"
-      }
-    },
-    {
-      "key": "oracle-merge-11217fdfd451",
-      "survivingOracle": "test/reviewer-dispatch.test.ts:16 \"one and two clone dispatches carry byte-identical deterministic bundles\"",
-      "source": {
-        "file": "test/reviewer-construction-seams.test.ts",
-        "test": "construction is deterministic from admitted immutable inputs and frozen evidence",
-        "grounds": "法条② merge 款 (同一契约重复证明) + 法条④ (只测内部结构)"
-      }
-    },
-    {
-      "key": "oracle-merge-12fff7bdd5e1",
-      "survivingOracle": "oracle-merge-12fff7bdd5e1",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "fixer plan phase accepts plans but rejects construction receipts",
-        "grounds": "②同根: the two rejections are plan/apply union rules owned by `validateFixerOutput`; the residue (that the tool reads its phase from the flag) is one row, not a whole extension."
-      }
-    },
-    {
-      "key": "oracle-merge-13c4df17cc04",
-      "survivingOracle": "test/audit-escalation.test.ts:149 'all retained auditors share typed escalation' (the test that actually depends on census completeness)",
-      "source": {
-        "file": "test/audit-escalation.test.ts",
-        "test": "the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor",
-        "grounds": "法条②（同根：它守的是下面循环测试的夹具完整性，属同一契约）＋法条④（死代码断言）。"
-      }
-    },
-    {
-      "key": "oracle-merge-1fbed90a1eba",
-      "survivingOracle": "applyEvidenceVersionHistory after-deadline mono first review nulls authoritativeTime (line 1059)",
-      "source": {
-        "file": "test/collector-ledger.test.ts",
-        "test": "applyEvidenceVersionHistory first review keeps submitted_at at/before deadline mono",
-        "grounds": "法条④ 同形状夹具第二份 + 法条② — both tests are the same three-line shape (normalizeReviewEvidence(sampleReview(...)) → applyEvidenceVersionHistory(...) → assert authoritativeTime) over the same single boundary; one row table is the cheapest form."
-      }
-    },
-    {
-      "key": "oracle-merge-25675ac92fd8",
-      "survivingOracle": "oracle-merge-25675ac92fd8",
-      "source": {
-        "file": "test/collector-role.test.ts",
-        "test": "F1 control: multiline rationale is schema-accepted",
-        "grounds": "② 同根 (same contract, same construction, one literal apart) + ④ 同形状夹具第二份. Merge into line 1753 by making that test's rationale multiline — zero added cost, one fewer session."
-      }
-    },
-    {
-      "key": "oracle-merge-25cd8ec728f0",
-      "survivingOracle": "oracle-merge-25cd8ec728f0",
-      "source": {
-        "file": "test/collector-role.test.ts",
-        "test": "collector immediate all-valid path through observe and singleton output",
-        "grounds": "② 同一契约重复证明 → merge into 'observe content exposes exact-head qualifying review for content-only valid path' (line 458), which is a strict superset of the same scenario."
-      }
-    },
-    {
-      "key": "oracle-merge-2de0d9a5afdd",
-      "survivingOracle": "oracle-merge-2de0d9a5afdd",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "Fixer apply accepts differently named classes with a shared commit and rejects duplicate names or missing pointers",
-        "grounds": "②同根: all three rejections already exist, with the same diagnostics, at the validator. ②construction-costlier-than-cheapest: two full fixer extensions built to re-run validator rows."
-      }
-    },
-    {
-      "key": "oracle-merge-355155ea0bec",
-      "survivingOracle": "JSONL bind/neutrality refuses coached user prompt (test:944), as one table-driven case over a shared row-builder",
-      "source": {
-        "file": "test/judge-posture-recordings.test.ts",
-        "test": "JSONL bind refuses materials-read body mismatch with static input",
-        "grounds": "法条④（同形状夹具第二份）+ 法条② merge（同一 gate 的同根证明）"
-      }
-    },
-    {
-      "key": "oracle-merge-39b2a310b444",
-      "survivingOracle": "test/collector-role.test.ts :: \"F3-receipt-overflow-role-path exact MAX+1 through output execute\" (877.5ms) — already contains this test verbatim",
-      "source": {
-        "file": "test/collector-receipt.test.ts",
-        "test": "F3 receipt exact 32 MiB valid-rationale MAX accept and MAX+1 fatal",
-        "grounds": "法②同根（同一契约重复证明）+ 法⑤①（一个独立外部行为契约最多一条最短 tracer bullet）+ 法⑤②（同根共用一条贯穿真实入口的测试）。法③保护的 MAX+1 负向案在并入方存活，不丢。"
-      }
-    },
-    {
-      "key": "oracle-merge-41f871b527d5",
-      "survivingOracle": "oracle-merge-41f871b527d5",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "judge activation narrows active tools to registered evidence tools and output",
-        "grounds": "②同根: the same narrowing assertion already exists at :250 with a poorer registry. One contract, two constructions."
-      }
-    },
-    {
-      "key": "oracle-merge-456b089216db",
-      "survivingOracle": "acceptance parser rejects orphan toolResult message without call chain (test:820) — that test already proves the real unbound-terminal contract, and proves it correctly",
-      "source": {
-        "file": "test/judge-posture-recordings.test.ts",
-        "test": "posture oracle refuses receipt-only trust without JSONL acceptance",
-        "grounds": "法条② merge（与其他测试同根：同一契约重复证明），且本条是同根两者中较弱的一份"
-      }
-    },
-    {
-      "key": "oracle-merge-4aee19d6e8f2",
-      "survivingOracle": "test/collector-github.test.ts:995 「request-path AbortSignal cancels hung POST child without rejected attempt」",
-      "source": {
-        "file": "test/collector-github.test.ts",
-        "test": "request-path abort with deadline exceeded Error cancels without rejected attempt",
-        "grounds": "②同根 + ④同形夹具第二份：被测代码从不读 reason 的 message。"
-      }
-    },
-    {
-      "key": "oracle-merge-4c52fe1e0db3",
-      "survivingOracle": "oracle-merge-4c52fe1e0db3",
-      "source": {
-        "file": "test/navigator-attendance.test.ts",
-        "test": "NAVIGATOR_TARGETS preserves packaged registry order",
-        "grounds": "法条④（同一事实证两遍）：#18「registry output tools are the contract-owned constants」已经把同一份七角色顺序字面量断言了一遍，且顺带绑定 outputTool；本测试的断言是它的真子集。"
-      }
-    },
-    {
-      "key": "oracle-merge-52d835d10ffc",
-      "survivingOracle": "oracle-merge-52d835d10ffc",
-      "source": {
-        "file": "test/package-entrypoint.integration.test.ts",
-        "test": "normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the cause matrix",
-        "grounds": "法条② (同根：分类契约已在 seam 层证明) + 法条② (最便宜构造 = 纯函数矩阵 + 一条 tracer)"
-      }
-    },
-    {
-      "key": "oracle-merge-5b88a07fa815",
-      "survivingOracle": "oracle-merge-5b88a07fa815",
-      "source": {
-        "file": "test/package-entrypoint.integration.test.ts",
-        "test": "packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion",
-        "grounds": "法条④ (同形状夹具第二份)"
-      }
-    },
-    {
-      "key": "oracle-merge-5c967bfe576d",
-      "survivingOracle": "evaluateBatch two-valid and invalid permutations latch fatal before execute (line 731)",
-      "source": {
-        "file": "test/collector-ledger.test.ts",
-        "test": "batch gate permits one operational or sole output and latches mixed/multiple",
-        "grounds": "法条② 同根 (同一契约重复证明) + 法条④ 同形状夹具第二份. 法条③ preserved: the must-reject rows survive the merge, none are deleted."
-      }
-    },
-    {
-      "key": "oracle-merge-72fc3c857398",
-      "survivingOracle": "oracle-merge-72fc3c857398",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "judge preserves an optional advisory note on every verdict",
-        "grounds": "②construction-costlier-than-cheapest: pure field-passthrough of the accepted-details validator, proved here by standing up a judge extension and executing three audited tool calls. The validator's own test file already owns exactly this shape of proof."
-      }
-    },
-    {
-      "key": "oracle-merge-76fa4b23bdae",
-      "survivingOracle": "oracle-merge-76fa4b23bdae",
-      "source": {
-        "file": "test/fixer-contract.test.ts",
-        "test": "every surviving Fixer rejection names its violated field or constraint",
-        "grounds": "法② 同根 (同一契约重复证明) + 法④ (死重复夹具). Merge into the rejection table at fixer-contract.test.ts:63, upgrading that table's rows from bare /Fixer/ to per-row diagnostics (the shape already used at :90). Net effect: strictly stronger assertions, one table instead of three, one fewer test."
-      }
-    },
-    {
-      "key": "oracle-merge-7a64da1ab7ad",
-      "survivingOracle": "oracle-merge-7a64da1ab7ad",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "Fixer activation rejects empty or trim-blank instructions before installing its tool",
-        "grounds": "②同根 + ④同形状夹具: byte-for-byte the same construction, same loop shape, same three post-conditions as the prerequisite-attachment test immediately above; only the injected bad input and the expected diagnostic differ."
-      }
-    },
-    {
-      "key": "oracle-merge-8035551a817d",
-      "survivingOracle": "oracle-merge-8035551a817d",
-      "source": {
-        "file": "test/package-entrypoint.integration.test.ts",
-        "test": "cold-installed role outputs run nested audits through pass, revise, and escalation",
-        "grounds": "法条② (与其他测试同根，同一契约重复证明)"
-      }
-    },
-    {
-      "key": "oracle-merge-8230e0533be6",
-      "survivingOracle": "oracle-merge-8230e0533be6",
-      "source": {
-        "file": "test/navigator-attendance.test.ts",
-        "test": "typed subject provenance replaces prose prefix branching",
-        "grounds": "法条④（同形状夹具第二份）：与 #12 是同一个函数（navigatorSubjectKey/ForInput）、同一个 `/repo/.ak/work/ad-hoc` 夹具字面量、同一条 subject key 推导契约的相邻条款，分两处各自搭台。"
-      }
-    },
-    {
-      "key": "oracle-merge-841a22a54bf3",
-      "survivingOracle": "oracle-merge-841a22a54bf3",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "declared plan refusal, apply refusal, and partial apply each reach exactly one fresh audit",
-        "grounds": "②同根: the shape-legality half is fixer-contract.test.ts's job (all three shapes appear verbatim in its `legal` table), and the freshness/identity half is the same claim already asserted at :1294 and :1475."
-      }
-    },
-    {
-      "key": "oracle-merge-89da4634da5f",
-      "survivingOracle": "test/package-entrypoint.integration.test.ts:760 'cold-installed live help follows the loaded extension and changes on the next hint'",
-      "source": {
-        "file": "test/collector-package-lifecycle.test.ts",
-        "test": "packaged collector help subprocess succeeds",
-        "grounds": "法条②（与其他测试同根：同一契约重复证明→merge，注明并入谁）。"
-      }
-    },
-    {
-      "key": "oracle-merge-90ae018d2f23",
-      "survivingOracle": "oracle-merge-90ae018d2f23",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "stable factory preserves exact Judge, Fixer, and Coder prompt bytes",
-        "grounds": "②同根 (same contract proved twice) + ②construction-costlier-than-cheapest: the factory is a pure delegator (src/role-runtime.ts:470/479/502), so routing through it to assert per-role prompt bytes builds three full extensions to re-prove what the three per-role tests already build anyway."
-      }
-    },
-    {
-      "key": "oracle-merge-90c1b8557234",
-      "survivingOracle": "same file :: \"F1 parseCollectorOutputCandidate schema matrix\" (line 1438) — carry over the one uncovered cell",
-      "source": {
-        "file": "test/collector-receipt.test.ts",
-        "test": "parseCollectorOutputCandidate accepts narrow semantic legs only",
-        "grounds": "法②同根（同一 schema 契约在两处证明）+ 法⑤①（一契约一条最短 tracer bullet）。"
-      }
-    },
-    {
-      "key": "oracle-merge-9d35b663aedb",
-      "survivingOracle": "oracle-merge-9d35b663aedb",
-      "source": {
-        "file": "test/activation-envelope-contract.test.ts",
-        "test": "a rejected registered activation fails closed with a structured named cause and dispatch barrier",
-        "grounds": "法条② — 与其他测试同根：同一契约重复证明。Test 4 already loops ROLE_REGISTRY, which includes judge, and already asserts throw + abort + exitCode 1 + failed-trace named cause + the barrier."
-      }
-    },
-    {
-      "key": "oracle-merge-9eca667bce18",
-      "survivingOracle": "oracle-merge-9eca667bce18",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "Fixer audits unfinished attempts through the production route and revise permits corrected resubmission",
-        "grounds": "②同根: the revise→reject→resubmit lifecycle is proved again, through the *actual* production auditor, by the prerequisite-lifecycle test below."
-      }
-    },
-    {
-      "key": "oracle-merge-a0b85fe860e5",
-      "survivingOracle": "R5 third observation of unchanged edited review keeps null/uncertain in modelView and store (line 1195)",
-      "source": {
-        "file": "test/collector-ledger.test.ts",
-        "test": "version history: later review edit without timestamp is uncertain",
-        "grounds": "法条② 同根 — the line-1195 test's second observe (test/collector-ledger.test.ts:1217-1239) proves the identical claim (edited body ⇒ authoritativeTime null, windowRelation uncertain) and then goes further to the third observe and the modelView projection. 法条④ 同形状夹具第二份 (same transport fixture, same review edit script)."
-      }
-    },
-    {
-      "key": "oracle-merge-a53089e66553",
-      "survivingOracle": "test/collector-github.test.ts:1038（EPIPE 产生 ambiguousGhFailure）+ test/collector-github.test.ts:1020（tagged → ambiguous_loss 映射）",
-      "source": {
-        "file": "test/collector-github.test.ts",
-        "test": "createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss",
-        "grounds": "②同根：EPIPE→标记 已由 :1038 证，标记→ambiguous_loss 已由 :1020 证，本测只是把两段已证链条再跑一遍，还第二次付了 32 MiB 的钱。"
-      }
-    },
-    {
-      "key": "oracle-merge-b6e58e8069f6",
-      "survivingOracle": "oracle-merge-b6e58e8069f6",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "judge escalation returns one terminating human decision without a role verdict",
-        "grounds": "②同根: `disposeComplianceDecision` / `projectAuditEscalation` own this projection for all four audited roles, and it is already proved directly against them."
-      }
-    },
-    {
-      "key": "oracle-merge-bcd7f590a738",
-      "survivingOracle": "oracle-merge-bcd7f590a738",
-      "source": {
-        "file": "test/collector-role.test.ts",
-        "test": "collector rejects parallel operational siblings and mixed output batches",
-        "grounds": "② 同根 — the same batch-gate clause is re-proved by the matrix at line 855, whose first block (L875-885) is the identical observe+wait sibling batch. Merge into line 855."
-      }
-    },
-    {
-      "key": "oracle-merge-bd0f930ae440",
-      "survivingOracle": "recorded r-block / recorded r-ready accepts via JSONL trust root (line 732) — no new construction needed, the loads already prove it",
-      "source": {
-        "file": "test/judge-posture-recordings.test.ts",
-        "test": "judge posture fixture bundles are present",
-        "grounds": "法条② merge（与其他测试同根：同一契约重复证明）+ 法条② delete 子款（答不出契约）for the README half"
-      }
-    },
-    {
-      "key": "oracle-merge-c1181a912429",
-      "survivingOracle": "oracle-merge-c1181a912429",
-      "source": {
-        "file": "test/class-contracts.test.ts",
-        "test": "Judge class receipt enforces status, grammar, and exact-name uniqueness",
-        "grounds": "法条② — 与其他测试同根（同一契约重复证明）→ merge; 法条④ — two files owning one validator's contract is the DRY disease. Merge INTO test/judge-output-contract.test.ts (which already owns validateAcceptedJudgeDetails and proves the shared facets strictly better)."
-      }
-    },
-    {
-      "key": "oracle-merge-c7898e06b1b4",
-      "survivingOracle": "R10 cross-surface normalized budget rejects before later surfaces and terminal PR (line 537, rebuilt)",
-      "source": {
-        "file": "test/collector-ledger.test.ts",
-        "test": "R10 intra-surface multi-page normalized budget stops before later pages/surfaces",
-        "grounds": "法条② 同根 — after the rebuild both tests prove one law ('exceed ⇒ stop charging, fetch nothing further, certify nothing'), differing only in where in the loop the exceed happens; the genuine page-loop early-stop is proven elsewhere."
-      }
-    },
-    {
-      "key": "oracle-merge-c9b73c584ae0",
-      "survivingOracle": "oracle-merge-c9b73c584ae0",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "worker output rejects malformed, unknown, blank, and non-object values",
-        "grounds": "②construction-costlier-than-cheapest: pure `validateFixerOutput` rows driven through a full fixer extension activation. ②同根 with the validator's own rejection tables."
-      }
-    },
-    {
-      "key": "oracle-merge-cafa7ae9765f",
-      "survivingOracle": "oracle-merge-cafa7ae9765f",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "judge role rejects a terminal audit response before accepting its valid decision call",
-        "grounds": "②同根: this is the shared compliance transport's contract, not the judge's, and it is already proved at the transport seam with a broader case matrix. ②construction-costlier-than-cheapest: reaching it through the judge extension costs a full activation plus createPiJudgeAuditor plus hand-stubbed model/modelRegistry."
-      }
-    },
-    {
-      "key": "oracle-merge-cd0bb36c7cda",
-      "survivingOracle": "oracle-merge-cd0bb36c7cda",
-      "source": {
-        "file": "test/audit-failure-subprocess.test.ts",
-        "test": "fatal Fixer audit infrastructure failure aborts print and JSON without a receipt",
-        "grounds": "法条② 同根 — merge into 'fatal Judge audit infrastructure failure aborts print and JSON CLI actions' (test/audit-failure-subprocess.test.ts:252). The abort path is shared runtime (failInfrastructure); role is a parameter, and print-vs-json is one rendering contract, not a per-role one. 法条③ respected: the must-reject case survives inside the merged table, nothing is deleted."
-      }
-    },
-    {
-      "key": "oracle-merge-d05e14681b39",
-      "survivingOracle": "same file :: \"F2-latestRelevant-recovered-then-succeeded\" (line 1629)",
-      "source": {
-        "file": "test/collector-receipt.test.ts",
-        "test": "F2 two-leg missing contamination: request only a",
-        "grounds": "法②同根（严格被覆盖）+ 法⑤①。"
-      }
-    },
-    {
-      "key": "oracle-merge-d4a2eee0d2a6",
-      "survivingOracle": "terminal PR reread binds terminal HEAD and retries on drift (line 868) + repeated PR identity drift after retry fails closed without certifying (line 893), as one drift-key table",
-      "source": {
-        "file": "test/collector-ledger.test.ts",
-        "test": "R9 updatedAt churn forces full-surface retry and fails closed on repeated drift",
-        "grounds": "法条② 同根 — the retry law and the fail-closed law are already proven for the headOid key; this proves the identical two laws for the updatedAt key. 法条④ 同形状夹具第二份 (identical pullRequestSequence scripting, identical assertions)."
-      }
-    },
-    {
-      "key": "oracle-merge-d4fa7acac10d",
-      "survivingOracle": "production Merger Git seam freezes the exact automatic merge tree and reports an unrelated resolution edit",
-      "source": {
-        "file": "test/merger-git-state.test.ts",
-        "test": "production Merger Git seam accepts a clean source-only first-parent change",
-        "grounds": "法条②（与其他测试同根：同一契约重复证明→merge，并入 t1「freezes the exact automatic merge tree…」）。"
-      }
-    },
-    {
-      "key": "oracle-merge-d5960285c6dc",
-      "survivingOracle": "8 MiB snapshot boundary: measured MAX accept and MAX+1 fail (line 1114, itself rebuilt)",
-      "source": {
-        "file": "test/collector-ledger.test.ts",
-        "test": "snapshot and ledger size bounds fail loudly without truncation",
-        "grounds": "法条② 同根 — 'over budget ⇒ reject + fatal' is exactly the reject half already proven at test/collector-ledger.test.ts:1170-1191. 法条④ — the trailing constant assertion is a tautology (it restates src/collector-evidence.ts:13 and is duplicated verbatim at test/collector-receipt.test.ts:1431), while the real receipt-bound enforcement is covered at src/collector-receipt.ts:805 via test/collector-role.test.ts:2452/2644 and test/collector-receipt.test.ts:2731."
-      }
-    },
-    {
-      "key": "oracle-merge-dcb68d1c4f9e",
-      "survivingOracle": "oracle-merge-dcb68d1c4f9e",
-      "source": {
-        "file": "test/judge-role.test.ts",
-        "test": "judge role audits only adjudicative fields while retaining evidence in receipts",
-        "grounds": "②同根 with the production-route test below, which proves the same projection end-to-end and byte-exactly. ②construction-costlier-than-cheapest: `projectJudgeVerdictForAudit` is an exported pure function (src/judge-role.ts:105) with zero direct unit test — a 3-row table over it is microseconds, versus three tool executions through the extension here."
-      }
-    },
-    {
-      "key": "oracle-merge-df89cfea260a",
-      "survivingOracle": "same file :: \"F3-timestamp-less-review-state\" (line 2163) — one test, two edit triggers",
-      "source": {
-        "file": "test/collector-receipt.test.ts",
-        "test": "F3-timestamp-less-review-text",
-        "grounds": "法②同根（同一规则的两个触发器各写一份 60 行夹具）+ 法⑤②（同根问题共用一条测试）+ 法④（同形状夹具第二份）。"
-      }
-    },
-    {
-      "key": "oracle-merge-e2943be830dd",
-      "survivingOracle": "oracle-merge-e2943be830dd",
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:0",
+      "rootKey": "Soul 措辞正则家族（judge/reviewer/collector/navigator/doctor Soul + auditor soul）",
+      "memberTests": [
+        "test/judge-soul.test.ts(×8)",
+        "test/reviewer-soul.test.ts(×2)",
+        "test/collector-soul.test.ts(×2)",
+        "test/navigator-contract-census.test.ts:32",
+        "test/doctor-case.test.ts"
+      ],
+      "resolutionEvidence": "一条根。三卷互指同一家族；本合账统一裁决：整族 delete（14 条），仅保留 judge-soul 一条合并后的表驱动 carrier-purity 检查（group-14 的 merge）。法条③已核：无运行时 reject 挂在这些断言上。",
       "source": {
         "file": "test/judge-soul.test.ts",
         "test": "Judge Soul excludes process, schema, transport, platform, and issue carriers",
@@ -6930,8 +6534,80 @@
       }
     },
     {
-      "key": "oracle-merge-ea453277ad2a",
-      "survivingOracle": "Reviewer materializes and verifies a real SHA-256 repository (test/reviewer-agent.test.ts:238) — as one table-driven 'materialization preserves the pinned snapshot across repository shapes' test with rows [plain, shallow, sha256]",
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:1",
+      "rootKey": "发布 tarball 清单契约（打包进/不进什么）",
+      "memberTests": [
+        "test/collector-package-lifecycle.test.ts:28",
+        "test/reviewer-package-lifecycle.test.ts:56",
+        "test/package-entrypoint.integration.test.ts:186 'packed package includes Doctor role…'",
+        "test/navigator-contract-census.test.ts:23(已 delete)"
+      ],
+      "resolutionEvidence": "一条根。权威真源＝真 npm pack 的那一条；其余降为该 pack 产物上的断言块。三处 ~45s 构造合成一处。",
+      "source": {
+        "file": "test/collector-package-lifecycle.test.ts",
+        "test": "packaged collector help subprocess succeeds",
+        "grounds": "法条②（与其他测试同根：同一契约重复证明→merge，注明并入谁）。"
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:10",
+      "rootKey": "gh marker 恢复契约",
+      "memberTests": [
+        "test/collector-ledger.test.ts:253(19ms, 最便宜)",
+        "test/collector-github.test.ts:775(进程内)",
+        "test/collector-github.test.ts:296(755ms 真子进程, merge)"
+      ],
+      "resolutionEvidence": "一条根，证了三遍。留前两条；第三条收窄为「PATH runner 真的 spawn 并解析」。",
+      "source": {
+        "file": "test/collector-github.test.ts",
+        "test": "createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss",
+        "grounds": "②同根：EPIPE→标记 已由 :1038 证，标记→ambiguous_loss 已由 :1020 证，本测只是把两段已证链条再跑一遍，还第二次付了 32 MiB 的钱。"
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:11",
+      "rootKey": "Judge 判词键集/输出校验器",
+      "memberTests": [
+        "test/judge-output-contract.test.ts(权威 validator)",
+        "test/class-contracts.test.ts:14(merge)",
+        "test/judge-soul.test.ts:66(已 delete)",
+        "test/judge-posture-recordings.test.ts:771 手抄键名白名单"
+      ],
+      "resolutionEvidence": "一条根，四处。validator 是唯一家；录像卷改调生产 validator，勿手抄键名。",
+      "source": {
+        "file": "test/class-contracts.test.ts",
+        "test": "Judge class receipt enforces status, grammar, and exact-name uniqueness",
+        "grounds": "法条② — 与其他测试同根（同一契约重复证明）→ merge; 法条④ — two files owning one validator's contract is the DRY disease. Merge INTO test/judge-output-contract.test.ts (which already owns validateAcceptedJudgeDetails and proves the shared facets strictly better)."
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:12",
+      "rootKey": "Fixer prerequisite fail-closed 三层",
+      "memberTests": [
+        "test/fixer-prerequisite-contract.test.ts:75/:88(μs)",
+        "test/judge-role.test.ts:1239(0.45ms)",
+        "test/activation-envelope-contract.test.ts:195(2.0s, rebuild)"
+      ],
+      "resolutionEvidence": "一条根但分层正当，非重复。子进程那条是具名事故回归，保留；只拆掉它自建的第二份 harness。",
+      "source": {
+        "file": "test/activation-envelope-contract.test.ts",
+        "test": "a rejected registered activation fails closed with a structured named cause and dispatch barrier",
+        "grounds": "法条② — 与其他测试同根：同一契约重复证明。Test 4 already loops ROLE_REGISTRY, which includes judge, and already asserts throw + abort + exitCode 1 + failed-trace named cause + the barrier."
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:13",
+      "rootKey": "Reviewer ref 快照 canonicalization / pinned 解析",
+      "memberTests": [
+        "test/reviewer-pinned-reader.test.ts:55/:166(纯 helper)",
+        "test/reviewer-agent.test.ts:225-228/:247-248(真 repo 重证)"
+      ],
+      "resolutionEvidence": "一条根。贵的一侧只证便宜侧证不了的部分。",
       "source": {
         "file": "test/reviewer-agent.test.ts",
         "test": "Reviewer materializes shallow session snapshot refs into the workspace",
@@ -6939,39 +6615,138 @@
       }
     },
     {
-      "key": "oracle-merge-f6413fe691dc",
-      "survivingOracle": "test/collector-github.test.ts:775 「2xx parse ambiguous_loss recovers via marker observe without second POST」（并与 test/collector-ledger.test.ts:253 同根）",
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:15",
+      "rootKey": "Reviewer 构造确定性",
+      "memberTests": [
+        "test/reviewer-construction-seams.test.ts:18(merge)",
+        "test/reviewer-dispatch.test.ts:16/:17(保留)"
+      ],
+      "resolutionEvidence": "一条根，三条断言同一事实；留经真 dispatcher 的两条强的。",
       "source": {
-        "file": "test/collector-github.test.ts",
-        "test": "PATH gh recovery through ledger request+observe sets recoverySnapshotId",
-        "grounds": "②同根：同一契约被证第三遍，且这一遍是最贵的一遍。"
+        "file": "test/reviewer-construction-seams.test.ts",
+        "test": "construction is deterministic from admitted immutable inputs and frozen evidence",
+        "grounds": "法条② merge 款 (同一契约重复证明) + 法条④ (只测内部结构)"
       }
     },
     {
-      "key": "oracle-merge-fb59ea37264d",
-      "survivingOracle": "wait caps a single call to five minutes when remaining eligibility is ample (line 366)",
-      "source": {
-        "file": "test/collector-ledger.test.ts",
-        "test": "wait PR4 shape caps to five minutes so re-observe still fits before deadline",
-        "grounds": "法条② 同根 — the cap arithmetic (requested 900_000 → effective 300_000, remaining debited) is the same branch already proven at line 377-380; only the elapsed offset differs. 法条④ 同形状夹具第二份."
-      }
-    },
-    {
-      "key": "oracle-merge-fd3f8b6872eb",
-      "survivingOracle": "oracle-merge-fd3f8b6872eb",
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:2",
+      "rootKey": "冷装后 live help / packaged help 子进程",
+      "memberTests": [
+        "test/collector-package-lifecycle.test.ts:230 'packaged collector help subprocess succeeds'(1.8s, merge)",
+        "test/package-entrypoint.integration.test.ts:760(44.0s, rebuild)",
+        "test/navigator-attendance.test.ts#2(3.9ms)"
+      ],
+      "resolutionEvidence": "一条根。前者并入后者；后者只保留「help 来自已加载扩展」这一层，内容变化交回 3.9ms 的进程内测试。",
       "source": {
         "file": "test/navigator-attendance.test.ts",
-        "test": "model settings are exact and typed settlement projection ignores prose and correctable errors",
-        "grounds": "法条④（同形状夹具第二/第三份）＋法条②：(c) 段与 #15「status-specific route candidates outrank generics」证的是同一函数的同一契约族，却在此处第三次手搭 candidate 字面量。并入 #15，由一处拥有 selectNavigatorCandidate 契约；(a)(b) 留在本测试。"
+        "test": "NAVIGATOR_TARGETS preserves packaged registry order",
+        "grounds": "法条④（同一事实证两遍）：#18「registry output tools are the contract-owned constants」已经把同一份七角色顺序字面量断言了一遍，且顺带绑定 outputTool；本测试的断言是它的真子集。"
       }
     },
     {
-      "key": "oracle-merge-fdaca9bbe74b",
-      "survivingOracle": "JSONL bind/neutrality refuses coached user prompt (test:944), as one table-driven case over a shared row-builder",
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:3",
+      "rootKey": "canonical Skill 不可用（缺失/目录/空）三态",
+      "memberTests": [
+        "test/canonical-skill-binding.test.ts:171(10.4ms, 权威)",
+        "test/audit-failure-subprocess.test.ts:327(8.5s, rebuild)"
+      ],
+      "resolutionEvidence": "一条根，823× 价差。便宜家在 canonical-skill-binding；贵的那条只留「不可用能穿到 CLI 退出码」一层。",
       "source": {
-        "file": "test/judge-posture-recordings.test.ts",
-        "test": "JSONL bind refuses direction-labeled materials path in user prompt",
-        "grounds": "法条④（同形状夹具第三份）+ 法条② merge（同一 gate 的同根证明）"
+        "file": "test/audit-failure-subprocess.test.ts",
+        "test": "fatal Fixer audit infrastructure failure aborts print and JSON without a receipt",
+        "grounds": "法条② 同根 — merge into 'fatal Judge audit infrastructure failure aborts print and JSON CLI actions' (test/audit-failure-subprocess.test.ts:252). The abort path is shared runtime (failInfrastructure); role is a parameter, and print-vs-json is one rendering contract, not a per-role one. 法条③ respected: the must-reject case survives inside the merged table, nothing is deleted."
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:4",
+      "rootKey": "Navigator 排空顺序 / 角色基建失败时的 typed 沉默",
+      "memberTests": [
+        "test/judge-role.test.ts:810(5.1ms)",
+        "test/navigator-attendance.test.ts:208(86ms)",
+        "test/audit-failure-subprocess.test.ts:273(3.5s, rebuild)"
+      ],
+      "resolutionEvidence": "一条根，三层。子进程那条的唯一残值是退出码与 JSON 事件流，排空/沉默断言全部已被 ~700× 更便宜地证过。",
+      "source": {
+        "file": "test/judge-role.test.ts",
+        "test": "fixer plan phase accepts plans but rejects construction receipts",
+        "grounds": "②同根: the two rejections are plan/apply union rules owned by `validateFixerOutput`; the residue (that the tool reads its phase from the flag) is one row, not a whole extension."
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:8",
+      "rootKey": "冷装后四角色嵌套审计 pass/revise/escalate",
+      "memberTests": [
+        "test/package-entrypoint.integration.test.ts:330(74.3s, merge)",
+        "test/audit-escalation.test.ts + test/judge-role.test.ts(0.3–18ms)"
+      ],
+      "resolutionEvidence": "一条根，最大单笔。进程内已证全，冷装侧整条并入。",
+      "source": {
+        "file": "test/audit-escalation.test.ts",
+        "test": "the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor",
+        "grounds": "法条②（同根：它守的是下面循环测试的夹具完整性，属同一契约）＋法条④（死代码断言）。"
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:9",
+      "rootKey": "32 MiB / 8 MiB 字节上限家族",
+      "memberTests": [
+        "test/collector-receipt.test.ts:1394(1.3s, rebuild) + :2687(289ms, merge) + :1431 常数镜像",
+        "test/collector-role.test.ts:2436(878ms, rebuild)",
+        "test/collector-ledger.test.ts:534 常数镜像 + :1114(491ms, rebuild)"
+      ],
+      "resolutionEvidence": "一条根，三份同形分配器。处方：把 COLLECTOR_RECEIPT_MAX_BYTES / SNAPSHOT 上限做成可注入（生产侧已有同款先例 collector-evidence.ts:452），一次退休 ~2.5s。",
+      "source": {
+        "file": "test/collector-ledger.test.ts",
+        "test": "applyEvidenceVersionHistory first review keeps submitted_at at/before deadline mono",
+        "grounds": "法条④ 同形状夹具第二份 + 法条② — both tests are the same three-line shape (normalizeReviewEvidence(sampleReview(...)) → applyEvidenceVersionHistory(...) → assert authoritativeTime) over the same single boundary; one row table is the cheapest form."
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:fallback-0ffd1e9842",
+      "rootKey": "adjudicated merge class for test/merger-git-state.test.ts :: production Merger Git seam reports tampering with a clean source-side path",
+      "memberTests": [
+        "test/merger-git-state.test.ts :: production Merger Git seam reports tampering with a clean source-side path"
+      ],
+      "resolutionEvidence": "Frozen adjudication class; no additional survivor prose is authoritative.",
+      "source": {
+        "file": "test/merger-git-state.test.ts",
+        "test": "production Merger Git seam reports tampering with a clean source-side path",
+        "grounds": "法条②（同根：与 t1 同一契约同一代码路径）+ 法条④（同形状夹具第二份＝病）。"
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:fallback-76fa4b23bd",
+      "rootKey": "adjudicated merge class for test/fixer-contract.test.ts :: every surviving Fixer rejection names its violated field or constraint",
+      "memberTests": [
+        "test/fixer-contract.test.ts :: every surviving Fixer rejection names its violated field or constraint"
+      ],
+      "resolutionEvidence": "Frozen adjudication class; no additional survivor prose is authoritative.",
+      "source": {
+        "file": "test/fixer-contract.test.ts",
+        "test": "every surviving Fixer rejection names its violated field or constraint",
+        "grounds": "法② 同根 (同一契约重复证明) + 法④ (死重复夹具). Merge into the rejection table at fixer-contract.test.ts:63, upgrading that table's rows from bare /Fixer/ to per-row diagnostics (the shape already used at :90). Net effect: strictly stronger assertions, one table instead of three, one fewer test."
+      }
+    },
+    {
+      "kind": "shared-class-oracle",
+      "key": "oracle:issue-92:class:fallback-d4fa7acac1",
+      "rootKey": "adjudicated merge class for test/merger-git-state.test.ts :: production Merger Git seam accepts a clean source-only first-parent change",
+      "memberTests": [
+        "test/merger-git-state.test.ts :: production Merger Git seam accepts a clean source-only first-parent change"
+      ],
+      "resolutionEvidence": "Frozen adjudication class; no additional survivor prose is authoritative.",
+      "source": {
+        "file": "test/merger-git-state.test.ts",
+        "test": "production Merger Git seam accepts a clean source-only first-parent change",
+        "grounds": "法条②（与其他测试同根：同一契约重复证明→merge，并入 t1「freezes the exact automatic merge tree…」）。"
       }
     }
   ],
@@ -7003,260 +6778,259 @@
       {
         "file": "test/package-entrypoint.integration.test.ts",
         "test": "cold-installed role outputs run nested audits through pass, revise, and escalation",
-        "mergeInto": "oracle-merge-8035551a817d"
+        "mergeInto": "oracle:issue-92:class:1"
       },
       {
         "file": "test/package-entrypoint.integration.test.ts",
         "test": "normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the cause matrix",
-        "mergeInto": "oracle-merge-52d835d10ffc"
+        "mergeInto": "oracle:issue-92:class:1"
       },
       {
         "file": "test/package-entrypoint.integration.test.ts",
         "test": "packaged coder apply transforms colliding /skill:tddfoo into canonical tdd expansion",
-        "mergeInto": "oracle-merge-5b88a07fa815"
+        "mergeInto": "oracle:issue-92:class:1"
       },
       {
         "file": "test/collector-package-lifecycle.test.ts",
         "test": "packaged collector help subprocess succeeds",
-        "mergeInto": "oracle-merge-89da4634da5f"
+        "mergeInto": "oracle:issue-92:class:1"
       },
       {
         "file": "test/reviewer-agent.test.ts",
         "test": "Reviewer materializes shallow session snapshot refs into the workspace",
-        "mergeInto": "oracle-merge-ea453277ad2a"
+        "mergeInto": "oracle:issue-92:class:13"
       },
       {
         "file": "test/audit-failure-subprocess.test.ts",
         "test": "fatal Fixer audit infrastructure failure aborts print and JSON without a receipt",
-        "mergeInto": "oracle-merge-cd0bb36c7cda"
+        "mergeInto": "oracle:issue-92:class:3"
       },
       {
         "file": "test/collector-github.test.ts",
         "test": "request-path abort with deadline exceeded Error cancels without rejected attempt",
-        "mergeInto": "oracle-merge-4aee19d6e8f2"
+        "mergeInto": "oracle:issue-92:class:10"
       },
       {
         "file": "test/collector-github.test.ts",
         "test": "PATH gh recovery through ledger request+observe sets recoverySnapshotId",
-        "mergeInto": "oracle-merge-f6413fe691dc"
+        "mergeInto": "oracle:issue-92:class:10"
       },
       {
         "file": "test/collector-github.test.ts",
         "test": "createGhApiRunner stdin EPIPE through createIssueComment is ambiguous_loss",
-        "mergeInto": "oracle-merge-a53089e66553"
+        "mergeInto": "oracle:issue-92:class:10"
       },
       {
         "file": "test/merger-git-state.test.ts",
         "test": "production Merger Git seam accepts a clean source-only first-parent change",
-        "mergeInto": "oracle-merge-d4fa7acac10d"
+        "mergeInto": "oracle:issue-92:class:fallback-d4fa7acac1"
       },
       {
         "file": "test/merger-git-state.test.ts",
         "test": "production Merger Git seam reports tampering with a clean source-side path",
-        "mergeInto": "oracle-merge-0ffd1e984268"
+        "mergeInto": "oracle:issue-92:class:fallback-0ffd1e9842"
       },
       {
         "file": "test/activation-envelope-contract.test.ts",
         "test": "a rejected registered activation fails closed with a structured named cause and dispatch barrier",
-        "mergeInto": "oracle-merge-9d35b663aedb"
+        "mergeInto": "oracle:issue-92:class:12"
       },
       {
         "file": "test/collector-receipt.test.ts",
         "test": "F3 receipt exact 32 MiB valid-rationale MAX accept and MAX+1 fatal",
-        "mergeInto": "oracle-merge-39b2a310b444"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-receipt.test.ts",
         "test": "parseCollectorOutputCandidate accepts narrow semantic legs only",
-        "mergeInto": "oracle-merge-90c1b8557234"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-receipt.test.ts",
         "test": "F2 two-leg missing contamination: request only a",
-        "mergeInto": "oracle-merge-d05e14681b39"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-receipt.test.ts",
         "test": "F3-timestamp-less-review-text",
-        "mergeInto": "oracle-merge-df89cfea260a"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-role.test.ts",
         "test": "collector rejects parallel operational siblings and mixed output batches",
-        "mergeInto": "oracle-merge-bcd7f590a738"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-role.test.ts",
         "test": "collector immediate all-valid path through observe and singleton output",
-        "mergeInto": "oracle-merge-25cd8ec728f0"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-role.test.ts",
         "test": "F1 control: multiline rationale is schema-accepted",
-        "mergeInto": "oracle-merge-25675ac92fd8"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/navigator-attendance.test.ts",
         "test": "model settings are exact and typed settlement projection ignores prose and correctable errors",
-        "mergeInto": "oracle-merge-fd3f8b6872eb"
+        "mergeInto": "oracle:issue-92:class:2"
       },
       {
         "file": "test/navigator-attendance.test.ts",
         "test": "typed subject provenance replaces prose prefix branching",
-        "mergeInto": "oracle-merge-8230e0533be6"
+        "mergeInto": "oracle:issue-92:class:2"
       },
       {
         "file": "test/navigator-attendance.test.ts",
         "test": "NAVIGATOR_TARGETS preserves packaged registry order",
-        "mergeInto": "oracle-merge-4c52fe1e0db3"
+        "mergeInto": "oracle:issue-92:class:2"
       },
       {
         "file": "test/collector-ledger.test.ts",
         "test": "R10 intra-surface multi-page normalized budget stops before later pages/surfaces",
-        "mergeInto": "oracle-merge-c7898e06b1b4"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-ledger.test.ts",
         "test": "snapshot and ledger size bounds fail loudly without truncation",
-        "mergeInto": "oracle-merge-d5960285c6dc"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-ledger.test.ts",
         "test": "batch gate permits one operational or sole output and latches mixed/multiple",
-        "mergeInto": "oracle-merge-5c967bfe576d"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-ledger.test.ts",
         "test": "wait PR4 shape caps to five minutes so re-observe still fits before deadline",
-        "mergeInto": "oracle-merge-fb59ea37264d"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-ledger.test.ts",
         "test": "R9 updatedAt churn forces full-surface retry and fails closed on repeated drift",
-        "mergeInto": "oracle-merge-d4a2eee0d2a6"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-ledger.test.ts",
         "test": "version history: later review edit without timestamp is uncertain",
-        "mergeInto": "oracle-merge-a0b85fe860e5"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-ledger.test.ts",
         "test": "R9 stable state+HEAD+updatedAt still single pass (2 PR reads)",
-        "mergeInto": "oracle-merge-02bd2029d3fd"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/collector-ledger.test.ts",
         "test": "applyEvidenceVersionHistory first review keeps submitted_at at/before deadline mono",
-        "mergeInto": "oracle-merge-1fbed90a1eba"
+        "mergeInto": "oracle:issue-92:class:9"
       },
       {
         "file": "test/judge-posture-recordings.test.ts",
         "test": "judge posture fixture bundles are present",
-        "mergeInto": "oracle-merge-bd0f930ae440"
+        "mergeInto": "oracle:issue-92:class:11"
       },
       {
         "file": "test/judge-posture-recordings.test.ts",
         "test": "posture oracle refuses receipt-only trust without JSONL acceptance",
-        "mergeInto": "oracle-merge-456b089216db"
+        "mergeInto": "oracle:issue-92:class:11"
       },
       {
         "file": "test/judge-posture-recordings.test.ts",
         "test": "JSONL bind refuses materials-read body mismatch with static input",
-        "mergeInto": "oracle-merge-355155ea0bec"
+        "mergeInto": "oracle:issue-92:class:11"
       },
       {
         "file": "test/judge-posture-recordings.test.ts",
         "test": "JSONL bind refuses direction-labeled materials path in user prompt",
-        "mergeInto": "oracle-merge-fdaca9bbe74b"
+        "mergeInto": "oracle:issue-92:class:11"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "judge role rejects a terminal audit response before accepting its valid decision call",
-        "mergeInto": "oracle-merge-cafa7ae9765f"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "stable factory preserves exact Judge, Fixer, and Coder prompt bytes",
-        "mergeInto": "oracle-merge-90ae018d2f23"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "declared plan refusal, apply refusal, and partial apply each reach exactly one fresh audit",
-        "mergeInto": "oracle-merge-841a22a54bf3"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "judge role audits only adjudicative fields while retaining evidence in receipts",
-        "mergeInto": "oracle-merge-dcb68d1c4f9e"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "Fixer apply accepts differently named classes with a shared commit and rejects duplicate names or missing pointers",
-        "mergeInto": "oracle-merge-2de0d9a5afdd"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "judge preserves an optional advisory note on every verdict",
-        "mergeInto": "oracle-merge-72fc3c857398"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "worker output rejects malformed, unknown, blank, and non-object values",
-        "mergeInto": "oracle-merge-c9b73c584ae0"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "Fixer activation rejects empty or trim-blank instructions before installing its tool",
-        "mergeInto": "oracle-merge-7a64da1ab7ad"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "judge escalation returns one terminating human decision without a role verdict",
-        "mergeInto": "oracle-merge-b6e58e8069f6"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "judge activation narrows active tools to registered evidence tools and output",
-        "mergeInto": "oracle-merge-41f871b527d5"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "Fixer audits unfinished attempts through the production route and revise permits corrected resubmission",
-        "mergeInto": "oracle-merge-9eca667bce18"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/judge-role.test.ts",
         "test": "fixer plan phase accepts plans but rejects construction receipts",
-        "mergeInto": "oracle-merge-12fff7bdd5e1"
+        "mergeInto": "oracle:issue-92:class:4"
       },
       {
         "file": "test/audit-escalation.test.ts",
         "test": "the typed audited-role census retains exactly Judge, Fixer, Reviewer, and Doctor",
-        "mergeInto": "oracle-merge-13c4df17cc04"
+        "mergeInto": "oracle:issue-92:class:8"
       },
       {
         "file": "test/fixer-contract.test.ts",
         "test": "every surviving Fixer rejection names its violated field or constraint",
-        "mergeInto": "oracle-merge-76fa4b23bdae"
+        "mergeInto": "oracle:issue-92:class:fallback-76fa4b23bd"
       },
       {
         "file": "test/judge-soul.test.ts",
         "test": "Judge Soul excludes process, schema, transport, platform, and issue carriers",
-        "mergeInto": "oracle-merge-e2943be830dd"
+        "mergeInto": "oracle:issue-92:class:0"
       },
       {
         "file": "test/reviewer-construction-seams.test.ts",
         "test": "construction is deterministic from admitted immutable inputs and frozen evidence",
-        "mergeInto": "oracle-merge-11217fdfd451"
+        "mergeInto": "oracle:issue-92:class:15"
       },
       {
         "file": "test/class-contracts.test.ts",
         "test": "Judge class receipt enforces status, grammar, and exact-name uniqueness",
-        "mergeInto": "oracle-merge-c1181a912429"
+        "mergeInto": "oracle:issue-92:class:11"
       }
     ],
-    "missingNarrativeTargets": 0,
-    "targetKind": "shared oracle key; oracle metadata preserves the evidence-derived surviving target"
+    "targetKind": "shared class oracle key; registry entry supplies the frozen root, member tests, and adjudication resolution"
   }
 }
