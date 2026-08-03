@@ -299,7 +299,14 @@ ${helpContext}
       ].join("\n\n");
       try {
         await activeSession.prompt(request);
-        if (output === void 0) throw new Error("Navigator did not submit typed route candidates");
+        if (output === void 0) {
+          const nativeFailure = [...activeSession.entries()].reverse().find((entry) => {
+            if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
+            return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
+          });
+          const errorMessage = exactRecord(nativeFailure) && exactRecord(nativeFailure.message) && typeof nativeFailure.message.errorMessage === "string" ? nativeFailure.message.errorMessage : "Navigator did not submit typed route candidates";
+          throw new Error(errorMessage);
+        }
         candidates = validatePrepareOutput(output);
         return candidates;
       } finally {

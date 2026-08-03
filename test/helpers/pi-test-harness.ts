@@ -226,6 +226,33 @@ export interface PiSubprocessResult {
   timedOut: boolean;
 }
 
+export async function runNodeSubprocess(
+  args: string[],
+  options: {
+    cwd: string;
+    env?: NodeJS.ProcessEnv;
+    timeoutMs?: number;
+  },
+): Promise<PiSubprocessResult> {
+  try {
+    const result = await execFileAsync(process.execPath, args, {
+      cwd: options.cwd,
+      env: options.env,
+      timeout: options.timeoutMs ?? 30_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { code: 0, stdout: result.stdout, stderr: result.stderr, timedOut: false };
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: string };
+    return {
+      code: typeof failure.code === "number" ? failure.code : null,
+      stdout: failure.stdout ?? "",
+      stderr: failure.stderr ?? failure.message ?? "",
+      timedOut: failure.killed === true || failure.signal === "SIGTERM",
+    };
+  }
+}
+
 export async function runPiSubprocess(
   args: string[],
   options: {
