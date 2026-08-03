@@ -479,6 +479,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         soul = (await options.loadSoul()).trim();
         if (!soul) throw new Error("Navigator soul is empty");
       } catch (error) {
+        // Contract: README.md#Navigator-attendance — context-loading failures become typed unavailable reports while retaining the original cause.
         throw navigatorUnavailableError("context", error);
       }
       let modelSetting: string;
@@ -542,6 +543,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             throw new NavigatorUnavailableError("thinking", `Navigator thinking level ${model.thinkingLevel} is unavailable for ${modelSetting}`);
           }
         } catch (error) {
+          // Contract: README.md#Navigator-attendance — resumed-session configuration failures remain typed unavailable and retain the original cause.
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
         }
         session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
