@@ -184,7 +184,6 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "ak-review-capabilities",
     "ak-review-scope-keys",
     "ak-doctor-case",
-    "ak-navigator-snapshot",
     "ak-merger-input",
     "ak-collector-repo",
     "ak-collector-pr",
@@ -193,14 +192,13 @@ test("stable factory registers the complete typed role flag set and stays inert 
   for (const [name, options] of harness.flags) {
     assert.equal((options as { type?: unknown }).type, "string", name);
   }
-  assert.deepEqual(new Set(harness.handlers.keys()), new Set(["input", "before_agent_start", "session_start"]));
+  assert.deepEqual(new Set(harness.handlers.keys()), new Set(["input", "before_agent_start", "session_start", "tool_result", "session_shutdown"]));
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
   assert.deepEqual([...harness.tools], []);
   assert.deepEqual(harness.activeToolSets, []);
   for (const event of [
-    "tool_execution_start", "tool_execution_end",
-    "tool_call", "tool_result", "session_shutdown",
+    "tool_execution_start", "tool_execution_end", "tool_call",
   ]) assert.equal(harness.handlers.has(event), false, event);
 });
 

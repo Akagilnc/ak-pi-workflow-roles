@@ -1,3 +1,5 @@
+> Historical record: this ADR predates Issue #28 Navigator attendance and is retained only for provenance.
+
 # 大扫除按同类扫描，不按票面条目施工
 
 Status: accepted（authority/provenance: ADR 0019）

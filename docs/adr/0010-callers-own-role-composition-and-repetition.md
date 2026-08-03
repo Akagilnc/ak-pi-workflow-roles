@@ -20,10 +20,6 @@ Date: 2026-07-28
 - 调用者负责无限循环、成本和停止策略；
 - 角色回执只证明该次调用的工作，不表达下一步应该调用谁。
 
-## Narrow amendment — Navigator / Assisted Runner（Issue #28）
+## Narrow amendment — Navigator attendance
 
-Navigator 是唯一可在回执中给出单一下一过程建议的角色；该建议没有执行或授权效力。
-
-**Assisted Runner sentence（由 ADR 0020 取代）：** Assisted Runner 可在一次调用者指定的非 Navigator 角色调用前后自动咨询 Navigator，并记录调用者动作是 followed 或 deviated。它不得选择该角色、自动派发推荐角色或继续工作流。
-
-除上述已取代的 Assisted Runner 句外，本 ADR 的 Navigator 建议与调用者所有权继续有效，包括调用者拥有角色组合、顺序、重复次数、预算和停止条件。
+Navigator may advise one next packaged role after a typed role settlement. The advice has no execution or authorization effect; the caller still owns role composition, repetition, budgets, and stopping. Attendance is supplied by the shared lifecycle envelope and does not alter ordinary role invocation.

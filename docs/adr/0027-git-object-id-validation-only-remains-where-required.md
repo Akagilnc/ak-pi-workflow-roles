@@ -1,3 +1,5 @@
+> Historical record: this ADR predates Issue #28 Navigator attendance and is retained only for provenance.
+
 # Git OID 校验只留在必需对象身份上
 
 Status: accepted（authority/provenance: ADR 0019）
