@@ -80,7 +80,15 @@ export { fixerOutputSchema, validateFixerOutput, validateFixerOutputForPacket } 
 export type { FixerBlocker, FixerClassResult, FixerPhase } from "./package-contracts/fixer-output.ts";
 export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
+export { AUDIT_ESCALATION_KIND, buildAuditEscalationResult, disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "./audit-escalation.ts";
+export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisionHandlers } from "./audit-escalation.ts";
+export { AUDITOR_SOUL_ROLES, loadAuditorSoul } from "./auditor-soul.ts";
+export type { AuditorSoulRole } from "./auditor-soul.ts";
+export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME, createPiJudgeAuditor } from "./judge-auditor.ts";
 export { FIXER_AUDIT_TOOL_NAME, createPiFixerAuditor } from "./fixer-auditor.ts";
+export { REVIEWER_AUDIT_TOOL_NAME, createPiReviewerAuditor } from "./reviewer-auditor.ts";
+export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
+export type { ComplianceDecision } from "./compliance-transport.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,

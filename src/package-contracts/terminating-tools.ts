@@ -24,6 +24,7 @@ import {
   type ReviewerIntent,
   type RuntimeReviewerReceiptV2,
 } from "./reviewer-output.ts";
+import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import {
@@ -125,6 +126,11 @@ export function validateAcceptedDetails(
   toolName: TerminatingToolName,
   details: unknown,
 ): AcceptedDetails {
+  if (isAuditEscalationResult(details)) {
+    throw new AcceptedDetailsContractError(
+      "audit escalation is not an accepted role receipt",
+    );
+  }
   try {
     switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
@@ -181,18 +187,6 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case MERGER_OUTPUT_TOOL_NAME: { const output = details as MergerOutput; return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) }; }
     case COLLECTOR_OUTPUT_TOOL: return {};
   }
-}
-
-export function carriesPackageAuditObservation(
-  toolName: TerminatingToolName,
-): boolean {
-  return (
-    toolName === JUDGE_OUTPUT_TOOL_NAME ||
-    toolName === FIXER_OUTPUT_TOOL_NAME ||
-    toolName === REVIEWER_OUTPUT_TOOL_NAME ||
-    toolName === DOCTOR_OUTPUT_TOOL_NAME ||
-    false
-  );
 }
 
 /** Deep structural equality for lifecycle agreement checks. */
