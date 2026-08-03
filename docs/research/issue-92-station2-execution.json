@@ -1200,7 +1200,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Family loop carrier test/contract/judge-posture-recordings.test.ts:731 recorded ${bundleName}.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
       }
     },
     "test/judge-posture-recordings.test.ts::posture oracle rejects metadata package SHA with mismatched packaged Judge Soul": {
@@ -1231,7 +1232,8 @@
       "evidence": {
         "kind": "construction-rebuild",
         "note": "Family loop carrier test/contract/judge-posture-recordings.test.ts:731 recorded ${bundleName}.",
-        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8"
+        "baseHeadAtPlan": "3820bdfd4b39c70fdb55db092225a6ac3a5234b8",
+        "commit": "a94a79a"
       }
     },
     "test/judge-posture-recordings.test.ts::judge posture fixture bundles are present": {

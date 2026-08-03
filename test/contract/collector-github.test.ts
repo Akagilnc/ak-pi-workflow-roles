@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -838,31 +838,34 @@ exec sleep 30
       ["api", "--hostname", "github.com", "--include", "-X", "GET", "/user"],
       { signal: controller.signal },
     );
-    let pid = 0;
-    for (let i = 0; i < 50; i += 1) {
+    const waitForPid = async (): Promise<number> => {
+      const deadline = Date.now() + 5_000;
+      let delayMs = 5;
+      while (Date.now() < deadline) {
+        try {
+          const pid = Number((await readFile(pidFile, "utf8")).trim());
+          if (Number.isSafeInteger(pid) && pid > 0) return pid;
+        } catch {
+          // The child has not written its readiness marker yet.
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        delayMs = Math.min(delayMs * 2, 100);
+      }
+      throw new Error("timed out waiting for hung child readiness marker");
+    };
+    const pid = await waitForPid();
+    controller.abort(new Error("observe canceled"));
+    await assert.rejects(() => pending, /abort|cancel/i);
+    const killDeadline = Date.now() + 5_000;
+    while (Date.now() < killDeadline) {
       try {
-        const text = await (await import("node:fs/promises")).readFile(pidFile, "utf8");
-        pid = Number(text.trim());
-        if (Number.isSafeInteger(pid) && pid > 0) break;
+        process.kill(pid, 0);
       } catch {
-        // not yet
+        return;
       }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    assert.ok(pid > 0, "hung child recorded pid");
-    controller.abort(new Error("observe canceled"));
-    await assert.rejects(() => pending, /abort|cancel/i);
-    let alive = true;
-    for (let i = 0; i < 50; i += 1) {
-      try {
-        process.kill(pid, 0);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      } catch {
-        alive = false;
-        break;
-      }
-    }
-    assert.equal(alive, false, "hung gh child must be killed");
+    assert.fail("hung gh child must be killed");
   });
 });
 
