@@ -44,55 +44,55 @@ export type DoctorEvidenceEntry = { id: string; kind: "session" | "stderr"; byte
 export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: DoctorEvidenceEntry[]; cost: DoctorCaseCost };
 
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
-const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: false });
+const count = Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank) }, { additionalProperties: true });
 const evidenceIds = Type.Array(nonblank, { minItems: 1 });
-const guardrail = Type.Object({ answer: Type.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
+const guardrail = Type.Object({ answer: Type.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: true });
 const lastRealBite = Type.Union([
-  Type.Object({ kind: Type.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
-  Type.Object({ kind: Type.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false }),
+  Type.Object({ kind: Type.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: true }),
+  Type.Object({ kind: Type.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: true }),
 ]);
 const assetKinds = DOCTOR_TARGET_KINDS;
 const findingBody = {
   evidenceIds, disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]),
-  guardrails: Type.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: false }),
-  prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }), lastRealBite,
+  guardrails: Type.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true }),
+  prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: true }), lastRealBite,
 };
 const finding = Type.Union([
-  Type.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: false }),
-  Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), assetEvidence: Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false }),
+  Type.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: true }),
+  Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), assetEvidence: Type.Object({ targetKey: nonblank, targetKind: Type.Union(assetKinds.map((kind) => Type.Literal(kind))), evidenceId: nonblank }, { additionalProperties: true }), ...findingBody }, { additionalProperties: true }),
 ]);
-const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
+const caseIdentity = Type.Object({ issueNumber: Type.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: true });
 const cost = Type.Object({
   invocations: count, legs: count, modelApiTurns: count, outputTokens: count, toolCalls: count,
-  retries: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), evidence: Type.Literal("literal run-dir naming") }, { additionalProperties: false }),
-  statuses: Type.Array(Type.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
-  commits: Type.Array(Type.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
+  retries: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), evidence: Type.Literal("literal run-dir naming") }, { additionalProperties: true }),
+  statuses: Type.Array(Type.Object({ source: nonblank, status: nonblank }, { additionalProperties: true })),
+  commits: Type.Array(Type.Object({ source: nonblank, commit: nonblank }, { additionalProperties: true })),
   sessions: Type.Array(Type.Union([
-    Type.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type.Number({ minimum: 0 }), completion: Type.Literal("accepted") }, { additionalProperties: false }),
-    Type.Object({ source: nonblank, startedAt: Type.Optional(nonblank), endedAt: Type.Optional(nonblank), wallMilliseconds: Type.Optional(Type.Number({ minimum: 0 })), completion: Type.Literal("incomplete"), degradationReason: Type.Optional(nonblank) }, { additionalProperties: false }),
+    Type.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: Type.Number({ minimum: 0 }), completion: Type.Literal("accepted") }, { additionalProperties: true }),
+    Type.Object({ source: nonblank, startedAt: Type.Optional(nonblank), endedAt: Type.Optional(nonblank), wallMilliseconds: Type.Optional(Type.Number({ minimum: 0 })), completion: Type.Literal("incomplete"), degradationReason: Type.Optional(nonblank) }, { additionalProperties: true }),
   ])),
-  outputBytes: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), payload: Type.Literal("raw JSONL bytes"), providerWireBytes: Type.Literal("unavailable") }, { additionalProperties: false }),
-}, { additionalProperties: false });
+  outputBytes: Type.Object({ count: Type.Integer({ minimum: 0 }), sources: Type.Array(nonblank), payload: Type.Literal("raw JSONL bytes"), providerWireBytes: Type.Literal("unavailable") }, { additionalProperties: true }),
+}, { additionalProperties: true });
 export const doctorSubmissionSchema = Type.Union([
   Type.Object({
     status: Type.Literal("completed", { description: "Truthful single-case testimony was completed; the runtime adds derived cost to the receipt." }),
     case: caseIdentity,
     findings: Type.Array(finding, { description: "May be empty or contain non-prescriptive case observations. Missing reusable-asset or bounded-bite evidence excludes only the corresponding asset prescription." }),
-  }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
+  }, { additionalProperties: true, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
   Type.Object({
     status: Type.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
     reason: nonblank,
-    missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 }),
-  }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." }),
+    missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: Type.Array(nonblank, { minItems: 1 }) }, { additionalProperties: true }), { minItems: 1 }),
+  }, { additionalProperties: true, description: "Evidence is insufficient for truthful case testimony." }),
 ]);
 export const doctorOutputSchema = Type.Union([
-  Type.Object({ status: Type.Literal("completed"), case: caseIdentity, findings: Type.Array(finding), cost }, { additionalProperties: false }),
+  Type.Object({ status: Type.Literal("completed"), case: caseIdentity, findings: Type.Array(finding), cost }, { additionalProperties: true }),
   doctorSubmissionSchema.anyOf[1]!,
 ]);
-export const doctorEvidenceReadSchema = Type.Object({ evidenceId: nonblank, offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
+export const doctorEvidenceReadSchema = Type.Object({ evidenceId: nonblank, offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: true });
 export class DoctorSubmissionContractError extends Error { override readonly name = "DoctorSubmissionContractError"; }
-export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission { if (!Value.Check(doctorSubmissionSchema, value)) throw new DoctorSubmissionContractError("Doctor submission does not match its closed contract"); return value as DoctorSubmission; }
-export function validateRecordedDoctorOutput(value: unknown): DoctorOutput { if (!Value.Check(doctorOutputSchema, value)) throw new Error("Doctor output does not match its closed contract"); return value as DoctorOutput; }
+export function validateDoctorSubmissionShape(value: unknown): DoctorSubmission { if (!Value.Check(doctorSubmissionSchema, value)) throw new DoctorSubmissionContractError("Doctor submission does not match its contract"); return value as DoctorSubmission; }
+export function validateRecordedDoctorOutput(value: unknown): DoctorOutput { if (!Value.Check(doctorOutputSchema, value)) throw new Error("Doctor output does not match its contract"); return value as DoctorOutput; }
 
 export class DoctorEvidenceStore {
   readonly entries: Map<string, DoctorEvidenceEntry>; private readonly coverage = new Map<string, Array<[number, number]>>();
