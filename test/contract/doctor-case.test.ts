@@ -42,7 +42,7 @@ test("one retained runs directory yields an independently cited single-case cost
   store.read("review-004/session/real.jsonl");
   const output = { status: "completed", case: patient.identity, findings: [] } as const;
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
-  assert.deepEqual(validateDoctorOutput({ ...output, presentation: "human-only" }, patient, store), { ...output, presentation: "human-only" });
+  assert.throws(() => validateDoctorOutput({ ...output, presentation: "human-only" }, patient, store), /contract/);
   assert.throws(() => validateDoctorOutput({ ...output, case: { ...patient.identity, issueNumber: 29 } }, patient, store), /activated case identity/);
 });
 
@@ -190,7 +190,7 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ targetKey: "case", evidenceIds: [evidenceId] }] }, patient, store), /contract/);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, observation: "" }] }, patient, store), /contract/);
-  assert.deepEqual(validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "delete" }] }, patient, store), { ...output, findings: [{ ...finding, disposition: "delete" }] });
+  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "delete" }] }, patient, store), /contract/);
   const assetFinding = {
     targetKey: "judge-output-gate", targetKind: "gate", assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate", evidenceId }, evidenceIds: [evidenceId], disposition: "keep",
     guardrails: { reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: { ...guardrail, answer: false } },
