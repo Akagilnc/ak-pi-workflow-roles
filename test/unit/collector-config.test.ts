@@ -177,7 +177,9 @@ test("manifest rejects unreadable path, non-UTF-8, and malformed JSON", async ()
 test("manifest retains required semantic validation while ignoring extra input", async () => {
   const dir = await mkdtemp(resolve(tmpdir(), "ak-collector-sem-"));
   const cases: Array<[string, unknown, RegExp]> = [
-    ["bad-version-is-ignored", { version: "future", legs: [{ id: "a", expectedAuthors: ["x"] }] }, /NEVER_MATCH/],
+    ["missing-version", { legs: [{ id: "a", expectedAuthors: ["x"] }] }, /version/i],
+    ["bad-version-string", { version: "future", legs: [{ id: "a", expectedAuthors: ["x"] }] }, /version/i],
+    ["bad-version-number", { version: 2, legs: [{ id: "a", expectedAuthors: ["x"] }] }, /version/i],
     ["unknown-fields-are-ignored", { version: 1, extra: true, legs: [{ id: "a", expectedAuthors: ["x"], bot: true }] }, /NEVER_MATCH/],
     ["no-legs", { version: 1, legs: [] }, /legs|min/i],
     ["bad-id-case", { version: 1, legs: [{ id: "Codex", expectedAuthors: ["x"] }] }, /id/i],

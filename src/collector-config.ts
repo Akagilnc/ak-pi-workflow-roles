@@ -241,8 +241,11 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
     fail(`Collector leg manifest is not valid JSON: ${detail}`, error);
   }
 
-  if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
-    fail("Collector manifest must be an object with legs");
+  if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["version", "legs"])) {
+    fail("Collector manifest must be an object with version and legs");
+  }
+  if (parsed["version"] !== COLLECTOR_MANIFEST_VERSION) {
+    fail("Collector manifest version must be the exact integer 1");
   }
   const legsRaw = parsed["legs"];
   if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
