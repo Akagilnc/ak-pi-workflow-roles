@@ -666,6 +666,8 @@ async function runCollectorSession(input: {
         "ak-collector-legs": input.legs,
       },
       noTools: "builtin",
+      // Emit session_shutdown so Collector can mark nonzero exit without accepted output.
+      reviewerShutdown: true,
     }, async ({ session, sessionManager }) => {
       faux.setResponses(input.responses);
       await session.prompt("start");
@@ -682,110 +684,90 @@ async function runCollectorSession(input: {
   }
 }
 
-test("collector same-session batch provenance matrix freezes transport after fatal", async () => {
-  await withHermeticHome({ prefix: "ak-collector-batch-matrix-" }, async ({ agentDir, home }) => {
+test("collector dual operational in one assistant turn is not batch-poisoned", async () => {
+  // ADR 0041: same-batch second operational is not whole-message fatal; each op runs at its seam.
+  await withHermeticHome({ prefix: "ak-collector-dual-op-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "h1" }),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const result = await runCollectorSession({
+      home,
+      agentDir,
+      legs,
+      transport,
+      clock: clockAt("2024-01-01T00:00:00Z"),
+      api: "ak-collector-dual-op",
+      responses: [
+        fauxAssistantMessage([
+          fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "a" }),
+          fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: 1000 }, { id: "b" }),
+        ], { stopReason: "toolUse" }),
+        fauxAssistantMessage("still running without output"),
+      ],
+    });
+    assert.ok(transport.calls.pull >= 2, "observe still executes in a multi-op turn");
+    assert.equal(transport.calls.create, 0);
+    // No accepted output → non-zero exit on shutdown, without batch-law fatal freeze.
+    assert.equal(result.exitCode, 1);
+  });
+});
 
-    // first-turn dual operational: wholly rejected — every toolResult isError, zero GH, exit 1
-    {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
-      const result = await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-dual-op",
-        responses: [
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "a" }),
-            fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: 1000 }, { id: "b" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage("batch rejected"),
-        ],
-      });
-      assert.ok(result.toolResultIsError.length >= 1);
-      assert.equal(result.toolResultIsError.every((isError) => isError), true);
-      assert.equal(transport.calls.pull, 0);
-      assert.equal(transport.calls.create, 0);
-      assert.equal(result.exitCode, 1);
-    }
-
-    // valid → invalid: T1 observe ok, T2 observe+wait fatal, counters freeze
-    {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull({ headOid: "h1" }),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
-      const result = await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-v-inv",
-        responses: [
-          fauxAssistantMessage(
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-ok" }),
-            { stopReason: "toolUse" },
-          ),
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-2" }),
-            fauxToolCall(COLLECTOR_WAIT_TOOL, { durationMs: 10 }, { id: "wait-2" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage("done"),
-        ],
-      });
-      assert.ok(transport.calls.pull >= 2);
-      const frozenPull = transport.calls.pull;
-      const frozenCreate = transport.calls.create;
-      assert.equal(transport.calls.create, 0);
-      assert.equal(result.exitCode, 1);
-      assert.equal(transport.calls.pull, frozenPull);
-      assert.equal(transport.calls.create, frozenCreate);
-    }
-
-    // invalid → valid: T1 unknown sibling, T2 sole observe still zero after fatal
-    {
-      const transport = createFakeGitHubTransport({
-        user: sampleUser(),
-        pullRequest: samplePull(),
-        reviews: [],
-        issueComments: [],
-        reviewComments: [],
-      });
-      const result = await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-inv-v",
-        responses: [
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs" }),
-            fauxToolCall("unknown_tool", {}, { id: "unk" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage(
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-later" }),
-            { stopReason: "toolUse" },
-          ),
-          fauxAssistantMessage("done"),
-        ],
-      });
-      assert.equal(transport.calls.pull, 0);
-      assert.equal(transport.calls.create, 0);
-      assert.equal(result.exitCode, 1);
-    }
+test("collector output rejects non-sole-final assistant tool batch", async () => {
+  await withHermeticHome({ prefix: "ak-collector-sole-final-" }, async ({ agentDir, home }) => {
+    const legs = await writeLegs(home);
+    const transport = createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull({ headOid: "h1" }),
+      reviews: [
+        sampleReview({
+          id: 1,
+          userLogin: "codexbot",
+          state: "APPROVED",
+          commitId: "h1",
+          submittedAt: "2024-01-01T00:00:00Z",
+        }),
+      ],
+      issueComments: [],
+      reviewComments: [],
+    });
+    const result = await runCollectorSession({
+      home,
+      agentDir,
+      legs,
+      transport,
+      clock: clockAt("2024-01-01T00:00:00Z"),
+      api: "ak-collector-sole-final",
+      responses: [
+        fauxAssistantMessage(
+          fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-1" }),
+          { stopReason: "toolUse" },
+        ),
+        // Second turn: observe sibling + output — sole-final denies output at execute.
+        fauxAssistantMessage([
+          fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-2" }),
+          fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
+            legs: [{
+              legId: "codex",
+              status: "valid",
+              rationale: "exact-head qualifying review",
+              evidenceRefs: ["placeholder"],
+            }],
+          }, { id: "out-1" }),
+        ], { stopReason: "toolUse" }),
+        fauxAssistantMessage("done"),
+      ],
+    });
+    assert.ok(transport.calls.pull >= 2, "observe sibling still runs");
+    assert.ok(
+      result.toolResultIsError.some((isError) => isError),
+      "output toolResult is error under sole-final",
+    );
+    assert.equal(result.exitCode, 1);
   });
 });
 
@@ -1023,7 +1005,7 @@ test("F1 registered collector tool schemas are the singular TypeBox owner", asyn
   });
 });
 
-test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", async () => {
+test("F1 real-Pi invalid sole output denies at execute with zero GitHub", async () => {
   await withHermeticHome({ prefix: "ak-collector-f1-out-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const neverTouched = createFakeGitHubTransport({
@@ -1035,7 +1017,7 @@ test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", asyn
     });
 
     // Shape space owned by collector-receipt schema matrix; keep one real-Pi tracer
-    // (discriminated-union clause most likely to rot) + one observe+bad-output sibling.
+    // (discriminated-union clause most likely to rot). Batch-law sibling poison is gone (ADR 0041).
     const tracer = {
       name: "unavailable missing scope",
       args: {
@@ -1067,34 +1049,10 @@ test("F1 real-Pi invalid output rows deny at message_end with zero GitHub", asyn
       });
       assertZeroGitHub(neverTouched, tracer.name);
       assert.equal(result.exitCode, 1, tracer.name);
-    }
-
-    {
-      const result = await runCollectorSession({
-        home,
-        agentDir,
-        legs,
-        transport: neverTouched,
-        clock: clockAt("2024-01-01T00:00:00Z"),
-        api: "ak-collector-f1-sibling",
-        responses: [
-          fauxAssistantMessage([
-            fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "obs-ok" }),
-            fauxToolCall(COLLECTOR_OUTPUT_TOOL, {
-              legs: [{
-                legId: "codex",
-                status: "missing",
-                rationale: "x",
-                evidenceRefs: ["s"],
-                extra: true,
-              }],
-            }, { id: "bad-shape" }),
-          ], { stopReason: "toolUse" }),
-          fauxAssistantMessage("done"),
-        ],
-      });
-      assertZeroGitHub(neverTouched, "observe+bad-output");
-      assert.equal(result.exitCode, 1, "observe+bad-output");
+      assert.ok(
+        result.toolResultIsError.some((isError) => isError),
+        "invalid sole output fails at the output execution seam",
+      );
     }
 
     // Remaining shapes: exported schema / parse path (no Pi boot).
