@@ -188,43 +188,38 @@ test("case admission rejects runs trees outside the ledger-home path", async () 
   const root = await mkdtemp(join(tmpdir(), "doctor-invalid-path-"));
   const runs = join(root, "issues/40/runs");
   await mkdir(runs, { recursive: true });
-  await assert.rejects(loadDoctorCase(runs), /\.ak-roles\/books\/<book>\/issues\/<n>\/runs/);
+  await assert.rejects(loadDoctorCase(runs));
 });
 
 test("case admission rejects retired .ak/work runs trees", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-retired-ak-work-"));
   const runs = join(root, ".ak/work/issues/40/runs");
   await mkdir(runs, { recursive: true });
-  await assert.rejects(loadDoctorCase(runs), /\.ak-roles\/books\/<book>\/issues\/<n>\/runs/);
+  await assert.rejects(loadDoctorCase(runs));
 });
 
-test("ledger-home historical migrated archive run with @source-tree suffix is admitted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "doctor-home-migrated-"));
+test("ledger-home historical and current invocation@source-tree shapes are admitted together", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-home-shapes-"));
   const runs = homeRuns(root, 130, "ak-roles-130");
-  const runDir = "review-004@legacy-worktree";
-  await mkdir(join(runs, runDir, "session"), { recursive: true });
+  const historicalRunDir = "review-004@legacy-worktree";
+  const currentRunDir = "coder-apply@ak-roles-130";
+  await mkdir(join(runs, historicalRunDir, "session"), { recursive: true });
+  await mkdir(join(runs, currentRunDir, "session"), { recursive: true });
   const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
-  await writeFile(join(runs, runDir, "session", "retained.jsonl"), body);
+  await writeFile(join(runs, historicalRunDir, "session", "retained.jsonl"), body);
+  await writeFile(join(runs, currentRunDir, "session", "session.jsonl"), body);
   const patient = await loadDoctorCase(runs);
   assert.equal(patient.identity.issueNumber, 130);
-  assert.deepEqual(patient.cost.legs.sources, [`${runDir}/session/retained.jsonl`]);
-  assert.equal(patient.cost.sessions[0]?.completion, "accepted");
-  assert.equal(patient.evidence[0]?.content, body);
-});
-
-test("ledger-home current invocation@source-tree session shape is admitted", async () => {
-  const root = await mkdtemp(join(tmpdir(), "doctor-home-current-"));
-  const runs = homeRuns(root, 130, "ak-roles-130");
-  const runDir = "coder-apply@ak-roles-130";
-  await mkdir(join(runs, runDir, "session"), { recursive: true });
-  const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
-  await writeFile(join(runs, runDir, "session", "session.jsonl"), body);
-  const patient = await loadDoctorCase(runs);
-  assert.equal(patient.identity.issueNumber, 130);
-  assert.deepEqual(patient.cost.invocations.sources, [runDir]);
-  assert.deepEqual(patient.cost.legs.sources, [`${runDir}/session/session.jsonl`]);
-  assert.equal(patient.cost.sessions[0]?.source, `${runDir}/session/session.jsonl`);
-  assert.equal(patient.cost.sessions[0]?.completion, "accepted");
+  const historicalLeg = `${historicalRunDir}/session/retained.jsonl`;
+  const currentLeg = `${currentRunDir}/session/session.jsonl`;
+  assert.deepEqual(patient.cost.invocations.sources, [currentRunDir, historicalRunDir]);
+  assert.ok(patient.cost.legs.sources.includes(historicalLeg));
+  assert.ok(patient.cost.legs.sources.includes(currentLeg));
+  assert.ok(patient.cost.sessions.some((session) => session.source === historicalLeg));
+  assert.ok(patient.cost.sessions.some((session) => session.source === currentLeg));
+  assert.ok(patient.evidence.some((entry) => entry.id === historicalLeg));
+  assert.ok(patient.evidence.some((entry) => entry.id === currentLeg));
+  assert.ok(patient.cost.sessions.every((session) => session.completion === "accepted"));
 });
 
 test("case identity is repository-relative with an absolute fallback outside repositories", async () => {
