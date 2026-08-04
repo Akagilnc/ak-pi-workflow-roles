@@ -16,6 +16,7 @@ import {
 
 import {
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
+  ComplianceDecisionContractError,
   complianceDecisionSchema,
   createComplianceDecisionTool,
   runComplianceAudit,
@@ -117,6 +118,103 @@ function diagnosticFacts(error: unknown): Record<string, unknown> {
   assert.ok(details && typeof details === "object" && !Array.isArray(details));
   return details as Record<string, unknown>;
 }
+
+function defaultCompletionContext(
+  sessionManager: SessionManager,
+  stream: (options: Record<string, unknown>) => Promise<AssistantMessage>,
+  seen: { options?: Record<string, unknown> },
+): ExtensionContext {
+  const base = context(sessionManager);
+  return {
+    ...base,
+    modelRegistry: {
+      ...(base.modelRegistry as object),
+      getProvider() {
+        return {
+          stream(_model: unknown, _context: unknown, options: Record<string, unknown>) {
+            seen.options = options;
+            return {
+              async *[Symbol.asyncIterator]() {
+                return;
+              },
+              result: () => stream(options),
+            };
+          },
+        };
+      },
+    },
+  } as unknown as ExtensionContext;
+}
+
+test("default compliance completion sends the production timeout and preserves signal pass-through", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const seen: { options?: Record<string, unknown> } = {};
+    const signal = new AbortController().signal;
+    const auditContext = defaultCompletionContext(
+      sessionManager,
+      async () => response("default-healthy", [
+        fauxToolCall(decisionToolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
+      ]),
+      seen,
+    );
+    const decision = await runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+      signal,
+    });
+    assert.equal(decision.status, "pass");
+    assert.equal(seen.options?.timeoutMs, 183000);
+    assert.strictEqual(seen.options?.signal, signal);
+    assert.deepEqual(Object.keys(seen.options ?? {}).sort(), [
+      "apiKey", "cacheRetention", "maxTokens", "onPayload", "sessionId", "signal", "timeoutMs", "toolChoice",
+    ]);
+  });
+});
+
+test("a timeout-honoring provider terminates the real default seam with typed cause and no receipt", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const seen: { options?: Record<string, unknown> } = {};
+    const auditContext = defaultCompletionContext(
+      sessionManager,
+      (options) => new Promise<AssistantMessage>((resolve) => {
+        // This provider models the registry timeout seam with a short threshold;
+        // without timeoutMs it remains pending rather than fabricating failure.
+        if (options.timeoutMs === undefined) return;
+        setTimeout(() => resolve(response("default-timeout", [], {
+          stopReason: "error",
+          errorMessage: "provider timeout: compliance request expired",
+        })), 10);
+      }),
+      seen,
+    );
+    const started = Date.now();
+    await assert.rejects(
+      runComplianceAudit({
+        tool: decisionTool,
+        systemPrompt: "audit system",
+        serializedInput: "audit input",
+        roleLabel: "Compliance",
+        invalidDecisionLabel: "invalid compliance decision",
+        context: auditContext,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ComplianceDecisionContractError);
+        assert.equal(error.details.errorMessage, "provider timeout: compliance request expired");
+        return true;
+      },
+    );
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(seen.options?.timeoutMs, 183000);
+    assert.equal(
+      sessionManager.getEntries().some((entry) => entry.type === "message"),
+      false,
+    );
+  });
+});
 
 test("shared compliance transport retains valid nested decisions verbatim", async () => {
   const cases = [
