@@ -10,7 +10,6 @@ import { Value } from "typebox/value";
 import {
   ActivationBarrierError,
   ROLE_REGISTRY,
-  TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   TOOL_EXECUTION_UPDATE_THROTTLE_MS,
   createRoleRuntimeExtension,
@@ -296,7 +295,7 @@ function assertRetryingJsonlWriter(input: {
   assert.equal(Value.Check(input.schema as never, JSON.parse(line)), true);
   assert.ok(calls > 2);
   if (input.invalidRecord !== undefined) {
-    assert.throws(() => input.write(input.invalidRecord as never, (() => 0) as never), /closed contract/);
+    assert.throws(() => input.write(input.invalidRecord as never, (() => 0) as never), /observation record does not match its contract/);
   }
 }
 
@@ -310,7 +309,6 @@ test("default trace and tool observation writers retry short writes and reject s
   assertRetryingJsonlWriter({
     write: writeToolExecutionObservationRecord as never,
     record: {
-      schemaVersion: 1,
       event: "tool_execution_start",
       role: "judge",
       toolCallId: "t1",
@@ -342,26 +340,25 @@ for (const [mode, expected] of [["print", 1], ["json", 1], ["tui", undefined], [
   });
 }
 
-test("tool-execution observation contract is versioned, closed, and output-driven", () => {
-  assert.equal(TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION, 1);
+test("tool-execution observation contract retains reader-required events and output-driven updates", () => {
   assert.equal(TOOL_EXECUTION_UPDATE_THROTTLE_MS, 30_000);
   assert.equal(TOOL_EXECUTION_UPDATE_HEARTBEAT, "output-driven");
   assert.equal(isProducingToolUpdate({ content: [], details: undefined }), false);
   assert.equal(isProducingToolUpdate({ content: [{ type: "text", text: "" }] }), false);
   assert.equal(isProducingToolUpdate({ content: [{ type: "text", text: "chunk" }] }), true);
   for (const record of [
-    { schemaVersion: 1, event: "tool_execution_start", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z" },
-    { schemaVersion: 1, event: "tool_execution_update", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:30.000Z" },
-    { schemaVersion: 1, event: "tool_execution_end", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:01:00.000Z", isError: false },
+    { event: "tool_execution_start", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z" },
+    { event: "tool_execution_update", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:30.000Z" },
+    { event: "tool_execution_end", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:01:00.000Z", isError: false },
   ] as const) {
     assert.equal(Value.Check(toolExecutionObservationRecordSchema, record), true);
   }
   assert.equal(Value.Check(toolExecutionObservationRecordSchema, {
-    schemaVersion: 1, event: "tool_execution_end", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z",
+    event: "tool_execution_end", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z",
   }), false);
   assert.equal(Value.Check(toolExecutionObservationRecordSchema, {
-    schemaVersion: 1, event: "tool_execution_start", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z", extra: true,
-  }), false);
+    event: "tool_execution_start", role: "judge", toolCallId: "c1", toolName: "bash", timestamp: "2025-01-01T00:00:00.000Z", extra: true,
+  }), true);
 });
 
 test("observation face emits start/end always, throttles producing updates per toolCallId, and ignores non-admitted sessions", async () => {
@@ -418,7 +415,6 @@ test("observation face emits start/end always, throttles producing updates per t
   for (const record of records) {
     assert.equal(Value.Check(toolExecutionObservationRecordSchema, record), true);
     assert.equal(record.role, "fixer");
-    assert.equal(record.schemaVersion, 1);
   }
 });
 
