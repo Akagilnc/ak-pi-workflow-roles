@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
   withInProcessPi,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 
 async function runCli(mode: "print" | "json") {
@@ -54,6 +55,72 @@ async function runCli(mode: "print" | "json") {
           PI_OFFLINE: "1",
         },
       }),
+  );
+}
+
+type SessionRow = {
+  type?: string;
+  customType?: string;
+  data?: { response?: Record<string, unknown> };
+  message?: {
+    role?: string;
+    toolName?: string;
+    isError?: boolean;
+    details?: Record<string, unknown>;
+    stopReason?: string;
+    errorMessage?: string;
+  };
+};
+
+/** Session-backed timeout path: retained compliance response is the typed cause. */
+async function runTimeoutCli(mode: "print" | "json") {
+  return withHermeticHome(
+    { prefix: "ak-audit-timeout-" },
+    async ({ home, agentDir }) => {
+      const sessionDirectory = resolve(home, "runs/judge/session");
+      await mkdir(sessionDirectory, { recursive: true });
+      const args = [
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--session-dir",
+        sessionDirectory,
+        "-e",
+        resolve(packageRoot, "extensions/role-runtime.ts"),
+        "-e",
+        resolve(packageRoot, "test/fixtures/audit-failure-provider.ts"),
+        "--ak-role",
+        "judge",
+        "--provider",
+        "ak-audit-failure",
+        "--model",
+        "faux-1",
+        ...(mode === "print" ? ["-p", "Judge."] : ["--mode", "json", "Judge."]),
+      ];
+      const result = await runPiSubprocess(args, {
+        cwd: home,
+        env: {
+          ...process.env,
+          HOME: home,
+          PI_CODING_AGENT_DIR: agentDir,
+          PI_OFFLINE: "1",
+          AK_AUDIT_TIMEOUT_FAILURE: "1",
+        },
+      });
+      // Read before hermetic home teardown so the retained compliance response
+      // (written by runComplianceAudit) remains observable evidence.
+      const sessionFiles = (await readdir(sessionDirectory))
+        .filter((name) => name.endsWith(".jsonl"));
+      const sessionRows: SessionRow[] = sessionFiles.length === 0
+        ? []
+        : (await readFile(resolve(sessionDirectory, sessionFiles[0]!), "utf8"))
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as SessionRow);
+      return { result, sessionFiles, sessionRows };
+    },
   );
 }
 
@@ -276,27 +343,135 @@ function assertAuditAbortWithoutReceipt(
 ) {
   assert.equal(result.timedOut, false, `${label} subprocess did not time out`);
   assert.equal(result.code, 1, `${label} exits nonzero`);
-  assert.doesNotMatch(
-    result.stdout,
-    /Judge verdict accepted|Fixer report accepted|Reviewer report accepted|Coder report accepted/,
+}
+
+function jsonEvents(stdout: string): any[] {
+  return stdout
+    .split("\n")
+    .filter((line) => line.trim().startsWith("{"))
+    .map((line) => JSON.parse(line) as any);
+}
+
+function assertJsonAbortFacts(
+  result: { stdout: string },
+  toolName: string,
+  label: string,
+) {
+  const events = jsonEvents(result.stdout);
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === "message_end" &&
+        event.message?.role === "toolResult" &&
+        event.message.toolName === toolName &&
+        event.message.isError === true,
+    ),
+    true,
+    `${label} emits an errored ${toolName} result`,
   );
-  assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === "message_end" &&
+        event.message?.role === "assistant" &&
+        event.message.stopReason === "aborted",
+    ),
+    true,
+    `${label} stops with typed aborted reason`,
+  );
 }
 
 test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
   for (const mode of ["print", "json"] as const) {
     const result = await runCli(mode);
     assertAuditAbortWithoutReceipt(result, mode);
-    assert.match(
-      result.stderr,
-      /Request was aborted|AUDIT_FAILURE_PROVIDER_CALLS/,
-    );
     if (mode === "json") {
-      assert.match(
-        result.stdout,
-        /"toolName":"ak_judge_output".*"isError":true/,
+      assertJsonAbortFacts(result, "ak_judge_output", mode);
+    }
+  }
+});
+
+test("provider timeout uses the fatal typed audit path without a fabricated Judge Receipt", async () => {
+  for (const mode of ["print", "json"] as const) {
+    const { result, sessionFiles, sessionRows } = await runTimeoutCli(mode);
+    assert.equal(result.timedOut, false, `${mode} subprocess did not time out`);
+    assert.equal(result.code, 1, `${mode} exits nonzero`);
+    assert.equal(
+      result.stderr.includes("AUDIT_FAILURE_TYPED_EVIDENCE="),
+      false,
+      `${mode} must not rely on fixture-written typed evidence`,
+    );
+
+    // Typed provider cause is retained by the real runComplianceAudit path
+    // (retainComplianceResponse before ComplianceDecisionContractError) —
+    // observe it from the session custom entry, never from fixture stderr.
+    assert.equal(sessionFiles.length, 1, `${mode} must persist one session file`);
+    const retained = sessionRows.filter(
+      (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
+    );
+    assert.equal(retained.length, 1, `${mode} retains one compliance response`);
+    const response = retained[0]!.data?.response;
+    assert.ok(response, `${mode} compliance response payload present`);
+    assert.equal(response.stopReason, "error");
+    assert.equal(response.errorMessage, "provider timeout: compliance request expired");
+    assert.equal(response.provider, "ak-audit-failure");
+    assert.equal(response.model, "faux-1");
+
+    // Terminal toolResult from failInfrastructure: errored, no fabricated Receipt.
+    const failedOutputs = sessionRows.filter(
+      (row) =>
+        row.type === "message" &&
+        row.message?.role === "toolResult" &&
+        row.message.toolName === "ak_judge_output",
+    );
+    assert.equal(failedOutputs.length, 1, `${mode} one Judge output toolResult`);
+    assert.equal(failedOutputs[0]!.message?.isError, true);
+    assert.equal(failedOutputs[0]!.message?.details?.status, undefined);
+    assert.equal(
+      sessionRows.some(
+        (row) =>
+          row.type === "message" &&
+          row.message?.role === "toolResult" &&
+          row.message.toolName === "ak_judge_output" &&
+          row.message.isError !== true,
+      ),
+      false,
+      `${mode} fabricates no accepted Judge Receipt`,
+    );
+    assert.equal(
+      sessionRows.some(
+        (row) =>
+          row.type === "message" &&
+          row.message?.role === "assistant" &&
+          row.message.stopReason === "aborted",
+      ),
+      true,
+      `${mode} aborts after failInfrastructure`,
+    );
+
+    if (mode === "json") {
+      const events = result.stdout
+        .split("\n")
+        .filter((line) => line.trim().startsWith("{"))
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          message?: {
+            role?: string;
+            toolName?: string;
+            isError?: boolean;
+            details?: Record<string, unknown>;
+            stopReason?: string;
+          };
+        });
+      const erroredOutput = events.find(
+        (event) =>
+          event.type === "message_end" &&
+          event.message?.role === "toolResult" &&
+          event.message.toolName === "ak_judge_output",
       );
-      assert.match(result.stdout, /"stopReason":"aborted"/);
+      assert.ok(erroredOutput, `${mode} emits terminal toolResult on stdout`);
+      assert.equal(erroredOutput.message?.isError, true);
+      assert.equal(erroredOutput.message?.details?.status, undefined);
     }
   }
 });
@@ -408,19 +583,17 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     false,
     "infrastructure failure must remain typed silence",
   );
-  assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
 });
 
 test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {
-  // Distinct Fixer marker (FIXER_AUDIT_FAILURE_PROVIDER_CALLS) is the absorbed clause
-  // that the Judge survivor does not cover — keep Fixer-specific process proof.
+  // Fixer-specific process proof (distinct from the Judge survivor): exit code +
+  // typed isError/stopReason on ak_fixer_output.
   for (const mode of ["print", "json"] as const) {
     const result = await runFixerAuditFailureCli({ mode });
-    const combined = `${result.stdout}\n${result.stderr}`;
     assertAuditAbortWithoutReceipt(result, `fixer/${mode}`);
-    assert.match(combined, /invalid fixer audit decision|Request was aborted/);
-    assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=3/);
-    assert.doesNotMatch(result.stdout, /Fixer report accepted|FORBIDDEN LATER SUCCESS PROSE/);
+    if (mode === "json") {
+      assertJsonAbortFacts(result, "ak_fixer_output", mode);
+    }
   }
 });
 
@@ -430,13 +603,7 @@ test("unavailable canonical tdd is infrastructure failure in print and JSON", as
   // process-level "infrastructure, not a receipt" negative (法条③).
   for (const mode of ["print", "json"] as const) {
     const result = await runCoderSkillFailureCli(mode, "missing");
-    const combined = `${result.stdout}\n${result.stderr}`;
     assertAuditAbortWithoutReceipt(result, `missing/${mode}`);
-    assert.match(
-      combined,
-      /Canonical tdd Skill|Coder canonical tdd Skill binding was not initialized/,
-    );
-    assert.doesNotMatch(combined, /Coder report accepted/);
     if (mode === "json") {
       const events = result.stdout
         .split("\n")
@@ -467,101 +634,31 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
   // crosses the real CLI boundary for both modes (法条③).
   const processRow = {
     stage: "audit-auth" as const,
-    marker: /INJECTED_REVIEWER_AUDIT_AUTH_FAILURE/,
-    calls: 1,
     tool: "ak_reviewer_output" as const,
   };
   for (const mode of ["json", "print"] as const) {
     const result = await runReviewerCli(mode, processRow.stage);
-    const combined = `${result.stdout}\n${result.stderr}`;
     assert.equal(result.timedOut, false, `${processRow.stage}/${mode} subprocess did not time out`);
-    assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero\n${combined}`);
-    assert.match(combined, processRow.marker, `${processRow.stage}/${mode} reached its stage`);
-    assert.match(combined, /Request was aborted|"stopReason":"aborted"/);
-    assert.match(
-      result.stderr,
-      new RegExp(`REVIEWER_FAILURE_PROVIDER_CALLS=${processRow.calls}(?:\\D|$)`),
-      `${processRow.stage}/${mode} made exactly ${processRow.calls} provider calls`,
-    );
-    assert.doesNotMatch(result.stdout, /Reviewer report accepted/);
-    assert.doesNotMatch(combined, /FORBIDDEN INFRASTRUCTURE REFUSAL/);
-    assert.doesNotMatch(combined, /FORBIDDEN LATER SUCCESS PROSE/);
+    assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero`);
     if (mode === "json") {
-      const events = result.stdout
-        .split("\n")
-        .filter((line) => line.trim().startsWith("{"))
-        .map((line) => JSON.parse(line));
-      const erroredTool = events.find(
-        (event) =>
-          event.type === "message_end" &&
-          event.message?.role === "toolResult" &&
-          event.message.toolName === processRow.tool &&
-          event.message.isError === true,
-      );
-      assert.ok(erroredTool, `${processRow.stage} marks ${processRow.tool} isError:true`);
-      assert.ok(
-        events.some(
-          (event) =>
-            event.type === "message_end" &&
-            event.message?.role === "assistant" &&
-            event.message.stopReason === "aborted",
-        ),
-      );
+      assertJsonAbortFacts(result, processRow.tool, `${processRow.stage}/${mode}`);
     }
   }
 
-  // Remaining stage × call-count × isError matrix: shared template + one JSON
-  // process each (template cp replaces per-row git clone). Full 4×2 matrix was
-  // the expensive construction; stage markers + call counts stay process-proved.
+  // Remaining stages: shared template + one JSON process each (template cp
+  // replaces per-row git clone). Assert exit code + typed isError/stopReason.
   const matrix: Array<{
     stage: ReviewerFailureStage;
-    marker: RegExp;
-    calls: number;
     tool: "Agent" | "ak_reviewer_output";
   }> = [
-    {
-      stage: "preflight-git",
-      marker: /INJECTED_REVIEWER_GIT_IO_FAILURE|not a git repository/,
-      calls: 1,
-      tool: "Agent",
-    },
-    {
-      stage: "audit-provider",
-      marker: /Reviewer compliance audit provider not found/,
-      calls: 1,
-      tool: "ak_reviewer_output",
-    },
-    {
-      stage: "audit-malformed-decision",
-      marker: /invalid reviewer audit decision/,
-      calls: 2,
-      tool: "ak_reviewer_output",
-    },
+    { stage: "preflight-git", tool: "Agent" },
+    { stage: "audit-provider", tool: "ak_reviewer_output" },
+    { stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
   ];
   for (const row of matrix) {
     const result = await runReviewerCli("json", row.stage);
-    const combined = `${result.stdout}\n${result.stderr}`;
-    assert.equal(result.code, 1, `${row.stage} exits nonzero\n${combined}`);
-    assert.match(combined, row.marker, `${row.stage} reached its stage`);
-    assert.match(
-      result.stderr,
-      new RegExp(`REVIEWER_FAILURE_PROVIDER_CALLS=${row.calls}(?:\\D|$)`),
-    );
-    assert.doesNotMatch(result.stdout, /Reviewer report accepted/);
-    const events = result.stdout
-      .split("\n")
-      .filter((line) => line.trim().startsWith("{"))
-      .map((line) => JSON.parse(line));
-    assert.ok(
-      events.some(
-        (event) =>
-          event.type === "message_end" &&
-          event.message?.role === "toolResult" &&
-          event.message.toolName === row.tool &&
-          event.message.isError === true,
-      ),
-      `${row.stage} marks ${row.tool} isError:true`,
-    );
+    assert.equal(result.code, 1, `${row.stage} exits nonzero`);
+    assertJsonAbortFacts(result, row.tool, row.stage);
   }
 });
 

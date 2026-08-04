@@ -59,7 +59,6 @@ const coderOutputSchema = Type.Union([
   Type.Object({
     status: StringEnum(["completed", "refused"] as const),
     report: Type.String({ minLength: 1 }),
-    commitSha: Type.Optional(Type.String({ minLength: 1 })),
   }, { additionalProperties: false }),
   Type.Object({
     status: StringEnum(["unfinished"] as const),

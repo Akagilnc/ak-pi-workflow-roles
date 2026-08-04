@@ -296,9 +296,10 @@ test("child executor runs in an already-prepared workspace without Git materiali
       workspace.path,
       accepted.legs[0]!,
       context,
-      undefined,
-      (operation) => {
-        operations.push(operation);
+      {
+        fault(operation) {
+          operations.push(operation);
+        },
       },
     );
     assert.equal(result.report, "axis 1 report");
@@ -641,47 +642,52 @@ test("Reviewer Agent reports deterministic setup failures with bounded retention
     ["child.session", "retained", "child"],
   ] as const;
 
-  for (const [fault, expected, classification] of cases) {
-    const runner = createReviewerAgentRunner({
-      fault(operation) {
-        if (operation === fault) {
-          throw new Error("provider cancelled child prose must not classify this failure");
-        }
-      },
-    });
-    const acceptedDispatch = await dispatch(source.root, [fault]);
-    const scratchBefore = new Set(
-      (await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-")),
-    );
-    let retained: string | undefined;
-    try {
-      await assert.rejects(runner.run(acceptedDispatch, { context }), (error: any) => {
-        const disposition = error.outcome.legs.standards.workspaceDisposition;
-        if (expected === "not-created") assert.equal(disposition, "not-created");
-        else {
-          retained = disposition.retained;
-          assert.ok(retained?.startsWith(tmpdir()));
-        }
-        const accepted = error.outcome;
-        assert.equal(accepted.legs.standards.failure, classification);
-        if (classification === "child") {
-          assert.equal(accepted.legs.standards.runtimeConstructionEvidence?.leg, "standards");
-          assert.equal(
-            accepted.legs.standards.runtimeConstructionEvidence?.manifestSha256,
-            acceptedDispatch.bundle.manifestSha256,
-          );
-        } else assert.equal(accepted.legs.standards.runtimeConstructionEvidence, undefined);
-        return true;
+  // Private parent: global tmpdir scans race with concurrent suite workers that also mint ak-reviewer-child-*.
+  const credentialScratchParent = await mkdtemp(join(tmpdir(), "ak-reviewer-cred-scope-"));
+  try {
+    for (const [fault, expected, classification] of cases) {
+      const runner = createReviewerAgentRunner({
+        credentialScratchParent,
+        fault(operation) {
+          if (operation === fault) {
+            throw new Error("provider cancelled child prose must not classify this failure");
+          }
+        },
       });
-      if (retained !== undefined) await access(retained);
-      const scratchAfter = (await readdir(tmpdir())).filter(
-        (name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name),
-      );
-      assert.deepEqual(scratchAfter, [], `${fault} leaked credential scratch`);
-    } finally {
-      await runner.shutdown().catch(() => {});
-      if (retained !== undefined) await rm(retained, { recursive: true, force: true });
+      const acceptedDispatch = await dispatch(source.root, [fault]);
+      let retained: string | undefined;
+      try {
+        await assert.rejects(runner.run(acceptedDispatch, { context }), (error: any) => {
+          const disposition = error.outcome.legs.standards.workspaceDisposition;
+          if (expected === "not-created") assert.equal(disposition, "not-created");
+          else {
+            retained = disposition.retained;
+            assert.ok(retained?.startsWith(tmpdir()));
+          }
+          const accepted = error.outcome;
+          assert.equal(accepted.legs.standards.failure, classification);
+          if (classification === "child") {
+            assert.equal(accepted.legs.standards.runtimeConstructionEvidence?.leg, "standards");
+            assert.equal(
+              accepted.legs.standards.runtimeConstructionEvidence?.manifestSha256,
+              acceptedDispatch.bundle.manifestSha256,
+            );
+          } else assert.equal(accepted.legs.standards.runtimeConstructionEvidence, undefined);
+          return true;
+        });
+        if (retained !== undefined) await access(retained);
+        assert.deepEqual(
+          await readdir(credentialScratchParent),
+          [],
+          `${fault} leaked credential scratch`,
+        );
+      } finally {
+        await runner.shutdown().catch(() => {});
+        if (retained !== undefined) await rm(retained, { recursive: true, force: true });
+      }
     }
+  } finally {
+    await rm(credentialScratchParent, { recursive: true, force: true });
   }
 });
 
@@ -702,10 +708,8 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     },
     1,
   );
-  const runner = createReviewerAgentRunner();
-  const scratchBefore = new Set(
-    (await readdir(tmpdir())).filter((name) => name.startsWith("ak-reviewer-child-")),
-  );
+  const credentialScratchParent = await mkdtemp(join(tmpdir(), "ak-reviewer-cred-scope-"));
+  const runner = createReviewerAgentRunner({ credentialScratchParent });
   const controller = new AbortController();
   const call = dispatch(source.root, ["Long review"]).then((accepted) =>
     runner.run(accepted, { context, signal: controller.signal }),
@@ -723,16 +727,12 @@ test("Reviewer Agent cancellation is infrastructure failure and retains its work
     });
     assert.ok(retained);
     await access(retained!);
-    assert.deepEqual(
-      (await readdir(tmpdir())).filter(
-        (name) => name.startsWith("ak-reviewer-child-") && !scratchBefore.has(name),
-      ),
-      [],
-    );
+    assert.deepEqual(await readdir(credentialScratchParent), []);
   } finally {
     await runner.shutdown().catch(() => {});
     if (retained !== undefined) {
       await rm(retained, { recursive: true, force: true });
     }
+    await rm(credentialScratchParent, { recursive: true, force: true });
   }
 });

@@ -23,7 +23,6 @@ import {
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
   type CollectorLedger,
-  type CollectorRawToolCallPart,
 } from "./collector-ledger.ts";
 import {
   buildCollectorReceipt,
@@ -83,27 +82,25 @@ type CollectorActivation = {
   clock: CollectorClock;
 };
 
-/** Pass every raw toolCall part, including malformed id/name/arguments. */
-function rawToolCallPartsFromMessage(message: {
-  role?: string;
-  content?: unknown;
-}): CollectorRawToolCallPart[] {
-  if (message.role !== "assistant" || !Array.isArray(message.content)) return [];
-  return message.content.flatMap((part: unknown) => {
-    if (
-      typeof part === "object" &&
-      part !== null &&
-      (part as { type?: string }).type === "toolCall"
-    ) {
-      return [{
-        type: "toolCall" as const,
-        id: (part as { id?: unknown }).id,
-        name: (part as { name?: unknown }).name,
-        arguments: (part as { arguments?: unknown }).arguments,
-      }];
-    }
-    return [];
-  });
+/** Sole-final at the output execution seam (same shape as other terminating roles). */
+function assertSoleFinalCollectorOutput(
+  toolCallId: string,
+  ctx: ExtensionContext,
+): void {
+  const leaf = ctx.sessionManager.getLeafEntry();
+  if (leaf?.type !== "message" || leaf.message.role !== "assistant") {
+    throw new Error("Collector output must be the sole final tool call");
+  }
+  const calls = leaf.message.content.filter((part) => part.type === "toolCall");
+  const call = calls[0];
+  if (
+    calls.length !== 1 ||
+    call === undefined ||
+    call.id !== toolCallId ||
+    call.name !== COLLECTOR_OUTPUT_TOOL
+  ) {
+    throw new Error("Collector output must be the sole final tool call");
+  }
 }
 
 function buildMethodContext(activation: CollectorActivation): string {
@@ -258,24 +255,7 @@ export function createCollectorRoleRuntime(
       };
     });
 
-    pi.on("message_end", (event, ctx) => {
-      if (activation === undefined) return;
-      if (event.message.role !== "assistant") return;
-      const calls = rawToolCallPartsFromMessage(event.message);
-      if (calls.length === 0) return;
-      const decision = activation.ledger.evaluateBatch(calls);
-      if (!decision.allow) {
-        // Fatal already latched inside evaluateBatch for illegal batches.
-        // Do not throw here: later tool_call/execute cross-check blocks operations.
-        console.error(`Collector batch rejected: ${decision.reason}`);
-        if (process.exitCode === undefined || process.exitCode === 0) {
-          process.exitCode = 1;
-        }
-      }
-      return undefined;
-    });
-
-    pi.on("tool_call", (event, ctx) => {
+    pi.on("tool_call", (event) => {
       if (activation === undefined) return;
       if (activation.ledger.fatal) {
         return {
@@ -289,12 +269,16 @@ export function createCollectorRoleRuntime(
           reason: `Collector forbids tool ${event.toolName}`,
         };
       }
-      try {
-        activation.ledger.beginOperational(event.toolName, event.toolCallId);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : "unknown failure";
-        activation.ledger.latchFatal(reason, error);
-        return { block: true, reason };
+      // Concurrency is owned at execute (beginOperational), not announced-batch preflight.
+      // Pi may emit tool_call for every part before any execute runs (ADR 0041).
+      if (
+        activation.ledger.outputAccepted &&
+        event.toolName !== COLLECTOR_OUTPUT_TOOL
+      ) {
+        return {
+          block: true,
+          reason: "Collector output already accepted; no further operations",
+        };
       }
       return undefined;
     });
@@ -443,6 +427,7 @@ export function createCollectorRoleRuntime(
           throw new Error("Collector is not activated");
         }
         try {
+          assertSoleFinalCollectorOutput(toolCallId, ctx);
           activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
           const receipt: CollectorReceipt = buildCollectorReceipt(
             activation.ledger,

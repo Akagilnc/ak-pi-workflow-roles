@@ -435,7 +435,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       assert.ok(Array.isArray(tool.parameters.anyOf));
       assert.deepEqual(tool.parameters.anyOf.map((branch: { properties: Record<string, unknown> }) => Object.keys(branch.properties)), [
         ["status", "report"],
-        ["status", "report", "commitSha"],
+        ["status", "report"],
         ["status", "report", "remainingScope"],
       ]);
     }

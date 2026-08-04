@@ -7,7 +7,6 @@
   "files": [
     "dist",
     "extensions",
-    "scripts/generate-activation-trace-schema.ts",
     "scripts/generate-tool-execution-observation-schema.ts",
     "scripts/build-package.mjs",
     "src",
@@ -17,9 +16,8 @@
     "README.md"
   ],
   "scripts": {
-    "generate:activation-trace-schema": "tsx scripts/generate-activation-trace-schema.ts",
     "generate:tool-execution-observation-schema": "tsx scripts/generate-tool-execution-observation-schema.ts",
-    "build": "npm run generate:activation-trace-schema && npm run generate:tool-execution-observation-schema && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
+    "build": "npm run generate:tool-execution-observation-schema && tsc -p tsconfig.build.json && node scripts/build-package.mjs",
     "prepack": "npm run build",
     "test": "npm run test:all",
     "test:fast": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
