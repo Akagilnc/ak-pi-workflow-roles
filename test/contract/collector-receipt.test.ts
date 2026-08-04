@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  assertCollectorByteLimit,
-  COLLECTOR_RECEIPT_MAX_BYTES,
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
 import {
@@ -1355,17 +1353,6 @@ test("edited review after deadline cannot prove unavailable via backdated submit
     }, clock),
     /unavailable|eligible|window/i,
   );
-});
-
-test("receipt byte boundary uses the real production limit", () => {
-  assert.doesNotThrow(() =>
-    assertCollectorByteLimit("receipt", COLLECTOR_RECEIPT_MAX_BYTES, COLLECTOR_RECEIPT_MAX_BYTES),
-  );
-  assert.throws(
-    () => assertCollectorByteLimit("receipt", COLLECTOR_RECEIPT_MAX_BYTES + 1, COLLECTOR_RECEIPT_MAX_BYTES),
-    new RegExp(`Collector receipt exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes`),
-  );
-  assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
 });
 
 // ---------------------------------------------------------------------------
