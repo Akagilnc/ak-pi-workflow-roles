@@ -434,8 +434,8 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
 });
 
 test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {
-  // Distinct Fixer marker (FIXER_AUDIT_FAILURE_PROVIDER_CALLS) is the absorbed clause
-  // that the Judge survivor does not cover — keep Fixer-specific process proof.
+  // Fixer-specific process proof (distinct from the Judge survivor): exit code +
+  // typed isError/stopReason on ak_fixer_output.
   for (const mode of ["print", "json"] as const) {
     const result = await runFixerAuditFailureCli({ mode });
     assertAuditAbortWithoutReceipt(result, `fixer/${mode}`);
@@ -493,9 +493,8 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
     }
   }
 
-  // Remaining stage × call-count × isError matrix: shared template + one JSON
-  // process each (template cp replaces per-row git clone). Full 4×2 matrix was
-  // the expensive construction; stage markers + call counts stay process-proved.
+  // Remaining stages: shared template + one JSON process each (template cp
+  // replaces per-row git clone). Assert exit code + typed isError/stopReason.
   const matrix: Array<{
     stage: ReviewerFailureStage;
     tool: "Agent" | "ak_reviewer_output";
