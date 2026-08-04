@@ -57,7 +57,6 @@ export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-
 export {
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   TOOL_EXECUTION_UPDATE_THROTTLE_MS,
-  TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION,
   createToolExecutionObservationFace,
   isProducingToolUpdate,
   systemToolExecutionObservationMonoNow,
