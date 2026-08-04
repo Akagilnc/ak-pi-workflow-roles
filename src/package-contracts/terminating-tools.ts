@@ -179,7 +179,7 @@ export function validateAcceptedLifecycle(
 
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): { status?: string; commit?: string } {
   switch (toolName) {
-    case CODER_OUTPUT_TOOL_NAME:
+    case CODER_OUTPUT_TOOL_NAME: return { status: (details as WorkerOutput).status };
     case FIXER_OUTPUT_TOOL_NAME: return { status: (details as WorkerOutput).status };
     case REVIEWER_OUTPUT_TOOL_NAME: return { status: (details as RuntimeReviewerReceiptV2).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as JudgeVerdict).judgeStatus };

@@ -17,4 +17,4 @@ test("Doctor output audits testimony, seals runtime cost, and keeps failure beha
   assert.deepEqual(accepted.details, { ...testimony, cost: patient.cost });
   assert.deepEqual(audited.at(-1).testimony, testimony);
   assert.equal("cost" in audited.at(-1).testimony, false);
-  const decorated = await output.execute("doctor", { ...testimony, presentation: "human-only" }, undefined, undefined, context("doctor")); assert.deepEqual(decorated.details, { ...testimony, presentation: "human-only", cost: patient.cost }); decision = "failure"; await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts++; })), /provider unavailable/); assert.equal(aborts, 1); });
+  await assert.rejects(output.execute("doctor", { ...testimony, presentation: "human-only" }, undefined, undefined, context("doctor")), /contract/); decision = "failure"; await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts++; })), /provider unavailable/); assert.equal(aborts, 1); });
