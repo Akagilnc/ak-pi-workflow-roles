@@ -177,32 +177,41 @@ test("default compliance completion sends the production timeout and preserves s
 
 test("a timeout-honoring provider terminates the real default seam with typed cause and no receipt", async () => {
   await withPersistedSession(async (sessionManager) => {
-    const seen: { options?: Record<string, unknown> } = {};
+    const seen: { options?: Record<string, unknown>; fireTimeout?: () => void } = {};
     const auditContext = defaultCompletionContext(
       sessionManager,
       (options) => new Promise<AssistantMessage>((resolve) => {
-        // This provider models the registry timeout seam with a short threshold;
-        // without timeoutMs it remains pending rather than fabricating failure.
+        // This provider honors the exact numeric deadline. The test fires the
+        // captured clock callback directly, so it never sleeps for 183 seconds.
         if (typeof options.timeoutMs !== "number" || options.timeoutMs <= 0) return;
-        // The provider honors the configured deadline, bounded to a short test
-        // threshold so this regression test never sleeps for 183 seconds.
-        setTimeout(() => resolve(response("default-timeout", [], {
+        const timer = setTimeout(() => resolve(response("default-timeout", [], {
           stopReason: "error",
           errorMessage: "provider timeout: compliance request expired",
-        })), Math.min(options.timeoutMs, 10));
+        })), options.timeoutMs);
+        seen.fireTimeout = () => {
+          clearTimeout(timer);
+          resolve(response("default-timeout", [], {
+            stopReason: "error",
+            errorMessage: "provider timeout: compliance request expired",
+          }));
+        };
       }),
       seen,
     );
     const started = Date.now();
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+    });
+    while (seen.fireTimeout === undefined) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(seen.options?.timeoutMs, 183000);
+    seen.fireTimeout();
     await assert.rejects(
-      runComplianceAudit({
-        tool: decisionTool,
-        systemPrompt: "audit system",
-        serializedInput: "audit input",
-        roleLabel: "Compliance",
-        invalidDecisionLabel: "invalid compliance decision",
-        context: auditContext,
-      }),
+      failure,
       (error: unknown) => {
         assert.ok(error instanceof ComplianceDecisionContractError);
         assert.equal(error.details.errorMessage, "provider timeout: compliance request expired");
