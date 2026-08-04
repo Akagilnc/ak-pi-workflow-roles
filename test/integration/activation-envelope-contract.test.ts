@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
+import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
+  ACCEPTED_ACTIVATION_EVENT,
   ActivationBarrierError,
+  activationWaitingLedgerPath,
+  buildAcceptedActivationFact,
+  correlationIdentityFromEnv,
+  resolveBookKeyFromGit,
+  serializeAcceptedActivationFact,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   TOOL_EXECUTION_UPDATE_THROTTLE_MS,
   createRoleRuntimeExtension,
@@ -14,26 +26,62 @@ import {
   toolExecutionObservationRecordSchema,
   writeActivationTraceRecord,
   writeToolExecutionObservationRecord,
+  type AcceptedActivationFact,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../../src/activation-trace.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
+import { testActivationLedgerDeps } from "../helpers/activation-ledger.ts";
+import {
+  createFakeGitHubTransport,
+  samplePull,
+  sampleUser,
+} from "../helpers/fake-github-transport.ts";
 import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
-import { packageRoot, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { packageRoot, runNodeSubprocess, withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
+import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
+
+function sha256Hex(bytes: Uint8Array | string): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+function mergerMaterial(text: string) {
+  const bytes = Buffer.from(text, "utf8");
+  return { bytesBase64: bytes.toString("base64"), sha256: sha256Hex(bytes) };
+}
+const emptyDoctorCost = {
+  invocations: { count: 0, sources: [] as string[] },
+  legs: { count: 0, sources: [] as string[] },
+  modelApiTurns: { count: 0, sources: [] as string[] },
+  outputTokens: { count: 0, sources: [] as string[] },
+  toolCalls: { count: 0, sources: [] as string[] },
+  retries: { count: 0, sources: [] as string[], evidence: "literal run-dir naming" as const },
+  statuses: [] as Array<{ source: string; status: string }>,
+  commits: [] as Array<{ source: string; commit: string }>,
+  sessions: [] as Array<{ source: string; completion: "incomplete" }>,
+  outputBytes: {
+    count: 0,
+    sources: [] as string[],
+    payload: "raw JSONL bytes" as const,
+    providerWireBytes: "unavailable" as const,
+  },
+};
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
 
+const CONTENT_MARKERS = ["PROMPT_SECRET_BYTES", "transcript-body", "--ak-role", "excerpt-text"];
 
 function runtimeHarness(options: {
   activate?: () => Promise<string>;
   clock?: () => string;
   writeTrace?: (record: ActivationTraceRecord) => void | Promise<void>;
   mode?: ExtensionContext["mode"];
+  ledger?: ReturnType<typeof testActivationLedgerDeps>;
 } = {}) {
   type Handler = (event: { reason?: string; systemPrompt?: string }, ctx: ExtensionContext) => unknown;
   const handlers = new Map<string, Handler[]>();
   const traces: ActivationTraceRecord[] = [];
+  const ledger = options.ledger ?? testActivationLedgerDeps();
   let aborts = 0;
   const pi = {
     registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
@@ -45,14 +93,211 @@ function runtimeHarness(options: {
     transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }),
     activationClock: options.clock ?? (() => "2025-01-01T00:00:00.000Z"),
     activationTraceWriter: options.writeTrace ?? ((record) => { traces.push(record); }),
+    ...ledger.deps,
   })(pi);
-  const ctx = { mode: options.mode ?? "print", abort() { aborts++; } } as unknown as ExtensionContext;
+  const ctx = { mode: options.mode ?? "print", cwd: "/repository", abort() { aborts++; } } as unknown as ExtensionContext;
   const handler = (name: string): Handler => {
     const found = handlers.get(name)?.[0];
     assert.ok(found, `missing ${name} handler`);
     return found;
   };
-  return { handler, traces, ctx, aborts: () => aborts };
+  return { handler, traces, ctx, aborts: () => aborts, facts: ledger.facts };
+}
+
+function roleActivationHarness(options: {
+  role: string;
+  clock?: () => string;
+  correlation?: import("../../src/activation-ledger.ts").ActivationCorrelationIdentity;
+  bookKey?: string;
+  sessionPath?: string;
+  appendError?: Error;
+  mode?: ExtensionContext["mode"];
+}) {
+  type Handler = (event: { reason?: string; systemPrompt?: string; systemPromptOptions?: unknown; prompt?: string }, ctx: ExtensionContext) => unknown;
+  const handlers = new Map<string, Handler[]>();
+  const tools = new Map<string, unknown>();
+  // Host tools exist before role registration (Merger/Doctor/Collector assert exact presence).
+  for (const name of ["read", "grep", "find", "ls", "bash", "write", "edit", "Agent"]) {
+    tools.set(name, { name });
+  }
+  let activeTools: string[] = [];
+  const ledger = testActivationLedgerDeps({
+    bookKey: options.bookKey ?? "envelope-book",
+    ...(options.correlation === undefined ? {} : { correlation: options.correlation }),
+    session: { kind: "session-file", path: options.sessionPath ?? "/ledger/home/session.jsonl" },
+    ...(options.appendError === undefined ? {} : { appendError: options.appendError }),
+  });
+  let aborts = 0;
+  let providerTurns = 0;
+  const oid = (ch: string) => ch.repeat(40);
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "ak-role-admit-"));
+  const legsPath = join(fixtureRoot, "legs.json");
+  writeFileSync(legsPath, `${JSON.stringify({
+    legs: [{ id: "codex", expectedAuthors: ["codexbot"], request: { body: "Please review." } }],
+  })}\n`);
+  const reviewTask = new TextEncoder().encode("Review the fixed point.\n");
+  const reviewOps = [
+    "preflight.git.pin-target", "preflight.git.resolve-base", "preflight.git.derive-range",
+    "preflight.git.list-ordered-commits", "preflight.git.read-material",
+    "runner.git.materialize-mirror", "runner.git.materialize-workspace", "runner.git.verify-snapshot",
+  ] as const;
+  const reviewCaps = new TextEncoder().encode(JSON.stringify({
+    version: 1,
+    taskSha256: sha256Hex(reviewTask),
+    tools: ["read", "bash"],
+    prerequisiteOperations: [...reviewOps],
+  }));
+  const flags: Record<string, unknown> = {
+    "ak-role": options.role,
+    "ak-fixer-phase": "plan",
+    "ak-fix-packet": "/lawful/packet.md",
+    "ak-coder-phase": "plan",
+    "ak-coder-task": "/lawful/task.md",
+    "ak-review-task": "/lawful/review-task.md",
+    "ak-review-capabilities": "/lawful/review-caps.md",
+    "ak-doctor-case": "/lawful/case",
+    "ak-merger-input": "/lawful/merger.json",
+    "ak-collector-repo": "acme/widgets",
+    "ak-collector-pr": "1",
+    "ak-collector-legs": legsPath,
+  };
+  const pi = {
+    registerFlag() {},
+    registerTool(tool: { name: string }) { tools.set(tool.name, tool); },
+    setActiveTools(names: string[]) { activeTools = [...names]; },
+    getActiveTools() { return [...activeTools]; },
+    getAllTools() { return [...tools.values()]; },
+    getCommands() { return []; },
+    getFlag(name: string) { return flags[name]; },
+    on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+  } as unknown as ExtensionAPI;
+
+  const mergerInput = {
+    version: 1 as const,
+    attemptId: "attempt-1",
+    targetObjectId: oid("a"),
+    sourceObjectId: oid("b"),
+    expectedConflictPaths: ["conflict.txt"],
+    resolutionScope: ["conflict.txt"],
+    authorizedChecks: [{ name: "test", argv: ["npm", "test"] }],
+    materials: {
+      task: mergerMaterial("task"),
+      authority: mergerMaterial("authority"),
+      targetIntent: mergerMaterial("target intent"),
+      sourceIntent: mergerMaterial("source intent"),
+    },
+  };
+
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "LAW",
+    loadFixerSoul: async () => "LAW",
+    loadFixPacket: async () => "Repair the findings.\n",
+    loadCoderSoul: async () => "LAW",
+    loadCoderTask: async () => "Build it.\n",
+    loadReviewerSoul: async () => "LAW",
+    loadReviewerTask: async () => reviewTask,
+    loadReviewerCapabilities: async () => reviewCaps,
+    createReviewerPinnedGitReader: async () => {
+      const pin = {
+        repositoryRoot: "/repo",
+        objectFormat: "sha1" as const,
+        targetHead: oid("9"),
+        refs: { "refs/heads/main": { objectId: oid("9"), peeledCommitId: oid("9") } },
+      };
+      return {
+        pin,
+        snapshot: async () => pin,
+        resolve: async () => oid("8"),
+        range: async () => ({
+          base: oid("8"),
+          target: oid("9"),
+          diffCommand: `git diff ${oid("8")}...${oid("9")}`,
+          diffSha256: "2".repeat(64),
+          commits: [oid("9")],
+        }),
+        material: async () => new TextEncoder().encode("material"),
+      };
+    },
+    loadCanonicalSkillBinding: async (name) => {
+      const raw = "# skill\n";
+      return {
+        name,
+        snapshot: {
+          raw,
+          path: "/skill",
+          baseDir: "/",
+          body: raw,
+          snapshotIdentity: reviewerPromptIdentity(raw),
+        },
+        invocation: (original: string) => `/skill:${name} ${original}`,
+        captureExpansion: () => undefined,
+      };
+    },
+    runReviewerDispatch: async () => {
+      throw new Error("dispatch unused during activation");
+    },
+    loadCollectorSoul: async () => "LAW",
+    createCollectorTransport: () => createFakeGitHubTransport({
+      user: sampleUser(),
+      pullRequest: samplePull(),
+      reviews: [],
+      issueComments: [],
+      reviewComments: [],
+    }),
+    loadDoctorSoul: async () => "LAW",
+    loadDoctorCase: async () => ({
+      version: 1 as const,
+      identity: { issueNumber: 1, runsPath: "/lawful/case" },
+      cost: emptyDoctorCost,
+      evidence: [],
+    }),
+    auditDoctorCompliance: async () => ({ status: "pass" as const }),
+    loadMergerSoul: async () => "LAW",
+    loadMergerInput: async () => mergerInput,
+    createMergerGitState: () => ({
+      activeMerge: async () => ({
+        targetObjectId: oid("a"),
+        sourceObjectId: oid("b"),
+        unmergedPaths: ["conflict.txt"],
+        automaticMergeTreeId: oid("c"),
+      }),
+      completedMerge: async () => { throw new Error("unused"); },
+    }),
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+    activationClock: options.clock ?? (() => "2025-01-01T00:00:00.000Z"),
+    activationTraceWriter: () => {},
+    ...ledger.deps,
+  })(pi);
+  const ctx = {
+    mode: options.mode ?? "print",
+    cwd: "/repository",
+    abort() { aborts++; },
+    sessionManager: {
+      getSessionDir: () => "/ledger/home/session",
+      getSessionFile: () => options.sessionPath ?? "/ledger/home/session.jsonl",
+    },
+  } as unknown as ExtensionContext;
+  return {
+    handlers,
+    facts: ledger.facts,
+    ctx,
+    aborts: () => aborts,
+    async start() {
+      const start = handlers.get("session_start")?.[0];
+      assert.ok(start);
+      await start({ reason: "startup" }, ctx);
+    },
+    async tryProvider() {
+      for (const before of handlers.get("before_agent_start") ?? []) await before({
+        systemPrompt: "BASE",
+        systemPromptOptions: {},
+        prompt: "go",
+      }, ctx);
+      providerTurns++;
+    },
+    providerTurns: () => providerTurns,
+  };
 }
 
 test("every registered whole-activation rejection terminates nonzero with a named cause before a model turn", async () => {
@@ -60,6 +305,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
     process.exitCode = undefined;
     const handlers = new Map<string, Array<(event: { reason?: string }, ctx: ExtensionContext) => unknown>>();
     const traces: ActivationTraceRecord[] = [];
+    const ledger = testActivationLedgerDeps({ bookKey: "reject-book" });
     let aborts = 0;
     let providerTurns = 0;
     const flags: Record<string, unknown> = {
@@ -89,6 +335,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
       auditSoulCompliance: async () => ({ status: "pass" }),
       activationClock: () => "2025-01-01T00:00:00.000Z",
       activationTraceWriter: (record) => { traces.push(record); },
+      ...ledger.deps,
     })(pi);
     const ctx = { mode: "print", cwd: "/repository", abort() { aborts++; } } as unknown as ExtensionContext;
     const start = handlers.get("session_start")?.[0];
@@ -103,6 +350,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
     assert.equal(providerTurns, 0, `${entry.role} reached the provider`);
     assert.equal(aborts, 2);
     assert.equal(process.exitCode, 1);
+    assert.equal(ledger.facts.length, 0, `${entry.role} wrote an accepted-activation fact on rejection`);
     const failed = traces.find((trace) => trace.status === "failed");
     assert.ok(failed && failed.status === "failed");
     assert.equal(failed.cause.identity, "TypeError");
@@ -111,6 +359,348 @@ test("every registered whole-activation rejection terminates nonzero with a name
     if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
     assert.match(failed.cause.evidenceId, /^activation-cause-/);
   }
+});
+
+test("every registered role writes exactly one accepted-activation fact after admission", async () => {
+  assert.ok(PACKAGED_ROLE_REGISTRY.some((entry) => entry.role === "collector"), "Collector must remain in the #52 registry gate");
+  for (const entry of PACKAGED_ROLE_REGISTRY) {
+    process.exitCode = undefined;
+    const withCorrelation = roleActivationHarness({
+      role: entry.role,
+      correlation: { kind: "caller", id: `corr-${entry.role}` },
+      sessionPath: `/sessions/${entry.role}.jsonl`,
+      clock: () => "2025-06-01T12:00:00.000Z",
+    });
+    await withCorrelation.start();
+    assert.equal(withCorrelation.facts.length, 1, `${entry.role} admitted fact count`);
+    assert.deepEqual(withCorrelation.facts[0], {
+      event: ACCEPTED_ACTIVATION_EVENT,
+      role: entry.role,
+      observedAt: "2025-06-01T12:00:00.000Z",
+      bookKey: "envelope-book",
+      session: { kind: "session-file", path: `/sessions/${entry.role}.jsonl` },
+      correlation: { kind: "caller", id: `corr-${entry.role}` },
+    });
+
+    const missingCorrelation = roleActivationHarness({
+      role: entry.role,
+      correlation: { kind: "absent" },
+      sessionPath: `/sessions/${entry.role}-absent.jsonl`,
+    });
+    await missingCorrelation.start();
+    assert.equal(missingCorrelation.facts.length, 1);
+    assert.deepEqual(missingCorrelation.facts[0]?.correlation, { kind: "absent" });
+  }
+
+  // Envelope barrier opens only after admitted fact write (judge is a bare role with no extra before_agent_start policy).
+  const admitted = roleActivationHarness({ role: "judge" });
+  await admitted.start();
+  await admitted.tryProvider();
+  assert.equal(admitted.providerTurns(), 1);
+});
+
+test("unselected role and unsupported role leave zero accepted-activation facts", async () => {
+  process.exitCode = undefined;
+  const unselected = testActivationLedgerDeps();
+  type Handler = (event: { reason?: string }, ctx: ExtensionContext) => unknown;
+  const handlers = new Map<string, Handler[]>();
+  const pi = {
+    registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
+    getFlag() { return undefined; },
+    on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+  } as unknown as ExtensionAPI;
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "LAW",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+    ...unselected.deps,
+  })(pi);
+  await handlers.get("session_start")?.[0]?.({}, { mode: "print", cwd: "/repo", abort() {} } as ExtensionContext);
+  assert.equal(unselected.facts.length, 0);
+
+  const unsupported = testActivationLedgerDeps();
+  const badHandlers = new Map<string, Handler[]>();
+  const badPi = {
+    registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
+    getFlag(name: string) { return name === "ak-role" ? "router" : undefined; },
+    on(name: string, handler: Handler) { badHandlers.set(name, [...(badHandlers.get(name) ?? []), handler]); },
+  } as unknown as ExtensionAPI;
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "LAW",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+    ...unsupported.deps,
+  })(badPi);
+  await assert.rejects(async () => badHandlers.get("session_start")?.[0]?.({}, {
+    mode: "print", cwd: "/repo", abort() {},
+  } as ExtensionContext));
+  assert.equal(unsupported.facts.length, 0);
+});
+
+test("non-git cwd fails before model dispatch with zero accepted facts", async () => {
+  process.exitCode = undefined;
+  const facts: AcceptedActivationFact[] = [];
+  type Handler = (event: { reason?: string }, ctx: ExtensionContext) => unknown;
+  const handlers = new Map<string, Handler[]>();
+  let aborts = 0;
+  let soulLoads = 0;
+  let providerTurns = 0;
+  const pi = {
+    registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
+    getFlag(name: string) { return name === "ak-role" ? "judge" : undefined; },
+    on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+  } as unknown as ExtensionAPI;
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => { soulLoads += 1; return "LAW"; },
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+    activationTraceWriter: () => {},
+    appendActivationLedgerFact: async (fact) => { facts.push(fact); },
+    // production book-key path — no override
+  })(pi);
+  const nonGit = mkdtempSync(join(tmpdir(), "ak-nongit-"));
+  try {
+    const ctx = { mode: "print" as const, cwd: nonGit, abort() { aborts++; } };
+    await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx as ExtensionContext), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /git rev-parse --git-common-dir/);
+      assert.ok(error.cause !== undefined, "original git cause must be retained");
+      return true;
+    });
+    assert.equal(soulLoads, 0, "activation stage must not run before book-key resolution");
+    assert.equal(facts.length, 0);
+    assert.equal(aborts, 1);
+    assert.equal(process.exitCode, 1);
+    await assert.rejects(async () => {
+      for (const before of handlers.get("before_agent_start") ?? []) await before({}, ctx as ExtensionContext);
+      providerTurns++;
+    }, (error: unknown) => error instanceof ActivationBarrierError);
+    assert.equal(providerTurns, 0);
+  } finally {
+    rmSync(nonGit, { recursive: true, force: true });
+  }
+});
+
+test("append failure preserves original cause, aborts nonzero, and blocks provider turns", async () => {
+  process.exitCode = undefined;
+  const appendError = new Error("disk full");
+  const h = roleActivationHarness({ role: "judge", appendError });
+  await assert.rejects(async () => h.start(), (error: unknown) => error === appendError);
+  assert.equal(h.facts.length, 0);
+  assert.equal(h.aborts(), 1);
+  assert.equal(process.exitCode, 1);
+  await assert.rejects(async () => h.tryProvider(), (error: unknown) => error instanceof ActivationBarrierError);
+  assert.equal(h.providerTurns(), 0);
+});
+
+test("accepted-activation serializer emits only index keys and zero known content bytes", () => {
+  const fact = buildAcceptedActivationFact({
+    role: "judge",
+    observedAt: "2025-01-01T00:00:00.000Z",
+    bookKey: "demo",
+    session: { kind: "session-file", path: "/home/session.jsonl" },
+    correlation: { kind: "caller", id: "c1" },
+  });
+  const smuggled = {
+    ...fact,
+    prompt: "PROMPT_SECRET_BYTES",
+    transcript: "transcript-body",
+    argv: ["--ak-role", "judge"],
+    excerpt: "excerpt-text",
+    content: "nope",
+  } as AcceptedActivationFact & Record<string, unknown>;
+  const line = serializeAcceptedActivationFact(smuggled);
+  const parsed = JSON.parse(line) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(parsed).sort(), [
+    "bookKey",
+    "correlation",
+    "event",
+    "observedAt",
+    "role",
+    "session",
+  ]);
+  for (const marker of CONTENT_MARKERS) {
+    assert.equal(line.includes(marker), false, `serialized fact must not contain ${marker}`);
+  }
+  assert.deepEqual(correlationIdentityFromEnv({}), { kind: "absent" });
+  assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "" }), { kind: "absent" });
+  assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "abc" }), { kind: "caller", id: "abc" });
+});
+
+test("book key follows git common-dir host basename across worktrees, rename, and basename collision", () => {
+  const root = mkdtempSync(join(tmpdir(), "ak-book-topo-"));
+  try {
+    const main = join(root, "project-alpha");
+    mkdirSync(main);
+    execFileSync("git", ["init", "-b", "main"], { cwd: main, stdio: "ignore" });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "init"], {
+      cwd: main,
+      stdio: "ignore",
+      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
+    });
+    const worktree = join(root, "project-alpha-wt");
+    execFileSync("git", ["worktree", "add", worktree], { cwd: main, stdio: "ignore" });
+    assert.equal(resolveBookKeyFromGit(main), "project-alpha");
+    assert.equal(resolveBookKeyFromGit(worktree), "project-alpha");
+
+    const renamed = join(root, "project-beta");
+    renameSync(main, renamed);
+    // linked worktree still points at renamed common dir host after directory rename of main checkout
+    assert.equal(resolveBookKeyFromGit(renamed), "project-beta");
+
+    const twin = join(root, "collision", "project-beta");
+    mkdirSync(join(root, "collision"), { recursive: true });
+    mkdirSync(twin);
+    execFileSync("git", ["init", "-b", "main"], { cwd: twin, stdio: "ignore" });
+    assert.equal(resolveBookKeyFromGit(twin), "project-beta");
+    assert.equal(resolveBookKeyFromGit(renamed), resolveBookKeyFromGit(twin));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent child processes append intact JSONL records with exact cardinality", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ak-ledger-conc-"));
+  const ledgerHome = join(root, "home");
+  const bookKey = "concurrent-book";
+  const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
+  const worker = join(root, "worker.mjs");
+  writeFileSync(worker, `
+import { appendAcceptedActivationFact, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
+const index = Number(process.argv[2]);
+const ledgerPath = process.argv[3];
+appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
+  role: "judge",
+  observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
+  bookKey: "concurrent-book",
+  session: { kind: "session-file", path: "/s/" + index + ".jsonl" },
+  correlation: { kind: "caller", id: "c-" + index },
+}));
+`);
+  const children = await Promise.all(Array.from({ length: 12 }, (_, index) =>
+    runNodeSubprocess(
+      ["--import", "tsx", worker, String(index), ledgerPath],
+      { cwd: packageRoot, timeoutMs: 15_000 },
+    )));
+  for (const child of children) {
+    assert.equal(child.code, 0, child.stderr);
+  }
+  const lines = readFileSync(ledgerPath, "utf8").split("\n").filter(Boolean);
+  assert.equal(lines.length, 12);
+  const ids = lines.map((line) => {
+    const row = JSON.parse(line) as AcceptedActivationFact;
+    assert.equal(row.event, ACCEPTED_ACTIVATION_EVENT);
+    assert.equal(row.bookKey, bookKey);
+    assert.equal(row.correlation.kind, "caller");
+    return row.correlation.kind === "caller" ? row.correlation.id : "";
+  });
+  assert.deepEqual(ids.sort(), Array.from({ length: 12 }, (_, i) => `c-${i}`).sort());
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("real subprocess activation writes one enumerable fact; non-git writes none", async () => {
+  await withHermeticHome({ prefix: "ak-act-subproc-" }, async ({ home, agentDir }) => {
+    const ledgerHome = join(home, "roles-home");
+    const repo = join(home, "repo-main");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "ignore" });
+    const sessionDir = join(ledgerHome, "books", "repo-main", "sessions", "run-1");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const ok = await runNodeSubprocess([
+      "--import", "tsx", "-e",
+      `
+import { createRoleRuntimeExtension } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/role-runtime.ts")).href)};
+const handlers = new Map();
+const pi = {
+  registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
+  getFlag(name) { return name === "ak-role" ? "judge" : undefined; },
+  on(name, handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+};
+createRoleRuntimeExtension({
+  loadJudgeSoul: async () => "LAW",
+  transcriptFromContext: () => "",
+  auditSoulCompliance: async () => ({ status: "pass" }),
+  activationClock: () => "2025-01-02T00:00:00.000Z",
+  activationTraceWriter: () => {},
+  resolveActivationLedgerHome: () => process.env.AK_ROLES_HOME,
+  resolveActivationCorrelation: () => ({ kind: "caller", id: "subproc-1" }),
+})(pi);
+const ctx = {
+  mode: "print",
+  cwd: process.env.REPO_CWD,
+  abort() {},
+  sessionManager: {
+    getSessionDir: () => process.env.SESSION_DIR,
+    getSessionFile: () => process.env.SESSION_DIR + "/session.jsonl",
+  },
+};
+await handlers.get("session_start")[0]({ reason: "startup" }, ctx);
+`,
+    ], {
+      cwd: packageRoot,
+      env: {
+        ...process.env,
+        AK_ROLES_HOME: ledgerHome,
+        REPO_CWD: repo,
+        SESSION_DIR: sessionDir,
+        HOME: home,
+        PI_CODING_AGENT_DIR: agentDir,
+      },
+      timeoutMs: 20_000,
+    });
+    assert.equal(ok.code, 0, ok.stderr);
+    const ledgerPath = activationWaitingLedgerPath(ledgerHome, "repo-main");
+    const lines = readFileSync(ledgerPath, "utf8").trim().split("\n");
+    assert.equal(lines.length, 1);
+    const fact = JSON.parse(lines[0]!) as AcceptedActivationFact;
+    assert.equal(fact.event, ACCEPTED_ACTIVATION_EVENT);
+    assert.equal(fact.role, "judge");
+    assert.equal(fact.bookKey, "repo-main");
+    assert.deepEqual(fact.session, { kind: "session-file", path: join(sessionDir, "session.jsonl") });
+    assert.deepEqual(fact.correlation, { kind: "caller", id: "subproc-1" });
+    // enumerable home → book → fact chain
+    assert.deepEqual(readdirSync(join(ledgerHome, "books")), ["repo-main"]);
+
+    // Outside the hermetic home so parent-directory git discovery cannot find a repo.
+    const nonGit = mkdtempSync(join(tmpdir(), "ak-truly-nongit-"));
+    const emptyHome = join(home, "empty-home");
+    mkdirSync(emptyHome);
+    const bad = await runNodeSubprocess([
+      "--import", "tsx", "-e",
+      `
+import { createRoleRuntimeExtension } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/role-runtime.ts")).href)};
+const handlers = new Map();
+const pi = {
+  registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
+  getFlag(name) { return name === "ak-role" ? "judge" : undefined; },
+  on(name, handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+};
+createRoleRuntimeExtension({
+  loadJudgeSoul: async () => "LAW",
+  transcriptFromContext: () => "",
+  auditSoulCompliance: async () => ({ status: "pass" }),
+  activationTraceWriter: () => {},
+  resolveActivationLedgerHome: () => process.env.AK_ROLES_HOME,
+})(pi);
+const ctx = { mode: "print", cwd: process.env.REPO_CWD, abort() {}, sessionManager: { getSessionDir: () => "/tmp", getSessionFile: () => undefined } };
+try {
+  await handlers.get("session_start")[0]({ reason: "startup" }, ctx);
+  process.exitCode = 0;
+} catch (error) {
+  process.exitCode = 1;
+  if (!(error instanceof Error) || !/git rev-parse --git-common-dir/.test(error.message)) process.exitCode = 2;
+}
+`,
+    ], {
+      cwd: packageRoot,
+      env: { ...process.env, AK_ROLES_HOME: emptyHome, REPO_CWD: nonGit, HOME: home },
+      timeoutMs: 20_000,
+    });
+    assert.equal(bad.code, 1, bad.stderr);
+    assert.equal(readdirSync(emptyHome).length, 0);
+    rmSync(nonGit, { recursive: true, force: true });
+  });
 });
 
 test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subprocess before provider dispatch", async () => {
@@ -343,6 +933,7 @@ test("observation face rejects throttleMs override at the typed call site and ig
 
 test("shared role runtime registers tool observation only after admitted activation and never writes stdout", async () => {
   const observations: ToolExecutionObservationRecord[] = [];
+  const ledger = testActivationLedgerDeps();
   type Handler = (event: Record<string, unknown>, ctx?: ExtensionContext) => unknown;
   const handlers = new Map<string, Handler[]>();
   const pi = {
@@ -357,6 +948,7 @@ test("shared role runtime registers tool observation only after admitted activat
     activationClock: () => "2025-01-01T00:00:00.000Z",
     activationTraceWriter: () => {},
     toolExecutionObservationWriter: (record) => { observations.push(record); },
+    ...ledger.deps,
   })(pi);
 
   const startHandler = handlers.get("tool_execution_start")?.[0];
@@ -371,7 +963,8 @@ test("shared role runtime registers tool observation only after admitted activat
 
   const sessionStart = handlers.get("session_start")?.[0];
   assert.ok(sessionStart);
-  await sessionStart({ reason: "startup" }, { mode: "print", abort() {} } as unknown as ExtensionContext);
+  await sessionStart({ reason: "startup" }, { mode: "print", cwd: "/repo", abort() {} } as unknown as ExtensionContext);
+  assert.equal(ledger.facts.length, 1);
 
   await startHandler({ toolCallId: "post", toolName: "bash" });
   await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [] } });
@@ -435,6 +1028,7 @@ test("observation writer failure aborts through real ExtensionRunner emit with o
           activationClock: () => "2025-01-01T00:00:00.000Z",
           activationTraceWriter: () => {},
           toolExecutionObservationWriter: () => { throw writerError; },
+          ...testActivationLedgerDeps().deps,
         })],
       }, async ({ session }) => {
         session.extensionRunner.onError((error) => { extensionErrors.push(error); });

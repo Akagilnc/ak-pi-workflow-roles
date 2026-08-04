@@ -10,6 +10,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage
 import { sha256Hex } from "../../src/sha256.ts";
 import { createMergerRoleRuntime } from "../../src/merger-role.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { testActivationLedgerDeps } from "../helpers/activation-ledger.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { withHermeticHome, withInProcessPi } from "../helpers/pi-test-harness.ts";
 
@@ -102,6 +103,7 @@ test("role extension binds Merger Git state to session cwd while preserving inje
     const states: object[] = [];
     const state = { activeMerge: async () => ({ targetObjectId: oid("a"), sourceObjectId: oid("b"), unmergedPaths: ["same.txt"], automaticMergeTreeId: oid("d") }), completedMerge: async () => { throw new Error("unused"); } };
     createRoleRuntimeExtension({
+      ...testActivationLedgerDeps().deps,
       loadJudgeSoul: async () => "unused", transcriptFromContext: () => "unused", auditSoulCompliance: async () => ({ status: "pass", violations: [] }),
       loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input,
       createMergerGitState(root) { roots.push(root); const created = { ...state }; states.push(created); return created; },
