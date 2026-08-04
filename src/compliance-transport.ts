@@ -11,6 +11,8 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
+const COMPLIANCE_REQUEST_TIMEOUT_MS = 183000;
+
 export type ComplianceCompletion = (
   model: Model<Api>,
   context: Context,
@@ -481,6 +483,7 @@ export async function runComplianceAudit(options: {
     },
     {
       ...dispatch.auth,
+      timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
       maxTokens: 2048,
       cacheRetention: "none",
       sessionId: uuidv7(),
