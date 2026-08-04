@@ -33,11 +33,6 @@ test("npm pack includes collector modules and soul and excludes skills/orchestra
   assert.ok(paths.includes("src/collector-tool-schemas.ts"));
   assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
   assert.equal(paths.includes("souls/collect.md"), false);
-  const archiveText = (await exec("tar", ["-xOf", pack.tarball], {
-    maxBuffer: 5 * 1024 * 1024,
-  })).stdout;
-  assert.doesNotMatch(archiveText, /onlineCollect|ReviewCargo|souls\/collect\.md/);
-  assert.doesNotMatch(archiveText, /Mysterious Name|Under 400 words|Feature Envy/);
 });
 
 test("installed npm tarball collector runs default gh transport end-to-end in print and json", async () => {

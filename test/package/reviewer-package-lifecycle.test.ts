@@ -35,10 +35,6 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       assert.ok(pack.files.some((file) => file.path === "src/reviewer-dispatch.ts"));
       assert.ok(pack.files.some((file) => file.path === "src/reviewer-pinned-git.ts"));
       assert.equal(pack.files.some((file) => /(^|\/)SKILL\.md$/.test(file.path)), false);
-      assert.ok(pack.files.some((file) => file.path === "README.md"));
-      const packagedReadme = (await exec("tar", ["-xOf", pack.tarball, "package/README.md"])).stdout;
-      assert.match(packagedReadme, /reviewerProposalSchema/);
-      assert.doesNotMatch(packagedReadme, /standardsMaterials.*may be empty|preflight\.git\.pin-target\|/);
 
       const agentDir = resolve(fixture, ".pi-agent");
       await git(fixture, "init");

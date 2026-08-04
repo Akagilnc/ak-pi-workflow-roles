@@ -190,17 +190,39 @@ test("successful Agent result is exactly thin while settled evidence remains int
   assert.equal(reviewerHarness.starts,1);
 });
 
-test("runtime receipt preserves exact report UTF-8 bytes, length, and SHA", async()=>{
+test("runtime receipt preserves exact consumed report text without identity shell", async()=>{
   const exact="    indented Markdown\n\ntrailing π\n";
   const reviewerHarness=setup({runDispatch:async(dispatch)=>{const leg=dispatch.legs[0]!;return {identity:dispatch.identity,target:pin,legs:{standards:successfulLeg(dispatch,leg,exact)}};}});
   await reviewerHarness.runtime.activate(); captureReviewExpansion(reviewerHarness);
   const result=await reviewerHarness.tools.get(AGENT_TOOL_NAME).execute("ok",proposal(false),undefined,undefined,{} as ExtensionContext);
   assert.equal(JSON.stringify(result).includes(exact),false);
   const receipt=await reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("out",{status:"completed"},undefined,undefined,outputContext("out"));
-  assert.deepEqual(receipt.details.reports.standards,{text:exact,utf8Length:Buffer.byteLength(exact),sha256:createHash("sha256").update(exact).digest("hex")});
+  assert.deepEqual(receipt.details.reports.standards,{text:exact});
+  assert.equal(Object.hasOwn(receipt.details.reports.standards, "utf8Length"), false);
+  assert.equal(Object.hasOwn(receipt.details.reports.standards, "sha256"), false);
 });
 
-test("runtime receipts preserve binding-owned and accepted canonical Skill content identity independent of locators",async()=>{const pre=setup();await pre.runtime.activate();const refused=await pre.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("pre",{status:"refused",diagnostic:"no accepted batch"},undefined,undefined,outputContext("pre"));assert.deepEqual(refused.details.identities.canonicalSkill.snapshotIdentity,reviewerPromptIdentity(skill));assert.equal(JSON.stringify(refused.details).includes("/skill"),false);const accepted=setup();await accepted.runtime.activate();captureReviewExpansion(accepted);await accepted.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);const completed=await accepted.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("done",{status:"completed"},undefined,undefined,outputContext("done"));assert.deepEqual(completed.details.identities.canonicalSkill.snapshotIdentity,accepted.audits[0]!.record.accepted!.input.canonicalSkill.snapshotIdentity);assert.equal(completed.details.identities.canonicalSkill.snapshotIdentity.text,skill)});
+test("runtime receipts project Skill content text and expansion facts without identity shells or locators",async()=>{
+  const pre=setup();
+  await pre.runtime.activate();
+  const refused=await pre.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("pre",{status:"refused",diagnostic:"no accepted batch"},undefined,undefined,outputContext("pre"));
+  assert.deepEqual(refused.details.identities.canonicalSkill,{text:skill});
+  assert.equal(JSON.stringify(refused.details).includes("/skill"),false);
+  assert.equal(Object.hasOwn(refused.details.identities.canonicalSkill,"sha256"),false);
+  assert.equal(Object.hasOwn(refused.details.identities.canonicalSkill,"utf8Length"),false);
+  assert.equal(Object.hasOwn(refused.details.identities.canonicalSkill,"snapshotIdentity"),false);
+
+  const accepted=setup();
+  await accepted.runtime.activate();
+  captureReviewExpansion(accepted);
+  await accepted.tools.get(AGENT_TOOL_NAME).execute("run",proposal(),undefined,undefined,{} as ExtensionContext);
+  const completed=await accepted.tools.get(REVIEWER_OUTPUT_TOOL_NAME).execute("done",{status:"completed"},undefined,undefined,outputContext("done"));
+  assert.deepEqual(completed.details.identities.canonicalSkill,{text:skill});
+  assert.equal(completed.details.identities.canonicalSkill.text,accepted.audits[0]!.record.accepted!.input.canonicalSkill.snapshotIdentity.text);
+  assert.equal(JSON.stringify(completed.details).includes("/skill"),false);
+  // Expansion is a completion gate, not a receipt identity shell.
+  assert.equal(accepted.audits.length,1);
+});
 
 test("runner result axes must exactly equal accepted one- and two-leg dispatch axes", async()=>{
   const cases = [

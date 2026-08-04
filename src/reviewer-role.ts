@@ -210,7 +210,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           const candidate = assembleRuntimeReviewerReceipt({
             intent: output,
             record,
-            canonicalSkillSnapshotIdentity: binding.snapshot.snapshotIdentity,
+            canonicalSkillText: binding.snapshot.raw,
           });
           let audit: ComplianceDecision;
           try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
