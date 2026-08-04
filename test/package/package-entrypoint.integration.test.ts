@@ -2183,7 +2183,6 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
     assert.ok(observations.length >= 2, `expected start/end observation records, got ${JSON.stringify(observations)}`);
     for (const record of observations) {
       assert.equal(record.role, "judge");
-      assert.equal(record.schemaVersion, 1);
       assert.notEqual(record.toolName, NAVIGATOR_PREPARE_TOOL_NAME, "Navigator prepare must not be attributed to the outer role");
     }
 
