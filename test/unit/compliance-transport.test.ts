@@ -175,35 +175,41 @@ test("default compliance completion sends the production timeout and preserves s
   });
 });
 
-test("a timeout-honoring provider terminates the real default seam with typed cause and no receipt", async () => {
+test("a timeout-honoring provider terminates the real default seam with typed cause and no receipt", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   await withPersistedSession(async (sessionManager) => {
     const seen: { options?: Record<string, unknown> } = {};
     const auditContext = defaultCompletionContext(
       sessionManager,
       (options) => new Promise<AssistantMessage>((resolve) => {
-        // This provider honors the deadline, with the short threshold supplied
-        // by this test seam rather than sleeping for the production interval.
+        // This provider honors the exact production deadline. The test clock
+        // advances it without sleeping for 183 seconds.
         if (typeof options.timeoutMs !== "number" || options.timeoutMs <= 0) return;
-        const testDeadlineMs = Math.min(options.timeoutMs, 10);
         setTimeout(() => resolve(response("default-timeout", [], {
           stopReason: "error",
           errorMessage: "provider timeout: compliance request expired",
-        })), testDeadlineMs);
+        })), options.timeoutMs);
       }),
       seen,
     );
     const started = Date.now();
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(183000);
     await assert.rejects(
-      runComplianceAudit({
-        tool: decisionTool,
-        systemPrompt: "audit system",
-        serializedInput: "audit input",
-        roleLabel: "Compliance",
-        invalidDecisionLabel: "invalid compliance decision",
-        context: auditContext,
-      }),
+      failure,
       (error: unknown) => {
         assert.ok(error instanceof ComplianceDecisionContractError);
+        assert.equal(error.name, "ComplianceDecisionContractError");
+        assert.equal(error.details.responseStopReason, "error");
+        assert.equal(error.details.provider, "faux");
         assert.equal(error.details.errorMessage, "provider timeout: compliance request expired");
         return true;
       },
