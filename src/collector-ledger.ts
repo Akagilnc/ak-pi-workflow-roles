@@ -3,12 +3,8 @@ import Value from "typebox/value";
 import type { CollectorManifest, CollectorRepository } from "./collector-config.ts";
 import {
   applyEvidenceVersionHistory,
-  assertCollectorByteLimit,
   assignWindowRelations,
   COLLECTOR_ELIGIBILITY_MS,
-  COLLECTOR_RECEIPT_MAX_BYTES,
-  COLLECTOR_SNAPSHOT_MAX_BYTES,
-  createSnapshotByteBudget,
   measureNormalizedBytes,
   normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
@@ -172,8 +168,6 @@ export type CollectorLedger = {
   transportFailures(): readonly CollectorTransportFailure[];
   configuredAuthorLogins(): ReadonlySet<string>;
   legById(legId: string): CollectorConfigState["manifest"]["legs"][number] | undefined;
-  materializationByteLength(): number;
-  assertMaterializationWithinBound(label: string): void;
 };
 
 function isOperationalTool(name: string): name is CollectorOperationalTool {
@@ -412,26 +406,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     return Math.max(0, deadlineMono - monoNowOrThrow(clock));
   };
 
-  const materializationByteLength = (): number => {
-    const payload = {
-      evidence: [...evidenceById.values()],
-      snapshots,
-      attempts,
-      waits,
-      transportFailures,
-    };
-    return Buffer.byteLength(JSON.stringify(payload), "utf8");
-  };
-
-  const assertMaterializationWithinBound = (label: string): void => {
-    const bytes = materializationByteLength();
-    try {
-      assertCollectorByteLimit(label, bytes, COLLECTOR_RECEIPT_MAX_BYTES);
-    } catch (error) {
-      throw latchFatal(error instanceof Error ? error.message : String(error));
-    }
-  };
-
   const prIdentity = (pr: GitHubPullRequest): string =>
     `${pr.state}|${pr.headOid}|${pr.updatedAt ?? ""}`;
 
@@ -444,49 +418,30 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     const repo = config.repository.repo;
     const prNumber = config.prNumber;
     const signalOpt = signal === undefined ? {} : { signal };
-    // One observation-attempt budget; resets on PR-identity retry.
-    const budget = createSnapshotByteBudget(COLLECTOR_SNAPSHOT_MAX_BYTES);
     const user = await transport.getAuthenticatedUser(signalOpt);
-    budget.retain([normalizeAuthenticatedUserEvidence(user, observedAt)]);
     const prInitial = await transport.getPullRequest({
       owner,
       repo,
       prNumber,
       ...signalOpt,
     });
-    budget.retain([normalizePullRequestEvidence(prInitial, observedAt)]);
     const reviews = await transport.listPullRequestReviews({
       owner,
       repo,
       prNumber,
       ...signalOpt,
-      retainPage: (items) => {
-        budget.retain(
-          items.map((item) => normalizeReviewEvidence(item, observedAt)),
-        );
-      },
     });
     const issueComments = await transport.listIssueComments({
       owner,
       repo,
       prNumber,
       ...signalOpt,
-      retainPage: (items) => {
-        budget.retain(
-          items.map((item) => normalizeIssueCommentEvidence(item, observedAt)),
-        );
-      },
     });
     const reviewComments = await transport.listReviewComments({
       owner,
       repo,
       prNumber,
       ...signalOpt,
-      retainPage: (items) => {
-        budget.retain(
-          items.map((item) => normalizeReviewCommentEvidence(item, observedAt)),
-        );
-      },
     });
     const prTerminal = await transport.getPullRequest({
       owner,
@@ -763,15 +718,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       assignWindowRelations(pendingRecords, activationTime, deadlineTime);
 
       const normalizedByteLength = measureNormalizedBytes(pendingRecords);
-      try {
-        assertCollectorByteLimit(
-          "snapshot",
-          normalizedByteLength,
-          COLLECTOR_SNAPSHOT_MAX_BYTES,
-        );
-      } catch (error) {
-        throw latchFatal(error instanceof Error ? error.message : String(error));
-      }
 
       // Commit only after complete surfaces validated.
       const storedIds: string[] = [];
@@ -842,7 +788,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       } else if (cutoff) {
         finalObservationCompleted = true;
       }
-      assertMaterializationWithinBound("invocation ledger");
 
       const modelView = buildObserveModelView({
         snapshot,
@@ -970,7 +915,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         );
         attempt.status = "succeeded";
         attempt.commentEvidenceId = record.evidenceId;
-        assertMaterializationWithinBound("invocation ledger");
         return {
           status: "succeeded",
           attemptId,
@@ -993,7 +937,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           marker,
           recovered: false,
         });
-        assertMaterializationWithinBound("invocation ledger");
         return {
           status: "ambiguous_loss",
           attemptId,
@@ -1054,7 +997,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         cutoffReached,
       };
       waits.push(record);
-      assertMaterializationWithinBound("invocation ledger");
       return {
         waitId,
         requestedMs: input.durationMs,
@@ -1091,8 +1033,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     legById(legId) {
       return config.manifest.legs.find((leg) => leg.id === legId);
     },
-    materializationByteLength,
-    assertMaterializationWithinBound,
   };
 
   return ledger;
