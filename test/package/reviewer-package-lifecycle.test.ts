@@ -110,7 +110,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
         (ctx) => { children.push(ctx); return fauxAssistantMessage("Standards report: no findings."); },
         (ctx) => { children.push(ctx); return fauxAssistantMessage("Spec report: requirement satisfied."); },
         fauxAssistantMessage(fauxToolCall(Output, candidate, { id: "candidate" }), { stopReason: "toolUse" }),
-        (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "revise", violations: ["add axis counts"], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); },
+        (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "revise", violations: ["must include standards file reference", "must separate spec report from standards report"], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); },
         fauxAssistantMessage(fauxToolCall(Output, corrected, { id: "corrected" }), { stopReason: "toolUse" }),
         (ctx) => { audits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); }
       ]);
@@ -137,7 +137,12 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           const firstOutput = results.find((e: any) => e.message.toolCallId === "candidate") as any;
           const finalOutput = results.find((e: any) => e.message.toolCallId === "corrected") as any;
           assert.equal(firstOutput.message.isError, true);
+          const firstErrorText = firstOutput.message.content[0]?.text;
+          assert.equal(typeof firstErrorText, "string");
+          assert.match(firstErrorText, /must include standards file reference/);
+          assert.match(firstErrorText, /must separate spec report from standards report/);
           assert.equal(finalOutput.message.isError, false);
+          assert.deepEqual(finalOutput.message.content, [{ type: "text", text: "Reviewer report accepted" }]);
           assert.equal(finalOutput.message.details.version, 2);
           assert.equal(finalOutput.message.details.status, "completed");
           assert.equal(finalOutput.message.details.acceptedBatch.identity, accepted.message.details.identity);
