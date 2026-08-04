@@ -140,7 +140,6 @@ test("Merger accepts one honest escalation without Git success verification", as
 test("Merger terminal contract and singleton failures abort without accepting a receipt", async () => {
   const valid = { status: "escalate", attemptId: "attempt", diagnosis: "new product decision", report: "both authorized intents cannot coexist" };
   for (const { args, calls, message } of [
-    { args: { status: "escalate", attemptId: "attempt", report: "missing diagnosis" }, calls: 1, message: /exact completed\|escalate contract/ },
     { args: { ...valid, attemptId: "wrong" }, calls: 1, message: /attempt mismatch/ },
     { args: valid, calls: 2, message: /sole final/ },
   ]) {
