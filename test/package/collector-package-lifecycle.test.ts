@@ -25,11 +25,10 @@ import {
 
 const exec = promisify(execFile);
 
-test("npm pack includes collector modules, schema, and soul and excludes skills/orchestrator collect", async () => {
+test("npm pack includes collector modules and soul and excludes skills/orchestrator collect", async () => {
   const pack = await getSharedIsolatedPack();
   const paths = pack.files.map((file) => file.path);
   assert.ok(paths.includes("souls/collector.md"));
-  assert.ok(paths.includes("schemas/collector-legs-v1.schema.json"));
   assert.ok(paths.includes("src/collector-role.ts"));
   assert.ok(paths.includes("src/collector-tool-schemas.ts"));
   assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
