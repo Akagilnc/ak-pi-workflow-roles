@@ -647,12 +647,12 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal("Collector observe requires activation");
       }
       if (signal?.aborted) {
+        const abortMessage = signal.reason instanceof Error
+          ? signal.reason.message
+          : String(signal.reason ?? "aborted");
         throw latchFatal(
-          `Collector observe failed: ${
-            signal.reason instanceof Error
-              ? signal.reason.message
-              : String(signal.reason ?? "aborted")
-          }`,
+          `Collector observe failed: ${abortMessage}`,
+          signal.reason,
         );
       }
       const observedAt = clock.wallNow().toISOString();
