@@ -122,13 +122,15 @@ pi --ak-role fixer \
   --ak-fixer-phase plan \
   --ak-fix-packet /path/to/fix-instructions.md \
   --ak-fixer-prerequisites /path/to/prerequisites.json \
-  -p "Prepare the repair plan."
+  -p "Prepare the repair plan." \
+  >/dev/null 2>stderr.log </dev/null
 
 pi --ak-role fixer \
   --ak-fixer-phase apply \
   --ak-fix-packet /path/to/approved-fix.md \
   --ak-fixer-prerequisites /path/to/prerequisites.json \
-  -p "Apply the approved repair plan."
+  -p "Apply the approved repair plan." \
+  >/dev/null 2>stderr.log </dev/null
 ```
 
 Fixer terminates through `ak_fixer_output`. Its legal status-dependent shapes are:
@@ -164,14 +166,16 @@ Either phase may return `refused` with authority and current-code evidence. Duri
 pi --ak-role coder \
   --ak-coder-phase plan \
   --ak-coder-task /path/to/task.md \
-  -p "Prepare the implementation plan."
+  -p "Prepare the implementation plan." \
+  >/dev/null 2>stderr.log </dev/null
 
 pi --no-skills \
   --skill ~/.agents/skills/tdd/SKILL.md \
   --ak-role coder \
   --ak-coder-phase apply \
   --ak-coder-task /path/to/approved-plan.md \
-  -p "Apply the approved implementation plan."
+  -p "Apply the approved implementation plan." \
+  >/dev/null 2>stderr.log </dev/null
 ```
 
 Coder terminates through `ak_coder_output` with the same thin worker envelope:
@@ -195,7 +199,8 @@ pi --no-skills \
   --ak-role reviewer \
   --ak-review-task /path/to/review-task.md \
   --ak-review-capabilities /path/to/review-capabilities.json \
-  -p "Review the requested fixed point."
+  -p "Review the requested fixed point." \
+  >/dev/null 2>stderr.log </dev/null
 ```
 
 The authoritative capability contract and validation live in the exported TypeScript API in [`src/reviewer-dispatch.ts`](src/reviewer-dispatch.ts). A static capability names tools and prerequisite operations; it never supplies a Git range command:
@@ -233,7 +238,8 @@ Supported one-shot launch profile (required shape):
 pi --no-extensions -e <package-extension> --no-skills --no-prompt-templates \
   --no-context-files --no-session --mode json --ak-role collector \
   --ak-collector-repo <owner/repo> --ak-collector-pr <n> \
-  --ak-collector-legs <manifest.json> -p "Start collection."
+  --ak-collector-legs <manifest.json> -p "Start collection." \
+  >/dev/null 2>stderr.log </dev/null
 ```
 
 That profile means: `--no-skills`; `--no-extensions` with only the explicit Collector package extension; no prompt templates; no context files; exactly one print/JSON prompt. Do not load Skills, ambient extensions, prompt templates, or context files alongside Collector.
@@ -261,7 +267,8 @@ Doctor reads one retained Pi-native case and exposes only the bounded evidence r
 ```bash
 pi --no-extensions -e /path/to/extensions/role-runtime.ts \
   --ak-role doctor --ak-doctor-case .ak/work/issues/40/runs \
-  --mode json -p "Produce this case's process-cost diagnosis."
+  --mode json -p "Produce this case's process-cost diagnosis." \
+  >/dev/null 2>stderr.log </dev/null
 ```
 
 Case identity is the issue number plus the repository-relative retained-runs path when a `.git` worktree root contains it; outside a repository the resolved absolute path is the explicit fallback. Do not delete or rewrite run directories before Doctor examines them. Each recursive `*.jsonl` is one model-session leg; each immediate run directory is one caller invocation, and `stderr.log` remains evidence for invocations that died before a session header. `ak_doctor_evidence` pages exact admitted session bytes in chunks of at most 4096 characters; filesystem, shell, network, write, and Agent tools remain inactive.
@@ -277,7 +284,8 @@ Merger resolves exactly one caller-assigned merge that is already in conflict. I
 ```bash
 pi --no-extensions -e /path/to/extensions/role-runtime.ts \
   --ak-role merger --ak-merger-input /path/to/merger-input-v1.json \
-  --mode json -p "Resolve the admitted in-progress merge or escalate the required decision."
+  --mode json -p "Resolve the admitted in-progress merge or escalate the required decision." \
+  >/dev/null 2>stderr.log </dev/null
 ```
 
 The authoritative exported TypeScript contract is `mergerInputSchema` plus `validateMergerInput`. It binds `attemptId`, exact target/source full object IDs, digest-bound UTF-8 task/authority/target-intent/source-intent bytes, the byte-sorted complete conflict set, permitted resolution scope, and named authorized check argv. Repository location is caller transport and is intentionally absent from portable identity.
