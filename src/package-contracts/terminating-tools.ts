@@ -34,6 +34,7 @@ import {
   FIXER_OUTPUT_TOOL_NAME,
   validateAcceptedWorkerDetails,
   type WorkerOutput,
+  type FixerOutput,
 } from "./worker-output.ts";
 
 export {
@@ -65,6 +66,7 @@ export type {
   ReviewerIntent,
   RuntimeReviewerReceiptV2,
   WorkerOutput,
+  FixerOutput,
   DoctorOutput,
   DoctorSubmission,
   MergerOutput,
@@ -180,7 +182,7 @@ export function validateAcceptedLifecycle(
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): { status?: string; commit?: string } {
   switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME: return { status: (details as WorkerOutput).status };
-    case FIXER_OUTPUT_TOOL_NAME: return { status: (details as WorkerOutput).status };
+    case FIXER_OUTPUT_TOOL_NAME: { const output = details as FixerOutput; const completed = "classResults" in output ? output.classResults.find((result) => result.disposition === "completed") : undefined; return { status: output.status, ...(completed === undefined || !("commitSha" in completed) ? {} : { commit: completed.commitSha }) }; }
     case REVIEWER_OUTPUT_TOOL_NAME: return { status: (details as RuntimeReviewerReceiptV2).status };
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as JudgeVerdict).judgeStatus };
     case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as DoctorOutput).status };
