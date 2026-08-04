@@ -2,7 +2,7 @@
 
 Status: proposed（Issue #101 `/grill-with-docs`，陛下逐项拍定中，2026-08-04）
 
-外部调用者不再以裸 `pi --ak-role`、Pi 事件流、session JSONL 或收官 grep 使用角色包；唯一受支持的产品入口是 `ak-role`。它以一个公开 executable 加角色子命令接收调用请求，并为每次已受理调用交付一份完整终局结果；裸 Pi 激活仅保留为获授权包开发 session 的内部接缝，不是安全秘密，但不发布、不教学、不承诺兼容。
+外部调用者不再以裸 `pi --ak-role`、Pi 事件流、session JSONL 或收官 grep 使用角色包；唯一受支持的产品入口是 `ak-role`。它以一个公开 executable 加角色子命令接收调用请求，并为每次已受理调用交付一份完整终局结果。裸 Pi 激活仅保留为包开发 session 显式加载的内部接缝：发布安装不自动注册它，公开 help/docs/bin 不展示它；但它不是安全秘密，不设凭据或身份认证，也不阻止知道源码路径的人显式加载。
 
 终局结果对所有调用者使用同一张简洁表格，不探测终端、不区分“人读/机器读”，也不建立第二套 JSON 输出；表格只冻结角色结果、Navigator 与 artifacts 等大块语义，不冻结表头、行序、措辞、边框或目录结构，机器测试不得咬这些呈现。内部 typed Receipt 与 Navigator facts 仍是生成结果的事实边界。Navigator 不得扣押已完成的角色结果：它在角色终态后最多获得三秒交付宽限，超时以诚实 unavailable 进入同一结果。
 
