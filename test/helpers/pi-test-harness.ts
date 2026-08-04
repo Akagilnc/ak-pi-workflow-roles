@@ -380,7 +380,7 @@ export async function getSharedIsolatedPack(): Promise<SharedPackFixture> {
 
 function coldInstallDependencySpec(tarball: string): Record<string, string> {
   return {
-    "@ak/pi-workflow-roles": `file:${tarball}`,
+    "@akagilnc/pi-workflow-roles": `file:${tarball}`,
     "@earendil-works/pi-ai": `file:${resolve(packageRoot, "node_modules/@earendil-works/pi-ai")}`,
     "@earendil-works/pi-coding-agent": `file:${
       resolve(packageRoot, "node_modules/@earendil-works/pi-coding-agent")
@@ -406,7 +406,7 @@ export async function getSharedColdInstalledPackage(): Promise<SharedColdInstall
     const fixture = resolve(cacheDir, "consumer");
     const installedRoot = resolve(
       fixture,
-      "node_modules/@ak/pi-workflow-roles",
+      "node_modules/@akagilnc/pi-workflow-roles",
     );
 
     await mkdir(cacheDir, { recursive: true });
@@ -501,7 +501,7 @@ export async function cloneSharedColdInstall(
   await rm(dest, { recursive: true, force: true });
   await mkdir(dirname(dest), { recursive: true });
   await cp(shared.fixture, dest, { recursive: true, force: true });
-  const installedRoot = resolve(dest, "node_modules/@ak/pi-workflow-roles");
+  const installedRoot = resolve(dest, "node_modules/@akagilnc/pi-workflow-roles");
   const installed = (relativePath: string) =>
     import(pathToFileURL(resolve(installedRoot, relativePath)).href);
   return {
