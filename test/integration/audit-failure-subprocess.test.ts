@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
@@ -20,9 +20,10 @@ import {
   withInProcessPi,
   writeTestSkill,
 } from "../helpers/pi-test-harness.ts";
+import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 
-async function runCli(mode: "print" | "json", timeoutFailure = false) {
+async function runCli(mode: "print" | "json") {
   const args = [
     "--no-extensions",
     "--no-skills",
@@ -52,9 +53,74 @@ async function runCli(mode: "print" | "json", timeoutFailure = false) {
           ...process.env,
           PI_CODING_AGENT_DIR: agentDir,
           PI_OFFLINE: "1",
-          ...(timeoutFailure ? { AK_AUDIT_TIMEOUT_FAILURE: "1" } : {}),
         },
       }),
+  );
+}
+
+type SessionRow = {
+  type?: string;
+  customType?: string;
+  data?: { response?: Record<string, unknown> };
+  message?: {
+    role?: string;
+    toolName?: string;
+    isError?: boolean;
+    details?: Record<string, unknown>;
+    stopReason?: string;
+    errorMessage?: string;
+  };
+};
+
+/** Session-backed timeout path: retained compliance response is the typed cause. */
+async function runTimeoutCli(mode: "print" | "json") {
+  return withHermeticHome(
+    { prefix: "ak-audit-timeout-" },
+    async ({ home, agentDir }) => {
+      const sessionDirectory = resolve(home, "runs/judge/session");
+      await mkdir(sessionDirectory, { recursive: true });
+      const args = [
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--session-dir",
+        sessionDirectory,
+        "-e",
+        resolve(packageRoot, "extensions/role-runtime.ts"),
+        "-e",
+        resolve(packageRoot, "test/fixtures/audit-failure-provider.ts"),
+        "--ak-role",
+        "judge",
+        "--provider",
+        "ak-audit-failure",
+        "--model",
+        "faux-1",
+        ...(mode === "print" ? ["-p", "Judge."] : ["--mode", "json", "Judge."]),
+      ];
+      const result = await runPiSubprocess(args, {
+        cwd: home,
+        env: {
+          ...process.env,
+          HOME: home,
+          PI_CODING_AGENT_DIR: agentDir,
+          PI_OFFLINE: "1",
+          AK_AUDIT_TIMEOUT_FAILURE: "1",
+        },
+      });
+      // Read before hermetic home teardown so the retained compliance response
+      // (written by runComplianceAudit) remains observable evidence.
+      const sessionFiles = (await readdir(sessionDirectory))
+        .filter((name) => name.endsWith(".jsonl"));
+      const sessionRows: SessionRow[] = sessionFiles.length === 0
+        ? []
+        : (await readFile(resolve(sessionDirectory, sessionFiles[0]!), "utf8"))
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as SessionRow);
+      return { result, sessionFiles, sessionRows };
+    },
   );
 }
 
@@ -304,44 +370,85 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
 
 test("provider timeout uses the fatal typed audit path without a fabricated Judge Receipt", async () => {
   for (const mode of ["print", "json"] as const) {
-    const result = await runCli(mode, true);
+    const { result, sessionFiles, sessionRows } = await runTimeoutCli(mode);
     assert.equal(result.timedOut, false, `${mode} subprocess did not time out`);
     assert.equal(result.code, 1, `${mode} exits nonzero`);
-    const evidenceLine = result.stderr
-      .split("\n")
-      .find((line) => line.startsWith("AUDIT_FAILURE_TYPED_EVIDENCE="));
-    assert.ok(evidenceLine, `${mode} must emit typed timeout evidence`);
-    const evidence = JSON.parse(
-      evidenceLine.slice("AUDIT_FAILURE_TYPED_EVIDENCE=".length),
-    ) as {
-      timeoutMs: number;
-      provider: string;
-      model: string;
-      responseStopReason: string;
-      receipt: unknown;
-    };
-    assert.equal(evidence.timeoutMs, 183000);
-    assert.equal(evidence.provider, "ak-audit-failure");
-    assert.equal(evidence.model, "faux-1");
-    assert.equal(evidence.responseStopReason, "error");
-    assert.equal(evidence.receipt, null);
+    assert.equal(
+      result.stderr.includes("AUDIT_FAILURE_TYPED_EVIDENCE="),
+      false,
+      `${mode} must not rely on fixture-written typed evidence`,
+    );
+
+    // Typed provider cause is retained by the real runComplianceAudit path
+    // (retainComplianceResponse before ComplianceDecisionContractError) —
+    // observe it from the session custom entry, never from fixture stderr.
+    assert.equal(sessionFiles.length, 1, `${mode} must persist one session file`);
+    const retained = sessionRows.filter(
+      (row) => row.type === "custom" && row.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE,
+    );
+    assert.equal(retained.length, 1, `${mode} retains one compliance response`);
+    const response = retained[0]!.data?.response;
+    assert.ok(response, `${mode} compliance response payload present`);
+    assert.equal(response.stopReason, "error");
+    assert.equal(response.errorMessage, "provider timeout: compliance request expired");
+    assert.equal(response.provider, "ak-audit-failure");
+    assert.equal(response.model, "faux-1");
+
+    // Terminal toolResult from failInfrastructure: errored, no fabricated Receipt.
+    const failedOutputs = sessionRows.filter(
+      (row) =>
+        row.type === "message" &&
+        row.message?.role === "toolResult" &&
+        row.message.toolName === "ak_judge_output",
+    );
+    assert.equal(failedOutputs.length, 1, `${mode} one Judge output toolResult`);
+    assert.equal(failedOutputs[0]!.message?.isError, true);
+    assert.equal(failedOutputs[0]!.message?.details?.status, undefined);
+    assert.equal(
+      sessionRows.some(
+        (row) =>
+          row.type === "message" &&
+          row.message?.role === "toolResult" &&
+          row.message.toolName === "ak_judge_output" &&
+          row.message.isError !== true,
+      ),
+      false,
+      `${mode} fabricates no accepted Judge Receipt`,
+    );
+    assert.equal(
+      sessionRows.some(
+        (row) =>
+          row.type === "message" &&
+          row.message?.role === "assistant" &&
+          row.message.stopReason === "aborted",
+      ),
+      true,
+      `${mode} aborts after failInfrastructure`,
+    );
+
     if (mode === "json") {
       const events = result.stdout
         .split("\n")
         .filter((line) => line.trim().startsWith("{"))
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-      const erroredOutput = events.find((event) => {
-        const message = event.message;
-        return event.type === "message_end" &&
-          typeof message === "object" && message !== null &&
-          (message as Record<string, unknown>).role === "toolResult" &&
-          (message as Record<string, unknown>).toolName === "ak_judge_output";
-      });
-      assert.ok(erroredOutput);
-      const message = erroredOutput.message as Record<string, unknown>;
-      assert.equal(message.isError, true);
-      assert.equal(typeof message.details, "object");
-      assert.equal((message.details as Record<string, unknown>).status, undefined);
+        .map((line) => JSON.parse(line) as {
+          type?: string;
+          message?: {
+            role?: string;
+            toolName?: string;
+            isError?: boolean;
+            details?: Record<string, unknown>;
+            stopReason?: string;
+          };
+        });
+      const erroredOutput = events.find(
+        (event) =>
+          event.type === "message_end" &&
+          event.message?.role === "toolResult" &&
+          event.message.toolName === "ak_judge_output",
+      );
+      assert.ok(erroredOutput, `${mode} emits terminal toolResult on stdout`);
+      assert.equal(erroredOutput.message?.isError, true);
+      assert.equal(erroredOutput.message?.details?.status, undefined);
     }
   }
 });

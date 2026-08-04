@@ -40,7 +40,6 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
   let inputReleasedAt = "";
-  let timeoutEvidence: { timeoutMs: number; provider: string; model: string; responseStopReason: "error"; errorMessage: string; receipt: null } | undefined;
   const response = async (context: Context, options?: { timeoutMs?: number }) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
@@ -74,18 +73,12 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
         if (typeof timeoutMs !== "number" || timeoutMs <= 0) {
           return await new Promise<ReturnType<typeof fauxAssistantMessage>>(() => undefined);
         }
-        // The stream honors timeoutMs; the fixture caps wall time only so the
-        // test exercises the real deadline clock without waiting 183 seconds.
+        // Honor timeoutMs the way registry providers do. The fixture only
+        // compresses the 183000 production delay on setTimeout so the real
+        // deadline fires without sleeping 183s; it does not invent terminal
+        // evidence for the test to read back.
         return await new Promise<ReturnType<typeof fauxAssistantMessage>>((resolve) => {
           setTimeout(() => {
-            timeoutEvidence = {
-              timeoutMs,
-              provider: "ak-audit-failure",
-              model: "faux-1",
-              responseStopReason: "error",
-              errorMessage: "provider timeout: compliance request expired",
-              receipt: null,
-            };
             resolve(fauxAssistantMessage([], {
               stopReason: "error",
               errorMessage: "provider timeout: compliance request expired",
@@ -151,11 +144,9 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   });
   process.on("exit", () => {
     if (healthyNavigator && !observation) console.error(`AUDIT_FAILURE_PROCESS_RELEASE=${JSON.stringify({ at: new Date().toISOString() })}`);
-    if (timeoutEvidence !== undefined) console.error(`AUDIT_FAILURE_TYPED_EVIDENCE=${JSON.stringify(timeoutEvidence)}`);
   });
   pi.on("session_shutdown", async () => {
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
-    if (timeoutEvidence !== undefined) console.error(`AUDIT_FAILURE_TYPED_EVIDENCE=${JSON.stringify(timeoutEvidence)}`);
     if (!healthyNavigator || observation) return;
     const root = process.env.AK_NAVIGATOR_ROOT;
     const directory = root === undefined ? undefined : join(root, "runs", "navigator");
