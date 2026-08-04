@@ -1,4 +1,4 @@
-# @ak/pi-workflow-roles
+# @akagilnc/pi-workflow-roles
 
 Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
 

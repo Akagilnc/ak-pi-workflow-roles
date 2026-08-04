@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This project (`@ak/pi-workflow-roles`) is licensed under **Apache-2.0**.
+This project (`@akagilnc/pi-workflow-roles`) is licensed under **Apache-2.0**.
 The notices below are **third-party** licenses and are **not** the project
 license authority. Do not treat them as dual-licensing the package.
 
