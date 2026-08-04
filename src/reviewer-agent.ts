@@ -17,7 +17,11 @@ export type ReviewerSuccessfulDispatchRunResult = Envelope<{ standards: Reviewer
 export class ReviewerDispatchExecutionError extends Error { constructor(readonly outcome: ReviewerDispatchRunResult) { super("Reviewer dispatch execution failed"); this.name = "ReviewerDispatchExecutionError"; } }
 export type ReviewerAgentRunner = { run(dispatch: AcceptedReviewerExecution, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ReviewerSuccessfulDispatchRunResult>; shutdown(): Promise<void> };
 export type ReviewerAgentFaultPoint = ReviewerWorkspaceFaultPoint | ReviewerExecutorFaultPoint;
-type Dependencies = Readonly<{ fault?(operation: ReviewerAgentFaultPoint): void }>;
+type Dependencies = Readonly<{
+  fault?(operation: ReviewerAgentFaultPoint): void;
+  /** When set, child credential/config scratch is created under this parent so cleanup proofs stay process-local. */
+  credentialScratchParent?: string;
+}>;
 function classify(error: unknown, signal?: AbortSignal): ReviewerFailureClassification { if (signal?.aborted) return "cancelled"; if (typeof error === "object" && error !== null && "reviewerFailure" in error) return (error as { reviewerFailure: ReviewerFailureClassification }).reviewerFailure; return "unknown"; }
 function failed(error: unknown, target: ReviewerTargetSnapshot, prompt: ReviewerPromptIdentity, signal?: AbortSignal, retained?: string, evidence?: MaterializedBundleEvidenceV1): ReviewerFailedLegRunResult { const attached = typeof error === "object" && error !== null ? error as { targetSnapshot?: ReviewerTargetSnapshot; workspaceDisposition?: ReviewerWorkspaceDisposition } : {}; return Object.freeze({ status: "failed", failure: classify(error, signal), cause: error, target: attached.targetSnapshot ?? target, prompt, workspaceDisposition: retained === undefined ? attached.workspaceDisposition ?? "not-created" : { retained }, ...(evidence === undefined ? {} : { runtimeConstructionEvidence: evidence }) }); }
 export function createReviewerAgentRunner(dependencies: Dependencies = {}): ReviewerAgentRunner {
@@ -40,8 +44,17 @@ export function createReviewerAgentRunner(dependencies: Dependencies = {}): Revi
       }
       const settled = await Promise.allSettled(batch.workspaces.map(async workspace => {
         const leg = dispatch.legs.find(candidate => candidate.axis === workspace.axis)!;
-        try { const child = await executeReviewerChild(workspace.path, leg, options.context, options.signal, dependencies.fault); const disposition = await workspaceOwner.dispose(workspace); return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition, runtimeConstructionEvidence: workspace.evidence })] as const; }
-        catch (error) {
+        try {
+          const child = await executeReviewerChild(workspace.path, leg, options.context, {
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(dependencies.fault === undefined ? {} : { fault: dependencies.fault }),
+            ...(dependencies.credentialScratchParent === undefined
+              ? {}
+              : { credentialScratchParent: dependencies.credentialScratchParent }),
+          });
+          const disposition = await workspaceOwner.dispose(workspace);
+          return [leg.axis, Object.freeze({ status: "successful" as const, report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition, runtimeConstructionEvidence: workspace.evidence })] as const;
+        } catch (error) {
           // Failed legs retain their workspace for the durable failure evidence and caller cleanup.
           return [leg.axis, failed(error, batch.target, leg.prompt, options.signal, workspace.path, workspace.evidence)] as const;
         }
