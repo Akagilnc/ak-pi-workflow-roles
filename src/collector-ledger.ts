@@ -3,12 +3,8 @@ import Value from "typebox/value";
 import type { CollectorManifest, CollectorRepository } from "./collector-config.ts";
 import {
   applyEvidenceVersionHistory,
-  assertCollectorByteLimit,
   assignWindowRelations,
   COLLECTOR_ELIGIBILITY_MS,
-  COLLECTOR_RECEIPT_MAX_BYTES,
-  COLLECTOR_SNAPSHOT_MAX_BYTES,
-  createSnapshotByteBudget,
   measureNormalizedBytes,
   normalizeAuthenticatedUserEvidence,
   normalizeIssueCommentEvidence,
@@ -47,25 +43,6 @@ export const COLLECTOR_OPERATIONAL_TOOLS = [
 ] as const;
 
 export type CollectorOperationalTool = (typeof COLLECTOR_OPERATIONAL_TOOLS)[number];
-
-/** Raw finalized tool-call candidate, including malformed id/name/arguments. */
-export type CollectorRawToolCallPart = {
-  type: "toolCall";
-  id?: unknown;
-  name?: unknown;
-  arguments?: unknown;
-};
-
-export type CollectorToolCallPart = {
-  type: "toolCall";
-  id: string;
-  name: string;
-  arguments?: unknown;
-};
-
-export type PermittedBatch =
-  | { kind: "operational"; callId: string; name: CollectorOperationalTool }
-  | { kind: "output"; callId: string; name: typeof COLLECTOR_OUTPUT_TOOL };
 
 export type CollectorRequestAttempt = {
   attemptId: string;
@@ -124,14 +101,10 @@ export type CollectorLedger = {
   readonly unresolvedTransportFailure: boolean;
   readonly mutationGeneration: number;
   readonly observedGeneration: number;
-  readonly permittedBatch: PermittedBatch | undefined;
 
   latchFatal(reason: string, cause?: unknown): Error;
   assertNotFatal(): void;
   recordActivation(clock: CollectorClock): void;
-  evaluateBatch(
-    calls: readonly CollectorRawToolCallPart[],
-  ): { allow: true; permitted: PermittedBatch } | { allow: false; reason: string };
   beginOperational(toolName: string, toolCallId: string): void;
   completeOperational(toolCallId: string): void;
   markOutputAccepted(): void;
@@ -172,23 +145,13 @@ export type CollectorLedger = {
   transportFailures(): readonly CollectorTransportFailure[];
   configuredAuthorLogins(): ReadonlySet<string>;
   legById(legId: string): CollectorConfigState["manifest"]["legs"][number] | undefined;
-  materializationByteLength(): number;
-  assertMaterializationWithinBound(label: string): void;
 };
 
 function isOperationalTool(name: string): name is CollectorOperationalTool {
   return (COLLECTOR_OPERATIONAL_TOOLS as readonly string[]).includes(name);
 }
 
-function isCollectorTool(name: string): boolean {
-  return isOperationalTool(name) || name === COLLECTOR_OUTPUT_TOOL;
-}
-
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-/** Validate Collector tool argument shapes at batch-classification time. */
+/** Shared Check owner for Collector tool argument shapes (schema seam, not batch law). */
 export function collectorToolArgumentsValid(
   name: string,
   args: unknown,
@@ -209,143 +172,6 @@ export function collectorToolArgumentsValid(
   }
 }
 
-type ClassifiedCall =
-  | { kind: "malformed"; reason: string }
-  | { kind: "illegal"; reason: string; id?: string; name?: string }
-  | {
-    kind: "operational";
-    callId: string;
-    name: CollectorOperationalTool;
-  }
-  | { kind: "output"; callId: string };
-
-export function classifyRawToolCall(part: CollectorRawToolCallPart): ClassifiedCall {
-  if (part.type !== "toolCall") {
-    return { kind: "malformed", reason: "content part is not a toolCall" };
-  }
-  if (!nonEmptyString(part.id) || !nonEmptyString(part.name)) {
-    return {
-      kind: "malformed",
-      reason: "toolCall missing string id or name",
-    };
-  }
-  const callId = part.id;
-  const name = part.name;
-  if (!isCollectorTool(name)) {
-    return {
-      kind: "illegal",
-      reason: `non-Collector sibling tool ${name}`,
-      id: callId,
-      name,
-    };
-  }
-  if (!collectorToolArgumentsValid(name, part.arguments)) {
-    return {
-      kind: "illegal",
-      reason: `schema-invalid arguments for ${name}`,
-      id: callId,
-      name,
-    };
-  }
-  if (name === COLLECTOR_OUTPUT_TOOL) {
-    return { kind: "output", callId };
-  }
-  return {
-    kind: "operational",
-    callId,
-    name: name as CollectorOperationalTool,
-  };
-}
-
-/**
- * Authoritative finalized-message batch classifier.
- * Walks every raw toolCall candidate; malformed/unknown/schema-invalid poison the batch.
- */
-export function classifyCollectorBatch(
-  calls: readonly CollectorRawToolCallPart[],
-  options: {
-    outputAccepted: boolean;
-    hasCompletedOperationalOrSnapshot: boolean;
-  },
-):
-  | { allow: true; permitted: PermittedBatch }
-  | { allow: false; reason: string } {
-  if (calls.length === 0) {
-    return {
-      allow: false,
-      reason: "Collector batch contains no toolCall parts",
-    };
-  }
-
-  const classified = calls.map((call) => classifyRawToolCall(call));
-  for (const item of classified) {
-    if (item.kind === "malformed") {
-      return {
-        allow: false,
-        reason: `Collector batch poisoned by malformed toolCall: ${item.reason}`,
-      };
-    }
-    if (item.kind === "illegal") {
-      return {
-        allow: false,
-        reason: `Collector batch illegal: ${item.reason}`,
-      };
-    }
-  }
-
-  const operational = classified.filter(
-    (item): item is Extract<ClassifiedCall, { kind: "operational" }> =>
-      item.kind === "operational",
-  );
-  const outputs = classified.filter(
-    (item): item is Extract<ClassifiedCall, { kind: "output" }> =>
-      item.kind === "output",
-  );
-
-  if (operational.length === 1 && outputs.length === 0 && classified.length === 1) {
-    const only = operational[0]!;
-    return {
-      allow: true,
-      permitted: {
-        kind: "operational",
-        callId: only.callId,
-        name: only.name,
-      },
-    };
-  }
-
-  if (outputs.length === 1 && operational.length === 0 && classified.length === 1) {
-    if (options.outputAccepted) {
-      return {
-        allow: false,
-        reason: "Collector output already accepted; second output is illegal",
-      };
-    }
-    if (!options.hasCompletedOperationalOrSnapshot) {
-      return {
-        allow: false,
-        reason:
-          "Collector output requires a prior completed operational result in this invocation",
-      };
-    }
-    const only = outputs[0]!;
-    return {
-      allow: true,
-      permitted: {
-        kind: "output",
-        callId: only.callId,
-        name: COLLECTOR_OUTPUT_TOOL,
-      },
-    };
-  }
-
-  return {
-    allow: false,
-    reason:
-      "Collector permits exactly one schema-valid operational call (observe|request|wait) per assistant batch, or a sole later schema-valid output call",
-  };
-}
-
 export function createCollectorLedger(config: CollectorConfigState): CollectorLedger {
   let fatal = false;
   let fatalReason: string | undefined;
@@ -359,8 +185,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
   let finalObservationRequired = false;
   let finalObservationCompleted = false;
   let activeOperationalCallId: string | undefined;
-  let permittedBatch: PermittedBatch | undefined;
-  let operationalCompletedSinceOutputPermit = false;
   let mutationGeneration = 0;
   let observedGeneration = 0;
 
@@ -380,7 +204,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
   const latchFatal = (reason: string, cause?: unknown): Error => {
     fatal = true;
     fatalReason = reason;
-    permittedBatch = undefined;
     const error = new Error(reason, cause === undefined ? undefined : { cause });
     Object.assign(error, { collectorFatal: true });
     return error;
@@ -412,26 +235,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     return Math.max(0, deadlineMono - monoNowOrThrow(clock));
   };
 
-  const materializationByteLength = (): number => {
-    const payload = {
-      evidence: [...evidenceById.values()],
-      snapshots,
-      attempts,
-      waits,
-      transportFailures,
-    };
-    return Buffer.byteLength(JSON.stringify(payload), "utf8");
-  };
-
-  const assertMaterializationWithinBound = (label: string): void => {
-    const bytes = materializationByteLength();
-    try {
-      assertCollectorByteLimit(label, bytes, COLLECTOR_RECEIPT_MAX_BYTES);
-    } catch (error) {
-      throw latchFatal(error instanceof Error ? error.message : String(error));
-    }
-  };
-
   const prIdentity = (pr: GitHubPullRequest): string =>
     `${pr.state}|${pr.headOid}|${pr.updatedAt ?? ""}`;
 
@@ -444,49 +247,30 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     const repo = config.repository.repo;
     const prNumber = config.prNumber;
     const signalOpt = signal === undefined ? {} : { signal };
-    // One observation-attempt budget; resets on PR-identity retry.
-    const budget = createSnapshotByteBudget(COLLECTOR_SNAPSHOT_MAX_BYTES);
     const user = await transport.getAuthenticatedUser(signalOpt);
-    budget.retain([normalizeAuthenticatedUserEvidence(user, observedAt)]);
     const prInitial = await transport.getPullRequest({
       owner,
       repo,
       prNumber,
       ...signalOpt,
     });
-    budget.retain([normalizePullRequestEvidence(prInitial, observedAt)]);
     const reviews = await transport.listPullRequestReviews({
       owner,
       repo,
       prNumber,
       ...signalOpt,
-      retainPage: (items) => {
-        budget.retain(
-          items.map((item) => normalizeReviewEvidence(item, observedAt)),
-        );
-      },
     });
     const issueComments = await transport.listIssueComments({
       owner,
       repo,
       prNumber,
       ...signalOpt,
-      retainPage: (items) => {
-        budget.retain(
-          items.map((item) => normalizeIssueCommentEvidence(item, observedAt)),
-        );
-      },
     });
     const reviewComments = await transport.listReviewComments({
       owner,
       repo,
       prNumber,
       ...signalOpt,
-      retainPage: (items) => {
-        budget.retain(
-          items.map((item) => normalizeReviewCommentEvidence(item, observedAt)),
-        );
-      },
     });
     const prTerminal = await transport.getPullRequest({
       owner,
@@ -546,9 +330,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     get observedGeneration() {
       return observedGeneration;
     },
-    get permittedBatch() {
-      return permittedBatch;
-    },
 
     latchFatal,
     assertNotFatal,
@@ -562,33 +343,8 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       deadlineMono = activationMono + COLLECTOR_ELIGIBILITY_MS;
     },
 
-    evaluateBatch(calls) {
-      if (fatal) {
-        return {
-          allow: false,
-          reason: fatalReason ?? "Collector is in fatal state",
-        };
-      }
-      const decision = classifyCollectorBatch(calls, {
-        outputAccepted,
-        hasCompletedOperationalOrSnapshot:
-          operationalCompletedSinceOutputPermit || snapshots.length > 0,
-      });
-      if (!decision.allow) {
-        latchFatal(decision.reason);
-        return decision;
-      }
-      permittedBatch = decision.permitted;
-      return decision;
-    },
-
     beginOperational(toolName, toolCallId) {
       assertNotFatal();
-      if (permittedBatch === undefined) {
-        throw latchFatal(
-          "Collector rejected tool execution without a permitted assistant batch",
-        );
-      }
       if (outputAccepted && toolName !== COLLECTOR_OUTPUT_TOOL) {
         throw latchFatal("Collector output already accepted; no further operations");
       }
@@ -596,33 +352,16 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       if (activeOperationalCallId === toolCallId) {
         return;
       }
-      if (activeOperationalCallId !== undefined && activeOperationalCallId !== toolCallId) {
+      if (activeOperationalCallId !== undefined) {
         throw latchFatal("Collector operational call already active");
       }
 
       if (toolName === COLLECTOR_OUTPUT_TOOL) {
-        if (
-          permittedBatch.kind !== "output" ||
-          permittedBatch.callId !== toolCallId
-        ) {
-          throw latchFatal(
-            "Collector output call does not match the permitted batch",
-          );
-        }
         return;
       }
 
       if (!isOperationalTool(toolName)) {
         throw latchFatal(`Unknown Collector tool ${toolName}`);
-      }
-      if (
-        permittedBatch.kind !== "operational" ||
-        permittedBatch.callId !== toolCallId ||
-        permittedBatch.name !== toolName
-      ) {
-        throw latchFatal(
-          "Collector operational call does not match the permitted batch",
-        );
       }
       activeOperationalCallId = toolCallId;
     },
@@ -630,7 +369,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     completeOperational(toolCallId) {
       if (activeOperationalCallId === toolCallId) {
         activeOperationalCallId = undefined;
-        operationalCompletedSinceOutputPermit = true;
       }
     },
 
@@ -692,12 +430,12 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         throw latchFatal("Collector observe requires activation");
       }
       if (signal?.aborted) {
+        const abortMessage = signal.reason instanceof Error
+          ? signal.reason.message
+          : String(signal.reason ?? "aborted");
         throw latchFatal(
-          `Collector observe failed: ${
-            signal.reason instanceof Error
-              ? signal.reason.message
-              : String(signal.reason ?? "aborted")
-          }`,
+          `Collector observe failed: ${abortMessage}`,
+          signal.reason,
         );
       }
       const observedAt = clock.wallNow().toISOString();
@@ -763,15 +501,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       assignWindowRelations(pendingRecords, activationTime, deadlineTime);
 
       const normalizedByteLength = measureNormalizedBytes(pendingRecords);
-      try {
-        assertCollectorByteLimit(
-          "snapshot",
-          normalizedByteLength,
-          COLLECTOR_SNAPSHOT_MAX_BYTES,
-        );
-      } catch (error) {
-        throw latchFatal(error instanceof Error ? error.message : String(error));
-      }
 
       // Commit only after complete surfaces validated.
       const storedIds: string[] = [];
@@ -842,7 +571,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
       } else if (cutoff) {
         finalObservationCompleted = true;
       }
-      assertMaterializationWithinBound("invocation ledger");
 
       const modelView = buildObserveModelView({
         snapshot,
@@ -970,7 +698,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         );
         attempt.status = "succeeded";
         attempt.commentEvidenceId = record.evidenceId;
-        assertMaterializationWithinBound("invocation ledger");
         return {
           status: "succeeded",
           attemptId,
@@ -993,7 +720,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
           marker,
           recovered: false,
         });
-        assertMaterializationWithinBound("invocation ledger");
         return {
           status: "ambiguous_loss",
           attemptId,
@@ -1054,7 +780,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
         cutoffReached,
       };
       waits.push(record);
-      assertMaterializationWithinBound("invocation ledger");
       return {
         waitId,
         requestedMs: input.durationMs,
@@ -1091,8 +816,6 @@ export function createCollectorLedger(config: CollectorConfigState): CollectorLe
     legById(legId) {
       return config.manifest.legs.find((leg) => leg.id === legId);
     },
-    materializationByteLength,
-    assertMaterializationWithinBound,
   };
 
   return ledger;

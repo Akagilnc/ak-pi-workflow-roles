@@ -148,7 +148,9 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     assert.equal((invocation as any).data.invocationId, events[0].invocationId);
     assert.equal((settlement as any).data.invocationId, events[0].invocationId);
     assert.equal((route as any).data.invocationId, events[0].invocationId);
-    assert.equal(formatNavigatorReport({ disposition: "recommendation", route: events[0].route, next: events[0].next, reason: events[0].reason, command: events[0].command }).includes(events[0].command), true);
+    assert.deepEqual(events[0].next, candidate().candidates[0]!.next);
+    assert.equal(events[0].reason, candidate().candidates[0]!.reason);
+    assert.equal(events[0].command, candidate().candidates[0]!.command);
   } catch (error) {
     await cleanupTempDir(root, error);
     throw error;
@@ -623,9 +625,8 @@ test("settlement decoration carries recommendation only; unavailable and silence
   assert.equal(decorated.details, base.details);
   assert.deepEqual(decorated.details, { judgeStatus: "converged" });
   const text = (decorated.content[0] as { text: string }).text;
-  assert.match(text, /下一步：reviewer/);
-  assert.match(text, /理由：needs review/);
-  assert.match(text, /命令：Usage: pi --ak-role reviewer --help/);
+  assert.equal(text.includes(recommendationEvent.reason), true);
+  assert.equal(text.includes(recommendationEvent.command), true);
   assert.deepEqual(settlementNavigationFromEvent(recommendationEvent), {
     disposition: "recommendation",
     route: recommendationEvent.route,

@@ -2,8 +2,6 @@
 
 import type { MaterializedBundleEvidenceV1 } from "../reviewer-bundle-materializer.ts";
 import type { ReviewerAcceptedEvidence, ReviewerFailureClassification, ReviewerWorkspaceDisposition } from "../reviewer-execution-ledger.ts";
-import { isReviewerPromptIdentity, sameReviewerPromptIdentity, type ReviewerPromptIdentity } from "../reviewer-prompt-identity.ts";
-import { sha256Hex } from "../sha256.ts";
 import { verifyBundleIdentity } from "../reviewer-construction.ts";
 
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
@@ -12,9 +10,14 @@ export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
 export type ReviewerIntent =
   | Readonly<{ status: "completed" }>
   | Readonly<{ status: "refused"; diagnostic: string }>;
-export type VerbatimChildReport = Readonly<{ text: string; utf8Length: number; sha256: string }>;
+/** Child report is plain text — no length/digest identity shell (ADR 0031). */
+export type VerbatimChildReport = Readonly<{ text: string }>;
+/** Prompt projection on the receipt face is plain text (ADR 0031). */
+export type ReviewerReceiptPrompt = Readonly<{ text: string }>;
+/** Canonical Skill content on the receipt face is plain text (ADR 0031/0032). */
+export type ReviewerReceiptSkillContent = Readonly<{ text: string }>;
 type RuntimeReviewerOutcomeCommon = Readonly<{
-  prompt: ReviewerPromptIdentity;
+  prompt: ReviewerReceiptPrompt;
   workspaceDisposition: ReviewerWorkspaceDisposition;
 }>;
 export type RuntimeReviewerOutcome = RuntimeReviewerOutcomeCommon & (
@@ -23,7 +26,7 @@ export type RuntimeReviewerOutcome = RuntimeReviewerOutcomeCommon & (
 );
 export type RuntimeReviewerAcceptedBatch = Readonly<{
   identity: string;
-  legs: readonly Readonly<{ axis: "standards" | "spec"; prompt: ReviewerPromptIdentity }>[];
+  legs: readonly Readonly<{ axis: "standards" | "spec"; prompt: ReviewerReceiptPrompt }>[];
 }>;
 export type RuntimeReviewerReceiptV2 = Readonly<{
   version: 2;
@@ -33,7 +36,7 @@ export type RuntimeReviewerReceiptV2 = Readonly<{
   reports: Readonly<Partial<Record<"standards" | "spec", VerbatimChildReport>>>;
   outcomes: Readonly<Partial<Record<"standards" | "spec", RuntimeReviewerOutcome>>>;
   identities: Readonly<{
-    canonicalSkill: Readonly<{ sha256: string; utf8Length: number; snapshotIdentity: ReviewerPromptIdentity }>;
+    canonicalSkill: ReviewerReceiptSkillContent;
     construction?: Readonly<Pick<ReviewerAcceptedEvidence, "recipe" | "bundle">>;
     target?: ReviewerAcceptedEvidence["target"];
   }>;
@@ -49,6 +52,9 @@ function exactKeys(value: Record<string, unknown>, required: readonly string[], 
 function validWorkspace(value: unknown): boolean {
   return value === "deleted" || value === "not-created" || (isRecord(value) && exactKeys(value, ["retained"]) && typeof value.retained === "string" && value.retained.length > 0);
 }
+function isReceiptText(value: unknown): value is ReviewerReceiptPrompt {
+  return isRecord(value) && exactKeys(value, ["text"]) && typeof value.text === "string";
+}
 const failures = new Set(["cancelled", "provider", "snapshot", "workspace", "child", "unknown"]);
 
 export function validateReviewerIntent(output: unknown): ReviewerIntent {
@@ -60,7 +66,7 @@ export function validateReviewerIntent(output: unknown): ReviewerIntent {
   throw new Error("Reviewer completed intent has no report; refused requires only a separate non-blank diagnostic");
 }
 
-/** Validate the runtime-owned V2 receipt, including all byte identities and outcome/report laws. */
+/** Validate the runtime-owned V2 receipt against consumed text and live target facts — no identity shells. */
 export function validateRuntimeReviewerReceipt(output: unknown): RuntimeReviewerReceiptV2 {
   if (!isRecord(output) || !exactKeys(output, ["version", "status", "reports", "outcomes", "identities"], ["diagnostic", "acceptedBatch"]) || output.version !== 2 ||
       (output.status !== "completed" && output.status !== "refused") || !isRecord(output.reports) || !isRecord(output.outcomes) || !isRecord(output.identities)) throw new Error("Invalid Reviewer V2 receipt");
@@ -68,9 +74,7 @@ export function validateRuntimeReviewerReceipt(output: unknown): RuntimeReviewer
   if (!exactKeys(output.reports, [], ["standards", "spec"]) || !exactKeys(output.outcomes, [], ["standards", "spec"]) ||
       !exactKeys(output.identities, ["canonicalSkill"], ["construction", "target"])) throw new Error("Invalid Reviewer receipt projection keys");
   const skill = output.identities.canonicalSkill;
-  if (!isRecord(skill) || !exactKeys(skill, ["sha256", "utf8Length", "snapshotIdentity"]) || !isRecord(skill.snapshotIdentity) ||
-      !exactKeys(skill.snapshotIdentity, ["text", "utf8Length", "sha256"]) || !isReviewerPromptIdentity(skill.snapshotIdentity as ReviewerPromptIdentity) ||
-      skill.sha256 !== skill.snapshotIdentity.sha256 || skill.utf8Length !== skill.snapshotIdentity.utf8Length) throw new Error("Invalid canonical Skill content identity");
+  if (!isReceiptText(skill)) throw new Error("Invalid canonical Skill content");
   const hasBatch = Object.hasOwn(output, "acceptedBatch");
   if (hasBatch !== Object.hasOwn(output.identities, "construction") || hasBatch !== Object.hasOwn(output.identities, "target") ||
       (hasBatch && (!isRecord(output.acceptedBatch) || !isRecord(output.identities.construction) || !isRecord(output.identities.target)))) throw new Error("Incomplete Reviewer accepted-batch identity");
@@ -84,7 +88,7 @@ export function validateRuntimeReviewerReceipt(output: unknown): RuntimeReviewer
     expectedLegs = acceptedBatch.legs as Record<string, unknown>[];
     const expectedAxes = expectedLegs.map((leg) => leg.axis);
     if (expectedAxes[0] !== "standards" || (expectedAxes.length === 2 && expectedAxes[1] !== "spec") || expectedLegs.some((leg) =>
-      !isRecord(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isRecord(leg.prompt) || !exactKeys(leg.prompt, ["text", "utf8Length", "sha256"]) || !isReviewerPromptIdentity(leg.prompt as ReviewerPromptIdentity)))
+      !isRecord(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isReceiptText(leg.prompt)))
       throw new Error("Invalid Reviewer accepted-leg projection");
     const objectId = (value: unknown): boolean => typeof value === "string" && new RegExp(target.objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
     if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord(construction.bundle) || !verifyBundleIdentity(construction.bundle as any) ||
@@ -95,12 +99,10 @@ export function validateRuntimeReviewerReceipt(output: unknown): RuntimeReviewer
   for (const axis of ["standards", "spec"] as const) {
     const report = output.reports[axis];
     const outcome = output.outcomes[axis];
-    if (report !== undefined && (!isRecord(report) || !exactKeys(report, ["text", "utf8Length", "sha256"]) || typeof report.text !== "string" ||
-        report.utf8Length !== Buffer.byteLength(report.text, "utf8") || report.sha256 !== sha256Hex(report.text))) throw new Error("Invalid Reviewer report identity");
+    if (report !== undefined && !isReceiptText(report)) throw new Error("Invalid Reviewer report text");
     if (outcome === undefined) { if (report !== undefined) throw new Error("Reviewer report lacks outcome"); continue; }
     if (!isRecord(outcome) || !exactKeys(outcome, ["status", "prompt", "workspaceDisposition"], ["failure", "runtimeConstructionEvidence"]) ||
-        (outcome.status !== "successful" && outcome.status !== "failed") || !isRecord(outcome.prompt) || !exactKeys(outcome.prompt, ["text", "utf8Length", "sha256"]) ||
-        !isReviewerPromptIdentity(outcome.prompt as ReviewerPromptIdentity) || !validWorkspace(outcome.workspaceDisposition)) throw new Error("Invalid Reviewer outcome");
+        (outcome.status !== "successful" && outcome.status !== "failed") || !isReceiptText(outcome.prompt) || !validWorkspace(outcome.workspaceDisposition)) throw new Error("Invalid Reviewer outcome");
     const materialized = outcome.runtimeConstructionEvidence;
     if (materialized !== undefined) {
       const bundle = (output.identities.construction as Record<string, unknown>).bundle as Record<string, unknown>;
@@ -122,7 +124,8 @@ export function validateRuntimeReviewerReceipt(output: unknown): RuntimeReviewer
   if (hasBatch && (outcomeAxes.length !== expectedAxes.length || outcomeAxes.some((axis, index) => axis !== expectedAxes[index]))) throw new Error("Reviewer outcomes must exactly cover accepted legs in canonical order");
   for (const [index, axis] of expectedAxes.entries()) {
     const outcome = output.outcomes[axis]! as RuntimeReviewerOutcome;
-    if (!sameReviewerPromptIdentity(outcome.prompt, expectedLegs[index]!.prompt as ReviewerPromptIdentity)) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
+    const expectedPrompt = expectedLegs[index]!.prompt as ReviewerReceiptPrompt;
+    if (outcome.prompt.text !== expectedPrompt.text) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
   }
   if (output.status === "completed" && (!hasBatch || Object.values(output.outcomes).some((item) => (item as RuntimeReviewerOutcome).status !== "successful"))) throw new Error("Completed Reviewer receipt requires a successful accepted batch");
   if (!hasBatch && (Object.keys(output.outcomes).length !== 0 || Object.keys(output.reports).length !== 0)) throw new Error("Pre-acceptance Reviewer refusal cannot contain outcomes or reports");

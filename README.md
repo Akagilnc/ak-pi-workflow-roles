@@ -244,14 +244,25 @@ pi --no-extensions -e <package-extension> --no-skills --no-prompt-templates \
 
 That profile means: `--no-skills`; `--no-extensions` with only the explicit Collector package extension; no prompt templates; no context files; exactly one print/JSON prompt. Do not load Skills, ambient extensions, prompt templates, or context files alongside Collector.
 
-Machine-readable manifest schema: [`schemas/collector-legs-v1.schema.json`](schemas/collector-legs-v1.schema.json).
+Legs-only caller example (`--ak-collector-legs`):
+
+```json
+{
+  "legs": [
+    {
+      "id": "codex",
+      "expectedAuthors": ["CodexBot"],
+      "request": { "body": "Please review this PR." }
+    }
+  ]
+}
+```
 
 Runtime behavior highlights:
 
 - only four tools are active: `ak_collector_observe`, `ak_collector_request`, `ak_collector_wait`, `ak_collector_output`;
 - external GitHub text is data-only evidence and cannot change target, legs, policy, or tools;
 - eligibility cutoff is 15 minutes from first model dispatch (request/wait gate; final observe/output may finish afterward);
-- hard limits: 8 MiB UTF-8 normalized evidence per complete snapshot and 32 MiB per self-contained receipt/invocation materialization; overflow fails non-zero without truncation;
 - successful receipts embed `snapshots[]` and `evidenceRecords[]` so every evidence ref resolves inside the tool-result details;
 - request attempts are process-local at-most-once per `(repo, PR, HEAD, leg)` with a deterministic HTML correlation marker; concurrent independent Collector processes can still race and duplicate comments—serialize callers when that is unacceptable;
 - requires ambient `gh` authentication for `github.com` and model credentials; role gating is drift prevention, not a security boundary;

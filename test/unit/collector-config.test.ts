@@ -1,16 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
 import {
-  COLLECTOR_LEGS_SCHEMA,
-  COLLECTOR_REQUEST_BODY_MAX_BYTES,
   loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
-  type CollectorManifest,
 } from "../../src/collector-config.ts";
 
 async function writeManifest(
@@ -30,7 +27,6 @@ function validManifest(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    version: 1,
     legs: [
       {
         id: "codex",
@@ -117,43 +113,6 @@ test("PR number accepts only positive safe integers", () => {
   }
 });
 
-test("manifest schema file matches the packaged machine-readable contract", async () => {
-  assert.equal(COLLECTOR_LEGS_SCHEMA.$schema, "https://json-schema.org/draft/2020-12/schema");
-  assert.equal(COLLECTOR_LEGS_SCHEMA.type, "object");
-  assert.equal((COLLECTOR_LEGS_SCHEMA as { additionalProperties?: boolean }).additionalProperties, false);
-  assert.deepEqual(COLLECTOR_LEGS_SCHEMA.required, ["version", "legs"]);
-  assert.equal(COLLECTOR_LEGS_SCHEMA.properties.version.const, 1);
-  const bodySchema =
-    COLLECTOR_LEGS_SCHEMA.properties.legs.items.properties.request.properties.body;
-  assert.equal(bodySchema.minLength, 1);
-  // Pattern must be the two-char string backslash-S (JSON Schema \\S).
-  assert.equal(bodySchema.pattern, "\u005cS");
-  assert.equal(bodySchema.pattern.length, 2);
-  assert.equal(bodySchema.pattern.charCodeAt(0), 0x5c);
-  assert.equal(bodySchema["x-maxUtf8Bytes"], COLLECTOR_REQUEST_BODY_MAX_BYTES);
-  assert.equal(COLLECTOR_REQUEST_BODY_MAX_BYTES, 60_000);
-  const authorItemSchema =
-    COLLECTOR_LEGS_SCHEMA.properties.legs.items.properties.expectedAuthors.items;
-  assert.equal(authorItemSchema.minLength, 1);
-  assert.equal(authorItemSchema.pattern, "\u005cS");
-  assert.equal(authorItemSchema.pattern.length, 2);
-  assert.equal(authorItemSchema.pattern.charCodeAt(0), 0x5c);
-  // Behavioral schema oracle: pattern rejects whitespace-only; accepts nonblank
-  // (including surrounding spaces — trim remains runtime authority).
-  const authorPattern = new RegExp(authorItemSchema.pattern);
-  assert.equal(authorPattern.test("   "), false);
-  assert.equal(authorPattern.test(""), false);
-  assert.equal(authorPattern.test("CodexBot"), true);
-  assert.equal(authorPattern.test(" CodexBot "), true);
-  const file = JSON.parse(
-    await readFile(
-      resolve("schemas/collector-legs-v1.schema.json"),
-      "utf8",
-    ),
-  );
-  assert.deepEqual(file, JSON.parse(JSON.stringify(COLLECTOR_LEGS_SCHEMA)));
-});
-
 test("manifest loads, normalizes authors, and digests canonical JSON stably", async () => {
   const dir = await mkdtemp(resolve(tmpdir(), "ak-collector-manifest-"));
   const path = await writeManifest(dir, validManifest({
@@ -171,7 +130,6 @@ test("manifest loads, normalizes authors, and digests canonical JSON stably", as
   }));
   const first = await loadCollectorManifest(path);
   const second = await loadCollectorManifest(path);
-  assert.equal(first.version, 1);
   assert.equal(first.digest, second.digest);
   assert.equal(first.digest.length, 64);
   assert.deepEqual(
@@ -193,11 +151,13 @@ test("manifest loads, normalizes authors, and digests canonical JSON stably", as
       },
     ],
   );
-  assert.equal(first.canonicalJson.includes("CodexBot"), false);
-  assert.equal(first.canonicalJson.includes("codexbot"), true);
+  assert.equal(
+    first.canonicalJson,
+    '{"legs":[{"id":"codex","expectedAuthors":["codexbot","helper"],"request":{"body":"Please review this PR."}},{"id":"claude","expectedAuthors":["claude-bot"]}]}\n',
+  );
 });
 
-test("manifest rejects unreadable path, non-UTF-8, malformed JSON, and duplicate keys", async () => {
+test("manifest rejects unreadable path, non-UTF-8, and malformed JSON", async () => {
   const dir = await mkdtemp(resolve(tmpdir(), "ak-collector-bad-manifest-"));
   await assert.rejects(
     () => loadCollectorManifest(resolve(dir, "missing.json")),
@@ -211,89 +171,57 @@ test("manifest rejects unreadable path, non-UTF-8, malformed JSON, and duplicate
   const malformed = await writeManifest(dir, "{not-json", "malformed.json");
   await assert.rejects(() => loadCollectorManifest(malformed), /JSON|manifest/i);
 
-  const topDup = await writeManifest(
-    dir,
-    '{"version":1,"version":2,"legs":[{"id":"a","expectedAuthors":["x"]}]}',
-    "top-dup.json",
-  );
-  await assert.rejects(() => loadCollectorManifest(topDup), /duplicate/i);
-
-  const nestedDup = await writeManifest(
-    dir,
-    '{"version":1,"legs":[{"id":"a","id":"b","expectedAuthors":["x"]}]}',
-    "nested-dup.json",
-  );
-  await assert.rejects(() => loadCollectorManifest(nestedDup), /duplicate/i);
-
-  const escapedDup = await writeManifest(
-    dir,
-    '{"version":1,"legs":[{"id":"a","expectedAuthors":["x"]}],"\\u0076ersion":2}',
-    "escaped-dup.json",
-  );
-  await assert.rejects(() => loadCollectorManifest(escapedDup), /duplicate/i);
 });
 
-test("manifest rejects wrong version, unknown fields, empty legs, bad ids, and author problems", async () => {
+test("manifest retains required semantic validation while ignoring extra input", async () => {
   const dir = await mkdtemp(resolve(tmpdir(), "ak-collector-sem-"));
   const cases: Array<[string, unknown, RegExp]> = [
-    ["float-version", { version: 1.1, legs: [{ id: "a", expectedAuthors: ["x"] }] }, /version/i],
-    ["string-version", { version: "1", legs: [{ id: "a", expectedAuthors: ["x"] }] }, /version/i],
-    ["unknown-top", { version: 1, legs: [{ id: "a", expectedAuthors: ["x"] }], extra: true }, /unknown|additional|only version and legs/i],
-    ["unknown-leg", { version: 1, legs: [{ id: "a", expectedAuthors: ["x"], bot: true }] }, /unknown|additional|missing required/i],
-    ["no-legs", { version: 1, legs: [] }, /legs|min/i],
-    ["bad-id-case", { version: 1, legs: [{ id: "Codex", expectedAuthors: ["x"] }] }, /id/i],
-    ["bad-id-start", { version: 1, legs: [{ id: "1codex", expectedAuthors: ["x"] }] }, /id/i],
+    ["versionless-manifest-loads", { legs: [{ id: "a", expectedAuthors: ["x"] }] }, /NEVER_MATCH/],
+    ["extra-top-level-fields-are-ignored", { extra: true, legs: [{ id: "a", expectedAuthors: ["x"], bot: true }] }, /NEVER_MATCH/],
+    ["no-legs", { legs: [] }, /legs|min/i],
+    ["bad-id-case", { legs: [{ id: "Codex", expectedAuthors: ["x"] }] }, /id/i],
+    ["bad-id-start", { legs: [{ id: "1codex", expectedAuthors: ["x"] }] }, /id/i],
     ["dup-id", {
-      version: 1,
       legs: [
         { id: "a", expectedAuthors: ["x"] },
         { id: "a", expectedAuthors: ["y"] },
       ],
     }, /id|duplicate/i],
-    ["empty-authors", { version: 1, legs: [{ id: "a", expectedAuthors: [] }] }, /author/i],
-    ["blank-author", { version: 1, legs: [{ id: "a", expectedAuthors: ["  "] }] }, /author/i],
+    ["empty-authors", { legs: [{ id: "a", expectedAuthors: [] }] }, /author/i],
+    ["blank-author", { legs: [{ id: "a", expectedAuthors: ["  "] }] }, /author/i],
     ["dup-author-case", {
-      version: 1,
       legs: [{ id: "a", expectedAuthors: ["Bot", "bot"] }],
     }, /author|duplicate/i],
     ["overlap-authors", {
-      version: 1,
       legs: [
         { id: "a", expectedAuthors: ["shared"] },
         { id: "b", expectedAuthors: ["Shared"] },
       ],
     }, /overlap|author/i],
     ["empty-body", {
-      version: 1,
       legs: [{ id: "a", expectedAuthors: ["x"], request: { body: "  " } }],
     }, /body/i],
-    ["unknown-request", {
-      version: 1,
+    ["unknown-request-fields-are-ignored", {
       legs: [{ id: "a", expectedAuthors: ["x"], request: { body: "ok", extra: 1 } }],
-    }, /unknown|additional|only body/i],
+    }, /NEVER_MATCH/],
   ];
   for (const [name, value, pattern] of cases) {
     const path = await writeManifest(dir, value, `${name}.json`);
-    await assert.rejects(() => loadCollectorManifest(path), pattern, name);
+    if (pattern.source === "NEVER_MATCH") {
+      await assert.doesNotReject(() => loadCollectorManifest(path), name);
+    } else {
+      await assert.rejects(() => loadCollectorManifest(path), pattern, name);
+    }
   }
 });
 
-test("request body enforces trim-non-empty content and exact 60_000 UTF-8 byte bound", async () => {
+test("request body enforces only trim-non-empty content", async () => {
   const dir = await mkdtemp(resolve(tmpdir(), "ak-collector-body-"));
-  const exact = "é".repeat(30_000); // 2 bytes each => 60_000
-  assert.equal(Buffer.byteLength(exact, "utf8"), 60_000);
   const okPath = await writeManifest(dir, validManifest({
-    legs: [{ id: "a", expectedAuthors: ["x"], request: { body: exact } }],
+    legs: [{ id: "a", expectedAuthors: ["x"], request: { body: "é".repeat(30_000) } }],
   }), "ok-body.json");
   const ok = await loadCollectorManifest(okPath);
-  assert.equal(ok.legs[0]?.requestBody, exact);
-
-  const over = `${exact}!`;
-  assert.equal(Buffer.byteLength(over, "utf8"), 60_001);
-  const overPath = await writeManifest(dir, validManifest({
-    legs: [{ id: "a", expectedAuthors: ["x"], request: { body: over } }],
-  }), "over-body.json");
-  await assert.rejects(() => loadCollectorManifest(overPath), /60,?000|byte/i);
+  assert.equal(ok.legs[0]?.requestBody, "é".repeat(30_000));
 
   const wsPath = await writeManifest(dir, validManifest({
     legs: [{ id: "a", expectedAuthors: ["x"], request: { body: "   " } }],

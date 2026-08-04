@@ -9,18 +9,6 @@ import type {
   GitHubUser,
 } from "./collector-github.ts";
 
-export const COLLECTOR_SNAPSHOT_MAX_BYTES = 8 * 1024 * 1024;
-export const COLLECTOR_RECEIPT_MAX_BYTES = 32 * 1024 * 1024;
-
-export function assertCollectorByteLimit(
-  label: string,
-  bytes: number,
-  maxBytes: number,
-): void {
-  if (bytes > maxBytes) {
-    throw new Error(`Collector ${label} exceeded ${maxBytes} UTF-8 bytes (${bytes})`);
-  }
-}
 export const COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1000;
 
 export type WindowRelation = "before" | "within" | "after" | "uncertain";
@@ -451,39 +439,6 @@ export function applyEvidenceVersionHistory(
 
 export function measureNormalizedBytes(records: readonly CollectorEvidenceRecord[]): number {
   return Buffer.byteLength(JSON.stringify(records), "utf8");
-}
-
-/**
- * Observation-scoped incremental retain budget over the same normalized record
- * shape measured by {@link measureNormalizedBytes}. Does not apply window/history
- * mutations; the final observe gate remains the exact authority.
- */
-export function createSnapshotByteBudget(
-  maxBytes: number = COLLECTOR_SNAPSHOT_MAX_BYTES,
-): {
-  retain(records: readonly CollectorEvidenceRecord[]): void;
-} {
-  const retained: CollectorEvidenceRecord[] = [];
-  return {
-    retain(records: readonly CollectorEvidenceRecord[]): void {
-      if (records.length === 0) return;
-      const candidate =
-        retained.length === 0 ? records.slice() : retained.concat(records);
-      const bytes = measureNormalizedBytes(candidate);
-      if (bytes > maxBytes) {
-        throw Object.assign(
-          new Error(
-            `Collector snapshot exceeded ${maxBytes} UTF-8 bytes (${bytes})`,
-          ),
-          {
-            githubSizeFailure: true,
-            normalizedByteLength: bytes,
-          },
-        );
-      }
-      retained.push(...records);
-    },
-  };
 }
 
 export function assignWindowRelations(

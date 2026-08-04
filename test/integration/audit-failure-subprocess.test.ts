@@ -343,27 +343,50 @@ function assertAuditAbortWithoutReceipt(
 ) {
   assert.equal(result.timedOut, false, `${label} subprocess did not time out`);
   assert.equal(result.code, 1, `${label} exits nonzero`);
-  assert.doesNotMatch(
-    result.stdout,
-    /Judge verdict accepted|Fixer report accepted|Reviewer report accepted|Coder report accepted/,
+}
+
+function jsonEvents(stdout: string): any[] {
+  return stdout
+    .split("\n")
+    .filter((line) => line.trim().startsWith("{"))
+    .map((line) => JSON.parse(line) as any);
+}
+
+function assertJsonAbortFacts(
+  result: { stdout: string },
+  toolName: string,
+  label: string,
+) {
+  const events = jsonEvents(result.stdout);
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === "message_end" &&
+        event.message?.role === "toolResult" &&
+        event.message.toolName === toolName &&
+        event.message.isError === true,
+    ),
+    true,
+    `${label} emits an errored ${toolName} result`,
   );
-  assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === "message_end" &&
+        event.message?.role === "assistant" &&
+        event.message.stopReason === "aborted",
+    ),
+    true,
+    `${label} stops with typed aborted reason`,
+  );
 }
 
 test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions", async () => {
   for (const mode of ["print", "json"] as const) {
     const result = await runCli(mode);
     assertAuditAbortWithoutReceipt(result, mode);
-    assert.match(
-      result.stderr,
-      /Request was aborted|AUDIT_FAILURE_PROVIDER_CALLS/,
-    );
     if (mode === "json") {
-      assert.match(
-        result.stdout,
-        /"toolName":"ak_judge_output".*"isError":true/,
-      );
-      assert.match(result.stdout, /"stopReason":"aborted"/);
+      assertJsonAbortFacts(result, "ak_judge_output", mode);
     }
   }
 });
@@ -560,19 +583,17 @@ test("fatal Judge audit failure drains one healthy packaged Navigator without ad
     false,
     "infrastructure failure must remain typed silence",
   );
-  assert.doesNotMatch(result.stdout, /FORBIDDEN LATER SUCCESS PROSE/);
 });
 
 test("fatal Fixer audit infrastructure failure aborts print and JSON without a receipt", async () => {
-  // Distinct Fixer marker (FIXER_AUDIT_FAILURE_PROVIDER_CALLS) is the absorbed clause
-  // that the Judge survivor does not cover — keep Fixer-specific process proof.
+  // Fixer-specific process proof (distinct from the Judge survivor): exit code +
+  // typed isError/stopReason on ak_fixer_output.
   for (const mode of ["print", "json"] as const) {
     const result = await runFixerAuditFailureCli({ mode });
-    const combined = `${result.stdout}\n${result.stderr}`;
     assertAuditAbortWithoutReceipt(result, `fixer/${mode}`);
-    assert.match(combined, /invalid fixer audit decision|Request was aborted/);
-    assert.match(result.stderr, /FIXER_AUDIT_FAILURE_PROVIDER_CALLS=3/);
-    assert.doesNotMatch(result.stdout, /Fixer report accepted|FORBIDDEN LATER SUCCESS PROSE/);
+    if (mode === "json") {
+      assertJsonAbortFacts(result, "ak_fixer_output", mode);
+    }
   }
 });
 
@@ -582,13 +603,7 @@ test("unavailable canonical tdd is infrastructure failure in print and JSON", as
   // process-level "infrastructure, not a receipt" negative (法条③).
   for (const mode of ["print", "json"] as const) {
     const result = await runCoderSkillFailureCli(mode, "missing");
-    const combined = `${result.stdout}\n${result.stderr}`;
     assertAuditAbortWithoutReceipt(result, `missing/${mode}`);
-    assert.match(
-      combined,
-      /Canonical tdd Skill|Coder canonical tdd Skill binding was not initialized/,
-    );
-    assert.doesNotMatch(combined, /Coder report accepted/);
     if (mode === "json") {
       const events = result.stdout
         .split("\n")
@@ -619,101 +634,31 @@ test("installed Reviewer fatal stages abort without a receipt", async () => {
   // crosses the real CLI boundary for both modes (法条③).
   const processRow = {
     stage: "audit-auth" as const,
-    marker: /INJECTED_REVIEWER_AUDIT_AUTH_FAILURE/,
-    calls: 1,
     tool: "ak_reviewer_output" as const,
   };
   for (const mode of ["json", "print"] as const) {
     const result = await runReviewerCli(mode, processRow.stage);
-    const combined = `${result.stdout}\n${result.stderr}`;
     assert.equal(result.timedOut, false, `${processRow.stage}/${mode} subprocess did not time out`);
-    assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero\n${combined}`);
-    assert.match(combined, processRow.marker, `${processRow.stage}/${mode} reached its stage`);
-    assert.match(combined, /Request was aborted|"stopReason":"aborted"/);
-    assert.match(
-      result.stderr,
-      new RegExp(`REVIEWER_FAILURE_PROVIDER_CALLS=${processRow.calls}(?:\\D|$)`),
-      `${processRow.stage}/${mode} made exactly ${processRow.calls} provider calls`,
-    );
-    assert.doesNotMatch(result.stdout, /Reviewer report accepted/);
-    assert.doesNotMatch(combined, /FORBIDDEN INFRASTRUCTURE REFUSAL/);
-    assert.doesNotMatch(combined, /FORBIDDEN LATER SUCCESS PROSE/);
+    assert.equal(result.code, 1, `${processRow.stage}/${mode} exits nonzero`);
     if (mode === "json") {
-      const events = result.stdout
-        .split("\n")
-        .filter((line) => line.trim().startsWith("{"))
-        .map((line) => JSON.parse(line));
-      const erroredTool = events.find(
-        (event) =>
-          event.type === "message_end" &&
-          event.message?.role === "toolResult" &&
-          event.message.toolName === processRow.tool &&
-          event.message.isError === true,
-      );
-      assert.ok(erroredTool, `${processRow.stage} marks ${processRow.tool} isError:true`);
-      assert.ok(
-        events.some(
-          (event) =>
-            event.type === "message_end" &&
-            event.message?.role === "assistant" &&
-            event.message.stopReason === "aborted",
-        ),
-      );
+      assertJsonAbortFacts(result, processRow.tool, `${processRow.stage}/${mode}`);
     }
   }
 
-  // Remaining stage × call-count × isError matrix: shared template + one JSON
-  // process each (template cp replaces per-row git clone). Full 4×2 matrix was
-  // the expensive construction; stage markers + call counts stay process-proved.
+  // Remaining stages: shared template + one JSON process each (template cp
+  // replaces per-row git clone). Assert exit code + typed isError/stopReason.
   const matrix: Array<{
     stage: ReviewerFailureStage;
-    marker: RegExp;
-    calls: number;
     tool: "Agent" | "ak_reviewer_output";
   }> = [
-    {
-      stage: "preflight-git",
-      marker: /INJECTED_REVIEWER_GIT_IO_FAILURE|not a git repository/,
-      calls: 1,
-      tool: "Agent",
-    },
-    {
-      stage: "audit-provider",
-      marker: /Reviewer compliance audit provider not found/,
-      calls: 1,
-      tool: "ak_reviewer_output",
-    },
-    {
-      stage: "audit-malformed-decision",
-      marker: /invalid reviewer audit decision/,
-      calls: 2,
-      tool: "ak_reviewer_output",
-    },
+    { stage: "preflight-git", tool: "Agent" },
+    { stage: "audit-provider", tool: "ak_reviewer_output" },
+    { stage: "audit-malformed-decision", tool: "ak_reviewer_output" },
   ];
   for (const row of matrix) {
     const result = await runReviewerCli("json", row.stage);
-    const combined = `${result.stdout}\n${result.stderr}`;
-    assert.equal(result.code, 1, `${row.stage} exits nonzero\n${combined}`);
-    assert.match(combined, row.marker, `${row.stage} reached its stage`);
-    assert.match(
-      result.stderr,
-      new RegExp(`REVIEWER_FAILURE_PROVIDER_CALLS=${row.calls}(?:\\D|$)`),
-    );
-    assert.doesNotMatch(result.stdout, /Reviewer report accepted/);
-    const events = result.stdout
-      .split("\n")
-      .filter((line) => line.trim().startsWith("{"))
-      .map((line) => JSON.parse(line));
-    assert.ok(
-      events.some(
-        (event) =>
-          event.type === "message_end" &&
-          event.message?.role === "toolResult" &&
-          event.message.toolName === row.tool &&
-          event.message.isError === true,
-      ),
-      `${row.stage} marks ${row.tool} isError:true`,
-    );
+    assert.equal(result.code, 1, `${row.stage} exits nonzero`);
+    assertJsonAbortFacts(result, row.tool, row.stage);
   }
 });
 

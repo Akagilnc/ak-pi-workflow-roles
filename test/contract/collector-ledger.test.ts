@@ -3,9 +3,6 @@ import test from "node:test";
 
 import {
   applyEvidenceVersionHistory,
-  assertCollectorByteLimit,
-  COLLECTOR_RECEIPT_MAX_BYTES,
-  COLLECTOR_SNAPSHOT_MAX_BYTES,
   computeWindowRelation,
   normalizeIssueCommentEvidence,
   normalizeReviewCommentEvidence,
@@ -13,7 +10,6 @@ import {
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
 import {
-  classifyCollectorBatch,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_REQUEST_TOOL,
@@ -43,9 +39,8 @@ function manifest(legs: Array<{
   requestBody: "Please review.",
 }]) {
   return {
-    version: 1 as const,
     legs,
-    canonicalJson: "{\"version\":1}\n",
+    canonicalJson: "{}\n",
     digest: "a".repeat(64),
     sourcePath: "/tmp/legs.json",
   };
@@ -110,155 +105,85 @@ test("windowRelation matrix uses authoritative times only", () => {
   assert.equal(computeWindowRelation("bogus", activation, deadline), "uncertain");
 });
 
-test("batch gate permits one operational or sole output and latches mixed/multiple", async () => {
-  const soleOutputArgs = {
-    legs: [{
-      legId: "codex",
-      status: "missing",
-      rationale: "x",
-      evidenceRefs: ["s"],
-    }],
-  };
-  const call = (name: string, id: string) => ({
-    type: "toolCall" as const,
-    id,
-    name,
-    arguments: name === COLLECTOR_OBSERVE_TOOL
-      ? {}
-      : name === COLLECTOR_WAIT_TOOL
-      ? { durationMs: 1 }
-      : name === COLLECTOR_REQUEST_TOOL
-      ? { legId: "codex", snapshotId: "s" }
-      : soleOutputArgs,
-  });
+test("beginOperational serializes concurrent calls and allows same-call reentry", () => {
+  const ledger = createCollectorLedger(config());
+  ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1");
+  ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1"); // same-call reentry
+  assert.throws(
+    () => ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-2"),
+    /already active/i,
+  );
+  assert.equal(ledger.fatal, true);
 
-  const allowObserve = createCollectorLedger(config());
-  const ok = allowObserve.evaluateBatch([call(COLLECTOR_OBSERVE_TOOL, "1")]);
-  assert.equal(ok.allow, true);
-  if (ok.allow) {
-    assert.deepEqual(ok.permitted, {
-      kind: "operational",
-      callId: "1",
-      name: COLLECTOR_OBSERVE_TOOL,
-    });
-  }
+  // Completing the active call frees the concurrency slot for a later operation.
+  const next = createCollectorLedger(config());
+  next.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-a");
+  next.completeOperational("obs-a");
+  next.beginOperational(COLLECTOR_WAIT_TOOL, "wait-b");
+  next.completeOperational("wait-b");
+  // Output does not take the operational concurrency slot.
+  next.beginOperational(COLLECTOR_OUTPUT_TOOL, "out-1");
+  next.beginOperational(COLLECTOR_OUTPUT_TOOL, "out-1");
+});
 
-  // Sole output after a completed snapshot is permitted.
+test("observe failure latches fatal retaining original cause identity", async () => {
   const clock = clockAt("2024-01-01T00:00:00Z");
-  const allowOutput = createCollectorLedger(config());
-  allowOutput.recordActivation(clock);
-  await allowOutput.observe(createFakeGitHubTransport({
+  const original = new TypeError("upstream gh exploded");
+  const transport = createFakeGitHubTransport({
     user: sampleUser(),
     pullRequest: samplePull(),
     reviews: [],
     issueComments: [],
     reviewComments: [],
-  }), clock);
-  const sole = allowOutput.evaluateBatch([call(COLLECTOR_OUTPUT_TOOL, "out")]);
-  assert.equal(sole.allow, true);
-  if (sole.allow) {
-    assert.deepEqual(sole.permitted, {
-      kind: "output",
-      callId: "out",
-      name: COLLECTOR_OUTPUT_TOOL,
-    });
-  }
-
-  // Deny table (includes sole-output-without-snapshot + mixed/multiple).
-  const denyRows = [
-    [COLLECTOR_OUTPUT_TOOL],
-    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_REQUEST_TOOL],
-    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_OUTPUT_TOOL],
-    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_OBSERVE_TOOL],
-    [COLLECTOR_REQUEST_TOOL, COLLECTOR_WAIT_TOOL],
-    [COLLECTOR_OUTPUT_TOOL, COLLECTOR_OUTPUT_TOOL],
-    [COLLECTOR_OUTPUT_TOOL, COLLECTOR_REQUEST_TOOL],
-  ];
-  for (const names of denyRows) {
-    const ledger = createCollectorLedger(config());
-    const decision = ledger.evaluateBatch(names.map((name, index) => call(name, String(index))));
-    assert.equal(decision.allow, false, names.join("+"));
-    assert.equal(ledger.fatal, true, names.join("+"));
-  }
-});
-
-test("classifier rejects unknown, malformed, and schema-invalid without role", () => {
-  assert.equal(
-    classifyCollectorBatch([
-      { type: "toolCall", id: "1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-      { type: "toolCall", id: "2", name: "unknown_tool", arguments: {} },
-    ], { outputAccepted: false, hasCompletedOperationalOrSnapshot: true }).allow,
-    false,
-  );
-  assert.equal(
-    classifyCollectorBatch([
-      { type: "toolCall", id: 1 as unknown as string, name: COLLECTOR_OBSERVE_TOOL },
-    ], { outputAccepted: false, hasCompletedOperationalOrSnapshot: false }).allow,
-    false,
-  );
-  assert.equal(
-    classifyCollectorBatch([
-      { type: "toolCall", id: "1", name: COLLECTOR_OBSERVE_TOOL, arguments: { extra: true } },
-    ], { outputAccepted: false, hasCompletedOperationalOrSnapshot: false }).allow,
-    false,
-  );
-  assert.equal(
-    classifyCollectorBatch([
-      {
-        type: "toolCall",
-        id: "1",
-        name: COLLECTOR_OBSERVE_TOOL,
-        arguments: {},
-      },
-      {
-        type: "toolCall",
-        id: "2",
-        name: COLLECTOR_WAIT_TOOL,
-        arguments: { durationMs: "nope" },
-      },
-    ], { outputAccepted: false, hasCompletedOperationalOrSnapshot: false }).allow,
-    false,
-  );
-});
-
-test("beginOperational requires exact permitted batch match", () => {
-  const bare = createCollectorLedger(config());
-  assert.throws(
-    () => bare.beginOperational(COLLECTOR_OBSERVE_TOOL, "x"),
-    /permitted|batch/i,
-  );
-
+  });
+  transport.getPullRequest = async () => {
+    throw original;
+  };
   const ledger = createCollectorLedger(config());
-  const decision = ledger.evaluateBatch([
-    { type: "toolCall", id: "obs-1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-  ]);
-  assert.equal(decision.allow, true);
-  assert.throws(
-    () => ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "wrong-id"),
-    /permitted|batch/i,
+  ledger.recordActivation(clock);
+  await assert.rejects(
+    () => ledger.observe(transport, clock),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
+      assert.match(error.message, /observe failed/);
+      assert.equal(error.cause, original);
+      assert.ok(error.cause instanceof TypeError);
+      assert.equal((error.cause as TypeError).message, "upstream gh exploded");
+      return true;
+    },
+  );
+  assert.equal(ledger.fatal, true);
+
+  // Negative: policy latch without an underlying throw keeps cause unset.
+  const bare = createCollectorLedger(config());
+  await assert.rejects(
+    () => bare.observe(transport, clock),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
+      assert.match(error.message, /requires activation/);
+      assert.equal(error.cause, undefined);
+      return true;
+    },
   );
 
-  const ledger2 = createCollectorLedger(config());
-  assert.equal(
-    ledger2.evaluateBatch([
-      { type: "toolCall", id: "obs-1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-    ]).allow,
-    true,
+  // Abort path retains signal.reason identity through the same latchFatal seam.
+  const abortReason = new Error("host cancelled");
+  const controller = new AbortController();
+  controller.abort(abortReason);
+  const abortLedger = createCollectorLedger(config());
+  abortLedger.recordActivation(clock);
+  await assert.rejects(
+    () => abortLedger.observe(transport, clock, controller.signal),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
+      assert.match(error.message, /host cancelled/);
+      assert.equal(error.cause, abortReason);
+      return true;
+    },
   );
-  assert.throws(
-    () => ledger2.beginOperational(COLLECTOR_WAIT_TOOL, "obs-1"),
-    /permitted|batch/i,
-  );
-
-  const ledger3 = createCollectorLedger(config());
-  assert.equal(
-    ledger3.evaluateBatch([
-      { type: "toolCall", id: "obs-1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-    ]).allow,
-    true,
-  );
-  ledger3.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1");
-  ledger3.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1"); // idempotent
 });
 
 test("observe stores immutable snapshot and recovers authenticated marker after ambiguous loss", async () => {
@@ -512,85 +437,6 @@ test("after/uncertain exact-head review does not block request like before/withi
     clock,
   ) as { status: string };
   assert.equal(result.status, "succeeded");
-});
-
-test("R10 normalized budget rejects before later surfaces and terminal PR", async () => {
-  // Exercise the production 8 MiB boundary; no test-only production limit is injected.
-  const probeClock = clockAt("2024-01-01T00:00:00Z");
-  const probe = createCollectorLedger(config());
-  probe.recordActivation(probeClock);
-  const { snapshot: emptySnap } = await probe.observe(createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull(),
-    reviews: [],
-    issueComments: [],
-    reviewComments: [],
-  }), probeClock);
-  const emptyBytes = emptySnap.normalizedByteLength;
-  const pad = "x".repeat(Math.floor(COLLECTOR_SNAPSHOT_MAX_BYTES * 0.4));
-  // Two padded surfaces exceed the real production bound.
-  const onePad = createCollectorLedger(config());
-  onePad.recordActivation(clockAt("2024-01-01T00:00:00Z"));
-  const { snapshot: onePadSnap } = await onePad.observe(createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull(),
-    reviews: [sampleReview({ id: 1, userLogin: "a", body: pad, raw: { id: 1, body: pad } })],
-    issueComments: [],
-    reviewComments: [],
-  }), clockAt("2024-01-01T00:00:00Z"));
-  const bound = COLLECTOR_SNAPSHOT_MAX_BYTES;
-
-  // Cross-surface: reviews ok, issue-comments exceed; review-comments + terminal PR skip.
-  {
-    const transport = createFakeGitHubTransport({
-
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [sampleReview({ id: 1, userLogin: "a", body: pad, raw: { id: 1, body: pad } })],
-      issueComments: [sampleIssueComment({ id: 2, userLogin: "b", body: pad, raw: { id: 2, body: pad } })],
-      reviewComments: [sampleReviewComment({ id: 3, userLogin: "c", body: "must-not-fetch" })],
-    });
-    const ledger = createCollectorLedger(config());
-    ledger.recordActivation(clockAt("2024-01-01T00:00:00Z"));
-    await assert.rejects(
-      () => ledger.observe(transport, clockAt("2024-01-01T00:00:00Z")),
-      new RegExp(`Collector snapshot exceeded ${bound} UTF-8 bytes`),
-    );
-    assert.equal(ledger.fatal, true);
-    assert.equal(ledger.latestCompleteSnapshotId, undefined);
-    assert.equal(transport.calls.reviews, 1);
-    assert.equal(transport.calls.issueComments, 1);
-    assert.equal(transport.calls.reviewComments, 0);
-    assert.equal(transport.calls.pull, 1, "terminal PR bracket must not run after budget exceed");
-  }
-
-  // Exceed inside first surface ⇒ later surfaces + terminal PR skipped.
-  {
-    const fat = "x".repeat(COLLECTOR_SNAPSHOT_MAX_BYTES); // single review page exceeds bound alone
-    const transport = createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull(),
-      reviews: [sampleReview({ id: 1, userLogin: "a", body: fat, raw: { id: 1, body: fat } })],
-      issueComments: [sampleIssueComment({ id: 99, userLogin: "later", body: "must-not-fetch" })],
-      reviewComments: [sampleReviewComment({ id: 98, userLogin: "later", body: "must-not-fetch" })],
-    });
-    const ledger = createCollectorLedger(config());
-    ledger.recordActivation(clockAt("2024-01-01T00:00:00Z"));
-    await assert.rejects(
-      () => ledger.observe(transport, clockAt("2024-01-01T00:00:00Z")),
-      new RegExp(`Collector snapshot exceeded ${bound} UTF-8 bytes`),
-    );
-    assert.equal(ledger.fatal, true);
-    assert.equal(ledger.latestCompleteSnapshotId, undefined);
-    assert.equal(transport.calls.reviews, 1);
-    assert.equal(transport.calls.issueComments, 0);
-    assert.equal(transport.calls.reviewComments, 0);
-    assert.equal(transport.calls.pull, 1);
-  }
-
-  assert.ok(emptyBytes > 0);
-  assert.equal(COLLECTOR_SNAPSHOT_MAX_BYTES, 8 * 1024 * 1024);
-  assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
 });
 
 test("HEAD move permits a new-head request once", async () => {
@@ -902,65 +748,6 @@ test("applyEvidenceVersionHistory first-sighting mono boundary keeps or nulls su
     firstObservedMono: deadlineMono + 120_000,
   });
   assert.equal(again.authoritativeTime, null);
-});
-
-test("real observe materialization overflow latches fatal and rejects later work", async () => {
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const transport = createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull({ headOid: "head-c" }),
-    reviews: [],
-    issueComments: [],
-    reviewComments: [],
-  });
-  const ledger = createCollectorLedger(config());
-  ledger.recordActivation(clock);
-
-  // Each observation is individually below the production 8 MiB snapshot cap,
-  // but six distinct reviews make the retained ledger exceed the production
-  // 32 MiB receipt/materialization cap.
-  const body = "x".repeat(6 * 1024 * 1024);
-  let overflow: unknown;
-  for (let id = 1; id <= 6; id++) {
-    transport.state.reviews = [sampleReview({
-      id,
-      userLogin: "codexbot",
-      state: "COMMENTED",
-      commitId: "head-c",
-      submittedAt: "2024-01-01T00:00:00Z",
-      body,
-      raw: {},
-    })];
-    try {
-      await ledger.observe(transport, clock);
-    } catch (error) {
-      overflow = error;
-      break;
-    }
-  }
-
-  assert.ok(overflow instanceof Error, "the real ledger must reject overflow");
-  assert.match(overflow.message, /invocation ledger exceeded 33554432 UTF-8 bytes/);
-  assert.equal((overflow as Error & { collectorFatal?: boolean }).collectorFatal, true);
-  assert.equal(ledger.fatal, true);
-
-  const callsAtFatal = { ...transport.calls };
-  await assert.rejects(
-    () => ledger.observe(transport, clock),
-    /invocation ledger exceeded 33554432 UTF-8 bytes/,
-  );
-  assert.deepEqual(transport.calls, callsAtFatal, "fatal ledger must reject before transport access");
-});
-
-test("snapshot byte boundary uses the real production limit", () => {
-  assert.doesNotThrow(() =>
-    assertCollectorByteLimit("snapshot", COLLECTOR_SNAPSHOT_MAX_BYTES, COLLECTOR_SNAPSHOT_MAX_BYTES),
-  );
-  assert.throws(
-    () => assertCollectorByteLimit("snapshot", COLLECTOR_SNAPSHOT_MAX_BYTES + 1, COLLECTOR_SNAPSHOT_MAX_BYTES),
-    new RegExp(`Collector snapshot exceeded ${COLLECTOR_SNAPSHOT_MAX_BYTES} UTF-8 bytes`),
-  );
-  assert.equal(COLLECTOR_SNAPSHOT_MAX_BYTES, 8 * 1024 * 1024);
 });
 
 test("R5 third observation of unchanged edited review keeps null/uncertain in modelView and store", async () => {
