@@ -99,14 +99,24 @@ async function createChildRuntime(
   return { runtime, model: dispatch.model };
 }
 
+export type ReviewerChildExecuteOptions = Readonly<{
+  signal?: AbortSignal;
+  fault?(operation: ReviewerExecutorFaultPoint): void;
+  /** Parent directory for credential/config scratch. Defaults to os.tmpdir(). */
+  credentialScratchParent?: string;
+}>;
+
 export async function executeReviewerChild(
   workspace: string,
   leg: AcceptedReviewerLeg,
   context: ExtensionContext,
-  signal?: AbortSignal,
-  fault?: (operation: ReviewerExecutorFaultPoint) => void,
+  options: ReviewerChildExecuteOptions = {},
 ): Promise<{ report: string; usage: Usage; prompt: ReviewerPromptIdentity }> {
-  const childConfigDir = await mkdtemp(join(tmpdir(), "ak-reviewer-child-"));
+  const signal = options.signal;
+  const fault = options.fault;
+  const childConfigDir = await mkdtemp(
+    join(options.credentialScratchParent ?? tmpdir(), "ak-reviewer-child-"),
+  );
   let outerFailure: unknown;
   try {
   const settings = SettingsManager.inMemory({
