@@ -1,55 +1,95 @@
 {
-  "type": "object",
-  "required": [
-    "role",
-    "stageId",
-    "status",
-    "timestamp",
-    "cause"
-  ],
-  "properties": {
-    "role": {
-      "type": "string",
-      "minLength": 1
-    },
-    "stageId": {
-      "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*$"
-    },
-    "status": {
-      "type": "string",
-      "const": "failed"
-    },
-    "timestamp": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "cause": {
+  "anyOf": [
+    {
       "type": "object",
       "required": [
-        "identity",
-        "name",
-        "message"
+        "role",
+        "stageId",
+        "status",
+        "timestamp"
       ],
       "properties": {
-        "identity": {
+        "role": {
           "type": "string",
           "minLength": 1
         },
-        "name": {
+        "stageId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "started"
+            },
+            {
+              "type": "string",
+              "const": "completed"
+            }
+          ]
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "role",
+        "stageId",
+        "status",
+        "timestamp",
+        "cause"
+      ],
+      "properties": {
+        "role": {
           "type": "string",
           "minLength": 1
         },
-        "message": {
-          "type": "string"
-        },
-        "evidenceId": {
+        "stageId": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "status": {
+          "type": "string",
+          "const": "failed"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cause": {
+          "type": "object",
+          "required": [
+            "identity",
+            "name",
+            "message"
+          ],
+          "properties": {
+            "identity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "evidenceId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
     }
-  },
-  "additionalProperties": false
+  ]
 }
