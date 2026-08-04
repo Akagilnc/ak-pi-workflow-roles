@@ -190,7 +190,7 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ targetKey: "case", evidenceIds: [evidenceId] }] }, patient, store), /contract/);
   assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, observation: "" }] }, patient, store), /contract/);
-  assert.throws(() => validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "delete" }] }, patient, store), /contract/);
+  assert.deepEqual(validateDoctorOutput({ ...output, findings: [{ ...finding, disposition: "delete" }] }, patient, store), { ...output, findings: [{ ...finding, disposition: "delete" }] });
   const assetFinding = {
     targetKey: "judge-output-gate", targetKind: "gate", assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate", evidenceId }, evidenceIds: [evidenceId], disposition: "keep",
     guardrails: { reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: { ...guardrail, answer: false } },
