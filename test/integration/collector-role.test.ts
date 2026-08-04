@@ -79,7 +79,6 @@ const COLLECTOR_SOUL = [
 async function writeLegs(
   dir: string,
   legs: unknown = {
-    version: 1,
     legs: [{
       id: "codex",
       expectedAuthors: ["codexbot"],
@@ -925,7 +924,7 @@ test("collector startup with no prompt still exits nonzero on shutdown", async (
 
 test("collector rejects invalid manifest before provider or GitHub side effects", async () => {
   await withHermeticHome({ prefix: "ak-collector-badcfg-" }, async ({ agentDir, home }) => {
-    const legs = await writeLegs(home, { version: 2, legs: [] });
+    const legs = await writeLegs(home, {});
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull(),

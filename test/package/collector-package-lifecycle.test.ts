@@ -56,7 +56,6 @@ test("installed npm tarball collector runs default gh transport end-to-end in pr
         await writeFile(
           legsPath,
           `${JSON.stringify({
-            version: 1,
             legs: [{
               id: "codex",
               expectedAuthors: ["codexbot"],

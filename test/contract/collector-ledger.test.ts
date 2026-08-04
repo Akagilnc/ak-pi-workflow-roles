@@ -40,9 +40,8 @@ function manifest(legs: Array<{
   requestBody: "Please review.",
 }]) {
   return {
-    version: 1 as const,
     legs,
-    canonicalJson: "{\"version\":1}\n",
+    canonicalJson: "{}\n",
     digest: "a".repeat(64),
     sourcePath: "/tmp/legs.json",
   };
