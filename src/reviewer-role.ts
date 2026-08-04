@@ -210,7 +210,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
           const candidate = assembleRuntimeReviewerReceipt({
             intent: output,
             record,
-            canonicalSkillSnapshotIdentity: binding.snapshot.snapshotIdentity,
+            canonicalSkillText: binding.snapshot.raw,
           });
           let audit: ComplianceDecision;
           try { audit = await dependencies.auditCompliance({ soul, canonicalSkill: binding.snapshot.raw, task, record, candidate }, { context: toolCtx, ...(signal === undefined ? {} : { signal }) }); }
@@ -221,7 +221,7 @@ export function createReviewerRoleRuntime(pi: ExtensionAPI, dependencies: Review
               return { content: [{ type: "text" as const, text: "Reviewer report accepted" }], details: candidate, terminate: true as const, ...(usage === undefined ? {} : { usage }) };
             },
             revise: (violations) => {
-              throw new AggregateError([], "aggregate Reviewer receipt violates its method", { cause: Object.freeze([...violations]) });
+              throw new AggregateError([], `Reviewer receipt rejected:\n${violations.join("\n")}`, { cause: Object.freeze([...violations]) });
             },
             escalate: async (result) => {
               try { await dependencies.shutdownAgent?.(); } catch (error) { hostActions.failInfrastructure(ledger.recordInfrastructureFailure(error), toolCtx, id); }

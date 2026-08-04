@@ -7,13 +7,11 @@ import { completed } from "../helpers/fixer-fixtures.ts";
 // Judge class grammar/uniqueness negatives live in judge-output-contract.test.ts
 // ("mixed and blank verdict shapes reject with named status diagnostics").
 
-test("current Fixer settlement is independent while Coder remains byte-compatible and closed", () => {
+test("current Fixer settlement is independent while Coder has no self-reported commit field", () => {
   const fixer = { status: "completed", report: "done", classResults: [completed()] };
   assert.deepEqual(validateAcceptedWorkerDetails(fixer, "Fixer"), fixer);
-  assert.deepEqual(
-    validateAcceptedWorkerDetails({ status: "completed", report: "done", commitSha: "advisory" }, "Coder"),
-    { status: "completed", report: "done", commitSha: "advisory" },
-  );
+  assert.deepEqual(validateAcceptedWorkerDetails({ status: "completed", report: "done" }, "Coder"), { status: "completed", report: "done" });
+  assert.throws(() => validateAcceptedWorkerDetails({ status: "completed", report: "done", commitSha: "advisory" }, "Coder"), /Coder output/);
   assert.throws(() => validateAcceptedWorkerDetails(fixer, "Coder"), /Coder output/);
   assert.throws(
     () => validateAcceptedWorkerDetails({ status: "completed", report: "old", classesRepaired: [] }, "Fixer"),

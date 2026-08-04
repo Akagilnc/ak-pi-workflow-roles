@@ -16,7 +16,6 @@ import {
 } from "../../src/collector-github.ts";
 import { createCollectorLedger } from "../../src/collector-ledger.ts";
 import {
-  createSnapshotByteBudget,
   normalizeAuthenticatedUserEvidence,
   normalizePullRequestEvidence,
   normalizeReviewEvidence,
@@ -333,7 +332,6 @@ test("R6 null user on review/issue comment/review comment preserves record and n
     },
     prNumber: 1,
     manifest: {
-      version: 1,
       legs: [{
         id: "codex",
         expectedAuthors: ["codexbot"],
@@ -459,60 +457,6 @@ test("R8 authenticated_user retained raw is login+id only", () => {
   assert.equal(JSON.stringify(record.raw).includes("plan"), false);
 });
 
-test("R10 multi-page pagination stops before retaining oversize normalized budget", async () => {
-  let pagesFetched = 0;
-  // Billing point is before next page; bound size is irrelevant — use few-KiB bodies.
-  const bound = 4_096;
-  const fat = "x".repeat(1_500);
-  const observedAt = "2024-01-01T00:00:00.000Z";
-  const budget = createSnapshotByteBudget(bound);
-  budget.retain([
-    normalizeAuthenticatedUserEvidence(sampleUser(), observedAt),
-    normalizePullRequestEvidence(samplePull(), observedAt),
-  ]);
-  const page = (id: number, next?: number) => ({
-    status: 200,
-    headers: next === undefined
-      ? {}
-      : { link: `<https://api.github.com/repos/a/b/pulls/1/reviews?page=${next}>; rel="next"` },
-    bodyText: JSON.stringify([{
-      id,
-      user: { login: String(id) },
-      state: "COMMENTED",
-      body: fat,
-      commit_id: "h",
-      submitted_at: "2024-01-01T00:00:00Z",
-      html_url: `https://example.test/${id}`,
-    }]),
-  });
-  const runner = async (args: string[]) => {
-    if (!args.some((arg) => arg.includes("/reviews"))) {
-      return { status: 200, headers: {}, bodyText: "[]" };
-    }
-    pagesFetched += 1;
-    if (pagesFetched === 1) return page(1, 2);
-    if (pagesFetched === 2) return page(2, 3);
-    return page(3);
-  };
-  const transport = createGhCollectorGitHubTransport(runner);
-  await assert.rejects(
-    () =>
-      transport.listPullRequestReviews({
-        owner: "a",
-        repo: "b",
-        prNumber: 1,
-        retainPage: (items) => {
-          budget.retain(
-            items.map((item) => normalizeReviewEvidence(item, observedAt)),
-          );
-        },
-      }),
-    /Collector snapshot exceeded 4096 UTF-8 bytes/,
-  );
-  assert.ok(pagesFetched <= 2, `stopped before all pages; fetched=${pagesFetched}`);
-  assert.equal(pagesFetched < 3, true);
-});
-
 test("2xx POST parse/normalization failures map to ambiguous_loss; non-2xx rejected", async () => {
   const shapes: Array<{ label: string; bodyText: string }> = [
     { label: "malformed JSON", bodyText: "not-json{" },
@@ -629,7 +573,6 @@ test("2xx parse ambiguous_loss recovers via marker observe without second POST",
     },
     prNumber: 1,
     manifest: {
-      version: 1,
       legs: [{
         id: "codex",
         expectedAuthors: ["codexbot"],
@@ -667,7 +610,6 @@ function collectorLedgerFixture(digestChar = "f") {
     },
     prNumber: 1,
     manifest: {
-      version: 1,
       legs: [{
         id: "codex",
         expectedAuthors: ["codexbot"],

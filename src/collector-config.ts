@@ -2,57 +2,11 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 export const COLLECTOR_HOST = "github.com" as const;
-export const COLLECTOR_MANIFEST_VERSION = 1 as const;
-export const COLLECTOR_REQUEST_BODY_MAX_BYTES = 60_000;
 export const COLLECTOR_LEG_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 export const COLLECTOR_OWNER_PATTERN =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 export const COLLECTOR_REPO_PATTERN =
   /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
-
-export const COLLECTOR_LEGS_SCHEMA = {
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: "https://ak.local/schemas/collector-legs-v1.schema.json",
-  type: "object",
-  additionalProperties: false,
-  required: ["version", "legs"],
-  properties: {
-    version: { const: 1 },
-    legs: {
-      type: "array",
-      minItems: 1,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["id", "expectedAuthors"],
-        properties: {
-          id: {
-            type: "string",
-            pattern: "^[a-z][a-z0-9._-]{0,63}$",
-          },
-          expectedAuthors: {
-            type: "array",
-            minItems: 1,
-            items: { type: "string", minLength: 1, pattern: "\\S" },
-          },
-          request: {
-            type: "object",
-            additionalProperties: false,
-            required: ["body"],
-            properties: {
-              body: {
-                type: "string",
-                minLength: 1,
-                pattern: "\\S",
-                "x-maxUtf8Bytes": COLLECTOR_REQUEST_BODY_MAX_BYTES,
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-} as const;
 
 export type CollectorRepository = {
   display: string;
@@ -68,7 +22,6 @@ export type CollectorLegConfig = {
 };
 
 export type CollectorManifest = {
-  version: 1;
   legs: readonly CollectorLegConfig[];
   canonicalJson: string;
   digest: string;
@@ -168,221 +121,12 @@ export function parseCollectorPrNumber(raw: unknown): number {
   return value;
 }
 
-/**
- * Bounded lexical scan for duplicate object keys, including nested objects and
- * JSON `\uXXXX` / escape-equivalent spellings. Also requires the top-level
- * `version` value token to be the exact integer `1` (rejects `1.0`, `1e0`).
- */
-export function assertCollectorManifestJsonIdentity(text: string): void {
-  let i = 0;
-  const length = text.length;
-
-  const peek = (): string => text[i] ?? "";
-  const advance = (): string => {
-    const ch = text[i] ?? "";
-    i += 1;
-    return ch;
-  };
-
-  const skipWs = (): void => {
-    while (i < length) {
-      const ch = peek();
-      if (ch === " " || ch === "\n" || ch === "\r" || ch === "\t") {
-        advance();
-        continue;
-      }
-      break;
-    }
-  };
-
-  const parseString = (): string => {
-    if (advance() !== "\"") fail("Collector manifest is not valid JSON");
-    let out = "";
-    while (i < length) {
-      const ch = advance();
-      if (ch === "\"") return out;
-      if (ch === "\\") {
-        const esc = advance();
-        switch (esc) {
-          case "\"":
-          case "\\":
-          case "/":
-            out += esc;
-            break;
-          case "b":
-            out += "\b";
-            break;
-          case "f":
-            out += "\f";
-            break;
-          case "n":
-            out += "\n";
-            break;
-          case "r":
-            out += "\r";
-            break;
-          case "t":
-            out += "\t";
-            break;
-          case "u": {
-            const hex = text.slice(i, i + 4);
-            if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
-              fail("Collector manifest is not valid JSON");
-            }
-            out += String.fromCharCode(Number.parseInt(hex, 16));
-            i += 4;
-            break;
-          }
-          default:
-            fail("Collector manifest is not valid JSON");
-        }
-        continue;
-      }
-      if (ch.charCodeAt(0) < 0x20) fail("Collector manifest is not valid JSON");
-      out += ch;
-    }
-    fail("Collector manifest is not valid JSON");
-  };
-
-  const parseNumberToken = (): string => {
-    const start = i;
-    if (peek() === "-") advance();
-    if (peek() === "0") {
-      advance();
-    } else if (/[1-9]/.test(peek())) {
-      while (/[0-9]/.test(peek())) advance();
-    } else {
-      fail("Collector manifest is not valid JSON");
-    }
-    if (peek() === ".") {
-      advance();
-      if (!/[0-9]/.test(peek())) fail("Collector manifest is not valid JSON");
-      while (/[0-9]/.test(peek())) advance();
-    }
-    if (peek() === "e" || peek() === "E") {
-      advance();
-      if (peek() === "+" || peek() === "-") advance();
-      if (!/[0-9]/.test(peek())) fail("Collector manifest is not valid JSON");
-      while (/[0-9]/.test(peek())) advance();
-    }
-    return text.slice(start, i);
-  };
-
-  const parseValue = (path: string): void => {
-    skipWs();
-    const ch = peek();
-    if (ch === "\"") {
-      parseString();
-      return;
-    }
-    if (ch === "{") {
-      parseObject(path);
-      return;
-    }
-    if (ch === "[") {
-      parseArray(path);
-      return;
-    }
-    if (ch === "t") {
-      if (text.slice(i, i + 4) !== "true") fail("Collector manifest is not valid JSON");
-      i += 4;
-      return;
-    }
-    if (ch === "f") {
-      if (text.slice(i, i + 5) !== "false") fail("Collector manifest is not valid JSON");
-      i += 5;
-      return;
-    }
-    if (ch === "n") {
-      if (text.slice(i, i + 4) !== "null") fail("Collector manifest is not valid JSON");
-      i += 4;
-      return;
-    }
-    if (ch === "-" || /[0-9]/.test(ch)) {
-      const token = parseNumberToken();
-      if (path === "$.version" && token !== "1") {
-        fail("Collector manifest version must be the exact integer 1");
-      }
-      return;
-    }
-    fail("Collector manifest is not valid JSON");
-  };
-
-  const parseArray = (path: string): void => {
-    if (advance() !== "[") fail("Collector manifest is not valid JSON");
-    skipWs();
-    if (peek() === "]") {
-      advance();
-      return;
-    }
-    let index = 0;
-    while (true) {
-      parseValue(`${path}[${index}]`);
-      skipWs();
-      const sep = peek();
-      if (sep === ",") {
-        advance();
-        index += 1;
-        skipWs();
-        continue;
-      }
-      if (sep === "]") {
-        advance();
-        return;
-      }
-      fail("Collector manifest is not valid JSON");
-    }
-  };
-
-  const parseObject = (path: string): void => {
-    if (advance() !== "{") fail("Collector manifest is not valid JSON");
-    skipWs();
-    if (peek() === "}") {
-      advance();
-      return;
-    }
-    const seen = new Set<string>();
-    while (true) {
-      skipWs();
-      if (peek() !== "\"") fail("Collector manifest is not valid JSON");
-      const key = parseString();
-      if (seen.has(key)) {
-        fail(`Collector manifest contains duplicate JSON key \"${key}\" at ${path || "$"}`);
-      }
-      seen.add(key);
-      skipWs();
-      if (advance() !== ":") fail("Collector manifest is not valid JSON");
-      const childPath = path === "" ? `$.${key}` : `${path}.${key}`;
-      parseValue(childPath);
-      skipWs();
-      const sep = peek();
-      if (sep === ",") {
-        advance();
-        skipWs();
-        continue;
-      }
-      if (sep === "}") {
-        advance();
-        return;
-      }
-      fail("Collector manifest is not valid JSON");
-    }
-  };
-
-  skipWs();
-  parseValue("$");
-  skipWs();
-  if (i !== length) fail("Collector manifest is not valid JSON");
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const keys = Object.keys(value);
-  return keys.length === expected.length &&
-    expected.every((key) => Object.hasOwn(value, key));
+function hasRequiredKeys(value: Record<string, unknown>, required: readonly string[]): boolean {
+  return required.every((key) => Object.hasOwn(value, key));
 }
 
 function canonicalizeAuthor(raw: unknown, legId: string): string {
@@ -405,11 +149,8 @@ function canonicalizeLeg(raw: unknown, index: number): CollectorLegConfig {
     fail(`Collector manifest legs[${index}] must be an object`);
   }
   const hasRequest = Object.hasOwn(raw, "request");
-  const expected = hasRequest
-    ? ["id", "expectedAuthors", "request"] as const
-    : ["id", "expectedAuthors"] as const;
-  if (!exactKeys(raw, expected)) {
-    fail(`Collector manifest legs[${index}] has unknown fields or missing required keys`);
+  if (!hasRequiredKeys(raw, ["id", "expectedAuthors"])) {
+    fail(`Collector manifest legs[${index}] is missing required keys`);
   }
   const id = raw["id"];
   if (typeof id !== "string" || !COLLECTOR_LEG_ID_PATTERN.test(id)) {
@@ -433,8 +174,8 @@ function canonicalizeLeg(raw: unknown, index: number): CollectorLegConfig {
   let requestBody: string | undefined;
   if (hasRequest) {
     const request = raw["request"];
-    if (!isPlainObject(request) || !exactKeys(request, ["body"])) {
-      fail(`Collector leg \"${id}\" request must be an object with only body`);
+    if (!isPlainObject(request) || !hasRequiredKeys(request, ["body"])) {
+      fail(`Collector leg \"${id}\" request must be an object with body`);
     }
     const body = request["body"];
     if (typeof body !== "string") {
@@ -442,12 +183,6 @@ function canonicalizeLeg(raw: unknown, index: number): CollectorLegConfig {
     }
     if (body.trim().length === 0) {
       fail(`Collector leg \"${id}\" request body must be trim-non-empty`);
-    }
-    const bytes = Buffer.byteLength(body, "utf8");
-    if (bytes > COLLECTOR_REQUEST_BODY_MAX_BYTES) {
-      fail(
-        `Collector leg \"${id}\" request body must be at most ${COLLECTOR_REQUEST_BODY_MAX_BYTES} UTF-8 bytes (got ${bytes})`,
-      );
     }
     // Preserve body byte-for-byte except runtime marker append later.
     requestBody = body;
@@ -459,7 +194,6 @@ function canonicalizeLeg(raw: unknown, index: number): CollectorLegConfig {
 }
 
 function stableCanonicalJson(manifest: {
-  version: 1;
   legs: readonly CollectorLegConfig[];
 }): string {
   const legs = manifest.legs.map((leg) => {
@@ -472,7 +206,7 @@ function stableCanonicalJson(manifest: {
     }
     return base;
   });
-  return `${JSON.stringify({ version: 1, legs })}\n`;
+  return `${JSON.stringify({ legs })}\n`;
 }
 
 export async function loadCollectorManifest(path: string): Promise<CollectorManifest> {
@@ -496,8 +230,6 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
     text = text.slice(1);
   }
 
-  assertCollectorManifestJsonIdentity(text);
-
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -506,11 +238,8 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
     fail(`Collector leg manifest is not valid JSON: ${detail}`, error);
   }
 
-  if (!isPlainObject(parsed) || !exactKeys(parsed, ["version", "legs"])) {
-    fail("Collector manifest must be an object with only version and legs");
-  }
-  if (parsed["version"] !== 1) {
-    fail("Collector manifest version must be the exact integer 1");
+  if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
+    fail("Collector manifest must be an object with legs");
   }
   const legsRaw = parsed["legs"];
   if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
@@ -538,10 +267,9 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
     legs.push(leg);
   }
 
-  const canonicalJson = stableCanonicalJson({ version: 1, legs });
+  const canonicalJson = stableCanonicalJson({ legs });
   const digest = createHash("sha256").update(canonicalJson, "utf8").digest("hex");
   return {
-    version: 1,
     legs,
     canonicalJson,
     digest,

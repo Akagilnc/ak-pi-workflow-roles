@@ -19,6 +19,11 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     provider: "ak-audit-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
+  if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
+      realSetTimeout(handler, delay === 183000 ? 25 : delay, ...args)) as typeof setTimeout;
+  }
   const observation = process.env.AK_NAVIGATOR_OBSERVATION === "1";
   /** Canonical delivery matrix: recommendation | unavailable | silence (extends observation seam). */
   const deliveryOutcome = process.env.AK_NAVIGATOR_DELIVERY_OUTCOME;
@@ -35,7 +40,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
   let inputReleasedAt = "";
-  const response = async (context: Context) => {
+  const response = async (context: Context, options?: { timeoutMs?: number }) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
       if (deliveryMode === "unavailable") {
@@ -63,6 +68,24 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       }
     }
     if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+      if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
+        const timeoutMs = options?.timeoutMs;
+        if (typeof timeoutMs !== "number" || timeoutMs <= 0) {
+          return await new Promise<ReturnType<typeof fauxAssistantMessage>>(() => undefined);
+        }
+        // Honor timeoutMs the way registry providers do. The fixture only
+        // compresses the 183000 production delay on setTimeout so the real
+        // deadline fires without sleeping 183s; it does not invent terminal
+        // evidence for the test to read back.
+        return await new Promise<ReturnType<typeof fauxAssistantMessage>>((resolve) => {
+          setTimeout(() => {
+            resolve(fauxAssistantMessage([], {
+              stopReason: "error",
+              errorMessage: "provider timeout: compliance request expired",
+            }));
+          }, timeoutMs);
+        });
+      }
       if (deliveryMode === "silence") {
         return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
           status: "escalate",
@@ -87,7 +110,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  faux.setResponses(healthyNavigator || deliveryMode === "unavailable" ? [response, response, response, response, response] : [
+  faux.setResponses(healthyNavigator || deliveryMode === "unavailable" || process.env.AK_AUDIT_TIMEOUT_FAILURE === "1" ? [response, response, response, response, response] : [
     fauxAssistantMessage(
       fauxToolCall(
         JUDGE_OUTPUT_TOOL_NAME,
