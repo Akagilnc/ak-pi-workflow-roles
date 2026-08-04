@@ -14,9 +14,14 @@ const rows = [
   { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "done" } } },
 ];
 
+/** Machine ledger home runs root: `.../.ak-roles/books/<book>/issues/<issue>/runs`. */
+function homeRuns(root: string, issue: number, book = "demo-book"): string {
+  return join(root, ".ak-roles", "books", book, "issues", String(issue), "runs");
+}
+
 test("one retained runs directory yields an independently cited single-case cost report", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-case-"));
-  const runs = join(root, ".ak/work/issues/28/runs");
+  const runs = homeRuns(root, 28);
   await mkdir(join(runs, "review-004/session"), { recursive: true });
   await mkdir(join(runs, "review-004-retry"), { recursive: true });
   const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
@@ -48,7 +53,7 @@ test("one retained runs directory yields an independently cited single-case cost
 
 test("runtime-derived metrics permit testimony when a case exceeds evidence pagination", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-large-case-"));
-  const runs = join(root, ".ak/work/issues/40/runs");
+  const runs = homeRuns(root, 40);
   await mkdir(join(runs, "coder/session"), { recursive: true });
   const padding = "保留证据".repeat(1250);
   const fixture = [...rows, { type: "custom", timestamp: "2026-08-01T05:01:21.000Z", padding }];
@@ -73,7 +78,7 @@ test("runtime-derived metrics permit testimony when a case exceeds evidence pagi
 
 test("commit accounting excludes Coder self-reported commit SHAs", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-commits-"));
-  const runs = join(root, ".ak/work/issues/40/runs");
+  const runs = homeRuns(root, 40);
   await mkdir(join(runs, "coder/session"), { recursive: true });
   const fixture = [
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
@@ -87,7 +92,7 @@ test("commit accounting excludes Coder self-reported commit SHAs", async () => {
 
 test("commit accounting excludes Fixer classResults self-reported commitSha", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-fixer-commits-"));
-  const runs = join(root, ".ak/work/issues/40/runs");
+  const runs = homeRuns(root, 40);
   await mkdir(join(runs, "fixer/session"), { recursive: true });
   const fixture = [
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
@@ -120,7 +125,7 @@ test("commit accounting excludes Fixer classResults self-reported commitSha", as
 
 test("intermediate object details neither terminate nor manufacture session status", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-endpoint-"));
-  const runs = join(root, ".ak/work/issues/40/runs");
+  const runs = homeRuns(root, 40);
   await mkdir(join(runs, "coder/session"), { recursive: true });
   const fixture = [
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
@@ -142,7 +147,7 @@ test("intermediate object details neither terminate nor manufacture session stat
 
 test("timestamp-less terminating results leave the session incomplete at the last retained row", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-timestampless-terminal-"));
-  const runs = join(root, ".ak/work/issues/40/runs");
+  const runs = homeRuns(root, 40);
   await mkdir(join(runs, "coder/session"), { recursive: true });
   const fixture = [
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
@@ -163,7 +168,7 @@ test("timestamp-less terminating results leave the session incomplete at the las
 
 test("partial and non-monotonic sessions remain reportable with every explicit degradation", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-degraded-"));
-  const runs = join(root, ".ak/work/issues/40/runs");
+  const runs = homeRuns(root, 40);
   await mkdir(join(runs, "crashed/session"), { recursive: true });
   await writeFile(join(runs, "crashed/session/truncated.jsonl"), `${JSON.stringify({ type: "session", timestamp: "2026-08-01T00:00:02.000Z" })}\n{`);
   await writeFile(join(runs, "crashed/session/headerless.jsonl"), `${JSON.stringify({ type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "assistant", responseId: "r" } })}\n`);
@@ -179,22 +184,58 @@ test("partial and non-monotonic sessions remain reportable with every explicit d
   assert.match(combined.degradationReason ?? "", /non-monotonic session timestamps/);
 });
 
-test("case admission rejects runs trees outside the ADR 0017 path", async () => {
+test("case admission rejects runs trees outside the ledger-home path", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-invalid-path-"));
   const runs = join(root, "issues/40/runs");
   await mkdir(runs, { recursive: true });
-  await assert.rejects(loadDoctorCase(runs), /\.ak\/work\/issues\/<n>\/runs/);
+  await assert.rejects(loadDoctorCase(runs), /\.ak-roles\/books\/<book>\/issues\/<n>\/runs/);
+});
+
+test("case admission rejects retired .ak/work runs trees", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-retired-ak-work-"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(runs, { recursive: true });
+  await assert.rejects(loadDoctorCase(runs), /\.ak-roles\/books\/<book>\/issues\/<n>\/runs/);
+});
+
+test("ledger-home historical migrated archive run with @source-tree suffix is admitted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-home-migrated-"));
+  const runs = homeRuns(root, 130, "ak-roles-130");
+  const runDir = "review-004@legacy-worktree";
+  await mkdir(join(runs, runDir, "session"), { recursive: true });
+  const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
+  await writeFile(join(runs, runDir, "session", "retained.jsonl"), body);
+  const patient = await loadDoctorCase(runs);
+  assert.equal(patient.identity.issueNumber, 130);
+  assert.deepEqual(patient.cost.legs.sources, [`${runDir}/session/retained.jsonl`]);
+  assert.equal(patient.cost.sessions[0]?.completion, "accepted");
+  assert.equal(patient.evidence[0]?.content, body);
+});
+
+test("ledger-home current invocation@source-tree session shape is admitted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-home-current-"));
+  const runs = homeRuns(root, 130, "ak-roles-130");
+  const runDir = "coder-apply@ak-roles-130";
+  await mkdir(join(runs, runDir, "session"), { recursive: true });
+  const body = rows.map((row) => JSON.stringify(row)).join("\n") + "\n";
+  await writeFile(join(runs, runDir, "session", "session.jsonl"), body);
+  const patient = await loadDoctorCase(runs);
+  assert.equal(patient.identity.issueNumber, 130);
+  assert.deepEqual(patient.cost.invocations.sources, [runDir]);
+  assert.deepEqual(patient.cost.legs.sources, [`${runDir}/session/session.jsonl`]);
+  assert.equal(patient.cost.sessions[0]?.source, `${runDir}/session/session.jsonl`);
+  assert.equal(patient.cost.sessions[0]?.completion, "accepted");
 });
 
 test("case identity is repository-relative with an absolute fallback outside repositories", async () => {
   const repository = await mkdtemp(join(tmpdir(), "doctor-identity-repository-"));
   await mkdir(join(repository, ".git"));
-  const repositoryRuns = join(repository, ".ak/work/issues/40/runs");
+  const repositoryRuns = homeRuns(repository, 40);
   await mkdir(repositoryRuns, { recursive: true });
-  assert.equal((await loadDoctorCase(repositoryRuns)).identity.runsPath, ".ak/work/issues/40/runs");
+  assert.equal((await loadDoctorCase(repositoryRuns)).identity.runsPath, ".ak-roles/books/demo-book/issues/40/runs");
 
   const outside = await mkdtemp(join(tmpdir(), "doctor-identity-outside-"));
-  const outsideRuns = join(outside, ".ak/work/issues/40/runs");
+  const outsideRuns = homeRuns(outside, 40);
   await mkdir(outsideRuns, { recursive: true });
   assert.equal((await loadDoctorCase(outsideRuns)).identity.runsPath, await realpath(outsideRuns));
 });
@@ -202,7 +243,7 @@ test("case identity is repository-relative with an absolute fallback outside rep
 test("case identity discovery propagates unexpected filesystem errors", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-identity-error-"));
   await symlink(".git", join(root, ".git"));
-  const runs = join(root, ".ak/work/issues/40/runs");
+  const runs = homeRuns(root, 40);
   await mkdir(runs, { recursive: true });
   await assert.rejects(loadDoctorCase(runs), (error: NodeJS.ErrnoException) => error.code === "ELOOP");
 });
@@ -210,7 +251,7 @@ test("case identity discovery propagates unexpected filesystem errors", async ()
 test("single-case findings enforce actual/no-real-bite and prescription law", async () => {
   assert.deepEqual(DOCTOR_TARGET_KINDS, ["law", "gate", "template", "station", "seat"]);
   const root = await mkdtemp(join(tmpdir(), "doctor-finding-"));
-  const runs = join(root, ".ak/work/issues/40/runs");
+  const runs = homeRuns(root, 40);
   await mkdir(join(runs, "judge/session"), { recursive: true });
   await writeFile(join(runs, "judge/session/session.jsonl"), rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
   const patient = await loadDoctorCase(runs);
