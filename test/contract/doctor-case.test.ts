@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
-import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, validateDoctorOutput } from "../../src/doctor-contracts.ts";
+import { DOCTOR_TARGET_KINDS, DoctorEvidenceStore, validateDoctorOutput, validateDoctorSubmissionShape } from "../../src/doctor-contracts.ts";
 
 const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
@@ -208,3 +208,56 @@ test("single-case findings enforce actual/no-real-bite and prescription law", as
   assert.deepEqual(validateDoctorOutput(refusal, patient, store), refusal);
   assert.throws(() => validateDoctorOutput({ ...refusal, missingEvidence: [{ need: "unknown", targetKeys: ["invented-gate"] }] }, patient, store), /lawful case target/);
 });
+
+test("Doctor submission accepts unknown guardrails keys while enforcing the three required members", () => {
+  const guardrail = { answer: true, evidenceIds: ["e1"], explanation: "observed" };
+  const baseFinding = {
+    targetKey: "judge-output-gate",
+    targetKind: "gate" as const,
+    assetEvidence: { targetKey: "judge-output-gate", targetKind: "gate" as const, evidenceId: "e1" },
+    evidenceIds: ["e1"],
+    disposition: "keep" as const,
+    prescription: { kind: "retain" as const, recommendation: "Retain the gate" },
+    lastRealBite: { kind: "actual" as const, targetKey: "judge-output-gate", evidenceId: "e1" },
+  };
+  const withUnknown = {
+    status: "completed" as const,
+    case: { issueNumber: 40, runsPath: ".ak/work/issues/40/runs" },
+    findings: [{
+      ...baseFinding,
+      guardrails: {
+        reproducibleFailure: guardrail,
+        owningSeamOrInvariant: guardrail,
+        deletionOrSimplificationSuffices: { ...guardrail, answer: false },
+        narrativeNote: "human-facing only",
+      },
+    }],
+  };
+  assert.deepEqual(validateDoctorSubmissionShape(withUnknown), withUnknown);
+
+  const missingMember = {
+    ...withUnknown,
+    findings: [{
+      ...baseFinding,
+      guardrails: {
+        reproducibleFailure: guardrail,
+        owningSeamOrInvariant: guardrail,
+      },
+    }],
+  };
+  assert.throws(() => validateDoctorSubmissionShape(missingMember), /contract/);
+
+  const wrongType = {
+    ...withUnknown,
+    findings: [{
+      ...baseFinding,
+      guardrails: {
+        reproducibleFailure: { ...guardrail, answer: "yes" },
+        owningSeamOrInvariant: guardrail,
+        deletionOrSimplificationSuffices: { ...guardrail, answer: false },
+      },
+    }],
+  };
+  assert.throws(() => validateDoctorSubmissionShape(wrongType), /contract/);
+});
+
