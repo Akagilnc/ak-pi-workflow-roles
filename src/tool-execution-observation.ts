@@ -4,7 +4,7 @@ import { Value } from "typebox/value";
 
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 
-/** Closed contract version for the tool-execution observation data plane. */
+/** @deprecated Records no longer carry a version field; retained for compatibility with the runtime export surface. */
 export const TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION = 1 as const;
 
 /** Mandatory coalesce window for tool_execution_update heartbeats (stderr is bounded). */
@@ -24,7 +24,6 @@ export const TOOL_EXECUTION_UPDATE_THROTTLE_MS = 30_000;
 export const TOOL_EXECUTION_UPDATE_HEARTBEAT = "output-driven" as const;
 
 const observationBase = {
-  schemaVersion: Type.Literal(TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION),
   role: Type.String({ minLength: 1 }),
   toolCallId: Type.String({ minLength: 1 }),
   toolName: Type.String({ minLength: 1 }),
@@ -35,16 +34,16 @@ export const toolExecutionObservationRecordSchema = Type.Union([
   Type.Object({
     ...observationBase,
     event: Type.Literal("tool_execution_start"),
-  }, { additionalProperties: false }),
+  }, { additionalProperties: true }),
   Type.Object({
     ...observationBase,
     event: Type.Literal("tool_execution_update"),
-  }, { additionalProperties: false }),
+  }, { additionalProperties: true }),
   Type.Object({
     ...observationBase,
     event: Type.Literal("tool_execution_end"),
     isError: Type.Boolean(),
-  }, { additionalProperties: false }),
+  }, { additionalProperties: true }),
 ]);
 
 export type ToolExecutionObservationRecord = Static<typeof toolExecutionObservationRecordSchema>;
@@ -52,7 +51,7 @@ export type ToolExecutionObservationWriter = (record: ToolExecutionObservationRe
 
 export function validateToolExecutionObservationRecord(record: unknown): ToolExecutionObservationRecord {
   if (!Value.Check(toolExecutionObservationRecordSchema, record)) {
-    throw new TypeError("Tool execution observation record does not match its closed contract");
+    throw new TypeError("Tool execution observation record does not match its contract");
   }
   return record as ToolExecutionObservationRecord;
 }
@@ -126,7 +125,6 @@ export function createToolExecutionObservationFace(options: {
       if (role === undefined) return;
       states.set(event.toolCallId, { lastUpdateEmitMonoMs: undefined });
       await emit({
-        schemaVersion: TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION,
         event: "tool_execution_start",
         role,
         toolCallId: event.toolCallId,
@@ -149,7 +147,6 @@ export function createToolExecutionObservationFace(options: {
       state.lastUpdateEmitMonoMs = now;
       states.set(event.toolCallId, state);
       await emit({
-        schemaVersion: TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION,
         event: "tool_execution_update",
         role,
         toolCallId: event.toolCallId,
@@ -162,7 +159,6 @@ export function createToolExecutionObservationFace(options: {
       if (role === undefined) return;
       states.delete(event.toolCallId);
       await emit({
-        schemaVersion: TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION,
         event: "tool_execution_end",
         role,
         toolCallId: event.toolCallId,
