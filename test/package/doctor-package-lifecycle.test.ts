@@ -64,7 +64,8 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
           ],
           {
             cwd: fixture,
-            timeoutMs: 15_000,
+            // Full-suite evidence: isolated ~1.4s; contended green ~8–9s; contended red timed out at 15s (duration_ms 16346).
+            timeoutMs: 30_000,
             env: {
               ...process.env,
               HOME: home,
