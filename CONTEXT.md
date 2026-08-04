@@ -29,6 +29,7 @@
 - **公开角色 CLI(Public role CLI)**:包外调用者使用角色包的唯一受支持产品入口；它接收调用请求并交付终局结果，不替调用者选择、组合或续跑角色。_Avoid_:把裸 Pi 角色入口、session 文件或事件流称为公开 CLI。
 - **内部角色入口(Internal role entrypoint)**:获授权的包开发 session 用来直接激活和诊断角色的仓内接缝，不是外部产品面，也不享有公开兼容承诺。_Avoid_:公开入口、备用 CLI。
 - **调用请求(Invocation request)**:一次角色调用的输入，由可选 opaque instruction、零到多个 attachments 与少量角色专属参数组成；内容是否充分由角色判断，不由 CLI 分类或裁决。
+- **附件(Attachment)**:调用者明确附给一次角色调用、并在受理时冻结内容的材料；原路径只表明出处，resume 继续消费同一份材料而非路径上的后来版本。
 - **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果，汇合角色结算、Navigator 出席事实与声明的 artifacts；过程事件与 session 记录不是终局结果。
 - **角色运行(Role run)**:一次已受理角色调用的持久执行身份，连接其调用请求、Pi session 与终局结果，并可在用户改选模型后继续同一现场。
 - **Artifact reference**:终局结果中声明的本地材料引用，用于打开完整报告、证据或错误详情；它补充内联核心结论，不替代结论。
