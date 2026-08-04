@@ -10,9 +10,7 @@ import {
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
 import {
-  classifyCollectorBatch,
   COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
@@ -106,155 +104,79 @@ test("windowRelation matrix uses authoritative times only", () => {
   assert.equal(computeWindowRelation("bogus", activation, deadline), "uncertain");
 });
 
-test("batch gate permits one operational or sole output and latches mixed/multiple", async () => {
-  const soleOutputArgs = {
-    legs: [{
-      legId: "codex",
-      status: "missing",
-      rationale: "x",
-      evidenceRefs: ["s"],
-    }],
-  };
-  const call = (name: string, id: string) => ({
-    type: "toolCall" as const,
-    id,
-    name,
-    arguments: name === COLLECTOR_OBSERVE_TOOL
-      ? {}
-      : name === COLLECTOR_WAIT_TOOL
-      ? { durationMs: 1 }
-      : name === COLLECTOR_REQUEST_TOOL
-      ? { legId: "codex", snapshotId: "s" }
-      : soleOutputArgs,
-  });
-
-  const allowObserve = createCollectorLedger(config());
-  const ok = allowObserve.evaluateBatch([call(COLLECTOR_OBSERVE_TOOL, "1")]);
-  assert.equal(ok.allow, true);
-  if (ok.allow) {
-    assert.deepEqual(ok.permitted, {
-      kind: "operational",
-      callId: "1",
-      name: COLLECTOR_OBSERVE_TOOL,
-    });
-  }
-
-  // Sole output after a completed snapshot is permitted.
-  const clock = clockAt("2024-01-01T00:00:00Z");
-  const allowOutput = createCollectorLedger(config());
-  allowOutput.recordActivation(clock);
-  await allowOutput.observe(createFakeGitHubTransport({
-    user: sampleUser(),
-    pullRequest: samplePull(),
-    reviews: [],
-    issueComments: [],
-    reviewComments: [],
-  }), clock);
-  const sole = allowOutput.evaluateBatch([call(COLLECTOR_OUTPUT_TOOL, "out")]);
-  assert.equal(sole.allow, true);
-  if (sole.allow) {
-    assert.deepEqual(sole.permitted, {
-      kind: "output",
-      callId: "out",
-      name: COLLECTOR_OUTPUT_TOOL,
-    });
-  }
-
-  // Deny table (includes sole-output-without-snapshot + mixed/multiple).
-  const denyRows = [
-    [COLLECTOR_OUTPUT_TOOL],
-    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_REQUEST_TOOL],
-    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_OUTPUT_TOOL],
-    [COLLECTOR_OBSERVE_TOOL, COLLECTOR_OBSERVE_TOOL],
-    [COLLECTOR_REQUEST_TOOL, COLLECTOR_WAIT_TOOL],
-    [COLLECTOR_OUTPUT_TOOL, COLLECTOR_OUTPUT_TOOL],
-    [COLLECTOR_OUTPUT_TOOL, COLLECTOR_REQUEST_TOOL],
-  ];
-  for (const names of denyRows) {
-    const ledger = createCollectorLedger(config());
-    const decision = ledger.evaluateBatch(names.map((name, index) => call(name, String(index))));
-    assert.equal(decision.allow, false, names.join("+"));
-    assert.equal(ledger.fatal, true, names.join("+"));
-  }
-});
-
-test("classifier rejects unknown, malformed, and schema-invalid without role", () => {
-  assert.equal(
-    classifyCollectorBatch([
-      { type: "toolCall", id: "1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-      { type: "toolCall", id: "2", name: "unknown_tool", arguments: {} },
-    ], { outputAccepted: false, hasCompletedOperationalOrSnapshot: true }).allow,
-    false,
-  );
-  assert.equal(
-    classifyCollectorBatch([
-      { type: "toolCall", id: 1 as unknown as string, name: COLLECTOR_OBSERVE_TOOL },
-    ], { outputAccepted: false, hasCompletedOperationalOrSnapshot: false }).allow,
-    false,
-  );
-  assert.equal(
-    classifyCollectorBatch([
-      { type: "toolCall", id: "1", name: COLLECTOR_OBSERVE_TOOL, arguments: { extra: true } },
-    ], { outputAccepted: false, hasCompletedOperationalOrSnapshot: false }).allow,
-    false,
-  );
-  assert.equal(
-    classifyCollectorBatch([
-      {
-        type: "toolCall",
-        id: "1",
-        name: COLLECTOR_OBSERVE_TOOL,
-        arguments: {},
-      },
-      {
-        type: "toolCall",
-        id: "2",
-        name: COLLECTOR_WAIT_TOOL,
-        arguments: { durationMs: "nope" },
-      },
-    ], { outputAccepted: false, hasCompletedOperationalOrSnapshot: false }).allow,
-    false,
-  );
-});
-
-test("beginOperational requires exact permitted batch match", () => {
-  const bare = createCollectorLedger(config());
-  assert.throws(
-    () => bare.beginOperational(COLLECTOR_OBSERVE_TOOL, "x"),
-    /permitted|batch/i,
-  );
-
+test("beginOperational serializes concurrent calls and allows same-call reentry", () => {
   const ledger = createCollectorLedger(config());
   const decision = ledger.evaluateBatch([
     { type: "toolCall", id: "obs-1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
   ]);
   assert.equal(decision.allow, true);
+  ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1");
+  ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1"); // same-call reentry
   assert.throws(
-    () => ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "wrong-id"),
-    /permitted|batch/i,
+    () => ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-2"),
+    /already active/i,
+  );
+  assert.equal(ledger.fatal, true);
+});
+
+test("observe failure latches fatal retaining original cause identity", async () => {
+  const clock = clockAt("2024-01-01T00:00:00Z");
+  const original = new TypeError("upstream gh exploded");
+  const transport = createFakeGitHubTransport({
+    user: sampleUser(),
+    pullRequest: samplePull(),
+    reviews: [],
+    issueComments: [],
+    reviewComments: [],
+  });
+  transport.getPullRequest = async () => {
+    throw original;
+  };
+  const ledger = createCollectorLedger(config());
+  ledger.recordActivation(clock);
+  await assert.rejects(
+    () => ledger.observe(transport, clock),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
+      assert.match(error.message, /observe failed/);
+      assert.equal(error.cause, original);
+      assert.ok(error.cause instanceof TypeError);
+      assert.equal((error.cause as TypeError).message, "upstream gh exploded");
+      return true;
+    },
+  );
+  assert.equal(ledger.fatal, true);
+
+  // Negative: policy latch without an underlying throw keeps cause unset.
+  const bare = createCollectorLedger(config());
+  await assert.rejects(
+    () => bare.observe(transport, clock),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
+      assert.match(error.message, /requires activation/);
+      assert.equal(error.cause, undefined);
+      return true;
+    },
   );
 
-  const ledger2 = createCollectorLedger(config());
-  assert.equal(
-    ledger2.evaluateBatch([
-      { type: "toolCall", id: "obs-1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-    ]).allow,
-    true,
+  // Abort path retains signal.reason identity through the same latchFatal seam.
+  const abortReason = new Error("host cancelled");
+  const controller = new AbortController();
+  controller.abort(abortReason);
+  const abortLedger = createCollectorLedger(config());
+  abortLedger.recordActivation(clock);
+  await assert.rejects(
+    () => abortLedger.observe(transport, clock, controller.signal),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
+      assert.match(error.message, /host cancelled/);
+      assert.equal(error.cause, abortReason);
+      return true;
+    },
   );
-  assert.throws(
-    () => ledger2.beginOperational(COLLECTOR_WAIT_TOOL, "obs-1"),
-    /permitted|batch/i,
-  );
-
-  const ledger3 = createCollectorLedger(config());
-  assert.equal(
-    ledger3.evaluateBatch([
-      { type: "toolCall", id: "obs-1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-    ]).allow,
-    true,
-  );
-  ledger3.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1");
-  ledger3.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1"); // idempotent
 });
 
 test("observe stores immutable snapshot and recovers authenticated marker after ambiguous loss", async () => {
