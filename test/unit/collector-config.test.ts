@@ -8,7 +8,6 @@ import {
   loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
-  type CollectorManifest,
 } from "../../src/collector-config.ts";
 
 async function writeManifest(
@@ -28,7 +27,6 @@ function validManifest(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    version: 1,
     legs: [
       {
         id: "codex",
@@ -132,7 +130,6 @@ test("manifest loads, normalizes authors, and digests canonical JSON stably", as
   }));
   const first = await loadCollectorManifest(path);
   const second = await loadCollectorManifest(path);
-  assert.equal(first.version, 1);
   assert.equal(first.digest, second.digest);
   assert.equal(first.digest.length, 64);
   assert.deepEqual(
@@ -156,6 +153,7 @@ test("manifest loads, normalizes authors, and digests canonical JSON stably", as
   );
   assert.equal(first.canonicalJson.includes("CodexBot"), false);
   assert.equal(first.canonicalJson.includes("codexbot"), true);
+  assert.equal(first.canonicalJson.includes('"version"'), false);
 });
 
 test("manifest rejects unreadable path, non-UTF-8, and malformed JSON", async () => {
@@ -177,39 +175,32 @@ test("manifest rejects unreadable path, non-UTF-8, and malformed JSON", async ()
 test("manifest retains required semantic validation while ignoring extra input", async () => {
   const dir = await mkdtemp(resolve(tmpdir(), "ak-collector-sem-"));
   const cases: Array<[string, unknown, RegExp]> = [
-    ["missing-version", { legs: [{ id: "a", expectedAuthors: ["x"] }] }, /version/i],
-    ["bad-version-string", { version: "future", legs: [{ id: "a", expectedAuthors: ["x"] }] }, /version/i],
-    ["bad-version-number", { version: 2, legs: [{ id: "a", expectedAuthors: ["x"] }] }, /version/i],
-    ["unknown-fields-are-ignored", { version: 1, extra: true, legs: [{ id: "a", expectedAuthors: ["x"], bot: true }] }, /NEVER_MATCH/],
-    ["no-legs", { version: 1, legs: [] }, /legs|min/i],
-    ["bad-id-case", { version: 1, legs: [{ id: "Codex", expectedAuthors: ["x"] }] }, /id/i],
-    ["bad-id-start", { version: 1, legs: [{ id: "1codex", expectedAuthors: ["x"] }] }, /id/i],
+    ["versionless-manifest-loads", { legs: [{ id: "a", expectedAuthors: ["x"] }] }, /NEVER_MATCH/],
+    ["extra-top-level-fields-are-ignored", { extra: true, legs: [{ id: "a", expectedAuthors: ["x"], bot: true }] }, /NEVER_MATCH/],
+    ["no-legs", { legs: [] }, /legs|min/i],
+    ["bad-id-case", { legs: [{ id: "Codex", expectedAuthors: ["x"] }] }, /id/i],
+    ["bad-id-start", { legs: [{ id: "1codex", expectedAuthors: ["x"] }] }, /id/i],
     ["dup-id", {
-      version: 1,
       legs: [
         { id: "a", expectedAuthors: ["x"] },
         { id: "a", expectedAuthors: ["y"] },
       ],
     }, /id|duplicate/i],
-    ["empty-authors", { version: 1, legs: [{ id: "a", expectedAuthors: [] }] }, /author/i],
-    ["blank-author", { version: 1, legs: [{ id: "a", expectedAuthors: ["  "] }] }, /author/i],
+    ["empty-authors", { legs: [{ id: "a", expectedAuthors: [] }] }, /author/i],
+    ["blank-author", { legs: [{ id: "a", expectedAuthors: ["  "] }] }, /author/i],
     ["dup-author-case", {
-      version: 1,
       legs: [{ id: "a", expectedAuthors: ["Bot", "bot"] }],
     }, /author|duplicate/i],
     ["overlap-authors", {
-      version: 1,
       legs: [
         { id: "a", expectedAuthors: ["shared"] },
         { id: "b", expectedAuthors: ["Shared"] },
       ],
     }, /overlap|author/i],
     ["empty-body", {
-      version: 1,
       legs: [{ id: "a", expectedAuthors: ["x"], request: { body: "  " } }],
     }, /body/i],
     ["unknown-request-fields-are-ignored", {
-      version: 1,
       legs: [{ id: "a", expectedAuthors: ["x"], request: { body: "ok", extra: 1 } }],
     }, /NEVER_MATCH/],
   ];

@@ -332,7 +332,6 @@ test("R6 null user on review/issue comment/review comment preserves record and n
     },
     prNumber: 1,
     manifest: {
-      version: 1,
       legs: [{
         id: "codex",
         expectedAuthors: ["codexbot"],
@@ -574,7 +573,6 @@ test("2xx parse ambiguous_loss recovers via marker observe without second POST",
     },
     prNumber: 1,
     manifest: {
-      version: 1,
       legs: [{
         id: "codex",
         expectedAuthors: ["codexbot"],
@@ -612,7 +610,6 @@ function collectorLedgerFixture(digestChar = "f") {
     },
     prNumber: 1,
     manifest: {
-      version: 1,
       legs: [{
         id: "codex",
         expectedAuthors: ["codexbot"],
