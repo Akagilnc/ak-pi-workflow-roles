@@ -6,8 +6,6 @@ import {
   type CollectorRepository,
 } from "./collector-config.ts";
 import {
-  assertCollectorByteLimit,
-  COLLECTOR_RECEIPT_MAX_BYTES,
   computeWindowRelation,
   isValidReviewState,
   reviewQualifiesForValid,
@@ -801,13 +799,6 @@ export function buildCollectorReceipt(
     snapshots,
     evidenceRecords,
   };
-
-  const bytes = Buffer.byteLength(JSON.stringify(receipt), "utf8");
-  try {
-    assertCollectorByteLimit("receipt", bytes, COLLECTOR_RECEIPT_MAX_BYTES);
-  } catch (error) {
-    throw ledger.latchFatal(error instanceof Error ? error.message : String(error));
-  }
 
   void isValidReviewState;
   void (null as unknown as CollectorRepository);

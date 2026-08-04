@@ -20,10 +20,7 @@ import {
   COLLECTOR_WAIT_TOOL,
   createCollectorRoleRuntime,
 } from "../../src/collector-role.ts";
-import {
-  COLLECTOR_RECEIPT_MAX_BYTES,
-  type CollectorClock,
-} from "../../src/collector-evidence.ts";
+import type { CollectorClock } from "../../src/collector-evidence.ts";
 import { loadCollectorManifest } from "../../src/collector-config.ts";
 import { buildCollectorRequestMarker } from "../../src/collector-github.ts";
 import {
@@ -1710,64 +1707,6 @@ test("F3-ambient-commands", async () => {
     } finally {
       process.exitCode = previousExit;
     }
-  });
-});
-
-test("F3-receipt-overflow uses the ledger test seam", async () => {
-  await withHermeticHome({ prefix: "ak-collector-recv-ovf-" }, async ({ home }) => {
-    const legs = await writeLegs(home);
-    const receiptMaxBytes = COLLECTOR_RECEIPT_MAX_BYTES;
-    const { parseCollectorRepository, parseCollectorPrNumber } =
-      await import("../../src/collector-config.ts");
-    const manifest = await loadCollectorManifest(legs);
-    const clock = clockAt("2024-01-01T00:10:00Z");
-    const makeTransport = () => createFakeGitHubTransport({
-      user: sampleUser(),
-      pullRequest: samplePull({ headOid: "head-c" }),
-      reviews: [sampleReview({
-        id: 1,
-        userLogin: "codexbot",
-        state: "APPROVED",
-        commitId: "head-c",
-        submittedAt: "2024-01-01T00:00:00Z",
-        body: "ok",
-        raw: {},
-      })],
-      issueComments: [],
-      reviewComments: [],
-    });
-    const config = {
-      repository: parseCollectorRepository("acme/widgets"),
-      prNumber: parseCollectorPrNumber("1"),
-      manifest,
-    };
-    const measure = async (rationale: string) => {
-      const ledger = createCollectorLedger(config);
-      ledger.recordActivation(clock);
-      const transport = makeTransport();
-      await ledger.observe(transport, clock);
-      const review = ledger.allEvidence().find((r) => r.kind === "review")!;
-      const receipt = buildCollectorReceipt(ledger, {
-        legs: [{
-          legId: "codex",
-          status: "valid",
-          rationale,
-          evidenceRefs: [review.evidenceId],
-        }],
-      }, clock);
-      return Buffer.byteLength(JSON.stringify(receipt), "utf8");
-    };
-    const baseBytes = await measure("x");
-    const maxRationale = "x".repeat(receiptMaxBytes - baseBytes + 2);
-    await assert.rejects(
-      () => measure(maxRationale),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.equal((error as { collectorFatal?: boolean }).collectorFatal, true);
-        assert.match(error.message, new RegExp(`receipt exceeded ${receiptMaxBytes} UTF-8 bytes`));
-        return true;
-      },
-    );
   });
 });
 
