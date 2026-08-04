@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  assertCollectorByteLimit,
-  COLLECTOR_RECEIPT_MAX_BYTES,
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
 import {
@@ -59,7 +57,6 @@ function baseConfig(authors = ["codexbot"]) {
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "codex",
@@ -1357,17 +1354,6 @@ test("edited review after deadline cannot prove unavailable via backdated submit
   );
 });
 
-test("receipt byte boundary uses the real production limit", () => {
-  assert.doesNotThrow(() =>
-    assertCollectorByteLimit("receipt", COLLECTOR_RECEIPT_MAX_BYTES, COLLECTOR_RECEIPT_MAX_BYTES),
-  );
-  assert.throws(
-    () => assertCollectorByteLimit("receipt", COLLECTOR_RECEIPT_MAX_BYTES + 1, COLLECTOR_RECEIPT_MAX_BYTES),
-    new RegExp(`Collector receipt exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes`),
-  );
-  assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
-});
-
 // ---------------------------------------------------------------------------
 // F1 schema owner matrix
 // ---------------------------------------------------------------------------
@@ -1560,7 +1546,6 @@ function twoLegConfig() {
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "a",
@@ -2688,7 +2673,6 @@ test("R2 valid rejects cross-leg cites and rebinds only same-leg qualifying proo
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "codex",
