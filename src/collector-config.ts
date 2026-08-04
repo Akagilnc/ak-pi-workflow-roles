@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 export const COLLECTOR_HOST = "github.com" as const;
-export const COLLECTOR_MANIFEST_VERSION = 1 as const;
 export const COLLECTOR_LEG_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 export const COLLECTOR_OWNER_PATTERN =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
@@ -23,7 +22,6 @@ export type CollectorLegConfig = {
 };
 
 export type CollectorManifest = {
-  version: 1;
   legs: readonly CollectorLegConfig[];
   canonicalJson: string;
   digest: string;
@@ -196,7 +194,6 @@ function canonicalizeLeg(raw: unknown, index: number): CollectorLegConfig {
 }
 
 function stableCanonicalJson(manifest: {
-  version: 1;
   legs: readonly CollectorLegConfig[];
 }): string {
   const legs = manifest.legs.map((leg) => {
@@ -209,7 +206,7 @@ function stableCanonicalJson(manifest: {
     }
     return base;
   });
-  return `${JSON.stringify({ version: 1, legs })}\n`;
+  return `${JSON.stringify({ legs })}\n`;
 }
 
 export async function loadCollectorManifest(path: string): Promise<CollectorManifest> {
@@ -241,11 +238,8 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
     fail(`Collector leg manifest is not valid JSON: ${detail}`, error);
   }
 
-  if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["version", "legs"])) {
-    fail("Collector manifest must be an object with version and legs");
-  }
-  if (parsed["version"] !== COLLECTOR_MANIFEST_VERSION) {
-    fail("Collector manifest version must be the exact integer 1");
+  if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
+    fail("Collector manifest must be an object with legs");
   }
   const legsRaw = parsed["legs"];
   if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
@@ -273,10 +267,9 @@ export async function loadCollectorManifest(path: string): Promise<CollectorMani
     legs.push(leg);
   }
 
-  const canonicalJson = stableCanonicalJson({ version: 1, legs });
+  const canonicalJson = stableCanonicalJson({ legs });
   const digest = createHash("sha256").update(canonicalJson, "utf8").digest("hex");
   return {
-    version: 1,
     legs,
     canonicalJson,
     digest,
