@@ -49,7 +49,13 @@ export function createReviewerAgentRunner(dependencies = {}) {
             const settled = await Promise.allSettled(batch.workspaces.map(async (workspace) => {
                 const leg = dispatch.legs.find(candidate => candidate.axis === workspace.axis);
                 try {
-                    const child = await executeReviewerChild(workspace.path, leg, options.context, options.signal, dependencies.fault);
+                    const child = await executeReviewerChild(workspace.path, leg, options.context, {
+                        ...(options.signal === undefined ? {} : { signal: options.signal }),
+                        ...(dependencies.fault === undefined ? {} : { fault: dependencies.fault }),
+                        ...(dependencies.credentialScratchParent === undefined
+                            ? {}
+                            : { credentialScratchParent: dependencies.credentialScratchParent }),
+                    });
                     const disposition = await workspaceOwner.dispose(workspace);
                     return [leg.axis, Object.freeze({ status: "successful", report: child.report, usage: child.usage, target: batch.target, prompt: child.prompt, workspaceDisposition: disposition, runtimeConstructionEvidence: workspace.evidence })];
                 }

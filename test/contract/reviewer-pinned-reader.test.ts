@@ -7,7 +7,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { isReviewerPromptIdentity, reviewerPromptIdentity } from "../../src/reviewer-dispatch.ts";
 import { createReviewerPinnedGitReader } from "../../src/reviewer-pinned-git.ts";
 import { immutableReviewerRefs, sameReviewerRefs } from "../../src/reviewer-git-snapshot.ts";
 
@@ -213,12 +212,4 @@ test("shared ref snapshot helper canonicalizes immutably and compares order-inde
   assert.equal(sameReviewerRefs(refs, { "refs/tags/z": { objectId: "2", peeledCommitId: "2" }, "refs/heads/a": { objectId: "1", peeledCommitId: "1" } }), true);
   assert.equal(sameReviewerRefs(refs, { "refs/heads/a": { objectId: "different", peeledCommitId: "different" } }), false);
   assert.throws(() => (refs as unknown as Record<string, string>)["refs/heads/a"] = "changed");
-});
-
-test("shared prompt identity validates exact UTF-8 bytes, length, and SHA-256", () => {
-  const identity = reviewerPromptIdentity("逐字 prompt\n");
-  assert.equal(isReviewerPromptIdentity(identity), true);
-  assert.equal(isReviewerPromptIdentity({ ...identity, utf8Length: identity.utf8Length + 1 }), false);
-  assert.equal(isReviewerPromptIdentity({ ...identity, text: `${identity.text}x` }), false);
-  assert.throws(() => (identity as { text: string }).text = "changed");
 });

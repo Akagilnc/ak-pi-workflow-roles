@@ -3,7 +3,6 @@
     {
       "type": "object",
       "required": [
-        "schemaVersion",
         "role",
         "toolCallId",
         "toolName",
@@ -11,10 +10,6 @@
         "event"
       ],
       "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
         "role": {
           "type": "string",
           "minLength": 1
@@ -36,12 +31,11 @@
           "const": "tool_execution_start"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
       "required": [
-        "schemaVersion",
         "role",
         "toolCallId",
         "toolName",
@@ -49,10 +43,6 @@
         "event"
       ],
       "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
         "role": {
           "type": "string",
           "minLength": 1
@@ -74,12 +64,11 @@
           "const": "tool_execution_update"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     {
       "type": "object",
       "required": [
-        "schemaVersion",
         "role",
         "toolCallId",
         "toolName",
@@ -88,10 +77,6 @@
         "isError"
       ],
       "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
         "role": {
           "type": "string",
           "minLength": 1
@@ -116,7 +101,7 @@
           "type": "boolean"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     }
   ]
 }

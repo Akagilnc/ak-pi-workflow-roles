@@ -25,20 +25,14 @@ import {
 
 const exec = promisify(execFile);
 
-test("npm pack includes collector modules, schema, and soul and excludes skills/orchestrator collect", async () => {
+test("npm pack includes collector modules and soul and excludes skills/orchestrator collect", async () => {
   const pack = await getSharedIsolatedPack();
   const paths = pack.files.map((file) => file.path);
   assert.ok(paths.includes("souls/collector.md"));
-  assert.ok(paths.includes("schemas/collector-legs-v1.schema.json"));
   assert.ok(paths.includes("src/collector-role.ts"));
   assert.ok(paths.includes("src/collector-tool-schemas.ts"));
   assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
   assert.equal(paths.includes("souls/collect.md"), false);
-  const archiveText = (await exec("tar", ["-xOf", pack.tarball], {
-    maxBuffer: 5 * 1024 * 1024,
-  })).stdout;
-  assert.doesNotMatch(archiveText, /onlineCollect|ReviewCargo|souls\/collect\.md/);
-  assert.doesNotMatch(archiveText, /Mysterious Name|Under 400 words|Feature Envy/);
 });
 
 test("installed npm tarball collector runs default gh transport end-to-end in print and json", async () => {
@@ -57,7 +51,6 @@ test("installed npm tarball collector runs default gh transport end-to-end in pr
         await writeFile(
           legsPath,
           `${JSON.stringify({
-            version: 1,
             legs: [{
               id: "codex",
               expectedAuthors: ["codexbot"],

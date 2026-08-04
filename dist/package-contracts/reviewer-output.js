@@ -1,6 +1,4 @@
 /** Package-owned Reviewer intent and runtime-receipt leaves — no role registration surface. */
-import { isReviewerPromptIdentity, sameReviewerPromptIdentity } from "../reviewer-prompt-identity.js";
-import { sha256Hex } from "../sha256.js";
 import { verifyBundleIdentity } from "../reviewer-construction.js";
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 export const REVIEWER_ACCEPTED_TEXT = "Reviewer report accepted";
@@ -14,6 +12,9 @@ function exactKeys(value, required, optional = []) {
 function validWorkspace(value) {
     return value === "deleted" || value === "not-created" || (isRecord(value) && exactKeys(value, ["retained"]) && typeof value.retained === "string" && value.retained.length > 0);
 }
+function isReceiptText(value) {
+    return isRecord(value) && exactKeys(value, ["text"]) && typeof value.text === "string";
+}
 const failures = new Set(["cancelled", "provider", "snapshot", "workspace", "child", "unknown"]);
 export function validateReviewerIntent(output) {
     if (!isRecord(output))
@@ -25,7 +26,7 @@ export function validateReviewerIntent(output) {
     }
     throw new Error("Reviewer completed intent has no report; refused requires only a separate non-blank diagnostic");
 }
-/** Validate the runtime-owned V2 receipt, including all byte identities and outcome/report laws. */
+/** Validate the runtime-owned V2 receipt against consumed text and live target facts — no identity shells. */
 export function validateRuntimeReviewerReceipt(output) {
     if (!isRecord(output) || !exactKeys(output, ["version", "status", "reports", "outcomes", "identities"], ["diagnostic", "acceptedBatch"]) || output.version !== 2 ||
         (output.status !== "completed" && output.status !== "refused") || !isRecord(output.reports) || !isRecord(output.outcomes) || !isRecord(output.identities))
@@ -36,10 +37,8 @@ export function validateRuntimeReviewerReceipt(output) {
         !exactKeys(output.identities, ["canonicalSkill"], ["construction", "target"]))
         throw new Error("Invalid Reviewer receipt projection keys");
     const skill = output.identities.canonicalSkill;
-    if (!isRecord(skill) || !exactKeys(skill, ["sha256", "utf8Length", "snapshotIdentity"]) || !isRecord(skill.snapshotIdentity) ||
-        !exactKeys(skill.snapshotIdentity, ["text", "utf8Length", "sha256"]) || !isReviewerPromptIdentity(skill.snapshotIdentity) ||
-        skill.sha256 !== skill.snapshotIdentity.sha256 || skill.utf8Length !== skill.snapshotIdentity.utf8Length)
-        throw new Error("Invalid canonical Skill content identity");
+    if (!isReceiptText(skill))
+        throw new Error("Invalid canonical Skill content");
     const hasBatch = Object.hasOwn(output, "acceptedBatch");
     if (hasBatch !== Object.hasOwn(output.identities, "construction") || hasBatch !== Object.hasOwn(output.identities, "target") ||
         (hasBatch && (!isRecord(output.acceptedBatch) || !isRecord(output.identities.construction) || !isRecord(output.identities.target))))
@@ -54,7 +53,7 @@ export function validateRuntimeReviewerReceipt(output) {
             throw new Error("Invalid Reviewer accepted-batch projection");
         expectedLegs = acceptedBatch.legs;
         const expectedAxes = expectedLegs.map((leg) => leg.axis);
-        if (expectedAxes[0] !== "standards" || (expectedAxes.length === 2 && expectedAxes[1] !== "spec") || expectedLegs.some((leg) => !isRecord(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isRecord(leg.prompt) || !exactKeys(leg.prompt, ["text", "utf8Length", "sha256"]) || !isReviewerPromptIdentity(leg.prompt)))
+        if (expectedAxes[0] !== "standards" || (expectedAxes.length === 2 && expectedAxes[1] !== "spec") || expectedLegs.some((leg) => !isRecord(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isReceiptText(leg.prompt)))
             throw new Error("Invalid Reviewer accepted-leg projection");
         const objectId = (value) => typeof value === "string" && new RegExp(target.objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
         if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord(construction.bundle) || !verifyBundleIdentity(construction.bundle) ||
@@ -66,17 +65,15 @@ export function validateRuntimeReviewerReceipt(output) {
     for (const axis of ["standards", "spec"]) {
         const report = output.reports[axis];
         const outcome = output.outcomes[axis];
-        if (report !== undefined && (!isRecord(report) || !exactKeys(report, ["text", "utf8Length", "sha256"]) || typeof report.text !== "string" ||
-            report.utf8Length !== Buffer.byteLength(report.text, "utf8") || report.sha256 !== sha256Hex(report.text)))
-            throw new Error("Invalid Reviewer report identity");
+        if (report !== undefined && !isReceiptText(report))
+            throw new Error("Invalid Reviewer report text");
         if (outcome === undefined) {
             if (report !== undefined)
                 throw new Error("Reviewer report lacks outcome");
             continue;
         }
         if (!isRecord(outcome) || !exactKeys(outcome, ["status", "prompt", "workspaceDisposition"], ["failure", "runtimeConstructionEvidence"]) ||
-            (outcome.status !== "successful" && outcome.status !== "failed") || !isRecord(outcome.prompt) || !exactKeys(outcome.prompt, ["text", "utf8Length", "sha256"]) ||
-            !isReviewerPromptIdentity(outcome.prompt) || !validWorkspace(outcome.workspaceDisposition))
+            (outcome.status !== "successful" && outcome.status !== "failed") || !isReceiptText(outcome.prompt) || !validWorkspace(outcome.workspaceDisposition))
             throw new Error("Invalid Reviewer outcome");
         const materialized = outcome.runtimeConstructionEvidence;
         if (materialized !== undefined) {
@@ -104,7 +101,8 @@ export function validateRuntimeReviewerReceipt(output) {
         throw new Error("Reviewer outcomes must exactly cover accepted legs in canonical order");
     for (const [index, axis] of expectedAxes.entries()) {
         const outcome = output.outcomes[axis];
-        if (!sameReviewerPromptIdentity(outcome.prompt, expectedLegs[index].prompt))
+        const expectedPrompt = expectedLegs[index].prompt;
+        if (outcome.prompt.text !== expectedPrompt.text)
             throw new Error("Reviewer outcome prompt disagrees with accepted leg");
     }
     if (output.status === "completed" && (!hasBatch || Object.values(output.outcomes).some((item) => item.status !== "successful")))
