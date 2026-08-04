@@ -85,8 +85,10 @@ async function createChildRuntime(context) {
     runtime.registerNativeProvider(provider);
     return { runtime, model: dispatch.model };
 }
-export async function executeReviewerChild(workspace, leg, context, signal, fault) {
-    const childConfigDir = await mkdtemp(join(tmpdir(), "ak-reviewer-child-"));
+export async function executeReviewerChild(workspace, leg, context, options = {}) {
+    const signal = options.signal;
+    const fault = options.fault;
+    const childConfigDir = await mkdtemp(join(options.credentialScratchParent ?? tmpdir(), "ak-reviewer-child-"));
     let outerFailure;
     try {
         const settings = SettingsManager.inMemory({
