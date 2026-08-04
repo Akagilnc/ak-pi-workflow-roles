@@ -35,7 +35,8 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
   let inputReleasedAt = "";
-  const response = async (context: Context) => {
+  let timeoutEvidence: { timeoutMs: number; stopReason: "error"; providerCause: string; receipt: null } | undefined;
+  const response = async (context: Context, options?: { timeoutMs?: number }) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
       if (deliveryMode === "unavailable") {
@@ -64,9 +65,25 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     }
     if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
       if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
-        return fauxAssistantMessage("AUDIT PROVIDER TIMEOUT", {
-          stopReason: "error",
-          errorMessage: "provider timeout: compliance request expired",
+        const timeoutMs = options?.timeoutMs;
+        if (typeof timeoutMs !== "number" || timeoutMs <= 0) {
+          return await new Promise<ReturnType<typeof fauxAssistantMessage>>(() => undefined);
+        }
+        // The stream honors timeoutMs; the fixture caps wall time only so the
+        // test exercises the real deadline clock without waiting 183 seconds.
+        return await new Promise<ReturnType<typeof fauxAssistantMessage>>((resolve) => {
+          setTimeout(() => {
+            timeoutEvidence = {
+              timeoutMs,
+              stopReason: "error",
+              providerCause: "provider timeout: compliance request expired",
+              receipt: null,
+            };
+            resolve(fauxAssistantMessage([], {
+              stopReason: "error",
+              errorMessage: "provider timeout: compliance request expired",
+            }));
+          }, Math.min(timeoutMs, 25));
         });
       }
       if (deliveryMode === "silence") {
@@ -93,7 +110,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     if (healthyNavigator || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
-  faux.setResponses(healthyNavigator || deliveryMode === "unavailable" ? [response, response, response, response, response] : [
+  faux.setResponses(healthyNavigator || deliveryMode === "unavailable" || process.env.AK_AUDIT_TIMEOUT_FAILURE === "1" ? [response, response, response, response, response] : [
     fauxAssistantMessage(
       fauxToolCall(
         JUDGE_OUTPUT_TOOL_NAME,
@@ -127,9 +144,11 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   });
   process.on("exit", () => {
     if (healthyNavigator && !observation) console.error(`AUDIT_FAILURE_PROCESS_RELEASE=${JSON.stringify({ at: new Date().toISOString() })}`);
+    if (timeoutEvidence !== undefined) console.error(`AUDIT_FAILURE_TYPED_EVIDENCE=${JSON.stringify(timeoutEvidence)}`);
   });
   pi.on("session_shutdown", async () => {
     console.error(`AUDIT_FAILURE_PROVIDER_CALLS=${faux.state.callCount}`);
+    if (timeoutEvidence !== undefined) console.error(`AUDIT_FAILURE_TYPED_EVIDENCE=${JSON.stringify(timeoutEvidence)}`);
     if (!healthyNavigator || observation) return;
     const root = process.env.AK_NAVIGATOR_ROOT;
     const directory = root === undefined ? undefined : join(root, "runs", "navigator");

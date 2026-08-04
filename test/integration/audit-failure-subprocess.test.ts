@@ -305,8 +305,42 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
 test("provider timeout uses the fatal typed audit path without a fabricated Judge Receipt", async () => {
   for (const mode of ["print", "json"] as const) {
     const result = await runCli(mode, true);
-    assertAuditAbortWithoutReceipt(result, `timeout/${mode}`);
-    assert.match(result.stderr, /Request was aborted|AUDIT_FAILURE_PROVIDER_CALLS/);
+    assert.equal(result.timedOut, false, `${mode} subprocess did not time out`);
+    assert.equal(result.code, 1, `${mode} exits nonzero`);
+    const evidenceLine = result.stderr
+      .split("\n")
+      .find((line) => line.startsWith("AUDIT_FAILURE_TYPED_EVIDENCE="));
+    assert.ok(evidenceLine, `${mode} must emit typed timeout evidence`);
+    const evidence = JSON.parse(
+      evidenceLine.slice("AUDIT_FAILURE_TYPED_EVIDENCE=".length),
+    ) as {
+      timeoutMs: number;
+      stopReason: string;
+      providerCause: string;
+      receipt: unknown;
+    };
+    assert.equal(evidence.timeoutMs, 183000);
+    assert.equal(evidence.stopReason, "error");
+    assert.equal(evidence.providerCause, "provider timeout: compliance request expired");
+    assert.equal(evidence.receipt, null);
+    if (mode === "json") {
+      const events = result.stdout
+        .split("\n")
+        .filter((line) => line.trim().startsWith("{"))
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const erroredOutput = events.find((event) => {
+        const message = event.message;
+        return event.type === "message_end" &&
+          typeof message === "object" && message !== null &&
+          (message as Record<string, unknown>).role === "toolResult" &&
+          (message as Record<string, unknown>).toolName === "ak_judge_output";
+      });
+      assert.ok(erroredOutput);
+      const message = erroredOutput.message as Record<string, unknown>;
+      assert.equal(message.isError, true);
+      assert.equal(typeof message.details, "object");
+      assert.equal((message.details as Record<string, unknown>).status, undefined);
+    }
   }
 });
 
