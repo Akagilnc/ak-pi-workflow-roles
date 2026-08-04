@@ -6,7 +6,7 @@ Status: accepted（Issue #101 `/grill-with-docs`，陛下逐项拍定并确认�
 
 终局结果对所有调用者使用同一张简洁表格，不探测终端、不区分“人读/机器读”，也不建立第二套 JSON 输出；表格只冻结角色结果、Navigator 与 artifacts 等大块语义，不冻结表头、行序、措辞、边框或目录结构，机器测试不得咬这些呈现。内部 typed Receipt 与 Navigator facts 仍是生成结果的事实边界。Navigator 不得扣押已完成的角色结果：它在角色终态后最多获得三秒交付宽限，超时以诚实 unavailable 进入同一结果。退出码表达 CLI 生命周期是否诚实完成，不表达业务成功：包括 `audit_escalation` 在内的 lawful typed terminal result 退出零；没有 lawful typed terminal result 的结构或基础设施失败退出非零。
 
-该 CLI 不是编排器：角色选择、调用顺序、重复、预算与停止仍归调用者（ADR 0010）。分发沿用 Pi package 单一安装真源：`pi install npm:<package>` 安装 extension 与 package bin，用户一次性把 Pi 私有 npm bin 目录加入 PATH 后调用 `ak-role`；不再全局 npm 安装第二份会与 `pi update` 漂移的副本。包同时携带角色强制方法，不能把用户 home 下的 Skill 当隐含前置：Coder 带 Matt `tdd` 完整目录；Reviewer、Fixer、Merger 分别带按本角色边界适配的 `code-review`、`diagnosing-bugs`、`resolving-merge-conflicts`，保留 MIT attribution 与上游版本，但不运行时追 latest。完成证据不是格式 fixture，而是合并后的版本被下一项自然产生的真实 Issue 使用，外部调用者全程只经 `ak-role` 完成到 merge；没有需求成功消费就不关闭 #11/#101。
+该 CLI 不是编排器：角色选择、调用顺序、重复、预算与停止仍归调用者（ADR 0010）。分发沿用 Pi package 单一安装真源：`pi install npm:<package>` 安装 extension 与 package bin，用户一次性把 Pi 私有 npm bin 目录加入 PATH 后调用 `ak-role`；不再全局 npm 安装第二份会与 `pi update` 漂移的副本。项目公开包采用 `Apache-2.0`；包内 Matt Skill 快照继续携带各自独立的 MIT copyright/license notice，不把第三方许可冒充项目许可。包同时携带角色强制方法，不能把用户 home 下的 Skill 当隐含前置：Coder 带 Matt `tdd` 完整目录；Reviewer、Fixer、Merger 分别带按本角色边界适配的 `code-review`、`diagnosing-bugs`、`resolving-merge-conflicts`，保留 MIT attribution 与上游版本，但不运行时追 latest。完成证据不是格式 fixture，而是合并后的版本被下一项自然产生的真实 Issue 使用，外部调用者全程只经 `ak-role` 完成到 merge；没有需求成功消费就不关闭 #11/#101。
 
 ## Considered options
 
