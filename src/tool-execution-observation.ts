@@ -4,9 +4,6 @@ import { Value } from "typebox/value";
 
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 
-/** @deprecated Records no longer carry a version field; retained for compatibility with the runtime export surface. */
-export const TOOL_EXECUTION_OBSERVATION_SCHEMA_VERSION = 1 as const;
-
 /** Mandatory coalesce window for tool_execution_update heartbeats (stderr is bounded). */
 export const TOOL_EXECUTION_UPDATE_THROTTLE_MS = 30_000;
 
