@@ -11,7 +11,7 @@ const rows = [
   { type: "session", version: 3, id: "real-shape", timestamp: "2026-08-01T05:01:18.580Z", cwd: "/repo" },
   { type: "message", timestamp: "2026-08-01T05:01:18.900Z", message: { role: "assistant", content: [{ type: "toolCall", id: "c0", name: "read", arguments: {} }] } },
   { type: "message", timestamp: "2026-08-01T05:01:19.000Z", message: { role: "assistant", responseId: "r1", usage: { output: 7 }, content: [{ type: "toolCall", id: "c1", name: "ak_coder_output", arguments: {} }] } },
-  { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "done", commitSha: "abc1234" } } },
+  { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "done" } } },
 ];
 
 test("one retained runs directory yields an independently cited single-case cost report", async () => {
@@ -33,7 +33,7 @@ test("one retained runs directory yields an independently cited single-case cost
   assert.equal(patient.cost.toolCalls.count, 2);
   assert.equal(patient.cost.retries.count, 1);
   assert.equal(patient.cost.statuses[0]?.status, "completed");
-  assert.deepEqual(patient.cost.commits, [{ source: "review-004/session/real.jsonl", commit: "abc1234" }]);
+  assert.deepEqual(patient.cost.commits, []);
   assert.equal(patient.cost.outputBytes.payload, "raw JSONL bytes");
   assert.equal(patient.cost.sessions[0]?.completion, "accepted");
   assert.equal(patient.cost.sessions[0]?.wallMilliseconds, 1420);
@@ -71,20 +71,18 @@ test("runtime-derived metrics permit testimony when a case exceeds evidence pagi
   assert.deepEqual(validateDoctorOutput(output, patient, store), output);
 });
 
-test("commit accounting admits only typed commit SHAs from accepted terminating results", async () => {
+test("commit accounting excludes Coder self-reported commit SHAs", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-commits-"));
   const runs = join(root, ".ak/work/issues/40/runs");
   await mkdir(join(runs, "coder/session"), { recursive: true });
   const fixture = [
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
     { type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "toolResult", toolName: "bash", content: "HEAD is now at badcafe; commit def56789" } },
-    { type: "message", timestamp: "2026-08-01T00:00:02.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "mentions commit badcafe in free text", commitSha: "abc1234" } } },
+    { type: "message", timestamp: "2026-08-01T00:00:02.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "mentions commit badcafe in free text" } } },
   ];
   await writeFile(join(runs, "coder/session/commits.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
   const patient = await loadDoctorCase(runs);
-  assert.deepEqual(patient.cost.commits, [
-    { source: "coder/session/commits.jsonl", commit: "abc1234" },
-  ]);
+  assert.deepEqual(patient.cost.commits, []);
 });
 
 test("intermediate object details neither terminate nor manufacture session status", async () => {
@@ -95,7 +93,7 @@ test("intermediate object details neither terminate nor manufacture session stat
     { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
     { type: "message", timestamp: "2026-08-01T00:00:01.000Z", message: { role: "toolResult", toolName: "read", isError: false, details: { status: "completed", commitSha: "badcafe" } } },
     { type: "message", timestamp: "2026-08-01T00:00:03.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "refused", reason: "invalid shape" } } },
-    { type: "message", timestamp: "2026-08-01T00:00:04.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "superseded", commitSha: "abc1234" } } },
+    { type: "message", timestamp: "2026-08-01T00:00:04.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "superseded" } } },
     { type: "message", timestamp: "2026-08-01T00:00:05.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "refused", report: "final" } } },
   ];
   await writeFile(join(runs, "coder/session/terminal.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
@@ -106,7 +104,7 @@ test("intermediate object details neither terminate nor manufacture session stat
   assert.deepEqual(terminal && { wall: terminal.wallMilliseconds, completion: terminal.completion }, { wall: 5000, completion: "accepted" });
   assert.deepEqual(incomplete && { wall: incomplete.wallMilliseconds, completion: incomplete.completion }, { wall: 3000, completion: "incomplete" });
   assert.deepEqual(patient.cost.statuses, [{ source: "coder/session/terminal.jsonl", status: "refused" }]);
-  assert.deepEqual(patient.cost.commits, [{ source: "coder/session/terminal.jsonl", commit: "abc1234" }]);
+  assert.deepEqual(patient.cost.commits, []);
 });
 
 test("timestamp-less terminating results leave the session incomplete at the last retained row", async () => {
