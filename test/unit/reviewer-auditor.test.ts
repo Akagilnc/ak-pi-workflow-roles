@@ -35,8 +35,8 @@ const input: any = {
   },
   candidate: {
     version: 2 as const, status: "completed" as const, acceptedBatch: { identity: "dispatch-1", legs: [] },
-    reports: { standards: { text: "No findings", utf8Length: 11, sha256: "report" } },
-    outcomes: {}, identities: { canonicalSkill: { sha256: "skill", utf8Length: 5, snapshotIdentity: "/skill" } },
+    reports: { standards: { text: "No findings" } },
+    outcomes: {}, identities: { canonicalSkill: { text: "complete raw canonical Skill" } },
   },
 };
 

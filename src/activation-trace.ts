@@ -7,21 +7,13 @@ const causeSchema = Type.Object({
   evidenceId: Type.Optional(Type.String({ minLength: 1 })),
 }, { additionalProperties: false });
 
-export const activationTraceRecordSchema = Type.Union([
-  Type.Object({
-    role: Type.String({ minLength: 1 }),
-    stageId: Type.String({ pattern: "^[a-z][a-z0-9-]*$" }),
-    status: Type.Union([Type.Literal("started"), Type.Literal("completed")]),
-    timestamp: Type.String({ format: "date-time" }),
-  }, { additionalProperties: false }),
-  Type.Object({
-    role: Type.String({ minLength: 1 }),
-    stageId: Type.String({ pattern: "^[a-z][a-z0-9-]*$" }),
-    status: Type.Literal("failed"),
-    timestamp: Type.String({ format: "date-time" }),
-    cause: causeSchema,
-  }, { additionalProperties: false }),
-]);
+export const activationTraceRecordSchema = Type.Object({
+  role: Type.String({ minLength: 1 }),
+  stageId: Type.String({ pattern: "^[a-z][a-z0-9-]*$" }),
+  status: Type.Literal("failed"),
+  timestamp: Type.String({ format: "date-time" }),
+  cause: causeSchema,
+}, { additionalProperties: false });
 
 export type ActivationTraceRecord = Static<typeof activationTraceRecordSchema>;
 export type ActivationTraceWriter = (record: ActivationTraceRecord) => void;

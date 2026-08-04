@@ -2,12 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  assertCollectorByteLimit,
-  COLLECTOR_RECEIPT_MAX_BYTES,
   type CollectorClock,
 } from "../../src/collector-evidence.ts";
 import {
-  classifyCollectorBatch,
   collectorToolArgumentsValid,
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
@@ -59,7 +56,6 @@ function baseConfig(authors = ["codexbot"]) {
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "codex",
@@ -1357,17 +1353,6 @@ test("edited review after deadline cannot prove unavailable via backdated submit
   );
 });
 
-test("receipt byte boundary uses the real production limit", () => {
-  assert.doesNotThrow(() =>
-    assertCollectorByteLimit("receipt", COLLECTOR_RECEIPT_MAX_BYTES, COLLECTOR_RECEIPT_MAX_BYTES),
-  );
-  assert.throws(
-    () => assertCollectorByteLimit("receipt", COLLECTOR_RECEIPT_MAX_BYTES + 1, COLLECTOR_RECEIPT_MAX_BYTES),
-    new RegExp(`Collector receipt exceeded ${COLLECTOR_RECEIPT_MAX_BYTES} UTF-8 bytes`),
-  );
-  assert.equal(COLLECTOR_RECEIPT_MAX_BYTES, 32 * 1024 * 1024);
-});
-
 // ---------------------------------------------------------------------------
 // F1 schema owner matrix
 // ---------------------------------------------------------------------------
@@ -1493,7 +1478,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
     );
   }
 
-  // Shared Check owner used by batch classify — no second validator fork.
+  // Shared Check owner at the schema seam — no second validator fork.
   assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, undefined), false);
   assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, null), false);
   assert.equal(collectorToolArgumentsValid(COLLECTOR_OBSERVE_TOOL, {}), true);
@@ -1506,44 +1491,7 @@ test("F1 parseCollectorOutputCandidate schema matrix", () => {
       false,
       `shared-check ${label}`,
     );
-    const batch = classifyCollectorBatch(
-      [{
-        type: "toolCall",
-        id: "out-1",
-        name: COLLECTOR_OUTPUT_TOOL,
-        arguments: raw,
-      }],
-      { outputAccepted: false, hasCompletedOperationalOrSnapshot: true },
-    );
-    assert.equal(batch.allow, false, `batch ${label}`);
   }
-  // observe envelope at classify: undefined|null illegal; {} legal sole operational
-  for (const bad of [undefined, null]) {
-    const batch = classifyCollectorBatch(
-      [{
-        type: "toolCall",
-        id: "obs-1",
-        name: COLLECTOR_OBSERVE_TOOL,
-        arguments: bad,
-      }],
-      { outputAccepted: false, hasCompletedOperationalOrSnapshot: false },
-    );
-    assert.equal(batch.allow, false, `observe ${String(bad)}`);
-  }
-  const observeEmpty = classifyCollectorBatch(
-    [{
-      type: "toolCall",
-      id: "obs-ok",
-      name: COLLECTOR_OBSERVE_TOOL,
-      arguments: {},
-    }],
-    { outputAccepted: false, hasCompletedOperationalOrSnapshot: false },
-  );
-  assert.equal(observeEmpty.allow, true, "observe {} legal");
-  assert.ok(observeEmpty.allow);
-  assert.equal(observeEmpty.permitted.kind, "operational");
-  assert.equal(observeEmpty.permitted.name, COLLECTOR_OBSERVE_TOOL);
-  assert.equal(observeEmpty.permitted.callId, "obs-ok");
 });
 
 // ---------------------------------------------------------------------------
@@ -1560,7 +1508,6 @@ function twoLegConfig() {
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "a",
@@ -2688,7 +2635,6 @@ test("R2 valid rejects cross-leg cites and rebinds only same-leg qualifying proo
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "codex",

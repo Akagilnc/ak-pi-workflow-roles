@@ -87,7 +87,6 @@ export type CollectorReceipt = {
   host: "github.com";
   repository: string;
   prNumber: number;
-  manifestVersion: 1;
   manifestDigest: string;
   activationTime: string;
   deadlineTime: string;
@@ -461,7 +460,6 @@ export function validateAcceptedCollectorReceipt(
       "host",
       "repository",
       "prNumber",
-      "manifestVersion",
       "manifestDigest",
       "activationTime",
       "deadlineTime",
@@ -484,7 +482,6 @@ export function validateAcceptedCollectorReceipt(
   if (typeof value.prNumber !== "number" || !Number.isInteger(value.prNumber)) {
     fail("Collector receipt prNumber is invalid");
   }
-  if (value.manifestVersion !== 1) fail("Collector receipt manifestVersion is invalid");
   if (typeof value.manifestDigest !== "string" || value.manifestDigest === "") {
     fail("Collector receipt manifestDigest is invalid");
   }
@@ -554,7 +551,6 @@ export function validateAcceptedCollectorReceipt(
     host: COLLECTOR_HOST,
     repository: value.repository,
     prNumber: value.prNumber,
-    manifestVersion: 1,
     manifestDigest: value.manifestDigest,
     activationTime: value.activationTime,
     deadlineTime: value.deadlineTime,
