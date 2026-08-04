@@ -85,6 +85,39 @@ test("commit accounting excludes Coder self-reported commit SHAs", async () => {
   assert.deepEqual(patient.cost.commits, []);
 });
 
+test("commit accounting excludes Fixer classResults self-reported commitSha", async () => {
+  const root = await mkdtemp(join(tmpdir(), "doctor-fixer-commits-"));
+  const runs = join(root, ".ak/work/issues/40/runs");
+  await mkdir(join(runs, "fixer/session"), { recursive: true });
+  const fixture = [
+    { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
+    {
+      type: "message",
+      timestamp: "2026-08-01T00:00:02.000Z",
+      message: {
+        role: "toolResult",
+        toolName: "ak_fixer_output",
+        isError: false,
+        details: {
+          status: "completed",
+          report: "settled one class",
+          classResults: [{
+            name: "ParserCase",
+            disposition: "completed",
+            searchScope: "all parser entry points",
+            exceptions: [],
+            commitSha: "a".repeat(40),
+          }],
+        },
+      },
+    },
+  ];
+  await writeFile(join(runs, "fixer/session/commits.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const patient = await loadDoctorCase(runs);
+  assert.equal(patient.cost.statuses[0]?.status, "completed");
+  assert.deepEqual(patient.cost.commits, []);
+});
+
 test("intermediate object details neither terminate nor manufacture session status", async () => {
   const root = await mkdtemp(join(tmpdir(), "doctor-endpoint-"));
   const runs = join(root, ".ak/work/issues/40/runs");
@@ -260,4 +293,3 @@ test("Doctor submission accepts unknown guardrails keys while enforcing the thre
   };
   assert.throws(() => validateDoctorSubmissionShape(wrongType), /contract/);
 });
-
