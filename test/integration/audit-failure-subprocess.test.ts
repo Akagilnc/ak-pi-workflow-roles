@@ -22,7 +22,7 @@ import {
 } from "../helpers/pi-test-harness.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 
-async function runCli(mode: "print" | "json") {
+async function runCli(mode: "print" | "json", timeoutFailure = false) {
   const args = [
     "--no-extensions",
     "--no-skills",
@@ -52,6 +52,7 @@ async function runCli(mode: "print" | "json") {
           ...process.env,
           PI_CODING_AGENT_DIR: agentDir,
           PI_OFFLINE: "1",
+          ...(timeoutFailure ? { AK_AUDIT_TIMEOUT_FAILURE: "1" } : {}),
         },
       }),
   );
@@ -298,6 +299,14 @@ test("fatal Judge audit infrastructure failure aborts print and JSON CLI actions
       );
       assert.match(result.stdout, /"stopReason":"aborted"/);
     }
+  }
+});
+
+test("provider timeout uses the fatal typed audit path without a fabricated Judge Receipt", async () => {
+  for (const mode of ["print", "json"] as const) {
+    const result = await runCli(mode, true);
+    assertAuditAbortWithoutReceipt(result, `timeout/${mode}`);
+    assert.match(result.stderr, /Request was aborted|AUDIT_FAILURE_PROVIDER_CALLS/);
   }
 });
 

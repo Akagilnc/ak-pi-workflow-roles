@@ -183,11 +183,13 @@ test("a timeout-honoring provider terminates the real default seam with typed ca
       (options) => new Promise<AssistantMessage>((resolve) => {
         // This provider models the registry timeout seam with a short threshold;
         // without timeoutMs it remains pending rather than fabricating failure.
-        if (options.timeoutMs === undefined) return;
+        if (typeof options.timeoutMs !== "number" || options.timeoutMs <= 0) return;
+        // The provider honors the configured deadline, bounded to a short test
+        // threshold so this regression test never sleeps for 183 seconds.
         setTimeout(() => resolve(response("default-timeout", [], {
           stopReason: "error",
           errorMessage: "provider timeout: compliance request expired",
-        })), 10);
+        })), Math.min(options.timeoutMs, 10));
       }),
       seen,
     );

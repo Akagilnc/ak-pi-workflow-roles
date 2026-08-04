@@ -63,6 +63,12 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
       }
     }
     if (names.includes(SOUL_AUDIT_TOOL_NAME)) {
+      if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
+        return fauxAssistantMessage("AUDIT PROVIDER TIMEOUT", {
+          stopReason: "error",
+          errorMessage: "provider timeout: compliance request expired",
+        });
+      }
       if (deliveryMode === "silence") {
         return fauxAssistantMessage(fauxToolCall(SOUL_AUDIT_TOOL_NAME, {
           status: "escalate",
