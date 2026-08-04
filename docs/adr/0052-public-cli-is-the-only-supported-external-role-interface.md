@@ -1,6 +1,6 @@
 # 0052 — 公开角色 CLI 是唯一受支持的外部角色入口
 
-Status: proposed（Issue #101 `/grill-with-docs`，陛下逐项拍定中，2026-08-04）
+Status: accepted（Issue #101 `/grill-with-docs`，陛下逐项拍定并确认收官，2026-08-04）
 
 外部调用者不再以裸 `pi --ak-role`、Pi 事件流、session JSONL 或收官 grep 使用角色包；唯一受支持的产品入口是 `ak-role`。它以一个公开 executable 加角色子命令接收调用请求，并为每次已受理调用交付一份完整终局结果。裸 Pi 激活仅保留为包开发 session 显式加载的内部接缝：发布安装不自动注册它，公开 help/docs/bin 不展示它；但它不是安全秘密，不设凭据或身份认证，也不阻止知道源码路径的人显式加载。
 
