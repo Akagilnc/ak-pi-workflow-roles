@@ -13,18 +13,14 @@ creates no routing, topology, role-order, or package memory.
 | Field | Value |
 | --- | --- |
 | Case (issue / face / ledger) reference | |
-
-| Artifact | Repository-relative path | SHA-256 of exact bytes |
-| --- | --- | --- |
-| Dispatch prompt | | |
-| Packet | | |
+| Dispatch prompt and packet paths | |
+| SHA-256 of exact bytes (per artifact) | |
 
 ## Item-level dispositions
 
-Record each content item inside the dispatch prompt and inside the packet as a
-separate row. “Item” includes claims, dispositions, checklists, acceptance
-criteria, dispatch wording, and packet internals; it does not mean the prompt or
-packet as one whole artifact.
+**Item** — each single content unit inside the dispatch prompt and inside the
+packet (claims, dispositions, checklists, acceptance criteria, dispatch wording,
+packet internals); not the prompt or packet as one whole artifact.
 
 | Item | Disposition (retain / reject / needs-evidence) | Ratified-law basis (Judge Soul) |
 | --- | --- | --- |
