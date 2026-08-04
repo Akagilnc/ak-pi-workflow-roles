@@ -68,6 +68,17 @@ grep -o '"judgeStatus":"[a-z]*"' /tmp/court/session/*.jsonl | tail -1
 
 Judge needs no other flags. Roles with mandatory flags: Fixer (`--ak-fixer-phase`, `--ak-fix-packet`), Reviewer (`--ak-review-task`, `--ak-review-capabilities`), Coder (`--ak-coder-phase`, `--ak-coder-task`) — see each role's section. An ignition that cannot activate its role exits nonzero; nothing falls back to uncaged pi.
 
+### Activation ledger (host channels)
+
+After a packaged role is admitted, the shared envelope appends one index-only fact to the machine ledger home (ADR 0047/0048/0049). This is not a CLI flag surface:
+
+| Host env | Meaning |
+| --- | --- |
+| `AK_CORRELATION_ID` | Optional caller-preassigned correlation id, stored as-is on the accepted-activation fact. When unset or blank, the fact records a typed `{ "kind": "absent" }` identity (never an empty string). |
+| `AK_ROLES_HOME` | Optional override for the package-owned ledger home. Default: `~/.ak-roles`. |
+
+Layout: `$AK_ROLES_HOME/books/<git-common-dir-host-basename>/waiting.jsonl`. Book key is the basename of the host directory of `git rev-parse --git-common-dir` (worktrees join the main repo’s book). Non-git cwd is rejected before model dispatch. Facts hold only event, role, observed time, book key, durable session pointer, and correlation — zero prompt/transcript/argv/excerpt bytes.
+
 ## Navigator attendance
 
 Every registered non-Navigator packaged role automatically prepares Navigator advice alongside its own work. The existing `pi --ak-role ...` invocation is unchanged. Navigator uses its own resumable Pi session, waits for that same preparation at typed role settlement, and emits an independent typed attendance event; it never invokes or enforces the recommended role.

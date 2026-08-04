@@ -32,6 +32,7 @@ import {
 } from "../src/navigator-attendance.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
+import { correlationIdentityFromEnv } from "../src/activation-ledger.ts";
 import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
 import { packagedRoleInputFlag } from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
@@ -207,5 +208,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     auditSoulCompliance: createPiJudgeAuditor(),
     auditFixerCompliance: createPiFixerAuditor(),
     auditReviewerCompliance: createPiReviewerAuditor(),
+    // Host channel (env), not a CLI flag — #11 owns launcher/flag surface.
+    resolveActivationCorrelation: () => correlationIdentityFromEnv(process.env),
   })(pi);
 }

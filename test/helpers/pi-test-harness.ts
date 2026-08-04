@@ -575,6 +575,9 @@ export async function withHermeticHome<T>(
     );
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
+    // Packaged role activation requires a git cwd (ADR 0048). Seed the hermetic
+    // home so nested issue roots and cwd=home resolve a common-dir book key.
+    execFileSync("git", ["init", "-b", "main"], { cwd: home, stdio: "ignore" });
     const previousHome = process.env.HOME;
     process.env.HOME = home;
     try {
