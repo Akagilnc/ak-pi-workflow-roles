@@ -5,17 +5,15 @@ import * as reviewerContracts from "../../src/package-contracts/reviewer-output.
 import { projectReviewerIntentToReceipt, validateReviewerIntent, validateRuntimeReviewerReceipt, type ReviewerIntent } from "../../src/package-contracts/reviewer-output.ts";
 // @ts-expect-error ReviewerOutput was a compatibility alias and is intentionally absent.
 import type { ReviewerOutput } from "../../src/package-contracts/reviewer-output.ts";
-import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
 import { assembleRuntimeReviewerReceipt } from "../../src/reviewer-settlement.ts";
-import { sha256Hex } from "../../src/sha256.ts";
 
-const prompt = (axis: string) => reviewerPromptIdentity(`${axis} prompt\n`);
+const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
 function receipt(axes: readonly ("standards" | "spec")[] = ["standards"], status: "completed" | "refused" = "completed") {
-  const skill = reviewerPromptIdentity("skill\n");
-  const bundle = compileMechanicalBundle({ canonicalSkill: skill.text, task: "task", range: { base: "a", target: "b", diffCommand: "git diff a...b", diffSha256: "1".repeat(64), commits: ["b"] }, materials: [] }).bundle;
-  const reports = Object.fromEntries(axes.map(axis => [axis, { text: `${axis} report`, utf8Length: Buffer.byteLength(`${axis} report`), sha256: sha256Hex(`${axis} report`) }]));
+  const skillText = "skill\n";
+  const bundle = compileMechanicalBundle({ canonicalSkill: skillText, task: "task", range: { base: "a", target: "b", diffCommand: "git diff a...b", diffSha256: "1".repeat(64), commits: ["b"] }, materials: [] }).bundle;
+  const reports = Object.fromEntries(axes.map(axis => [axis, { text: `${axis} report` }]));
   const outcomes = Object.fromEntries(axes.map(axis => [axis, { status: "successful", prompt: prompt(axis), workspaceDisposition: "deleted", runtimeConstructionEvidence: { leg: axis, workspaceIdentity: `${axis}-workspace`, manifestSha256: bundle.manifestSha256, entries: bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256, verified: true })) } }]));
-  return { version: 2, status, ...(status === "refused" ? { diagnostic: "stopped" } : {}), acceptedBatch: { identity: "dispatch", legs: axes.map(axis => ({ axis, prompt: prompt(axis) })) }, reports, outcomes, identities: { canonicalSkill: { sha256: skill.sha256, utf8Length: skill.utf8Length, snapshotIdentity: skill }, construction: { recipe: "reviewer-common-bundle-v1", bundle }, target: { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "a".repeat(40), refs: { tag: { objectId: "b".repeat(40), peeledCommitId: null } } } } };
+  return { version: 2, status, ...(status === "refused" ? { diagnostic: "stopped" } : {}), acceptedBatch: { identity: "dispatch", legs: axes.map(axis => ({ axis, prompt: prompt(axis) })) }, reports, outcomes, identities: { canonicalSkill: { text: skillText }, construction: { recipe: "reviewer-common-bundle-v1", bundle }, target: { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "a".repeat(40), refs: { tag: { objectId: "b".repeat(40), peeledCommitId: null } } } } };
 }
 
 test("Reviewer intent and receipt leaves remain distinct without legacy runtime exports", () => {
@@ -43,11 +41,26 @@ test("settlement preserves ledgered materialization evidence for successful and 
     ...(axis === "standards" ? { report: source.reports.standards.text } : {}),
   }]));
   const assembled = assembleRuntimeReviewerReceipt({
-    intent: { status: "refused", diagnostic: "stopped" }, canonicalSkillSnapshotIdentity: source.identities.canonicalSkill.snapshotIdentity,
-    record: { transportRejections: [], rejections: [], results, accepted: { identity: "dispatch", input: { canonicalSkill: source.identities.canonicalSkill }, legs: source.acceptedBatch.legs, recipe: source.identities.construction.recipe, bundle: source.identities.construction.bundle, target: source.identities.target } } as any,
+    intent: { status: "refused", diagnostic: "stopped" },
+    canonicalSkillText: source.identities.canonicalSkill.text,
+    record: {
+      transportRejections: [],
+      rejections: [],
+      results,
+      accepted: {
+        identity: "dispatch",
+        input: { canonicalSkill: { snapshotIdentity: { text: source.identities.canonicalSkill.text } } },
+        legs: source.acceptedBatch.legs,
+        recipe: source.identities.construction.recipe,
+        bundle: source.identities.construction.bundle,
+        target: source.identities.target,
+      },
+    } as any,
   });
   assert.deepEqual(assembled.outcomes.standards?.runtimeConstructionEvidence, source.outcomes.standards.runtimeConstructionEvidence);
   assert.deepEqual(assembled.outcomes.spec?.runtimeConstructionEvidence, source.outcomes.spec.runtimeConstructionEvidence);
+  assert.deepEqual(assembled.identities.canonicalSkill, { text: source.identities.canonicalSkill.text });
+  assert.deepEqual(assembled.reports.standards, { text: "standards report" });
   validateRuntimeReviewerReceipt(assembled);
 });
 
@@ -64,5 +77,10 @@ test("accepted projection authenticates exact canonical terminal leg and report 
     (r:any) => delete r.outcomes.spec.runtimeConstructionEvidence,
   ]) { const value = receipt(["standards", "spec"]) as any; mutate(value); assert.throws(() => validateRuntimeReviewerReceipt(value)); }
   const pre = receipt([], "refused") as any; delete pre.acceptedBatch; delete pre.identities.construction; delete pre.identities.target; validateRuntimeReviewerReceipt(pre);
-  pre.reports.standards = { text: "x", utf8Length: 1, sha256: sha256Hex("x") }; assert.throws(() => validateRuntimeReviewerReceipt(pre));
+  // Pre-acceptance refusal still rejects any report projection (coverage law), not an identity shell.
+  pre.reports.standards = { text: "x" }; assert.throws(() => validateRuntimeReviewerReceipt(pre));
+  // Report/skill identity shells are not authenticated — plain text is enough.
+  const withShell = receipt(["standards"]) as any;
+  withShell.reports.standards = { text: "standards report", utf8Length: 999, sha256: "deadbeef" };
+  assert.throws(() => validateRuntimeReviewerReceipt(withShell), /Invalid Reviewer report text/);
 });
