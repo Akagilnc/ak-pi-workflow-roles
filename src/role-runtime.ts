@@ -147,17 +147,7 @@ type ActivationRuntime = {
   merger(): Promise<void>;
 };
 
-export type ActivationStage = {
-  readonly id: string;
-  run(): Promise<void>;
-};
-
-type ActivationStageDeclaration = {
-  readonly id: string;
-  run(runtime: ActivationRuntime): Promise<void>;
-};
-
-function activationStage(role: PackagedRole, runtime: ActivationRuntime): ActivationStageDeclaration {
+function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: string; run(): Promise<void> } {
   switch (role) {
     case "judge": return { id: "load-and-install", run: async () => runtime.judge.activate() };
     case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
@@ -166,19 +156,6 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): Activa
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
-  }
-}
-
-export const ROLE_REGISTRY = PACKAGED_ROLE_REGISTRY.map((entry) => ({
-  role: entry.role,
-  stages: [{ id: entry.activationStage, run: async (runtime: ActivationRuntime) => activationStage(entry.role, runtime).run(runtime) }],
-})) as readonly { role: PackagedRole; stages: readonly ActivationStageDeclaration[] }[];
-
-for (const entry of ROLE_REGISTRY) {
-  const seen = new Set<string>();
-  for (const stage of entry.stages) {
-    if (!/^[a-z][a-z0-9-]*$/.test(stage.id) || seen.has(stage.id)) throw new Error(`Invalid activation stage id for ${entry.role}: ${stage.id}`);
-    seen.add(stage.id);
   }
 }
 
@@ -196,30 +173,26 @@ async function emitActivationTrace(
   await writeTrace(validateActivationTraceRecord(record));
 }
 
-export async function executeActivationStages(
+async function executeActivationStage(
   role: string,
-  stages: readonly ActivationStage[],
+  stage: { id: string; run(): Promise<void> },
   infrastructure: { clock(): string; writeTrace(record: ActivationTraceRecord): void | Promise<void> },
 ): Promise<void> {
-  for (const stage of stages) {
-    await emitActivationTrace(infrastructure.writeTrace, { role, stageId: stage.id, status: "started", timestamp: infrastructure.clock() });
+  try {
+    await stage.run();
+  } catch (activationError) {
     try {
-      await stage.run();
-    } catch (activationError) {
-      try {
-        await emitActivationTrace(infrastructure.writeTrace, {
-          role,
-          stageId: stage.id,
-          status: "failed",
-          timestamp: infrastructure.clock(),
-          cause: namedActivationCause(activationError),
-        });
-      } catch (traceError) {
-        throw new AggregateError([activationError, traceError], `Activation stage ${stage.id} failed and its failure trace could not be emitted`);
-      }
-      throw activationError;
+      await emitActivationTrace(infrastructure.writeTrace, {
+        role,
+        stageId: stage.id,
+        status: "failed",
+        timestamp: infrastructure.clock(),
+        cause: namedActivationCause(activationError),
+      });
+    } catch (traceError) {
+      throw new AggregateError([activationError, traceError], `Activation stage ${stage.id} failed and its failure trace could not be emitted`);
     }
-    await emitActivationTrace(infrastructure.writeTrace, { role, stageId: stage.id, status: "completed", timestamp: infrastructure.clock() });
+    throw activationError;
   }
 }
 
@@ -660,7 +633,7 @@ export function createRoleRuntimeExtension(
       navigatorWorkContext = undefined;
       const rawRole = pi.getFlag(ROLE_FLAG.name);
       if (rawRole === undefined) return;
-      const entry = ROLE_REGISTRY.find(({ role }) => role === rawRole);
+      const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);
       if (entry === undefined) {
         failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
@@ -717,11 +690,7 @@ export function createRoleRuntimeExtension(
         },
       };
       try {
-        await executeActivationStages(
-          entry.role,
-          entry.stages.map((stage) => ({ id: stage.id, run: () => stage.run(runtime) })),
-          { clock, writeTrace },
-        );
+        await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
         admitted = true;
       } catch (error) {
         failInfrastructure(error, ctx);
