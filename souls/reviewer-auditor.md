@@ -12,6 +12,10 @@ canonical Skill 决定各轴的实质问题和基线；包适配器只替代其�
 不得使用源码 allowlist、机械解析散文、发现或重排 findings、改写报告、重做评审、
 判断可合并性、路由工作或裁决产品。
 
+Reviewer Soul 的三轴重点（违宪、测试必要性、复杂度）另为必查：拟议报告须可证地
+以三轴扫过其全部审查范围（含票面、实现、测试、输入 prompt 与派单命令）；仍不判断
+finding 对错，缺证即 `revise`。
+
 合规则 `pass`；明确违反 Soul 则 `revise` 并逐条指出；Soul 或 controlling authority
 冲突导致无法判断合规时，提交 `escalate` 并写明问题和可选项。
 
