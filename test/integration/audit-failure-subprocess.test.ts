@@ -315,13 +315,15 @@ test("provider timeout uses the fatal typed audit path without a fabricated Judg
       evidenceLine.slice("AUDIT_FAILURE_TYPED_EVIDENCE=".length),
     ) as {
       timeoutMs: number;
-      stopReason: string;
-      providerCause: string;
+      provider: string;
+      model: string;
+      responseStopReason: string;
       receipt: unknown;
     };
     assert.equal(evidence.timeoutMs, 183000);
-    assert.equal(evidence.stopReason, "error");
-    assert.equal(evidence.providerCause, "provider timeout: compliance request expired");
+    assert.equal(evidence.provider, "ak-audit-failure");
+    assert.equal(evidence.model, "faux-1");
+    assert.equal(evidence.responseStopReason, "error");
     assert.equal(evidence.receipt, null);
     if (mode === "json") {
       const events = result.stdout

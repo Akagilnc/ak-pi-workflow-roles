@@ -19,6 +19,11 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     provider: "ak-audit-failure",
     tokenSize: { min: 1000, max: 1000 },
   });
+  if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
+      realSetTimeout(handler, delay === 183000 ? 25 : delay, ...args)) as typeof setTimeout;
+  }
   const observation = process.env.AK_NAVIGATOR_OBSERVATION === "1";
   /** Canonical delivery matrix: recommendation | unavailable | silence (extends observation seam). */
   const deliveryOutcome = process.env.AK_NAVIGATOR_DELIVERY_OUTCOME;
@@ -35,7 +40,7 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
   let navigatorStartedAt = "";
   let navigatorCompletedAt = "";
   let inputReleasedAt = "";
-  let timeoutEvidence: { timeoutMs: number; stopReason: "error"; providerCause: string; receipt: null } | undefined;
+  let timeoutEvidence: { timeoutMs: number; provider: string; model: string; responseStopReason: "error"; errorMessage: string; receipt: null } | undefined;
   const response = async (context: Context, options?: { timeoutMs?: number }) => {
     const names = context.tools?.map((tool) => tool.name) ?? [];
     if (names.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
@@ -75,15 +80,17 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
           setTimeout(() => {
             timeoutEvidence = {
               timeoutMs,
-              stopReason: "error",
-              providerCause: "provider timeout: compliance request expired",
+              provider: "ak-audit-failure",
+              model: "faux-1",
+              responseStopReason: "error",
+              errorMessage: "provider timeout: compliance request expired",
               receipt: null,
             };
             resolve(fauxAssistantMessage([], {
               stopReason: "error",
               errorMessage: "provider timeout: compliance request expired",
             }));
-          }, Math.min(timeoutMs, 25));
+          }, timeoutMs);
         });
       }
       if (deliveryMode === "silence") {
