@@ -11,6 +11,7 @@ import {
 } from "../../src/collector-evidence.ts";
 import {
   COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
   createCollectorLedger,
@@ -106,10 +107,6 @@ test("windowRelation matrix uses authoritative times only", () => {
 
 test("beginOperational serializes concurrent calls and allows same-call reentry", () => {
   const ledger = createCollectorLedger(config());
-  const decision = ledger.evaluateBatch([
-    { type: "toolCall", id: "obs-1", name: COLLECTOR_OBSERVE_TOOL, arguments: {} },
-  ]);
-  assert.equal(decision.allow, true);
   ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1");
   ledger.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-1"); // same-call reentry
   assert.throws(
@@ -117,6 +114,16 @@ test("beginOperational serializes concurrent calls and allows same-call reentry"
     /already active/i,
   );
   assert.equal(ledger.fatal, true);
+
+  // Completing the active call frees the concurrency slot for a later operation.
+  const next = createCollectorLedger(config());
+  next.beginOperational(COLLECTOR_OBSERVE_TOOL, "obs-a");
+  next.completeOperational("obs-a");
+  next.beginOperational(COLLECTOR_WAIT_TOOL, "wait-b");
+  next.completeOperational("wait-b");
+  // Output does not take the operational concurrency slot.
+  next.beginOperational(COLLECTOR_OUTPUT_TOOL, "out-1");
+  next.beginOperational(COLLECTOR_OUTPUT_TOOL, "out-1");
 });
 
 test("observe failure latches fatal retaining original cause identity", async () => {
