@@ -57,7 +57,6 @@ function baseConfig(authors = ["codexbot"]) {
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "codex",
@@ -1547,7 +1546,6 @@ function twoLegConfig() {
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "a",
@@ -2675,7 +2673,6 @@ test("R2 valid rejects cross-leg cites and rebinds only same-leg qualifying proo
     },
     prNumber: 1,
     manifest: {
-      version: 1 as const,
       legs: [
         {
           id: "codex",

@@ -69,7 +69,6 @@ export type CollectorReceipt = {
   host: "github.com";
   repository: string;
   prNumber: number;
-  manifestVersion: 1;
   manifestDigest: string;
   activationTime: string;
   deadlineTime: string;
@@ -786,7 +785,6 @@ export function buildCollectorReceipt(
     host: COLLECTOR_HOST,
     repository: config.repository.canonical,
     prNumber: config.prNumber,
-    manifestVersion: 1,
     manifestDigest: config.manifest.digest,
     activationTime: activationTime.toISOString(),
     deadlineTime: deadlineTime.toISOString(),

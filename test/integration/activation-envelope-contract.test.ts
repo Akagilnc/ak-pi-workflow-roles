@@ -46,7 +46,7 @@ test("registration enrolls every role in stable named activation stages", () => 
 test("every registered healthy production ignition leaves structured start and completion traces", async () => {
   const fixture = await mkdtemp(resolve(tmpdir(), "ak-activation-healthy-"));
   const collectorManifest = resolve(fixture, "legs.json");
-  await writeFile(collectorManifest, JSON.stringify({ version: 1, legs: [{ id: "gate", expectedAuthors: ["gatebot"], request: { body: "review" } }] }));
+  await writeFile(collectorManifest, JSON.stringify({ legs: [{ id: "gate", expectedAuthors: ["gatebot"], request: { body: "review" } }] }));
   try {
   for (const entry of ROLE_REGISTRY) {
     const traces: ActivationTraceRecord[] = [];

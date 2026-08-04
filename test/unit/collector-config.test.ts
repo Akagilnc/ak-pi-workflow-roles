@@ -151,9 +151,19 @@ test("manifest loads, normalizes authors, and digests canonical JSON stably", as
       },
     ],
   );
-  assert.equal(first.canonicalJson.includes("CodexBot"), false);
-  assert.equal(first.canonicalJson.includes("codexbot"), true);
-  assert.equal(first.canonicalJson.includes('"version"'), false);
+  assert.deepEqual(JSON.parse(first.canonicalJson), {
+    legs: [
+      {
+        id: "codex",
+        expectedAuthors: ["codexbot", "helper"],
+        request: { body: "Please review this PR." },
+      },
+      {
+        id: "claude",
+        expectedAuthors: ["claude-bot"],
+      },
+    ],
+  });
 });
 
 test("manifest rejects unreadable path, non-UTF-8, and malformed JSON", async () => {
