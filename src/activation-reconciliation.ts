@@ -48,10 +48,11 @@ void _dispatchStubFactKeysMatch;
 export type DispatchStubFactInput = Omit<DispatchStubFact, "event">;
 
 /**
+ * Construct the closed dispatch stub from trusted typed inputs only.
  * Descriptor-driven top-level pick: only DISPATCH_STUB_FACT_KEYS leave this boundary.
  * Nested dispatch/correlation are rebuilt closed (ADR 0049 zero-content by construction).
  */
-function projectDispatchStubFact(input: DispatchStubFactInput): DispatchStubFact {
+export function buildDispatchStubFact(input: DispatchStubFactInput): DispatchStubFact {
   const closed: DispatchStubFact = {
     event: DISPATCH_STUB_EVENT,
     observedAt: input.observedAt,
@@ -64,11 +65,6 @@ function projectDispatchStubFact(input: DispatchStubFactInput): DispatchStubFact
   return Object.fromEntries(
     DISPATCH_STUB_FACT_KEYS.map((key) => [key, closed[key]]),
   ) as DispatchStubFact;
-}
-
-/** Construct the closed dispatch stub from trusted typed inputs only. */
-export function buildDispatchStubFact(input: DispatchStubFactInput): DispatchStubFact {
-  return projectDispatchStubFact(input);
 }
 
 /**

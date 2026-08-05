@@ -8,7 +8,7 @@ const DISPATCH_STUB_FACT_KEYS = Object.freeze([
 ]);
 const _dispatchStubFactKeysMatch = true;
 void _dispatchStubFactKeysMatch;
-function projectDispatchStubFact(input) {
+function buildDispatchStubFact(input) {
   const closed = {
     event: DISPATCH_STUB_EVENT,
     observedAt: input.observedAt,
@@ -19,9 +19,6 @@ function projectDispatchStubFact(input) {
   return Object.fromEntries(
     DISPATCH_STUB_FACT_KEYS.map((key) => [key, closed[key]])
   );
-}
-function buildDispatchStubFact(input) {
-  return projectDispatchStubFact(input);
 }
 function callerCorrelationId(correlation) {
   return correlation.kind === "caller" ? correlation.id : void 0;
