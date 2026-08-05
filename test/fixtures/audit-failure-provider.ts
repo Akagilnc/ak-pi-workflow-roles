@@ -154,7 +154,9 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     const persisted = files.length === 0 || directory === undefined
       ? []
       : (await readFile(join(directory, files.at(-1)!), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as any);
-    const roleDirectory = root === undefined ? undefined : join(root, "runs", "judge", "session");
+    // Prefer explicit role session dir (ledger-home topology); fall back to legacy issue-root layout.
+    const roleDirectory = process.env.AK_ROLE_SESSION_DIR
+      ?? (root === undefined ? undefined : join(root, "runs", "judge", "session"));
     const roleFiles = roleDirectory === undefined ? [] : (await readdir(roleDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
     const rolePersisted = roleFiles.length === 0 || roleDirectory === undefined
       ? []

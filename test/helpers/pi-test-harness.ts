@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   copyFile,
   cp,
@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -27,12 +27,19 @@ import {
 import {
   createAgentSession,
   DefaultResourceLoader,
+  type ExtensionContext,
   type InlineExtension,
   ModelRuntime,
   SessionManager,
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import {
+  activationWaitingLedgerPath,
+  resolveActivationLedgerHome,
+  resolveBookKeyFromGit,
+  type AcceptedActivationFact,
+} from "../../src/activation-ledger.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -587,6 +594,130 @@ export async function withHermeticHome<T>(
   });
 }
 
+/** Explicit git substrate for activation fixtures (ADR 0048). Not a generic home default. */
+export function seedGitRepository(cwd: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
+}
+
+/**
+ * Opt-in activation-owned hermetic home: hermetic HOME plus explicit git substrate (ADR 0048).
+ * Only callers that load the production role extension / exercise activation may use this.
+ * Role-less and nonactivation tests keep withHermeticHome without git seed.
+ * Fixture path prefixes are synthetic test labels, not retained real-role evidence topology.
+ */
+export async function withActivationHome<T>(
+  options: { prefix?: string },
+  scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
+): Promise<T> {
+  return withHermeticHome(options, async (fixture) => {
+    seedGitRepository(fixture.home);
+    return scenario(fixture);
+  });
+}
+
+/** Sole machine ledger home under a hermetic process home (ADR 0048). */
+export function machineLedgerHome(home: string): string {
+  return join(home, ".ak-roles");
+}
+
+/** Book key for a git cwd whose common-dir host basename is the directory name. */
+export function activationBookKeyFor(cwd: string): string {
+  return basename(cwd);
+}
+
+/**
+ * Write a genuine session principal under the machine ledger book (ADR 0048).
+ * Tests must not label nonexistent / outside-home paths durable.
+ */
+export function persistActivationSessionFile(input: {
+  home: string;
+  bookKey: string;
+  name?: string;
+  cwd?: string;
+}): string {
+  const sessionDir = join(
+    machineLedgerHome(input.home),
+    "books",
+    input.bookKey,
+    "runs",
+    "activation",
+    input.name ?? "default",
+  );
+  mkdirSync(sessionDir, { recursive: true });
+  const sessionFile = join(sessionDir, "session.jsonl");
+  if (!existsSync(sessionFile)) {
+    writeFileSync(
+      sessionFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: input.name ?? "activation-session",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: input.cwd ?? input.home,
+      })}\n`,
+    );
+  }
+  return sessionFile;
+}
+
+/**
+ * ExtensionContext that exercises production book-key + durable session-file paths.
+ * Default session files are genuinely persisted under the ledger book.
+ * Pass `sessionFile: null` only when testing the missing-principal rejection.
+ * Pass an explicit `sessionFile` for rejection-class paths (caller owns creation).
+ */
+export function activationExtensionContext(input: {
+  cwd: string;
+  mode?: ExtensionContext["mode"];
+  home?: string;
+  bookKey?: string;
+  sessionDir?: string;
+  sessionFile?: string | null;
+  abort?: () => void;
+}): ExtensionContext {
+  const home = input.home ?? process.env.HOME;
+  if (typeof home !== "string" || home.length === 0) {
+    throw new Error("activationExtensionContext requires home or process.env.HOME");
+  }
+  const bookKey = input.bookKey ?? activationBookKeyFor(input.cwd);
+  let sessionFile: string | undefined;
+  let sessionDir: string;
+  if (input.sessionFile === null) {
+    sessionFile = undefined;
+    sessionDir = input.sessionDir ?? join(machineLedgerHome(home), "books", bookKey, "runs", "activation", "missing");
+  } else if (input.sessionFile !== undefined) {
+    sessionFile = input.sessionFile;
+    sessionDir = input.sessionDir ?? dirname(sessionFile);
+  } else {
+    sessionFile = persistActivationSessionFile({
+      home,
+      bookKey,
+      cwd: input.cwd,
+      ...(input.sessionDir === undefined ? {} : { name: basename(input.sessionDir) }),
+    });
+    sessionDir = input.sessionDir ?? dirname(sessionFile);
+  }
+  return {
+    mode: input.mode ?? "print",
+    cwd: input.cwd,
+    abort: input.abort ?? (() => {}),
+    sessionManager: {
+      getSessionDir: () => sessionDir,
+      getSessionFile: () => sessionFile,
+    },
+  } as unknown as ExtensionContext;
+}
+
+/** Read accepted-activation facts from the sole machine home for one book. */
+export function readAcceptedActivationFacts(home: string, bookKey: string): AcceptedActivationFact[] {
+  const path = activationWaitingLedgerPath(machineLedgerHome(home), bookKey);
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as AcceptedActivationFact);
+}
+
 /**
  * Scope process.chdir to one invocation under the same process-global lock
  * used by withHermeticHome, so shared fixtures stay safe under overlap.
@@ -698,6 +829,13 @@ export interface InProcessPiOptions {
   customTools?: ToolDefinition[];
   noExtensions?: boolean;
   reviewerShutdown?: boolean;
+  /**
+   * Opt-in at activation-owning tests only: place a durable session file under the
+   * machine ledger book (ADR 0048). Requires hermetic HOME and a git cwd. Generic
+   * in-process callers must leave this unset so they incur no git discovery or
+   * durable-session persistence.
+   */
+  activationLedgerSession?: boolean;
 }
 
 export interface InProcessPiFixture {
@@ -776,7 +914,37 @@ export async function withInProcessPi<T>(
     systemPrompt: options.systemPrompt,
   });
   await loader.reload();
-  const sessionManager = SessionManager.inMemory(options.cwd);
+  // Default: plain in-memory session — no git discovery, no durable-session I/O.
+  // Activation-owning tests opt in via activationLedgerSession.
+  let sessionManager: SessionManager = SessionManager.inMemory(options.cwd);
+  if (options.activationLedgerSession === true) {
+    // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
+    // derivation from cwd/.ak/work stays intact, while exposing a genuinely persisted
+    // session file under the machine ledger book (ADR 0048).
+    const memorySession = sessionManager;
+    const hermeticHome = process.env.HOME;
+    if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
+      throw new Error("withInProcessPi activationLedgerSession requires process.env.HOME");
+    }
+    if (resolveActivationLedgerHome() !== machineLedgerHome(hermeticHome)) {
+      throw new Error("withInProcessPi ledger home does not match hermetic HOME");
+    }
+    // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
+    const bookKey = resolveBookKeyFromGit(options.cwd);
+    const durableSessionFile = persistActivationSessionFile({
+      home: hermeticHome,
+      bookKey,
+      name: "inprocess-pi",
+      cwd: options.cwd,
+    });
+    sessionManager = new Proxy(memorySession, {
+      get(target, property, receiver) {
+        if (property === "getSessionFile") return () => durableSessionFile;
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  }
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,
     agentDir: options.agentDir,

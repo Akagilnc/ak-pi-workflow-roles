@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, realpath, readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
 import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.ts";
 import { validateRecordedDoctorOutput } from "../../src/doctor-contracts.ts";
+import {
+  ACCEPTED_ACTIVATION_EVENT,
+  activationWaitingLedgerPath,
+  type AcceptedActivationFact,
+} from "../../src/role-runtime.ts";
 import {
   packageRoot,
   runPiSubprocess,
@@ -19,7 +26,6 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
       await withColdInstalledPackage(home, async ({ fixture, installedRoot }) => {
         const runsPath = resolve(fixture, ".ak-roles/books/demo-book/issues/58/runs");
         await mkdir(resolve(runsPath, "case/session"), { recursive: true });
-        const activatedRunsPath = await realpath(runsPath);
         await writeFile(
           resolve(runsPath, "case/session/retained.jsonl"),
           `${JSON.stringify({
@@ -35,7 +41,21 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
           installedRoot,
           "extensions/role-runtime.ts",
         );
-        const sessionDir = resolve(home, "doctor-pi-session");
+        // Durable role session under the machine ledger book (ADR 0048); not under the consumer fixture.
+        const bookKey = "consumer"; // cloneSharedColdInstall dest basename under home/consumer
+        const sessionDir = resolve(
+          home,
+          ".ak-roles",
+          "books",
+          bookKey,
+          "runs",
+          "doctor-fresh",
+          "session",
+        );
+        // Production activation requires a git cwd (ADR 0048); seed the consumer fixture.
+        // With a git root present, Doctor case identity becomes repo-relative (stableRunsIdentity).
+        execFileSync("git", ["init", "-b", "main"], { cwd: fixture, stdio: "ignore" });
+        const caseIdentityPath = ".ak-roles/books/demo-book/issues/58/runs";
         assert.notEqual(installedRoot, packageRoot);
         const result = await runPiSubprocess(
           [
@@ -71,7 +91,8 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
               HOME: home,
               PI_CODING_AGENT_DIR: agentDir,
               PI_OFFLINE: "1",
-              AK_DOCTOR_FRESH_CASE_PATH: activatedRunsPath,
+              AK_CORRELATION_ID: "doctor-fresh-corr",
+              AK_DOCTOR_FRESH_CASE_PATH: caseIdentityPath,
               AK_DOCTOR_FRESH_ISSUE: "58",
             },
           },
@@ -128,9 +149,27 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         assert.equal(outputResults[0].message.isError, false);
         const output = validateRecordedDoctorOutput(outputResults[0].message.details);
         assert.equal(output.status, "completed");
-        assert.deepEqual(output.case, { issueNumber: 58, runsPath: activatedRunsPath });
+        assert.deepEqual(output.case, { issueNumber: 58, runsPath: caseIdentityPath });
         assert.deepEqual(output.findings, []);
         assert.ok(output.cost);
+
+        // Envelope activation fact (outside locator-focused tests): points at the durable Pi session.
+        const ledgerPath = activationWaitingLedgerPath(resolve(home, ".ak-roles"), bookKey);
+        const factLines = (await readFile(ledgerPath, "utf8")).trim().split("\n");
+        assert.equal(factLines.length, 1, `expected one activation fact at ${ledgerPath}`);
+        const fact = JSON.parse(factLines[0]!) as AcceptedActivationFact;
+        assert.equal(fact.event, ACCEPTED_ACTIVATION_EVENT);
+        assert.equal(fact.role, "doctor");
+        assert.equal(fact.bookKey, bookKey);
+        assert.deepEqual(fact.correlation, { kind: "caller", id: "doctor-fresh-corr" });
+        assert.equal(fact.session.kind, "session-file");
+        if (fact.session.kind !== "session-file") throw new Error("expected session-file pointer");
+        assert.equal(fact.session.path, realpathSync(resolve(sessionDir, sessionFiles[0]!)));
+        // Retained case session bytes still under the admitted ledger-home runsPath.
+        assert.equal(
+          (await readFile(resolve(runsPath, "case/session/retained.jsonl"), "utf8")).includes("doctor-case"),
+          true,
+        );
       });
     },
   );

@@ -46,6 +46,7 @@ import {
   sampleUser,
 } from "../helpers/fake-github-transport.ts";
 import {
+  withActivationHome,
   withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
@@ -174,8 +175,9 @@ function parseObserveModelViewFromContent(message: {
   return JSON.parse(toolResultContentText(message)) as ObserveModelViewFromContent;
 }
 
+
 test("collector activation fails closed for unsupported mode and missing flags without GitHub calls", async () => {
-  await withHermeticHome({ prefix: "ak-collector-mode-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-mode-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -194,6 +196,7 @@ test("collector activation fails closed for unsupported mode and missing flags w
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -230,7 +233,7 @@ test("collector activation fails closed for unsupported mode and missing flags w
 });
 
 test("collector replaces first input entirely, strips images, and rejects later input", async () => {
-  await withHermeticHome({ prefix: "ak-collector-input-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-input-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -256,6 +259,7 @@ test("collector replaces first input entirely, strips images, and rejects later 
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -337,7 +341,7 @@ test("collector replaces first input entirely, strips images, and rejects later 
 });
 
 test("observe content exposes exact-head qualifying review for content-only valid path", async () => {
-  await withHermeticHome({ prefix: "ak-collector-obs-content-valid-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-obs-content-valid-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -372,6 +376,7 @@ test("observe content exposes exact-head qualifying review for content-only vali
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -474,7 +479,7 @@ test("observe content exposes exact-head qualifying review for content-only vali
 });
 
 test("observe content exposes authenticated request-marker so wait/missing path never creates", async () => {
-  await withHermeticHome({ prefix: "ak-collector-obs-content-marker-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-obs-content-marker-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const manifest = await loadCollectorManifest(legs);
     const headOid = "head-m";
@@ -516,6 +521,7 @@ test("observe content exposes authenticated request-marker so wait/missing path 
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -644,6 +650,7 @@ async function runCollectorSession(input: {
   let toolResultIsError: boolean[] = [];
   try {
     await withInProcessPi({
+      activationLedgerSession: true,
       cwd: input.home,
       agentDir: input.agentDir,
       faux,
@@ -686,7 +693,7 @@ async function runCollectorSession(input: {
 
 test("collector dual operational in one assistant turn is not batch-poisoned", async () => {
   // ADR 0041: same-batch second operational is not whole-message fatal; each op runs at its seam.
-  await withHermeticHome({ prefix: "ak-collector-dual-op-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-dual-op-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -718,7 +725,7 @@ test("collector dual operational in one assistant turn is not batch-poisoned", a
 });
 
 test("collector output rejects non-sole-final assistant tool batch", async () => {
-  await withHermeticHome({ prefix: "ak-collector-sole-final-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-sole-final-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -772,7 +779,7 @@ test("collector output rejects non-sole-final assistant tool batch", async () =>
 });
 
 test("collector startup fails closed on required tool collision with zero GitHub calls", async () => {
-  await withHermeticHome({ prefix: "ak-collector-collision-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-collision-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -791,6 +798,7 @@ test("collector startup fails closed on required tool collision with zero GitHub
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -843,7 +851,7 @@ test("collector startup fails closed on required tool collision with zero GitHub
 });
 
 test("collector startup with no prompt still exits nonzero on shutdown", async () => {
-  await withHermeticHome({ prefix: "ak-collector-noprompt-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-noprompt-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -861,6 +869,7 @@ test("collector startup with no prompt still exits nonzero on shutdown", async (
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -905,7 +914,7 @@ test("collector startup with no prompt still exits nonzero on shutdown", async (
 });
 
 test("collector rejects invalid manifest before provider or GitHub side effects", async () => {
-  await withHermeticHome({ prefix: "ak-collector-badcfg-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-badcfg-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home, {});
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -924,6 +933,7 @@ test("collector rejects invalid manifest before provider or GitHub side effects"
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -1006,7 +1016,7 @@ test("F1 registered collector tool schemas are the singular TypeBox owner", asyn
 });
 
 test("F1 real-Pi invalid sole output denies at execute with zero GitHub", async () => {
-  await withHermeticHome({ prefix: "ak-collector-f1-out-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-f1-out-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const neverTouched = createFakeGitHubTransport({
       user: sampleUser(),
@@ -1107,6 +1117,7 @@ async function runSchemaAcceptedControl(input: {
   process.exitCode = undefined;
   try {
     await withInProcessPi({
+      activationLedgerSession: true,
       cwd: input.home,
       agentDir: input.agentDir,
       faux,
@@ -1184,7 +1195,7 @@ async function runSchemaAcceptedControl(input: {
 }
 
 test("F1 control: well-formed missing is schema-accepted", async () => {
-  await withHermeticHome({ prefix: "ak-collector-f1-missing-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-f1-missing-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const clock = clockAt("2024-01-01T00:00:00Z");
     const transport = createFakeGitHubTransport({
@@ -1217,7 +1228,7 @@ test("F1 control: well-formed missing is schema-accepted", async () => {
 });
 
 test("F1 control: well-formed unavailable is schema-accepted", async () => {
-  await withHermeticHome({ prefix: "ak-collector-f1-unavail-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-f1-unavail-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const clock = clockAt("2024-01-01T00:10:00Z");
     const transport = createFakeGitHubTransport({
@@ -1265,7 +1276,7 @@ test("F1 control: well-formed unavailable is schema-accepted", async () => {
 // ---------------------------------------------------------------------------
 
 test("F3-required-tool-absence", async () => {
-  await withHermeticHome({ prefix: "ak-collector-no-wait-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-no-wait-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -1285,6 +1296,7 @@ test("F3-required-tool-absence", async () => {
     const traces: ActivationTraceRecord[] = [];
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -1339,7 +1351,7 @@ test("F3-required-tool-absence", async () => {
 // command, not late prompt mutation). Includes command-only
 // disable-model-invocation so prompt exclusion does not hide the Skill command.
 test("F3-loaded-skill-startup-fail-closed", async () => {
-  await withHermeticHome({ prefix: "ak-collector-loaded-skill-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-loaded-skill-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const skillDir = resolve(home, "hostile-cmd-only-skill");
     const skillPath = resolve(skillDir, "SKILL.md");
@@ -1378,6 +1390,7 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
     const exposedSkillCommands: Array<{ name: string; source: string }> = [];
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -1506,7 +1519,7 @@ test("F3 ambient guards reject skills, contextFiles, and appendSystemPrompt", as
   ];
 
   for (const row of cases) {
-    await withHermeticHome({ prefix: row.prefix }, async ({ agentDir, home }) => {
+    await withActivationHome({ prefix: row.prefix }, async ({ agentDir, home }) => {
       const legs = await writeLegs(home);
       await row.beforeFactories?.(home);
       const transport = createFakeGitHubTransport({
@@ -1597,7 +1610,7 @@ test("F3 ambient guards reject skills, contextFiles, and appendSystemPrompt", as
 });
 
 test("F3-ambient-commands", async () => {
-  await withHermeticHome({ prefix: "ak-collector-amb-cmd-" }, async ({ agentDir, home }) => {
+  await withActivationHome({ prefix: "ak-collector-amb-cmd-" }, async ({ agentDir, home }) => {
     const legs = await writeLegs(home);
     const transport = createFakeGitHubTransport({
       user: sampleUser(),
@@ -1617,6 +1630,7 @@ test("F3-ambient-commands", async () => {
     const traces: ActivationTraceRecord[] = [];
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
