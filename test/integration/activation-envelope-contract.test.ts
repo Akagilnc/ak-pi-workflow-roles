@@ -7,13 +7,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
 import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
@@ -23,8 +24,10 @@ import {
   ACCEPTED_ACTIVATION_EVENT,
   ActivationBarrierError,
   activationWaitingLedgerPath,
+  appendAcceptedActivationFact,
   buildAcceptedActivationFact,
   correlationIdentityFromEnv,
+  durableSessionPointer,
   resolveBookKeyFromGit,
   serializeAcceptedActivationFact,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
@@ -435,7 +438,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
           role: entry.role,
           observedAt: "2025-06-01T12:00:00.000Z",
           bookKey,
-          session: { kind: "session-file", path: resolve(sessionFile) },
+          session: { kind: "session-file", path: realpathSync(sessionFile) },
           correlation: { kind: "caller", id: `corr-${entry.role}` },
         });
       }
@@ -612,6 +615,16 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       true,
     );
 
+    // Deferred path: parent session-dir exists but file is absent and no live header — reject.
+    const deferredDir = join(machineLedgerHome(home), "books", bookKey, "runs", "deferred-only");
+    mkdirSync(deferredDir, { recursive: true });
+    await rejectSessionClass(
+      "deferred missing file",
+      join(deferredDir, "session.jsonl"),
+      /durable session file does not exist/,
+      true,
+    );
+
     // Directory masquerading as the session file principal.
     const dirPrincipal = join(machineLedgerHome(home), "books", bookKey, "runs", "dir-principal");
     mkdirSync(dirPrincipal, { recursive: true });
@@ -639,6 +652,19 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     await rejectSessionClass(
       "consumer repository",
       join(home, "repo-session.jsonl"),
+      /under the machine ledger book/,
+    );
+
+    // Symlink escape: path lexically under the book but real file outside.
+    const escapeOutside = join(home, "escape-target.jsonl");
+    writeFileSync(escapeOutside, "{ steals: true }\n");
+    const linkDir = join(machineLedgerHome(home), "books", bookKey, "runs", "link-escape");
+    mkdirSync(linkDir, { recursive: true });
+    const linkPrincipal = join(linkDir, "session.jsonl");
+    symlinkSync(escapeOutside, linkPrincipal);
+    await rejectSessionClass(
+      "symlink escape",
+      linkPrincipal,
       /under the machine ledger book/,
     );
   });
@@ -719,7 +745,14 @@ test("accepted-activation serializer emits index fields and zero known content b
   }
   assert.deepEqual(correlationIdentityFromEnv({}), { kind: "absent" });
   assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "" }), { kind: "absent" });
+  assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "   " }), { kind: "absent" });
+  assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "\t\n" }), { kind: "absent" });
   assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "abc" }), { kind: "caller", id: "abc" });
+  // Non-blank caller value is preserved verbatim (including surrounding whitespace).
+  assert.deepEqual(
+    correlationIdentityFromEnv({ AK_CORRELATION_ID: "  keep-me  " }),
+    { kind: "caller", id: "  keep-me  " },
+  );
 });
 
 test("book key follows git common-dir host basename across worktrees, rename, and basename collision", () => {
@@ -748,6 +781,34 @@ test("book key follows git common-dir host basename across worktrees, rename, an
     execFileSync("git", ["init", "-b", "main"], { cwd: twin, stdio: "ignore" });
     assert.equal(resolveBookKeyFromGit(twin), "project-beta");
     assert.equal(resolveBookKeyFromGit(renamed), resolveBookKeyFromGit(twin));
+
+    // Non-git cwd must loudly reject even when GIT_DIR points at another repository.
+    const nonGit = join(root, "not-a-repo");
+    mkdirSync(nonGit);
+    const previousGitDir = process.env.GIT_DIR;
+    const previousGitCommon = process.env.GIT_COMMON_DIR;
+    const previousGitWorkTree = process.env.GIT_WORK_TREE;
+    try {
+      process.env.GIT_DIR = join(renamed, ".git");
+      process.env.GIT_COMMON_DIR = join(renamed, ".git");
+      process.env.GIT_WORK_TREE = renamed;
+      assert.throws(
+        () => resolveBookKeyFromGit(nonGit),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /git rev-parse --git-common-dir/);
+          assert.match(error.message, /not a git repository/i);
+          return true;
+        },
+      );
+    } finally {
+      if (previousGitDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = previousGitDir;
+      if (previousGitCommon === undefined) delete process.env.GIT_COMMON_DIR;
+      else process.env.GIT_COMMON_DIR = previousGitCommon;
+      if (previousGitWorkTree === undefined) delete process.env.GIT_WORK_TREE;
+      else process.env.GIT_WORK_TREE = previousGitWorkTree;
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -763,17 +824,18 @@ test("concurrent child processes append intact JSONL records with exact cardinal
 import { appendAcceptedActivationFact, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
 const index = Number(process.argv[2]);
 const ledgerPath = process.argv[3];
+const ledgerHome = process.argv[4];
 appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
   role: "judge",
   observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
   bookKey: "concurrent-book",
   session: { kind: "session-file", path: "/s/" + index + ".jsonl" },
   correlation: { kind: "caller", id: "c-" + index },
-}));
+}), { ledgerHome });
 `);
   const children = await Promise.all(Array.from({ length: 12 }, (_, index) =>
     runNodeSubprocess(
-      ["--import", "tsx", worker, String(index), ledgerPath],
+      ["--import", "tsx", worker, String(index), ledgerPath, ledgerHome],
       { cwd: packageRoot, timeoutMs: 15_000 },
     )));
   for (const child of children) {
@@ -792,75 +854,56 @@ appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
   rmSync(root, { recursive: true, force: true });
 });
 
-test("real subprocess activation writes one enumerable fact under production home/session topology", async () => {
-  await withHermeticHome({ prefix: "ak-act-subproc-" }, async ({ home, agentDir }) => {
-    const repo = join(home, "repo-main");
-    mkdirSync(repo);
-    seedGitRepository(repo);
-    const sessionDir = join(home, ".ak-roles", "books", "repo-main", "runs", "run-1", "session");
-    mkdirSync(sessionDir, { recursive: true });
-    const sessionFile = join(sessionDir, "session.jsonl");
-    // Genuinely persist the principal (admission requires file or prepared session-dir under the book).
-    writeFileSync(sessionFile, `${JSON.stringify({
-      type: "session",
-      version: 3,
-      id: "subproc-session",
-      timestamp: "2025-01-02T00:00:00.000Z",
-      cwd: repo,
-    })}\n`);
+test("ledger append and durable session admission reject symlink component escapes", async () => {
+  await withHermeticHome({ prefix: "ak-act-symlink-" }, async ({ home }) => {
+    seedGitRepository(home);
+    const bookKey = activationBookKeyFor(home);
+    const ledgerHome = machineLedgerHome(home);
+    const outside = join(home, "outside-ledger");
+    mkdirSync(outside, { recursive: true });
 
-    // Focused process boundary for production topology only — registry owns cardinality/failure classes.
-    const ok = await runNodeSubprocess([
-      "--import", "tsx", "-e",
-      `
-import { createRoleRuntimeExtension } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/role-runtime.ts")).href)};
-const handlers = new Map();
-const pi = {
-  registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
-  getFlag(name) { return name === "ak-role" ? "judge" : undefined; },
-  on(name, handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
-};
-createRoleRuntimeExtension({
-  loadJudgeSoul: async () => "LAW",
-  transcriptFromContext: () => "",
-  auditSoulCompliance: async () => ({ status: "pass" }),
-  activationClock: () => "2025-01-02T00:00:00.000Z",
-  activationTraceWriter: () => {},
-})(pi);
-const ctx = {
-  mode: "print",
-  cwd: process.env.REPO_CWD,
-  abort() {},
-  sessionManager: {
-    getSessionDir: () => process.env.SESSION_DIR,
-    getSessionFile: () => process.env.SESSION_FILE,
-  },
-};
-await handlers.get("session_start")[0]({ reason: "startup" }, ctx);
-`,
-    ], {
-      cwd: packageRoot,
-      env: {
-        ...process.env,
-        REPO_CWD: repo,
-        SESSION_DIR: sessionDir,
-        SESSION_FILE: sessionFile,
-        HOME: home,
-        AK_CORRELATION_ID: "subproc-1",
-        PI_CODING_AGENT_DIR: agentDir,
-      },
-      timeoutMs: 20_000,
-    });
-    assert.equal(ok.code, 0, ok.stderr);
-    const facts = readAcceptedActivationFacts(home, "repo-main");
-    assert.equal(facts.length, 1);
-    const fact = facts[0]!;
-    assert.equal(fact.event, ACCEPTED_ACTIVATION_EVENT);
-    assert.equal(fact.role, "judge");
-    assert.equal(fact.bookKey, "repo-main");
-    assert.deepEqual(fact.session, { kind: "session-file", path: resolve(sessionFile) });
-    assert.deepEqual(fact.correlation, { kind: "caller", id: "subproc-1" });
-    assert.deepEqual(readdirSync(join(home, ".ak-roles", "books")).sort(), ["repo-main"]);
+    // Pre-existing books component symlink that escapes the machine home.
+    mkdirSync(ledgerHome, { recursive: true });
+    symlinkSync(outside, join(ledgerHome, "books"));
+    assert.throws(
+      () => appendAcceptedActivationFact(
+        join(ledgerHome, "books", bookKey, "waiting.jsonl"),
+        buildAcceptedActivationFact({
+          role: "judge",
+          observedAt: "2025-01-01T00:00:00.000Z",
+          bookKey,
+          session: { kind: "session-file", path: join(home, "s.jsonl") },
+          correlation: { kind: "absent" },
+        }),
+        { ledgerHome },
+      ),
+      /escapes ledger home via symlink/,
+    );
+    assert.equal(existsSync(join(outside, bookKey, "waiting.jsonl")), false);
+
+    // Session path lexically under book but final realpath escapes.
+    rmSync(join(ledgerHome, "books"), { force: true });
+    const sessionFile = persistActivationSessionFile({ home, bookKey, cwd: home });
+    const realSession = resolve(sessionFile);
+    // Replace runs dir with symlink to consumer path holding a decoy file.
+    const bookDir = join(ledgerHome, "books", bookKey);
+    const runsDir = join(bookDir, "runs");
+    const decoyDir = join(home, "decoy-runs", "activation", "default");
+    mkdirSync(dirname(decoyDir), { recursive: true });
+    // Move real tree aside then link.
+    rmSync(runsDir, { recursive: true, force: true });
+    mkdirSync(decoyDir, { recursive: true });
+    const decoyFile = join(decoyDir, "session.jsonl");
+    writeFileSync(decoyFile, `${JSON.stringify({ type: "session", version: 3, id: "decoy", timestamp: "2025-01-01T00:00:00.000Z", cwd: home })}\n`);
+    symlinkSync(join(home, "decoy-runs"), runsDir);
+    assert.throws(
+      () => durableSessionPointer(
+        { getSessionFile: () => join(runsDir, "activation", "default", "session.jsonl") },
+        { ledgerHome, bookKey },
+      ),
+      /under the machine ledger book/,
+    );
+    assert.notEqual(realSession, decoyFile);
   });
 });
 
