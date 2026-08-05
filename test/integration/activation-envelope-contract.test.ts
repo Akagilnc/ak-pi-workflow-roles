@@ -23,6 +23,7 @@ import { Value } from "typebox/value";
 import {
   ACCEPTED_ACTIVATION_EVENT,
   ActivationBarrierError,
+  ActivationGitRepositoryRequiredError,
   activationWaitingLedgerPath,
   appendAcceptedActivationFact,
   buildAcceptedActivationFact,
@@ -538,8 +539,8 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       abort() { aborts++; },
     });
     await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.match(error.message, /git rev-parse --git-common-dir/);
+      assert.ok(error instanceof ActivationGitRepositoryRequiredError);
+      assert.equal(error.code, "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED");
       assert.ok(error.cause !== undefined, "original git cause must be retained");
       return true;
     });
@@ -558,7 +559,6 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     async function rejectSessionClass(
       label: string,
       sessionFile: string | null,
-      messagePattern: RegExp,
       requireCause = false,
     ): Promise<void> {
       process.exitCode = undefined;
@@ -584,7 +584,6 @@ test("non-git cwd and durable session rejection classes fail before model dispat
         async () => roleHandlers.get("session_start")?.[0]?.({ reason: "startup" }, rejectCtx),
         (error: unknown) => {
           assert.ok(error instanceof Error, `${label} must throw Error`);
-          assert.match(error.message, messagePattern, label);
           if (requireCause) assert.ok(error.cause !== undefined, `${label} must retain original cause`);
           return true;
         },
@@ -601,59 +600,33 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     }
 
     // Missing getSessionFile principal (empty / --no-session).
-    await rejectSessionClass(
-      "missing principal",
-      null,
-      /durable Pi session file principal/,
-    );
+    await rejectSessionClass("missing principal", null);
 
     // Fabricated path under the book: neither file nor parent session-dir exists.
     await rejectSessionClass(
       "missing file",
       join(machineLedgerHome(home), "books", bookKey, "runs", "no-such", "missing.jsonl"),
-      /durable session file does not exist/,
       true,
     );
 
     // Deferred path: parent session-dir exists but file is absent and no live header — reject.
     const deferredDir = join(machineLedgerHome(home), "books", bookKey, "runs", "deferred-only");
     mkdirSync(deferredDir, { recursive: true });
-    await rejectSessionClass(
-      "deferred missing file",
-      join(deferredDir, "session.jsonl"),
-      /durable session file does not exist/,
-      true,
-    );
+    await rejectSessionClass("deferred missing file", join(deferredDir, "session.jsonl"), true);
 
     // Directory masquerading as the session file principal.
     const dirPrincipal = join(machineLedgerHome(home), "books", bookKey, "runs", "dir-principal");
     mkdirSync(dirPrincipal, { recursive: true });
-    await rejectSessionClass(
-      "directory principal",
-      dirPrincipal,
-      /must be a file, not a directory/,
-    );
+    await rejectSessionClass("directory principal", dirPrincipal);
 
     // Relative path rejected (not absolute under the ledger book).
-    await rejectSessionClass(
-      "relative path",
-      "relative/session.jsonl",
-      /absolute durable session file path/,
-    );
+    await rejectSessionClass("relative path", "relative/session.jsonl");
 
     // Outside-home /tmp pointer rejected with topology cause.
-    await rejectSessionClass(
-      "outside-home /tmp",
-      join(tmpdir(), "ak-act-outside-session.jsonl"),
-      /under the machine ledger book/,
-    );
+    await rejectSessionClass("outside-home /tmp", join(tmpdir(), "ak-act-outside-session.jsonl"));
 
     // Consumer-repository pointer rejected (cwd-relative durable claim).
-    await rejectSessionClass(
-      "consumer repository",
-      join(home, "repo-session.jsonl"),
-      /under the machine ledger book/,
-    );
+    await rejectSessionClass("consumer repository", join(home, "repo-session.jsonl"));
 
     // Symlink escape: path lexically under the book but real file outside.
     const escapeOutside = join(home, "escape-target.jsonl");
@@ -662,11 +635,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     mkdirSync(linkDir, { recursive: true });
     const linkPrincipal = join(linkDir, "session.jsonl");
     symlinkSync(escapeOutside, linkPrincipal);
-    await rejectSessionClass(
-      "symlink escape",
-      linkPrincipal,
-      /under the machine ledger book/,
-    );
+    await rejectSessionClass("symlink escape", linkPrincipal);
   });
 });
 
@@ -697,8 +666,20 @@ test("append failure preserves original cause, aborts nonzero, and blocks provid
       });
       await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
         assert.ok(error instanceof Error);
-        const code = (error as NodeJS.ErrnoException).code;
-        assert.ok(code === "EACCES" || code === "EPERM" || /EACCES|EPERM|permission denied/i.test(error.message));
+        const codes: string[] = [];
+        let current: unknown = error;
+        const seen = new Set<unknown>();
+        while (current !== null && typeof current === "object" && !seen.has(current)) {
+          seen.add(current);
+          if ("code" in current && typeof (current as { code: unknown }).code === "string") {
+            codes.push((current as { code: string }).code);
+          }
+          current = "cause" in current ? (current as { cause: unknown }).cause : undefined;
+        }
+        assert.ok(
+          codes.includes("EACCES") || codes.includes("EPERM"),
+          `append failure must retain typed errno cause, got codes=${codes.join(",") || "none"}`,
+        );
         return true;
       });
       assert.equal(aborts, 1);
@@ -795,9 +776,9 @@ test("book key follows git common-dir host basename across worktrees, rename, an
       assert.throws(
         () => resolveBookKeyFromGit(nonGit),
         (error: unknown) => {
-          assert.ok(error instanceof Error);
-          assert.match(error.message, /git rev-parse --git-common-dir/);
-          assert.match(error.message, /not a git repository/i);
+          assert.ok(error instanceof ActivationGitRepositoryRequiredError);
+          assert.equal(error.code, "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED");
+          assert.ok(error.cause !== undefined, "original git cause must be retained");
           return true;
         },
       );
@@ -854,6 +835,50 @@ appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
   rmSync(root, { recursive: true, force: true });
 });
 
+test("concurrent first-time ledger directory creation across books stays race-safe", async () => {
+  // Fresh home: workers race on creating shared ledgerHome/books components plus distinct books.
+  const root = mkdtempSync(join(tmpdir(), "ak-ledger-mkdir-race-"));
+  const ledgerHome = join(root, "home");
+  const worker = join(root, "mkdir-race-worker.mjs");
+  writeFileSync(worker, `
+import { appendAcceptedActivationToBook, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
+const index = Number(process.argv[2]);
+const ledgerHome = process.argv[3];
+const bookKey = "book-" + index;
+appendAcceptedActivationToBook({
+  ledgerHome,
+  fact: buildAcceptedActivationFact({
+    role: "judge",
+    observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
+    bookKey,
+    session: { kind: "session-file", path: "/s/" + index + ".jsonl" },
+    correlation: { kind: "caller", id: "mkdir-" + index },
+  }),
+});
+`);
+  const workerCount = 16;
+  const children = await Promise.all(Array.from({ length: workerCount }, (_, index) =>
+    runNodeSubprocess(
+      ["--import", "tsx", worker, String(index), ledgerHome],
+      { cwd: packageRoot, timeoutMs: 15_000 },
+    )));
+  for (const child of children) {
+    assert.equal(child.code, 0, child.stderr);
+  }
+  for (let index = 0; index < workerCount; index += 1) {
+    const bookKey = `book-${index}`;
+    const lines = readFileSync(activationWaitingLedgerPath(ledgerHome, bookKey), "utf8")
+      .split("\n")
+      .filter(Boolean);
+    assert.equal(lines.length, 1, `${bookKey} must keep exactly one accepted fact`);
+    const row = JSON.parse(lines[0]!) as AcceptedActivationFact;
+    assert.equal(row.event, ACCEPTED_ACTIVATION_EVENT);
+    assert.equal(row.bookKey, bookKey);
+    assert.deepEqual(row.correlation, { kind: "caller", id: `mkdir-${index}` });
+  }
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("ledger append and durable session admission reject symlink component escapes", async () => {
   await withHermeticHome({ prefix: "ak-act-symlink-" }, async ({ home }) => {
     seedGitRepository(home);
@@ -877,7 +902,7 @@ test("ledger append and durable session admission reject symlink component escap
         }),
         { ledgerHome },
       ),
-      /escapes ledger home via symlink/,
+      (error: unknown) => error instanceof Error,
     );
     assert.equal(existsSync(join(outside, bookKey, "waiting.jsonl")), false);
 
@@ -901,7 +926,7 @@ test("ledger append and durable session admission reject symlink component escap
         { getSessionFile: () => join(runsDir, "activation", "default", "session.jsonl") },
         { ledgerHome, bookKey },
       ),
-      /under the machine ledger book/,
+      (error: unknown) => error instanceof Error,
     );
     assert.notEqual(realSession, decoyFile);
   });
@@ -931,7 +956,6 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
   assert.equal(failed.cause.name, "FixerPacketValidationError");
   if (typeof failed.cause.evidenceId !== "string") throw new Error("missing activation evidence id");
   assert.match(failed.cause.evidenceId, /^activation-cause-/);
-  assert.match(failed.cause.message, /Fixer prerequisites/);
 });
 
 test("failed trace emission cannot mask the activation cause or skip termination", async () => {

@@ -171,12 +171,23 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
       try {
         mkdirSync(lexicalCursor);
       } catch (mkdirError) {
+        // Concurrent first-time creators can lose the mkdir race. Only EEXIST is
+        // recoverable; re-lstat/realpath validation below still admits the winner.
+        if (errnoCode(mkdirError) !== "EEXIST") {
+          throw new Error(
+            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
+            { cause: mkdirError },
+          );
+        }
+      }
+      try {
+        st = lstatSync(lexicalCursor);
+      } catch (statError) {
         throw new Error(
-          `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
-          { cause: mkdirError },
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
+          { cause: statError },
         );
       }
-      st = lstatSync(lexicalCursor);
     }
 
     if (st.isSymbolicLink()) {
@@ -387,18 +398,19 @@ function envWithoutGitDiscovery(base: NodeJS.ProcessEnv = process.env): NodeJS.P
   return env;
 }
 
-/** True when an activation book-key error is the documented non-git cwd rejection. */
-export function isNonGitRepositoryActivationError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const chunks = [error.message];
-  const cause = error.cause;
-  if (cause instanceof Error) chunks.push(cause.message);
-  if (cause !== null && typeof cause === "object") {
-    const stderr = (cause as { stderr?: unknown }).stderr;
-    if (typeof stderr === "string") chunks.push(stderr);
-    else if (Buffer.isBuffer(stderr)) chunks.push(stderr.toString("utf8"));
+/**
+ * Typed book-key discovery failure: cwd is not an admissible git repository.
+ * Original git/exec cause is retained for infrastructure classification (ENOENT/EACCES).
+ */
+export class ActivationGitRepositoryRequiredError extends Error {
+  readonly code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED" as const;
+  constructor(detail: string, options?: { cause?: unknown }) {
+    super(
+      `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = "ActivationGitRepositoryRequiredError";
   }
-  return /not a git repository/i.test(chunks.join("\n"));
 }
 
 /**
@@ -423,10 +435,7 @@ export function resolveBookKeyFromGit(cwd: string): string {
       : Buffer.isBuffer(err.stderr)
       ? err.stderr.toString("utf8").trim()
       : err.message;
-    throw new Error(
-      `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
-      { cause: error },
-    );
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
   }
   if (commonDir.length === 0) {
     throw new Error("git rev-parse --git-common-dir returned an empty path");
