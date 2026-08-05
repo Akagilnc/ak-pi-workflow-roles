@@ -54,7 +54,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         // Production activation requires a git cwd (ADR 0048); seed the consumer fixture.
         // With a git root present, Doctor case identity becomes repo-relative (stableRunsIdentity).
         execFileSync("git", ["init", "-b", "main"], { cwd: fixture, stdio: "ignore" });
-        const caseIdentityPath = ".ak/work/issues/58/runs";
+        const caseIdentityPath = ".ak-roles/books/demo-book/issues/58/runs";
         assert.notEqual(installedRoot, packageRoot);
         const result = await runPiSubprocess(
           [
@@ -164,7 +164,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         assert.equal(fact.session.kind, "session-file");
         if (fact.session.kind !== "session-file") throw new Error("expected session-file pointer");
         assert.equal(resolve(fact.session.path), resolve(sessionDir, sessionFiles[0]!));
-        // ADR 0017 byte-reading path unchanged: retained case session still under runsPath.
+        // Retained case session bytes still under the admitted ledger-home runsPath.
         assert.equal(
           (await readFile(resolve(runsPath, "case/session/retained.jsonl"), "utf8")).includes("doctor-case"),
           true,
