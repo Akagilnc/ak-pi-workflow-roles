@@ -296,6 +296,7 @@ function ticket(
     milestone: null,
     parentIssueNumber: null,
     blockedBy: [],
+    closedAt: null,
     ...partial,
   };
 }
@@ -530,7 +531,14 @@ test("named closed tickets enter the board and remain drillable", async () => {
     const roles = snapshot.books[0]!;
     const tickets = [
       ...roles.tickets,
-      ticket({ issueNumber: 99, title: "drilled closed", state: "closed", milestone: "done" }),
+      ticket({
+        issueNumber: 99,
+        title: "drilled closed",
+        state: "closed",
+        milestone: "done",
+        // Closure after the sole run start — landing cycle uses this, not ledger end.
+        closedAt: "2026-08-02T00:00:00.000Z",
+      }),
     ];
     const view: FactoryBoardView = {
       ok: true,
@@ -608,6 +616,7 @@ test("snapshot adapter maps transport payloads into titled tickets with parent a
             state: "open",
             milestone: "m1",
             parentIssueNumber: null,
+            closedAt: null,
             blockedBy: [],
           },
           {
@@ -616,6 +625,7 @@ test("snapshot adapter maps transport payloads into titled tickets with parent a
             state: "open",
             milestone: null,
             parentIssueNumber: 78,
+            closedAt: null,
             blockedBy: [],
           },
           {
@@ -624,6 +634,7 @@ test("snapshot adapter maps transport payloads into titled tickets with parent a
             state: "open",
             milestone: null,
             parentIssueNumber: 78,
+            closedAt: null,
             blockedBy: [{ issueNumber: 127, state: "open" }],
           },
           {
@@ -632,6 +643,7 @@ test("snapshot adapter maps transport payloads into titled tickets with parent a
             state: "closed",
             milestone: null,
             parentIssueNumber: 78,
+            closedAt: "2026-08-05T04:03:43Z",
             blockedBy: [],
           },
         ];
@@ -644,6 +656,7 @@ test("snapshot adapter maps transport payloads into titled tickets with parent a
             state: "open",
             milestone: null,
             parentIssueNumber: null,
+            closedAt: null,
             blockedBy: [],
           },
         ];
@@ -1189,7 +1202,12 @@ test("S3 four-state is mutually exclusive and decided only by the latest run", a
               owner: "acme",
               repo: "roles",
               tickets: [
-                ticket({ issueNumber: 1, title: "closed", state: "closed" }),
+                ticket({
+                  issueNumber: 1,
+                  title: "closed",
+                  state: "closed",
+                  closedAt: "2026-08-02T00:00:00.000Z",
+                }),
                 ticket({ issueNumber: 2, title: "pending", state: "open" }),
                 ticket({ issueNumber: 3, title: "fly", state: "open" }),
                 ticket({ issueNumber: 4, title: "watch", state: "open" }),
@@ -1382,6 +1400,111 @@ test("S3 wallclock: only current latest unaccepted ends at now; historical unacc
     assert.equal(ticketA["data-landing-cycle-ms"], String(2 * 3600_000));
     assert.equal(ticketB["data-landing-cycle-ms"], String(3 * 3600_000));
     assert.notEqual(ticketA["data-landing-cycle-ms"], ticketA["data-wall-ms"]);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("S3 landing cycle: open ends at now; closed ends at closedAt not last ledger record", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-landing-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    // First run 10:00–10:30; second (last ledger) 11:00–11:15.
+    await writeRunSession(
+      ledgerDir,
+      77,
+      "first@x",
+      [
+        sessionHeader("2026-08-05T10:00:00.000Z"),
+        ...acceptedCoderFinal("2026-08-05T10:30:00.000Z", 0.1, 100),
+      ],
+      { mtime: new Date("2026-08-05T10:30:00.000Z") },
+    );
+    await writeRunSession(
+      ledgerDir,
+      77,
+      "last@x",
+      [
+        sessionHeader("2026-08-05T11:00:00.000Z"),
+        ...acceptedCoderFinal("2026-08-05T11:15:00.000Z", 0.2, 200),
+      ],
+      { mtime: new Date("2026-08-05T11:15:00.000Z") },
+    );
+
+    const now = new Date("2026-08-05T14:00:00.000Z");
+    // Closure deliberately later than the final run record (11:15).
+    const closedAt = "2026-08-05T13:00:00.000Z";
+    const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
+
+    const openHtml = await renderFactoryBoardHtml(
+      books,
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 77, title: "open-land", state: "open" })],
+            },
+          ],
+        },
+      },
+      now,
+    );
+    const closedHtml = await renderFactoryBoardHtml(
+      books,
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({
+                  issueNumber: 77,
+                  title: "closed-land",
+                  state: "closed",
+                  closedAt,
+                }),
+              ],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    const openTicket = elementsWith(openHtml, "data-ticket").find((t) => t["data-ticket"] === "77");
+    const closedTicket = elementsWith(closedHtml, "data-ticket").find(
+      (t) => t["data-ticket"] === "77",
+    );
+    assert.ok(openTicket && closedTicket);
+
+    // Construction wall = sum of run walls only (30m + 15m); independent of landing/now/closure.
+    const constructionWallMs = 30 * 60_000 + 15 * 60_000;
+    assert.equal(openTicket["data-wall-ms"], String(constructionWallMs));
+    assert.equal(closedTicket["data-wall-ms"], String(constructionWallMs));
+
+    // Open landing: first start 10:00 → injected now 14:00.
+    assert.equal(openTicket["data-landing-cycle-ms"], String(4 * 3600_000));
+    // Closed landing: first start 10:00 → closedAt 13:00 (not last ledger 11:15, not now 14:00).
+    assert.equal(closedTicket["data-landing-cycle-ms"], String(3 * 3600_000));
+    assert.notEqual(
+      closedTicket["data-landing-cycle-ms"],
+      String(Date.parse("2026-08-05T11:15:00.000Z") - Date.parse("2026-08-05T10:00:00.000Z")),
+      "closed landing must not end at last ledger record",
+    );
+    assert.notEqual(
+      closedTicket["data-landing-cycle-ms"],
+      openTicket["data-landing-cycle-ms"],
+      "closed landing must not keep stretching to injected now",
+    );
+    assert.notEqual(closedTicket["data-landing-cycle-ms"], closedTicket["data-wall-ms"]);
+    assert.notEqual(openTicket["data-landing-cycle-ms"], openTicket["data-wall-ms"]);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -1620,6 +1743,7 @@ test("S3 production sort: #130 per-ticket burn participates under native #78 fam
                   title: "hot child",
                   state: "closed",
                   parentIssueNumber: 78,
+                  closedAt: "2026-08-05T04:03:43Z",
                 }),
                 ticket({ issueNumber: 50, title: "mid standalone", state: "open" }),
                 ticket({ issueNumber: 40, title: "cheap standalone", state: "open" }),
@@ -2059,6 +2183,8 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
                 title: "130",
                 state: "closed",
                 parentIssueNumber: 78,
+                // Live GitHub closedAt for #130 — landing cycle ends here, not last ledger.
+                closedAt: "2026-08-05T04:03:43Z",
               }),
               ticket({ issueNumber: activeIssue, title: "active", state: "open" }),
             ],
@@ -2224,6 +2350,7 @@ test("blockedBy connection paginates to completion and refuses silent truncation
                 number: 42,
                 title: "many blockers",
                 state: "OPEN",
+                closedAt: null,
                 milestone: null,
                 parent: null,
                 blockedBy: {
@@ -2269,6 +2396,7 @@ test("blockedBy connection paginates to completion and refuses silent truncation
                 number: 7,
                 title: "truncated",
                 state: "OPEN",
+                closedAt: null,
                 milestone: null,
                 parent: null,
                 blockedBy: {
@@ -2292,6 +2420,134 @@ test("blockedBy connection paginates to completion and refuses silent truncation
     (err: unknown) => {
       assert.ok(err instanceof Error);
       assert.match(err.message, /pageInfo missing|completeness/i);
+      return true;
+    },
+  );
+});
+
+test("snapshot adapter carries closedAt and refuses closed issues without it", async () => {
+  const seenQueries: string[] = [];
+  const runner: GhApiRunner = async (args) => {
+    const queryArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("query="));
+    const query = queryArg?.slice("query=".length) ?? "";
+    seenQueries.push(query);
+    const ok = (data: unknown): GhApiResponse => ({
+      status: 200,
+      headers: {},
+      bodyText: JSON.stringify({ data }),
+    });
+
+    if (query.includes("issues(states: OPEN")) {
+      return ok({
+        repository: {
+          issues: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                number: 1,
+                title: "open",
+                state: "OPEN",
+                closedAt: null,
+                milestone: null,
+                parent: null,
+                blockedBy: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [],
+                },
+              },
+            ],
+          },
+        },
+      });
+    }
+
+    if (query.includes("c0: issue(number: 2)")) {
+      return ok({
+        repository: {
+          c0: {
+            number: 2,
+            title: "closed-ok",
+            state: "CLOSED",
+            closedAt: "2026-08-05T04:03:43Z",
+            milestone: null,
+            parent: null,
+            blockedBy: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [],
+            },
+          },
+        },
+      });
+    }
+
+    throw new Error(`unexpected graphql query: ${query.slice(0, 120)}`);
+  };
+
+  const tickets = await createGhTicketSnapshotTransport(runner).listBookTickets({
+    owner: "acme",
+    repo: "roles",
+    closedIssueNumbers: [2],
+  });
+  assert.ok(seenQueries.some((q) => /issues\(states: OPEN[\s\S]*closedAt/.test(q)));
+  assert.ok(seenQueries.some((q) => /c0: issue\(number: 2\)[\s\S]*closedAt/.test(q)));
+  assert.equal(tickets.find((t) => t.issueNumber === 1)?.closedAt, null);
+  assert.equal(tickets.find((t) => t.issueNumber === 2)?.closedAt, "2026-08-05T04:03:43Z");
+
+  const missingClosedAtRunner: GhApiRunner = async (args) => {
+    const queryArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("query="));
+    const query = queryArg?.slice("query=".length) ?? "";
+    if (query.includes("issues(states: OPEN")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          data: {
+            repository: {
+              issues: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [],
+              },
+            },
+          },
+        }),
+      };
+    }
+    if (query.includes("c0: issue(number: 9)")) {
+      return {
+        status: 200,
+        headers: {},
+        bodyText: JSON.stringify({
+          data: {
+            repository: {
+              c0: {
+                number: 9,
+                title: "closed-missing",
+                state: "CLOSED",
+                closedAt: null,
+                milestone: null,
+                parent: null,
+                blockedBy: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [],
+                },
+              },
+            },
+          },
+        }),
+      };
+    }
+    throw new Error(`unexpected graphql query: ${query.slice(0, 120)}`);
+  };
+  await assert.rejects(
+    () =>
+      createGhTicketSnapshotTransport(missingClosedAtRunner).listBookTickets({
+        owner: "acme",
+        repo: "roles",
+        closedIssueNumbers: [9],
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /closedAt missing for closed issue/i);
       return true;
     },
   );

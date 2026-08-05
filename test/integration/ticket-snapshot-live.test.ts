@@ -58,6 +58,17 @@ test("live GitHub snapshot keeps #78 family parent and blocked_by edges", async 
   assert.equal(byNumber.get(128)?.parentIssueNumber, 78);
   assert.equal(byNumber.get(130)?.parentIssueNumber, 78);
 
+  // Open tickets carry null closedAt; closed drills must surface GitHub closure time.
+  assert.equal(byNumber.get(78)?.closedAt, null);
+  assert.equal(byNumber.get(127)?.closedAt, null);
+  assert.equal(byNumber.get(128)?.closedAt, null);
+  assert.equal(byNumber.get(130)?.state, "closed");
+  assert.equal(typeof byNumber.get(130)?.closedAt, "string");
+  assert.ok(
+    Number.isFinite(Date.parse(byNumber.get(130)!.closedAt!)),
+    "#130 closedAt must be a parseable GitHub timestamp",
+  );
+
   const blocked = byNumber.get(128)?.blockedBy ?? [];
   assert.ok(
     blocked.some((edge) => edge.issueNumber === 127),
