@@ -12,6 +12,7 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -24,6 +25,7 @@ import {
   ACCEPTED_ACTIVATION_EVENT,
   ActivationBarrierError,
   ActivationGitRepositoryRequiredError,
+  ActivationLedgerError,
   activationWaitingLedgerPath,
   appendAcceptedActivationFact,
   buildAcceptedActivationFact,
@@ -917,6 +919,168 @@ appendAcceptedActivationToBook({
     assert.deepEqual(row.correlation, { kind: "caller", id: `mkdir-${index}` });
   }
   rmSync(root, { recursive: true, force: true });
+});
+
+test("short append rolls back partial bytes and preserves the original failure", () => {
+  const root = mkdtempSync(join(tmpdir(), "ak-ledger-short-write-"));
+  try {
+    const ledgerHome = join(root, "home");
+    const bookKey = "short-write-book";
+    const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
+    const prior = buildAcceptedActivationFact({
+      role: "judge",
+      observedAt: "2025-01-01T00:00:00.000Z",
+      bookKey,
+      session: { kind: "session-file", path: "/s/prior.jsonl" },
+      correlation: { kind: "caller", id: "prior" },
+    });
+    appendAcceptedActivationFact(ledgerPath, prior, { ledgerHome });
+    const before = readFileSync(ledgerPath);
+
+    const failed = buildAcceptedActivationFact({
+      role: "fixer",
+      observedAt: "2025-01-01T00:00:01.000Z",
+      bookKey,
+      session: { kind: "session-file", path: "/s/failed.jsonl" },
+      correlation: { kind: "caller", id: "failed" },
+    });
+
+    assert.throws(
+      () => appendAcceptedActivationFact(ledgerPath, failed, {
+        ledgerHome,
+        write(fd, buffer, offset, length, position) {
+          const partial = Math.min(3, length);
+          return writeSync(fd, buffer, offset, partial, position);
+        },
+      }),
+      (error: unknown) => {
+        const primary = error instanceof AggregateError ? error.errors[0] : error;
+        assert.ok(primary instanceof ActivationLedgerError);
+        assert.equal(primary.code, "AK_ACTIVATION_LEDGER");
+        if (error instanceof AggregateError) {
+          assert.equal(error.cause, primary);
+        }
+        return true;
+      },
+    );
+
+    const after = readFileSync(ledgerPath);
+    assert.deepEqual(after, before);
+    const lines = after.toString("utf8").split("\n").filter(Boolean);
+    assert.equal(lines.length, 1);
+    const row = JSON.parse(lines[0]!) as AcceptedActivationFact;
+    assert.deepEqual(row.correlation, { kind: "caller", id: "prior" });
+    assert.equal(existsSync(`${ledgerPath}.append-lock`), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("failed append write rolls back partial bytes and keeps the original write cause", () => {
+  const root = mkdtempSync(join(tmpdir(), "ak-ledger-write-fail-"));
+  try {
+    const ledgerHome = join(root, "home");
+    const bookKey = "write-fail-book";
+    const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
+    const prior = buildAcceptedActivationFact({
+      role: "judge",
+      observedAt: "2025-01-01T00:00:00.000Z",
+      bookKey,
+      session: { kind: "session-file", path: "/s/prior.jsonl" },
+      correlation: { kind: "caller", id: "prior" },
+    });
+    appendAcceptedActivationFact(ledgerPath, prior, { ledgerHome });
+    const before = readFileSync(ledgerPath);
+    const writeFailure = new Error("injected-write-failure");
+
+    assert.throws(
+      () => appendAcceptedActivationFact(
+        ledgerPath,
+        buildAcceptedActivationFact({
+          role: "fixer",
+          observedAt: "2025-01-01T00:00:01.000Z",
+          bookKey,
+          session: { kind: "session-file", path: "/s/failed.jsonl" },
+          correlation: { kind: "caller", id: "failed" },
+        }),
+        {
+          ledgerHome,
+          write(fd, buffer, offset, length, position) {
+            writeSync(fd, buffer, offset, Math.min(5, length), position);
+            throw writeFailure;
+          },
+        },
+      ),
+      (error: unknown) => {
+        const primary = error instanceof AggregateError ? error.cause ?? error.errors[0] : error;
+        assert.equal(primary, writeFailure);
+        return true;
+      },
+    );
+
+    assert.deepEqual(readFileSync(ledgerPath), before);
+    assert.equal(existsSync(`${ledgerPath}.append-lock`), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("append cleanup failure cannot mask the primary write failure", () => {
+  const root = mkdtempSync(join(tmpdir(), "ak-ledger-cleanup-mask-"));
+  const ledgerHome = join(root, "home");
+  const bookKey = "cleanup-mask-book";
+  const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
+  const bookDir = dirname(ledgerPath);
+  const writeFailure = new Error("injected-write-failure");
+  try {
+    appendAcceptedActivationFact(
+      ledgerPath,
+      buildAcceptedActivationFact({
+        role: "judge",
+        observedAt: "2025-01-01T00:00:00.000Z",
+        bookKey,
+        session: { kind: "session-file", path: "/s/prior.jsonl" },
+        correlation: { kind: "caller", id: "prior" },
+      }),
+      { ledgerHome },
+    );
+    const before = readFileSync(ledgerPath);
+
+    assert.throws(
+      () => appendAcceptedActivationFact(
+        ledgerPath,
+        buildAcceptedActivationFact({
+          role: "fixer",
+          observedAt: "2025-01-01T00:00:01.000Z",
+          bookKey,
+          session: { kind: "session-file", path: "/s/failed.jsonl" },
+          correlation: { kind: "caller", id: "failed" },
+        }),
+        {
+          ledgerHome,
+          write(fd, buffer, offset, length, position) {
+            writeSync(fd, buffer, offset, Math.min(5, length), position);
+            // Freeze the book dir so lock unlink during cleanup fails after the write cause.
+            chmodSync(bookDir, 0o555);
+            throw writeFailure;
+          },
+        },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.cause, writeFailure);
+        assert.equal(error.errors[0], writeFailure);
+        assert.equal(error.errors.length, 2);
+        return true;
+      },
+    );
+
+    chmodSync(bookDir, 0o755);
+    assert.deepEqual(readFileSync(ledgerPath), before);
+  } finally {
+    try { chmodSync(bookDir, 0o755); } catch { /* best-effort restore before rm */ }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("ledger append and durable session admission reject symlink component escapes", async () => {
