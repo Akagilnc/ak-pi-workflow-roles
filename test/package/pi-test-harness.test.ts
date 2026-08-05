@@ -198,6 +198,30 @@ async function exerciseSharedPackageContracts(): Promise<void> {
     () => topology.resolveActivationLedgerHome(() => "relative-home"),
     (error: unknown) => error instanceof topology.ActivationLedgerError,
   );
+
+  // Activation reconciliation deep module: builder + pure reconciler (no role-runtime).
+  const reconciliationUrl = pathToFileURL(
+    resolve(packageRoot, "dist/activation-reconciliation.js"),
+  ).href;
+  const reconciliation = await import(
+    `${reconciliationUrl}?t=${Date.now()}-${Math.random()}`
+  );
+  assert.equal(typeof reconciliation.buildDispatchStubFact, "function");
+  assert.equal(typeof reconciliation.reconcileInvocation, "function");
+  assert.equal(reconciliation.DISPATCH_STUB_EVENT, "dispatch-stub");
+  const dispatch = reconciliation.buildDispatchStubFact({
+    observedAt: "2025-06-01T12:00:00.000Z",
+    bookKey: "pack-deep-book",
+    dispatch: { kind: "process", pid: 4242 },
+    correlation: { kind: "caller", id: "pack-deep-corr" },
+  });
+  const outcome = reconciliation.reconcileInvocation({
+    dispatch,
+    process: { state: "alive" },
+  });
+  assert.equal(outcome.kind, "pending");
+  assert.equal(outcome.correlationId, "pack-deep-corr");
+  assert.equal(outcome.bookKey, "pack-deep-book");
 }
 
 test("isolated packs leave shared dist identity stable under concurrent contract imports", async () => {
@@ -222,6 +246,7 @@ test("isolated packs leave shared dist identity stable under concurrent contract
   assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
   assert.ok(paths.includes("dist/navigator-attendance.js"));
   assert.ok(paths.includes("dist/activation-ledger-topology.js"));
+  assert.ok(paths.includes("dist/activation-reconciliation.js"));
   assert.ok(!paths.some((path) => path.includes("recorder")));
 
   // Provenance must bind the fixture to the current construction HEAD.

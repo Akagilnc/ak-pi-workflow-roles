@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
 
-const entries = ["packaged-role-registry", "navigator-attendance", "activation-ledger-topology"];
+const entries = ["packaged-role-registry", "navigator-attendance", "activation-ledger-topology", "activation-reconciliation"];
 await build({
   entryPoints: entries.map((name) => `src/${name}.ts`),
   outdir: "dist",
