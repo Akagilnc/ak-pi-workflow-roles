@@ -214,6 +214,7 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
     "souls/navigator.md",
     "src/navigator-attendance.ts",
     "dist/navigator-attendance.js",
+    "dist/activation-ledger-topology.js",
     "souls/merger.md",
     "src/merger-contracts.ts",
     "src/merger-git-state.ts",
