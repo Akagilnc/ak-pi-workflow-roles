@@ -17,7 +17,7 @@ export type ReviewerAxis = "standards" | "spec";
 export const REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
   adapterId: "reviewer-axis-output",
   version: 1,
-  implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report"),
+  implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities"),
 });
 
 /** Package-owned mechanics layered over the unchanged canonical Skill semantics. */
@@ -26,12 +26,16 @@ export function reviewerAxisMethodAdapter(axis: ReviewerAxis): string {
     ? "Answer only the canonical Standards question, including its complete smell baseline and burden."
     : "Answer only the canonical Spec question.";
   const other = axis === "standards" ? "Spec" : "Standards";
+  const priority = axis === "standards"
+    ? "Inside that single Standards report, explicitly conclude on constitutionality, minimum-necessary test cost, and complexity; a finding or clear no-finding on each counts as a conclusion."
+    : "Do not discuss constitutionality, minimum-necessary test cost, or complexity; those are Standards judgements.";
   return [
     `Axis-Output-Adapter: ${REVIEWER_AXIS_OUTPUT_ADAPTER.adapterId}@${REVIEWER_AXIS_OUTPUT_ADAPTER.version}:${axis}`,
     "The complete canonical Skill snapshot in the common bundle remains authoritative semantic input.",
     "For this already-isolated leg, this package adapter supersedes that Skill's dual-agent orchestration, dual-axis aggregation, and dual-section presentation mechanics.",
     question,
     `Emit exactly one substantive ${axis === "standards" ? "Standards" : "Spec"} report. Do not emit a ${other} assessment, ${other} finding count, ${other} conclusion, or second-axis section.`,
+    priority,
     "You may read and cite any supplied common material, including material relevant to the other axis; material access and citation do not change the assigned question.",
     "The returned report is the complete output envelope and its UTF-8 bytes are preserved verbatim; no heading parser, sanitizer, section splitter, rewrite, aggregation, or replacement leg follows.",
   ].join("\n");
