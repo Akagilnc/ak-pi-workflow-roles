@@ -1,4 +1,4 @@
-# CONTEXT — @ak/pi-workflow-roles 词表
+# CONTEXT — @akagilnc/pi-workflow-roles 词表
 
 > 只放术语,零实现细节。决策的为什么在 `docs/adr/`。
 
