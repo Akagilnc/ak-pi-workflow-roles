@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
@@ -2021,6 +2021,175 @@ async function pathExists(path: string): Promise<boolean> {
  * not the board/trajectory loader — so true-home #127 trajectory acceptance can reconcile
  * rendered result fields against ledger bytes without coupling to current-state selection.
  */
+/**
+ * Independent latest-run activity/mtime/acceptance probe for true-home active-leg
+ * acceptance. Mirrors session-start ordering and content activity rules without
+ * calling the board/trajectory loader (oracle must not share the code under test).
+ */
+async function independentLatestLegActivity(
+  ledgerDir: string,
+  issueNumber: number,
+): Promise<{
+  runId: string;
+  startedAt?: string;
+  lastActivityAt?: string;
+  mtimeMs: number;
+  hasAcceptedResult: boolean;
+  acceptedResultStatus?: string;
+} | undefined> {
+  const runsDir = join(ledgerDir, "issues", String(issueNumber), "runs");
+  let runIds: string[] = [];
+  try {
+    runIds = (await readdir(runsDir, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (runIds.length === 0) return undefined;
+
+  const readJsonl = async (path: string): Promise<Record<string, unknown>[]> => {
+    const text = await readFile(path, "utf8");
+    const out: Record<string, unknown>[] = [];
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          out.push(parsed as Record<string, unknown>);
+        }
+      } catch {
+        // Independent scan skips malformed lines.
+      }
+    }
+    return out;
+  };
+
+  const listJsonl = async (dir: string): Promise<string[]> => {
+    try {
+      return (await readdir(dir, { withFileTypes: true }))
+        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
+        .map((e) => join(dir, e.name))
+        .sort();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  };
+
+  const maxMtime = async (paths: readonly string[]): Promise<number> => {
+    let max = 0;
+    for (const path of paths) {
+      try {
+        const ms = (await lstat(path)).mtimeMs;
+        if (Number.isFinite(ms) && ms > max) max = ms;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+    }
+    return max;
+  };
+
+  type RunProbe = {
+    runId: string;
+    startedAt: string;
+    lastActivityAt?: string;
+    mtimeMs: number;
+    hasAcceptedResult: boolean;
+    acceptedResultStatus?: string;
+  };
+  const probes: RunProbe[] = [];
+
+  for (const runId of runIds) {
+    const sessionDir = join(runsDir, runId, "session");
+    const parentFiles = await listJsonl(sessionDir);
+    const axisFiles = await listJsonl(join(sessionDir, "reviewer-legs"));
+    const parentRows: Record<string, unknown>[] = [];
+    for (const f of parentFiles) parentRows.push(...(await readJsonl(f)));
+
+    let startedAt: string | undefined;
+    for (const row of parentRows) {
+      if (row.type === "session" && typeof row.timestamp === "string") {
+        startedAt = row.timestamp;
+        break;
+      }
+      if (!startedAt && typeof row.timestamp === "string") startedAt = row.timestamp;
+    }
+    // Session-start order requires a start key; runs without timestamps sort last via "".
+    const startKey = startedAt ?? "";
+
+    let lastActivityAt: string | undefined;
+    for (const row of parentRows) {
+      if (typeof row.timestamp === "string" && row.timestamp) lastActivityAt = row.timestamp;
+    }
+    for (const f of axisFiles) {
+      const legRows = await readJsonl(f);
+      let legEnd: string | undefined;
+      for (const row of legRows) {
+        if (typeof row.timestamp === "string" && row.timestamp) legEnd = row.timestamp;
+      }
+      if (legEnd !== undefined && (lastActivityAt === undefined || legEnd > lastActivityAt)) {
+        lastActivityAt = legEnd;
+      }
+    }
+
+    let hasAcceptedResult = false;
+    let acceptedResultStatus: string | undefined;
+    for (const row of parentRows) {
+      const message =
+        row.message && typeof row.message === "object" && !Array.isArray(row.message)
+          ? (row.message as Record<string, unknown>)
+          : undefined;
+      if (!message || message.role !== "toolResult") continue;
+      if (typeof message.toolName !== "string" || !isTerminatingToolName(message.toolName)) continue;
+      if (message.isError === true) continue;
+      if (!message.details || typeof message.details !== "object" || Array.isArray(message.details)) {
+        continue;
+      }
+      try {
+        const details = validateAcceptedDetails(
+          message.toolName as TerminatingToolName,
+          message.details,
+        );
+        const facts = acceptedFacts(message.toolName as TerminatingToolName, details);
+        hasAcceptedResult = true;
+        acceptedResultStatus = facts.status ?? "";
+      } catch (error) {
+        if (error instanceof AcceptedDetailsContractError) continue;
+        throw error;
+      }
+    }
+
+    probes.push({
+      runId,
+      startedAt: startKey,
+      ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
+      mtimeMs: await maxMtime([...parentFiles, ...axisFiles]),
+      hasAcceptedResult,
+      ...(acceptedResultStatus !== undefined ? { acceptedResultStatus } : {}),
+    });
+  }
+
+  probes.sort((a, b) => {
+    if (a.startedAt !== b.startedAt) return a.startedAt.localeCompare(b.startedAt);
+    return a.runId.localeCompare(b.runId);
+  });
+  const latest = probes.at(-1);
+  if (!latest) return undefined;
+  return {
+    runId: latest.runId,
+    ...(latest.startedAt ? { startedAt: latest.startedAt } : {}),
+    ...(latest.lastActivityAt !== undefined ? { lastActivityAt: latest.lastActivityAt } : {}),
+    mtimeMs: latest.mtimeMs,
+    hasAcceptedResult: latest.hasAcceptedResult,
+    ...(latest.acceptedResultStatus !== undefined
+      ? { acceptedResultStatus: latest.acceptedResultStatus }
+      : {}),
+  };
+}
+
 async function independentAcceptedTrajectory(
   ledgerDir: string,
   issueNumber: number,
@@ -2159,8 +2328,39 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
     assert.ok(expected130.runCount >= 1, "#130 must have runs");
     assert.ok(expected130.reviewerRunCount >= 1, "#130 reviewer rounds present");
 
+    // Independent true-home active-leg oracle (bytes + mtimes), not the board loader.
+    // Fixed wall now=12:00Z against ~10:4x mtime only proved /^unaccepted-/ and let suspect false-green.
+    const activeLeg = await independentLatestLegActivity(ledgerDir, activeIssue);
+    assert.ok(activeLeg, `true-home #${activeIssue} must have at least one run`);
+    assert.equal(
+      activeLeg.hasAcceptedResult,
+      false,
+      `true-home #${activeIssue} latest ${activeLeg.runId} must be unaccepted (no accepted terminating toolResult)`,
+    );
+    assert.ok(
+      activeLeg.mtimeMs > 0,
+      `true-home #${activeIssue} latest ${activeLeg.runId} must expose session mtime`,
+    );
+    // Honest acceptance clock: freeze now just after preserved latest mtime so a genuinely
+    // unaccepted true-home leg lands in the flying band (<2min) without utimes rewrite.
+    const flyingOffsetMs = 30_000;
+    assert.ok(
+      flyingOffsetMs < UNACCEPTED_FLYING_MS,
+      "probe offset must stay inside the flying band",
+    );
+    const now = new Date(activeLeg.mtimeMs + flyingOffsetMs);
+    const expectedDisplayActivityAt =
+      activeLeg.lastActivityAt ??
+      (activeLeg.mtimeMs > 0 ? new Date(activeLeg.mtimeMs).toISOString() : undefined);
+    assert.ok(
+      expectedDisplayActivityAt,
+      `true-home #${activeIssue} latest must yield last-activity (content ts or mtime)`,
+    );
+    const expectedLegAgeMs = activeLeg.startedAt
+      ? Math.max(0, now.getTime() - Date.parse(activeLeg.startedAt))
+      : Math.max(0, now.getTime() - activeLeg.mtimeMs);
+
     const before = await treeFingerprint(ledgerDir);
-    const now = new Date("2026-08-05T12:00:00.000Z");
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
     const view: FactoryBoardView = {
       ok: true,
@@ -2285,10 +2485,19 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
     // #130 is not a top-level lane entry (nested) but its burn moved the family key
     assert.ok(!sorted.includes(130), "#130 stays nested under family; burn rides aggregate");
 
-    // Genuine unaccepted active leg surfaces age/activity
-    assert.match(tActive["data-current-state"] ?? "", /^unaccepted-/);
+    // Genuine unaccepted true-home leg: must be 在飞 under the honest acceptance clock,
+    // with leg age + last activity projected from true-home parent/axis content + mtime.
+    assert.equal(
+      tActive["data-current-state"],
+      "unaccepted-flying",
+      `true-home #${activeIssue} latest ${activeLeg.runId} must be 在飞 at honest now=${now.toISOString()} mtimeMs=${activeLeg.mtimeMs}`,
+    );
+    assert.equal(tActive["data-last-activity-at"], expectedDisplayActivityAt);
+    assert.equal(tActive["data-last-activity-mtime-ms"], String(activeLeg.mtimeMs));
     assert.ok(tActive["data-leg-age-ms"] !== undefined);
-    assert.ok(Number(tActive["data-leg-age-ms"]) >= 0);
+    assert.equal(Number(tActive["data-leg-age-ms"]), expectedLegAgeMs);
+    // Age from true start must be at least the flying probe offset (now is after mtime ≥ start).
+    assert.ok(Number(tActive["data-leg-age-ms"]) >= flyingOffsetMs);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
