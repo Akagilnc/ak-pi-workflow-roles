@@ -137,6 +137,59 @@ test("explicit internal activation args point at the package entrypoint file", a
   assert.equal(args.includes("--ak-role"), true);
 });
 
+test("role command goes through ak-role-owned explicit Internal load before deferring run", async () => {
+  await withTempHome(async (home) => {
+    const { io, stderr } = captureIo();
+    let captured: string[] | undefined;
+    const result = await runAkRole(["judge"], {
+      packageRoot,
+      home,
+      io,
+      piRunner: async (args) => {
+        captured = [...args];
+        return {
+          code: 0,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
+    assert.equal(result.exitCode, 2);
+    assert.match(stderr.join(""), /not available in this install slice/);
+    assert.equal(Array.isArray(captured), true);
+    assert.deepEqual(captured!.slice(0, 3), [
+      "--no-extensions",
+      "-e",
+      resolveInternalRoleEntrypoint(packageRoot),
+    ]);
+    assert.equal(captured!.includes("--help"), true);
+    assert.equal(captured!.includes("--no-session"), true);
+  });
+});
+
+test("role command reports load failure when explicit Internal spawn fails", async () => {
+  await withTempHome(async (home) => {
+    const { io, stderr } = captureIo();
+    const result = await runAkRole(["coder"], {
+      packageRoot,
+      home,
+      io,
+      piRunner: async (args) => ({
+        code: 1,
+        stdout: "",
+        stderr: "extension boom",
+        timedOut: false,
+        args: [...args],
+      }),
+    });
+    assert.equal(result.exitCode, 1);
+    assert.match(stderr.join(""), /failed to load installed role runtime/);
+    assert.match(stderr.join(""), /extension boom/);
+  });
+});
+
 test("unknown command exits nonzero without touching config", async () => {
   await withTempHome(async (home) => {
     await mkdir(join(home, ".ak-roles"), { recursive: true });
