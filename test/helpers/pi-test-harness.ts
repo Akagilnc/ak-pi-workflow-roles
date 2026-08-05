@@ -35,7 +35,6 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
-  ActivationGitRepositoryRequiredError,
   activationWaitingLedgerPath,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
@@ -814,6 +813,13 @@ export interface InProcessPiOptions {
   customTools?: ToolDefinition[];
   noExtensions?: boolean;
   reviewerShutdown?: boolean;
+  /**
+   * Opt-in at activation-owning tests only: place a durable session file under the
+   * machine ledger book (ADR 0048). Requires hermetic HOME and a git cwd. Generic
+   * in-process callers must leave this unset so they incur no git discovery or
+   * durable-session persistence.
+   */
+  activationLedgerSession?: boolean;
 }
 
 export interface InProcessPiFixture {
@@ -892,55 +898,37 @@ export async function withInProcessPi<T>(
     systemPrompt: options.systemPrompt,
   });
   await loader.reload();
-  // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
-  // derivation from cwd/.ak/work stays intact, while exposing a genuinely persisted
-  // session file under the machine ledger book (ADR 0048).
-  const memorySession = SessionManager.inMemory(options.cwd);
-  let durableSessionFile: string;
-  const hermeticHome = process.env.HOME;
-  if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
-    throw new Error("withInProcessPi requires process.env.HOME for ledger session placement");
-  }
-  // Confirm production ledger home resolves under this HOME before persisting.
-  if (resolveActivationLedgerHome() !== machineLedgerHome(hermeticHome)) {
-    throw new Error("withInProcessPi ledger home does not match hermetic HOME");
-  }
-  let bookKey: string | undefined;
-  try {
-    bookKey = resolveBookKeyFromGit(options.cwd);
-  } catch (error) {
-    // Only the typed non-git discovery rejection may continue with a non-ledger fallback.
-    // Missing binary, permission, and unknown errors retain cause and fail closed.
-    if (!(error instanceof ActivationGitRepositoryRequiredError)) throw error;
-    const causeCode = error.cause !== null && typeof error.cause === "object" && "code" in error.cause
-      && typeof (error.cause as { code: unknown }).code === "string"
-      ? (error.cause as { code: string }).code
-      : undefined;
-    if (causeCode === "ENOENT" || causeCode === "EACCES" || causeCode === "EPERM") throw error;
-    bookKey = undefined;
-  }
-  if (bookKey === undefined) {
-    // Non-git cwd never reaches session admission (book key fails first).
-    durableSessionFile = resolve(options.agentDir, "sessions", "inprocess-session.jsonl");
-    await mkdir(dirname(durableSessionFile), { recursive: true });
-    if (!existsSync(durableSessionFile)) {
-      await writeFile(durableSessionFile, "\n");
+  // Default: plain in-memory session — no git discovery, no durable-session I/O.
+  // Activation-owning tests opt in via activationLedgerSession.
+  let sessionManager: SessionManager = SessionManager.inMemory(options.cwd);
+  if (options.activationLedgerSession === true) {
+    // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
+    // derivation from cwd/.ak/work stays intact, while exposing a genuinely persisted
+    // session file under the machine ledger book (ADR 0048).
+    const memorySession = sessionManager;
+    const hermeticHome = process.env.HOME;
+    if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
+      throw new Error("withInProcessPi activationLedgerSession requires process.env.HOME");
     }
-  } else {
-    durableSessionFile = persistActivationSessionFile({
+    if (resolveActivationLedgerHome() !== machineLedgerHome(hermeticHome)) {
+      throw new Error("withInProcessPi ledger home does not match hermetic HOME");
+    }
+    // Opt-in path requires a git cwd; infrastructure and non-git failures propagate.
+    const bookKey = resolveBookKeyFromGit(options.cwd);
+    const durableSessionFile = persistActivationSessionFile({
       home: hermeticHome,
       bookKey,
       name: "inprocess-pi",
       cwd: options.cwd,
     });
+    sessionManager = new Proxy(memorySession, {
+      get(target, property, receiver) {
+        if (property === "getSessionFile") return () => durableSessionFile;
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
   }
-  const sessionManager = new Proxy(memorySession, {
-    get(target, property, receiver) {
-      if (property === "getSessionFile") return () => durableSessionFile;
-      const value = Reflect.get(target, property, receiver);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,
     agentDir: options.agentDir,

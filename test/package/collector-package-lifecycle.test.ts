@@ -107,6 +107,7 @@ exit 2
         process.exitCode = undefined;
         try {
           await withInProcessPi({
+            activationLedgerSession: true,
             cwd: consumer,
             agentDir,
             faux,

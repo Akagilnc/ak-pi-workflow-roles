@@ -116,7 +116,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
       ]);
 
       await withProcessCwd(nestedCwd, async () => {
-        await withInProcessPi({ cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
+        await withInProcessPi({ activationLedgerSession: true, cwd: nestedCwd, agentDir, faux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
           assert.deepEqual(loader.getExtensions().errors, []);
           const before = await readFile(resolve(fixture, "consumer.txt"), "utf8");
           await session.prompt("Review this fixed point.");
@@ -168,7 +168,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           fauxAssistantMessage(fauxToolCall(Output, { status: "completed" }, { id: "no-spec-output" }), { stopReason: "toolUse" }),
           (ctx) => { noSpecAudits.push(ctx); return fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }); },
         ]);
-        await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-no-spec"), faux: noSpecFaux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
+        await withInProcessPi({ activationLedgerSession: true, cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-no-spec"), faux: noSpecFaux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ loader, session, sessionManager }) => {
           assert.deepEqual(loader.getExtensions().errors, []);
           await session.prompt("Review with no established Spec.");
           const results = sessionManager.getEntries().filter((e) => e.type === "message" && e.message.role === "toolResult") as any[];
@@ -194,7 +194,7 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
           fauxAssistantMessage(fauxToolCall(Output, { status: "refused", diagnostic: "No review can be started." }, { id: "refused-output" }), { stopReason: "toolUse" }),
           fauxAssistantMessage(fauxToolCall(Audit, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" }),
         ]);
-        await withInProcessPi({ cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-refused"), faux: refusedFaux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ session, sessionManager }) => {
+        await withInProcessPi({ activationLedgerSession: true, cwd: nestedCwd, agentDir: resolve(fixture, ".pi-agent-refused"), faux: refusedFaux, modelsPath: null, additionalExtensionPaths: [resolve(installedRoot, "extensions/role-runtime.ts")], additionalSkillPaths: [skillPath], noExtensions: true, systemPrompt: "PACKAGED REVIEWER", mode: "print", flags: { "ak-role": "reviewer", "ak-review-task": taskPath, "ak-review-capabilities": capsPath }, reviewerShutdown: true }, async ({ session, sessionManager }) => {
           await session.prompt("Refuse before dispatch.");
           const output = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolCallId === "refused-output") as any;
           assert.equal(output.message.isError, false);

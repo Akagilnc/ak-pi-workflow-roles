@@ -87,7 +87,7 @@ test("production extension observes session repository B, not ambient repository
         fauxAssistantMessage(fauxToolCall("bash", { command: `git reset --hard ${mergeCommitId}` }, { id: "resolve" }), { stopReason: "toolUse" }),
         fauxAssistantMessage(fauxToolCall(MERGER_OUTPUT_TOOL_NAME, { status: "completed", attemptId: "attempt", report: "resolved", mergeCommitId }, { id: "out" }), { stopReason: "toolUse" }),
       ]);
-      await withInProcessPi({ cwd: repositoryB, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-role": "merger", "ak-merger-input": inputPath }, additionalExtensionPaths: [fileURLToPath(new URL("../../extensions/role-runtime.ts", import.meta.url))] }, async ({ session, sessionManager }) => {
+      await withInProcessPi({ activationLedgerSession: true, cwd: repositoryB, agentDir, faux, modelsPath: null, noExtensions: true, systemPrompt: "MERGER", mode: "print", flags: { "ak-role": "merger", "ak-merger-input": inputPath }, additionalExtensionPaths: [fileURLToPath(new URL("../../extensions/role-runtime.ts", import.meta.url))] }, async ({ session, sessionManager }) => {
         await session.prompt("Resolve and settle.");
         const result = sessionManager.getEntries().find(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === MERGER_OUTPUT_TOOL_NAME) as any;
         assert.equal(result?.message.isError, false, JSON.stringify(result?.message.content)); assert.equal(result?.message.details.mergeCommitId, mergeCommitId);

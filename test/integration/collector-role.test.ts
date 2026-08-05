@@ -206,6 +206,7 @@ test("collector activation fails closed for unsupported mode and missing flags w
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -268,6 +269,7 @@ test("collector replaces first input entirely, strips images, and rejects later 
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -384,6 +386,7 @@ test("observe content exposes exact-head qualifying review for content-only vali
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -528,6 +531,7 @@ test("observe content exposes authenticated request-marker so wait/missing path 
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -656,6 +660,7 @@ async function runCollectorSession(input: {
   let toolResultIsError: boolean[] = [];
   try {
     await withInProcessPi({
+      activationLedgerSession: true,
       cwd: input.home,
       agentDir: input.agentDir,
       faux,
@@ -803,6 +808,7 @@ test("collector startup fails closed on required tool collision with zero GitHub
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -873,6 +879,7 @@ test("collector startup with no prompt still exits nonzero on shutdown", async (
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -936,6 +943,7 @@ test("collector rejects invalid manifest before provider or GitHub side effects"
     process.exitCode = undefined;
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -1119,6 +1127,7 @@ async function runSchemaAcceptedControl(input: {
   process.exitCode = undefined;
   try {
     await withInProcessPi({
+      activationLedgerSession: true,
       cwd: input.home,
       agentDir: input.agentDir,
       faux,
@@ -1297,6 +1306,7 @@ test("F3-required-tool-absence", async () => {
     const traces: ActivationTraceRecord[] = [];
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -1390,6 +1400,7 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
     const exposedSkillCommands: Array<{ name: string; source: string }> = [];
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,
@@ -1629,6 +1640,7 @@ test("F3-ambient-commands", async () => {
     const traces: ActivationTraceRecord[] = [];
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,

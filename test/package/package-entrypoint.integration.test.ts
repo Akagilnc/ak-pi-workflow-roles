@@ -594,6 +594,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
         }),
       );
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: packageRoot,
         agentDir,
         faux,
@@ -912,6 +913,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
           let event: any;
           let timestamps: { preparedAt: string; settledAt: string; persistedVisibleAt: string } | undefined;
           await withInProcessPi({
+            activationLedgerSession: true,
             cwd: issueRoot,
             agentDir: coldAgentDir,
             faux: luna,
@@ -1042,6 +1044,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
           invalidJudge = true;
           faux.setResponses([response, response, response, response]);
           await withInProcessPi({
+            activationLedgerSession: true,
             cwd: issueRoot,
             agentDir,
             faux,
@@ -1075,6 +1078,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
         invalidJudge = false;
         faux.setResponses([response, response, response]);
         await withInProcessPi({
+          activationLedgerSession: true,
           cwd: issueRoot,
           agentDir,
           faux,
@@ -1172,6 +1176,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
           };
           faux.setResponses([response, response, response, response, response]);
           await withInProcessPi({
+            activationLedgerSession: true,
             cwd: issueRoot,
             agentDir,
             faux,
@@ -1260,7 +1265,7 @@ test("ongoing packaged session drains pre-output role failure and prepares a fre
         return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
       };
       faux.setResponses(Array.from({ length: 8 }, () => response));
-      await withInProcessPi({ cwd: issueRoot, agentDir, faux, model, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: "PRE OUTPUT FAILURE", mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+      await withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, model, additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: "PRE OUTPUT FAILURE", mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
         const first = session.prompt("first role turn fails before output");
         await navigatorStarted;
         await roleFailed;
@@ -1296,6 +1301,7 @@ test("normal packaged context-loader failure is typed unavailable and preserves 
       await mkdir(resolve(issueRoot, "authority.md"), { recursive: true });
       const faux = fauxProvider({ api: "ak-navigator-context-failure", provider: "ak-navigator-context-failure", tokenSize: { min: 1000, max: 1000 } });
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: issueRoot,
         agentDir,
         faux,
@@ -1411,7 +1417,7 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
               return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }), { stopReason: "toolUse" });
             };
             faux.setResponses([response, response, response]);
-            await withInProcessPi({ cwd: issueRoot, agentDir, faux, ...(provider === undefined ? {} : { provider }), additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+            await withInProcessPi({ activationLedgerSession: true, cwd: issueRoot, agentDir, faux, ...(provider === undefined ? {} : { provider }), additionalExtensionPaths: [packageEntrypoint(manifest)], systemPrompt: `NAVIGATOR FAILURE MATRIX ${scenario.name}`, mode: "json", flags: { "ak-role": "judge" }, noTools: "builtin" }, async ({ session, sessionManager }) => {
               await session.prompt(`Exercise normal packaged ${scenario.name} Navigator failure.`);
               const receipt = sessionManager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === JUDGE_OUTPUT_TOOL_NAME);
               assert.ok(receipt?.type === "message" && receipt.message.role === "toolResult");
@@ -1500,6 +1506,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
 
       faux.setResponses([response, response]);
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: issueRoot,
         agentDir,
         faux,
@@ -1521,6 +1528,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
 
       faux.setResponses([response, response, response]);
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: issueRoot,
         agentDir,
         faux,
@@ -1559,6 +1567,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
 
       faux.setResponses([response, response, response]);
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: otherRoot,
         agentDir,
         faux,
@@ -1626,6 +1635,7 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
         };
         faux.setResponses([response, response, response]);
         await withInProcessPi({
+          activationLedgerSession: true,
           cwd: outsideRoot,
           agentDir,
           faux,
@@ -1702,7 +1712,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
         const manifest = await loadRawPackageManifest();
         faux.setResponses([response, response, response]);
         let result;
-        await withInProcessPi({ cwd: root, agentDir, faux, additionalExtensionPaths: [resolvePackageEntrypoint(manifest)], systemPrompt: "FRESH PROCESS NAVIGATOR", mode: "json", flags: role === "fixer" ? { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": input } : { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": input }, noTools: "builtin" }, async ({ session, sessionManager }) => {
+        await withInProcessPi({ activationLedgerSession: true, cwd: root, agentDir, faux, additionalExtensionPaths: [resolvePackageEntrypoint(manifest)], systemPrompt: "FRESH PROCESS NAVIGATOR", mode: "json", flags: role === "fixer" ? { "ak-role": "fixer", "ak-fixer-phase": "plan", "ak-fix-packet": input } : { "ak-role": "coder", "ak-coder-phase": "plan", "ak-coder-task": input }, noTools: "builtin" }, async ({ session, sessionManager }) => {
           await session.prompt("fresh process role invocation");
           const messages = sessionManager.getEntries().filter((entry) => entry.type === "custom_message" && entry.customType === "ak-navigator-attendance");
           result = messages[0]?.type === "custom_message" ? messages[0].details : undefined;
@@ -1747,6 +1757,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
         tokenSize: { min: 1000, max: 1000 },
       });
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: packageRoot,
         agentDir,
         faux,
@@ -1862,6 +1873,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
           tokenSize: { min: 1000, max: 1000 },
         });
         await withInProcessPi({
+          activationLedgerSession: true,
           cwd: packageRoot,
           agentDir,
           faux,
@@ -1977,6 +1989,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
           tokenSize: { min: 1000, max: 1000 },
         });
         await withInProcessPi({
+          activationLedgerSession: true,
           cwd: packageRoot,
           agentDir,
           faux,
@@ -2252,7 +2265,8 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
 
 test("installed composition without --ak-role emits no tool-execution observation records", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome({ prefix: "ak-tool-observation-no-role-" }, async ({ home, agentDir }) => {
+  // Role-less observation: no activation substrate (no git seed, no durable session).
+  await withHermeticHome({ prefix: "ak-tool-observation-no-role-" }, async ({ home, agentDir }) => {
     const cwd = resolve(home, "workspace");
     await mkdir(cwd, { recursive: true });
     const result = await runPiSubprocess([
