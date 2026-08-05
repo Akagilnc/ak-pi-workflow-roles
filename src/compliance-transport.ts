@@ -15,7 +15,6 @@ import {
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   createStreamIdleGuard,
   isStreamIdleTimeoutError,
-  type StreamIdleGuardTimers,
 } from "./stream-idle-guard.ts";
 
 export {
@@ -28,7 +27,6 @@ export {
 export type {
   StreamIdleGuard,
   StreamIdleGuardOptions,
-  StreamIdleGuardTimers,
 } from "./stream-idle-guard.ts";
 
 const COMPLIANCE_REQUEST_TIMEOUT_MS = 183000;
@@ -464,7 +462,6 @@ export async function runComplianceAudit(options: {
   signal?: AbortSignal;
   /** Idle silence budget (first wait + between events). Default 600s (#102). */
   idleTimeoutMs?: number;
-  idleTimers?: StreamIdleGuardTimers;
 }): Promise<ComplianceDecision> {
   const model = options.context.model;
   if (model === undefined) {
@@ -478,21 +475,14 @@ export async function runComplianceAudit(options: {
   const idle = createStreamIdleGuard({
     idleTimeoutMs: options.idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
     ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
-    ...(options.idleTimers === undefined ? {} : { timers: options.idleTimers }),
   });
   try {
-    const baseOnPayload = singleComplianceToolCallPayload(
+    // Silence clock starts with the request and resets only on real AssistantMessageEvent
+    // yields from provider.stream — not on outbound payload transform or response headers.
+    const onPayload = singleComplianceToolCallPayload(
       dispatch.model,
       options.tool.name,
     );
-    const onPayload: ProviderStreamOptions["onPayload"] = (payload, payloadModel) => {
-      idle.poke();
-      if (baseOnPayload === undefined) return payload;
-      return baseOnPayload(payload, payloadModel);
-    };
-    const onResponse: ProviderStreamOptions["onResponse"] = () => {
-      idle.poke();
-    };
     const complete =
       options.runCompletion ??
       (async (auditModel: Model<Api>, context: Context, request: ProviderStreamOptions) => {
@@ -551,8 +541,7 @@ export async function runComplianceAudit(options: {
             cacheRetention: "none",
             sessionId: uuidv7(),
             toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
-            onPayload,
-            onResponse,
+            ...(onPayload === undefined ? {} : { onPayload }),
             signal: idle.signal,
           },
         ).then(

@@ -172,8 +172,9 @@ test("default compliance completion sends the production timeout and merges pare
     assert.equal(seen.options?.timeoutMs, 183000);
     assert.ok(seen.options?.signal instanceof AbortSignal);
     assert.notStrictEqual(seen.options?.signal, parent.signal);
+    assert.equal("onResponse" in (seen.options ?? {}), false);
     assert.deepEqual(Object.keys(seen.options ?? {}).sort(), [
-      "apiKey", "cacheRetention", "maxTokens", "onPayload", "onResponse", "sessionId", "signal", "timeoutMs", "toolChoice",
+      "apiKey", "cacheRetention", "maxTokens", "onPayload", "sessionId", "signal", "timeoutMs", "toolChoice",
     ]);
   });
 });
@@ -564,54 +565,149 @@ test("silent compliance completion aborts as typed stream idle infrastructure fa
   });
 });
 
-test("compliance stream events poke the idle guard so long healthy streams survive", async (t) => {
+test("payload and response-header hooks do not extend the first body-event silence budget", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   await withPersistedSession(async (sessionManager) => {
-    const seen: { options?: Record<string, unknown>; pokes: number } = { pokes: 0 };
-    const auditContext = defaultCompletionContext(
-      sessionManager,
-      async (options) => {
-        const onPayload = options.onPayload;
-        const onResponse = options.onResponse;
-        if (typeof onPayload === "function") {
-          seen.pokes += 1;
-          await onPayload({ tools: [] }, { api: "openai-responses" });
-        }
-        if (typeof onResponse === "function") {
-          seen.pokes += 1;
-          await onResponse({ status: 200, headers: {} }, { api: "openai-responses" });
-        }
-        // Three spaced events, each under the idle budget, total wall > idle budget.
-        for (let i = 0; i < 3; i += 1) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 400_000));
-          if (typeof onPayload === "function") {
-            seen.pokes += 1;
-            await onPayload({ tools: [] }, { api: "openai-responses" });
-          }
-        }
-        return response("idle-healthy", [
-          fauxToolCall(decisionToolName, { status: "pass", violations: [], conflicts: [], decisionGate: null }),
-        ]);
+    const base = context(sessionManager);
+    const hooks: { payload: number; response: number } = { payload: 0, response: 0 };
+    const auditContext = {
+      ...base,
+      modelRegistry: {
+        ...(base.modelRegistry as object),
+        getProvider() {
+          return {
+            stream(_model: unknown, _context: unknown, options: Record<string, unknown>) {
+              const signal = options.signal;
+              return {
+                async *[Symbol.asyncIterator]() {
+                  // Late outbound/header activity must not reset the first-event silence clock.
+                  await new Promise<void>((resolve) => setTimeout(resolve, 500_000));
+                  const onPayload = options.onPayload;
+                  if (typeof onPayload === "function") {
+                    hooks.payload += 1;
+                    await onPayload({ tools: [] }, { api: "openai-responses" });
+                  }
+                  const onResponse = options.onResponse;
+                  if (typeof onResponse === "function") {
+                    hooks.response += 1;
+                    await onResponse({ status: 200, headers: {} }, { api: "openai-responses" });
+                  }
+                  await new Promise<never>((_resolve, reject) => {
+                    if (!(signal instanceof AbortSignal)) return;
+                    if (signal.aborted) {
+                      reject(signal.reason);
+                      return;
+                    }
+                    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                  });
+                },
+                result: async () => {
+                  throw new Error("idle must abort before stream.result");
+                },
+              };
+            },
+          };
+        },
       },
-      seen,
-    );
-    const pending = runComplianceAudit({
+    } as unknown as ExtensionContext;
+
+    const failure = runComplianceAudit({
       tool: decisionTool,
       systemPrompt: "audit system",
       serializedInput: "audit input",
       roleLabel: "Compliance",
       invalidDecisionLabel: "invalid compliance decision",
       context: auditContext,
-      idleTimeoutMs: 500_000,
+      idleTimeoutMs: DEFAULT_STREAM_IDLE_TIMEOUT_MS,
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    for (let i = 0; i < 3; i += 1) {
-      t.mock.timers.tick(400_000);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    const decision = await pending;
-    assert.equal(decision.status, "pass");
-    assert.ok(seen.pokes >= 5);
+    t.mock.timers.tick(500_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(hooks.payload, 1);
+    // Production no longer installs onResponse; even if a provider called one, it must not poke.
+    assert.equal(hooks.response, 0);
+    t.mock.timers.tick(100_000);
+    await assert.rejects(
+      failure,
+      (error: unknown) => {
+        assert.ok(error instanceof StreamIdleTimeoutError);
+        assert.equal(error.idleTimeoutMs, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+        return true;
+      },
+    );
+    assert.equal(
+      sessionManager.getEntries().some((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE),
+      false,
+    );
+  });
+});
+
+test("after one real body event, a full idle silence budget aborts without a receipt", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await withPersistedSession(async (sessionManager) => {
+    const base = context(sessionManager);
+    const auditContext = {
+      ...base,
+      modelRegistry: {
+        ...(base.modelRegistry as object),
+        getProvider() {
+          return {
+            stream(_model: unknown, _context: unknown, options: Record<string, unknown>) {
+              const signal = options.signal;
+              return {
+                async *[Symbol.asyncIterator]() {
+                  yield { type: "text_delta", delta: "first" };
+                  await new Promise<never>((_resolve, reject) => {
+                    if (!(signal instanceof AbortSignal)) return;
+                    if (signal.aborted) {
+                      reject(signal.reason);
+                      return;
+                    }
+                    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                  });
+                },
+                result: async () => {
+                  throw new Error("idle must abort before stream.result");
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as ExtensionContext;
+
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+      idleTimeoutMs: DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Allow the first body event to poke, then enforce a fresh full silence budget.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+    await assert.rejects(
+      failure,
+      (error: unknown) => {
+        assert.ok(error instanceof StreamIdleTimeoutError);
+        assert.equal(error.code, "AK_STREAM_IDLE_TIMEOUT");
+        assert.equal(error.idleTimeoutMs, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+        return true;
+      },
+    );
+    assert.equal(
+      sessionManager.getEntries().some((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE),
+      false,
+    );
+    assert.equal(
+      sessionManager.getEntries().some((entry) => entry.type === "message"),
+      false,
+    );
   });
 });
 
