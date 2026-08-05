@@ -47,6 +47,7 @@ import {
 } from "../helpers/fake-github-transport.ts";
 import {
   withActivationHome,
+  withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 
@@ -972,7 +973,7 @@ test("collector rejects invalid manifest before provider or GitHub side effects"
 // ---------------------------------------------------------------------------
 
 test("F1 registered collector tool schemas are the singular TypeBox owner", async () => {
-  await withActivationHome({ prefix: "ak-collector-schema-owner-" }, async ({ home }) => {
+  await withHermeticHome({ prefix: "ak-collector-schema-owner-" }, async ({ home }) => {
     const legs = await writeLegs(home);
     const tools = new Map<string, { name: string; parameters: unknown }>();
     const flags = new Map<string, unknown>([
@@ -1681,7 +1682,7 @@ test("F3-ambient-commands", async () => {
 });
 
 test("Collector success followed by failed reactivation cannot dispatch stale state", async () => {
-  await withActivationHome({ prefix: "ak-collector-reactivation-" }, async ({ home }) => {
+  await withHermeticHome({ prefix: "ak-collector-reactivation-" }, async ({ home }) => {
     const legs = await writeLegs(home);
     const flags = new Map<string, unknown>([
       ["ak-collector-repo", "acme/widgets"], ["ak-collector-pr", "1"], ["ak-collector-legs", legs],
