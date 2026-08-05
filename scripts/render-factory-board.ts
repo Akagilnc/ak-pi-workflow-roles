@@ -14,6 +14,10 @@
  *     --closed ak-pi-workflow-roles=130 \
  *     --out /tmp/factory-board.html
  *
+ * Optional --watch starts the production page lifecycle (regenerate on the
+ * declared refresh boundary). Stop with Ctrl-C / SIGINT / SIGTERM.
+ * One-shot (default) writes a page that does NOT advertise refresh.
+ *
  * Output MUST sit outside every ledger. Ledgers are read-only.
  *
  * When --out is present but explicit --book binding is absent or malformed,
@@ -24,6 +28,8 @@ import { resolve } from "node:path";
 
 import { createGhApiRunner } from "../src/collector-github.ts";
 import {
+  DEFAULT_REFRESH_BOUNDARY_SECONDS,
+  startFactoryBoardPage,
   writeFactoryBoardPage,
   type FactoryBoardBook,
   type FactoryBoardView,
@@ -37,10 +43,12 @@ import {
 } from "../src/ticket-snapshot.ts";
 
 function usage(): never {
-  console.error(`Usage: npx tsx scripts/render-factory-board.ts --book <key>=<ledgerDir>:<owner>/<repo> [--book ...] [--closed <key>=<n,n>] --out <htmlPath>
-  --book     explicit book binding (repeatable). ledgerDir + owner/repo required.
-  --closed   optional named closed issues to drill, keyed by book (repeatable)
-  --out      HTML output path (must be outside every ledger)
+  console.error(`Usage: npx tsx scripts/render-factory-board.ts --book <key>=<ledgerDir>:<owner>/<repo> [--book ...] [--closed <key>=<n,n>] --out <htmlPath> [--watch] [--refresh-seconds <n>]
+  --book              explicit book binding (repeatable). ledgerDir + owner/repo required.
+  --closed            optional named closed issues to drill, keyed by book (repeatable)
+  --out               HTML output path (must be outside every ledger)
+  --watch             keep regenerating within the refresh boundary until stopped
+  --refresh-seconds   refresh boundary in seconds when --watch (default ${DEFAULT_REFRESH_BOUNDARY_SECONDS})
 `);
   process.exit(2);
 }
@@ -123,10 +131,18 @@ function parseClosed(raw: string): { bookKey: string; numbers: number[] } {
 const bookArgs = allArgs("--book");
 const closedArgs = allArgs("--closed");
 const out = arg("--out");
+const watch = process.argv.includes("--watch");
+const refreshRaw = arg("--refresh-seconds");
 // Without --out there is no page destination — usage only.
 if (!out) usage();
 
 const outputPath = resolve(out);
+const refreshBoundarySeconds =
+  refreshRaw !== undefined ? Number(refreshRaw) : DEFAULT_REFRESH_BOUNDARY_SECONDS;
+if (!(refreshBoundarySeconds > 0) || !Number.isFinite(refreshBoundarySeconds)) {
+  console.error("--refresh-seconds must be a positive finite number");
+  process.exit(2);
+}
 
 async function writeBindingFailurePage(message: string, books: readonly FactoryBoardBook[] = []): Promise<never> {
   const view: FactoryBoardView = {
@@ -219,16 +235,74 @@ try {
   }
 }
 
+if (!watch) {
+  // One-shot: no refresh declaration — page lifecycle matches actual behavior.
+  try {
+    const result = await writeFactoryBoardPage({
+      books,
+      view,
+      now: new Date(),
+      outputPath,
+    });
+    console.error(`wrote ${result.outputPath}${view.ok ? "" : " (error page)"}`);
+    process.exit(view.ok ? 0 : 1);
+  } catch (error) {
+    console.error(formatError(error));
+    process.exit(1);
+  }
+}
+
+// Watch: declare refresh bound and regenerate within it (snapshot fixed; ledgers re-read).
+const handle = startFactoryBoardPage({
+  books,
+  view,
+  outputPath,
+  refreshBoundarySeconds,
+});
+
+let exiting = false;
+const exitOnce = (code: number): void => {
+  if (exiting) return;
+  exiting = true;
+  process.exit(code);
+};
+
+void handle.closed.then(
+  () => undefined,
+  (error) => {
+    console.error(formatError(error));
+    exitOnce(1);
+  },
+);
+
 try {
-  const result = await writeFactoryBoardPage({
-    books,
-    view,
-    now: new Date(),
-    outputPath,
-  });
-  console.error(`wrote ${result.outputPath}${view.ok ? "" : " (error page)"}`);
-  process.exit(view.ok ? 0 : 1);
+  const first = await handle.started;
+  console.error(
+    `wrote ${first.outputPath}${view.ok ? "" : " (error page)"}; watching every ${refreshBoundarySeconds}s (stop with SIGINT)`,
+  );
+  if (!view.ok) {
+    await handle.stop().catch(() => undefined);
+    exitOnce(1);
+  }
 } catch (error) {
   console.error(formatError(error));
-  process.exit(1);
+  exitOnce(1);
 }
+
+const shutdown = async (signal: string) => {
+  console.error(`stopping on ${signal}`);
+  try {
+    await handle.stop();
+    exitOnce(0);
+  } catch (error) {
+    console.error(formatError(error));
+    exitOnce(1);
+  }
+};
+
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
