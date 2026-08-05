@@ -91,6 +91,21 @@ export type {
   ActivationSessionPointer,
 } from "./activation-ledger.ts";
 export {
+  DISPATCH_STUB_EVENT,
+  DISPATCH_STUB_FACT_KEYS,
+  buildDispatchStubFact,
+  reconcileInvocation,
+} from "./activation-reconciliation.ts";
+export type {
+  DispatchPointer,
+  DispatchStubFact,
+  DispatchStubFactInput,
+  DispatchStubFactKey,
+  ProcessLivenessFact,
+  ReconciliationOutcome,
+  ReconciliationSubject,
+} from "./activation-reconciliation.ts";
+export {
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   TOOL_EXECUTION_UPDATE_THROTTLE_MS,
   createToolExecutionObservationFace,
