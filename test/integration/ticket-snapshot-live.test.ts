@@ -17,13 +17,16 @@ import {
 
 const OWNER = "Akagilnc";
 const REPO = "ak-pi-workflow-roles";
+// Frozen #78 family drills — each member is fetched whether open or closed.
+const FROZEN_FAMILY_ISSUE_NUMBERS = [78, 127, 128, 130] as const;
 
 test("live GitHub snapshot keeps #78 family parent and blocked_by edges", async () => {
   const transport = createGhTicketSnapshotTransport(createGhApiRunner());
   const snapshot = await fetchBoardSnapshot({
     bindings: [{ bookKey: "ak-pi-workflow-roles", owner: OWNER, repo: REPO }],
-    // #130 is closed on the live board — name it so it enters the snapshot.
-    closedIssueNumbersByBook: { "ak-pi-workflow-roles": [130] },
+    closedIssueNumbersByBook: {
+      "ak-pi-workflow-roles": [...FROZEN_FAMILY_ISSUE_NUMBERS],
+    },
     transport,
   });
 
@@ -34,7 +37,7 @@ test("live GitHub snapshot keeps #78 family parent and blocked_by edges", async 
 
   const byNumber = new Map(book.tickets.map((t) => [t.issueNumber, t]));
 
-  for (const n of [78, 127, 128, 130] as const) {
+  for (const n of FROZEN_FAMILY_ISSUE_NUMBERS) {
     const ticket = byNumber.get(n);
     assert.ok(ticket, `issue #${n} must be present in snapshot`);
     assert.equal(typeof ticket.title, "string");
@@ -52,22 +55,21 @@ test("live GitHub snapshot keeps #78 family parent and blocked_by edges", async 
       assert.ok(Number.isInteger(edge.issueNumber) && edge.issueNumber > 0);
       assert.ok(edge.state === "open" || edge.state === "closed");
     }
+    // open → closedAt null; closed → finite parseable timestamp string
+    if (ticket.state === "open") {
+      assert.equal(ticket.closedAt, null, `#${n} open closedAt null`);
+    } else {
+      assert.equal(typeof ticket.closedAt, "string", `#${n} closed closedAt string`);
+      assert.ok(
+        Number.isFinite(Date.parse(ticket.closedAt!)),
+        `#${n} closedAt must be a parseable GitHub timestamp`,
+      );
+    }
   }
 
   assert.equal(byNumber.get(127)?.parentIssueNumber, 78);
   assert.equal(byNumber.get(128)?.parentIssueNumber, 78);
   assert.equal(byNumber.get(130)?.parentIssueNumber, 78);
-
-  // Open tickets carry null closedAt; closed drills must surface GitHub closure time.
-  assert.equal(byNumber.get(78)?.closedAt, null);
-  assert.equal(byNumber.get(127)?.closedAt, null);
-  assert.equal(byNumber.get(128)?.closedAt, null);
-  assert.equal(byNumber.get(130)?.state, "closed");
-  assert.equal(typeof byNumber.get(130)?.closedAt, "string");
-  assert.ok(
-    Number.isFinite(Date.parse(byNumber.get(130)!.closedAt!)),
-    "#130 closedAt must be a parseable GitHub timestamp",
-  );
 
   const blocked = byNumber.get(128)?.blockedBy ?? [];
   assert.ok(
