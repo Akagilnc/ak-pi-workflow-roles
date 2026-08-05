@@ -343,25 +343,29 @@ function renderTicketArticle(input: {
       ? ` data-parent-issue="${attr(String(ticket.parentIssueNumber))}"`
       : "";
 
+  const ticketNo = String(ticket.issueNumber);
   const unaccepted =
     currentState === "unaccepted-flying" ||
     currentState === "unaccepted-watch" ||
     currentState === "unaccepted-suspect";
+  // Visible fact labels carry their own machine keys (data-*-label). Article-level
+  // data-leg-age-ms / data-last-activity-* are projection attributes only — tests that
+  // bite only the article cannot prove the human-visible spans exist (AC2 false-green).
   const activityBits =
     unaccepted && legAgeMs !== undefined
       ? [
-          `<span class="leg-age" data-leg-age-ms="${attr(String(legAgeMs))}">腿龄 ${legAgeMs}ms</span>`,
+          `<span class="leg-age" data-leg-age-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-leg-age-ms="${attr(String(legAgeMs))}">腿龄 ${legAgeMs}ms</span>`,
           lastActivityAt
-            ? `<span class="last-activity" data-last-activity-at="${attr(lastActivityAt)}"${lastActivityMtimeMs !== undefined ? ` data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}"` : ""}>末次活动 ${escapeHtml(lastActivityAt)}</span>`
+            ? `<span class="last-activity" data-last-activity-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-last-activity-at="${attr(lastActivityAt)}"${lastActivityMtimeMs !== undefined ? ` data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}"` : ""}>末次活动 ${escapeHtml(lastActivityAt)}</span>`
             : lastActivityMtimeMs !== undefined
-              ? `<span class="last-activity" data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}">末次活动 mtime</span>`
+              ? `<span class="last-activity" data-last-activity-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}">末次活动 mtime</span>`
               : "",
         ].join("")
       : "";
 
   return [
     `<article class="ticket${input.nested ? " ticket-child" : ""} current-${attr(currentState)}"`,
-    ` data-ticket="${attr(String(ticket.issueNumber))}"`,
+    ` data-ticket="${attr(ticketNo)}"`,
     ` data-book="${attr(input.bookKey)}"`,
     ` data-title="${attr(ticket.title)}"`,
     ` data-milestone="${attr(milestone)}"`,
@@ -382,13 +386,13 @@ function renderTicketArticle(input: {
     parentAttr,
     `>`,
     `<header class="ticket-head">`,
-    `<h3 class="ticket-title">#${escapeHtml(String(ticket.issueNumber))} · ${escapeHtml(ticket.title)}</h3>`,
+    `<h3 class="ticket-title">#${escapeHtml(ticketNo)} · ${escapeHtml(ticket.title)}</h3>`,
     `<p class="ticket-meta">`,
     `<span class="state" data-state-label="${attr(currentState)}">${escapeHtml(currentStateLabel(currentState))}</span>`,
     milestone ? `<span class="milestone">milestone: ${escapeHtml(milestone)}</span>` : `<span class="milestone">milestone: —</span>`,
-    `<span class="cost" data-cost-label="true">$${escapeHtml(formatUsd(costUsd))} · ${totalTokens} tok</span>`,
-    `<span class="wall" data-wall-label="true">施工墙钟 ${wallMs}ms</span>`,
-    `<span class="landing" data-landing-label="true">落地周期 ${landingCycleMs}ms</span>`,
+    `<span class="cost" data-cost-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-cost-usd="${attr(formatUsd(costUsd))}" data-total-tokens="${attr(String(totalTokens))}">$${escapeHtml(formatUsd(costUsd))} · ${totalTokens} tok</span>`,
+    `<span class="wall" data-wall-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-wall-ms="${attr(String(wallMs))}">施工墙钟 ${wallMs}ms</span>`,
+    `<span class="landing" data-landing-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-landing-cycle-ms="${attr(String(landingCycleMs))}">落地周期 ${landingCycleMs}ms</span>`,
     activityBits,
     badges,
     `</p>`,
