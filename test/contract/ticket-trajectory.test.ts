@@ -156,6 +156,35 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
   const ids = new Set(runs.map((r) => r["data-run-id"]));
   assert.equal(ids.size, 6);
 
+  // Per-station round total is user-visible and agrees with data-round-count.
+  // #127: judge=1, coder=1, fixer=1, reviewer=3 (005s + 026 + 002s).
+  const stations = elementsWith(html, "data-station-block");
+  assert.ok(stations.length >= 4);
+  const expectedRounds: Record<string, string> = {
+    judge: "1",
+    coder: "1",
+    fixer: "1",
+    reviewer: "3",
+  };
+  for (const st of stations) {
+    const name = st["data-station-block"]!;
+    const count = st["data-round-count"]!;
+    if (expectedRounds[name] !== undefined) {
+      assert.equal(count, expectedRounds[name], `round total for ${name}`);
+    }
+    const marker = `data-station-block="${name}"`;
+    const sectionAt = html.indexOf(marker);
+    assert.ok(sectionAt >= 0, `station block for ${name}`);
+    const titleOpen = html.indexOf(`<h2 class="station-title">`, sectionAt);
+    const titleClose = html.indexOf("</h2>", titleOpen);
+    assert.ok(titleOpen >= 0 && titleClose > titleOpen, `visible station title for ${name}`);
+    const titleText = html.slice(titleOpen + `<h2 class="station-title">`.length, titleClose);
+    assert.ok(
+      titleText.includes(`${count} 轮`),
+      `human-visible round total must agree with data-round-count for ${name}: ${titleText}`,
+    );
+  }
+
   // Responsive single-page foundation (viewport + single root document).
   assert.match(html, /name="viewport"/i);
   assert.match(html, /<html\b/i);
@@ -582,6 +611,28 @@ test("JSONL middle corruption fails loudly; unfinished tail stays tolerable", as
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
       /malformed JSONL record in middle/i,
+    );
+
+    // Complete non-object JSONL (null/array/primitive) must fail cause-preservingly
+    // through the production render seam — never silently under-count.
+    // Unfinished-tail tolerance above remains lawful (syntax error only).
+    await writeFile(sessionPath, original, "utf8");
+    const nonObjectLine = "null";
+    const withNonObject = [lines[0], nonObjectLine, ...lines.slice(1)].join("\n");
+    await writeFile(sessionPath, withNonObject, "utf8");
+    await assert.rejects(
+      () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /complete non-object JSONL record/i);
+        assert.match(err.message, /at line 2/);
+        assert.match(err.message, /expected object, got null/);
+        assert.ok(
+          err.message.includes(sessionPath) || err.message.includes("plan-court-001"),
+          "error must carry file context",
+        );
+        return true;
+      },
     );
   } finally {
     await rm(workspace, { recursive: true, force: true });
