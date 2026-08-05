@@ -18,7 +18,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
 import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
   ACCEPTED_ACTIVATION_EVENT,
@@ -57,6 +57,7 @@ import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   activationBookKeyFor,
   activationExtensionContext,
+  captureExtensionHandlers,
   machineLedgerHome,
   packageRoot,
   persistActivationSessionFile,
@@ -96,40 +97,6 @@ const emptyDoctorCost = {
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
-
-const HOST_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"] as const;
-
-/** Lightweight #52 registry pi mock — not a parallel activation harness. */
-function registryPi(options: {
-  role: string | undefined;
-  flags?: Record<string, unknown>;
-  withHostTools?: boolean;
-}) {
-  type Handler = (event: Record<string, unknown>, ctx: ExtensionContext) => unknown;
-  const handlers = new Map<string, Handler[]>();
-  const tools = new Map<string, { name: string }>();
-  if (options.withHostTools) {
-    for (const name of HOST_TOOLS) tools.set(name, { name });
-  }
-  let activeTools: string[] = [];
-  const flags: Record<string, unknown> = {
-    ...(options.role === undefined ? {} : { "ak-role": options.role }),
-    ...options.flags,
-  };
-  const pi = {
-    registerFlag() {},
-    registerTool(tool: { name: string }) { tools.set(tool.name, tool); },
-    setActiveTools(names: string[]) { activeTools = [...names]; },
-    getActiveTools() { return [...activeTools]; },
-    getAllTools() { return [...tools.values()]; },
-    getCommands() { return []; },
-    getFlag(name: string) { return flags[name]; },
-    on(name: string, handler: Handler) {
-      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-    },
-  } as unknown as ExtensionAPI;
-  return { pi, handlers, tools };
-}
 
 /** Role load stubs already owned by production RoleRuntimeDependencies — not ledger hooks. */
 function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typeof createRoleRuntimeExtension>[0] {
@@ -299,7 +266,10 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
   }
 }
 
-/** Judge failure/trace adapter over the sole registry owner — not a parallel harness. */
+/**
+ * Judge-only failure/trace probe — topology/failure path that withInProcessPi cannot
+ * inject (custom activationTraceWriter + mode exit-code). Not an all-role registry owner.
+ */
 function runtimeHarness(options: {
   activate?: () => Promise<string>;
   clock?: () => string;
@@ -310,13 +280,15 @@ function runtimeHarness(options: {
   type Handler = (event: { reason?: string; systemPrompt?: string }, ctx: ExtensionContext) => unknown;
   const traces: ActivationTraceRecord[] = [];
   let aborts = 0;
-  const { pi, handlers } = registryPi({ role: "judge" });
-  createRoleRuntimeExtension({
-    loadJudgeSoul: options.activate ?? (async () => { throw new TypeError("soul unavailable"); }),
-    transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }),
-    activationClock: options.clock ?? (() => "2025-01-01T00:00:00.000Z"),
-    activationTraceWriter: options.writeTrace ?? ((record) => { traces.push(record); }),
-  })(pi);
+  const { handlers } = captureExtensionHandlers(
+    (pi) => createRoleRuntimeExtension({
+      loadJudgeSoul: options.activate ?? (async () => { throw new TypeError("soul unavailable"); }),
+      transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }),
+      activationClock: options.clock ?? (() => "2025-01-01T00:00:00.000Z"),
+      activationTraceWriter: options.writeTrace ?? ((record) => { traces.push(record); }),
+    })(pi),
+    { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
+  );
   const ctx = activationExtensionContext({
     cwd: options.home,
     mode: options.mode ?? "print",
@@ -331,6 +303,8 @@ function runtimeHarness(options: {
 }
 
 test("every registered whole-activation rejection terminates nonzero with a named cause before a model turn", async () => {
+  // Handler-level barrier probe: withInProcessPi disposes the session before a post-failure
+  // before_agent_start emit is reachable. All-role admission uses withInProcessPi below.
   await withActivationHome({ prefix: "ak-act-reject-" }, async ({ home }) => {
     for (const entry of PACKAGED_ROLE_REGISTRY) {
       process.exitCode = undefined;
@@ -339,27 +313,28 @@ test("every registered whole-activation rejection terminates nonzero with a name
       let providerTurns = 0;
       const rejection = new TypeError(`${entry.role} activation rejected`);
       const reject = async (): Promise<never> => { throw rejection; };
-      const { pi, handlers } = registryPi({
-        role: entry.role,
-        flags: {
-          "ak-doctor-case": "/lawful/case",
-          "ak-merger-input": "/lawful/merger.json",
-        },
-      });
-      createRoleRuntimeExtension({
-        loadJudgeSoul: reject,
-        loadFixerSoul: reject,
-        loadCoderSoul: reject,
-        loadReviewerSoul: reject,
-        loadCollectorSoul: reject,
-        loadDoctorSoul: reject,
-        loadMergerSoul: reject,
-        createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
-        transcriptFromContext: () => "",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-        activationClock: () => "2025-01-01T00:00:00.000Z",
-        activationTraceWriter: (record) => { traces.push(record); },
-      })(pi);
+      const flags: Record<string, unknown> = {
+        "ak-role": entry.role,
+        "ak-doctor-case": "/lawful/case",
+        "ak-merger-input": "/lawful/merger.json",
+      };
+      const { handlers } = captureExtensionHandlers(
+        (pi) => createRoleRuntimeExtension({
+          loadJudgeSoul: reject,
+          loadFixerSoul: reject,
+          loadCoderSoul: reject,
+          loadReviewerSoul: reject,
+          loadCollectorSoul: reject,
+          loadDoctorSoul: reject,
+          loadMergerSoul: reject,
+          createMergerGitState: () => ({ activeMerge: reject, completedMerge: reject }),
+          transcriptFromContext: () => "",
+          auditSoulCompliance: async () => ({ status: "pass" }),
+          activationClock: () => "2025-01-01T00:00:00.000Z",
+          activationTraceWriter: (record) => { traces.push(record); },
+        })(pi),
+        { getFlag: (name) => flags[name] },
+      );
       const ctx = activationExtensionContext({
         cwd: home,
         abort() { aborts++; },
@@ -393,51 +368,49 @@ test("every registered whole-activation rejection terminates nonzero with a name
 
 test("every registered role writes exactly one accepted-activation fact after admission", async () => {
   assert.ok(PACKAGED_ROLE_REGISTRY.some((entry) => entry.role === "collector"), "Collector must remain in the #52 registry gate");
-  await withActivationHome({ prefix: "ak-act-admit-" }, async ({ home }) => {
+  // #52 registry activation seam via shared withInProcessPi owner (not a local registry harness).
+  await withActivationHome({ prefix: "ak-act-admit-" }, async ({ home, agentDir }) => {
     const fixtureRoot = join(home, "admit-fixtures");
     mkdirSync(fixtureRoot, { recursive: true });
     const bookKey = activationBookKeyFor(home);
     const previousCorr = process.env.AK_CORRELATION_ID;
+    const faux = fauxProvider({ api: "ak-act-admit", provider: "ak-act-admit" });
 
     try {
       for (const entry of PACKAGED_ROLE_REGISTRY) {
         process.exitCode = undefined;
-        const needsHostTools = entry.role === "collector" || entry.role === "merger";
-        const sessionFile = persistActivationSessionFile({
-          home,
-          bookKey,
-          name: entry.role,
-          cwd: home,
-        });
-
         process.env.AK_CORRELATION_ID = `corr-${entry.role}`;
-        const withCorrelation = registryPi({
-          role: entry.role,
-          flags: admissionFlagsForRole(entry.role, fixtureRoot),
-          withHostTools: needsHostTools,
-        });
-        createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))(withCorrelation.pi);
-        const ctx = activationExtensionContext({
+        const roleFlags = Object.fromEntries(
+          Object.entries({
+            "ak-role": entry.role,
+            ...admissionFlagsForRole(entry.role, fixtureRoot),
+          }).map(([key, value]) => [key, String(value)]),
+        );
+        await withInProcessPi({
+          activationLedgerSession: true,
           cwd: home,
-          home,
-          bookKey,
-          sessionFile,
-          abort() {},
-        });
-        const start = withCorrelation.handlers.get("session_start")?.[0];
-        assert.ok(start);
-        await start({ reason: "startup" }, ctx);
-
-        const facts = readAcceptedActivationFacts(home, bookKey);
-        const roleFacts = facts.filter((fact) => fact.role === entry.role);
-        assert.equal(roleFacts.length, 1, `${entry.role} admitted fact count`);
-        assert.deepEqual(roleFacts[0], {
-          event: ACCEPTED_ACTIVATION_EVENT,
-          role: entry.role,
-          observedAt: "2025-06-01T12:00:00.000Z",
-          bookKey,
-          session: { kind: "session-file", path: realpathSync(sessionFile) },
-          correlation: { kind: "caller", id: `corr-${entry.role}` },
+          agentDir,
+          faux,
+          modelsPath: null,
+          noExtensions: true,
+          systemPrompt: `ADMIT ${entry.role}`,
+          mode: "print",
+          flags: roleFlags,
+          extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))],
+        }, async ({ sessionManager }) => {
+          const sessionFile = sessionManager.getSessionFile();
+          assert.ok(typeof sessionFile === "string" && sessionFile.length > 0);
+          const facts = readAcceptedActivationFacts(home, bookKey);
+          const roleFacts = facts.filter((fact) => fact.role === entry.role);
+          assert.equal(roleFacts.length, 1, `${entry.role} admitted fact count`);
+          assert.deepEqual(roleFacts[0], {
+            event: ACCEPTED_ACTIVATION_EVENT,
+            role: entry.role,
+            observedAt: "2025-06-01T12:00:00.000Z",
+            bookKey,
+            session: { kind: "session-file", path: realpathSync(sessionFile) },
+            correlation: { kind: "caller", id: `corr-${entry.role}` },
+          });
         });
       }
 
@@ -445,37 +418,38 @@ test("every registered role writes exactly one accepted-activation fact after ad
       delete process.env.AK_CORRELATION_ID;
       process.exitCode = undefined;
       const beforeAbsent = readAcceptedActivationFacts(home, bookKey).length;
-      const missing = registryPi({ role: "judge" });
-      createRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))(missing.pi);
-      await missing.handlers.get("session_start")?.[0]?.(
-        { reason: "startup" },
-        activationExtensionContext({
-          cwd: home,
-          home,
-          bookKey,
-          sessionFile: persistActivationSessionFile({
-            home,
-            bookKey,
-            name: "judge-absent",
-            cwd: home,
-          }),
-        }),
-      );
-      const afterAbsent = readAcceptedActivationFacts(home, bookKey);
-      assert.equal(afterAbsent.length, beforeAbsent + 1);
-      assert.deepEqual(afterAbsent.at(-1)?.correlation, { kind: "absent" });
+      await withInProcessPi({
+        activationLedgerSession: true,
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noExtensions: true,
+        systemPrompt: "ADMIT ABSENT",
+        mode: "print",
+        flags: { "ak-role": "judge" },
+        extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
+      }, async () => {
+        const afterAbsent = readAcceptedActivationFacts(home, bookKey);
+        assert.equal(afterAbsent.length, beforeAbsent + 1);
+        assert.deepEqual(afterAbsent.at(-1)?.correlation, { kind: "absent" });
+      });
 
-      // Envelope barrier opens only after admitted fact write.
-      const admitted = registryPi({ role: "judge" });
-      createRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))(admitted.pi);
-      const admittedCtx = activationExtensionContext({ cwd: home });
-      await admitted.handlers.get("session_start")?.[0]?.({ reason: "startup" }, admittedCtx);
-      let providerTurns = 0;
-      for (const before of admitted.handlers.get("before_agent_start") ?? []) {
-        await before({ systemPrompt: "BASE", systemPromptOptions: {}, prompt: "go" }, admittedCtx);
-      }
-      providerTurns++;
-      assert.equal(providerTurns, 1);
+      // Envelope barrier opens only after admitted fact write (real ExtensionRunner).
+      await withInProcessPi({
+        activationLedgerSession: true,
+        cwd: home,
+        agentDir,
+        faux,
+        modelsPath: null,
+        noExtensions: true,
+        systemPrompt: "ADMIT BARRIER",
+        mode: "print",
+        flags: { "ak-role": "judge" },
+        extensionFactories: [createRoleRuntimeExtension(admissionDepsForRole("judge", fixtureRoot))],
+      }, async ({ session }) => {
+        await session.extensionRunner.emitBeforeAgentStart("go", undefined, "BASE", { cwd: home });
+      });
     } finally {
       if (previousCorr === undefined) delete process.env.AK_CORRELATION_ID;
       else process.env.AK_CORRELATION_ID = previousCorr;
@@ -484,47 +458,69 @@ test("every registered role writes exactly one accepted-activation fact after ad
 });
 
 test("unselected role and unsupported role leave zero accepted-activation facts", async () => {
-  await withActivationHome({ prefix: "ak-act-unsel-" }, async ({ home }) => {
+  await withActivationHome({ prefix: "ak-act-unsel-" }, async ({ home, agentDir }) => {
+    const faux = fauxProvider({ api: "ak-act-unsel", provider: "ak-act-unsel" });
     process.exitCode = undefined;
-    const unselected = registryPi({ role: undefined });
-    createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "LAW",
-      transcriptFromContext: () => "",
-      auditSoulCompliance: async () => ({ status: "pass" }),
-    })(unselected.pi);
-    await unselected.handlers.get("session_start")?.[0]?.(
-      {},
-      activationExtensionContext({ cwd: home }),
-    );
-    assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
+    await withInProcessPi({
+      activationLedgerSession: true,
+      cwd: home,
+      agentDir,
+      faux,
+      modelsPath: null,
+      noExtensions: true,
+      systemPrompt: "UNSELECTED",
+      mode: "print",
+      flags: {},
+      extensionFactories: [createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "LAW",
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+      })],
+    }, async () => {
+      assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
+    });
 
-    const unsupported = registryPi({ role: "router" });
-    createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "LAW",
-      transcriptFromContext: () => "",
-      auditSoulCompliance: async () => ({ status: "pass" }),
-    })(unsupported.pi);
-    await assert.rejects(async () => unsupported.handlers.get("session_start")?.[0]?.(
-      {},
-      activationExtensionContext({ cwd: home }),
-    ));
+    process.exitCode = undefined;
+    await assert.rejects(async () => withInProcessPi({
+      activationLedgerSession: true,
+      cwd: home,
+      agentDir,
+      faux,
+      modelsPath: null,
+      noExtensions: true,
+      systemPrompt: "UNSUPPORTED",
+      mode: "print",
+      flags: { "ak-role": "router" },
+      extensionFactories: [createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "LAW",
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+      })],
+    }, async () => {
+      throw new Error("unsupported role must not complete bindExtensions");
+    }));
     assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
   });
 });
 
 test("non-git cwd and durable session rejection classes fail before model dispatch with zero accepted facts", async () => {
+  // Topology/failure probe: custom session principals and non-git cwd are unreachable via
+  // withInProcessPi's fixed durable-session opt-in. All-role admission uses withInProcessPi.
   await withHermeticHome({ prefix: "ak-act-nongit-" }, async ({ home }) => {
     process.exitCode = undefined;
     let aborts = 0;
     let soulLoads = 0;
     let providerTurns = 0;
-    const { pi, handlers } = registryPi({ role: "judge" });
-    createRoleRuntimeExtension({
+    const judgeDeps = () => ({
       loadJudgeSoul: async () => { soulLoads += 1; return "LAW"; },
       transcriptFromContext: () => "",
-      auditSoulCompliance: async () => ({ status: "pass" }),
+      auditSoulCompliance: async () => ({ status: "pass" as const }),
       activationTraceWriter: () => {},
-    })(pi);
+    });
+    const { handlers } = captureExtensionHandlers(
+      (pi) => createRoleRuntimeExtension(judgeDeps())(pi),
+      { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
+    );
     // Hermetic home is intentionally not a git repo (generic withHermeticHome has no git substrate).
     // Pre-create a ledger session so non-git fails on book-key, not session placement.
     const bookKey = activationBookKeyFor(home);
@@ -562,13 +558,10 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       soulLoads = 0;
       providerTurns = 0;
       const beforeFacts = readAcceptedActivationFacts(home, bookKey).length;
-      const { pi: rolePi, handlers: roleHandlers } = registryPi({ role: "judge" });
-      createRoleRuntimeExtension({
-        loadJudgeSoul: async () => { soulLoads += 1; return "LAW"; },
-        transcriptFromContext: () => "",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-        activationTraceWriter: () => {},
-      })(rolePi);
+      const { handlers: roleHandlers } = captureExtensionHandlers(
+        (pi) => createRoleRuntimeExtension(judgeDeps())(pi),
+        { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
+      );
       const rejectCtx = activationExtensionContext({
         cwd: home,
         home,
@@ -636,6 +629,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
 });
 
 test("append failure preserves original cause, aborts nonzero, and blocks provider turns", async () => {
+  // Topology probe: book-dir chmod errno path is clearer at the handler seam than full Pi bind.
   await withActivationHome({ prefix: "ak-act-append-" }, async ({ home }) => {
     process.exitCode = undefined;
     const bookKey = activationBookKeyFor(home);
@@ -645,13 +639,15 @@ test("append failure preserves original cause, aborts nonzero, and blocks provid
     chmodSync(bookDir, 0o555);
     let aborts = 0;
     try {
-      const { pi, handlers } = registryPi({ role: "judge" });
-      createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "LAW",
-        transcriptFromContext: () => "",
-        auditSoulCompliance: async () => ({ status: "pass" }),
-        activationTraceWriter: () => {},
-      })(pi);
+      const { handlers } = captureExtensionHandlers(
+        (pi) => createRoleRuntimeExtension({
+          loadJudgeSoul: async () => "LAW",
+          transcriptFromContext: () => "",
+          auditSoulCompliance: async () => ({ status: "pass" }),
+          activationTraceWriter: () => {},
+        })(pi),
+        { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
+      );
       const ctx = activationExtensionContext({
         cwd: home,
         home,
@@ -1389,17 +1385,21 @@ test("observation face rejects throttleMs override at the typed call site and ig
 });
 
 test("shared role runtime registers tool observation only after admitted activation and never writes stdout", async () => {
+  // Pre/post-admission observation ordering needs a custom writer on the same handler set;
+  // withInProcessPi cannot inject toolExecutionObservationWriter between events this tightly.
   await withActivationHome({ prefix: "ak-act-obs-" }, async ({ home }) => {
     const observations: ToolExecutionObservationRecord[] = [];
-    const { pi, handlers } = registryPi({ role: "judge" });
-    createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "LAW",
-      transcriptFromContext: () => "",
-      auditSoulCompliance: async () => ({ status: "pass" }),
-      activationClock: () => "2025-01-01T00:00:00.000Z",
-      activationTraceWriter: () => {},
-      toolExecutionObservationWriter: (record) => { observations.push(record); },
-    })(pi);
+    const { handlers } = captureExtensionHandlers(
+      (pi) => createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "LAW",
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationClock: () => "2025-01-01T00:00:00.000Z",
+        activationTraceWriter: () => {},
+        toolExecutionObservationWriter: (record) => { observations.push(record); },
+      })(pi),
+      { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
+    );
 
     const startHandler = handlers.get("tool_execution_start")?.[0];
     const updateHandler = handlers.get("tool_execution_update")?.[0];
