@@ -27,15 +27,9 @@ export function isStreamIdleTimeoutError(value: unknown): value is StreamIdleTim
     );
 }
 
-export type StreamIdleGuardTimers = {
-  setTimer: typeof setTimeout;
-  clearTimer: typeof clearTimeout;
-};
-
 export type StreamIdleGuardOptions = {
   idleTimeoutMs?: number;
   parentSignal?: AbortSignal;
-  timers?: StreamIdleGuardTimers;
 };
 
 export type StreamIdleGuard = {
@@ -48,8 +42,6 @@ export function createStreamIdleGuard(
   options: StreamIdleGuardOptions = {},
 ): StreamIdleGuard {
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
-  const setTimer = options.timers?.setTimer ?? setTimeout;
-  const clearTimer = options.timers?.clearTimer ?? clearTimeout;
   const parentSignal = options.parentSignal;
 
   const controller = new AbortController();
@@ -58,7 +50,7 @@ export function createStreamIdleGuard(
 
   const clear = (): void => {
     if (timer !== undefined) {
-      clearTimer(timer);
+      clearTimeout(timer);
       timer = undefined;
     }
   };
@@ -66,7 +58,7 @@ export function createStreamIdleGuard(
   const arm = (): void => {
     if (disposed || controller.signal.aborted || idleTimeoutMs <= 0) return;
     clear();
-    timer = setTimer(() => {
+    timer = setTimeout(() => {
       timer = undefined;
       if (disposed || controller.signal.aborted) return;
       controller.abort(new StreamIdleTimeoutError(idleTimeoutMs));
