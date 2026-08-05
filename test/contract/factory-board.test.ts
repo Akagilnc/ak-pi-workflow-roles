@@ -72,6 +72,20 @@ async function treeFingerprint(root: string): Promise<string> {
   return h.digest("hex");
 }
 
+/** Visible ticket-meta label for one ticket (data-*-label carries the issue number). */
+function visibleTicketLabel(
+  html: string,
+  labelAttr: string,
+  issueNumber: number,
+  bookKey?: string,
+): Record<string, string> | undefined {
+  return elementsWith(html, labelAttr).find(
+    (el) =>
+      el[labelAttr] === String(issueNumber) &&
+      (bookKey === undefined || el["data-book"] === bookKey),
+  );
+}
+
 function elementsWith(html: string, dataAttr: string): Record<string, string>[] {
   const re = new RegExp(`<[^>]+\\b${dataAttr}="[^"]*"[^>]*>`, "g");
   const out: Record<string, string>[] = [];
@@ -1259,17 +1273,52 @@ test("S3 four-state is mutually exclusive and decided only by the latest run", a
       ),
     );
 
-    // Unaccepted legs expose leg age + last activity
-    assert.ok(by(3)?.["data-leg-age-ms"] !== undefined);
-    assert.equal(Number(by(3)?.["data-leg-age-ms"]), 60_000);
-    assert.ok(by(3)?.["data-last-activity-mtime-ms"] !== undefined);
+    // Unaccepted legs visibly expose leg age + last activity via dedicated label spans
+    // (not only article projection attrs — deleting activityBits must fail these).
+    const flyAge = visibleTicketLabel(html, "data-leg-age-label", 3, "roles");
+    const flyAct = visibleTicketLabel(html, "data-last-activity-label", 3, "roles");
+    assert.ok(flyAge, "flying ticket must render visible leg-age label");
+    assert.ok(flyAct, "flying ticket must render visible last-activity label");
+    assert.equal(Number(flyAge["data-leg-age-ms"]), 60_000);
+    assert.ok(flyAct["data-last-activity-mtime-ms"] !== undefined);
+    // Article projection stays aligned with the visible labels.
+    assert.equal(by(3)?.["data-leg-age-ms"], flyAge["data-leg-age-ms"]);
+    assert.equal(by(3)?.["data-last-activity-mtime-ms"], flyAct["data-last-activity-mtime-ms"]);
+
     assert.equal(by(5)?.["data-current-state"], "unaccepted-suspect");
-    assert.ok(Number(by(5)?.["data-leg-age-ms"]) > UNACCEPTED_WATCH_MS);
+    const suspectAge = visibleTicketLabel(html, "data-leg-age-label", 5, "roles");
+    assert.ok(suspectAge, "suspect ticket must render visible leg-age label");
+    assert.ok(Number(suspectAge["data-leg-age-ms"]) > UNACCEPTED_WATCH_MS);
+    assert.ok(visibleTicketLabel(html, "data-last-activity-label", 5, "roles"));
+
+    // Non-unaccepted states must not show leg-age / last-activity labels.
+    for (const n of [1, 2, 6, 7]) {
+      assert.equal(
+        visibleTicketLabel(html, "data-leg-age-label", n, "roles"),
+        undefined,
+        `#${n} must not show leg-age label outside unaccepted bands`,
+      );
+      assert.equal(
+        visibleTicketLabel(html, "data-last-activity-label", n, "roles"),
+        undefined,
+        `#${n} must not show last-activity label outside unaccepted bands`,
+      );
+    }
 
     // Exact threshold boundaries (authority: 2–15 watch inclusive at 15; >15 suspect)
     assert.equal(by(8)?.["data-current-state"], "unaccepted-watch");
     assert.equal(by(9)?.["data-current-state"], "unaccepted-watch");
     assert.equal(by(10)?.["data-current-state"], "unaccepted-suspect");
+    for (const n of [4, 8, 9, 10]) {
+      assert.ok(
+        visibleTicketLabel(html, "data-leg-age-label", n, "roles"),
+        `#${n} unaccepted band must show visible leg-age`,
+      );
+      assert.ok(
+        visibleTicketLabel(html, "data-last-activity-label", n, "roles"),
+        `#${n} unaccepted band must show visible last-activity`,
+      );
+    }
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -1326,6 +1375,11 @@ test("S3 last activity projects newest parent/axis content timestamp", async () 
     assert.match(t["data-current-state"] ?? "", /^unaccepted-/);
     assert.equal(t["data-last-activity-at"], "2026-08-05T11:30:00.000Z");
     assert.notEqual(t["data-last-activity-at"], "2026-08-05T11:00:00.000Z");
+    // Visible last-activity label must carry the axis-newer timestamp (not article-only).
+    const actLabel = visibleTicketLabel(html, "data-last-activity-label", 40);
+    assert.ok(actLabel, "unaccepted ticket must render visible last-activity label");
+    assert.equal(actLabel["data-last-activity-at"], "2026-08-05T11:30:00.000Z");
+    assert.ok(visibleTicketLabel(html, "data-leg-age-label", 40), "visible leg-age label required");
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -1400,6 +1454,13 @@ test("S3 wallclock: only current latest unaccepted ends at now; historical unacc
     assert.equal(ticketA["data-landing-cycle-ms"], String(2 * 3600_000));
     assert.equal(ticketB["data-landing-cycle-ms"], String(3 * 3600_000));
     assert.notEqual(ticketA["data-landing-cycle-ms"], ticketA["data-wall-ms"]);
+    // Visible wall + landing labels are distinct elements (并列显示); deleting either fails.
+    const wallLabelA = visibleTicketLabel(htmlA, "data-wall-label", 10);
+    const landLabelA = visibleTicketLabel(htmlA, "data-landing-label", 10);
+    assert.ok(wallLabelA && landLabelA, "wall and landing must both render as visible labels");
+    assert.equal(wallLabelA["data-wall-ms"], ticketA["data-wall-ms"]);
+    assert.equal(landLabelA["data-landing-cycle-ms"], ticketA["data-landing-cycle-ms"]);
+    assert.notEqual(wallLabelA["data-wall-ms"], landLabelA["data-landing-cycle-ms"]);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -1505,6 +1566,19 @@ test("S3 landing cycle: open ends at now; closed ends at closedAt not last ledge
     );
     assert.notEqual(closedTicket["data-landing-cycle-ms"], closedTicket["data-wall-ms"]);
     assert.notEqual(openTicket["data-landing-cycle-ms"], openTicket["data-wall-ms"]);
+
+    // Visible labels carry the same split (并列显示) for open and closed.
+    for (const [html, expectedLand] of [
+      [openHtml, openTicket["data-landing-cycle-ms"]],
+      [closedHtml, closedTicket["data-landing-cycle-ms"]],
+    ] as const) {
+      const wallL = visibleTicketLabel(html, "data-wall-label", 77);
+      const landL = visibleTicketLabel(html, "data-landing-label", 77);
+      assert.ok(wallL && landL);
+      assert.equal(wallL["data-wall-ms"], String(constructionWallMs));
+      assert.equal(landL["data-landing-cycle-ms"], expectedLand);
+      assert.notEqual(wallL["data-wall-ms"], landL["data-landing-cycle-ms"]);
+    }
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -1613,6 +1687,17 @@ test("S3 cost/tokens aggregate per station and ticket; axis legs fold into stati
     assert.equal(Number(t21["data-cost-usd"]), 0.05);
     assert.equal(Number(t22["data-cost-usd"]), 0.8);
     assert.equal(Number(t22["data-total-tokens"]), 800);
+    // Visible cost labels (not article attrs alone) carry the same burn figures.
+    for (const [n, cost, tokens] of [
+      [20, 1.65, 1650],
+      [21, 0.05, 50],
+      [22, 0.8, 800],
+    ] as const) {
+      const costLabel = visibleTicketLabel(html, "data-cost-label", n, "roles");
+      assert.ok(costLabel, `#${n} must render visible cost label`);
+      assert.equal(Number(costLabel["data-cost-usd"]), cost);
+      assert.equal(Number(costLabel["data-total-tokens"]), tokens);
+    }
 
     const axisRun = elementsWith(html, "data-run-id").find((r) => r["data-run-id"] === "review-axis@x");
     assert.ok(axisRun);
@@ -1660,6 +1745,97 @@ test("S3 cost/tokens aggregate per station and ticket; axis legs fold into stati
       executeProductionBoardSort(html, "roles", "ticket-asc").map(laneSortIdentity),
       [20, 21, 22],
     );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("S3 board projects no textual conclusion and excludes unlabelled narrative self-report", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-conclusion-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    // Session carries free-text assistant narrative + a model-claimed commitSha inside an
+    // unaccepted attempt — board must not promote either into conclusion/self-report stats.
+    await writeRunSession(
+      ledgerDir,
+      55,
+      "narrative-noise@x",
+      [
+        sessionHeader("2026-08-05T11:00:00.000Z"),
+        {
+          type: "message",
+          timestamp: "2026-08-05T11:05:00.000Z",
+          message: {
+            role: "assistant",
+            model: "m",
+            provider: "p",
+            content: [
+              {
+                type: "text",
+                text: "断势：趋势上升，建议加派。commitSha=deadbeefcafebabe",
+              },
+            ],
+            usage: {
+              input: 1,
+              output: 1,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 10,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
+            },
+          },
+        },
+      ],
+      { invocationRole: "fixer", mtime: new Date(now.getTime() - 30_000) },
+    );
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 55, title: "noise", state: "open" })],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    // Projection-field allowlist audit: no conclusion / trend / unlabelled self-report channels.
+    for (const banned of [
+      "data-conclusion",
+      "data-divination",
+      "data-trend",
+      "data-forecast",
+      "data-self-report",
+      "data-narrative",
+      "data-commit-sha",
+      "data-commitsha",
+    ]) {
+      assert.equal(
+        elementsWith(html, banned).length,
+        0,
+        `board must not project ${banned}`,
+      );
+      assert.doesNotMatch(html, new RegExp(`${banned}=`));
+    }
+    // Free-text assistant narrative must not be copied into the page body as a fact channel.
+    assert.doesNotMatch(html, /断势/);
+    assert.doesNotMatch(html, /趋势上升/);
+    assert.doesNotMatch(html, /deadbeefcafebabe/);
+    // Mechanical burn still projects; narrative does not ride along.
+    const t = elementsWith(html, "data-ticket").find((el) => el["data-ticket"] === "55");
+    assert.ok(t);
+    assert.equal(Number(t["data-cost-usd"]), 0.01);
+    assert.equal(Number(t["data-total-tokens"]), 10);
+    assert.match(t["data-current-state"] ?? "", /^unaccepted-/);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -2486,18 +2662,24 @@ test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost r
     assert.ok(!sorted.includes(130), "#130 stays nested under family; burn rides aggregate");
 
     // Genuine unaccepted true-home leg: must be 在飞 under the honest acceptance clock,
-    // with leg age + last activity projected from true-home parent/axis content + mtime.
+    // with leg age + last activity *visibly* labeled (not article projection alone).
     assert.equal(
       tActive["data-current-state"],
       "unaccepted-flying",
       `true-home #${activeIssue} latest ${activeLeg.runId} must be 在飞 at honest now=${now.toISOString()} mtimeMs=${activeLeg.mtimeMs}`,
     );
-    assert.equal(tActive["data-last-activity-at"], expectedDisplayActivityAt);
-    assert.equal(tActive["data-last-activity-mtime-ms"], String(activeLeg.mtimeMs));
-    assert.ok(tActive["data-leg-age-ms"] !== undefined);
-    assert.equal(Number(tActive["data-leg-age-ms"]), expectedLegAgeMs);
-    // Age from true start must be at least the flying probe offset (now is after mtime ≥ start).
-    assert.ok(Number(tActive["data-leg-age-ms"]) >= flyingOffsetMs);
+    const visibleAge = visibleTicketLabel(html, "data-leg-age-label", activeIssue, "roles");
+    const visibleAct = visibleTicketLabel(html, "data-last-activity-label", activeIssue, "roles");
+    assert.ok(visibleAge, `true-home #${activeIssue} must render visible leg-age label`);
+    assert.ok(visibleAct, `true-home #${activeIssue} must render visible last-activity label`);
+    assert.equal(visibleAct["data-last-activity-at"], expectedDisplayActivityAt);
+    assert.equal(visibleAct["data-last-activity-mtime-ms"], String(activeLeg.mtimeMs));
+    assert.equal(Number(visibleAge["data-leg-age-ms"]), expectedLegAgeMs);
+    assert.ok(Number(visibleAge["data-leg-age-ms"]) >= flyingOffsetMs);
+    // Article projection remains consistent with the visible labels.
+    assert.equal(tActive["data-last-activity-at"], visibleAct["data-last-activity-at"]);
+    assert.equal(tActive["data-last-activity-mtime-ms"], visibleAct["data-last-activity-mtime-ms"]);
+    assert.equal(tActive["data-leg-age-ms"], visibleAge["data-leg-age-ms"]);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
