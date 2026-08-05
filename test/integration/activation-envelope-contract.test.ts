@@ -3,9 +3,12 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -23,6 +26,7 @@ import { Value } from "typebox/value";
 import {
   ACCEPTED_ACTIVATION_EVENT,
   ACCEPTED_ACTIVATION_FACT_KEYS,
+  ACTIVATION_LEDGER_APPEND_OPEN_FLAGS,
   ActivationBarrierError,
   ActivationGitRepositoryRequiredError,
   ActivationLedgerError,
@@ -1067,6 +1071,47 @@ test("ledger append rejects cross-book waiting.jsonl symlink without writing the
     );
     assert.equal(readFileSync(targetLedger, "utf8"), "");
   });
+});
+
+// Typed bare seam for kernel no-follow: production open uses only this flag word.
+// Final-component TOCTOU swap is not deterministically injectable without a test-only
+// production hook; the flag contract plus open-on-symlink ELOOP is the durable proof.
+test("ledger append open flags include O_NOFOLLOW and reject final-component symlink at open", () => {
+  assert.equal(
+    ACTIVATION_LEDGER_APPEND_OPEN_FLAGS,
+    constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW,
+  );
+  assert.equal(
+    (ACTIVATION_LEDGER_APPEND_OPEN_FLAGS & constants.O_NOFOLLOW) === constants.O_NOFOLLOW,
+    true,
+  );
+
+  const root = mkdtempSync(join(tmpdir(), "ak-ledger-nofollow-"));
+  try {
+    const target = join(root, "target.jsonl");
+    const waiting = join(root, "waiting.jsonl");
+    writeFileSync(target, "");
+    symlinkSync(target, waiting);
+    assert.throws(
+      () => openSync(waiting, ACTIVATION_LEDGER_APPEND_OPEN_FLAGS, 0o644),
+      (error: unknown) => {
+        assert.ok(error !== null && typeof error === "object" && "code" in error);
+        assert.equal((error as NodeJS.ErrnoException).code, "ELOOP");
+        return true;
+      },
+    );
+    // Control: missing final component still creates a regular file under the same flags.
+    const fresh = join(root, "fresh-waiting.jsonl");
+    const fd = openSync(fresh, ACTIVATION_LEDGER_APPEND_OPEN_FLAGS, 0o644);
+    try {
+      assert.equal(existsSync(fresh), true);
+    } finally {
+      closeSync(fd);
+    }
+    assert.equal(readFileSync(target, "utf8"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("ledger append rejects cross-book directory symlink without writing the target book", async () => {
