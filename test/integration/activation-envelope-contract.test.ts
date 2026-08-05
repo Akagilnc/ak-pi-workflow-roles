@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
-  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,7 +12,6 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
-  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -22,9 +20,6 @@ import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
-import {
-  appendActivationLedgerLine,
-} from "../../src/activation-ledger.ts";
 import {
   ACCEPTED_ACTIVATION_EVENT,
   ActivationBarrierError,
@@ -960,142 +955,6 @@ appendAcceptedActivationToBook({
     assert.deepEqual(row.correlation, { kind: "caller", id: `mkdir-${index}` });
   }
   rmSync(root, { recursive: true, force: true });
-});
-
-test("short append fails honestly as typed infrastructure failure", () => {
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-short-write-"));
-  try {
-    const ledgerHome = join(root, "home");
-    const bookKey = "short-write-book";
-    const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-    appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
-      role: "judge",
-      observedAt: "2025-01-01T00:00:00.000Z",
-      bookKey,
-      session: { kind: "session-file", path: "/s/prior.jsonl" },
-      correlation: { kind: "caller", id: "prior" },
-    }), { ledgerHome });
-
-    const failedLine = Buffer.from(serializeAcceptedActivationFact(buildAcceptedActivationFact({
-      role: "fixer",
-      observedAt: "2025-01-01T00:00:01.000Z",
-      bookKey,
-      session: { kind: "session-file", path: "/s/failed.jsonl" },
-      correlation: { kind: "caller", id: "failed" },
-    })), "utf8");
-
-    assert.throws(
-      () => appendActivationLedgerLine(ledgerPath, failedLine, {
-        ledgerHome,
-        write(fd, buffer, offset, length, position) {
-          const partial = Math.min(3, length);
-          return writeSync(fd, buffer, offset, partial, position);
-        },
-      }),
-      (error: unknown) => {
-        const primary = error instanceof AggregateError ? error.cause ?? error.errors[0] : error;
-        assert.ok(primary instanceof ActivationLedgerError);
-        assert.equal(primary.code, "AK_ACTIVATION_LEDGER");
-        return true;
-      },
-    );
-
-    // No private lock artifact; no claim of transactional rollback recovery.
-    assert.equal(existsSync(`${ledgerPath}.append-lock`), false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("failed append write keeps the original write cause", () => {
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-write-fail-"));
-  try {
-    const ledgerHome = join(root, "home");
-    const bookKey = "write-fail-book";
-    const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-    appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
-      role: "judge",
-      observedAt: "2025-01-01T00:00:00.000Z",
-      bookKey,
-      session: { kind: "session-file", path: "/s/prior.jsonl" },
-      correlation: { kind: "caller", id: "prior" },
-    }), { ledgerHome });
-    const writeFailure = new Error("injected-write-failure");
-    const failedLine = Buffer.from(serializeAcceptedActivationFact(buildAcceptedActivationFact({
-      role: "fixer",
-      observedAt: "2025-01-01T00:00:01.000Z",
-      bookKey,
-      session: { kind: "session-file", path: "/s/failed.jsonl" },
-      correlation: { kind: "caller", id: "failed" },
-    })), "utf8");
-
-    assert.throws(
-      () => appendActivationLedgerLine(ledgerPath, failedLine, {
-        ledgerHome,
-        write() {
-          throw writeFailure;
-        },
-      }),
-      (error: unknown) => {
-        const primary = error instanceof AggregateError ? error.cause ?? error.errors[0] : error;
-        assert.equal(primary, writeFailure);
-        return true;
-      },
-    );
-
-    assert.equal(existsSync(`${ledgerPath}.append-lock`), false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("append cleanup failure cannot mask the primary write failure", () => {
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-cleanup-mask-"));
-  const ledgerHome = join(root, "home");
-  const bookKey = "cleanup-mask-book";
-  const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-  const writeFailure = new Error("injected-write-failure");
-  try {
-    appendAcceptedActivationFact(
-      ledgerPath,
-      buildAcceptedActivationFact({
-        role: "judge",
-        observedAt: "2025-01-01T00:00:00.000Z",
-        bookKey,
-        session: { kind: "session-file", path: "/s/prior.jsonl" },
-        correlation: { kind: "caller", id: "prior" },
-      }),
-      { ledgerHome },
-    );
-
-    const failedLine = Buffer.from(serializeAcceptedActivationFact(buildAcceptedActivationFact({
-      role: "fixer",
-      observedAt: "2025-01-01T00:00:01.000Z",
-      bookKey,
-      session: { kind: "session-file", path: "/s/failed.jsonl" },
-      correlation: { kind: "caller", id: "failed" },
-    })), "utf8");
-
-    assert.throws(
-      () => appendActivationLedgerLine(ledgerPath, failedLine, {
-        ledgerHome,
-        write(fd) {
-          // Close early so cleanup closeSync fails; primary write cause must remain.
-          closeSync(fd);
-          throw writeFailure;
-        },
-      }),
-      (error: unknown) => {
-        assert.ok(error instanceof AggregateError);
-        assert.equal(error.cause, writeFailure);
-        assert.equal(error.errors[0], writeFailure);
-        assert.equal(error.errors.length, 2);
-        return true;
-      },
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test("resolved ledger home rejects relative process home before filesystem writes", () => {

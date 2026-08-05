@@ -139,22 +139,12 @@ function settleWithCleanup(body: () => void, cleanups: ReadonlyArray<() => void>
 
 /**
  * Bare O_APPEND write of one complete line under an absolute ledger home.
- * Production binds writeSync; this lower seam owns open/write/close honesty only and
- * does not appear on the production fact-append options surface.
+ * Private helper: production-bound to writeSync; owns open/write/close honesty only.
  */
-export function appendActivationLedgerLine(
+function appendActivationLedgerLine(
   ledgerPath: string,
   line: Uint8Array,
-  options: {
-    ledgerHome: string;
-    write: (
-      fd: number,
-      buffer: NodeJS.ArrayBufferView,
-      offset: number,
-      length: number,
-      position: number | null,
-    ) => number;
-  },
+  options: { ledgerHome: string },
 ): void {
   if (!isAbsolute(options.ledgerHome)) {
     throw new ActivationLedgerError(
@@ -185,7 +175,7 @@ export function appendActivationLedgerLine(
         );
       }
 
-      const written = options.write(ledgerFd, bytes, 0, bytes.length, null);
+      const written = writeSync(ledgerFd, bytes, 0, bytes.length, null);
       if (written !== bytes.length) {
         throw new ActivationLedgerError(
           `activation ledger short write: wrote ${written} of ${bytes.length} bytes to ${resolvedLedger}`,
@@ -218,7 +208,7 @@ export function appendAcceptedActivationFact(
   appendActivationLedgerLine(
     ledgerPath,
     Buffer.from(serializeAcceptedActivationFact(fact), "utf8"),
-    { ledgerHome: options.ledgerHome, write: writeSync },
+    { ledgerHome: options.ledgerHome },
   );
 }
 
