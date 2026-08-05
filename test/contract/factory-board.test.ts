@@ -1926,65 +1926,23 @@ test("S3 true-home acceptance: frozen #127, active leg, #130 cost reconciliation
     });
 
     // 2) True-home #130 bytes (closed multi-round reviewer burn)
-    await cp(home130, join(ledgerDir, "issues", "130"), { recursive: true });
+    await cp(home130, join(ledgerDir, "issues", "130"), {
+      recursive: true,
+      preserveTimestamps: true,
+    });
 
-    // 3) Genuine unaccepted active leg: prefer true-home #139 when its latest run is
-    // unaccepted; otherwise plant authentic unaccepted review-026 bytes as a flying leg
-    // under a dedicated issue (true bytes, controlled mtime — not a manufactured receipt).
-    let activeIssue = 139;
-    const flyingMtime = new Date("2026-08-05T11:59:45.000Z");
-    let plantedActive = false;
-    if (await pathExists(home139)) {
-      await cp(home139, join(ledgerDir, "issues", "139"), { recursive: true });
-      // Probe current state with a throwaway render of #139 alone.
-      const probeHtml = await renderFactoryBoardHtml(
-        [{ bookKey: "roles", ledgerDir }],
-        {
-          ok: true,
-          snapshot: {
-            books: [
-              {
-                bookKey: "roles",
-                owner: "Akagilnc",
-                repo: "ak-pi-workflow-roles",
-                tickets: [ticket({ issueNumber: 139, title: "probe", state: "open" })],
-              },
-            ],
-          },
-        },
-        new Date("2026-08-05T12:00:00.000Z"),
-      );
-      const probe = elementsWith(probeHtml, "data-ticket").find((t) => t["data-ticket"] === "139");
-      if (probe?.["data-current-state"]?.startsWith("unaccepted-")) {
-        plantedActive = true;
-      } else {
-        await rm(join(ledgerDir, "issues", "139"), { recursive: true, force: true });
-      }
-    }
-    if (!plantedActive) {
-      activeIssue = 998;
-      const unacceptedSrc = join(
-        fixtureLedger,
-        "issues",
-        "127",
-        "runs",
-        "review-026@ak-roles-127",
-      );
-      const dest = join(
-        ledgerDir,
-        "issues",
-        String(activeIssue),
-        "runs",
-        "review-026@ak-roles-127",
-      );
-      await cp(unacceptedSrc, dest, { recursive: true });
-      // Fresh mtime so the authentic unaccepted session lands in the flying band.
-      const sessionFiles = await readdir(join(dest, "session"));
-      for (const name of sessionFiles) {
-        if (!name.endsWith(".jsonl")) continue;
-        await utimes(join(dest, "session", name), flyingMtime, flyingMtime);
-      }
-    }
+    // 3) Genuine unaccepted active leg: exact true-home #139 latest run only.
+    // No substituted issue, fixture transplant, or mtime rewrite — absence or an
+    // accepted latest is an honest failure of this acceptance, not a cue to plant.
+    assert.ok(
+      await pathExists(home139),
+      "true-home acceptance requires home #139 (genuinely active leg issue)",
+    );
+    await cp(home139, join(ledgerDir, "issues", "139"), {
+      recursive: true,
+      preserveTimestamps: true,
+    });
+    const activeIssue = 139;
 
     // Plant zero-run #78 so native family edge is present for sort participation.
     await mkdir(join(ledgerDir, "issues", "78"), { recursive: true });
