@@ -246,13 +246,15 @@ Supported one-shot launch profile (required shape):
 
 ```bash
 pi --no-extensions -e <package-extension> --no-skills --no-prompt-templates \
-  --no-context-files --no-session --mode json --ak-role collector \
+  --no-context-files \
+  --session-dir ~/.ak-roles/books/<git-common-dir-host-basename>/issues/<issue>/runs/<invocation>/session \
+  --mode json --ak-role collector \
   --ak-collector-repo <owner/repo> --ak-collector-pr <n> \
   --ak-collector-legs <manifest.json> -p "Start collection." \
   >/dev/null 2>stderr.log </dev/null
 ```
 
-That profile means: `--no-skills`; `--no-extensions` with only the explicit Collector package extension; no prompt templates; no context files; exactly one print/JSON prompt. Do not load Skills, ambient extensions, prompt templates, or context files alongside Collector.
+That profile means: `--no-skills`; `--no-extensions` with only the explicit Collector package extension; no prompt templates; no context files; a durable `--session-dir` under the machine ledger home (not `--no-session`); exactly one print/JSON prompt. Do not load Skills, ambient extensions, prompt templates, or context files alongside Collector. The future public CLI (#11) owns computing the session path; this retained profile only records the durable-session shape.
 
 Legs-only caller example (`--ak-collector-legs`):
 

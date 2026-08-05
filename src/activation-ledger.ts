@@ -8,10 +8,11 @@ export type ActivationCorrelationIdentity =
   | { readonly kind: "caller"; readonly id: string }
   | { readonly kind: "absent" };
 
-/** Durable pointer to the Pi session principal — file when persisted, else directory. */
-export type ActivationSessionPointer =
-  | { readonly kind: "session-file"; readonly path: string }
-  | { readonly kind: "session-directory"; readonly path: string };
+/** Durable pointer to the authoritative Pi session file principal (ADR 0048/0049). */
+export type ActivationSessionPointer = {
+  readonly kind: "session-file";
+  readonly path: string;
+};
 
 export const ACCEPTED_ACTIVATION_EVENT = "accepted-activation" as const;
 
@@ -71,13 +72,14 @@ export function correlationIdentityFromEnv(
 
 export function durableSessionPointer(sessionManager: {
   getSessionFile?(): string | undefined;
-  getSessionDir(): string;
 }): ActivationSessionPointer {
   const file = sessionManager.getSessionFile?.();
   if (typeof file === "string" && file.length > 0) {
     return { kind: "session-file", path: file };
   }
-  return { kind: "session-directory", path: sessionManager.getSessionDir() };
+  throw new Error(
+    "Workflow role activation requires a durable Pi session file principal (getSessionFile); directory-only or --no-session invocations are rejected",
+  );
 }
 
 /**
@@ -125,9 +127,7 @@ export function buildAcceptedActivationFact(input: AcceptedActivationFactInput):
     role: input.role,
     observedAt: input.observedAt,
     bookKey: input.bookKey,
-    session: input.session.kind === "session-file"
-      ? { kind: "session-file", path: input.session.path }
-      : { kind: "session-directory", path: input.session.path },
+    session: { kind: "session-file", path: input.session.path },
     correlation: input.correlation.kind === "caller"
       ? { kind: "caller", id: input.correlation.id }
       : { kind: "absent" },
@@ -141,9 +141,7 @@ export function serializeAcceptedActivationFact(fact: AcceptedActivationFact): s
     role: fact.role,
     observedAt: fact.observedAt,
     bookKey: fact.bookKey,
-    session: fact.session.kind === "session-file"
-      ? { kind: "session-file", path: fact.session.path }
-      : { kind: "session-directory", path: fact.session.path },
+    session: { kind: "session-file", path: fact.session.path },
     correlation: fact.correlation.kind === "caller"
       ? { kind: "caller", id: fact.correlation.id }
       : { kind: "absent" },

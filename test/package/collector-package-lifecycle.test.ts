@@ -19,6 +19,7 @@ import {
   getSharedIsolatedPack,
   packageRoot,
   withColdInstalledPackage,
+  seedGitRepository,
   withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
@@ -41,6 +42,7 @@ test("installed npm tarball collector runs default gh transport end-to-end in pr
       { prefix: `ak-collector-install-${mode}-` },
       async ({ home }) => {
         await withColdInstalledPackage(home, async ({ fixture: consumer, installedRoot }) => {
+        seedGitRepository(consumer);
         const installedEntrypoint = resolve(
           installedRoot,
           "extensions/role-runtime.ts",
