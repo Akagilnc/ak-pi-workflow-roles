@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { promisify } from "node:util";
 
@@ -31,6 +34,14 @@ const EXPECTED_PEERS = {
   "@earendil-works/pi-coding-agent": "~0.83.0",
   typebox: ">=1.3.7 <=1.3.8",
 } as const;
+
+/** Declared TypeBox endpoints that must execute this packed package (docs/npm-identity.md). */
+const TYPEBOX_EXECUTABLE_MATRIX = ["1.3.7", "1.3.8"] as const;
+
+const TYPEBOX_ARTIFACT_CACHE = resolve(
+  tmpdir(),
+  "ak-pi-workflow-roles-typebox-matrix",
+);
 
 interface ExtractedPack {
   root: string;
@@ -152,4 +163,160 @@ test("packed peerDependencies use explicit evidence-bounded ranges, not wildcard
       assert.equal(extracted.packageJson.peerDependencies?.[name], range);
     }
   });
+});
+
+/**
+ * Materialize an exact typebox version tarball once (registry/cache), independent of
+ * Pi's nested dependency tree. Consumers install this as their top-level typebox peer.
+ */
+async function ensureTypeboxTarball(
+  version: (typeof TYPEBOX_EXECUTABLE_MATRIX)[number],
+): Promise<string> {
+  const cacheDir = resolve(TYPEBOX_ARTIFACT_CACHE, version);
+  const readyPath = resolve(cacheDir, "ready.json");
+  if (existsSync(readyPath)) {
+    const ready = JSON.parse(await readFile(readyPath, "utf8")) as {
+      version: string;
+      tarball: string;
+    };
+    if (ready.version === version && existsSync(ready.tarball)) {
+      return ready.tarball;
+    }
+  }
+
+  await mkdir(cacheDir, { recursive: true });
+  const { stdout } = await execFileAsync(
+    "npm",
+    ["pack", `typebox@${version}`, "--json", "--pack-destination", cacheDir],
+    { cwd: cacheDir, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
+  );
+  const entry = (JSON.parse(stdout) as Array<{ filename: string }>)[0];
+  assert.ok(entry?.filename, `npm pack typebox@${version} must emit a tarball`);
+  const tarball = resolve(cacheDir, entry.filename);
+  await writeFile(
+    readyPath,
+    JSON.stringify({ version, tarball, filename: entry.filename }, null, 2),
+  );
+  return tarball;
+}
+
+async function withTypeboxMatrixConsumer<
+  T,
+>(
+  typeboxVersion: (typeof TYPEBOX_EXECUTABLE_MATRIX)[number],
+  scenario: (paths: {
+    consumer: string;
+    installedRoot: string;
+    typeboxRoot: string;
+  }) => Promise<T>,
+): Promise<T> {
+  const pack = await getSharedIsolatedPack();
+  const typeboxTarball = await ensureTypeboxTarball(typeboxVersion);
+  const consumer = await mkdtemp(resolve(tmpdir(), `ak-typebox-matrix-${typeboxVersion}-`));
+  return await withPrimaryAwareCleanup(
+    async () => {
+      await writeFile(
+        resolve(consumer, "package.json"),
+        JSON.stringify({
+          private: true,
+          type: "module",
+          dependencies: {
+            "@akagilnc/pi-workflow-roles": `file:${pack.tarball}`,
+            "@earendil-works/pi-ai": `file:${resolve(
+              packageRoot,
+              "node_modules/@earendil-works/pi-ai",
+            )}`,
+            "@earendil-works/pi-coding-agent": `file:${resolve(
+              packageRoot,
+              "node_modules/@earendil-works/pi-coding-agent",
+            )}`,
+            typebox: `file:${typeboxTarball}`,
+          },
+        }),
+      );
+      await execFileAsync(
+        "npm",
+        ["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+        { cwd: consumer, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
+      );
+      const installedRoot = resolve(
+        consumer,
+        "node_modules/@akagilnc/pi-workflow-roles",
+      );
+      const typeboxRoot = resolve(consumer, "node_modules/typebox");
+      return await scenario({ consumer, installedRoot, typeboxRoot });
+    },
+    async () => {
+      await rm(consumer, { recursive: true, force: true });
+    },
+  );
+}
+
+test("cold-installed package executes against each declared typebox matrix endpoint", async () => {
+  for (const typeboxVersion of TYPEBOX_EXECUTABLE_MATRIX) {
+    await withTypeboxMatrixConsumer(typeboxVersion, async ({
+      consumer,
+      installedRoot,
+      typeboxRoot,
+    }) => {
+      const installedTypeboxVersion = JSON.parse(
+        await readFile(resolve(typeboxRoot, "package.json"), "utf8"),
+      ).version as string;
+      assert.equal(
+        installedTypeboxVersion,
+        typeboxVersion,
+        `consumer must resolve top-level typebox ${typeboxVersion}`,
+      );
+
+      const modulePath = resolve(
+        installedRoot,
+        "dist/package-contracts/fixer-packet.js",
+      );
+      const requireFromPackage = createRequire(modulePath);
+      const resolvedTypeboxEntry = await realpath(
+        requireFromPackage.resolve("typebox"),
+      );
+      const canonicalTypeboxRoot = await realpath(typeboxRoot);
+      assert.ok(
+        resolvedTypeboxEntry === canonicalTypeboxRoot ||
+          resolvedTypeboxEntry.startsWith(`${canonicalTypeboxRoot}/`),
+        `packed package must load consumer typebox ${typeboxVersion}, not Pi nested copies (resolved ${resolvedTypeboxEntry})`,
+      );
+
+      const fixerPacket = await import(pathToFileURL(modulePath).href) as {
+        parseFixerPrerequisites: (source: string) => readonly unknown[];
+      };
+      const accepted = fixerPacket.parseFixerPrerequisites(
+        JSON.stringify([{ id: "matrix-ok", requirement: "need matrix proof" }]),
+      );
+      assert.equal(accepted.length, 1);
+      assert.equal(
+        (accepted[0] as { id: string }).id,
+        "matrix-ok",
+        `packed fixer schema must accept under typebox ${typeboxVersion}`,
+      );
+      assert.throws(
+        () =>
+          fixerPacket.parseFixerPrerequisites(
+            JSON.stringify([{ id: "bad id", requirement: "x" }]),
+          ),
+        /Fixer prerequisites/,
+        `packed fixer schema must reject under typebox ${typeboxVersion}`,
+      );
+
+      // Guard against silently using the workspace root typebox via path bleed.
+      const canonicalConsumerModules = await realpath(
+        resolve(consumer, "node_modules"),
+      );
+      const workspaceTypebox = await realpath(
+        resolve(packageRoot, "node_modules/typebox"),
+      ).catch(() => undefined);
+      assert.notEqual(canonicalTypeboxRoot, workspaceTypebox);
+      assert.ok(
+        canonicalTypeboxRoot.startsWith(`${canonicalConsumerModules}/`) ||
+          canonicalTypeboxRoot === canonicalConsumerModules,
+        "typebox peer must live inside the cold-installed consumer",
+      );
+    });
+  }
 });
