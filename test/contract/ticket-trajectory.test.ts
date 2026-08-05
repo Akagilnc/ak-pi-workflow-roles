@@ -568,12 +568,13 @@ test("production lifecycle regenerates within refresh boundary and stops", async
   }
 });
 
-test("JSONL middle corruption fails loudly; unfinished tail stays tolerable", async () => {
+test("JSONL completed malformed lines fail loudly; unfinished tail stays tolerable", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-jsonl-"));
   try {
     const good = join(workspace, "good.jsonl");
     const tail = join(workspace, "tail.jsonl");
     const middle = join(workspace, "middle.jsonl");
+    const completedFinal = join(workspace, "completed-final.jsonl");
 
     const row = (n: number) =>
       JSON.stringify({
@@ -587,14 +588,48 @@ test("JSONL middle corruption fails loudly; unfinished tail stays tolerable", as
     await writeFile(good, `${row(1)}\n${row(2)}\n`, "utf8");
     assert.equal((await readLedgerSessionJsonl(good)).length, 2);
 
-    // Truncated unfinished tail (no complete record after the broken line).
+    // Truncated unfinished tail (no record terminator after the broken fragment).
     await writeFile(tail, `${row(1)}\n{"type":"session","id":`, "utf8");
     const tailRows = await readLedgerSessionJsonl(tail);
     assert.equal(tailRows.length, 1);
 
     // Malformed middle with a valid accepted-looking suffix after it — must throw.
     await writeFile(middle, `${row(1)}\nNOT-JSON\n${row(3)}\n`, "utf8");
-    await assert.rejects(() => readLedgerSessionJsonl(middle), /malformed JSONL record in middle/i);
+    await assert.rejects(
+      () => readLedgerSessionJsonl(middle),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /malformed JSONL record/i);
+        assert.match(err.message, /at line 2/);
+        assert.ok(err.message.includes(middle), "error must carry file context");
+        return true;
+      },
+    );
+
+    // Completed-by-terminator final malformed line with nothing after — must throw.
+    // Prior heuristic ("no non-empty line follows") would silently return [].
+    await writeFile(completedFinal, "NOT-JSON\n", "utf8");
+    await assert.rejects(
+      () => readLedgerSessionJsonl(completedFinal),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /malformed JSONL record/i);
+        assert.match(err.message, /at line 1/);
+        assert.ok(err.message.includes(completedFinal), "error must carry file context");
+        return true;
+      },
+    );
+    await writeFile(completedFinal, `${row(1)}\nNOT-JSON\n`, "utf8");
+    await assert.rejects(
+      () => readLedgerSessionJsonl(completedFinal),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /malformed JSONL record/i);
+        assert.match(err.message, /at line 2/);
+        assert.ok(err.message.includes(completedFinal), "error must carry file context");
+        return true;
+      },
+    );
 
     // End-to-end: middle corruption must not render as a quiet attempts-only page.
     const ledgerCopy = join(workspace, "ledger");
@@ -610,7 +645,36 @@ test("JSONL middle corruption fails loudly; unfinished tail stays tolerable", as
 
     await assert.rejects(
       () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
-      /malformed JSONL record in middle/i,
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /malformed JSONL record/i);
+        assert.match(err.message, /at line 2/);
+        assert.ok(
+          err.message.includes(sessionPath) || err.message.includes("plan-court-001"),
+          "error must carry file context",
+        );
+        return true;
+      },
+    );
+
+    // End-to-end: completed final malformed line (terminator, nothing after) must also
+    // fail through the production render seam — never a quiet empty/under-count page.
+    const originalLines = original.endsWith("\n") ? original.slice(0, -1).split("\n") : original.split("\n");
+    const withCompletedFinalJunk = `${originalLines.join("\n")}\nNOT-JSON\n`;
+    await writeFile(sessionPath, withCompletedFinalJunk, "utf8");
+    const expectedFinalLine = originalLines.length + 1;
+    await assert.rejects(
+      () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /malformed JSONL record/i);
+        assert.match(err.message, new RegExp(`at line ${expectedFinalLine}`));
+        assert.ok(
+          err.message.includes(sessionPath) || err.message.includes("plan-court-001"),
+          "error must carry file context",
+        );
+        return true;
+      },
     );
 
     // Complete non-object JSONL (null/array/primitive) must fail cause-preservingly

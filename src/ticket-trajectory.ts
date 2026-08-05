@@ -142,12 +142,16 @@ function attr(value: string): string {
 
 /**
  * Read session JSONL with honest live-tail semantics:
- * a malformed line is tolerated only when it is the unfinished tail
- * (no non-empty line follows). Mid-file corruption after which more
- * records exist must fail loudly — never silently under-count.
+ * a malformed line is tolerated only when it is an unfinished final
+ * fragment at EOF (no record terminator after it). Any malformed line
+ * completed by a line terminator must fail loudly with file and 1-based
+ * line context — even when no non-empty record follows — never silently
+ * under-count.
  */
 export async function readLedgerSessionJsonl(path: string): Promise<SessionRow[]> {
   const text = await readFile(path, "utf8");
+  // split keeps a trailing empty segment iff text ends with "\n", so
+  // index < lines.length - 1 means this segment was terminated.
   const lines = text.split("\n");
   const rows: SessionRow[] = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -158,13 +162,13 @@ export async function readLedgerSessionJsonl(path: string): Promise<SessionRow[]
       row = JSON.parse(line);
     } catch (error) {
       if (!(error instanceof SyntaxError)) throw error;
-      const hasRecordAfter = lines.slice(index + 1).some((candidate) => candidate.trim().length > 0);
-      if (hasRecordAfter) {
+      const completedByTerminator = index < lines.length - 1;
+      if (completedByTerminator) {
         throw new Error(
-          `malformed JSONL record in middle of ${path} at line ${index + 1}: ${error.message}`,
+          `malformed JSONL record in ${path} at line ${index + 1}: ${error.message}`,
         );
       }
-      // truncated live tail — keep prior complete rows
+      // unfinished fragment at EOF — keep prior complete rows
       break;
     }
     // Syntactically complete line: must be a session object. Silent omission
