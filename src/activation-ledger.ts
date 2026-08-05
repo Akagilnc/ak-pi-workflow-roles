@@ -4,7 +4,7 @@ import {
   openSync,
   writeSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 
 import type { ActivationSessionPointer } from "./activation-ledger-session.ts";
 import {
@@ -52,13 +52,8 @@ export type AcceptedActivationFact = {
   readonly correlation: ActivationCorrelationIdentity;
 };
 
-export type AcceptedActivationFactInput = {
-  readonly role: string;
-  readonly observedAt: string;
-  readonly bookKey: string;
-  readonly session: ActivationSessionPointer;
-  readonly correlation: ActivationCorrelationIdentity;
-};
+/** Trusted typed inputs for building the closed fact (canonical fact minus event discriminant). */
+export type AcceptedActivationFactInput = Omit<AcceptedActivationFact, "event">;
 
 /**
  * Host correlation channel (not a CLI flag): a non-blank AK_CORRELATION_ID carries
@@ -78,13 +73,9 @@ export function correlationIdentityFromEnv(
  * Sole closed whitelist projection for accepted-activation facts (ADR 0049).
  * Build and serialize both consume this — zero content keys, no dual projection drift.
  */
-function projectAcceptedActivationFact(input: {
-  readonly role: string;
-  readonly observedAt: string;
-  readonly bookKey: string;
-  readonly session: ActivationSessionPointer;
-  readonly correlation: ActivationCorrelationIdentity;
-}): AcceptedActivationFact {
+function projectAcceptedActivationFact(
+  input: AcceptedActivationFactInput,
+): AcceptedActivationFact {
   return {
     event: ACCEPTED_ACTIVATION_EVENT,
     role: input.role,
@@ -106,15 +97,6 @@ export function buildAcceptedActivationFact(input: AcceptedActivationFactInput):
 export function serializeAcceptedActivationFact(fact: AcceptedActivationFact): string {
   return `${JSON.stringify(projectAcceptedActivationFact(fact))}\n`;
 }
-
-/** Write seam matching node:fs writeSync — injectable for controlled short-write tests. */
-export type ActivationLedgerWriteSync = (
-  fd: number,
-  buffer: NodeJS.ArrayBufferView,
-  offset: number,
-  length: number,
-  position: number | null,
-) => number;
 
 /**
  * Run body then cleanups without letting cleanup erase the primary failure.
@@ -156,29 +138,36 @@ function settleWithCleanup(body: () => void, cleanups: ReadonlyArray<() => void>
 }
 
 /**
- * Append one complete JSONL record with one O_APPEND write of the full record.
- * Shared-ledger contract: concurrent successful append-only producers cannot
- * overwrite one another. A short write is an honest infrastructure failure
- * (ADR 0049) — no non-append rollback/truncate. Close failure cannot mask the
- * primary write cause; cleanup evidence is retained.
+ * Bare O_APPEND write of one complete line under an absolute ledger home.
+ * Production binds writeSync; this lower seam owns open/write/close honesty only and
+ * does not appear on the production fact-append options surface.
  */
-export function appendAcceptedActivationFact(
+export function appendActivationLedgerLine(
   ledgerPath: string,
-  fact: AcceptedActivationFact,
+  line: Uint8Array,
   options: {
     ledgerHome: string;
-    /** Optional write seam for controlled short-write tests; production uses writeSync. */
-    write?: ActivationLedgerWriteSync;
+    write: (
+      fd: number,
+      buffer: NodeJS.ArrayBufferView,
+      offset: number,
+      length: number,
+      position: number | null,
+    ) => number;
   },
 ): void {
-  const line = Buffer.from(serializeAcceptedActivationFact(fact), "utf8");
+  if (!isAbsolute(options.ledgerHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger home must be absolute: ${options.ledgerHome}`,
+    );
+  }
   const resolvedLedger = resolve(ledgerPath);
   const resolvedHome = resolve(options.ledgerHome);
   const parent = dirname(resolvedLedger);
   ensureRealDirectoryTree(resolvedHome, parent);
   assertLedgerFileInsideHome(resolvedLedger, resolvedHome);
 
-  const write = options.write ?? writeSync;
+  const bytes = Buffer.isBuffer(line) ? line : Buffer.from(line);
   let ledgerFd: number | undefined;
 
   settleWithCleanup(
@@ -196,10 +185,10 @@ export function appendAcceptedActivationFact(
         );
       }
 
-      const written = write(ledgerFd, line, 0, line.length, null);
-      if (written !== line.length) {
+      const written = options.write(ledgerFd, bytes, 0, bytes.length, null);
+      if (written !== bytes.length) {
         throw new ActivationLedgerError(
-          `activation ledger short write: wrote ${written} of ${line.length} bytes to ${resolvedLedger}`,
+          `activation ledger short write: wrote ${written} of ${bytes.length} bytes to ${resolvedLedger}`,
         );
       }
     },
@@ -214,19 +203,32 @@ export function appendAcceptedActivationFact(
   );
 }
 
+/**
+ * Append one complete JSONL record with one O_APPEND write of the full record.
+ * Shared-ledger contract: concurrent successful append-only producers cannot
+ * overwrite one another. A short write is an honest infrastructure failure
+ * (ADR 0049) — no non-append rollback/truncate. Close failure cannot mask the
+ * primary write cause; cleanup evidence is retained.
+ */
+export function appendAcceptedActivationFact(
+  ledgerPath: string,
+  fact: AcceptedActivationFact,
+  options: { ledgerHome: string },
+): void {
+  appendActivationLedgerLine(
+    ledgerPath,
+    Buffer.from(serializeAcceptedActivationFact(fact), "utf8"),
+    { ledgerHome: options.ledgerHome, write: writeSync },
+  );
+}
+
 export function appendAcceptedActivationToBook(options: {
   ledgerHome: string;
   fact: AcceptedActivationFact;
-  write?: ActivationLedgerWriteSync;
 }): void {
-  const appendOptions: {
-    ledgerHome: string;
-    write?: ActivationLedgerWriteSync;
-  } = { ledgerHome: options.ledgerHome };
-  if (options.write !== undefined) appendOptions.write = options.write;
   appendAcceptedActivationFact(
     activationWaitingLedgerPath(options.ledgerHome, options.fact.bookKey),
     options.fact,
-    appendOptions,
+    { ledgerHome: options.ledgerHome },
   );
 }

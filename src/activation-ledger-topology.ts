@@ -26,9 +26,16 @@ export class ActivationLedgerError extends Error {
  * Sole package-owned machine home (ADR 0048 / #78): one enumerable family under
  * the process home directory. No env override — relative or invocation-varying
  * homes would split the family and can write into a consumer repository.
+ * Process home must already be absolute; relative HOME is rejected before any write.
  */
 export function resolveActivationLedgerHome(home: () => string = homedir): string {
-  return join(home(), ".ak-roles");
+  const processHome = home();
+  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`,
+    );
+  }
+  return resolve(processHome, ".ak-roles");
 }
 
 /** Enumerable book directory for one basename key. */
@@ -65,6 +72,9 @@ export function errorText(error: unknown): string {
  * Original filesystem causes are retained.
  */
 export function ensureRealDirectoryTree(root: string, targetDir: string): string {
+  if (!isAbsolute(root)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
+  }
   const absoluteRoot = resolve(root);
   const absoluteTarget = resolve(targetDir);
   if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
@@ -199,6 +209,9 @@ export function ensureRealDirectoryTree(root: string, targetDir: string): string
  * before open/write follows it.
  */
 export function assertLedgerFileInsideHome(ledgerPath: string, ledgerHome: string): void {
+  if (!isAbsolute(ledgerHome)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
+  }
   const resolvedLedger = resolve(ledgerPath);
   const resolvedHome = resolve(ledgerHome);
   try {
