@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -12,6 +12,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 
+import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
 import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   packageRoot,
@@ -28,7 +29,12 @@ async function runCli(mode: "print" | "json") {
   return withHermeticHome(
     { prefix: "ak-audit-cli-" },
     async ({ home, agentDir }) => {
-      const sessionDirectory = resolve(home, ".ak-roles/books/ak-roles-127/runs/audit-cli/session");
+      const sessionDirectory = resolve(
+        home,
+        ".ak-roles/books",
+        resolveBookKeyFromGit(packageRoot),
+        "runs/audit-cli/session",
+      );
       await mkdir(sessionDirectory, { recursive: true });
       const args = [
         "--no-extensions",
@@ -83,7 +89,16 @@ async function runTimeoutCli(mode: "print" | "json") {
     { prefix: "ak-audit-timeout-" },
     async ({ home, agentDir }) => {
       seedGitRepository(home);
-      const sessionDirectory = resolve(home, "runs/judge/session");
+      // Session principal must sit under the machine ledger book (ADR 0048).
+      const sessionDirectory = resolve(
+        home,
+        ".ak-roles",
+        "books",
+        basename(home),
+        "runs",
+        "judge-timeout",
+        "session",
+      );
       await mkdir(sessionDirectory, { recursive: true });
       const args = [
         "--no-extensions",
@@ -136,7 +151,17 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
     async ({ home, agentDir }) => {
       seedGitRepository(home);
       const issueRoot = resolve(home, ".ak/work/issues/28");
-      const sessionDirectory = resolve(issueRoot, "runs/judge/session");
+      await mkdir(issueRoot, { recursive: true });
+      // Role session under ledger book; Navigator subject still derives from issueRoot cwd.
+      const sessionDirectory = resolve(
+        home,
+        ".ak-roles",
+        "books",
+        basename(home),
+        "runs",
+        "judge-navigator",
+        "session",
+      );
       await mkdir(sessionDirectory, { recursive: true });
       await writeFile(
         resolve(issueRoot, "authority.md"),
@@ -176,6 +201,7 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
           PI_CODING_AGENT_DIR: agentDir,
           AK_HEALTHY_NAVIGATOR: "1",
           AK_NAVIGATOR_ROOT: issueRoot,
+          AK_ROLE_SESSION_DIR: sessionDirectory,
           PI_OFFLINE: "1",
         },
       });
@@ -311,7 +337,12 @@ async function runCoderSkillFailureCli(
           "---\nname: tdd\ndescription: empty fixture\n---\n\n",
         );
       }
-      const sessionDirectory = resolve(home, ".ak-roles/books/ak-roles-127/runs/coder-skill-fatal/session");
+      const sessionDirectory = resolve(
+        home,
+        ".ak-roles/books",
+        resolveBookKeyFromGit(packageRoot),
+        "runs/coder-skill-fatal/session",
+      );
       await mkdir(sessionDirectory, { recursive: true });
       const args = [
         "--no-extensions",

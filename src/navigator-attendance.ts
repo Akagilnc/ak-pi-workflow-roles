@@ -305,16 +305,34 @@ function issueRoot(value: string): string | undefined {
   return issue === undefined || issue === "" ? undefined : normalized.slice(0, index + marker.length) + issue;
 }
 
+function workIdentityFromCwd(cwd: string): string | undefined {
+  const resolvedCwd = resolve(cwd, ".");
+  const cwdIssue = issueRoot(resolvedCwd);
+  if (cwdIssue !== undefined) return cwdIssue;
+  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
+  return undefined;
+}
+
+/** Machine-ledger session paths are not work identity (ADR 0048 session-in-home). */
+function isMachineLedgerSessionPath(sessionPath: string): boolean {
+  const normalized = sessionPath.replaceAll("\\", "/");
+  return normalized.includes("/.ak-roles/books/");
+}
+
 function subjectPath(sessionDir: string, cwd = process.cwd()): string {
   // Session placement is an implementation detail. Resolve it before deriving
   // the work identity so relative and absolute role invocations share one key.
   if (sessionDir === "") {
-    const resolvedCwd = resolve(cwd, ".");
-    const cwdIssue = issueRoot(resolvedCwd);
-    if (cwdIssue !== undefined) return cwdIssue;
-    if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
+    // Preserve prior fall-through: empty sessionDir with no work cwd → cwd/.ak/work.
+    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
   }
   const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
+  // Durable role sessions under the machine ledger home are not work roots.
+  // Derive subject from cwd (same as empty sessionDir / in-memory) so Navigator
+  // keeps issue-root identity when ignition places --session-dir under ADR 0048.
+  if (isMachineLedgerSessionPath(resolvedSession)) {
+    return workIdentityFromCwd(cwd) ?? resolvedSession;
+  }
   const issue = issueRoot(resolvedSession);
   if (issue !== undefined) return issue;
   // Ad-hoc role sessions live below the same work root.  Remove the role's

@@ -722,8 +722,8 @@ export function createRoleRuntimeExtension(
         // Production topology only (ADR 0048/0049): no test-only ledger hooks.
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
-        const session = durableSessionPointer(ctx.sessionManager);
         const ledgerHome = resolveActivationLedgerHome();
+        const session = durableSessionPointer(ctx.sessionManager, { ledgerHome, bookKey });
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
         appendAcceptedActivationToBook({
           ledgerHome,

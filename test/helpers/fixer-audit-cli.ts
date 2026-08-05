@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
 import { packageRoot, runPiSubprocess, withHermeticHome } from "./pi-test-harness.ts";
 
 export type FixerAuditFailureCliOptions = {
@@ -45,11 +46,13 @@ export async function runFixerAuditFailureCli(
         typeof packet === "string" ? packet : JSON.stringify(packet),
       );
 
+      // Book key follows production git common-dir host basename (worktree → main repo).
+      const bookKey = resolveBookKeyFromGit(packageRoot);
       const sessionDirectory = resolve(
         home,
         ".ak-roles",
         "books",
-        "ak-roles-127",
+        bookKey,
         "runs",
         `fixer-audit-${mode}`,
         "session",

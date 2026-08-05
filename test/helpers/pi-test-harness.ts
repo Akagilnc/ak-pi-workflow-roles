@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   copyFile,
   cp,
@@ -36,6 +36,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   activationWaitingLedgerPath,
+  resolveActivationLedgerHome,
+  resolveBookKeyFromGit,
   type AcceptedActivationFact,
 } from "../../src/activation-ledger.ts";
 
@@ -608,20 +610,77 @@ export function activationBookKeyFor(cwd: string): string {
 }
 
 /**
+ * Write a genuine session principal under the machine ledger book (ADR 0048).
+ * Tests must not label nonexistent / outside-home paths durable.
+ */
+export function persistActivationSessionFile(input: {
+  home: string;
+  bookKey: string;
+  name?: string;
+  cwd?: string;
+}): string {
+  const sessionDir = join(
+    machineLedgerHome(input.home),
+    "books",
+    input.bookKey,
+    "runs",
+    "activation",
+    input.name ?? "default",
+  );
+  mkdirSync(sessionDir, { recursive: true });
+  const sessionFile = join(sessionDir, "session.jsonl");
+  if (!existsSync(sessionFile)) {
+    writeFileSync(
+      sessionFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: input.name ?? "activation-session",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: input.cwd ?? input.home,
+      })}\n`,
+    );
+  }
+  return sessionFile;
+}
+
+/**
  * ExtensionContext that exercises production book-key + durable session-file paths.
+ * Default session files are genuinely persisted under the ledger book.
  * Pass `sessionFile: null` only when testing the missing-principal rejection.
+ * Pass an explicit `sessionFile` for rejection-class paths (caller owns creation).
  */
 export function activationExtensionContext(input: {
   cwd: string;
   mode?: ExtensionContext["mode"];
+  home?: string;
+  bookKey?: string;
   sessionDir?: string;
   sessionFile?: string | null;
   abort?: () => void;
 }): ExtensionContext {
-  const sessionDir = input.sessionDir ?? join(input.cwd, "session");
-  const sessionFile = input.sessionFile === null
-    ? undefined
-    : input.sessionFile ?? join(sessionDir, "session.jsonl");
+  const home = input.home ?? process.env.HOME;
+  if (typeof home !== "string" || home.length === 0) {
+    throw new Error("activationExtensionContext requires home or process.env.HOME");
+  }
+  const bookKey = input.bookKey ?? activationBookKeyFor(input.cwd);
+  let sessionFile: string | undefined;
+  let sessionDir: string;
+  if (input.sessionFile === null) {
+    sessionFile = undefined;
+    sessionDir = input.sessionDir ?? join(machineLedgerHome(home), "books", bookKey, "runs", "activation", "missing");
+  } else if (input.sessionFile !== undefined) {
+    sessionFile = input.sessionFile;
+    sessionDir = input.sessionDir ?? dirname(sessionFile);
+  } else {
+    sessionFile = persistActivationSessionFile({
+      home,
+      bookKey,
+      cwd: input.cwd,
+      ...(input.sessionDir === undefined ? {} : { name: basename(input.sessionDir) }),
+    });
+    sessionDir = input.sessionDir ?? dirname(sessionFile);
+  }
   return {
     mode: input.mode ?? "print",
     cwd: input.cwd,
@@ -833,11 +892,33 @@ export async function withInProcessPi<T>(
   });
   await loader.reload();
   // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
-  // derivation from cwd/.ak/work stays intact, while exposing a durable file principal
-  // for activation ledger admission (ADR 0048 — no directory-pointer degradation).
+  // derivation from cwd/.ak/work stays intact, while exposing a genuinely persisted
+  // session file under the machine ledger book (ADR 0048).
   const memorySession = SessionManager.inMemory(options.cwd);
-  const durableSessionFile = resolve(options.agentDir, "sessions", "inprocess-session.jsonl");
-  await mkdir(dirname(durableSessionFile), { recursive: true });
+  let durableSessionFile: string;
+  const hermeticHome = process.env.HOME;
+  try {
+    if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
+      throw new Error("withInProcessPi requires process.env.HOME for ledger session placement");
+    }
+    // Confirm production ledger home resolves under this HOME before persisting.
+    if (resolveActivationLedgerHome() !== machineLedgerHome(hermeticHome)) {
+      throw new Error("withInProcessPi ledger home does not match hermetic HOME");
+    }
+    durableSessionFile = persistActivationSessionFile({
+      home: hermeticHome,
+      bookKey: resolveBookKeyFromGit(options.cwd),
+      name: "inprocess-pi",
+      cwd: options.cwd,
+    });
+  } catch {
+    // Non-git cwd never reaches session admission (book key fails first).
+    durableSessionFile = resolve(options.agentDir, "sessions", "inprocess-session.jsonl");
+    await mkdir(dirname(durableSessionFile), { recursive: true });
+    if (!existsSync(durableSessionFile)) {
+      await writeFile(durableSessionFile, "\n");
+    }
+  }
   const sessionManager = new Proxy(memorySession, {
     get(target, property, receiver) {
       if (property === "getSessionFile") return () => durableSessionFile;

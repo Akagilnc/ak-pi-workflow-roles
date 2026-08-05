@@ -52,6 +52,7 @@ import {
   activationExtensionContext,
   machineLedgerHome,
   packageRoot,
+  persistActivationSessionFile,
   readAcceptedActivationFacts,
   runNodeSubprocess,
   seedGitRepository,
@@ -401,8 +402,12 @@ test("every registered role writes exactly one accepted-activation fact after ad
       for (const entry of PACKAGED_ROLE_REGISTRY) {
         process.exitCode = undefined;
         const needsHostTools = entry.role === "collector" || entry.role === "merger";
-        const sessionFile = join(home, "sessions", `${entry.role}.jsonl`);
-        mkdirSync(join(home, "sessions"), { recursive: true });
+        const sessionFile = persistActivationSessionFile({
+          home,
+          bookKey,
+          name: entry.role,
+          cwd: home,
+        });
 
         process.env.AK_CORRELATION_ID = `corr-${entry.role}`;
         const withCorrelation = registryPi({
@@ -413,6 +418,8 @@ test("every registered role writes exactly one accepted-activation fact after ad
         createRoleRuntimeExtension(admissionDepsForRole(entry.role, fixtureRoot))(withCorrelation.pi);
         const ctx = activationExtensionContext({
           cwd: home,
+          home,
+          bookKey,
           sessionFile,
           abort() {},
         });
@@ -428,7 +435,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
           role: entry.role,
           observedAt: "2025-06-01T12:00:00.000Z",
           bookKey,
-          session: { kind: "session-file", path: sessionFile },
+          session: { kind: "session-file", path: resolve(sessionFile) },
           correlation: { kind: "caller", id: `corr-${entry.role}` },
         });
       }
@@ -443,7 +450,14 @@ test("every registered role writes exactly one accepted-activation fact after ad
         { reason: "startup" },
         activationExtensionContext({
           cwd: home,
-          sessionFile: join(home, "sessions", "judge-absent.jsonl"),
+          home,
+          bookKey,
+          sessionFile: persistActivationSessionFile({
+            home,
+            bookKey,
+            name: "judge-absent",
+            cwd: home,
+          }),
         }),
       );
       const afterAbsent = readAcceptedActivationFacts(home, bookKey);
@@ -498,7 +512,7 @@ test("unselected role and unsupported role leave zero accepted-activation facts"
   });
 });
 
-test("non-git cwd and missing durable session fail before model dispatch with zero accepted facts", async () => {
+test("non-git cwd and durable session rejection classes fail before model dispatch with zero accepted facts", async () => {
   await withHermeticHome({ prefix: "ak-act-nongit-" }, async ({ home }) => {
     process.exitCode = undefined;
     let aborts = 0;
@@ -512,8 +526,12 @@ test("non-git cwd and missing durable session fail before model dispatch with ze
       activationTraceWriter: () => {},
     })(pi);
     // Hermetic home is intentionally not a git repo (generic withHermeticHome has no git substrate).
+    // Pre-create a ledger session so non-git fails on book-key, not session placement.
+    const bookKey = activationBookKeyFor(home);
     const ctx = activationExtensionContext({
       cwd: home,
+      home,
+      bookKey,
       abort() { aborts++; },
     });
     await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
@@ -523,8 +541,7 @@ test("non-git cwd and missing durable session fail before model dispatch with ze
       return true;
     });
     assert.equal(soulLoads, 0, "activation stage must not run before book-key resolution");
-    assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
-    assert.equal(existsSync(join(machineLedgerHome(home), "books")), false);
+    assert.equal(readAcceptedActivationFacts(home, bookKey).length, 0);
     assert.equal(aborts, 1);
     assert.equal(process.exitCode, 1);
     await assert.rejects(async () => {
@@ -533,37 +550,97 @@ test("non-git cwd and missing durable session fail before model dispatch with ze
     }, (error: unknown) => error instanceof ActivationBarrierError);
     assert.equal(providerTurns, 0);
 
-    // Missing durable session principal fails closed (no directory-pointer degradation).
-    process.exitCode = undefined;
-    aborts = 0;
-    soulLoads = 0;
-    providerTurns = 0;
     seedGitRepository(home);
-    const missingSession = registryPi({ role: "judge" });
-    createRoleRuntimeExtension({
-      loadJudgeSoul: async () => { soulLoads += 1; return "LAW"; },
-      transcriptFromContext: () => "",
-      auditSoulCompliance: async () => ({ status: "pass" }),
-      activationTraceWriter: () => {},
-    })(missingSession.pi);
-    const noSessionCtx = activationExtensionContext({
-      cwd: home,
-      sessionFile: null,
-      abort() { aborts++; },
-    });
-    await assert.rejects(
-      async () => missingSession.handlers.get("session_start")?.[0]?.({ reason: "startup" }, noSessionCtx),
-      (error: unknown) => error instanceof Error && /durable Pi session file principal/.test(error.message),
+
+    async function rejectSessionClass(
+      label: string,
+      sessionFile: string | null,
+      messagePattern: RegExp,
+      requireCause = false,
+    ): Promise<void> {
+      process.exitCode = undefined;
+      aborts = 0;
+      soulLoads = 0;
+      providerTurns = 0;
+      const beforeFacts = readAcceptedActivationFacts(home, bookKey).length;
+      const { pi: rolePi, handlers: roleHandlers } = registryPi({ role: "judge" });
+      createRoleRuntimeExtension({
+        loadJudgeSoul: async () => { soulLoads += 1; return "LAW"; },
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        activationTraceWriter: () => {},
+      })(rolePi);
+      const rejectCtx = activationExtensionContext({
+        cwd: home,
+        home,
+        bookKey,
+        sessionFile,
+        abort() { aborts++; },
+      });
+      await assert.rejects(
+        async () => roleHandlers.get("session_start")?.[0]?.({ reason: "startup" }, rejectCtx),
+        (error: unknown) => {
+          assert.ok(error instanceof Error, `${label} must throw Error`);
+          assert.match(error.message, messagePattern, label);
+          if (requireCause) assert.ok(error.cause !== undefined, `${label} must retain original cause`);
+          return true;
+        },
+      );
+      assert.equal(soulLoads, 0, `${label}: activation stage must not run`);
+      assert.equal(readAcceptedActivationFacts(home, bookKey).length, beforeFacts, `${label}: zero facts`);
+      assert.equal(aborts, 1, `${label}: abort once`);
+      assert.equal(process.exitCode, 1, `${label}: nonzero exit`);
+      await assert.rejects(async () => {
+        for (const before of roleHandlers.get("before_agent_start") ?? []) await before({}, rejectCtx);
+        providerTurns++;
+      }, (error: unknown) => error instanceof ActivationBarrierError);
+      assert.equal(providerTurns, 0, `${label}: no provider turn`);
+    }
+
+    // Missing getSessionFile principal (empty / --no-session).
+    await rejectSessionClass(
+      "missing principal",
+      null,
+      /durable Pi session file principal/,
     );
-    assert.equal(soulLoads, 0, "activation stage must not run without a durable session principal");
-    assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
-    assert.equal(aborts, 1);
-    assert.equal(process.exitCode, 1);
-    await assert.rejects(async () => {
-      for (const before of missingSession.handlers.get("before_agent_start") ?? []) await before({}, noSessionCtx);
-      providerTurns++;
-    }, (error: unknown) => error instanceof ActivationBarrierError);
-    assert.equal(providerTurns, 0);
+
+    // Fabricated path under the book: neither file nor parent session-dir exists.
+    await rejectSessionClass(
+      "missing file",
+      join(machineLedgerHome(home), "books", bookKey, "runs", "no-such", "missing.jsonl"),
+      /durable session file does not exist/,
+      true,
+    );
+
+    // Directory masquerading as the session file principal.
+    const dirPrincipal = join(machineLedgerHome(home), "books", bookKey, "runs", "dir-principal");
+    mkdirSync(dirPrincipal, { recursive: true });
+    await rejectSessionClass(
+      "directory principal",
+      dirPrincipal,
+      /must be a file, not a directory/,
+    );
+
+    // Relative path rejected (not absolute under the ledger book).
+    await rejectSessionClass(
+      "relative path",
+      "relative/session.jsonl",
+      /absolute durable session file path/,
+    );
+
+    // Outside-home /tmp pointer rejected with topology cause.
+    await rejectSessionClass(
+      "outside-home /tmp",
+      join(tmpdir(), "ak-act-outside-session.jsonl"),
+      /under the machine ledger book/,
+    );
+
+    // Consumer-repository pointer rejected (cwd-relative durable claim).
+    await rejectSessionClass(
+      "consumer repository",
+      join(home, "repo-session.jsonl"),
+      /under the machine ledger book/,
+    );
   });
 });
 
@@ -571,10 +648,11 @@ test("append failure preserves original cause, aborts nonzero, and blocks provid
   await withHermeticHome({ prefix: "ak-act-append-" }, async ({ home }) => {
     seedGitRepository(home);
     process.exitCode = undefined;
-    // Make the sole machine home unwritable so production O_APPEND fails with the OS cause.
-    const ledgerHome = machineLedgerHome(home);
-    mkdirSync(ledgerHome, { recursive: true });
-    chmodSync(ledgerHome, 0o555);
+    const bookKey = activationBookKeyFor(home);
+    // Persist the durable session principal, then lock the book dir so O_APPEND fails.
+    const sessionFile = persistActivationSessionFile({ home, bookKey, cwd: home });
+    const bookDir = join(machineLedgerHome(home), "books", bookKey);
+    chmodSync(bookDir, 0o555);
     let aborts = 0;
     try {
       const { pi, handlers } = registryPi({ role: "judge" });
@@ -586,6 +664,9 @@ test("append failure preserves original cause, aborts nonzero, and blocks provid
       })(pi);
       const ctx = activationExtensionContext({
         cwd: home,
+        home,
+        bookKey,
+        sessionFile,
         abort() { aborts++; },
       });
       await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
@@ -600,7 +681,7 @@ test("append failure preserves original cause, aborts nonzero, and blocks provid
         for (const before of handlers.get("before_agent_start") ?? []) await before({}, ctx);
       }, (error: unknown) => error instanceof ActivationBarrierError);
     } finally {
-      chmodSync(ledgerHome, 0o755);
+      chmodSync(bookDir, 0o755);
     }
   });
 });
@@ -716,8 +797,17 @@ test("real subprocess activation writes one enumerable fact under production hom
     const repo = join(home, "repo-main");
     mkdirSync(repo);
     seedGitRepository(repo);
-    const sessionDir = join(home, ".ak-roles", "books", "repo-main", "sessions", "run-1");
+    const sessionDir = join(home, ".ak-roles", "books", "repo-main", "runs", "run-1", "session");
     mkdirSync(sessionDir, { recursive: true });
+    const sessionFile = join(sessionDir, "session.jsonl");
+    // Genuinely persist the principal (admission requires file or prepared session-dir under the book).
+    writeFileSync(sessionFile, `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "subproc-session",
+      timestamp: "2025-01-02T00:00:00.000Z",
+      cwd: repo,
+    })}\n`);
 
     // Focused process boundary for production topology only — registry owns cardinality/failure classes.
     const ok = await runNodeSubprocess([
@@ -743,7 +833,7 @@ const ctx = {
   abort() {},
   sessionManager: {
     getSessionDir: () => process.env.SESSION_DIR,
-    getSessionFile: () => process.env.SESSION_DIR + "/session.jsonl",
+    getSessionFile: () => process.env.SESSION_FILE,
   },
 };
 await handlers.get("session_start")[0]({ reason: "startup" }, ctx);
@@ -754,6 +844,7 @@ await handlers.get("session_start")[0]({ reason: "startup" }, ctx);
         ...process.env,
         REPO_CWD: repo,
         SESSION_DIR: sessionDir,
+        SESSION_FILE: sessionFile,
         HOME: home,
         AK_CORRELATION_ID: "subproc-1",
         PI_CODING_AGENT_DIR: agentDir,
@@ -767,7 +858,7 @@ await handlers.get("session_start")[0]({ reason: "startup" }, ctx);
     assert.equal(fact.event, ACCEPTED_ACTIVATION_EVENT);
     assert.equal(fact.role, "judge");
     assert.equal(fact.bookKey, "repo-main");
-    assert.deepEqual(fact.session, { kind: "session-file", path: join(sessionDir, "session.jsonl") });
+    assert.deepEqual(fact.session, { kind: "session-file", path: resolve(sessionFile) });
     assert.deepEqual(fact.correlation, { kind: "caller", id: "subproc-1" });
     assert.deepEqual(readdirSync(join(home, ".ak-roles", "books")).sort(), ["repo-main"]);
   });
