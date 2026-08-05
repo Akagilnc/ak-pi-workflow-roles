@@ -67,9 +67,59 @@ export function errorText(error: unknown): string {
 }
 
 /**
+ * Ensure the configured ledger root is a physical directory identity.
+ * lstat before create/realpath: a root symlink is never admitted, even when its
+ * target is a directory. Missing roots are created; post-create re-lstat covers
+ * a concurrent symlink swap. Native stat/mkdir causes are retained.
+ */
+function assertPhysicalLedgerRoot(absoluteRoot: string): void {
+  let st: ReturnType<typeof lstatSync> | undefined;
+  try {
+    st = lstatSync(absoluteRoot);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  if (st === undefined) {
+    try {
+      mkdirSync(absoluteRoot, { recursive: true });
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+    try {
+      st = lstatSync(absoluteRoot);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  if (st.isSymbolicLink()) {
+    throw new ActivationLedgerError(
+      `activation ledger home is a symbolic link: ${absoluteRoot}`,
+    );
+  }
+  if (!st.isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
+  }
+}
+
+/**
  * Create `targetDir` (and missing parents) under `root` without following pre-existing
  * symlink components that escape the real root. Returns the real path of `targetDir`.
- * Original filesystem causes are retained.
+ * The configured root itself must be a physical directory — a pre-existing root symlink
+ * is rejected before realpath/creation so the package-owned machine home cannot redirect
+ * into a consumer repository. Original filesystem causes are retained.
  */
 export function ensureRealDirectoryTree(root: string, targetDir: string): string {
   if (!isAbsolute(root)) {
@@ -83,14 +133,9 @@ export function ensureRealDirectoryTree(root: string, targetDir: string): string
     );
   }
 
-  try {
-    mkdirSync(absoluteRoot, { recursive: true });
-  } catch (error) {
-    throw new ActivationLedgerError(
-      `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
-      { cause: error },
-    );
-  }
+  // Type-identity the configured root before realpath/creation. Nested component
+  // containment below still applies once the root is a physical directory.
+  assertPhysicalLedgerRoot(absoluteRoot);
 
   let realRoot: string;
   try {
