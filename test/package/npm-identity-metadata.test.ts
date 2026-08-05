@@ -29,8 +29,8 @@ const UPSTREAM_MATT_MIT = await readFile(
 );
 
 const EXPECTED_PEERS = {
-  "@earendil-works/pi-ai": "~0.83.0",
-  "@earendil-works/pi-coding-agent": "~0.83.0",
+  "@earendil-works/pi-ai": ">=0.83.0 <=0.83.0",
+  "@earendil-works/pi-coding-agent": ">=0.83.0 <=0.83.0",
   typebox: ">=1.3.7 <=1.3.8",
 } as const;
 

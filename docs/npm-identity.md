@@ -61,8 +61,8 @@ Explicit ranges replace upstream Pi docs' `"*"` recommendation for bundled peers
 
 | peer | range | executable matrix |
 | --- | --- | --- |
-| `@earendil-works/pi-coding-agent` | `~0.83.0` | `0.83.0` |
-| `@earendil-works/pi-ai` | `~0.83.0` | `0.83.0` |
+| `@earendil-works/pi-coding-agent` | `>=0.83.0 <=0.83.0` | `0.83.0` |
+| `@earendil-works/pi-ai` | `>=0.83.0 <=0.83.0` | `0.83.0` |
 | `typebox` | `>=1.3.7 <=1.3.8` | `1.3.7`, `1.3.8` |
 
 Distribution remains one Pi-managed npm copy (`pi install npm:<package>`), not a second global install. Packed metadata is verified via the repository `npm pack` seam (`getSharedIsolatedPack`). TypeBox matrix endpoints are executed by cold-installing that packed tarball with each pin as the consumer’s top-level `typebox` peer (`test/package/npm-identity-metadata.test.ts`), not by inspecting Pi’s nested dependency copies.
