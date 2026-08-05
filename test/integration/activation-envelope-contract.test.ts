@@ -44,6 +44,10 @@ import {
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema, type ActivationTraceRecord } from "../../src/activation-trace.ts";
+import {
+  buildDispatchStubFact,
+  reconcileInvocation,
+} from "../../src/activation-reconciliation.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import {
   createFakeGitHubTransport,
@@ -304,6 +308,27 @@ test("every registered role writes exactly one accepted-activation fact after ad
             session: { kind: "session-file", path: realpathSync(sessionFile) },
             correlation: { kind: "caller", id: `corr-${entry.role}` },
           });
+
+          // One normal admitted fact is enough to prove the real-leg matched tracer
+          // without a third harness (canonical fact already produced above).
+          if (entry.role === "judge") {
+            const admitted = roleFacts[0]!;
+            const correlationId = `corr-${entry.role}`;
+            const outcome = reconcileInvocation({
+              dispatch: buildDispatchStubFact({
+                correlation: { kind: "caller", id: correlationId },
+                bookKey,
+                observedAt: "2025-06-01T11:59:59.000Z",
+                dispatch: { kind: "process", pid: 1 },
+              }),
+              activation: admitted,
+            });
+            assert.deepEqual(outcome, {
+              kind: "matched",
+              correlationId,
+              bookKey,
+            });
+          }
         });
       }
 
