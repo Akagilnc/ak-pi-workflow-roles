@@ -1,13 +1,14 @@
 /**
- * Factory board full view (S2).
+ * Factory board full view (S2+S3).
  *
  * Unique render seam: (books, view, now) → HTML.
  * - books: explicit bookKey + ledgerDir (no git-remote guess)
  * - view: BoardSnapshot success OR loud binding/api error
+ * - now: injected clock for unaccepted bands, leg age, wall-now rule
  *
  * Reuses S1 tracer (`loadTicketTrajectoryRuns` + station HTML) for each ticket.
- * This module owns swimlanes, family aggregation, pending (zero-run), blocked
- * badges, and closed drill presentation — not four-state/cost (S3).
+ * Owns swimlanes, family aggregation, blocked badges, closed drill, and S3
+ * latest-run four-state / wallclock / cost aggregation (no parallel receipt parser).
  */
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
@@ -19,6 +20,19 @@ import {
   type TicketTrajectoryRun,
 } from "./ticket-trajectory.ts";
 import type { BoardSnapshot, SnapshotTicket, TicketIssueState } from "./ticket-snapshot.ts";
+
+/** Unaccepted latest-run mtime bands (page-visible thresholds). */
+export const UNACCEPTED_FLYING_MS = 2 * 60 * 1000;
+export const UNACCEPTED_WATCH_MS = 15 * 60 * 1000;
+
+/** Latest-run four-state (blocked is a badge, never a state). */
+export type TicketCurrentState =
+  | "closed"
+  | "pending"
+  | "unaccepted-flying"
+  | "unaccepted-watch"
+  | "unaccepted-suspect"
+  | "accepted-awaiting";
 
 export type FactoryBoardBook = {
   bookKey: string;
@@ -38,10 +52,138 @@ export type FactoryBoardView =
 type PreparedTicket = {
   ticket: SnapshotTicket;
   runs: TicketTrajectoryRun[];
+  /** Display runs with wallMs applying the latest-unaccepted→now rule. */
+  displayRuns: TicketTrajectoryRun[];
   pending: boolean;
+  currentState: TicketCurrentState;
   /** Incomplete blockers only (open blockers), for non-closed tickets. */
   activeBlockedBy: number[];
+  costUsd: number;
+  totalTokens: number;
+  /** Cumulative construction wall (runs + axis legs). */
+  wallMs: number;
+  /** First run start → now (open) or last endedAt (closed). */
+  landingCycleMs: number;
+  /** Present only for unaccepted latest-run states. */
+  legAgeMs?: number;
+  lastActivityAt?: string;
+  lastActivityMtimeMs?: number;
 };
+
+function formatUsd(value: number): string {
+  return Number.isFinite(value) ? String(value) : "0";
+}
+
+function wallMsBetween(startedAt: string | undefined, endedAtIso: string | undefined): number {
+  if (!startedAt || !endedAtIso) return 0;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAtIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
+  return end - start;
+}
+
+function sortRunsByStart(runs: readonly TicketTrajectoryRun[]): TicketTrajectoryRun[] {
+  return [...runs].sort((a, b) => {
+    const at = a.startedAt ?? "";
+    const bt = b.startedAt ?? "";
+    if (at !== bt) return at.localeCompare(bt);
+    return a.runId.localeCompare(b.runId);
+  });
+}
+
+function unacceptedBand(mtimeMs: number, nowMs: number): TicketCurrentState {
+  const age = Math.max(0, nowMs - mtimeMs);
+  if (age < UNACCEPTED_FLYING_MS) return "unaccepted-flying";
+  if (age < UNACCEPTED_WATCH_MS) return "unaccepted-watch";
+  return "unaccepted-suspect";
+}
+
+/**
+ * Current state is decided only by the latest run (session-start order).
+ * Historical unaccepted runs never flip the state; blocked is not a state.
+ */
+export function decideTicketCurrentState(input: {
+  ticketState: TicketIssueState;
+  runs: readonly TicketTrajectoryRun[];
+  now: Date;
+}): TicketCurrentState {
+  if (input.ticketState === "closed") return "closed";
+  if (input.runs.length === 0) return "pending";
+  const latest = sortRunsByStart(input.runs).at(-1)!;
+  if (!latest.hasResult) return unacceptedBand(latest.mtimeMs, input.now.getTime());
+  return "accepted-awaiting";
+}
+
+function enrichRunsForBoard(
+  runs: readonly TicketTrajectoryRun[],
+  currentState: TicketCurrentState,
+  now: Date,
+): TicketTrajectoryRun[] {
+  const sorted = sortRunsByStart(runs);
+  const latest = sorted.at(-1);
+  const extendLatest =
+    latest !== undefined &&
+    !latest.hasResult &&
+    (currentState === "unaccepted-flying" ||
+      currentState === "unaccepted-watch" ||
+      currentState === "unaccepted-suspect");
+  const nowIso = now.toISOString();
+  return sorted.map((run) => {
+    const isLatestUnaccepted = extendLatest && run.runId === latest!.runId;
+    const endIso = isLatestUnaccepted ? nowIso : run.endedAt;
+    const wallMs = wallMsBetween(run.startedAt, endIso);
+    return { ...run, wallMs };
+  });
+}
+
+function aggregateTicketMetrics(
+  displayRuns: readonly TicketTrajectoryRun[],
+  ticketState: TicketIssueState,
+  now: Date,
+): { costUsd: number; totalTokens: number; wallMs: number; landingCycleMs: number } {
+  let costUsd = 0;
+  let totalTokens = 0;
+  let wallMs = 0;
+  let firstStart: string | undefined;
+  let lastEnd: string | undefined;
+  for (const run of displayRuns) {
+    costUsd += run.costUsd;
+    totalTokens += run.totalTokens;
+    wallMs += (run.wallMs ?? wallMsBetween(run.startedAt, run.endedAt)) + run.axisWallMs;
+    if (run.startedAt && (firstStart === undefined || run.startedAt < firstStart)) {
+      firstStart = run.startedAt;
+    }
+    if (run.endedAt && (lastEnd === undefined || run.endedAt > lastEnd)) {
+      lastEnd = run.endedAt;
+    }
+  }
+  let landingCycleMs = 0;
+  if (firstStart) {
+    if (ticketState === "closed") {
+      landingCycleMs = wallMsBetween(firstStart, lastEnd);
+    } else {
+      landingCycleMs = wallMsBetween(firstStart, now.toISOString());
+    }
+  }
+  return { costUsd, totalTokens, wallMs, landingCycleMs };
+}
+
+function currentStateLabel(state: TicketCurrentState): string {
+  switch (state) {
+    case "closed":
+      return "closed";
+    case "pending":
+      return "待发";
+    case "unaccepted-flying":
+      return "未受理·在飞";
+    case "unaccepted-watch":
+      return "未受理·观察";
+    case "unaccepted-suspect":
+      return "未受理·疑挂";
+    case "accepted-awaiting":
+      return "已交卷待派";
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -133,7 +275,21 @@ function renderTicketArticle(input: {
   prepared: PreparedTicket;
   nested: boolean;
 }): string {
-  const { ticket, runs, pending, activeBlockedBy: blockers } = input.prepared;
+  const {
+    ticket,
+    runs,
+    displayRuns,
+    pending,
+    currentState,
+    activeBlockedBy: blockers,
+    costUsd,
+    totalTokens,
+    wallMs,
+    landingCycleMs,
+    legAgeMs,
+    lastActivityAt,
+    lastActivityMtimeMs,
+  } = input.prepared;
   const state: TicketIssueState = ticket.state;
   const milestone = ticket.milestone ?? "";
   const blockedAttr = blockers.join(" ");
@@ -144,8 +300,8 @@ function renderTicketArticle(input: {
     )
     .join(" ");
   const trajectory =
-    runs.length > 0
-      ? `<div class="trajectory" data-trajectory="true">${renderTicketTrajectoryStationHtml(runs)}</div>`
+    displayRuns.length > 0
+      ? `<div class="trajectory" data-trajectory="true">${renderTicketTrajectoryStationHtml(displayRuns)}</div>`
       : pending
         ? `<p class="pending-label" data-pending-label="true">待发（零卷）</p>`
         : `<p class="pending-label" data-empty-trajectory="true">no runs</p>`;
@@ -155,28 +311,58 @@ function renderTicketArticle(input: {
       ? ` data-parent-issue="${attr(String(ticket.parentIssueNumber))}"`
       : "";
 
+  const unaccepted =
+    currentState === "unaccepted-flying" ||
+    currentState === "unaccepted-watch" ||
+    currentState === "unaccepted-suspect";
+  const activityBits =
+    unaccepted && legAgeMs !== undefined
+      ? [
+          `<span class="leg-age" data-leg-age-ms="${attr(String(legAgeMs))}">腿龄 ${legAgeMs}ms</span>`,
+          lastActivityAt
+            ? `<span class="last-activity" data-last-activity-at="${attr(lastActivityAt)}"${lastActivityMtimeMs !== undefined ? ` data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}"` : ""}>末次活动 ${escapeHtml(lastActivityAt)}</span>`
+            : lastActivityMtimeMs !== undefined
+              ? `<span class="last-activity" data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}">末次活动 mtime</span>`
+              : "",
+        ].join("")
+      : "";
+
   return [
-    `<article class="ticket${input.nested ? " ticket-child" : ""}"`,
+    `<article class="ticket${input.nested ? " ticket-child" : ""} current-${attr(currentState)}"`,
     ` data-ticket="${attr(String(ticket.issueNumber))}"`,
     ` data-book="${attr(input.bookKey)}"`,
     ` data-title="${attr(ticket.title)}"`,
     ` data-milestone="${attr(milestone)}"`,
     ` data-ticket-state="${attr(state)}"`,
+    ` data-current-state="${attr(currentState)}"`,
     ` data-pending="${pending ? "true" : "false"}"`,
     ` data-blocked-by="${attr(blockedAttr)}"`,
     ` data-run-count="${attr(String(runs.length))}"`,
+    ` data-cost-usd="${attr(formatUsd(costUsd))}"`,
+    ` data-total-tokens="${attr(String(totalTokens))}"`,
+    ` data-wall-ms="${attr(String(wallMs))}"`,
+    ` data-landing-cycle-ms="${attr(String(landingCycleMs))}"`,
+    legAgeMs !== undefined ? ` data-leg-age-ms="${attr(String(legAgeMs))}"` : "",
+    lastActivityAt ? ` data-last-activity-at="${attr(lastActivityAt)}"` : "",
+    lastActivityMtimeMs !== undefined
+      ? ` data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}"`
+      : "",
     parentAttr,
     `>`,
     `<header class="ticket-head">`,
     `<h3 class="ticket-title">#${escapeHtml(String(ticket.issueNumber))} · ${escapeHtml(ticket.title)}</h3>`,
     `<p class="ticket-meta">`,
-    state === "closed" ? `<span class="state">closed</span>` : pending ? `<span class="state">待发</span>` : `<span class="state">open</span>`,
+    `<span class="state" data-state-label="${attr(currentState)}">${escapeHtml(currentStateLabel(currentState))}</span>`,
     milestone ? `<span class="milestone">milestone: ${escapeHtml(milestone)}</span>` : `<span class="milestone">milestone: —</span>`,
+    `<span class="cost" data-cost-label="true">$${escapeHtml(formatUsd(costUsd))} · ${totalTokens} tok</span>`,
+    `<span class="wall" data-wall-label="true">施工墙钟 ${wallMs}ms</span>`,
+    `<span class="landing" data-landing-label="true">落地周期 ${landingCycleMs}ms</span>`,
+    activityBits,
     badges,
     `</p>`,
     `</header>`,
     runs.length > 0
-      ? `<details class="ticket-body" data-drill="${attr(String(ticket.issueNumber))}"${state === "closed" ? " open" : ""}><summary>轨迹 · ${runs.length} run(s)</summary>${trajectory}</details>`
+      ? `<details class="ticket-body" data-drill="${attr(String(ticket.issueNumber))}"${state === "closed" ? " open" : ""}><summary>轨迹 · ${runs.length} run(s) · $${escapeHtml(formatUsd(costUsd))}</summary>${trajectory}</details>`
       : trajectory,
     `</article>`,
   ].join("");
@@ -274,21 +460,66 @@ function collectDescendants(
 async function prepareTicket(
   ledgerDir: string,
   ticket: SnapshotTicket,
+  now: Date,
 ): Promise<PreparedTicket> {
   const runs = await loadTicketTrajectoryRuns(ledgerDir, ticket.issueNumber);
   const pending = ticket.state !== "closed" && runs.length === 0;
+  const currentState = decideTicketCurrentState({
+    ticketState: ticket.state,
+    runs,
+    now,
+  });
+  const displayRuns = enrichRunsForBoard(runs, currentState, now);
+  const metrics = aggregateTicketMetrics(displayRuns, ticket.state, now);
+
+  let legAgeMs: number | undefined;
+  let lastActivityAt: string | undefined;
+  let lastActivityMtimeMs: number | undefined;
+  if (
+    currentState === "unaccepted-flying" ||
+    currentState === "unaccepted-watch" ||
+    currentState === "unaccepted-suspect"
+  ) {
+    const latest = sortRunsByStart(runs).at(-1)!;
+    lastActivityMtimeMs = latest.mtimeMs;
+    lastActivityAt =
+      latest.endedAt ??
+      (latest.mtimeMs > 0 ? new Date(latest.mtimeMs).toISOString() : undefined);
+    if (latest.startedAt) {
+      legAgeMs = wallMsBetween(latest.startedAt, now.toISOString());
+    } else if (latest.mtimeMs > 0) {
+      legAgeMs = Math.max(0, now.getTime() - latest.mtimeMs);
+    } else {
+      legAgeMs = 0;
+    }
+  }
+
   return {
     ticket,
     runs,
+    displayRuns,
     pending,
+    currentState,
     activeBlockedBy: activeBlockedBy(ticket),
+    costUsd: metrics.costUsd,
+    totalTokens: metrics.totalTokens,
+    wallMs: metrics.wallMs,
+    landingCycleMs: metrics.landingCycleMs,
+    ...(legAgeMs !== undefined ? { legAgeMs } : {}),
+    ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
+    ...(lastActivityMtimeMs !== undefined ? { lastActivityMtimeMs } : {}),
   };
 }
 
-async function renderLaneHtml(bookKey: string, ledgerDir: string, tickets: readonly SnapshotTicket[]): Promise<string> {
+async function renderLaneHtml(
+  bookKey: string,
+  ledgerDir: string,
+  tickets: readonly SnapshotTicket[],
+  now: Date,
+): Promise<string> {
   const prepared = new Map<number, PreparedTicket>();
   for (const ticket of tickets) {
-    prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket));
+    prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket, now));
   }
 
   const childrenByParent = buildDirectChildrenByParent(prepared);
@@ -328,8 +559,10 @@ async function renderLaneHtml(bookKey: string, ledgerDir: string, tickets: reado
   return [
     `<section class="lane" data-lane="${attr(bookKey)}" data-book="${attr(bookKey)}">`,
     `<h2 class="lane-title">册 ${escapeHtml(bookKey)}</h2>`,
+    `<div class="lane-tickets" data-lane-tickets="${attr(bookKey)}">`,
     familyHtml,
     topHtml,
+    `</div>`,
     `</section>`,
   ].join("\n");
 }
@@ -340,6 +573,8 @@ function boardStyles(): string {
   body { margin: 0 auto; padding: 1rem; max-width: 72rem; }
   header.page { margin-bottom: 1rem; }
   .generated { font-size: 0.9rem; opacity: 0.8; }
+  .thresholds { font-size: 0.85rem; opacity: 0.9; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+  .controls { margin: 0.5rem 0 0; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; font-size: 0.9rem; }
   .lane {
     border: 1px solid color-mix(in srgb, CanvasText 22%, Canvas);
     border-radius: 0.6rem;
@@ -362,6 +597,13 @@ function boardStyles(): string {
   .ticket-child { margin-left: 0.75rem; padding-left: 0.5rem; border-left: 2px solid color-mix(in srgb, CanvasText 18%, Canvas); }
   .ticket-title { margin: 0; font-size: 1rem; }
   .ticket-meta { margin: 0.25rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem 0.85rem; font-size: 0.88rem; }
+  .state { font-weight: 600; }
+  .ticket.current-unaccepted-flying .state { color: color-mix(in srgb, seagreen 80%, CanvasText); }
+  .ticket.current-unaccepted-watch .state { color: color-mix(in srgb, darkorange 85%, CanvasText); }
+  .ticket.current-unaccepted-suspect .state { color: color-mix(in srgb, tomato 85%, CanvasText); }
+  .ticket.current-pending .state { opacity: 0.85; }
+  .ticket.current-accepted-awaiting .state { color: color-mix(in srgb, dodgerblue 75%, CanvasText); }
+  .ticket.current-closed .state { opacity: 0.75; }
   .blocked-badge {
     display: inline-block;
     padding: 0.05rem 0.4rem;
@@ -384,6 +626,57 @@ function boardStyles(): string {
     .ticket-child { margin-left: 0.35rem; }
   }
 `;
+}
+
+function boardSortScript(): string {
+  // Presentation-only reorder; machine facts stay on data-* attrs.
+  return `<script>
+(function () {
+  var sel = document.querySelector('[data-sort-control]');
+  if (!sel) return;
+  function costOf(el) {
+    var v = el.getAttribute('data-cost-usd');
+    var n = v == null ? 0 : Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function ticketNo(el) {
+    var v = el.getAttribute('data-ticket');
+    var n = v == null ? 0 : Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function sortKey(node) {
+    if (node.nodeType !== 1) return null;
+    var el = node;
+    if (el.hasAttribute && el.hasAttribute('data-ticket')) return el;
+    if (el.hasAttribute && el.hasAttribute('data-family')) {
+      var parent = el.querySelector(':scope > .family-parent [data-ticket]');
+      return parent || el;
+    }
+    return null;
+  }
+  sel.addEventListener('change', function () {
+    var mode = sel.value;
+    document.querySelectorAll('[data-lane-tickets]').forEach(function (lane) {
+      var nodes = Array.prototype.filter.call(lane.children, function (n) {
+        return n.nodeType === 1 && sortKey(n);
+      });
+      nodes.sort(function (a, b) {
+        var ka = sortKey(a);
+        var kb = sortKey(b);
+        if (mode === 'cost-desc') {
+          var d = costOf(kb) - costOf(ka);
+          if (d !== 0) return d;
+        } else if (mode === 'cost-asc') {
+          var d2 = costOf(ka) - costOf(kb);
+          if (d2 !== 0) return d2;
+        }
+        return ticketNo(ka) - ticketNo(kb);
+      });
+      nodes.forEach(function (n) { lane.appendChild(n); });
+    });
+  });
+})();
+</script>`;
 }
 
 /**
@@ -444,13 +737,15 @@ export async function renderFactoryBoardHtml(
         generatedAt,
       );
     }
-    laneHtmlParts.push(await renderLaneHtml(book.bookKey, resolve(book.ledgerDir), bookSnap.tickets));
+    laneHtmlParts.push(
+      await renderLaneHtml(book.bookKey, resolve(book.ledgerDir), bookSnap.tickets, now),
+    );
   }
 
   // Preserve caller book order for empty-snapshot books still listed in books? Only snapshot books form lanes.
 
   return `<!DOCTYPE html>
-<html lang="zh-CN" data-generated-at="${attr(generatedAt)}" data-board="true">
+<html lang="zh-CN" data-generated-at="${attr(generatedAt)}" data-board="true" data-threshold-flying-ms="${attr(String(UNACCEPTED_FLYING_MS))}" data-threshold-watch-ms="${attr(String(UNACCEPTED_WATCH_MS))}">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -462,10 +757,26 @@ export async function renderFactoryBoardHtml(
 <header class="page">
   <h1>工厂进度板 · 驿传轨迹</h1>
   <p class="generated">generated-at <time datetime="${attr(generatedAt)}">${escapeHtml(generatedAt)}</time></p>
+  <p class="thresholds" data-thresholds="true">
+    <span>未受理阈值：</span>
+    <span data-threshold-flying-ms="${attr(String(UNACCEPTED_FLYING_MS))}">&lt;${UNACCEPTED_FLYING_MS}ms 在飞</span>
+    <span data-threshold-watch-ms="${attr(String(UNACCEPTED_WATCH_MS))}">${UNACCEPTED_FLYING_MS}–${UNACCEPTED_WATCH_MS}ms 观察</span>
+    <span data-threshold-suspect="true">&gt;${UNACCEPTED_WATCH_MS}ms 疑挂</span>
+  </p>
+  <p class="controls">
+    <label>排序
+      <select data-sort-control="true">
+        <option value="ticket-asc" selected>票号</option>
+        <option value="cost-desc">烧钱↓</option>
+        <option value="cost-asc">烧钱↑</option>
+      </select>
+    </label>
+  </p>
 </header>
 <main data-lane-count="${laneHtmlParts.length}">
 ${laneHtmlParts.join("\n") || "<p data-empty-board=\"true\">no books in snapshot</p>"}
 </main>
+${boardSortScript()}
 </body>
 </html>
 `;

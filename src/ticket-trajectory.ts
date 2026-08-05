@@ -68,12 +68,27 @@ export type TicketTrajectoryPageHandle = {
 
 type SessionRow = Record<string, unknown>;
 
-/** One ledger run as loaded by the S1 tracer (shared with the S2 board). */
+/** One ledger run as loaded by the S1 tracer (shared with the S2/S3 board). */
 export type TicketTrajectoryRun = {
   runId: string;
   ledgerCoord: string;
   evidenceHref: string;
   startedAt?: string;
+  /** Last session-record timestamp (parent session only; axis legs excluded). */
+  endedAt?: string;
+  /** Latest mtime among parent session + axis-leg session files (ms since epoch). */
+  mtimeMs: number;
+  /** Sum of message.usage.cost.total across parent session + axis legs. */
+  costUsd: number;
+  /** Sum of message.usage.totalTokens across parent session + axis legs. */
+  totalTokens: number;
+  /** Sum of first→last wall ms across axis-leg sessions (parent excluded). */
+  axisWallMs: number;
+  /**
+   * Display wall ms for this run when a consumer precomputes it (board applies
+   * the "latest unaccepted ends at now" rule). Absent → first→last of parent.
+   */
+  wallMs?: number;
   station: string;
   stationSource: StationSource;
   attemptCount: number;
@@ -208,6 +223,48 @@ function extractModelFields(rows: SessionRow[]): { model: string; provider: stri
   return { model, provider, thinking };
 }
 
+/** First and last record timestamps in encounter order. */
+function extractTimestampSpan(rows: SessionRow[]): { startedAt?: string; endedAt?: string } {
+  let startedAt: string | undefined;
+  let endedAt: string | undefined;
+  for (const row of rows) {
+    if (typeof row.timestamp !== "string" || !row.timestamp) continue;
+    if (startedAt === undefined) startedAt = row.timestamp;
+    endedAt = row.timestamp;
+  }
+  return {
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(endedAt !== undefined ? { endedAt } : {}),
+  };
+}
+
+/** Sum budget dollars and tokens from message.usage on session rows. */
+function extractUsageTotals(rows: SessionRow[]): { costUsd: number; totalTokens: number } {
+  let costUsd = 0;
+  let totalTokens = 0;
+  for (const row of rows) {
+    const message = isRecord(row.message) ? row.message : undefined;
+    const usage = message && isRecord(message.usage) ? message.usage : isRecord(row.usage) ? row.usage : undefined;
+    if (!usage) continue;
+    if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
+      totalTokens += usage.totalTokens;
+    }
+    const cost = isRecord(usage.cost) ? usage.cost : undefined;
+    if (cost && typeof cost.total === "number" && Number.isFinite(cost.total)) {
+      costUsd += cost.total;
+    }
+  }
+  return { costUsd, totalTokens };
+}
+
+function wallMsBetween(startedAt: string | undefined, endedAt: string | undefined): number {
+  if (!startedAt || !endedAt) return 0;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
+  return end - start;
+}
+
 function extractTerminatingLifecycle(rows: SessionRow[]): {
   attemptCount: number;
   toolNames: string[];
@@ -330,17 +387,40 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
   }
 }
 
+/** Reviewer parallel axis-leg sessions live under session/reviewer-legs/. */
+async function listAxisLegSessionFiles(sessionDir: string): Promise<string[]> {
+  return listSessionFiles(join(sessionDir, "reviewer-legs"));
+}
+
+async function maxMtimeMs(paths: readonly string[]): Promise<number> {
+  let max = 0;
+  for (const path of paths) {
+    try {
+      const st = await lstat(path);
+      const ms = st.mtimeMs;
+      if (Number.isFinite(ms) && ms > max) max = ms;
+    } catch (error) {
+      if (isMissingPathError(error)) continue;
+      throw error;
+    }
+  }
+  return max;
+}
+
 async function parseRun(ledgerDir: string, issueNumber: number, runId: string): Promise<ParsedRun> {
   const runDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId);
   const ledgerCoord = ["issues", String(issueNumber), "runs", runId].join("/");
   const evidenceTarget = await realpathOrLexicalIfMissing(runDir);
   const evidenceHref = pathToFileURL(evidenceTarget).href;
-  const sessionFiles = await listSessionFiles(join(runDir, "session"));
+  const sessionDir = join(runDir, "session");
+  const sessionFiles = await listSessionFiles(sessionDir);
+  const axisLegFiles = await listAxisLegSessionFiles(sessionDir);
   const rows: SessionRow[] = [];
   for (const file of sessionFiles) {
     rows.push(...(await readLedgerSessionJsonl(file)));
   }
 
+  // Prefer explicit session header timestamp as start; else first record.
   let startedAt: string | undefined;
   for (const row of rows) {
     if (row.type === "session" && typeof row.timestamp === "string") {
@@ -349,6 +429,24 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
     }
     if (!startedAt && typeof row.timestamp === "string") startedAt = row.timestamp;
   }
+  const parentSpan = extractTimestampSpan(rows);
+  if (startedAt === undefined) startedAt = parentSpan.startedAt;
+  const endedAt = parentSpan.endedAt;
+
+  const parentUsage = extractUsageTotals(rows);
+  let costUsd = parentUsage.costUsd;
+  let totalTokens = parentUsage.totalTokens;
+  let axisWallMs = 0;
+  for (const file of axisLegFiles) {
+    const legRows = await readLedgerSessionJsonl(file);
+    const legUsage = extractUsageTotals(legRows);
+    costUsd += legUsage.costUsd;
+    totalTokens += legUsage.totalTokens;
+    const legSpan = extractTimestampSpan(legRows);
+    axisWallMs += wallMsBetween(legSpan.startedAt, legSpan.endedAt);
+  }
+
+  const mtimeMs = await maxMtimeMs([...sessionFiles, ...axisLegFiles]);
 
   const lifecycle = extractTerminatingLifecycle(rows);
   const models = extractModelFields(rows);
@@ -372,6 +470,11 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
     ledgerCoord,
     evidenceHref,
     ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(endedAt !== undefined ? { endedAt } : {}),
+    mtimeMs,
+    costUsd,
+    totalTokens,
+    axisWallMs,
     station,
     stationSource,
     attemptCount: lifecycle.attemptCount,
@@ -408,6 +511,18 @@ function sortRuns(runs: readonly ParsedRun[]): ParsedRun[] {
  * Render station/run blocks from already-loaded S1 runs.
  * Shared by the single-ticket page and the S2 factory board (no second receipt parser).
  */
+function formatUsd(value: number): string {
+  // Full precision mechanical string — presentation may round; machines parse the attr.
+  return Number.isFinite(value) ? String(value) : "0";
+}
+
+function parentWallMs(run: TicketTrajectoryRun): number {
+  if (typeof run.wallMs === "number" && Number.isFinite(run.wallMs) && run.wallMs >= 0) {
+    return run.wallMs;
+  }
+  return wallMsBetween(run.startedAt, run.endedAt);
+}
+
 export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajectoryRun[]): string {
   const stationOrder: string[] = [];
   const byStation = new Map<string, ParsedRun[]>();
@@ -424,6 +539,15 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
     .map((station) => {
       const rounds = byStation.get(station)!;
       const stationLabel = station === "unknown" ? "未知站" : station;
+      let stationCost = 0;
+      let stationTokens = 0;
+      let stationWall = 0;
+      for (const run of rounds) {
+        stationCost += run.costUsd;
+        stationTokens += run.totalTokens;
+        // Station wall = each run's (possibly now-extended) wall + axis legs folded in.
+        stationWall += parentWallMs(run) + run.axisWallMs;
+      }
       const roundHtml = rounds
         .map((run) => {
           const resultDisplay = run.hasResult
@@ -432,6 +556,7 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
             : "";
           // Machine channel: space-separated closed-enum tokens (no custom status dialect).
           const legStatusesAttr = run.legStatuses.join(" ");
+          const wall = parentWallMs(run);
           return [
             `<article class="run"`,
             ` data-run-id="${attr(run.runId)}"`,
@@ -445,6 +570,13 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
             ` data-model="${attr(run.model)}"`,
             ` data-provider="${attr(run.provider)}"`,
             ` data-thinking="${attr(run.thinking)}"`,
+            run.startedAt ? ` data-started-at="${attr(run.startedAt)}"` : "",
+            run.endedAt ? ` data-ended-at="${attr(run.endedAt)}"` : "",
+            ` data-mtime-ms="${attr(String(run.mtimeMs))}"`,
+            ` data-cost-usd="${attr(formatUsd(run.costUsd))}"`,
+            ` data-total-tokens="${attr(String(run.totalTokens))}"`,
+            ` data-wall-ms="${attr(String(wall))}"`,
+            ` data-axis-wall-ms="${attr(String(run.axisWallMs))}"`,
             `>`,
             `<header class="run-head">`,
             `<span class="run-id">${escapeHtml(run.runId)}</span>`,
@@ -457,6 +589,8 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
             run.hasResult
               ? `<span class="result">result: ${escapeHtml(resultDisplay)}</span>`
               : `<span class="result">result: (none — attempts only)</span>`,
+            `<span class="cost">$${escapeHtml(formatUsd(run.costUsd))} · ${run.totalTokens} tok</span>`,
+            `<span class="wall">wall ${wall}ms</span>`,
             `</p>`,
             `<p class="ledger"><a data-ledger-link="${attr(run.ledgerCoord)}" href="${attr(run.evidenceHref)}">${escapeHtml(run.ledgerCoord)}</a></p>`,
             `</article>`,
@@ -465,8 +599,8 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
         .join("\n");
 
       return [
-        `<section class="station" data-station-block="${attr(station)}" data-round-count="${rounds.length}">`,
-        `<h2 class="station-title">${escapeHtml(stationLabel)} · ${rounds.length} 轮</h2>`,
+        `<section class="station" data-station-block="${attr(station)}" data-round-count="${rounds.length}" data-station-cost-usd="${attr(formatUsd(stationCost))}" data-station-total-tokens="${attr(String(stationTokens))}" data-station-wall-ms="${attr(String(stationWall))}">`,
+        `<h2 class="station-title">${escapeHtml(stationLabel)} · ${rounds.length} 轮 · $${escapeHtml(formatUsd(stationCost))} · ${stationTokens} tok · wall ${stationWall}ms</h2>`,
         roundHtml,
         `</section>`,
       ].join("\n");
