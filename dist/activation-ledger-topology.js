@@ -200,24 +200,11 @@ function assertLedgerFileInsideHome(ledgerPath, ledgerHome) {
     throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
   }
   const resolvedLedger = resolve(ledgerPath);
-  const resolvedHome = resolve(ledgerHome);
   try {
     if (!lstatSync(resolvedLedger).isSymbolicLink()) return;
-    let realFile;
-    try {
-      realFile = realpathSync(resolvedLedger);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger file symlink is not resolvable (${resolvedLedger}): ${errorText(error)}`,
-        { cause: error }
-      );
-    }
-    const realHome = realpathSync(resolvedHome);
-    if (realFile !== realHome && !pathContainedIn(realHome, realFile)) {
-      throw new ActivationLedgerError(
-        `activation ledger file escapes ledger home via symlink (${resolvedLedger} -> ${realFile})`
-      );
-    }
+    throw new ActivationLedgerError(
+      `activation ledger file is a symbolic link: ${resolvedLedger}`
+    );
   } catch (error) {
     if (errnoCode(error) !== "ENOENT") {
       if (error instanceof ActivationLedgerError) throw error;

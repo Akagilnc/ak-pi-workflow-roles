@@ -250,32 +250,21 @@ export function ensureRealDirectoryTree(root: string, targetDir: string): string
 }
 
 /**
- * Reject a pre-existing ledger-file symlink that escapes the real ledger home
- * before open/write follows it.
+ * Reject a pre-existing ledger-file symlink before open/write follows it.
+ * A computed book may only append to its own regular waiting.jsonl — any symlink,
+ * including a target still inside the machine ledger home (cross-book redirect),
+ * violates ADR 0048 partition identity. Missing paths are admitted (O_CREAT).
  */
 export function assertLedgerFileInsideHome(ledgerPath: string, ledgerHome: string): void {
   if (!isAbsolute(ledgerHome)) {
     throw new ActivationLedgerError(`activation ledger home must be absolute: ${ledgerHome}`);
   }
   const resolvedLedger = resolve(ledgerPath);
-  const resolvedHome = resolve(ledgerHome);
   try {
     if (!lstatSync(resolvedLedger).isSymbolicLink()) return;
-    let realFile: string;
-    try {
-      realFile = realpathSync(resolvedLedger);
-    } catch (error) {
-      throw new ActivationLedgerError(
-        `activation ledger file symlink is not resolvable (${resolvedLedger}): ${errorText(error)}`,
-        { cause: error },
-      );
-    }
-    const realHome = realpathSync(resolvedHome);
-    if (realFile !== realHome && !pathContainedIn(realHome, realFile)) {
-      throw new ActivationLedgerError(
-        `activation ledger file escapes ledger home via symlink (${resolvedLedger} -> ${realFile})`,
-      );
-    }
+    throw new ActivationLedgerError(
+      `activation ledger file is a symbolic link: ${resolvedLedger}`,
+    );
   } catch (error) {
     if (errnoCode(error) !== "ENOENT") {
       if (error instanceof ActivationLedgerError) throw error;
