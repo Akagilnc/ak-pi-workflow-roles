@@ -9,8 +9,8 @@ import {
   isStreamIdleTimeoutError,
 } from "../../src/stream-idle-guard.ts";
 
-test("default idle timeout matches #102 (600s)", () => {
-  assert.equal(DEFAULT_STREAM_IDLE_TIMEOUT_MS, 600_000);
+test("default idle timeout matches #102 owner-final 183s", () => {
+  assert.equal(DEFAULT_STREAM_IDLE_TIMEOUT_MS, 183_000);
 });
 
 test("StreamIdleTimeoutError carries stable typed identity", () => {
@@ -100,7 +100,7 @@ test("dispose clears the timer so a late tick cannot abort", async (t) => {
 test("idleTimeoutMs <= 0 disables the idle timer", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const guard = createStreamIdleGuard({ idleTimeoutMs: 0 });
-  t.mock.timers.tick(600_000);
+  t.mock.timers.tick(183_000);
   assert.equal(guard.signal.aborted, false);
   guard.dispose();
 });

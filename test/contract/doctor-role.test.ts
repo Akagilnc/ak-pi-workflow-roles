@@ -3,6 +3,7 @@ import test from "node:test";
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
+  DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   StreamIdleTimeoutError,
   createComplianceDecisionTool,
@@ -101,17 +102,14 @@ test("stream idle timeout through Doctor output reaches failInfrastructure witho
     });
     await runtime.activate();
     const output = h.tools.get(DOCTOR_OUTPUT_TOOL_NAME);
-    const pending = output.execute(
-      "doctor-idle",
-      refusal,
-      undefined,
-      undefined,
-      context("doctor-idle", () => { aborts += 1; }, { mode: "print" }),
-    );
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    t.mock.timers.tick(DEFAULT_STREAM_IDLE_TIMEOUT_MS);
-    await assert.rejects(
-      pending,
+    const assertion = assert.rejects(
+      output.execute(
+        "doctor-idle",
+        refusal,
+        undefined,
+        undefined,
+        context("doctor-idle", () => { aborts += 1; }, { mode: "print" }),
+      ),
       (error: unknown) => {
         assert.ok(error instanceof StreamIdleTimeoutError);
         assert.equal(error.code, "AK_STREAM_IDLE_TIMEOUT");
@@ -119,6 +117,12 @@ test("stream idle timeout through Doctor output reaches failInfrastructure witho
         return true;
       },
     );
+    for (let attempt = 0; attempt <= DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES; attempt += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      t.mock.timers.tick(DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    await assertion;
     assert.equal(infrastructureCauses.length, 1);
     assert.ok(infrastructureCauses[0] instanceof StreamIdleTimeoutError);
     assert.equal(aborts, 1);

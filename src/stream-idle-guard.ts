@@ -1,9 +1,12 @@
 /**
  * Stream idle backstop (#102 / #155 a): first-wait + between-event silence only.
  * Not a total wall-clock for long thinking turns.
+ *
+ * Default silence budget is owner-final 183s (#102 2026-08-04),
+ * same numeric value as header timeoutMs but a distinct body-idle clock.
  */
 
-export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 600_000;
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 183_000;
 export const STREAM_IDLE_TIMEOUT_CODE = "AK_STREAM_IDLE_TIMEOUT" as const;
 
 export class StreamIdleTimeoutError extends Error {
