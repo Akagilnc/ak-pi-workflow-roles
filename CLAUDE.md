@@ -1,5 +1,10 @@
 # ak-pi-workflow-roles
 
+## 全局宪法（先读）
+
+本机全局规则在 `~/.claude/CLAUDE.md`（与 `~/.codex/AGENTS.md` byte-identical）。**pi session 默认不读全局 CLAUDE.md / AGENTS.md**——凡在本仓工作的 agent（含 pi 起的角色腿与驱动 session），视全局文件为本文件的一部分，开工先读。
+
+
 ## Soul 内容纪律
 
 **Soul 是角色的注意力预算，不是完整说明书。** 单个 Soul 越长，核心原则越容易被字段说明、运行机制和任务细节稀释。默认删减；只保留角色做专业判断时不可缺少、且无法由更低层可靠表达的内容。
