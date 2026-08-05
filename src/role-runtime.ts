@@ -74,6 +74,7 @@ export {
   buildAcceptedActivationFact,
   correlationIdentityFromEnv,
   durableSessionPointer,
+  isNonGitRepositoryActivationError,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
   serializeAcceptedActivationFact,
@@ -82,6 +83,7 @@ export type {
   AcceptedActivationFact,
   AcceptedActivationFactInput,
   ActivationCorrelationIdentity,
+  ActivationSessionManager,
   ActivationSessionPointer,
 } from "./activation-ledger.ts";
 export {

@@ -1,4 +1,14 @@
-import { constants, mkdirSync, openSync, closeSync, statSync, writeSync } from "node:fs";
+import {
+  constants,
+  closeSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -37,6 +47,14 @@ export type AcceptedActivationFactInput = {
   readonly correlation: ActivationCorrelationIdentity;
 };
 
+/** Session manager surface needed to admit (and, when deferred, materialize) the durable principal. */
+export type ActivationSessionManager = {
+  getSessionFile?(): string | undefined;
+  getHeader?(): { readonly type: string } | null;
+  /** Full SessionManager rebind after early header materialization (keeps Pi append path consistent). */
+  setSessionFile?(path: string): void;
+};
+
 /**
  * Sole package-owned machine home (ADR 0048 / #78): one enumerable family under
  * the process home directory. No env override — relative or invocation-varying
@@ -57,14 +75,14 @@ export function activationWaitingLedgerPath(ledgerHome: string, bookKey: string)
 }
 
 /**
- * Host correlation channel (not a CLI flag): non-empty AK_CORRELATION_ID carries
- * the caller id; missing/blank yields the typed absent identity.
+ * Host correlation channel (not a CLI flag): a non-blank AK_CORRELATION_ID carries
+ * the caller id verbatim; missing/blank/whitespace-only yields the typed absent identity.
  */
 export function correlationIdentityFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): ActivationCorrelationIdentity {
   const raw = env.AK_CORRELATION_ID;
-  if (typeof raw === "string" && raw.length > 0) {
+  if (typeof raw === "string" && raw.trim().length > 0) {
     return { kind: "caller", id: raw };
   }
   return { kind: "absent" };
@@ -83,20 +101,179 @@ function errnoCode(error: unknown): string | undefined {
     : undefined;
 }
 
+function errorText(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  return error.message;
+}
+
+/**
+ * Create `targetDir` (and missing parents) under `root` without following pre-existing
+ * symlink components that escape the real root. Returns the real path of `targetDir`.
+ * Original filesystem causes are retained.
+ */
+function ensureRealDirectoryTree(root: string, targetDir: string): string {
+  const absoluteRoot = resolve(root);
+  const absoluteTarget = resolve(targetDir);
+  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
+    throw new Error(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`,
+    );
+  }
+
+  try {
+    mkdirSync(absoluteRoot, { recursive: true });
+  } catch (error) {
+    throw new Error(
+      `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(absoluteRoot);
+  } catch (error) {
+    throw new Error(
+      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  if (!statSync(realRoot).isDirectory()) {
+    throw new Error(`activation ledger home is not a directory: ${realRoot}`);
+  }
+
+  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
+  if (rel === "") return realRoot;
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new Error(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`,
+    );
+  }
+
+  let lexicalCursor = absoluteRoot;
+  for (const part of rel.split(sep)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      throw new Error(`activation ledger path contains '..': ${absoluteTarget}`);
+    }
+    lexicalCursor = join(lexicalCursor, part);
+
+    let st: ReturnType<typeof lstatSync>;
+    try {
+      st = lstatSync(lexicalCursor);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        throw new Error(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
+          { cause: error },
+        );
+      }
+      try {
+        mkdirSync(lexicalCursor);
+      } catch (mkdirError) {
+        throw new Error(
+          `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
+          { cause: mkdirError },
+        );
+      }
+      st = lstatSync(lexicalCursor);
+    }
+
+    if (st.isSymbolicLink()) {
+      let realNext: string;
+      try {
+        realNext = realpathSync(lexicalCursor);
+      } catch (error) {
+        throw new Error(
+          `activation ledger symlink component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
+          { cause: error },
+        );
+      }
+      if (realNext !== realRoot && !pathContainedIn(realRoot, realNext)) {
+        throw new Error(
+          `activation ledger path component escapes ledger home via symlink (${lexicalCursor} -> ${realNext})`,
+        );
+      }
+      if (!statSync(realNext).isDirectory()) {
+        throw new Error(`activation ledger path component is not a directory: ${realNext}`);
+      }
+      continue;
+    }
+
+    if (!st.isDirectory()) {
+      throw new Error(`activation ledger path component is not a directory: ${lexicalCursor}`);
+    }
+
+    let realCursor: string;
+    try {
+      realCursor = realpathSync(lexicalCursor);
+    } catch (error) {
+      throw new Error(
+        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
+      throw new Error(
+        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`,
+      );
+    }
+  }
+
+  try {
+    return realpathSync(absoluteTarget);
+  } catch (error) {
+    throw new Error(
+      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+}
+
+function materializeDeferredSessionFile(
+  sessionManager: ActivationSessionManager,
+  resolvedFile: string,
+  ledgerHome: string,
+): void {
+  const header = sessionManager.getHeader?.();
+  if (header === null || header === undefined || header.type !== "session") {
+    throw new Error(
+      `Workflow role activation durable session file does not exist: ${resolvedFile}`,
+    );
+  }
+  ensureRealDirectoryTree(ledgerHome, dirname(resolvedFile));
+  try {
+    writeFileSync(resolvedFile, `${JSON.stringify(header)}\n`, { flag: "wx" });
+  } catch (error) {
+    if (errnoCode(error) !== "EEXIST") {
+      throw new Error(
+        `Workflow role activation failed to materialize durable session file (${resolvedFile}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+    // Lost a create race — validate the winner below.
+  }
+  // Rebind full SessionManager so subsequent Pi appends use O_APPEND (flushed=true)
+  // instead of exclusive wx create against the file we just wrote.
+  if (typeof sessionManager.setSessionFile === "function") {
+    sessionManager.setSessionFile(resolvedFile);
+  }
+}
+
 /**
  * Admit only a durable Pi session file principal under the resolved machine ledger
- * book (ADR 0048). Non-empty getSessionFile is not enough: reject relative paths,
- * paths outside the book, directories, and paths whose file and session-dir parent
- * are both missing. Original filesystem causes are retained.
+ * book (ADR 0048). Requires an existing regular file at admission: resolve real paths
+ * and prove containment under the real book. Reject relative paths, outside-book paths,
+ * directories, symlink escapes, and nonexistent paths that cannot be materialized from
+ * the live SessionManager header. Original filesystem causes are retained.
  *
- * A missing file whose parent session-dir already exists under the book is admitted:
- * upstream Pi defers the first exclusive create until an assistant message, so the
- * path is the durable principal before bytes land (see SessionManager._persist).
+ * Upstream Pi defers exclusive create until the first assistant message. When the path
+ * is the live SessionManager principal under the book and only the header is in memory,
+ * admission materializes that header onto the same path before the fact is written so
+ * the role fact never points at a session that may be created later.
  */
 export function durableSessionPointer(
-  sessionManager: {
-    getSessionFile?(): string | undefined;
-  },
+  sessionManager: ActivationSessionManager,
   options: {
     ledgerHome: string;
     bookKey: string;
@@ -113,6 +290,7 @@ export function durableSessionPointer(
       `Workflow role activation requires an absolute durable session file path under the machine ledger book; got relative path: ${file}`,
     );
   }
+
   const resolvedFile = resolve(file);
   const bookRoot = resolve(activationBookDirectory(options.ledgerHome, options.bookKey));
   if (!pathContainedIn(bookRoot, resolvedFile)) {
@@ -121,53 +299,113 @@ export function durableSessionPointer(
     );
   }
 
-  let info: ReturnType<typeof statSync>;
   try {
-    info = statSync(resolvedFile);
+    lstatSync(resolvedFile);
   } catch (error) {
     if (errnoCode(error) !== "ENOENT") {
       throw new Error(
-        `Workflow role activation failed to stat durable session file (${resolvedFile}): ${error instanceof Error ? error.message : String(error)}`,
+        `Workflow role activation failed to stat durable session file (${resolvedFile}): ${errorText(error)}`,
         { cause: error },
       );
     }
-    // File not yet written (Pi deferred create). Parent session-dir must already exist
-    // under the book so the pointer is a prepared durable path, not a fabricated string.
-    const parentPath = dirname(resolvedFile);
     try {
-      const parent = statSync(parentPath);
-      if (!parent.isDirectory()) {
-        throw new Error(
-          `Workflow role activation durable session parent is not a directory: ${parentPath}`,
-          { cause: error },
-        );
+      materializeDeferredSessionFile(sessionManager, resolvedFile, options.ledgerHome);
+    } catch (materializeError) {
+      if (
+        materializeError instanceof Error
+        && materializeError.message.startsWith("Workflow role activation durable session file does not exist:")
+      ) {
+        throw new Error(materializeError.message, { cause: error });
       }
-    } catch (parentError) {
-      if (errnoCode(parentError) === undefined && parentError instanceof Error) throw parentError;
-      throw new Error(
-        `Workflow role activation durable session file does not exist: ${resolvedFile}`,
-        { cause: error },
-      );
+      throw materializeError;
     }
-    return { kind: "session-file", path: resolvedFile };
+  }
+
+  let realBook: string;
+  try {
+    realBook = realpathSync(bookRoot);
+  } catch (error) {
+    throw new Error(
+      `Workflow role activation machine ledger book is not resolvable (${bookRoot}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+
+  let realFile: string;
+  try {
+    realFile = realpathSync(resolvedFile);
+  } catch (error) {
+    throw new Error(
+      `Workflow role activation durable session file does not exist: ${resolvedFile}`,
+      { cause: error },
+    );
+  }
+
+  if (!pathContainedIn(realBook, realFile)) {
+    throw new Error(
+      `Workflow role activation requires the durable session file principal under the machine ledger book (${realBook}); got: ${realFile}`,
+    );
+  }
+
+  let info: ReturnType<typeof statSync>;
+  try {
+    info = statSync(realFile);
+  } catch (error) {
+    throw new Error(
+      `Workflow role activation failed to stat durable session file (${realFile}): ${errorText(error)}`,
+      { cause: error },
+    );
   }
 
   if (info.isDirectory()) {
     throw new Error(
-      `Workflow role activation durable session principal must be a file, not a directory: ${resolvedFile}`,
+      `Workflow role activation durable session principal must be a file, not a directory: ${realFile}`,
     );
   }
   if (!info.isFile()) {
     throw new Error(
-      `Workflow role activation durable session principal is not a regular file: ${resolvedFile}`,
+      `Workflow role activation durable session principal is not a regular file: ${realFile}`,
     );
   }
-  return { kind: "session-file", path: resolvedFile };
+  return { kind: "session-file", path: realFile };
+}
+
+/** Git discovery env vars that must not influence book-key resolution from cwd. */
+const GIT_DISCOVERY_ENV_KEYS = [
+  "GIT_DIR",
+  "GIT_COMMON_DIR",
+  "GIT_WORK_TREE",
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+] as const;
+
+function envWithoutGitDiscovery(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base };
+  for (const key of GIT_DISCOVERY_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+
+/** True when an activation book-key error is the documented non-git cwd rejection. */
+export function isNonGitRepositoryActivationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const chunks = [error.message];
+  const cause = error.cause;
+  if (cause instanceof Error) chunks.push(cause.message);
+  if (cause !== null && typeof cause === "object") {
+    const stderr = (cause as { stderr?: unknown }).stderr;
+    if (typeof stderr === "string") chunks.push(stderr);
+    else if (Buffer.isBuffer(stderr)) chunks.push(stderr.toString("utf8"));
+  }
+  return /not a git repository/i.test(chunks.join("\n"));
 }
 
 /**
  * Book key = basename of the git common-dir host directory (ADR 0048).
  * Worktrees resolve to the main repository host. Non-git cwd retains the original git cause.
+ * Discovery is bound to `cwd` only — caller-controlled GIT_DIR / GIT_COMMON_DIR /
+ * work-tree / ceiling / discovery env cannot redirect the lookup.
  */
 export function resolveBookKeyFromGit(cwd: string): string {
   let commonDir: string;
@@ -176,6 +414,7 @@ export function resolveBookKeyFromGit(cwd: string): string {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      env: envWithoutGitDiscovery(),
     }).trim();
   } catch (error) {
     const err = error as NodeJS.ErrnoException & { stderr?: string | Buffer };
@@ -233,16 +472,52 @@ export function serializeAcceptedActivationFact(fact: AcceptedActivationFact): s
 
 /**
  * Append one complete JSONL record with O_APPEND and a single write of the full record.
- * Creates parent directories without destructive replacement. Short writes fail closed.
+ * Creates parent directories without destructive replacement, rejecting pre-existing
+ * symlink component escapes via filesystem identity. Short writes fail closed.
  */
 export function appendAcceptedActivationFact(
   ledgerPath: string,
   fact: AcceptedActivationFact,
+  options: { ledgerHome: string },
 ): void {
   const line = Buffer.from(serializeAcceptedActivationFact(fact), "utf8");
-  mkdirSync(dirname(ledgerPath), { recursive: true });
+  const resolvedLedger = resolve(ledgerPath);
+  const resolvedHome = resolve(options.ledgerHome);
+  const parent = dirname(resolvedLedger);
+  ensureRealDirectoryTree(resolvedHome, parent);
+
+  // Parent is proven under the real ledger home. Reject a pre-existing ledger
+  // file symlink that escapes the home before O_APPEND follows it.
+  try {
+    if (lstatSync(resolvedLedger).isSymbolicLink()) {
+      let realFile: string;
+      try {
+        realFile = realpathSync(resolvedLedger);
+      } catch (error) {
+        throw new Error(
+          `activation ledger file symlink is not resolvable (${resolvedLedger}): ${errorText(error)}`,
+          { cause: error },
+        );
+      }
+      const realHome = realpathSync(resolvedHome);
+      if (realFile !== realHome && !pathContainedIn(realHome, realFile)) {
+        throw new Error(
+          `activation ledger file escapes ledger home via symlink (${resolvedLedger} -> ${realFile})`,
+        );
+      }
+    }
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      if (error instanceof Error && error.message.startsWith("activation ledger")) throw error;
+      throw new Error(
+        `activation ledger failed to stat ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
   const fd = openSync(
-    ledgerPath,
+    resolvedLedger,
     constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY,
     0o644,
   );
@@ -250,7 +525,7 @@ export function appendAcceptedActivationFact(
     const written = writeSync(fd, line, 0, line.length, null);
     if (written !== line.length) {
       throw new Error(
-        `activation ledger short write: wrote ${written} of ${line.length} bytes to ${ledgerPath}`,
+        `activation ledger short write: wrote ${written} of ${line.length} bytes to ${resolvedLedger}`,
       );
     }
   } finally {
@@ -265,5 +540,6 @@ export function appendAcceptedActivationToBook(options: {
   appendAcceptedActivationFact(
     activationWaitingLedgerPath(options.ledgerHome, options.fact.bookKey),
     options.fact,
+    { ledgerHome: options.ledgerHome },
   );
 }

@@ -76,7 +76,7 @@ After a packaged role is admitted, the shared envelope appends one index-only fa
 
 | Host env | Meaning |
 | --- | --- |
-| `AK_CORRELATION_ID` | Optional caller-preassigned correlation id, stored as-is on the accepted-activation fact. When unset or blank, the fact records a typed `{ "kind": "absent" }` identity (never an empty string). |
+| `AK_CORRELATION_ID` | Optional caller-preassigned correlation id, stored as-is on the accepted-activation fact. When unset, blank, or whitespace-only, the fact records a typed `{ "kind": "absent" }` identity (never an empty string). Non-blank values are preserved verbatim. |
 
 Layout: `~/.ak-roles/books/<git-common-dir-host-basename>/waiting.jsonl` (sole machine home under the process home directory; ADR 0048). Book key is the basename of the host directory of `git rev-parse --git-common-dir` (worktrees join the main repo’s book). Non-git cwd is rejected before model dispatch. The durable session principal must be an absolute path under that same book (file or prepared session-dir parent); relative paths, `/tmp`, consumer-repository paths, and directory principals are rejected before model dispatch. Facts hold only event, role, observed time, book key, durable session pointer, and correlation — zero prompt/transcript/argv/excerpt bytes.
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -163,7 +164,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
         assert.deepEqual(fact.correlation, { kind: "caller", id: "doctor-fresh-corr" });
         assert.equal(fact.session.kind, "session-file");
         if (fact.session.kind !== "session-file") throw new Error("expected session-file pointer");
-        assert.equal(resolve(fact.session.path), resolve(sessionDir, sessionFiles[0]!));
+        assert.equal(fact.session.path, realpathSync(resolve(sessionDir, sessionFiles[0]!)));
         // Retained case session bytes still under the admitted ledger-home runsPath.
         assert.equal(
           (await readFile(resolve(runsPath, "case/session/retained.jsonl"), "utf8")).includes("doctor-case"),

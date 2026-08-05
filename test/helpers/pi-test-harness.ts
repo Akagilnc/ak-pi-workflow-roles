@@ -36,6 +36,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   activationWaitingLedgerPath,
+  isNonGitRepositoryActivationError,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
   type AcceptedActivationFact,
@@ -897,27 +898,36 @@ export async function withInProcessPi<T>(
   const memorySession = SessionManager.inMemory(options.cwd);
   let durableSessionFile: string;
   const hermeticHome = process.env.HOME;
+  if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
+    throw new Error("withInProcessPi requires process.env.HOME for ledger session placement");
+  }
+  // Confirm production ledger home resolves under this HOME before persisting.
+  if (resolveActivationLedgerHome() !== machineLedgerHome(hermeticHome)) {
+    throw new Error("withInProcessPi ledger home does not match hermetic HOME");
+  }
+  let bookKey: string | undefined;
   try {
-    if (typeof hermeticHome !== "string" || hermeticHome.length === 0) {
-      throw new Error("withInProcessPi requires process.env.HOME for ledger session placement");
-    }
-    // Confirm production ledger home resolves under this HOME before persisting.
-    if (resolveActivationLedgerHome() !== machineLedgerHome(hermeticHome)) {
-      throw new Error("withInProcessPi ledger home does not match hermetic HOME");
-    }
-    durableSessionFile = persistActivationSessionFile({
-      home: hermeticHome,
-      bookKey: resolveBookKeyFromGit(options.cwd),
-      name: "inprocess-pi",
-      cwd: options.cwd,
-    });
-  } catch {
+    bookKey = resolveBookKeyFromGit(options.cwd);
+  } catch (error) {
+    // Only the documented non-git cwd case may continue with a non-ledger fallback.
+    // Permission, topology, filesystem, and unknown errors retain cause and fail.
+    if (!isNonGitRepositoryActivationError(error)) throw error;
+    bookKey = undefined;
+  }
+  if (bookKey === undefined) {
     // Non-git cwd never reaches session admission (book key fails first).
     durableSessionFile = resolve(options.agentDir, "sessions", "inprocess-session.jsonl");
     await mkdir(dirname(durableSessionFile), { recursive: true });
     if (!existsSync(durableSessionFile)) {
       await writeFile(durableSessionFile, "\n");
     }
+  } else {
+    durableSessionFile = persistActivationSessionFile({
+      home: hermeticHome,
+      bookKey,
+      name: "inprocess-pi",
+      cwd: options.cwd,
+    });
   }
   const sessionManager = new Proxy(memorySession, {
     get(target, property, receiver) {

@@ -145,10 +145,6 @@ function toolCallContext(
 }
 
 
-function installRoleRuntime(deps: Parameters<typeof createRoleRuntimeExtension>[0]) {
-  return createRoleRuntimeExtension(deps);
-}
-
 async function withActivationHome<T>(run: (home: string) => Promise<T>): Promise<T> {
   return withHermeticHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     seedGitRepository(home);
@@ -179,7 +175,7 @@ async function startJudge(
 ) {
   return withActivationHome(async (home) => {
     const harness = extensionHarness("judge");
-    installRoleRuntime({
+    createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
       transcriptFromContext,
       auditSoulCompliance,
@@ -194,7 +190,7 @@ async function startJudge(
 test("stable factory registers the complete typed role flag set and stays inert without a role", async () => {
   let loads = 0;
   const harness = extensionHarness(undefined);
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => { loads += 1; return "judge"; },
     loadFixerSoul: async () => { loads += 1; return "fixer"; },
     loadCoderSoul: async () => { loads += 1; return "coder"; },
@@ -244,7 +240,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
 test("unsupported role fails with the frozen diagnostic before any loader runs", async () => {
   let loads = 0;
   const harness = extensionHarness("router");
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => { loads += 1; return "judge"; },
     loadFixerSoul: async () => { loads += 1; return "fixer"; },
     loadCoderSoul: async () => { loads += 1; return "coder"; },
@@ -666,7 +662,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
       dispose() {},
     };
     let navigator: ReturnType<typeof createNavigatorAttendance> | undefined;
-    const extension = installRoleRuntime({
+    const extension = createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       transcriptFromContext: () => "record",
       auditSoulCompliance: async () => { throw new Error("provider quota exhausted"); },
@@ -743,7 +739,7 @@ test("packaged infrastructure failure silence correlates the exact output call i
 
 test("judge role fails before adjudication when its soul is empty", async () => {
   const harness = extensionHarness("judge");
-  const extension = installRoleRuntime({
+  const extension = createRoleRuntimeExtension({
     loadJudgeSoul: async () => "   \n",
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
@@ -766,7 +762,7 @@ test("coder plan loads its task without construction skill and returns planned",
     "ak-coder-task": "/materials/task.md",
     "ak-coder-phase": "plan",
   });
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async (path) => {
@@ -844,7 +840,7 @@ test("coder apply accepts an unfinished handoff with typed remaining scope", asy
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
   });
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadCoderSoul: async () => "CODER LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
@@ -891,7 +887,7 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       "ak-coder-task": "/materials/approved.md",
       "ak-coder-phase": "apply",
     });
-    installRoleRuntime({
+    createRoleRuntimeExtension({
       loadJudgeSoul: async () => "JUDGE LAW",
       loadCoderSoul: async () => "CODER LAW",
       loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
@@ -1084,7 +1080,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
   for (const row of rows) {
     const harness = extensionHarness("fixer", row.flags);
     let audits = 0;
-    installRoleRuntime({
+    createRoleRuntimeExtension({
       loadJudgeSoul: async () => "judge",
       loadFixerSoul: async () => "fixer",
       loadFixPacket: async () => row.packet,
@@ -1104,7 +1100,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
 test("undeclared prerequisite submissions are correctable before audit and declared references receive one immutable audit input", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   const seen: unknown[] = [];
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
     transcriptFromContext: () => "record", auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: async (input) => { seen.push(input); return { status: "pass", usage }; },
@@ -1161,7 +1157,7 @@ test("undeclared prerequisite submissions are correctable before audit and decla
 test("declared plan refusal reaches exactly one fresh audit", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "plan" });
   const auditInputs: unknown[] = [];
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer",
     loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n",
     transcriptFromContext: () => "plan-record", auditSoulCompliance: async () => ({ status: "pass" }),
@@ -1185,7 +1181,7 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     "ak-fix-packet": "/materials/fix.md",
     "ak-fixer-phase": "apply",
   });
-  const extension = installRoleRuntime({
+  const extension = createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW\nCreate one forward commit.",
     loadFixPacket: async (path) => {
@@ -1254,7 +1250,7 @@ test("Fixer prospective prerequisite decisions survive the production submission
       { stopReason: "toolUse" },
     );
   });
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => "judge",
     loadFixerSoul: async () => "fixer",
     loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? JSON.stringify([{ id: "owner.choice", requirement: "The predecessor owner decision exists." }]) : "A predecessor owner decision is required before work when the packet says so.",
@@ -1310,7 +1306,7 @@ test("fixer output must be the sole call in its assistant batch", async () => {
     "ak-fix-packet": "/materials/fix.md",
     "ak-fixer-phase": "apply",
   });
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
     loadFixPacket: async () => emptyFixPacket,
@@ -1368,7 +1364,7 @@ test("fixer activation leaves its tool surface unchanged", async () => {
     },
     ["read", "bash", "write", "edit", "arbitrary_sibling"],
   );
-  installRoleRuntime({
+  createRoleRuntimeExtension({
     loadJudgeSoul: async () => "JUDGE LAW",
     loadFixerSoul: async () => "FIXER LAW",
     loadFixPacket: async () => emptyFixPacket,
