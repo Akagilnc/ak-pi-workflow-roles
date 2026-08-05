@@ -691,6 +691,25 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", () 
   assert.equal(navigatorSubjectKey("/repo/task.md", "task text"), "/repo/task.md");
   assert.equal(first.startsWith("/repo/.ak/work/navigator/"), true);
   assert.equal(first.includes("/navigator/navigator"), false);
+  // Machine-ledger session transport is not work identity (ADR 0048).
+  // Ordinary repo cwd with no explicit work root falls back to cwd/.ak/work,
+  // same as empty/in-memory sessionDir — never the per-invocation ledger path.
+  const ledgerSession = "/home/.ak-roles/books/repo/issues/28/runs/judge@src/session";
+  assert.equal(subjectPath(ledgerSession, "/repo"), "/repo/.ak/work");
+  assert.equal(subjectPath("", "/repo"), "/repo/.ak/work");
+  assert.equal(
+    subjectPath(ledgerSession, "/repo/.ak/work/issues/28"),
+    "/repo/.ak/work/issues/28",
+  );
+  assert.equal(
+    navigatorSessionDirectory(
+      { cwd: "/repo", sessionManager: { getSessionDir: () => ledgerSession } } as never,
+    ),
+    navigatorSessionDirectory(
+      { cwd: "/repo", sessionManager: { getSessionDir: () => "" } } as never,
+      "/repo/.ak/work",
+    ),
+  );
   // Typed provenance (absorbed from standalone provenance carrier).
   assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
   const legitimate = `work subject: ${adHocRoot} with real task bytes`;

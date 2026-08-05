@@ -330,8 +330,10 @@ function subjectPath(sessionDir: string, cwd = process.cwd()): string {
   // Durable role sessions under the machine ledger home are not work roots.
   // Derive subject from cwd (same as empty sessionDir / in-memory) so Navigator
   // keeps issue-root identity when ignition places --session-dir under ADR 0048.
+  // Ordinary repository cwd with no explicit work identity uses the established
+  // cwd-derived `.ak/work` fallback — never the per-invocation ledger session path.
   if (isMachineLedgerSessionPath(resolvedSession)) {
-    return workIdentityFromCwd(cwd) ?? resolvedSession;
+    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
   }
   const issue = issueRoot(resolvedSession);
   if (issue !== undefined) return issue;

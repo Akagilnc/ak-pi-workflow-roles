@@ -107,6 +107,38 @@ function errorText(error: unknown): string {
 }
 
 /**
+ * Typed activation-ledger path/fs failure. Callers discriminate with instanceof/code;
+ * never by parsing message prose. Original filesystem causes are retained.
+ */
+export class ActivationLedgerError extends Error {
+  readonly code = "AK_ACTIVATION_LEDGER" as const;
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(
+      message,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = "ActivationLedgerError";
+  }
+}
+
+/**
+ * Typed missing durable session principal. Callers discriminate with instanceof/code;
+ * never by parsing message prose. Original filesystem causes are retained.
+ */
+export class ActivationSessionFileMissingError extends Error {
+  readonly code = "AK_ACTIVATION_SESSION_FILE_MISSING" as const;
+  readonly path: string;
+  constructor(path: string, options?: { cause?: unknown }) {
+    super(
+      `Workflow role activation durable session file does not exist: ${path}`,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = "ActivationSessionFileMissingError";
+    this.path = path;
+  }
+}
+
+/**
  * Create `targetDir` (and missing parents) under `root` without following pre-existing
  * symlink components that escape the real root. Returns the real path of `targetDir`.
  * Original filesystem causes are retained.
@@ -115,7 +147,7 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
   const absoluteRoot = resolve(root);
   const absoluteTarget = resolve(targetDir);
   if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
-    throw new Error(
+    throw new ActivationLedgerError(
       `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`,
     );
   }
@@ -123,7 +155,7 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
   try {
     mkdirSync(absoluteRoot, { recursive: true });
   } catch (error) {
-    throw new Error(
+    throw new ActivationLedgerError(
       `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
       { cause: error },
     );
@@ -133,19 +165,19 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
   try {
     realRoot = realpathSync(absoluteRoot);
   } catch (error) {
-    throw new Error(
+    throw new ActivationLedgerError(
       `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
       { cause: error },
     );
   }
   if (!statSync(realRoot).isDirectory()) {
-    throw new Error(`activation ledger home is not a directory: ${realRoot}`);
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
   }
 
   const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
   if (rel === "") return realRoot;
   if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new Error(
+    throw new ActivationLedgerError(
       `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`,
     );
   }
@@ -154,7 +186,7 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
   for (const part of rel.split(sep)) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
-      throw new Error(`activation ledger path contains '..': ${absoluteTarget}`);
+      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
     }
     lexicalCursor = join(lexicalCursor, part);
 
@@ -163,7 +195,7 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
       st = lstatSync(lexicalCursor);
     } catch (error) {
       if (errnoCode(error) !== "ENOENT") {
-        throw new Error(
+        throw new ActivationLedgerError(
           `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
           { cause: error },
         );
@@ -174,7 +206,7 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
         // Concurrent first-time creators can lose the mkdir race. Only EEXIST is
         // recoverable; re-lstat/realpath validation below still admits the winner.
         if (errnoCode(mkdirError) !== "EEXIST") {
-          throw new Error(
+          throw new ActivationLedgerError(
             `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
             { cause: mkdirError },
           );
@@ -183,7 +215,7 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
       try {
         st = lstatSync(lexicalCursor);
       } catch (statError) {
-        throw new Error(
+        throw new ActivationLedgerError(
           `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
           { cause: statError },
         );
@@ -195,37 +227,37 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
       try {
         realNext = realpathSync(lexicalCursor);
       } catch (error) {
-        throw new Error(
+        throw new ActivationLedgerError(
           `activation ledger symlink component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
           { cause: error },
         );
       }
       if (realNext !== realRoot && !pathContainedIn(realRoot, realNext)) {
-        throw new Error(
+        throw new ActivationLedgerError(
           `activation ledger path component escapes ledger home via symlink (${lexicalCursor} -> ${realNext})`,
         );
       }
       if (!statSync(realNext).isDirectory()) {
-        throw new Error(`activation ledger path component is not a directory: ${realNext}`);
+        throw new ActivationLedgerError(`activation ledger path component is not a directory: ${realNext}`);
       }
       continue;
     }
 
     if (!st.isDirectory()) {
-      throw new Error(`activation ledger path component is not a directory: ${lexicalCursor}`);
+      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
     }
 
     let realCursor: string;
     try {
       realCursor = realpathSync(lexicalCursor);
     } catch (error) {
-      throw new Error(
+      throw new ActivationLedgerError(
         `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
         { cause: error },
       );
     }
     if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
-      throw new Error(
+      throw new ActivationLedgerError(
         `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`,
       );
     }
@@ -234,7 +266,7 @@ function ensureRealDirectoryTree(root: string, targetDir: string): string {
   try {
     return realpathSync(absoluteTarget);
   } catch (error) {
-    throw new Error(
+    throw new ActivationLedgerError(
       `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
       { cause: error },
     );
@@ -248,9 +280,7 @@ function materializeDeferredSessionFile(
 ): void {
   const header = sessionManager.getHeader?.();
   if (header === null || header === undefined || header.type !== "session") {
-    throw new Error(
-      `Workflow role activation durable session file does not exist: ${resolvedFile}`,
-    );
+    throw new ActivationSessionFileMissingError(resolvedFile);
   }
   ensureRealDirectoryTree(ledgerHome, dirname(resolvedFile));
   try {
@@ -322,11 +352,10 @@ export function durableSessionPointer(
     try {
       materializeDeferredSessionFile(sessionManager, resolvedFile, options.ledgerHome);
     } catch (materializeError) {
-      if (
-        materializeError instanceof Error
-        && materializeError.message.startsWith("Workflow role activation durable session file does not exist:")
-      ) {
-        throw new Error(materializeError.message, { cause: error });
+      // Missing principal: rethrow typed missing-file identity with the original ENOENT cause.
+      // Other materialize failures keep their own typed/native identity.
+      if (materializeError instanceof ActivationSessionFileMissingError) {
+        throw new ActivationSessionFileMissingError(resolvedFile, { cause: error });
       }
       throw materializeError;
     }
@@ -346,10 +375,7 @@ export function durableSessionPointer(
   try {
     realFile = realpathSync(resolvedFile);
   } catch (error) {
-    throw new Error(
-      `Workflow role activation durable session file does not exist: ${resolvedFile}`,
-      { cause: error },
-    );
+    throw new ActivationSessionFileMissingError(resolvedFile, { cause: error });
   }
 
   if (!pathContainedIn(realBook, realFile)) {
@@ -532,22 +558,22 @@ export function appendAcceptedActivationFact(
       try {
         realFile = realpathSync(resolvedLedger);
       } catch (error) {
-        throw new Error(
+        throw new ActivationLedgerError(
           `activation ledger file symlink is not resolvable (${resolvedLedger}): ${errorText(error)}`,
           { cause: error },
         );
       }
       const realHome = realpathSync(resolvedHome);
       if (realFile !== realHome && !pathContainedIn(realHome, realFile)) {
-        throw new Error(
+        throw new ActivationLedgerError(
           `activation ledger file escapes ledger home via symlink (${resolvedLedger} -> ${realFile})`,
         );
       }
     }
   } catch (error) {
     if (errnoCode(error) !== "ENOENT") {
-      if (error instanceof Error && error.message.startsWith("activation ledger")) throw error;
-      throw new Error(
+      if (error instanceof ActivationLedgerError) throw error;
+      throw new ActivationLedgerError(
         `activation ledger failed to stat ledger file (${resolvedLedger}): ${errorText(error)}`,
         { cause: error },
       );
@@ -562,7 +588,7 @@ export function appendAcceptedActivationFact(
   try {
     const written = writeSync(fd, line, 0, line.length, null);
     if (written !== line.length) {
-      throw new Error(
+      throw new ActivationLedgerError(
         `activation ledger short write: wrote ${written} of ${line.length} bytes to ${resolvedLedger}`,
       );
     }

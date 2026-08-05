@@ -297,22 +297,18 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
   }
 }
 
+/** Judge failure/trace adapter over the sole registry owner — not a parallel harness. */
 function runtimeHarness(options: {
   activate?: () => Promise<string>;
   clock?: () => string;
   writeTrace?: (record: ActivationTraceRecord) => void | Promise<void>;
   mode?: ExtensionContext["mode"];
   home: string;
-} ) {
+}) {
   type Handler = (event: { reason?: string; systemPrompt?: string }, ctx: ExtensionContext) => unknown;
-  const handlers = new Map<string, Handler[]>();
   const traces: ActivationTraceRecord[] = [];
   let aborts = 0;
-  const pi = {
-    registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
-    getFlag(name: string) { return name === "ak-role" ? "judge" : undefined; },
-    on(name: string, handler: Handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
-  } as unknown as ExtensionAPI;
+  const { pi, handlers } = registryPi({ role: "judge" });
   createRoleRuntimeExtension({
     loadJudgeSoul: options.activate ?? (async () => { throw new TypeError("soul unavailable"); }),
     transcriptFromContext: () => "", auditSoulCompliance: async () => ({ status: "pass" }),
@@ -327,7 +323,7 @@ function runtimeHarness(options: {
   const handler = (name: string): Handler => {
     const found = handlers.get(name)?.[0];
     assert.ok(found, `missing ${name} handler`);
-    return found;
+    return found as Handler;
   };
   return { handler, traces, ctx, aborts: () => aborts };
 }
