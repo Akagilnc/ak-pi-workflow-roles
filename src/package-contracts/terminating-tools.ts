@@ -7,6 +7,7 @@ import {
   COLLECTOR_ACCEPTED_TEXT,
   COLLECTOR_OUTPUT_TOOL,
   validateAcceptedCollectorReceipt,
+  type CollectorLegStatus,
   type CollectorReceipt,
 } from "./collector-output.ts";
 import {
@@ -60,6 +61,7 @@ export {
   validateMergerOutput,
 };
 export type {
+  CollectorLegStatus,
   CollectorReceipt,
   JudgeVerdict,
   ReviewerIntent,
@@ -177,7 +179,21 @@ export function validateAcceptedLifecycle(
   return details;
 }
 
-export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): { status?: string; commit?: string } {
+/** Machine-facing facts from an accepted terminating receipt. No presentation joins. */
+export type AcceptedFacts = {
+  status?: string;
+  commit?: string;
+  /** Collector only: distinct leg terminal states in stable rank order. */
+  legStatuses?: readonly CollectorLegStatus[];
+};
+
+const COLLECTOR_LEG_STATUS_RANK: Record<CollectorLegStatus, number> = {
+  missing: 0,
+  unavailable: 1,
+  valid: 2,
+};
+
+export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): AcceptedFacts {
   switch (toolName) {
     case CODER_OUTPUT_TOOL_NAME:
     case FIXER_OUTPUT_TOOL_NAME: return { status: (details as WorkerOutput).status };
@@ -186,13 +202,11 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as DoctorOutput).status };
     case MERGER_OUTPUT_TOOL_NAME: { const output = details as MergerOutput; return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) }; }
     case COLLECTOR_OUTPUT_TOOL: {
-      // Collector has no receipt-level status field; legs carry the typed terminal
-      // collection states (valid | unavailable | missing). Project a nonempty
-      // deterministic summary of those states — never tool-call prose.
-      const rank: Record<string, number> = { missing: 0, unavailable: 1, valid: 2 };
+      // Collector has no receipt-level status; legs carry typed terminal states.
+      // Keep the distinct set as a typed field — never join into a display string here.
       const unique = [...new Set((details as CollectorReceipt).legs.map((leg) => leg.status))];
-      unique.sort((a, b) => (rank[a] ?? 99) - (rank[b] ?? 99));
-      return { status: unique.join("+") };
+      unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
+      return { legStatuses: unique };
     }
   }
 }
