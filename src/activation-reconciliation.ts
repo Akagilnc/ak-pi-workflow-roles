@@ -80,14 +80,22 @@ export type ProcessLivenessFact =
   | { readonly state: "terminated" };
 
 /**
- * One reconciliation subject: typed dispatch and/or activation facts plus
- * consumer-supplied process liveness. No session-file existence oracle (ADR 0047).
+ * One reconciliation subject as an exclusive complete union (four outcomes only):
+ * - activation present → activation required; dispatch/process optional
+ * - activation absent → dispatch + truthful process required; activation prohibited
+ * No session-file existence oracle (ADR 0047). Untyped JS still hits runtime TypeError.
  */
-export type ReconciliationSubject = {
-  readonly dispatch?: DispatchStubFact;
-  readonly activation?: AcceptedActivationFact;
-  readonly process?: ProcessLivenessFact;
-};
+export type ReconciliationSubject =
+  | {
+      readonly activation: AcceptedActivationFact;
+      readonly dispatch?: DispatchStubFact;
+      readonly process?: ProcessLivenessFact;
+    }
+  | {
+      readonly activation?: undefined;
+      readonly dispatch: DispatchStubFact;
+      readonly process: ProcessLivenessFact;
+    };
 
 /**
  * Exactly four typed outcomes (D1a):
