@@ -296,16 +296,6 @@ export type RoleRuntimeDependencies = {
   ): Promise<ComplianceDecision>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
-  /** Override book-key derivation (production: git common-dir host basename). */
-  resolveActivationBookKey?(cwd: string): string | Promise<string>;
-  /** Override correlation identity (production: AK_CORRELATION_ID host channel). */
-  resolveActivationCorrelation?(): ActivationCorrelationIdentity | Promise<ActivationCorrelationIdentity>;
-  /** Override ledger home (production: AK_ROLES_HOME or ~/.ak-roles). */
-  resolveActivationLedgerHome?(): string | Promise<string>;
-  /** Override append sink (production: O_APPEND JSONL under the book waiting ledger). */
-  appendActivationLedgerFact?(fact: AcceptedActivationFact): void | Promise<void>;
-  /** Override durable session pointer (production: sessionManager file or directory). */
-  resolveActivationSessionPointer?(ctx: ExtensionContext): ActivationSessionPointer | Promise<ActivationSessionPointer>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
   toolExecutionObservationClock?(): string;
   /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
@@ -729,21 +719,22 @@ export function createRoleRuntimeExtension(
         },
       };
       try {
-        const bookKey = await (dependencies.resolveActivationBookKey ?? ((cwd: string) => resolveBookKeyFromGit(cwd)))(ctx.cwd);
-        const correlation = await (dependencies.resolveActivationCorrelation ?? (() => correlationIdentityFromEnv()))();
-        const session = await (dependencies.resolveActivationSessionPointer ?? ((context: ExtensionContext) => durableSessionPointer(context.sessionManager)))(ctx);
-        const ledgerHome = await (dependencies.resolveActivationLedgerHome ?? (() => resolveActivationLedgerHome()))();
-        const appendFact = dependencies.appendActivationLedgerFact ?? ((fact: AcceptedActivationFact) => {
-          appendAcceptedActivationToBook({ ledgerHome, fact });
-        });
+        // Production topology only (ADR 0048/0049): no test-only ledger hooks.
+        const bookKey = resolveBookKeyFromGit(ctx.cwd);
+        const correlation = correlationIdentityFromEnv();
+        const session = durableSessionPointer(ctx.sessionManager);
+        const ledgerHome = resolveActivationLedgerHome();
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
-        await appendFact(buildAcceptedActivationFact({
-          role: entry.role,
-          observedAt: clock(),
-          bookKey,
-          session,
-          correlation,
-        }));
+        appendAcceptedActivationToBook({
+          ledgerHome,
+          fact: buildAcceptedActivationFact({
+            role: entry.role,
+            observedAt: clock(),
+            bookKey,
+            session,
+            correlation,
+          }),
+        });
         admitted = true;
       } catch (error) {
         failInfrastructure(error, ctx);
