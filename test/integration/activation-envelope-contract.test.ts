@@ -283,6 +283,9 @@ function roleActivationHarness(options: {
     facts: ledger.facts,
     ctx,
     aborts: () => aborts,
+    dispose() {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    },
     async start() {
       const start = handlers.get("session_start")?.[0];
       assert.ok(start);
@@ -363,40 +366,48 @@ test("every registered whole-activation rejection terminates nonzero with a name
 
 test("every registered role writes exactly one accepted-activation fact after admission", async () => {
   assert.ok(PACKAGED_ROLE_REGISTRY.some((entry) => entry.role === "collector"), "Collector must remain in the #52 registry gate");
-  for (const entry of PACKAGED_ROLE_REGISTRY) {
-    process.exitCode = undefined;
-    const withCorrelation = roleActivationHarness({
-      role: entry.role,
-      correlation: { kind: "caller", id: `corr-${entry.role}` },
-      sessionPath: `/sessions/${entry.role}.jsonl`,
-      clock: () => "2025-06-01T12:00:00.000Z",
-    });
-    await withCorrelation.start();
-    assert.equal(withCorrelation.facts.length, 1, `${entry.role} admitted fact count`);
-    assert.deepEqual(withCorrelation.facts[0], {
-      event: ACCEPTED_ACTIVATION_EVENT,
-      role: entry.role,
-      observedAt: "2025-06-01T12:00:00.000Z",
-      bookKey: "envelope-book",
-      session: { kind: "session-file", path: `/sessions/${entry.role}.jsonl` },
-      correlation: { kind: "caller", id: `corr-${entry.role}` },
-    });
+  const harnesses: Array<{ dispose(): void }> = [];
+  try {
+    for (const entry of PACKAGED_ROLE_REGISTRY) {
+      process.exitCode = undefined;
+      const withCorrelation = roleActivationHarness({
+        role: entry.role,
+        correlation: { kind: "caller", id: `corr-${entry.role}` },
+        sessionPath: `/sessions/${entry.role}.jsonl`,
+        clock: () => "2025-06-01T12:00:00.000Z",
+      });
+      harnesses.push(withCorrelation);
+      await withCorrelation.start();
+      assert.equal(withCorrelation.facts.length, 1, `${entry.role} admitted fact count`);
+      assert.deepEqual(withCorrelation.facts[0], {
+        event: ACCEPTED_ACTIVATION_EVENT,
+        role: entry.role,
+        observedAt: "2025-06-01T12:00:00.000Z",
+        bookKey: "envelope-book",
+        session: { kind: "session-file", path: `/sessions/${entry.role}.jsonl` },
+        correlation: { kind: "caller", id: `corr-${entry.role}` },
+      });
 
-    const missingCorrelation = roleActivationHarness({
-      role: entry.role,
-      correlation: { kind: "absent" },
-      sessionPath: `/sessions/${entry.role}-absent.jsonl`,
-    });
-    await missingCorrelation.start();
-    assert.equal(missingCorrelation.facts.length, 1);
-    assert.deepEqual(missingCorrelation.facts[0]?.correlation, { kind: "absent" });
+      const missingCorrelation = roleActivationHarness({
+        role: entry.role,
+        correlation: { kind: "absent" },
+        sessionPath: `/sessions/${entry.role}-absent.jsonl`,
+      });
+      harnesses.push(missingCorrelation);
+      await missingCorrelation.start();
+      assert.equal(missingCorrelation.facts.length, 1);
+      assert.deepEqual(missingCorrelation.facts[0]?.correlation, { kind: "absent" });
+    }
+
+    // Envelope barrier opens only after admitted fact write (judge is a bare role with no extra before_agent_start policy).
+    const admitted = roleActivationHarness({ role: "judge" });
+    harnesses.push(admitted);
+    await admitted.start();
+    await admitted.tryProvider();
+    assert.equal(admitted.providerTurns(), 1);
+  } finally {
+    for (const harness of harnesses) harness.dispose();
   }
-
-  // Envelope barrier opens only after admitted fact write (judge is a bare role with no extra before_agent_start policy).
-  const admitted = roleActivationHarness({ role: "judge" });
-  await admitted.start();
-  await admitted.tryProvider();
-  assert.equal(admitted.providerTurns(), 1);
 });
 
 test("unselected role and unsupported role leave zero accepted-activation facts", async () => {
@@ -485,12 +496,16 @@ test("append failure preserves original cause, aborts nonzero, and blocks provid
   process.exitCode = undefined;
   const appendError = new Error("disk full");
   const h = roleActivationHarness({ role: "judge", appendError });
-  await assert.rejects(async () => h.start(), (error: unknown) => error === appendError);
-  assert.equal(h.facts.length, 0);
-  assert.equal(h.aborts(), 1);
-  assert.equal(process.exitCode, 1);
-  await assert.rejects(async () => h.tryProvider(), (error: unknown) => error instanceof ActivationBarrierError);
-  assert.equal(h.providerTurns(), 0);
+  try {
+    await assert.rejects(async () => h.start(), (error: unknown) => error === appendError);
+    assert.equal(h.facts.length, 0);
+    assert.equal(h.aborts(), 1);
+    assert.equal(process.exitCode, 1);
+    await assert.rejects(async () => h.tryProvider(), (error: unknown) => error instanceof ActivationBarrierError);
+    assert.equal(h.providerTurns(), 0);
+  } finally {
+    h.dispose();
+  }
 });
 
 test("accepted-activation serializer emits only index keys and zero known content bytes", () => {
