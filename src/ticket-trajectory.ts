@@ -153,9 +153,9 @@ export async function readLedgerSessionJsonl(path: string): Promise<SessionRow[]
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     if (!line.trim()) continue;
+    let row: unknown;
     try {
-      const row: unknown = JSON.parse(line);
-      if (isRecord(row)) rows.push(row);
+      row = JSON.parse(line);
     } catch (error) {
       if (!(error instanceof SyntaxError)) throw error;
       const hasRecordAfter = lines.slice(index + 1).some((candidate) => candidate.trim().length > 0);
@@ -167,6 +167,15 @@ export async function readLedgerSessionJsonl(path: string): Promise<SessionRow[]
       // truncated live tail — keep prior complete rows
       break;
     }
+    // Syntactically complete line: must be a session object. Silent omission
+    // would under-count ledger evidence (failure honesty).
+    if (!isRecord(row)) {
+      const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
+      throw new Error(
+        `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
+      );
+    }
+    rows.push(row);
   }
   return rows;
 }
@@ -453,7 +462,7 @@ function renderHtml(input: {
 
     return [
       `<section class="station" data-station-block="${attr(station)}" data-round-count="${rounds.length}">`,
-      `<h2 class="station-title">${escapeHtml(stationLabel)}</h2>`,
+      `<h2 class="station-title">${escapeHtml(stationLabel)} · ${rounds.length} 轮</h2>`,
       roundHtml,
       `</section>`,
     ].join("\n");
