@@ -599,6 +599,22 @@ export function seedGitRepository(cwd: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
 }
 
+/**
+ * Opt-in activation-owned hermetic home: hermetic HOME plus explicit git substrate (ADR 0048).
+ * Only callers that load the production role extension / exercise activation may use this.
+ * Role-less and nonactivation tests keep withHermeticHome without git seed.
+ * Fixture path prefixes are synthetic test labels, not retained real-role evidence topology.
+ */
+export async function withActivationHome<T>(
+  options: { prefix?: string },
+  scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
+): Promise<T> {
+  return withHermeticHome(options, async (fixture) => {
+    seedGitRepository(fixture.home);
+    return scenario(fixture);
+  });
+}
+
 /** Sole machine ledger home under a hermetic process home (ADR 0048). */
 export function machineLedgerHome(home: string): string {
   return join(home, ".ak-roles");

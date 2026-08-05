@@ -17,7 +17,7 @@ import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   packageRoot,
   runPiSubprocess,
-  seedGitRepository,
+  withActivationHome,
   withHermeticHome,
   withInProcessPi,
   writeTestSkill,
@@ -85,10 +85,9 @@ type SessionRow = {
 
 /** Session-backed timeout path: retained compliance response is the typed cause. */
 async function runTimeoutCli(mode: "print" | "json") {
-  return withHermeticHome(
+  return withActivationHome(
     { prefix: "ak-audit-timeout-" },
     async ({ home, agentDir }) => {
-      seedGitRepository(home);
       // Session principal must sit under the machine ledger book (ADR 0048).
       const sessionDirectory = resolve(
         home,
@@ -146,10 +145,9 @@ async function runTimeoutCli(mode: "print" | "json") {
 }
 
 async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
-  return withHermeticHome(
+  return withActivationHome(
     { prefix: "ak-audit-navigator-" },
     async ({ home, agentDir }) => {
-      seedGitRepository(home);
       const issueRoot = resolve(home, ".ak/work/issues/28");
       await mkdir(issueRoot, { recursive: true });
       // Role session under ledger book; Navigator subject still derives from issueRoot cwd.
