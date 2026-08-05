@@ -23,6 +23,7 @@
     "test:fast": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts",
     "test:integration": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts",
     "test:all": "node --import tsx --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts test/package/**/*.test.ts",
+    "test:adjudication": "node --import tsx --test test/adjudication/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "pi": {
