@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -37,11 +36,6 @@ const EXPECTED_PEERS = {
 
 /** Declared TypeBox endpoints that must execute this packed package (docs/npm-identity.md). */
 const TYPEBOX_EXECUTABLE_MATRIX = ["1.3.7", "1.3.8"] as const;
-
-const TYPEBOX_ARTIFACT_CACHE = resolve(
-  tmpdir(),
-  "ak-pi-workflow-roles-typebox-matrix",
-);
 
 interface ExtractedPack {
   root: string;
@@ -166,38 +160,31 @@ test("packed peerDependencies use explicit evidence-bounded ranges, not wildcard
 });
 
 /**
- * Materialize an exact typebox version tarball once (registry/cache), independent of
- * Pi's nested dependency tree. Consumers install this as their top-level typebox peer.
+ * Pack one exact typebox pin into the consumer temp tree. Lifecycle is bounded to
+ * that consumer directory — no second permanent ready-marker cache beside the
+ * harness pack/cold-install owner.
  */
-async function ensureTypeboxTarball(
+async function packTypeboxPeerTarball(
+  destinationDir: string,
   version: (typeof TYPEBOX_EXECUTABLE_MATRIX)[number],
 ): Promise<string> {
-  const cacheDir = resolve(TYPEBOX_ARTIFACT_CACHE, version);
-  const readyPath = resolve(cacheDir, "ready.json");
-  if (existsSync(readyPath)) {
-    const ready = JSON.parse(await readFile(readyPath, "utf8")) as {
-      version: string;
-      tarball: string;
-    };
-    if (ready.version === version && existsSync(ready.tarball)) {
-      return ready.tarball;
-    }
-  }
-
-  await mkdir(cacheDir, { recursive: true });
   const { stdout } = await execFileAsync(
     "npm",
-    ["pack", `typebox@${version}`, "--json", "--pack-destination", cacheDir],
-    { cwd: cacheDir, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
+    ["pack", `typebox@${version}`, "--json", "--pack-destination", destinationDir],
+    { cwd: destinationDir, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
   );
   const entry = (JSON.parse(stdout) as Array<{ filename: string }>)[0];
   assert.ok(entry?.filename, `npm pack typebox@${version} must emit a tarball`);
-  const tarball = resolve(cacheDir, entry.filename);
-  await writeFile(
-    readyPath,
-    JSON.stringify({ version, tarball, filename: entry.filename }, null, 2),
+  return resolve(destinationDir, entry.filename);
+}
+
+function isPackedFixerPacketValidationError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "FixerPacketValidationError" &&
+    (error as { code?: unknown }).code === "AK_INVALID_FIX_PACKET"
   );
-  return tarball;
 }
 
 async function withTypeboxMatrixConsumer<
@@ -211,10 +198,10 @@ async function withTypeboxMatrixConsumer<
   }) => Promise<T>,
 ): Promise<T> {
   const pack = await getSharedIsolatedPack();
-  const typeboxTarball = await ensureTypeboxTarball(typeboxVersion);
   const consumer = await mkdtemp(resolve(tmpdir(), `ak-typebox-matrix-${typeboxVersion}-`));
   return await withPrimaryAwareCleanup(
     async () => {
+      const typeboxTarball = await packTypeboxPeerTarball(consumer, typeboxVersion);
       await writeFile(
         resolve(consumer, "package.json"),
         JSON.stringify({
@@ -300,7 +287,7 @@ test("cold-installed package executes against each declared typebox matrix endpo
           fixerPacket.parseFixerPrerequisites(
             JSON.stringify([{ id: "bad id", requirement: "x" }]),
           ),
-        /Fixer prerequisites/,
+        isPackedFixerPacketValidationError,
         `packed fixer schema must reject under typebox ${typeboxVersion}`,
       );
 
