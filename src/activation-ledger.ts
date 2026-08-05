@@ -1,10 +1,7 @@
 import {
   constants,
   closeSync,
-  fstatSync,
-  ftruncateSync,
   openSync,
-  unlinkSync,
   writeSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -15,7 +12,6 @@ import {
   activationWaitingLedgerPath,
   assertLedgerFileInsideHome,
   ensureRealDirectoryTree,
-  errnoCode,
   errorText,
 } from "./activation-ledger-topology.ts";
 
@@ -120,9 +116,6 @@ export type ActivationLedgerWriteSync = (
   position: number | null,
 ) => number;
 
-const LOCK_WAIT_SLICE_MS = 10;
-const LOCK_TIMEOUT_MS = 60_000;
-
 /**
  * Run body then cleanups without letting cleanup erase the primary failure.
  * Primary remains AggregateError.cause / errors[0]; cleanup is retained as nested evidence.
@@ -162,77 +155,12 @@ function settleWithCleanup(body: () => void, cleanups: ReadonlyArray<() => void>
   if (primaryFailure !== undefined) throw primaryFailure;
 }
 
-function sleepMs(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-/** Exclusive cross-process append ownership via O_EXCL lock file next to the ledger. */
-function acquireAppendLock(lockPath: string): number {
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      return openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o644);
-    } catch (error) {
-      lastError = error;
-      if (errnoCode(error) !== "EEXIST") {
-        throw new ActivationLedgerError(
-          `activation ledger failed to acquire append lock (${lockPath}): ${errorText(error)}`,
-          { cause: error },
-        );
-      }
-      sleepMs(LOCK_WAIT_SLICE_MS);
-    }
-  }
-  throw new ActivationLedgerError(
-    `activation ledger timed out acquiring append lock (${lockPath})`,
-    lastError === undefined ? undefined : { cause: lastError },
-  );
-}
-
-function releaseAppendLock(lockFd: number, lockPath: string): void {
-  let closeError: unknown;
-  try {
-    closeSync(lockFd);
-  } catch (error) {
-    closeError = error;
-  }
-  try {
-    unlinkSync(lockPath);
-  } catch (error) {
-    if (errnoCode(error) !== "ENOENT") {
-      if (closeError !== undefined) {
-        throw new AggregateError(
-          [closeError, error],
-          "activation ledger lock release failed",
-          { cause: closeError },
-        );
-      }
-      throw error;
-    }
-  }
-  if (closeError !== undefined) throw closeError;
-}
-
-function rollbackPartialAppend(fd: number, boundary: number, primary: unknown): never {
-  try {
-    ftruncateSync(fd, boundary);
-  } catch (truncError) {
-    throw new AggregateError(
-      [primary, truncError],
-      "activation ledger write failed and rollback failed",
-      { cause: primary },
-    );
-  }
-  throw primary;
-}
-
 /**
- * Append one complete JSONL record under exclusive cross-process ownership.
- * Captures the prior file boundary, writes one full record, and rolls back any
- * partial bytes without truncating another writer's data. Short writes and write
- * failures fail closed while preserving the original infrastructure cause.
- * Cleanup (close/lock release) cannot mask that primary cause.
+ * Append one complete JSONL record with one O_APPEND write of the full record.
+ * Shared-ledger contract: concurrent successful append-only producers cannot
+ * overwrite one another. A short write is an honest infrastructure failure
+ * (ADR 0049) — no non-append rollback/truncate. Close failure cannot mask the
+ * primary write cause; cleanup evidence is retained.
  */
 export function appendAcceptedActivationFact(
   ledgerPath: string,
@@ -250,18 +178,15 @@ export function appendAcceptedActivationFact(
   ensureRealDirectoryTree(resolvedHome, parent);
   assertLedgerFileInsideHome(resolvedLedger, resolvedHome);
 
-  const lockPath = `${resolvedLedger}.append-lock`;
   const write = options.write ?? writeSync;
-  let lockFd: number | undefined;
   let ledgerFd: number | undefined;
 
   settleWithCleanup(
     () => {
-      lockFd = acquireAppendLock(lockPath);
       try {
         ledgerFd = openSync(
           resolvedLedger,
-          constants.O_RDWR | constants.O_CREAT,
+          constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY,
           0o644,
         );
       } catch (error) {
@@ -271,20 +196,10 @@ export function appendAcceptedActivationFact(
         );
       }
 
-      const boundary = fstatSync(ledgerFd).size;
-      let written: number;
-      try {
-        written = write(ledgerFd, line, 0, line.length, boundary);
-      } catch (error) {
-        rollbackPartialAppend(ledgerFd, boundary, error);
-      }
+      const written = write(ledgerFd, line, 0, line.length, null);
       if (written !== line.length) {
-        rollbackPartialAppend(
-          ledgerFd,
-          boundary,
-          new ActivationLedgerError(
-            `activation ledger short write: wrote ${written} of ${line.length} bytes to ${resolvedLedger}`,
-          ),
+        throw new ActivationLedgerError(
+          `activation ledger short write: wrote ${written} of ${line.length} bytes to ${resolvedLedger}`,
         );
       }
     },
@@ -294,12 +209,6 @@ export function appendAcceptedActivationFact(
         const fd = ledgerFd;
         ledgerFd = undefined;
         closeSync(fd);
-      },
-      () => {
-        if (lockFd === undefined) return;
-        const fd = lockFd;
-        lockFd = undefined;
-        releaseAppendLock(fd, lockPath);
       },
     ],
   );

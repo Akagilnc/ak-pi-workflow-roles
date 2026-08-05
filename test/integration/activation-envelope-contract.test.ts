@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -877,6 +878,82 @@ appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
   rmSync(root, { recursive: true, force: true });
 });
 
+test("mixed concurrent O_APPEND producers keep intact records with exact cardinality", async () => {
+  // Shared-ledger contract: package append and a foreign O_APPEND producer must not
+  // overwrite one another. No private lock / positional rewrite / truncate ownership.
+  const root = mkdtempSync(join(tmpdir(), "ak-ledger-mixed-"));
+  const ledgerHome = join(root, "home");
+  const bookKey = "mixed-book";
+  const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
+  const packageWorker = join(root, "package-worker.mjs");
+  const foreignWorker = join(root, "foreign-worker.mjs");
+  writeFileSync(packageWorker, `
+import { appendAcceptedActivationFact, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
+const index = Number(process.argv[2]);
+const ledgerPath = process.argv[3];
+const ledgerHome = process.argv[4];
+appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
+  role: "judge",
+  observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
+  bookKey: "mixed-book",
+  session: { kind: "session-file", path: "/s/pkg-" + index + ".jsonl" },
+  correlation: { kind: "caller", id: "pkg-" + index },
+}), { ledgerHome });
+`);
+  writeFileSync(foreignWorker, `
+import { constants, closeSync, openSync, writeSync } from "node:fs";
+const index = Number(process.argv[2]);
+const ledgerPath = process.argv[3];
+const line = Buffer.from(JSON.stringify({ producer: "foreign", id: "foreign-" + index }) + "\\n", "utf8");
+const fd = openSync(ledgerPath, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY, 0o644);
+try {
+  const written = writeSync(fd, line, 0, line.length, null);
+  if (written !== line.length) throw new Error("foreign short write " + written + "/" + line.length);
+} finally {
+  closeSync(fd);
+}
+`);
+  // Ensure parent tree exists so foreign O_APPEND open does not race mkdir.
+  mkdirSync(dirname(ledgerPath), { recursive: true });
+  const packageCount = 8;
+  const foreignCount = 8;
+  const children = await Promise.all([
+    ...Array.from({ length: packageCount }, (_, index) =>
+      runNodeSubprocess(
+        ["--import", "tsx", packageWorker, String(index), ledgerPath, ledgerHome],
+        { cwd: packageRoot, timeoutMs: 15_000 },
+      )),
+    ...Array.from({ length: foreignCount }, (_, index) =>
+      runNodeSubprocess(
+        ["--import", "tsx", foreignWorker, String(index), ledgerPath],
+        { cwd: packageRoot, timeoutMs: 15_000 },
+      )),
+  ]);
+  for (const child of children) {
+    assert.equal(child.code, 0, child.stderr);
+  }
+  const lines = readFileSync(ledgerPath, "utf8").split("\n").filter(Boolean);
+  assert.equal(lines.length, packageCount + foreignCount);
+  const packageIds: string[] = [];
+  const foreignIds: string[] = [];
+  for (const line of lines) {
+    const row = JSON.parse(line) as Record<string, unknown>;
+    if (row.event === ACCEPTED_ACTIVATION_EVENT) {
+      const fact = row as unknown as AcceptedActivationFact;
+      assert.equal(fact.bookKey, bookKey);
+      assert.equal(fact.correlation.kind, "caller");
+      if (fact.correlation.kind === "caller") packageIds.push(fact.correlation.id);
+      continue;
+    }
+    assert.equal(row.producer, "foreign");
+    assert.equal(typeof row.id, "string");
+    foreignIds.push(row.id as string);
+  }
+  assert.deepEqual(packageIds.sort(), Array.from({ length: packageCount }, (_, i) => `pkg-${i}`).sort());
+  assert.deepEqual(foreignIds.sort(), Array.from({ length: foreignCount }, (_, i) => `foreign-${i}`).sort());
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("concurrent first-time ledger directory creation across books stays race-safe", async () => {
   // Fresh home: workers race on creating shared ledgerHome/books components plus distinct books.
   const root = mkdtempSync(join(tmpdir(), "ak-ledger-mkdir-race-"));
@@ -921,32 +998,28 @@ appendAcceptedActivationToBook({
   rmSync(root, { recursive: true, force: true });
 });
 
-test("short append rolls back partial bytes and preserves the original failure", () => {
+test("short append fails honestly as typed infrastructure failure", () => {
   const root = mkdtempSync(join(tmpdir(), "ak-ledger-short-write-"));
   try {
     const ledgerHome = join(root, "home");
     const bookKey = "short-write-book";
     const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-    const prior = buildAcceptedActivationFact({
+    appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
       role: "judge",
       observedAt: "2025-01-01T00:00:00.000Z",
       bookKey,
       session: { kind: "session-file", path: "/s/prior.jsonl" },
       correlation: { kind: "caller", id: "prior" },
-    });
-    appendAcceptedActivationFact(ledgerPath, prior, { ledgerHome });
-    const before = readFileSync(ledgerPath);
-
-    const failed = buildAcceptedActivationFact({
-      role: "fixer",
-      observedAt: "2025-01-01T00:00:01.000Z",
-      bookKey,
-      session: { kind: "session-file", path: "/s/failed.jsonl" },
-      correlation: { kind: "caller", id: "failed" },
-    });
+    }), { ledgerHome });
 
     assert.throws(
-      () => appendAcceptedActivationFact(ledgerPath, failed, {
+      () => appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
+        role: "fixer",
+        observedAt: "2025-01-01T00:00:01.000Z",
+        bookKey,
+        session: { kind: "session-file", path: "/s/failed.jsonl" },
+        correlation: { kind: "caller", id: "failed" },
+      }), {
         ledgerHome,
         write(fd, buffer, offset, length, position) {
           const partial = Math.min(3, length);
@@ -954,43 +1027,33 @@ test("short append rolls back partial bytes and preserves the original failure",
         },
       }),
       (error: unknown) => {
-        const primary = error instanceof AggregateError ? error.errors[0] : error;
+        const primary = error instanceof AggregateError ? error.cause ?? error.errors[0] : error;
         assert.ok(primary instanceof ActivationLedgerError);
         assert.equal(primary.code, "AK_ACTIVATION_LEDGER");
-        if (error instanceof AggregateError) {
-          assert.equal(error.cause, primary);
-        }
         return true;
       },
     );
 
-    const after = readFileSync(ledgerPath);
-    assert.deepEqual(after, before);
-    const lines = after.toString("utf8").split("\n").filter(Boolean);
-    assert.equal(lines.length, 1);
-    const row = JSON.parse(lines[0]!) as AcceptedActivationFact;
-    assert.deepEqual(row.correlation, { kind: "caller", id: "prior" });
+    // No private lock artifact; no claim of transactional rollback recovery.
     assert.equal(existsSync(`${ledgerPath}.append-lock`), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("failed append write rolls back partial bytes and keeps the original write cause", () => {
+test("failed append write keeps the original write cause", () => {
   const root = mkdtempSync(join(tmpdir(), "ak-ledger-write-fail-"));
   try {
     const ledgerHome = join(root, "home");
     const bookKey = "write-fail-book";
     const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-    const prior = buildAcceptedActivationFact({
+    appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
       role: "judge",
       observedAt: "2025-01-01T00:00:00.000Z",
       bookKey,
       session: { kind: "session-file", path: "/s/prior.jsonl" },
       correlation: { kind: "caller", id: "prior" },
-    });
-    appendAcceptedActivationFact(ledgerPath, prior, { ledgerHome });
-    const before = readFileSync(ledgerPath);
+    }), { ledgerHome });
     const writeFailure = new Error("injected-write-failure");
 
     assert.throws(
@@ -1005,8 +1068,7 @@ test("failed append write rolls back partial bytes and keeps the original write 
         }),
         {
           ledgerHome,
-          write(fd, buffer, offset, length, position) {
-            writeSync(fd, buffer, offset, Math.min(5, length), position);
+          write() {
             throw writeFailure;
           },
         },
@@ -1018,7 +1080,6 @@ test("failed append write rolls back partial bytes and keeps the original write 
       },
     );
 
-    assert.deepEqual(readFileSync(ledgerPath), before);
     assert.equal(existsSync(`${ledgerPath}.append-lock`), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -1030,7 +1091,6 @@ test("append cleanup failure cannot mask the primary write failure", () => {
   const ledgerHome = join(root, "home");
   const bookKey = "cleanup-mask-book";
   const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-  const bookDir = dirname(ledgerPath);
   const writeFailure = new Error("injected-write-failure");
   try {
     appendAcceptedActivationFact(
@@ -1044,7 +1104,6 @@ test("append cleanup failure cannot mask the primary write failure", () => {
       }),
       { ledgerHome },
     );
-    const before = readFileSync(ledgerPath);
 
     assert.throws(
       () => appendAcceptedActivationFact(
@@ -1058,10 +1117,9 @@ test("append cleanup failure cannot mask the primary write failure", () => {
         }),
         {
           ledgerHome,
-          write(fd, buffer, offset, length, position) {
-            writeSync(fd, buffer, offset, Math.min(5, length), position);
-            // Freeze the book dir so lock unlink during cleanup fails after the write cause.
-            chmodSync(bookDir, 0o555);
+          write(fd) {
+            // Close early so cleanup closeSync fails; primary write cause must remain.
+            closeSync(fd);
             throw writeFailure;
           },
         },
@@ -1074,11 +1132,7 @@ test("append cleanup failure cannot mask the primary write failure", () => {
         return true;
       },
     );
-
-    chmodSync(bookDir, 0o755);
-    assert.deepEqual(readFileSync(ledgerPath), before);
   } finally {
-    try { chmodSync(bookDir, 0o755); } catch { /* best-effort restore before rm */ }
     rmSync(root, { recursive: true, force: true });
   }
 });
