@@ -93,7 +93,7 @@ type PreparedTicket = {
   totalTokens: number;
   /** Cumulative construction wall (runs + axis legs). */
   wallMs: number;
-  /** First run start → now (open) or last endedAt (closed). */
+  /** First run start → now (open) or issue closedAt (closed); never last ledger record. */
   landingCycleMs: number;
   /** Present only for unaccepted latest-run states. */
   legAgeMs?: number;
@@ -170,14 +170,13 @@ function enrichRunsForBoard(
 
 function aggregateTicketMetrics(
   displayRuns: readonly TicketTrajectoryRun[],
-  ticketState: TicketIssueState,
+  ticket: Pick<SnapshotTicket, "state" | "closedAt">,
   now: Date,
 ): { costUsd: number; totalTokens: number; wallMs: number; landingCycleMs: number } {
   let costUsd = 0;
   let totalTokens = 0;
   let wallMs = 0;
   let firstStart: string | undefined;
-  let lastEnd: string | undefined;
   for (const run of displayRuns) {
     costUsd += run.costUsd;
     totalTokens += run.totalTokens;
@@ -185,14 +184,15 @@ function aggregateTicketMetrics(
     if (run.startedAt && (firstStart === undefined || run.startedAt < firstStart)) {
       firstStart = run.startedAt;
     }
-    if (run.endedAt && (lastEnd === undefined || run.endedAt > lastEnd)) {
-      lastEnd = run.endedAt;
-    }
   }
   let landingCycleMs = 0;
   if (firstStart) {
-    if (ticketState === "closed") {
-      landingCycleMs = wallMsBetween(firstStart, lastEnd);
+    if (ticket.state === "closed") {
+      // Authority (#136): 落地周期 = 首 run 起点至 now/关票 — closure, not last ledger record.
+      if (!ticket.closedAt) {
+        throw new Error("closed ticket landing cycle requires closedAt");
+      }
+      landingCycleMs = wallMsBetween(firstStart, ticket.closedAt);
     } else {
       landingCycleMs = wallMsBetween(firstStart, now.toISOString());
     }
@@ -511,7 +511,7 @@ async function prepareTicket(
     now,
   });
   const displayRuns = enrichRunsForBoard(runs, currentState, now);
-  const metrics = aggregateTicketMetrics(displayRuns, ticket.state, now);
+  const metrics = aggregateTicketMetrics(displayRuns, ticket, now);
 
   let legAgeMs: number | undefined;
   let lastActivityAt: string | undefined;

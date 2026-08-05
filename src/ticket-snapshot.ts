@@ -33,6 +33,12 @@ export type SnapshotTicket = {
   /** Milestone title, or null when unset. */
   milestone: string | null;
   parentIssueNumber: number | null;
+  /**
+   * Issue closure timestamp (GitHub `closedAt`).
+   * Required non-null when state is closed — landing cycle ends here, not at last ledger record.
+   * Always null when state is open.
+   */
+  closedAt: string | null;
   blockedBy: readonly BlockedByEdge[];
 };
 
@@ -146,6 +152,14 @@ type ParsedTicketNode = {
   blockedByPage: BlockedByPage;
 };
 
+function parseClosedAt(raw: unknown, label: string): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string" || !Number.isFinite(Date.parse(raw))) {
+    throw new Error(`${label}.closedAt invalid`);
+  }
+  return raw;
+}
+
 function parseTicketNode(raw: unknown, label: string): ParsedTicketNode {
   if (!isRecord(raw)) throw new Error(`${label} is not an object`);
   const number = raw.number;
@@ -172,13 +186,22 @@ function parseTicketNode(raw: unknown, label: string): ParsedTicketNode {
     throw new Error(`${label}.parent invalid`);
   }
 
+  const state = mapIssueState(raw.state);
+  const closedAtRaw = parseClosedAt(raw.closedAt, label);
+  if (state === "closed" && closedAtRaw === null) {
+    throw new Error(`${label}.closedAt missing for closed issue`);
+  }
+  // Open tickets never carry a closure endpoint into landing-cycle math.
+  const closedAt = state === "closed" ? closedAtRaw : null;
+
   return {
     ticket: {
       issueNumber: number,
       title: raw.title,
-      state: mapIssueState(raw.state),
+      state,
       milestone,
       parentIssueNumber,
+      closedAt,
     },
     blockedByPage: parseBlockedByPage(raw.blockedBy, `${label}.blockedBy`),
   };
@@ -203,6 +226,7 @@ function buildOpenIssuesQuery(): string {
         number
         title
         state
+        closedAt
         milestone { title }
         parent { number }
         ${blockedBySelection()}
@@ -220,6 +244,7 @@ function buildClosedIssuesQuery(numbers: readonly number[]): string {
       number
       title
       state
+      closedAt
       milestone { title }
       parent { number }
       ${blockedBySelection()}
