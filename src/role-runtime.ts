@@ -3,6 +3,17 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Value } from "typebox/value";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
+import {
+  appendAcceptedActivationToBook,
+  buildAcceptedActivationFact,
+  correlationIdentityFromEnv,
+  durableSessionPointer,
+  resolveActivationLedgerHome,
+  resolveBookKeyFromGit,
+  type AcceptedActivationFact,
+  type ActivationCorrelationIdentity,
+  type ActivationSessionPointer,
+} from "./activation-ledger.ts";
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
   createToolExecutionObservationFace,
@@ -54,6 +65,31 @@ import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-r
 
 export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
+export {
+  ACCEPTED_ACTIVATION_EVENT,
+  ACCEPTED_ACTIVATION_FACT_KEYS,
+  ActivationGitRepositoryRequiredError,
+  ActivationLedgerError,
+  ActivationSessionFileMissingError,
+  activationBookDirectory,
+  activationWaitingLedgerPath,
+  appendAcceptedActivationFact,
+  appendAcceptedActivationToBook,
+  buildAcceptedActivationFact,
+  correlationIdentityFromEnv,
+  durableSessionPointer,
+  resolveActivationLedgerHome,
+  resolveBookKeyFromGit,
+  serializeAcceptedActivationFact,
+} from "./activation-ledger.ts";
+export type {
+  AcceptedActivationFact,
+  AcceptedActivationFactInput,
+  AcceptedActivationFactKey,
+  ActivationCorrelationIdentity,
+  ActivationSessionManager,
+  ActivationSessionPointer,
+} from "./activation-ledger.ts";
 export {
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   TOOL_EXECUTION_UPDATE_THROTTLE_MS,
@@ -689,7 +725,22 @@ export function createRoleRuntimeExtension(
         },
       };
       try {
+        // Production topology only (ADR 0048/0049): no test-only ledger hooks.
+        const bookKey = resolveBookKeyFromGit(ctx.cwd);
+        const correlation = correlationIdentityFromEnv();
+        const ledgerHome = resolveActivationLedgerHome();
+        const session = durableSessionPointer(ctx.sessionManager, { ledgerHome, bookKey });
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
+        appendAcceptedActivationToBook({
+          ledgerHome,
+          fact: buildAcceptedActivationFact({
+            role: entry.role,
+            observedAt: clock(),
+            bookKey,
+            session,
+            correlation,
+          }),
+        });
         admitted = true;
       } catch (error) {
         failInfrastructure(error, ctx);

@@ -165,6 +165,39 @@ async function exerciseSharedPackageContracts(): Promise<void> {
   const judge = await import(`${judgeUrl}?t=${Date.now()}-${Math.random()}`);
   assert.equal(judge.JUDGE_OUTPUT_TOOL_NAME, mod.JUDGE_OUTPUT_TOOL_NAME);
   assert.equal(typeof judge.validateAcceptedJudgeDetails, "function");
+
+  // Navigator package graph: attendance imports topology + registry from emitted dist.
+  const navigatorUrl = pathToFileURL(
+    resolve(packageRoot, "dist/navigator-attendance.js"),
+  ).href;
+  const navigator = await import(`${navigatorUrl}?t=${Date.now()}-${Math.random()}`);
+  assert.equal(navigator.NAVIGATOR_EVENT_TYPE, "ak-navigator-attendance");
+  assert.equal(typeof navigator.createNavigatorAttendance, "function");
+  assert.ok(Array.isArray(navigator.NAVIGATOR_TARGETS));
+  assert.ok(
+    navigator.NAVIGATOR_TARGETS.some(
+      (target: { role: string }) => target.role === "judge",
+    ),
+  );
+  const topologyUrl = pathToFileURL(
+    resolve(packageRoot, "dist/activation-ledger-topology.js"),
+  ).href;
+  const topology = await import(`${topologyUrl}?t=${Date.now()}-${Math.random()}`);
+  assert.equal(typeof topology.resolveActivationLedgerHome, "function");
+  assert.equal(typeof topology.pathContainedIn, "function");
+  assert.equal(typeof topology.ActivationLedgerError, "function");
+  assert.equal(
+    topology.resolveActivationLedgerHome(() => "/tmp/ak-package-import-home"),
+    resolve("/tmp/ak-package-import-home", ".ak-roles"),
+  );
+  assert.equal(
+    topology.pathContainedIn("/ledger", "/ledger/books/x"),
+    true,
+  );
+  assert.throws(
+    () => topology.resolveActivationLedgerHome(() => "relative-home"),
+    (error: unknown) => error instanceof topology.ActivationLedgerError,
+  );
 }
 
 test("isolated packs leave shared dist identity stable under concurrent contract imports", async () => {
@@ -188,6 +221,7 @@ test("isolated packs leave shared dist identity stable under concurrent contract
   assert.ok(paths.includes("dist/package-contracts/terminating-tools.js"));
   assert.ok(paths.includes("dist/package-contracts/judge-output.js"));
   assert.ok(paths.includes("dist/navigator-attendance.js"));
+  assert.ok(paths.includes("dist/activation-ledger-topology.js"));
   assert.ok(!paths.some((path) => path.includes("recorder")));
 
   // Provenance must bind the fixture to the current construction HEAD.

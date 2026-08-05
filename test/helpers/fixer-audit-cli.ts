@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { resolveBookKeyFromGit } from "../../src/activation-ledger.ts";
 import { packageRoot, runPiSubprocess, withHermeticHome } from "./pi-test-harness.ts";
 
 export type FixerAuditFailureCliOptions = {
@@ -12,15 +13,14 @@ export type FixerAuditFailureCliOptions = {
   packet?: unknown;
   /** When set, written as JSON and passed via --ak-fixer-prerequisites. */
   prerequisites?: unknown;
-  /** Prefer --no-session over a durable session-dir. */
-  noSession?: boolean;
   timeoutMs?: number;
   prefix?: string;
 };
 
 /**
  * Shared Fixer + fixer-audit-failure-provider CLI boot used by activation-envelope
- * and audit-failure-subprocess. One harness, still one real CLI boot per call.
+ * and audit-failure-subprocess. One real CLI boot per call; durable session under
+ * the hermetic ledger home (no --no-session).
  */
 export async function runFixerAuditFailureCli(
   options: FixerAuditFailureCliOptions = {},
@@ -29,6 +29,7 @@ export async function runFixerAuditFailureCli(
   return withHermeticHome(
     { prefix: options.prefix ?? "ak-fixer-audit-cli-" },
     async ({ home, agentDir }) => {
+      // packageRoot is the git cwd; hermetic HOME only owns ledger + session.
       const packetPath = resolve(
         home,
         typeof options.packet === "string" ? "instructions.md" : "packet.json",
@@ -45,42 +46,27 @@ export async function runFixerAuditFailureCli(
         typeof packet === "string" ? packet : JSON.stringify(packet),
       );
 
+      // Book key follows production git common-dir host basename (worktree → main repo).
+      const bookKey = resolveBookKeyFromGit(packageRoot);
+      const sessionDirectory = resolve(
+        home,
+        ".ak-roles",
+        "books",
+        bookKey,
+        "runs",
+        `fixer-audit-${mode}`,
+        "session",
+      );
+      await mkdir(sessionDirectory, { recursive: true });
+
       const args: string[] = [
         "--no-extensions",
         "--no-skills",
         "--no-prompt-templates",
         "--no-themes",
         "--no-context-files",
-      ];
-
-      const useNoSession = options.noSession === true || options.prerequisites !== undefined;
-      if (useNoSession) {
-        args.push("--no-session");
-      } else {
-        const runDirectory = resolve(
-          packageRoot,
-          `.ak/work/issues/44/runs/audit-failure-subprocess-${mode}`,
-        );
-        const sessionDirectory = resolve(runDirectory, "session");
-        await mkdir(sessionDirectory, { recursive: true });
-        await writeFile(
-          resolve(runDirectory, "invocation.json"),
-          JSON.stringify(
-            {
-              role: "fixer",
-              phase: "apply",
-              mode,
-              provider: "ak-fixer-audit-failure",
-              model: "faux-1",
-            },
-            null,
-            2,
-          ),
-        );
-        args.push("--session-dir", sessionDirectory);
-      }
-
-      args.push(
+        "--session-dir",
+        sessionDirectory,
         "-e",
         resolve(packageRoot, "extensions/role-runtime.ts"),
         "-e",
@@ -91,7 +77,7 @@ export async function runFixerAuditFailureCli(
         "apply",
         "--ak-fix-packet",
         packetPath,
-      );
+      ];
 
       if (options.prerequisites !== undefined) {
         const prerequisitesPath = resolve(home, "prerequisites.json");
@@ -118,13 +104,7 @@ export async function runFixerAuditFailureCli(
         },
       });
 
-      if (!useNoSession) {
-        const runDirectory = resolve(
-          packageRoot,
-          `.ak/work/issues/44/runs/audit-failure-subprocess-${mode}`,
-        );
-        await writeFile(resolve(runDirectory, "stderr.log"), result.stderr);
-      }
+      await writeFile(resolve(sessionDirectory, "..", "stderr.log"), result.stderr);
       return result;
     },
   );
