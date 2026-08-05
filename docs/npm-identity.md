@@ -30,6 +30,27 @@ Read-only probes only; no `npm publish`.
 **Decision:** current name unpublishable under authenticated evidence → apply
 documented fallback order item 1 → set name to `@akagilnc/pi-workflow-roles`.
 
+### Auth freshness refresh (2026-08-05T13:38:30Z)
+
+Court continue required fresh authenticated registry evidence. Re-ran read-only
+probes on the maintainer machine. **Do not publish. Do not rename on this
+unauthenticated/invalid-token result.**
+
+| Probe | Result | Meaning |
+| --- | --- | --- |
+| `npm whoami` | `E401` Unauthorized | Token present in npm config but **invalid** — not a clean `ENEEDAUTH` empty-login, and not a successful whoami. Cannot invent an identity. |
+| `npm view @akagilnc/pi-workflow-roles` | `E404` Not found | Public registry still shows fallback #1 name free (public read; not auth proof). |
+| `npm access list packages @akagilnc` | `E401` invalid token | Authenticated scope probe blocked — same invalid token. |
+| `npm access list collaborators @akagilnc/pi-workflow-roles` | `E401` invalid token | Collaborators probe blocked — same invalid token. |
+| `npm view @ak/pi-workflow-roles` | `E404` Not found | Public E404 only; **insufficient** alone for rename or publish-rights claims (court continue). |
+
+**Refresh decision:** leave package name `@akagilnc/pi-workflow-roles` (historical
+authenticated 2026-08-04 decision under user `akagilnc`). Fresh whoami did **not**
+succeed, so the 2026-08-04 authenticated probe table is **not** re-confirmed on this
+pass. **Blocker for Apply court:** maintainer npm credential must be renewed
+(`npm login` / valid token) before any further identity rename or publish step.
+Public E404 must not be treated as fresh AC1 clearance.
+
 ### Registry check commands
 
 ```bash
