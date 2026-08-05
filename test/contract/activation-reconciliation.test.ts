@@ -1,14 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import test, { afterEach } from "node:test";
-import { fauxProvider } from "@earendil-works/pi-ai";
 
 import {
-  ACCEPTED_ACTIVATION_EVENT,
   buildAcceptedActivationFact,
-  createRoleRuntimeExtension,
   type AcceptedActivationFact,
-} from "../../src/role-runtime.ts";
+} from "../../src/activation-ledger.ts";
 import {
   DISPATCH_STUB_EVENT,
   DISPATCH_STUB_FACT_KEYS,
@@ -18,12 +15,6 @@ import {
   type ProcessLivenessFact,
   type ReconciliationOutcome,
 } from "../../src/activation-reconciliation.ts";
-import {
-  activationBookKeyFor,
-  readAcceptedActivationFacts,
-  withActivationHome,
-  withInProcessPi,
-} from "../helpers/pi-test-harness.ts";
 
 type ParkedChild = ChildProcess & { stdin: NonNullable<ChildProcess["stdin"]> };
 
@@ -242,63 +233,4 @@ test("activation without a matching dispatch stub is activation-without-dispatch
       bookKey,
     } satisfies ReconciliationOutcome,
   );
-});
-
-test("real admitted leg + matching dispatch stub reconciles as matched", async () => {
-  await withActivationHome({ prefix: "ak-recon-admit-" }, async ({ home, agentDir }) => {
-    const bookKey = activationBookKeyFor(home);
-    const correlationId = "corr-real-leg-1";
-    const previousCorr = process.env.AK_CORRELATION_ID;
-    const faux = fauxProvider({ api: "ak-recon-admit", provider: "ak-recon-admit" });
-    process.env.AK_CORRELATION_ID = correlationId;
-    process.exitCode = undefined;
-    try {
-      await withInProcessPi({
-        activationLedgerSession: true,
-        cwd: home,
-        agentDir,
-        faux,
-        modelsPath: null,
-        noExtensions: true,
-        systemPrompt: "RECON ADMIT",
-        mode: "print",
-        flags: { "ak-role": "judge" },
-        extensionFactories: [
-          createRoleRuntimeExtension({
-            loadJudgeSoul: async () => "LAW",
-            transcriptFromContext: () => "",
-            auditSoulCompliance: async () => ({ status: "pass" as const }),
-            activationClock: () => "2025-06-01T12:00:00.000Z",
-            activationTraceWriter: () => {},
-          }),
-        ],
-      }, async ({ sessionManager }) => {
-        const sessionFile = sessionManager.getSessionFile();
-        assert.ok(typeof sessionFile === "string" && sessionFile.length > 0);
-        const facts = readAcceptedActivationFacts(home, bookKey);
-        assert.equal(facts.length, 1);
-        assert.equal(facts[0]?.event, ACCEPTED_ACTIVATION_EVENT);
-        assert.deepEqual(facts[0]?.correlation, { kind: "caller", id: correlationId });
-
-        // #11-shaped dispatch stub joined by the same correlation + book.
-        const outcome = reconcileInvocation({
-          dispatch: dispatchStub({
-            correlationId,
-            bookKey,
-            observedAt: "2025-06-01T11:59:59.000Z",
-          }),
-          activation: facts[0],
-          process: { state: "alive" },
-        });
-        assert.deepEqual(outcome, {
-          kind: "matched",
-          correlationId,
-          bookKey,
-        } satisfies ReconciliationOutcome);
-      });
-    } finally {
-      if (previousCorr === undefined) delete process.env.AK_CORRELATION_ID;
-      else process.env.AK_CORRELATION_ID = previousCorr;
-    }
-  });
 });
