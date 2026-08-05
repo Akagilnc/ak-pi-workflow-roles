@@ -7,12 +7,16 @@
  * Assertions read machine data-* keys only (anchoring constitution).
  */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 import {
   renderFactoryBoardHtml,
@@ -518,6 +522,59 @@ test("page write lands outside every ledger and stays read-only on books", async
         }),
       /outside|ledger|output/i,
     );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+async function runFactoryBoardCli(
+  args: string[],
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", join(packageRoot, "scripts/render-factory-board.ts"), ...args],
+      { cwd: packageRoot, encoding: "utf8" },
+    );
+    return { code: 0, stdout, stderr };
+  } catch (error) {
+    const err = error as { code?: number | string | null; stdout?: string; stderr?: string };
+    const code = typeof err.code === "number" ? err.code : 1;
+    return { code, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+  }
+}
+
+test("CLI --out alone writes binding error page and exits nonzero", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-out-alone-"));
+  try {
+    const outputPath = join(workspace, "board.html");
+    const result = await runFactoryBoardCli(["--out", outputPath]);
+    assert.notEqual(result.code, 0, "must exit nonzero on missing --book");
+    const html = await readFile(outputPath, "utf8");
+    assert.equal(elementsWith(html, "data-board-error")[0]?.["data-board-error"], "binding");
+    assert.equal(elementsWith(html, "data-lane").length, 0);
+    assert.equal(elementsWith(html, "data-ticket").length, 0);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("CLI malformed owner/repo with --out writes binding error page and exits nonzero", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-cli-malformed-"));
+  try {
+    const outputPath = join(workspace, "board.html");
+    const result = await runFactoryBoardCli([
+      "--book",
+      "roles=/tmp/not-a-ledger:not-owner-repo",
+      "--out",
+      outputPath,
+    ]);
+    assert.notEqual(result.code, 0, "must exit nonzero on malformed owner/repo");
+    const html = await readFile(outputPath, "utf8");
+    assert.equal(elementsWith(html, "data-board-error")[0]?.["data-board-error"], "binding");
+    assert.equal(elementsWith(html, "data-lane").length, 0);
+    assert.equal(elementsWith(html, "data-ticket").length, 0);
+    assert.match(html, /owner\/repo/i);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
