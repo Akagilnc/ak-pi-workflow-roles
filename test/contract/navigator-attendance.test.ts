@@ -26,6 +26,7 @@ import {
   selectNavigatorCandidate,
   subjectPath,
 } from "../../src/navigator-attendance.ts";
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
@@ -694,12 +695,28 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", () 
   // Machine-ledger session transport is not work identity (ADR 0048).
   // Ordinary repo cwd with no explicit work root falls back to cwd/.ak/work,
   // same as empty/in-memory sessionDir — never the per-invocation ledger path.
-  const ledgerSession = "/home/.ak-roles/books/repo/issues/28/runs/judge@src/session";
+  // Membership is path-semantic containment under the resolved package ledger home.
+  const ledgerSession = join(
+    resolveActivationLedgerHome(),
+    "books",
+    "repo",
+    "issues",
+    "28",
+    "runs",
+    "judge@src",
+    "session",
+  );
   assert.equal(subjectPath(ledgerSession, "/repo"), "/repo/.ak/work");
   assert.equal(subjectPath("", "/repo"), "/repo/.ak/work");
   assert.equal(
     subjectPath(ledgerSession, "/repo/.ak/work/issues/28"),
     "/repo/.ak/work/issues/28",
+  );
+  // Directory spelling alone is not ledger membership — consumer-repo path stays ordinary.
+  const spellingOnlySession = "/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session";
+  assert.equal(
+    subjectPath(spellingOnlySession, "/repo"),
+    "/repo/.ak-roles/books/repo/issues/28",
   );
   assert.equal(
     navigatorSessionDirectory(

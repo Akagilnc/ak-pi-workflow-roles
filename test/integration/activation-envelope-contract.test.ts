@@ -838,46 +838,6 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
   }
 });
 
-test("concurrent child processes append intact JSONL records with exact cardinality", async () => {
-  const root = mkdtempSync(join(tmpdir(), "ak-ledger-conc-"));
-  const ledgerHome = join(root, "home");
-  const bookKey = "concurrent-book";
-  const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
-  const worker = join(root, "worker.mjs");
-  writeFileSync(worker, `
-import { appendAcceptedActivationFact, buildAcceptedActivationFact } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/activation-ledger.ts")).href)};
-const index = Number(process.argv[2]);
-const ledgerPath = process.argv[3];
-const ledgerHome = process.argv[4];
-appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
-  role: "judge",
-  observedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, index)).toISOString(),
-  bookKey: "concurrent-book",
-  session: { kind: "session-file", path: "/s/" + index + ".jsonl" },
-  correlation: { kind: "caller", id: "c-" + index },
-}), { ledgerHome });
-`);
-  const children = await Promise.all(Array.from({ length: 12 }, (_, index) =>
-    runNodeSubprocess(
-      ["--import", "tsx", worker, String(index), ledgerPath, ledgerHome],
-      { cwd: packageRoot, timeoutMs: 15_000 },
-    )));
-  for (const child of children) {
-    assert.equal(child.code, 0, child.stderr);
-  }
-  const lines = readFileSync(ledgerPath, "utf8").split("\n").filter(Boolean);
-  assert.equal(lines.length, 12);
-  const ids = lines.map((line) => {
-    const row = JSON.parse(line) as AcceptedActivationFact;
-    assert.equal(row.event, ACCEPTED_ACTIVATION_EVENT);
-    assert.equal(row.bookKey, bookKey);
-    assert.equal(row.correlation.kind, "caller");
-    return row.correlation.kind === "caller" ? row.correlation.id : "";
-  });
-  assert.deepEqual(ids.sort(), Array.from({ length: 12 }, (_, i) => `c-${i}`).sort());
-  rmSync(root, { recursive: true, force: true });
-});
-
 test("mixed concurrent O_APPEND producers keep intact records with exact cardinality", async () => {
   // Shared-ledger contract: package append and a foreign O_APPEND producer must not
   // overwrite one another. No private lock / positional rewrite / truncate ownership.
