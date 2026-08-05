@@ -5,6 +5,9 @@
   "type": "module",
   "license": "Apache-2.0",
   "keywords": ["pi-package"],
+  "bin": {
+    "ak-role": "./dist/public-cli/main.js"
+  },
   "files": [
     "dist",
     "extensions",
@@ -30,7 +33,7 @@
     "typecheck": "tsc --noEmit"
   },
   "pi": {
-    "extensions": ["./extensions/role-runtime.ts"]
+    "extensions": []
   },
   "engines": {
     "node": ">=20"

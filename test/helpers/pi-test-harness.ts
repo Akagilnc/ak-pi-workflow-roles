@@ -40,6 +40,7 @@ import {
   resolveBookKeyFromGit,
   type AcceptedActivationFact,
 } from "../../src/activation-ledger.ts";
+import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE as PACKAGE_INTERNAL_ROLE_ENTRYPOINT } from "../../src/public-cli/registry.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -537,14 +538,84 @@ export interface RawPackageManifest {
   pi?: { extensions?: string[] };
 }
 
+/** Explicit Internal role entrypoint (not auto-registered; ADR 0052 / #105). */
+export const INTERNAL_ROLE_ENTRYPOINT_RELATIVE = PACKAGE_INTERNAL_ROLE_ENTRYPOINT;
+
 export async function loadRawPackageManifest(): Promise<RawPackageManifest> {
   return JSON.parse(
     await readFile(resolve(packageRoot, "package.json"), "utf8"),
   ) as RawPackageManifest;
 }
 
-export function resolvePackageEntrypoint(manifest: RawPackageManifest): string {
-  return resolve(packageRoot, manifest.pi!.extensions![0]!);
+/**
+ * Resolve the Internal role entrypoint for explicit `-e` load.
+ * Package auto-registration leaves `pi.extensions` empty; callers that need the
+ * development seam pass this path themselves (or go through `ak-role`).
+ */
+export function resolvePackageEntrypoint(_manifest?: RawPackageManifest): string {
+  return resolve(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
+}
+
+/** Pi-managed private npm root under an isolated agent dir (user scope). */
+export function piPrivateNpmRoot(agentDir: string): string {
+  return resolve(agentDir, "npm");
+}
+
+/** Pi private npm bin directory — where package bins surface after install. */
+export function piPrivateNpmBinDir(agentDir: string): string {
+  return resolve(piPrivateNpmRoot(agentDir), "node_modules", ".bin");
+}
+
+export interface PiManagedInstall {
+  agentDir: string;
+  npmRoot: string;
+  binDir: string;
+  installedRoot: string;
+  akRoleBin: string;
+  pack: IsolatedPackResult;
+}
+
+/**
+ * Install one packed artifact into an isolated Pi private npm root so `ak-role`
+ * is discovered through Pi's npm bin directory (ADR 0052 distribution shape).
+ */
+export async function installPackedArtifactIntoPiNpm(
+  agentDir: string,
+): Promise<PiManagedInstall> {
+  const pack = await getSharedIsolatedPack();
+  const npmRoot = piPrivateNpmRoot(agentDir);
+  await mkdir(npmRoot, { recursive: true });
+  await writeFile(
+    resolve(npmRoot, "package.json"),
+    JSON.stringify({ name: "pi-extensions", private: true }, null, 2),
+  );
+  await execFileAsync(
+    "npm",
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      `file:${pack.tarball}`,
+    ],
+    { cwd: npmRoot, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
+  );
+  const installedRoot = resolve(
+    npmRoot,
+    "node_modules",
+    "@akagilnc",
+    "pi-workflow-roles",
+  );
+  const binDir = piPrivateNpmBinDir(agentDir);
+  const akRoleBin = resolve(binDir, "ak-role");
+  return {
+    agentDir,
+    npmRoot,
+    binDir,
+    installedRoot,
+    akRoleBin,
+    pack,
+  };
 }
 
 /**
