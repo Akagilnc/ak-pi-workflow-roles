@@ -156,12 +156,21 @@ if (bookArgs.length === 0) {
 
 const books: FactoryBoardBook[] = [];
 const bindings: BookRepoBinding[] = [];
+const seenBookKeys = new Set<string>();
 for (const raw of bookArgs) {
   const parsed = parseBook(raw);
   if (!parsed.ok) {
     // Malformed binding: still emit the requested page as binding failure.
     await writeBindingFailurePage(parsed.message, books);
   }
+  // bookKey is the sole lane/ledger join identity — duplicates fail closed before API.
+  if (seenBookKeys.has(parsed.book.bookKey)) {
+    await writeBindingFailurePage(
+      `duplicate bookKey binding: ${parsed.book.bookKey}`,
+      books,
+    );
+  }
+  seenBookKeys.add(parsed.book.bookKey);
   books.push(parsed.book);
   bindings.push(parsed.binding);
 }

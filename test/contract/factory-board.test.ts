@@ -25,11 +25,14 @@ import {
   type FactoryBoardView,
 } from "../../src/factory-board.ts";
 import {
+  createGhTicketSnapshotTransport,
   fetchBoardSnapshot,
+  TicketSnapshotBindingError,
   type BoardSnapshot,
   type SnapshotTicket,
   type TicketSnapshotTransport,
 } from "../../src/ticket-snapshot.ts";
+import type { GhApiRunner, GhApiResponse } from "../../src/collector-github.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureLedger = join(packageRoot, "test/fixtures/ticket-trajectory/ledger");
@@ -578,4 +581,304 @@ test("CLI malformed owner/repo with --out writes binding error page and exits no
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
+});
+
+test("duplicate bookKey bindings fail closed before API and never cross-wire lanes", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-dup-book-"));
+  try {
+    const ledgerA = join(workspace, "ledger-a");
+    const ledgerB = join(workspace, "ledger-b");
+    await mkdir(join(ledgerA, "issues", "1"), { recursive: true });
+    await mkdir(join(ledgerB, "issues", "1"), { recursive: true });
+    const outputPath = join(workspace, "board.html");
+
+    // CLI: two --book flags share one bookKey → binding error page, nonzero, no lanes.
+    const cli = await runFactoryBoardCli([
+      "--book",
+      `roles=${ledgerA}:acme/repo-a`,
+      "--book",
+      `roles=${ledgerB}:acme/repo-b`,
+      "--out",
+      outputPath,
+    ]);
+    assert.notEqual(cli.code, 0, "duplicate bookKey must exit nonzero");
+    const cliHtml = await readFile(outputPath, "utf8");
+    assert.equal(elementsWith(cliHtml, "data-board-error")[0]?.["data-board-error"], "binding");
+    assert.equal(elementsWith(cliHtml, "data-lane").length, 0);
+    assert.equal(elementsWith(cliHtml, "data-ticket").length, 0);
+    assert.match(cliHtml, /duplicate bookKey/i);
+
+    // Adapter: reject before transport is touched.
+    let transportCalls = 0;
+    const transport: TicketSnapshotTransport = {
+      async listBookTickets() {
+        transportCalls += 1;
+        throw new Error("transport must not run on duplicate bookKey");
+      },
+    };
+    await assert.rejects(
+      () =>
+        fetchBoardSnapshot({
+          bindings: [
+            { bookKey: "roles", owner: "acme", repo: "repo-a" },
+            { bookKey: "roles", owner: "acme", repo: "repo-b" },
+          ],
+          transport,
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof TicketSnapshotBindingError);
+        assert.equal(err.bookKey, "roles");
+        assert.match(err.message, /duplicate bookKey/i);
+        return true;
+      },
+    );
+    assert.equal(transportCalls, 0, "no repository lookup on duplicate bookKey");
+
+    // Renderer fail-closed: duplicate ledger books never Map-last-wins to wrong ledger.
+    const renderHtml = await renderFactoryBoardHtml(
+      [
+        { bookKey: "roles", ledgerDir: ledgerA },
+        { bookKey: "roles", ledgerDir: ledgerB },
+      ],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "repo-a",
+              tickets: [ticket({ issueNumber: 1, title: "a", state: "open" })],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+    assert.equal(elementsWith(renderHtml, "data-board-error")[0]?.["data-board-error"], "binding");
+    assert.equal(elementsWith(renderHtml, "data-lane").length, 0);
+    assert.equal(elementsWith(renderHtml, "data-ticket").length, 0);
+
+    // Renderer fail-closed: duplicate snapshot bookKeys.
+    const snapDupHtml = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir: ledgerA }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "repo-a",
+              tickets: [ticket({ issueNumber: 1, title: "a", state: "open" })],
+            },
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "repo-b",
+              tickets: [ticket({ issueNumber: 2, title: "b", state: "open" })],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+    assert.equal(elementsWith(snapDupHtml, "data-board-error")[0]?.["data-board-error"], "binding");
+    assert.equal(elementsWith(snapDupHtml, "data-lane").length, 0);
+    assert.equal(elementsWith(snapDupHtml, "data-ticket").length, 0);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("nested A→B→C is one rooted whole-family with each ticket rendered once", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-nested-family-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    for (const n of [10, 11, 12]) {
+      await mkdir(join(ledgerDir, "issues", String(n)), { recursive: true });
+    }
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 10, title: "root-A", state: "open" }),
+                ticket({
+                  issueNumber: 11,
+                  title: "mid-B",
+                  state: "open",
+                  parentIssueNumber: 10,
+                }),
+                ticket({
+                  issueNumber: 12,
+                  title: "leaf-C",
+                  state: "open",
+                  parentIssueNumber: 11,
+                }),
+              ],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+
+    const families = elementsWith(html, "data-family").filter((el) => el["data-book"] === "roles");
+    assert.equal(families.length, 1, "exactly one root family for A→B→C");
+    assert.equal(families[0]?.["data-parent"], "10");
+    assert.equal(families[0]?.["data-child-count"], "2", "whole-family descendant count is two");
+
+    const articles = elementsWith(html, "data-ticket").filter((t) => t["data-book"] === "roles");
+    const byNum = new Map(articles.map((t) => [t["data-ticket"], t]));
+    assert.equal(articles.length, 3, "exactly one article each for A/B/C");
+    assert.ok(byNum.get("10"), "A present once");
+    assert.ok(byNum.get("11"), "B present once");
+    assert.ok(byNum.get("12"), "C present once");
+    assert.equal(byNum.get("11")?.["data-parent-issue"], "10");
+    assert.equal(byNum.get("12")?.["data-parent-issue"], "11");
+
+    // Intermediate B must not spawn a second family root.
+    assert.equal(
+      elementsWith(html, "data-family").filter((el) => el["data-parent"] === "11").length,
+      0,
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("blockedBy connection paginates to completion and refuses silent truncation", async () => {
+  const PAGE = 100; // must match transport page size
+  const totalBlockers = PAGE + 5; // force a second page past the first-page boundary
+  const firstPageNodes = Array.from({ length: PAGE }, (_, i) => ({
+    number: 1000 + i,
+    state: "OPEN",
+  }));
+  const secondPageNodes = Array.from({ length: totalBlockers - PAGE }, (_, i) => ({
+    number: 1000 + PAGE + i,
+    state: "OPEN",
+  }));
+
+  let openCalls = 0;
+  let blockedPageCalls = 0;
+
+  const runner: GhApiRunner = async (args) => {
+    const queryArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("query="));
+    const query = queryArg?.slice("query=".length) ?? "";
+    const afterArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("after="));
+    const after = afterArg?.slice("after=".length) ?? null;
+    const numberArg = args.find((a, i) => args[i - 1] === "-F" && a.startsWith("number="));
+
+    const ok = (data: unknown): GhApiResponse => ({
+      status: 200,
+      headers: {},
+      bodyText: JSON.stringify({ data }),
+    });
+
+    // Follow-up blockedBy page query (has $number Int variable).
+    if (query.includes("issue(number: $number)") && numberArg) {
+      blockedPageCalls += 1;
+      assert.equal(after, "cursor-page-1", "second blockedBy page uses endCursor");
+      return ok({
+        repository: {
+          issue: {
+            blockedBy: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: secondPageNodes,
+            },
+          },
+        },
+      });
+    }
+
+    // Open-issues list query.
+    if (query.includes("issues(states: OPEN")) {
+      openCalls += 1;
+      return ok({
+        repository: {
+          issues: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                number: 42,
+                title: "many blockers",
+                state: "OPEN",
+                milestone: null,
+                parent: null,
+                blockedBy: {
+                  pageInfo: { hasNextPage: true, endCursor: "cursor-page-1" },
+                  nodes: firstPageNodes,
+                },
+              },
+            ],
+          },
+        },
+      });
+    }
+
+    throw new Error(`unexpected graphql query: ${query.slice(0, 120)}`);
+  };
+
+  const transport = createGhTicketSnapshotTransport(runner);
+  const tickets = await transport.listBookTickets({
+    owner: "acme",
+    repo: "roles",
+    closedIssueNumbers: [],
+  });
+
+  assert.equal(openCalls, 1);
+  assert.equal(blockedPageCalls, 1, "must request the next blockedBy page");
+  assert.equal(tickets.length, 1);
+  const blocked = tickets[0]!.blockedBy;
+  assert.equal(blocked.length, totalBlockers, "full blocker set, not first page only");
+  assert.equal(blocked[0]?.issueNumber, 1000);
+  assert.equal(blocked[blocked.length - 1]?.issueNumber, 1000 + totalBlockers - 1);
+
+  // Missing pageInfo must fail loudly — never treat nodes as a complete set.
+  const truncatedRunner: GhApiRunner = async () => ({
+    status: 200,
+    headers: {},
+    bodyText: JSON.stringify({
+      data: {
+        repository: {
+          issues: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                number: 7,
+                title: "truncated",
+                state: "OPEN",
+                milestone: null,
+                parent: null,
+                blockedBy: {
+                  // no pageInfo — completeness cannot be established
+                  nodes: [{ number: 1, state: "OPEN" }],
+                },
+              },
+            ],
+          },
+        },
+      },
+    }),
+  });
+  await assert.rejects(
+    () =>
+      createGhTicketSnapshotTransport(truncatedRunner).listBookTickets({
+        owner: "acme",
+        repo: "roles",
+        closedIssueNumbers: [],
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /pageInfo missing|completeness/i);
+      return true;
+    },
+  );
 });

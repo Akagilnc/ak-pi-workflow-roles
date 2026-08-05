@@ -7,6 +7,9 @@
  * Parent / blocked_by edges come from GitHub's native issue relationship API
  * (GraphQL parent + blockedBy). Binding or API failure throws — callers render
  * the error loudly; never invent an empty successful board.
+ *
+ * blockedBy is paginated to completion (or fails loudly). Never expose a
+ * truncated first page as the full blocker set.
  */
 import { createGhApiRunner, type GhApiRunner } from "./collector-github.ts";
 
@@ -89,7 +92,61 @@ function mapIssueState(raw: unknown): TicketIssueState {
   throw new Error(`unexpected issue state: ${String(raw)}`);
 }
 
-function parseTicketNode(raw: unknown, label: string): SnapshotTicket {
+type BlockedByPage = {
+  edges: BlockedByEdge[];
+  hasNextPage: boolean;
+  endCursor: string | null;
+};
+
+/**
+ * Parse one blockedBy connection page. Completeness requires pageInfo;
+ * missing pageInfo is a loud failure (never treat a truncated first page as full).
+ */
+function parseBlockedByPage(raw: unknown, label: string): BlockedByPage {
+  if (raw === undefined || raw === null) {
+    return { edges: [], hasNextPage: false, endCursor: null };
+  }
+  if (!isRecord(raw) || !Array.isArray(raw.nodes)) {
+    throw new Error(`${label} invalid`);
+  }
+  const pageInfo = raw.pageInfo;
+  if (!isRecord(pageInfo) || typeof pageInfo.hasNextPage !== "boolean") {
+    throw new Error(`${label}.pageInfo missing — cannot establish blockedBy completeness`);
+  }
+  let endCursor: string | null = null;
+  if (pageInfo.endCursor === null || pageInfo.endCursor === undefined) {
+    endCursor = null;
+  } else if (typeof pageInfo.endCursor === "string") {
+    endCursor = pageInfo.endCursor;
+  } else {
+    throw new Error(`${label}.pageInfo.endCursor invalid`);
+  }
+  if (pageInfo.hasNextPage && !endCursor) {
+    throw new Error(`${label}.pageInfo endCursor missing while hasNextPage`);
+  }
+  const edges: BlockedByEdge[] = [];
+  for (const [index, node] of raw.nodes.entries()) {
+    if (!isRecord(node) || typeof node.number !== "number") {
+      throw new Error(`${label}.nodes[${index}] invalid`);
+    }
+    edges.push({
+      issueNumber: node.number,
+      state: mapIssueState(node.state),
+    });
+  }
+  return {
+    edges,
+    hasNextPage: pageInfo.hasNextPage,
+    endCursor,
+  };
+}
+
+type ParsedTicketNode = {
+  ticket: Omit<SnapshotTicket, "blockedBy">;
+  blockedByPage: BlockedByPage;
+};
+
+function parseTicketNode(raw: unknown, label: string): ParsedTicketNode {
   if (!isRecord(raw)) throw new Error(`${label} is not an object`);
   const number = raw.number;
   if (typeof number !== "number" || !Number.isInteger(number) || number < 1) {
@@ -115,31 +172,26 @@ function parseTicketNode(raw: unknown, label: string): SnapshotTicket {
     throw new Error(`${label}.parent invalid`);
   }
 
-  const blockedBy: BlockedByEdge[] = [];
-  const blockedContainer = raw.blockedBy;
-  if (blockedContainer !== undefined && blockedContainer !== null) {
-    if (!isRecord(blockedContainer) || !Array.isArray(blockedContainer.nodes)) {
-      throw new Error(`${label}.blockedBy invalid`);
-    }
-    for (const [index, node] of blockedContainer.nodes.entries()) {
-      if (!isRecord(node) || typeof node.number !== "number") {
-        throw new Error(`${label}.blockedBy.nodes[${index}] invalid`);
-      }
-      blockedBy.push({
-        issueNumber: node.number,
-        state: mapIssueState(node.state),
-      });
-    }
-  }
-
   return {
-    issueNumber: number,
-    title: raw.title,
-    state: mapIssueState(raw.state),
-    milestone,
-    parentIssueNumber,
-    blockedBy,
+    ticket: {
+      issueNumber: number,
+      title: raw.title,
+      state: mapIssueState(raw.state),
+      milestone,
+      parentIssueNumber,
+    },
+    blockedByPage: parseBlockedByPage(raw.blockedBy, `${label}.blockedBy`),
   };
+}
+
+const BLOCKED_BY_PAGE_SIZE = 100;
+
+function blockedBySelection(afterVar?: string): string {
+  const afterArg = afterVar ? `, after: ${afterVar}` : "";
+  return `blockedBy(first: ${BLOCKED_BY_PAGE_SIZE}${afterArg}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { number state }
+        }`;
 }
 
 function buildOpenIssuesQuery(): string {
@@ -153,7 +205,7 @@ function buildOpenIssuesQuery(): string {
         state
         milestone { title }
         parent { number }
-        blockedBy(first: 20) { nodes { number state } }
+        ${blockedBySelection()}
       }
     }
   }
@@ -170,7 +222,7 @@ function buildClosedIssuesQuery(numbers: readonly number[]): string {
       state
       milestone { title }
       parent { number }
-      blockedBy(first: 20) { nodes { number state } }
+      ${blockedBySelection()}
     }`,
     )
     .join("\n");
@@ -181,10 +233,20 @@ function buildClosedIssuesQuery(numbers: readonly number[]): string {
 }`;
 }
 
+function buildBlockedByPageQuery(): string {
+  return `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      ${blockedBySelection("$after")}
+    }
+  }
+}`;
+}
+
 async function ghGraphql(
   runner: GhApiRunner,
   query: string,
-  variables: Record<string, string | null>,
+  variables: Record<string, string | number | null>,
   signal?: AbortSignal,
 ): Promise<unknown> {
   const args = [
@@ -199,6 +261,9 @@ async function ghGraphql(
   for (const [key, value] of Object.entries(variables)) {
     if (value === null) {
       args.push("-F", `${key}=null`);
+    } else if (typeof value === "number") {
+      // GraphQL Int variables must be typed, not string-forced.
+      args.push("-F", `${key}=${value}`);
     } else {
       args.push("-f", `${key}=${value}`);
     }
@@ -219,6 +284,69 @@ async function ghGraphql(
     throw new Error(`GitHub GraphQL errors: ${msg}`);
   }
   return payload.data;
+}
+
+/**
+ * Drain blockedBy pages until complete. Never return a partial first page as full.
+ */
+async function completeBlockedBy(
+  runner: GhApiRunner,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  firstPage: BlockedByPage,
+  signal?: AbortSignal,
+): Promise<BlockedByEdge[]> {
+  const edges = [...firstPage.edges];
+  let hasNextPage = firstPage.hasNextPage;
+  let endCursor = firstPage.endCursor;
+  while (hasNextPage) {
+    if (!endCursor) {
+      throw new Error(
+        `blockedBy pagination incomplete for #${issueNumber}: missing endCursor`,
+      );
+    }
+    const data = await ghGraphql(
+      runner,
+      buildBlockedByPageQuery(),
+      { owner, repo, number: issueNumber, after: endCursor },
+      signal,
+    );
+    if (!isRecord(data) || !isRecord(data.repository) || !isRecord(data.repository.issue)) {
+      throw new Error(`blockedBy page missing for #${issueNumber}`);
+    }
+    const page = parseBlockedByPage(
+      data.repository.issue.blockedBy,
+      `blockedBy[#${issueNumber}]`,
+    );
+    edges.push(...page.edges);
+    hasNextPage = page.hasNextPage;
+    endCursor = page.endCursor;
+  }
+  return edges;
+}
+
+async function materializeTicket(
+  runner: GhApiRunner,
+  owner: string,
+  repo: string,
+  raw: unknown,
+  label: string,
+  signal?: AbortSignal,
+): Promise<SnapshotTicket> {
+  const parsed = parseTicketNode(raw, label);
+  const blockedBy = await completeBlockedBy(
+    runner,
+    owner,
+    repo,
+    parsed.ticket.issueNumber,
+    parsed.blockedByPage,
+    signal,
+  );
+  return {
+    ...parsed.ticket,
+    blockedBy,
+  };
 }
 
 export function createGhTicketSnapshotTransport(
@@ -247,7 +375,14 @@ export function createGhTicketSnapshotTransport(
         }
         for (const [index, node] of issues.nodes.entries()) {
           if (node === null) continue;
-          const ticket = parseTicketNode(node, `open[${index}]`);
+          const ticket = await materializeTicket(
+            runner,
+            owner,
+            repo,
+            node,
+            `open[${index}]`,
+            input.signal,
+          );
           tickets.set(ticket.issueNumber, ticket);
         }
         const pageInfo = issues.pageInfo;
@@ -293,7 +428,14 @@ export function createGhTicketSnapshotTransport(
               `named closed issue #${batch[index]} not found in ${owner}/${repo}`,
             );
           }
-          const ticket = parseTicketNode(node, `closed[#${batch[index]}]`);
+          const ticket = await materializeTicket(
+            runner,
+            owner,
+            repo,
+            node,
+            `closed[#${batch[index]}]`,
+            input.signal,
+          );
           tickets.set(ticket.issueNumber, ticket);
         }
       }
@@ -321,6 +463,7 @@ function assertBinding(binding: BookRepoBinding): { owner: string; repo: string 
 /**
  * Fetch a board snapshot from explicit book→repo bindings.
  * Never inspects git remotes. Transport failures become TicketSnapshotApiError.
+ * Duplicate bookKey bindings fail closed before any transport work.
  */
 export async function fetchBoardSnapshot(input: {
   bindings: readonly BookRepoBinding[];
@@ -331,6 +474,21 @@ export async function fetchBoardSnapshot(input: {
   if (!Array.isArray(input.bindings) || input.bindings.length === 0) {
     throw new TicketSnapshotBindingError("", "bindings must be a non-empty array");
   }
+
+  // Reject duplicate bookKeys before any API / ledger work — bookKey is the
+  // sole join identity across bindings, snapshot books, and swimlanes.
+  const seenBookKeys = new Set<string>();
+  for (const binding of input.bindings) {
+    const key = binding.bookKey;
+    if (seenBookKeys.has(key)) {
+      throw new TicketSnapshotBindingError(
+        key,
+        `duplicate bookKey binding: ${key}`,
+      );
+    }
+    seenBookKeys.add(key);
+  }
+
   const books: BookSnapshot[] = [];
   for (const binding of input.bindings) {
     const { owner, repo } = assertBinding(binding);
