@@ -1003,6 +1003,38 @@ test("resolved ledger home rejects relative process home before filesystem write
   }
 });
 
+test("ledger append rejects pre-existing root symlink escape without writing outside", async () => {
+  await withActivationHome({ prefix: "ak-act-root-symlink-" }, async ({ home }) => {
+    const bookKey = activationBookKeyFor(home);
+    const ledgerHome = machineLedgerHome(home);
+    const outside = join(home, "consumer-repo-ledger");
+    mkdirSync(outside, { recursive: true });
+    // Configured machine home itself is a symlink into a consumer path.
+    symlinkSync(outside, ledgerHome);
+
+    assert.throws(
+      () => appendAcceptedActivationFact(
+        join(ledgerHome, "books", bookKey, "waiting.jsonl"),
+        buildAcceptedActivationFact({
+          role: "judge",
+          observedAt: "2025-01-01T00:00:00.000Z",
+          bookKey,
+          session: { kind: "session-file", path: join(home, "s.jsonl") },
+          correlation: { kind: "absent" },
+        }),
+        { ledgerHome },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ActivationLedgerError);
+        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+        return true;
+      },
+    );
+    assert.equal(existsSync(join(outside, "books", bookKey, "waiting.jsonl")), false);
+    assert.equal(existsSync(join(outside, "books")), false);
+  });
+});
+
 test("ledger append and durable session admission reject symlink component escapes", async () => {
   await withActivationHome({ prefix: "ak-act-symlink-" }, async ({ home }) => {
     const bookKey = activationBookKeyFor(home);
