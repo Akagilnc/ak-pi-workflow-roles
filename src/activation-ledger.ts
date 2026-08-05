@@ -1,6 +1,7 @@
 import {
   constants,
   closeSync,
+  fstatSync,
   openSync,
   writeSync,
 } from "node:fs";
@@ -14,6 +15,15 @@ import {
   ensureRealDirectoryTree,
   errorText,
 } from "./activation-ledger-topology.ts";
+
+/**
+ * Kernel open flags for waiting.jsonl append.
+ * O_NOFOLLOW refuses a final-component symlink at open (closes the lstat→open
+ * TOCTOU window); O_APPEND|O_CREAT|O_WRONLY is the shared append contract.
+ * Typed bare seam — tests assert these bits; production open uses only this value.
+ */
+export const ACTIVATION_LEDGER_APPEND_OPEN_FLAGS =
+  constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW;
 
 export {
   ActivationGitRepositoryRequiredError,
@@ -152,15 +162,27 @@ function appendActivationLedgerLine(
   let primaryFailure: unknown;
   try {
     try {
-      ledgerFd = openSync(
-        resolvedLedger,
-        constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY,
-        0o644,
-      );
+      ledgerFd = openSync(resolvedLedger, ACTIVATION_LEDGER_APPEND_OPEN_FLAGS, 0o644);
     } catch (error) {
+      // Native ELOOP/filesystem cause retained; no errno dispatch.
       throw new ActivationLedgerError(
         `activation ledger failed to open ledger file (${resolvedLedger}): ${errorText(error)}`,
         { cause: error },
+      );
+    }
+
+    let opened: ReturnType<typeof fstatSync>;
+    try {
+      opened = fstatSync(ledgerFd);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to fstat ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+    if (!opened.isFile()) {
+      throw new ActivationLedgerError(
+        `activation ledger is not a regular file: ${resolvedLedger}`,
       );
     }
 
