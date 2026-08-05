@@ -76,6 +76,11 @@ export type TicketTrajectoryRun = {
   startedAt?: string;
   /** Last session-record timestamp (parent session only; axis legs excluded). */
   endedAt?: string;
+  /**
+   * Newest session-record timestamp across parent session + axis-leg sessions.
+   * Differs from endedAt when an axis leg recorded activity after the parent.
+   */
+  lastActivityAt?: string;
   /** Latest mtime among parent session + axis-leg session files (ms since epoch). */
   mtimeMs: number;
   /** Sum of message.usage.cost.total across parent session + axis legs. */
@@ -437,6 +442,8 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
   let costUsd = parentUsage.costUsd;
   let totalTokens = parentUsage.totalTokens;
   let axisWallMs = 0;
+  // Newest content activity across parent + axis (not parent-only endedAt).
+  let lastActivityAt = parentSpan.endedAt;
   for (const file of axisLegFiles) {
     const legRows = await readLedgerSessionJsonl(file);
     const legUsage = extractUsageTotals(legRows);
@@ -444,6 +451,12 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
     totalTokens += legUsage.totalTokens;
     const legSpan = extractTimestampSpan(legRows);
     axisWallMs += wallMsBetween(legSpan.startedAt, legSpan.endedAt);
+    if (
+      legSpan.endedAt !== undefined &&
+      (lastActivityAt === undefined || legSpan.endedAt > lastActivityAt)
+    ) {
+      lastActivityAt = legSpan.endedAt;
+    }
   }
 
   const mtimeMs = await maxMtimeMs([...sessionFiles, ...axisLegFiles]);
@@ -471,6 +484,7 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
     evidenceHref,
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(endedAt !== undefined ? { endedAt } : {}),
+    ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
     mtimeMs,
     costUsd,
     totalTokens,

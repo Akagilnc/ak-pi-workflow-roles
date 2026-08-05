@@ -93,8 +93,9 @@ function sortRunsByStart(runs: readonly TicketTrajectoryRun[]): TicketTrajectory
 
 function unacceptedBand(mtimeMs: number, nowMs: number): TicketCurrentState {
   const age = Math.max(0, nowMs - mtimeMs);
+  // Authority: <2min flying / 2–15min watch / >15min suspect (exact 15 stays watch).
   if (age < UNACCEPTED_FLYING_MS) return "unaccepted-flying";
-  if (age < UNACCEPTED_WATCH_MS) return "unaccepted-watch";
+  if (age <= UNACCEPTED_WATCH_MS) return "unaccepted-watch";
   return "unaccepted-suspect";
 }
 
@@ -482,7 +483,9 @@ async function prepareTicket(
   ) {
     const latest = sortRunsByStart(runs).at(-1)!;
     lastActivityMtimeMs = latest.mtimeMs;
+    // Newest parent/axis *content* activity (mtime stays on data-last-activity-mtime-ms).
     lastActivityAt =
+      latest.lastActivityAt ??
       latest.endedAt ??
       (latest.mtimeMs > 0 ? new Date(latest.mtimeMs).toISOString() : undefined);
     if (latest.startedAt) {
@@ -628,8 +631,28 @@ function boardStyles(): string {
 `;
 }
 
+/** Burn/ticket sort key carried on rendered lane nodes (article or family). */
+export type FactoryBoardSortMode = "ticket-asc" | "cost-desc" | "cost-asc";
+
+/** Pure comparator for lane entries — shared by page script and executable proofs. */
+export function compareFactoryBoardSort(
+  a: { ticketNumber: number; costUsd: number },
+  b: { ticketNumber: number; costUsd: number },
+  mode: FactoryBoardSortMode,
+): number {
+  if (mode === "cost-desc") {
+    const d = b.costUsd - a.costUsd;
+    if (d !== 0) return d;
+  } else if (mode === "cost-asc") {
+    const d = a.costUsd - b.costUsd;
+    if (d !== 0) return d;
+  }
+  return a.ticketNumber - b.ticketNumber;
+}
+
 function boardSortScript(): string {
   // Presentation-only reorder; machine facts stay on data-* attrs.
+  // Comparator body mirrors compareFactoryBoardSort (ticket-asc / cost-desc / cost-asc).
   return `<script>
 (function () {
   var sel = document.querySelector('[data-sort-control]');
@@ -643,6 +666,16 @@ function boardSortScript(): string {
     var v = el.getAttribute('data-ticket');
     var n = v == null ? 0 : Number(v);
     return Number.isFinite(n) ? n : 0;
+  }
+  function compareEntries(a, b, mode) {
+    if (mode === 'cost-desc') {
+      var d = costOf(b) - costOf(a);
+      if (d !== 0) return d;
+    } else if (mode === 'cost-asc') {
+      var d2 = costOf(a) - costOf(b);
+      if (d2 !== 0) return d2;
+    }
+    return ticketNo(a) - ticketNo(b);
   }
   function sortKey(node) {
     if (node.nodeType !== 1) return null;
@@ -663,14 +696,7 @@ function boardSortScript(): string {
       nodes.sort(function (a, b) {
         var ka = sortKey(a);
         var kb = sortKey(b);
-        if (mode === 'cost-desc') {
-          var d = costOf(kb) - costOf(ka);
-          if (d !== 0) return d;
-        } else if (mode === 'cost-asc') {
-          var d2 = costOf(ka) - costOf(kb);
-          if (d2 !== 0) return d2;
-        }
-        return ticketNo(ka) - ticketNo(kb);
+        return compareEntries(ka, kb, mode);
       });
       nodes.forEach(function (n) { lane.appendChild(n); });
     });

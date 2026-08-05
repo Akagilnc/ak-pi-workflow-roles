@@ -9,8 +9,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -21,9 +21,11 @@ const execFileAsync = promisify(execFile);
 import {
   UNACCEPTED_FLYING_MS,
   UNACCEPTED_WATCH_MS,
+  compareFactoryBoardSort,
   renderFactoryBoardHtml,
   writeFactoryBoardPage,
   type FactoryBoardBook,
+  type FactoryBoardSortMode,
   type FactoryBoardView,
 } from "../../src/factory-board.ts";
 import {
@@ -926,6 +928,39 @@ test("S3 four-state is mutually exclusive and decided only by the latest run", a
     );
     // #7 pending + blocked badge (badge must not change state)
     await mkdir(join(ledgerDir, "issues", "7"), { recursive: true });
+    // #8 exact 2min boundary → watch (flying is strict <2min)
+    await writeRunSession(
+      ledgerDir,
+      8,
+      "coder-exact-2@x",
+      [
+        sessionHeader("2026-08-05T11:58:00.000Z"),
+        assistantUsage("2026-08-05T11:58:30.000Z", 0.01, 10),
+      ],
+      { invocationRole: "coder", mtime: new Date(nowMs - UNACCEPTED_FLYING_MS) },
+    );
+    // #9 exact 15min boundary → watch (suspect is strict >15min)
+    await writeRunSession(
+      ledgerDir,
+      9,
+      "coder-exact-15@x",
+      [
+        sessionHeader("2026-08-05T11:45:00.000Z"),
+        assistantUsage("2026-08-05T11:45:30.000Z", 0.01, 10),
+      ],
+      { invocationRole: "coder", mtime: new Date(nowMs - UNACCEPTED_WATCH_MS) },
+    );
+    // #10 just over 15min → suspect
+    await writeRunSession(
+      ledgerDir,
+      10,
+      "coder-over-15@x",
+      [
+        sessionHeader("2026-08-05T11:44:00.000Z"),
+        assistantUsage("2026-08-05T11:44:30.000Z", 0.01, 10),
+      ],
+      { invocationRole: "coder", mtime: new Date(nowMs - UNACCEPTED_WATCH_MS - 1) },
+    );
 
     const html = await renderFactoryBoardHtml(
       [{ bookKey: "roles", ledgerDir }],
@@ -950,6 +985,9 @@ test("S3 four-state is mutually exclusive and decided only by the latest run", a
                   state: "open",
                   blockedBy: [{ issueNumber: 6, state: "open" }],
                 }),
+                ticket({ issueNumber: 8, title: "exact-2", state: "open" }),
+                ticket({ issueNumber: 9, title: "exact-15", state: "open" }),
+                ticket({ issueNumber: 10, title: "over-15", state: "open" }),
               ],
             },
           ],
@@ -993,6 +1031,67 @@ test("S3 four-state is mutually exclusive and decided only by the latest run", a
     assert.ok(by(3)?.["data-last-activity-mtime-ms"] !== undefined);
     assert.equal(by(5)?.["data-current-state"], "unaccepted-suspect");
     assert.ok(Number(by(5)?.["data-leg-age-ms"]) > UNACCEPTED_WATCH_MS);
+
+    // Exact threshold boundaries (authority: 2–15 watch inclusive at 15; >15 suspect)
+    assert.equal(by(8)?.["data-current-state"], "unaccepted-watch");
+    assert.equal(by(9)?.["data-current-state"], "unaccepted-watch");
+    assert.equal(by(10)?.["data-current-state"], "unaccepted-suspect");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("S3 last activity projects newest parent/axis content timestamp", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-activity-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    // Parent last record 11:00; axis leg continues to 11:30 — activity must be 11:30, not parent endedAt.
+    await writeRunSession(
+      ledgerDir,
+      40,
+      "review-axis-newer@x",
+      [
+        sessionHeader("2026-08-05T10:00:00.000Z"),
+        assistantUsage("2026-08-05T11:00:00.000Z", 0.1, 100),
+      ],
+      {
+        invocationRole: "reviewer",
+        mtime: new Date(now.getTime() - 30_000),
+        axisLegs: [
+          {
+            name: "standards",
+            rows: [
+              sessionHeader("2026-08-05T10:05:00.000Z", "leg-s"),
+              assistantUsage("2026-08-05T11:30:00.000Z", 0.2, 200),
+            ],
+          },
+        ],
+      },
+    );
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 40, title: "axis-activity", state: "open" })],
+            },
+          ],
+        },
+      },
+      now,
+    );
+    const t = elementsWith(html, "data-ticket").find((el) => el["data-ticket"] === "40");
+    assert.ok(t);
+    assert.match(t["data-current-state"] ?? "", /^unaccepted-/);
+    assert.equal(t["data-last-activity-at"], "2026-08-05T11:30:00.000Z");
+    assert.notEqual(t["data-last-activity-at"], "2026-08-05T11:00:00.000Z");
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -1201,20 +1300,44 @@ test("S3 cost/tokens aggregate per station and ticket; axis legs fold into stati
     assert.equal(Number(auditorStation["data-station-cost-usd"]), 0.8);
     assert.equal(auditorStation["data-round-count"], "2");
 
-    // Sort control present (burn sort)
+    // Sort control present (burn sort) + executable order from rendered machine facts
     assert.ok(elementsWith(html, "data-sort-control").length >= 1);
     assert.match(html, /cost-desc/);
+    assert.match(html, /cost-asc/);
+
+    const laneEntries = [t20, t21, t22].map((el) => ({
+      ticketNumber: Number(el["data-ticket"]),
+      costUsd: Number(el["data-cost-usd"]),
+    }));
+    const orderOf = (mode: FactoryBoardSortMode): number[] =>
+      [...laneEntries]
+        .sort((a, b) => compareFactoryBoardSort(a, b, mode))
+        .map((e) => e.ticketNumber);
+    // costs: #20=1.65, #21=0.05, #22=0.8
+    assert.deepEqual(orderOf("cost-asc"), [21, 22, 20]);
+    assert.deepEqual(orderOf("cost-desc"), [20, 22, 21]);
+    assert.deepEqual(orderOf("ticket-asc"), [20, 21, 22]);
+    // Script embeds the same mode branches the comparator proves
+    assert.match(html, /mode === 'cost-desc'/);
+    assert.match(html, /mode === 'cost-asc'/);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
 });
 
-test("S3 #127 fixture latest unaccepted stays mechanical; accepted-awaiting when latest accepted", async () => {
+test("S3 frozen authentic #127 accepted-after-rejections is accepted-awaiting", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-127-"));
   try {
     const rolesLedger = join(workspace, "ledgers", "roles");
     await cp(fixtureLedger, rolesLedger, { recursive: true });
-    // Fixture #127 latest is review-026 unaccepted → suspect under far-future now
+    // Controlling frozen counterexample: multi-round unaccepted then latest accepted.
+    // Shared S1 fixture keeps later unaccepted review-026 for other contracts; the
+    // accepted-after-rejections freeze is the authentic prefix without that later run
+    // and without synthetic appends or mutable true-home tail runs.
+    await rm(join(rolesLedger, "issues", "127", "runs", "review-026@ak-roles-127"), {
+      recursive: true,
+      force: true,
+    });
     const now = new Date("2026-08-05T12:00:00.000Z");
     const html = await renderFactoryBoardHtml(
       [{ bookKey: "roles", ledgerDir: rolesLedger }],
@@ -1235,53 +1358,383 @@ test("S3 #127 fixture latest unaccepted stays mechanical; accepted-awaiting when
     );
     const t = elementsWith(html, "data-ticket").find((x) => x["data-ticket"] === "127");
     assert.ok(t);
-    // latest run unaccepted → one of the three unaccepted bands (mtime of fixture is old → suspect)
-    assert.match(t["data-current-state"] ?? "", /^unaccepted-/);
-
-    // Known fixture costs roll up
-    const plan = elementsWith(html, "data-run-id").find((r) => r["data-run-id"] === "plan-court-001@ak-roles-127");
+    // Latest authentic run is fixer-apply-001 (accepted) after prior unaccepted reviews
+    assert.equal(t["data-current-state"], "accepted-awaiting");
+    const fixer = elementsWith(html, "data-run-id").find(
+      (r) => r["data-run-id"] === "fixer-apply-001@ak-roles-127",
+    );
+    assert.ok(fixer);
+    assert.equal(fixer["data-has-result"], "true");
+    assert.equal(fixer["data-result-status"], "completed");
+    // Prior unaccepted attempt remains visible and is not now-extended
+    const zero = elementsWith(html, "data-run-id").find(
+      (r) => r["data-run-id"] === "review-005s@ak-roles-127",
+    );
+    assert.ok(zero);
+    assert.equal(zero["data-has-result"], "false");
+    assert.equal(zero["data-wall-ms"], "337448");
+    // Known fixture costs still roll up
+    const plan = elementsWith(html, "data-run-id").find(
+      (r) => r["data-run-id"] === "plan-court-001@ak-roles-127",
+    );
     assert.ok(plan);
     assert.ok(Number(plan["data-cost-usd"]) > 0.9);
-    assert.equal(plan["data-has-result"], "true");
-    // ticket cost is sum of runs
     const runCosts = elementsWith(html, "data-run-id").map((r) => Number(r["data-cost-usd"]));
     const sum = runCosts.reduce((a, b) => a + b, 0);
     assert.ok(Math.abs(Number(t["data-cost-usd"]) - sum) < 1e-9);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
 
-    // Append a later accepted run → current state becomes accepted-awaiting (#127 morph)
-    await writeRunSession(
-      rolesLedger,
-      127,
-      "coder-final@ak-roles-127",
-      [
-        sessionHeader("2026-08-05T11:00:00.000Z"),
-        ...acceptedCoderFinal("2026-08-05T11:05:00.000Z", 0.01, 10),
-      ],
-      { mtime: new Date(now.getTime() - 60_000) },
-    );
-    const html2 = await renderFactoryBoardHtml(
-      [{ bookKey: "roles", ledgerDir: rolesLedger }],
-      {
-        ok: true,
-        snapshot: {
-          books: [
-            {
-              bookKey: "roles",
-              owner: "acme",
-              repo: "roles",
-              tickets: [ticket({ issueNumber: 127, title: "child with runs", state: "open" })],
-            },
-          ],
+/** Independent JSONL usage scan — not the board/trajectory loader — for true-home reconciliation. */
+async function independentIssueUsage(ledgerDir: string, issueNumber: number): Promise<{
+  runCount: number;
+  reviewerRunCount: number;
+  costUsd: number;
+  totalTokens: number;
+  reviewerCostUsd: number;
+  reviewerTokens: number;
+  axisWallMs: number;
+}> {
+  const runsDir = join(ledgerDir, "issues", String(issueNumber), "runs");
+  let runIds: string[] = [];
+  try {
+    runIds = (await readdir(runsDir, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        runCount: 0,
+        reviewerRunCount: 0,
+        costUsd: 0,
+        totalTokens: 0,
+        reviewerCostUsd: 0,
+        reviewerTokens: 0,
+        axisWallMs: 0,
+      };
+    }
+    throw error;
+  }
+
+  const sumUsage = (rows: Record<string, unknown>[]): { cost: number; tokens: number } => {
+    let cost = 0;
+    let tokens = 0;
+    for (const row of rows) {
+      const message = row.message && typeof row.message === "object" ? (row.message as Record<string, unknown>) : undefined;
+      const usageRaw =
+        message && message.usage && typeof message.usage === "object"
+          ? (message.usage as Record<string, unknown>)
+          : row.usage && typeof row.usage === "object"
+            ? (row.usage as Record<string, unknown>)
+            : undefined;
+      if (!usageRaw) continue;
+      if (typeof usageRaw.totalTokens === "number" && Number.isFinite(usageRaw.totalTokens)) {
+        tokens += usageRaw.totalTokens;
+      }
+      const costObj =
+        usageRaw.cost && typeof usageRaw.cost === "object"
+          ? (usageRaw.cost as Record<string, unknown>)
+          : undefined;
+      if (costObj && typeof costObj.total === "number" && Number.isFinite(costObj.total)) {
+        cost += costObj.total;
+      }
+    }
+    return { cost, tokens };
+  };
+
+  const readJsonl = async (path: string): Promise<Record<string, unknown>[]> => {
+    const text = await readFile(path, "utf8");
+    const out: Record<string, unknown>[] = [];
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          out.push(parsed as Record<string, unknown>);
+        }
+      } catch {
+        // Independent scan skips malformed lines the same way a human eyeball would continue.
+      }
+    }
+    return out;
+  };
+
+  const spanWall = (rows: Record<string, unknown>[]): number => {
+    const ts = rows
+      .map((r) => r.timestamp)
+      .filter((t): t is string => typeof t === "string" && t.length > 0);
+    if (ts.length === 0) return 0;
+    const start = Date.parse(ts[0]!);
+    const end = Date.parse(ts[ts.length - 1]!);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
+    return end - start;
+  };
+
+  let costUsd = 0;
+  let totalTokens = 0;
+  let reviewerRunCount = 0;
+  let reviewerCostUsd = 0;
+  let reviewerTokens = 0;
+  let axisWallMs = 0;
+
+  for (const runId of runIds) {
+    const runDir = join(runsDir, runId);
+    const sessionDir = join(runDir, "session");
+    let parentFiles: string[] = [];
+    try {
+      parentFiles = (await readdir(sessionDir, { withFileTypes: true }))
+        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
+        .map((e) => join(sessionDir, e.name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    let axisFiles: string[] = [];
+    try {
+      const legsDir = join(sessionDir, "reviewer-legs");
+      axisFiles = (await readdir(legsDir, { withFileTypes: true }))
+        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
+        .map((e) => join(legsDir, e.name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    let runCost = 0;
+    let runTokens = 0;
+    let runAxisWall = 0;
+    for (const f of parentFiles) {
+      const u = sumUsage(await readJsonl(f));
+      runCost += u.cost;
+      runTokens += u.tokens;
+    }
+    for (const f of axisFiles) {
+      const rows = await readJsonl(f);
+      const u = sumUsage(rows);
+      runCost += u.cost;
+      runTokens += u.tokens;
+      runAxisWall += spanWall(rows);
+    }
+
+    costUsd += runCost;
+    totalTokens += runTokens;
+
+    let role: string | undefined;
+    try {
+      const inv = JSON.parse(await readFile(join(runDir, "invocation.json"), "utf8")) as {
+        role?: string;
+      };
+      if (typeof inv.role === "string") role = inv.role;
+    } catch {
+      // no invocation
+    }
+    const lower = runId.toLowerCase();
+    const isReviewer =
+      role === "reviewer" || lower.startsWith("review") || lower.startsWith("reviewer");
+    if (isReviewer) {
+      reviewerRunCount += 1;
+      reviewerCostUsd += runCost;
+      reviewerTokens += runTokens;
+      axisWallMs += runAxisWall;
+    }
+  }
+
+  return {
+    runCount: runIds.length,
+    reviewerRunCount,
+    costUsd,
+    totalTokens,
+    reviewerCostUsd,
+    reviewerTokens,
+    axisWallMs,
+  };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test("S3 true-home acceptance: frozen #127, active leg, #130 cost reconciliation", async () => {
+  const homeLedger =
+    process.env.AK_FACTORY_BOARD_HOME_LEDGER?.trim() ||
+    join(homedir(), ".ak-roles", "books", "ak-pi-workflow-roles");
+  const home130 = join(homeLedger, "issues", "130");
+  const home139 = join(homeLedger, "issues", "139");
+  if (!(await pathExists(home130))) {
+    // CI/agents without the owner true-home ledger skip; owner machine must run green.
+    return;
+  }
+
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-true-home-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    // 1) Frozen authentic #127 accepted-after-rejections (fixture prefix, no mutable tail)
+    await cp(join(fixtureLedger, "issues", "127"), join(ledgerDir, "issues", "127"), {
+      recursive: true,
+    });
+    await rm(join(ledgerDir, "issues", "127", "runs", "review-026@ak-roles-127"), {
+      recursive: true,
+      force: true,
+    });
+
+    // 2) True-home #130 bytes (closed multi-round reviewer burn)
+    await cp(home130, join(ledgerDir, "issues", "130"), { recursive: true });
+
+    // 3) Genuine unaccepted active leg: prefer true-home #139 when its latest run is
+    // unaccepted; otherwise plant authentic unaccepted review-026 bytes as a flying leg
+    // under a dedicated issue (true bytes, controlled mtime — not a manufactured receipt).
+    let activeIssue = 139;
+    const flyingMtime = new Date("2026-08-05T11:59:45.000Z");
+    let plantedActive = false;
+    if (await pathExists(home139)) {
+      await cp(home139, join(ledgerDir, "issues", "139"), { recursive: true });
+      // Probe current state with a throwaway render of #139 alone.
+      const probeHtml = await renderFactoryBoardHtml(
+        [{ bookKey: "roles", ledgerDir }],
+        {
+          ok: true,
+          snapshot: {
+            books: [
+              {
+                bookKey: "roles",
+                owner: "Akagilnc",
+                repo: "ak-pi-workflow-roles",
+                tickets: [ticket({ issueNumber: 139, title: "probe", state: "open" })],
+              },
+            ],
+          },
         },
+        new Date("2026-08-05T12:00:00.000Z"),
+      );
+      const probe = elementsWith(probeHtml, "data-ticket").find((t) => t["data-ticket"] === "139");
+      if (probe?.["data-current-state"]?.startsWith("unaccepted-")) {
+        plantedActive = true;
+      } else {
+        await rm(join(ledgerDir, "issues", "139"), { recursive: true, force: true });
+      }
+    }
+    if (!plantedActive) {
+      activeIssue = 998;
+      const unacceptedSrc = join(
+        fixtureLedger,
+        "issues",
+        "127",
+        "runs",
+        "review-026@ak-roles-127",
+      );
+      const dest = join(
+        ledgerDir,
+        "issues",
+        String(activeIssue),
+        "runs",
+        "review-026@ak-roles-127",
+      );
+      await cp(unacceptedSrc, dest, { recursive: true });
+      // Fresh mtime so the authentic unaccepted session lands in the flying band.
+      const sessionFiles = await readdir(join(dest, "session"));
+      for (const name of sessionFiles) {
+        if (!name.endsWith(".jsonl")) continue;
+        await utimes(join(dest, "session", name), flyingMtime, flyingMtime);
+      }
+    }
+
+    const expected130 = await independentIssueUsage(ledgerDir, 130);
+    assert.ok(expected130.runCount >= 1, "#130 must have runs");
+    assert.ok(expected130.reviewerRunCount >= 1, "#130 reviewer rounds present");
+
+    const before = await treeFingerprint(ledgerDir);
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
+    const view: FactoryBoardView = {
+      ok: true,
+      snapshot: {
+        books: [
+          {
+            bookKey: "roles",
+            owner: "Akagilnc",
+            repo: "ak-pi-workflow-roles",
+            tickets: [
+              ticket({ issueNumber: 127, title: "127", state: "open" }),
+              ticket({ issueNumber: 130, title: "130", state: "closed" }),
+              ticket({ issueNumber: activeIssue, title: "active", state: "open" }),
+            ],
+          },
+        ],
       },
-      now,
+    };
+
+    const outPath = join(workspace, "out", "board.html");
+    const written = await writeFactoryBoardPage({ books, view, now, outputPath: outPath });
+    const html = written.html;
+    assert.equal(await treeFingerprint(ledgerDir), before, "true-home acceptance stays read-only");
+
+    const t127 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "127");
+    const t130 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "130");
+    const tActive = elementsWith(html, "data-ticket").find(
+      (t) => t["data-ticket"] === String(activeIssue),
     );
-    const t2 = elementsWith(html2, "data-ticket").find((x) => x["data-ticket"] === "127");
-    assert.equal(t2?.["data-current-state"], "accepted-awaiting");
-    // Historical unaccepted review-005s wall stays capped (not now-extended)
-    const zero = elementsWith(html2, "data-run-id").find((r) => r["data-run-id"] === "review-005s@ak-roles-127");
-    assert.ok(zero);
-    assert.equal(zero["data-wall-ms"], "337448");
+    assert.ok(t127 && t130 && tActive);
+
+    // Frozen #127 counterexample
+    assert.equal(t127["data-current-state"], "accepted-awaiting");
+    const acceptedFixer = elementsWith(html, "data-run-id").find(
+      (r) => r["data-run-id"] === "fixer-apply-001@ak-roles-127",
+    );
+    assert.equal(acceptedFixer?.["data-has-result"], "true");
+
+    // #130 totals reconcile with independent true-byte scan (human read-ledger oracle)
+    assert.equal(Number(t130["data-run-count"]), expected130.runCount);
+    assert.ok(Math.abs(Number(t130["data-cost-usd"]) - expected130.costUsd) < 1e-9);
+    assert.equal(Number(t130["data-total-tokens"]), expected130.totalTokens);
+    // Scope to #130 runs via ledger coord (run rows are nested <article>s, so ticket-level
+    // HTML slicing on </article> is not a reliable station boundary).
+    const runs130 = elementsWith(html, "data-run-id").filter(
+      (r) => (r["data-ledger-coord"] ?? "").includes("issues/130/runs/"),
+    );
+    assert.equal(runs130.length, expected130.runCount);
+    const reviewerRuns130 = runs130.filter((r) => r["data-station"] === "reviewer");
+    assert.equal(reviewerRuns130.length, expected130.reviewerRunCount, "#130 御史台 multi-round runs");
+    const boardReviewerCost = reviewerRuns130.reduce((s, r) => s + Number(r["data-cost-usd"]), 0);
+    const boardReviewerTokens = reviewerRuns130.reduce(
+      (s, r) => s + Number(r["data-total-tokens"]),
+      0,
+    );
+    const boardReviewerAxisWall = reviewerRuns130.reduce(
+      (s, r) => s + Number(r["data-axis-wall-ms"] ?? 0),
+      0,
+    );
+    assert.ok(
+      Math.abs(boardReviewerCost - expected130.reviewerCostUsd) < 1e-9,
+      `#130 reviewer cost board=${boardReviewerCost} independent=${expected130.reviewerCostUsd}`,
+    );
+    assert.equal(boardReviewerTokens, expected130.reviewerTokens);
+    assert.ok(Math.abs(boardReviewerAxisWall - expected130.axisWallMs) < 1);
+    // Station block for reviewer must appear on the board (may share the page with other tickets).
+    assert.ok(
+      elementsWith(html, "data-station-block").some((s) => s["data-station-block"] === "reviewer"),
+      "#130 御史台 station block rendered",
+    );
+
+    // Burn sort order includes #130 vs cheaper frozen #127
+    const sortEntries = [t127, t130, tActive].map((el) => ({
+      ticketNumber: Number(el["data-ticket"]),
+      costUsd: Number(el["data-cost-usd"]),
+    }));
+    const desc = [...sortEntries]
+      .sort((a, b) => compareFactoryBoardSort(a, b, "cost-desc"))
+      .map((e) => e.ticketNumber);
+    assert.equal(desc[0], 130, "#130 is the burn leader among acceptance tickets");
+
+    // Genuine unaccepted active leg surfaces age/activity
+    assert.match(tActive["data-current-state"] ?? "", /^unaccepted-/);
+    assert.ok(tActive["data-leg-age-ms"] !== undefined);
+    assert.ok(Number(tActive["data-leg-age-ms"]) >= 0);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
