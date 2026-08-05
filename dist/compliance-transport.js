@@ -1,6 +1,15 @@
 import { uuidv7, } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";
+export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_CODE, StreamIdleTimeoutError, createStreamIdleGuard, isStreamIdleTimeoutError, } from "./stream-idle-guard.js";
+const COMPLIANCE_REQUEST_TIMEOUT_MS = 183000;
+/**
+ * Package-side idle retries after StreamIdleTimeoutError (fresh guard/signal per attempt).
+ * Frozen at the OpenAI/Anthropic SDK default maxRetries (2 retries = 3 total attempts).
+ * Provider HTTP maxRetries stay on the error path; do not stack a second idle-retry loop.
+ */
+export const DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES = 2;
 const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
 const decisionGateSchema = Type.Object({
     question: nonblank,
@@ -241,22 +250,29 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
             };
     }
 }
+function throwIfStreamIdleTimedOut(reason) {
+    if (isStreamIdleTimeoutError(reason))
+        throw reason;
+}
+function abortRejectionReason(signal) {
+    if (isStreamIdleTimeoutError(signal.reason))
+        return signal.reason;
+    if (signal.reason instanceof Error)
+        return signal.reason;
+    return new Error(String(signal.reason ?? "aborted"));
+}
 export async function runComplianceAudit(options) {
     const model = options.context.model;
     if (model === undefined) {
         throw new Error(`${options.roleLabel} requires an active model`);
     }
     const dispatch = await prepareComplianceDispatch(model, options.context, options.roleLabel);
-    const complete = options.runCompletion ??
-        ((auditModel, context, request) => {
-            const provider = options.context.modelRegistry.getProvider(auditModel.provider);
-            if (provider === undefined) {
-                throw new Error(`${options.roleLabel} provider not found: ${auditModel.provider}`);
-            }
-            return provider.stream(auditModel, context, request).result();
-        });
+    const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+    const idleMaxRetries = options.idleMaxRetries ?? DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES;
+    // Silence clock starts with each attempt and resets only on real AssistantMessageEvent
+    // yields from provider.stream — not on outbound payload transform or response headers.
     const onPayload = singleComplianceToolCallPayload(dispatch.model, options.tool.name);
-    const response = await complete(dispatch.model, {
+    const requestContext = {
         systemPrompt: options.systemPrompt,
         messages: [
             {
@@ -269,15 +285,82 @@ export async function runComplianceAudit(options) {
             },
         ],
         tools: [options.tool],
-    }, {
-        ...dispatch.auth,
-        maxTokens: 2048,
-        cacheRetention: "none",
-        sessionId: uuidv7(),
-        toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
-        ...(onPayload === undefined ? {} : { onPayload }),
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-    retainComplianceResponse(options.context, response);
-    return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
+    };
+    let lastIdleError;
+    for (let attempt = 0; attempt <= idleMaxRetries; attempt += 1) {
+        if (options.signal?.aborted) {
+            throw abortRejectionReason(options.signal);
+        }
+        const idle = createStreamIdleGuard({
+            idleTimeoutMs,
+            ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
+        });
+        try {
+            const complete = options.runCompletion ??
+                (async (auditModel, context, request) => {
+                    const provider = options.context.modelRegistry.getProvider(auditModel.provider);
+                    if (provider === undefined) {
+                        throw new Error(`${options.roleLabel} provider not found: ${auditModel.provider}`);
+                    }
+                    const stream = provider.stream(auditModel, context, request);
+                    for await (const _event of stream) {
+                        idle.poke();
+                    }
+                    return stream.result();
+                });
+            let response;
+            try {
+                response = await new Promise((resolve, reject) => {
+                    const onAbort = () => {
+                        reject(abortRejectionReason(idle.signal));
+                    };
+                    if (idle.signal.aborted) {
+                        onAbort();
+                        return;
+                    }
+                    idle.signal.addEventListener("abort", onAbort, { once: true });
+                    void complete(dispatch.model, requestContext, {
+                        ...dispatch.auth,
+                        timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
+                        maxTokens: 2048,
+                        cacheRetention: "none",
+                        sessionId: uuidv7(),
+                        toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
+                        ...(onPayload === undefined ? {} : { onPayload }),
+                        signal: idle.signal,
+                    }).then((value) => {
+                        idle.signal.removeEventListener("abort", onAbort);
+                        resolve(value);
+                    }, (error) => {
+                        idle.signal.removeEventListener("abort", onAbort);
+                        if (isStreamIdleTimeoutError(idle.signal.reason)) {
+                            reject(idle.signal.reason);
+                            return;
+                        }
+                        reject(error);
+                    });
+                });
+            }
+            catch (error) {
+                throwIfStreamIdleTimedOut(idle.signal.reason);
+                throw error;
+            }
+            throwIfStreamIdleTimedOut(idle.signal.reason);
+            retainComplianceResponse(options.context, response);
+            return readComplianceDecision(response, options.tool.name, options.invalidDecisionLabel);
+        }
+        catch (error) {
+            if (isStreamIdleTimeoutError(error)
+                && attempt < idleMaxRetries
+                && options.signal?.aborted !== true) {
+                lastIdleError = error;
+                continue;
+            }
+            throw error;
+        }
+        finally {
+            idle.dispose();
+        }
+    }
+    throw lastIdleError ?? new StreamIdleTimeoutError(idleTimeoutMs);
 }

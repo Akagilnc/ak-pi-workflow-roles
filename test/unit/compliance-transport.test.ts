@@ -17,6 +17,9 @@ import {
 import {
   COMPLIANCE_RESPONSE_ENTRY_TYPE,
   ComplianceDecisionContractError,
+  DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  StreamIdleTimeoutError,
   complianceDecisionSchema,
   createComplianceDecisionTool,
   runComplianceAudit,
@@ -146,10 +149,10 @@ function defaultCompletionContext(
   } as unknown as ExtensionContext;
 }
 
-test("default compliance completion sends the production timeout and preserves signal pass-through", async () => {
+test("default compliance completion sends the production timeout and merges parent signal into idle guard", async () => {
   await withPersistedSession(async (sessionManager) => {
     const seen: { options?: Record<string, unknown> } = {};
-    const signal = new AbortController().signal;
+    const parent = new AbortController();
     const auditContext = defaultCompletionContext(
       sessionManager,
       async () => response("default-healthy", [
@@ -164,11 +167,13 @@ test("default compliance completion sends the production timeout and preserves s
       roleLabel: "Compliance",
       invalidDecisionLabel: "invalid compliance decision",
       context: auditContext,
-      signal,
+      signal: parent.signal,
     });
     assert.equal(decision.status, "pass");
     assert.equal(seen.options?.timeoutMs, 183000);
-    assert.strictEqual(seen.options?.signal, signal);
+    assert.ok(seen.options?.signal instanceof AbortSignal);
+    assert.notStrictEqual(seen.options?.signal, parent.signal);
+    assert.equal("onResponse" in (seen.options ?? {}), false);
     assert.deepEqual(Object.keys(seen.options ?? {}).sort(), [
       "apiKey", "cacheRetention", "maxTokens", "onPayload", "sessionId", "signal", "timeoutMs", "toolChoice",
     ]);
@@ -200,6 +205,8 @@ test("a timeout-honoring provider terminates the real default seam with typed ca
       roleLabel: "Compliance",
       invalidDecisionLabel: "invalid compliance decision",
       context: auditContext,
+      // Isolate header timeoutMs from the body-idle clock (same default numeric value, distinct seam).
+      idleTimeoutMs: 0,
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
     t.mock.timers.tick(183000);
@@ -507,5 +514,412 @@ test("a provider throw without an AssistantMessage preserves its original cause"
     assert.ok(sessionFile);
     const raw = await readFile(sessionFile, "utf8");
     assert.equal(raw.includes("stream disconnected before a response"), false);
+  });
+});
+
+async function advanceIdleAttempts(
+  t: { mock: { timers: { tick(ms: number): void } } },
+  attempts: number,
+  idleTimeoutMs = DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+): Promise<void> {
+  for (let i = 0; i < attempts; i += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(idleTimeoutMs);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+test("default body idle silence budget is owner-final 183s and distinct from header timeout wiring", () => {
+  assert.equal(DEFAULT_STREAM_IDLE_TIMEOUT_MS, 183_000);
+  assert.equal(DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES, 2);
+});
+
+test("silent compliance completion exhausts idle retries as typed infrastructure failure", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await withPersistedSession(async (sessionManager) => {
+    const seen: { options?: Record<string, unknown>; attempts: number } = { attempts: 0 };
+    const auditContext = defaultCompletionContext(
+      sessionManager,
+      (options) => {
+        seen.attempts += 1;
+        return new Promise<AssistantMessage>((_resolve, reject) => {
+          const signal = options.signal;
+          if (!(signal instanceof AbortSignal)) return;
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+      seen,
+    );
+    const started = Date.now();
+    const assertion = assert.rejects(
+      runComplianceAudit({
+        tool: decisionTool,
+        systemPrompt: "audit system",
+        serializedInput: "audit input",
+        roleLabel: "Compliance",
+        invalidDecisionLabel: "invalid compliance decision",
+        context: auditContext,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof StreamIdleTimeoutError);
+        assert.equal(error.code, "AK_STREAM_IDLE_TIMEOUT");
+        assert.equal(error.idleTimeoutMs, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+        return true;
+      },
+    );
+    await advanceIdleAttempts(t, DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES + 1);
+    await assertion;
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(seen.attempts, DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES + 1);
+    assert.equal(seen.options?.timeoutMs, 183000);
+    assert.equal(
+      sessionManager.getEntries().some((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE),
+      false,
+    );
+    assert.equal(
+      sessionManager.getEntries().some((entry) => entry.type === "message"),
+      false,
+    );
+  });
+});
+
+test("payload and response-header hooks do not extend the first body-event silence budget", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await withPersistedSession(async (sessionManager) => {
+    const base = context(sessionManager);
+    const hooks: { payload: number; response: number } = { payload: 0, response: 0 };
+    const silenceBudgetMs = 200_000;
+    const auditContext = {
+      ...base,
+      modelRegistry: {
+        ...(base.modelRegistry as object),
+        getProvider() {
+          return {
+            stream(_model: unknown, _context: unknown, options: Record<string, unknown>) {
+              const signal = options.signal;
+              return {
+                async *[Symbol.asyncIterator]() {
+                  // Late outbound/header activity must not reset the first-event silence clock.
+                  await new Promise<void>((resolve) => setTimeout(resolve, 150_000));
+                  const onPayload = options.onPayload;
+                  if (typeof onPayload === "function") {
+                    hooks.payload += 1;
+                    await onPayload({ tools: [] }, { api: "openai-responses" });
+                  }
+                  const onResponse = options.onResponse;
+                  if (typeof onResponse === "function") {
+                    hooks.response += 1;
+                    await onResponse({ status: 200, headers: {} }, { api: "openai-responses" });
+                  }
+                  await new Promise<never>((_resolve, reject) => {
+                    if (!(signal instanceof AbortSignal)) return;
+                    if (signal.aborted) {
+                      reject(signal.reason);
+                      return;
+                    }
+                    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                  });
+                },
+                result: async () => {
+                  throw new Error("idle must abort before stream.result");
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as ExtensionContext;
+
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+      idleTimeoutMs: silenceBudgetMs,
+      idleMaxRetries: 0,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(150_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(hooks.payload, 1);
+    // Production no longer installs onResponse; even if a provider called one, it must not poke.
+    assert.equal(hooks.response, 0);
+    t.mock.timers.tick(50_000);
+    await assert.rejects(
+      failure,
+      (error: unknown) => {
+        assert.ok(error instanceof StreamIdleTimeoutError);
+        assert.equal(error.idleTimeoutMs, silenceBudgetMs);
+        return true;
+      },
+    );
+    assert.equal(
+      sessionManager.getEntries().some((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE),
+      false,
+    );
+  });
+});
+
+test("after one real body event, a full idle silence budget aborts without a receipt", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await withPersistedSession(async (sessionManager) => {
+    const base = context(sessionManager);
+    const auditContext = {
+      ...base,
+      modelRegistry: {
+        ...(base.modelRegistry as object),
+        getProvider() {
+          return {
+            stream(_model: unknown, _context: unknown, options: Record<string, unknown>) {
+              const signal = options.signal;
+              return {
+                async *[Symbol.asyncIterator]() {
+                  yield { type: "text_delta", delta: "first" };
+                  await new Promise<never>((_resolve, reject) => {
+                    if (!(signal instanceof AbortSignal)) return;
+                    if (signal.aborted) {
+                      reject(signal.reason);
+                      return;
+                    }
+                    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                  });
+                },
+                result: async () => {
+                  throw new Error("idle must abort before stream.result");
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as ExtensionContext;
+
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+      idleTimeoutMs: DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+      idleMaxRetries: 0,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Allow the first body event to poke, then enforce a fresh full silence budget.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    t.mock.timers.tick(DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+    await assert.rejects(
+      failure,
+      (error: unknown) => {
+        assert.ok(error instanceof StreamIdleTimeoutError);
+        assert.equal(error.code, "AK_STREAM_IDLE_TIMEOUT");
+        assert.equal(error.idleTimeoutMs, DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+        return true;
+      },
+    );
+    assert.equal(
+      sessionManager.getEntries().some((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE),
+      false,
+    );
+    assert.equal(
+      sessionManager.getEntries().some((entry) => entry.type === "message"),
+      false,
+    );
+  });
+});
+
+test("default stream iterator events poke idle so body silence is bounded without a total wall clock", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await withPersistedSession(async (sessionManager) => {
+    const base = context(sessionManager);
+    // Gaps stay under the 183s idle budget while total wall exceeds 183s.
+    const gapMs = 150_000;
+    const auditContext = {
+      ...base,
+      modelRegistry: {
+        ...(base.modelRegistry as object),
+        getProvider() {
+          return {
+            stream(_model: unknown, _context: unknown, options: Record<string, unknown>) {
+              const signal = options.signal;
+              return {
+                async *[Symbol.asyncIterator]() {
+                  for (let i = 0; i < 3; i += 1) {
+                    await new Promise<void>((resolve) => setTimeout(resolve, gapMs));
+                    if (signal instanceof AbortSignal && signal.aborted) {
+                      throw signal.reason;
+                    }
+                    yield { type: "text_delta", delta: "chunk" };
+                  }
+                },
+                result: async () => {
+                  if (signal instanceof AbortSignal && signal.aborted) throw signal.reason;
+                  return response("stream-idle-healthy", [
+                    fauxToolCall(decisionToolName, {
+                      status: "pass",
+                      violations: [],
+                      conflicts: [],
+                      decisionGate: null,
+                    }),
+                  ]);
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as ExtensionContext;
+
+    const pending = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    for (let i = 0; i < 3; i += 1) {
+      t.mock.timers.tick(gapMs);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    const decision = await pending;
+    assert.equal(decision.status, "pass");
+    assert.ok(gapMs * 3 > DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+  });
+});
+
+test("first silent hang aborts then the next idle attempt starts with a fresh signal", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await withPersistedSession(async (sessionManager) => {
+    const signals: AbortSignal[] = [];
+    const auditContext = defaultCompletionContext(
+      sessionManager,
+      (options) => {
+        const signal = options.signal;
+        assert.ok(signal instanceof AbortSignal);
+        signals.push(signal);
+        return new Promise<AssistantMessage>((_resolve, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+      {},
+    );
+    const assertion = assert.rejects(
+      runComplianceAudit({
+        tool: decisionTool,
+        systemPrompt: "audit system",
+        serializedInput: "audit input",
+        roleLabel: "Compliance",
+        invalidDecisionLabel: "invalid compliance decision",
+        context: auditContext,
+        idleTimeoutMs: 5_000,
+        idleMaxRetries: 1,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof StreamIdleTimeoutError);
+        assert.equal(error.idleTimeoutMs, 5_000);
+        return true;
+      },
+    );
+    await advanceIdleAttempts(t, 1, 5_000);
+    assert.equal(signals.length, 2);
+    assert.notStrictEqual(signals[0], signals[1]);
+    assert.equal(signals[0]?.aborted, true);
+    await advanceIdleAttempts(t, 1, 5_000);
+    await assertion;
+  });
+});
+
+test("healthy idle retry succeeds without forging a compliance receipt on the failed attempt", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await withPersistedSession(async (sessionManager) => {
+    let attempts = 0;
+    const auditContext = defaultCompletionContext(
+      sessionManager,
+      (options) => {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Promise<AssistantMessage>((_resolve, reject) => {
+            const signal = options.signal;
+            if (!(signal instanceof AbortSignal)) return;
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        }
+        return Promise.resolve(response("idle-retry-healthy", [
+          fauxToolCall(decisionToolName, {
+            status: "pass",
+            violations: [],
+            conflicts: [],
+            decisionGate: null,
+          }),
+        ]));
+      },
+      {},
+    );
+    const pending = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: auditContext,
+      idleTimeoutMs: 5_000,
+      idleMaxRetries: 1,
+    });
+    await advanceIdleAttempts(t, 1, 5_000);
+    const decision = await pending;
+    assert.equal(decision.status, "pass");
+    assert.equal(attempts, 2);
+    assert.equal(persistedResponse(sessionManager, "idle-retry-healthy").responseId, "idle-retry-healthy");
+    assert.equal(
+      sessionManager.getEntries().filter((entry) =>
+        entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE).length,
+      1,
+    );
+  });
+});
+
+test("parent abort still wins over the idle guard on the compliance seam", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const parent = new AbortController();
+    const parentReason = new Error("parent cancelled compliance");
+    const failure = runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      context: defaultCompletionContext(
+        sessionManager,
+        (options) => new Promise<AssistantMessage>((_resolve, reject) => {
+          const signal = options.signal;
+          if (!(signal instanceof AbortSignal)) return;
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+        {},
+      ),
+      signal: parent.signal,
+      idleTimeoutMs: 183_000,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    parent.abort(parentReason);
+    await assert.rejects(failure, (error: unknown) => {
+      assert.strictEqual(error, parentReason);
+      return true;
+    });
   });
 });

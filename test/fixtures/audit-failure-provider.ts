@@ -20,9 +20,19 @@ export default function auditFailureProvider(pi: ExtensionAPI): void {
     tokenSize: { min: 1000, max: 1000 },
   });
   if (process.env.AK_AUDIT_TIMEOUT_FAILURE === "1") {
+    // Header timeoutMs and body-idle both default to owner-final 183000ms but are distinct seams.
+    // Idle arms first; the provider schedules timeoutMs second. Compress provider waits harder so the
+    // typed timeout AssistantMessage can settle before idle abort (and idle retries) take over.
     const realSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
-      realSetTimeout(handler, delay === 183000 ? 25 : delay, ...args)) as typeof setTimeout;
+    let deadlineClocks = 0;
+    globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (delay === 183000) {
+        deadlineClocks += 1;
+        const compressed = deadlineClocks % 2 === 1 ? 100 : 25;
+        return realSetTimeout(handler, compressed, ...args);
+      }
+      return realSetTimeout(handler, delay, ...args);
+    }) as typeof setTimeout;
   }
   const observation = process.env.AK_NAVIGATOR_OBSERVATION === "1";
   /** Canonical delivery matrix: recommendation | unavailable | silence (extends observation seam). */
