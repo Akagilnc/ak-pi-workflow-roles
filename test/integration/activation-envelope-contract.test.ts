@@ -16,12 +16,15 @@ import {
   writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
 import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
+import {
+  appendActivationLedgerLine,
+} from "../../src/activation-ledger.ts";
 import {
   ACCEPTED_ACTIVATION_EVENT,
   ActivationBarrierError,
@@ -32,6 +35,7 @@ import {
   buildAcceptedActivationFact,
   correlationIdentityFromEnv,
   durableSessionPointer,
+  resolveActivationLedgerHome,
   resolveBookKeyFromGit,
   serializeAcceptedActivationFact,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
@@ -972,14 +976,16 @@ test("short append fails honestly as typed infrastructure failure", () => {
       correlation: { kind: "caller", id: "prior" },
     }), { ledgerHome });
 
+    const failedLine = Buffer.from(serializeAcceptedActivationFact(buildAcceptedActivationFact({
+      role: "fixer",
+      observedAt: "2025-01-01T00:00:01.000Z",
+      bookKey,
+      session: { kind: "session-file", path: "/s/failed.jsonl" },
+      correlation: { kind: "caller", id: "failed" },
+    })), "utf8");
+
     assert.throws(
-      () => appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
-        role: "fixer",
-        observedAt: "2025-01-01T00:00:01.000Z",
-        bookKey,
-        session: { kind: "session-file", path: "/s/failed.jsonl" },
-        correlation: { kind: "caller", id: "failed" },
-      }), {
+      () => appendActivationLedgerLine(ledgerPath, failedLine, {
         ledgerHome,
         write(fd, buffer, offset, length, position) {
           const partial = Math.min(3, length);
@@ -1015,24 +1021,21 @@ test("failed append write keeps the original write cause", () => {
       correlation: { kind: "caller", id: "prior" },
     }), { ledgerHome });
     const writeFailure = new Error("injected-write-failure");
+    const failedLine = Buffer.from(serializeAcceptedActivationFact(buildAcceptedActivationFact({
+      role: "fixer",
+      observedAt: "2025-01-01T00:00:01.000Z",
+      bookKey,
+      session: { kind: "session-file", path: "/s/failed.jsonl" },
+      correlation: { kind: "caller", id: "failed" },
+    })), "utf8");
 
     assert.throws(
-      () => appendAcceptedActivationFact(
-        ledgerPath,
-        buildAcceptedActivationFact({
-          role: "fixer",
-          observedAt: "2025-01-01T00:00:01.000Z",
-          bookKey,
-          session: { kind: "session-file", path: "/s/failed.jsonl" },
-          correlation: { kind: "caller", id: "failed" },
-        }),
-        {
-          ledgerHome,
-          write() {
-            throw writeFailure;
-          },
+      () => appendActivationLedgerLine(ledgerPath, failedLine, {
+        ledgerHome,
+        write() {
+          throw writeFailure;
         },
-      ),
+      }),
       (error: unknown) => {
         const primary = error instanceof AggregateError ? error.cause ?? error.errors[0] : error;
         assert.equal(primary, writeFailure);
@@ -1065,25 +1068,23 @@ test("append cleanup failure cannot mask the primary write failure", () => {
       { ledgerHome },
     );
 
+    const failedLine = Buffer.from(serializeAcceptedActivationFact(buildAcceptedActivationFact({
+      role: "fixer",
+      observedAt: "2025-01-01T00:00:01.000Z",
+      bookKey,
+      session: { kind: "session-file", path: "/s/failed.jsonl" },
+      correlation: { kind: "caller", id: "failed" },
+    })), "utf8");
+
     assert.throws(
-      () => appendAcceptedActivationFact(
-        ledgerPath,
-        buildAcceptedActivationFact({
-          role: "fixer",
-          observedAt: "2025-01-01T00:00:01.000Z",
-          bookKey,
-          session: { kind: "session-file", path: "/s/failed.jsonl" },
-          correlation: { kind: "caller", id: "failed" },
-        }),
-        {
-          ledgerHome,
-          write(fd) {
-            // Close early so cleanup closeSync fails; primary write cause must remain.
-            closeSync(fd);
-            throw writeFailure;
-          },
+      () => appendActivationLedgerLine(ledgerPath, failedLine, {
+        ledgerHome,
+        write(fd) {
+          // Close early so cleanup closeSync fails; primary write cause must remain.
+          closeSync(fd);
+          throw writeFailure;
         },
-      ),
+      }),
       (error: unknown) => {
         assert.ok(error instanceof AggregateError);
         assert.equal(error.cause, writeFailure);
@@ -1092,6 +1093,52 @@ test("append cleanup failure cannot mask the primary write failure", () => {
         return true;
       },
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resolved ledger home rejects relative process home before filesystem writes", () => {
+  for (const relativeHome of [".", "relative-home", ""] as const) {
+    assert.throws(
+      () => resolveActivationLedgerHome(() => relativeHome),
+      (error: unknown) => {
+        assert.ok(error instanceof ActivationLedgerError);
+        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+        return true;
+      },
+    );
+  }
+
+  const absoluteHome = resolve(tmpdir(), "ak-ledger-abs-home");
+  const ledgerHome = resolveActivationLedgerHome(() => absoluteHome);
+  assert.equal(isAbsolute(ledgerHome), true);
+  assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
+
+  const root = mkdtempSync(join(tmpdir(), "ak-ledger-rel-home-"));
+  try {
+    const relativeLedgerHome = "relative-ledger-home";
+    assert.equal(isAbsolute(relativeLedgerHome), false);
+    assert.throws(
+      () => appendAcceptedActivationFact(
+        join(relativeLedgerHome, "books", "b", "waiting.jsonl"),
+        buildAcceptedActivationFact({
+          role: "judge",
+          observedAt: "2025-01-01T00:00:00.000Z",
+          bookKey: "b",
+          session: { kind: "session-file", path: "/s/x.jsonl" },
+          correlation: { kind: "absent" },
+        }),
+        { ledgerHome: relativeLedgerHome },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ActivationLedgerError);
+        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+        return true;
+      },
+    );
+    assert.equal(existsSync(join(root, relativeLedgerHome)), false);
+    assert.equal(existsSync(resolve(relativeLedgerHome)), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
