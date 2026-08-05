@@ -9,21 +9,52 @@
  * Reuses S1 tracer (`loadTicketTrajectoryRuns` + station HTML) for each ticket.
  * Owns swimlanes, family aggregation, blocked badges, closed drill, and S3
  * latest-run four-state / wallclock / cost aggregation (no parallel receipt parser).
+ *
+ * Page lifecycle: startFactoryBoardPage owns refresh regeneration to an explicit
+ * output path outside every ledger and declares the bound; one-shot write does
+ * not advertise refresh. Snapshot bindings stay fixed; each tick re-reads ledgers.
  */
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import {
+  DEFAULT_REFRESH_BOUNDARY_SECONDS,
   loadTicketTrajectoryRuns,
   renderTicketTrajectoryStationHtml,
   type TicketTrajectoryRun,
+  type TrajectoryClock,
+  type TrajectoryScheduler,
 } from "./ticket-trajectory.ts";
 import type { BoardSnapshot, SnapshotTicket, TicketIssueState } from "./ticket-snapshot.ts";
 
 /** Unaccepted latest-run mtime bands (page-visible thresholds). */
 export const UNACCEPTED_FLYING_MS = 2 * 60 * 1000;
 export const UNACCEPTED_WATCH_MS = 15 * 60 * 1000;
+
+/** Same declared refresh bound as the S1 trajectory surface (seconds). */
+export { DEFAULT_REFRESH_BOUNDARY_SECONDS };
+
+/** Injected clock + scheduler for the production board lifecycle. */
+export type FactoryBoardClock = TrajectoryClock;
+export type FactoryBoardScheduler = TrajectoryScheduler;
+
+export type FactoryBoardPageHandle = {
+  readonly outputPath: string;
+  /** Settles when the first page write finishes (or rejects on first failure). */
+  readonly started: Promise<{ outputPath: string; html: string }>;
+  /**
+   * Settles when the lifecycle ends.
+   * Resolves on a clean stop with no regeneration fault; rejects with the
+   * original cause when a post-start regeneration fails (or the initial write fails).
+   */
+  readonly closed: Promise<void>;
+  /**
+   * Stop further regeneration. In-flight write is awaited.
+   * Re-throws the original regeneration failure when the lifecycle faulted.
+   */
+  stop: () => Promise<void>;
+};
 
 /** Latest-run four-state (blocked is a badge, never a state). */
 export type TicketCurrentState =
@@ -378,6 +409,12 @@ function renderFamily(input: {
   const childCount = input.descendants.length;
   const pendingCount = input.descendants.filter((c) => c.pending).length;
   const closedCount = input.descendants.filter((c) => c.ticket.state === "closed").length;
+  // Family lane-entry burn = parent + every in-snapshot descendant (retains S2 nest;
+  // child burns such as #130 participate in the sortable family key).
+  const costUsd =
+    input.parent.costUsd + input.descendants.reduce((sum, d) => sum + d.costUsd, 0);
+  const totalTokens =
+    input.parent.totalTokens + input.descendants.reduce((sum, d) => sum + d.totalTokens, 0);
   const childHtml = input.descendants
     .map((child) =>
       renderTicketArticle({ bookKey: input.bookKey, prepared: child, nested: true }),
@@ -397,6 +434,8 @@ function renderFamily(input: {
     ` data-child-count="${attr(String(childCount))}"`,
     ` data-pending-count="${attr(String(pendingCount))}"`,
     ` data-closed-count="${attr(String(closedCount))}"`,
+    ` data-cost-usd="${attr(formatUsd(costUsd))}"`,
+    ` data-total-tokens="${attr(String(totalTokens))}"`,
     `>`,
     `<header class="family-head">`,
     `<h2 class="family-title">族 #${escapeHtml(String(input.parent.ticket.issueNumber))} · ${escapeHtml(input.parent.ticket.title)}</h2>`,
@@ -404,6 +443,7 @@ function renderFamily(input: {
     `<span>子轨迹 ${childCount}</span>`,
     `<span>待发 ${pendingCount}</span>`,
     `<span>收官 ${closedCount}</span>`,
+    `<span class="cost" data-family-cost-label="true">$${escapeHtml(formatUsd(costUsd))} · ${totalTokens} tok</span>`,
     `</p>`,
     `</header>`,
     `<div class="family-parent">${parentBlock}</div>`,
@@ -653,6 +693,8 @@ export function compareFactoryBoardSort(
 function boardSortScript(): string {
   // Presentation-only reorder; machine facts stay on data-* attrs.
   // Comparator body mirrors compareFactoryBoardSort (ticket-asc / cost-desc / cost-asc).
+  // Family lane entries carry aggregate data-cost-usd (parent + descendants) so nested
+  // per-ticket burns (e.g. #130 under #78) participate without flattening the S2 nest.
   return `<script>
 (function () {
   var sel = document.querySelector('[data-sort-control]');
@@ -663,7 +705,9 @@ function boardSortScript(): string {
     return Number.isFinite(n) ? n : 0;
   }
   function ticketNo(el) {
+    // Tickets use data-ticket; family sections use data-parent (root issue).
     var v = el.getAttribute('data-ticket');
+    if (v == null || v === '') v = el.getAttribute('data-parent');
     var n = v == null ? 0 : Number(v);
     return Number.isFinite(n) ? n : 0;
   }
@@ -680,11 +724,11 @@ function boardSortScript(): string {
   function sortKey(node) {
     if (node.nodeType !== 1) return null;
     var el = node;
-    if (el.hasAttribute && el.hasAttribute('data-ticket')) return el;
+    // Lane children only: family sections (aggregate burn) or standalone tickets.
     if (el.hasAttribute && el.hasAttribute('data-family')) {
-      var parent = el.querySelector(':scope > .family-parent [data-ticket]');
-      return parent || el;
+      return el.hasAttribute('data-cost-usd') ? el : null;
     }
+    if (el.hasAttribute && el.hasAttribute('data-ticket')) return el;
     return null;
   }
   sel.addEventListener('change', function () {
@@ -708,11 +752,14 @@ function boardSortScript(): string {
 /**
  * Unique S2 seam: books + snapshot-or-error + now → HTML.
  * Read-only against every ledger.
+ * When refreshBoundarySeconds is a positive finite number, the page declares that
+ * bound (backed by startFactoryBoardPage regeneration). One-shot omits it.
  */
 export async function renderFactoryBoardHtml(
   books: readonly FactoryBoardBook[],
   view: FactoryBoardView,
   now: Date,
+  options?: { refreshBoundarySeconds?: number },
 ): Promise<string> {
   if (!Array.isArray(books)) {
     throw new Error("books must be an array");
@@ -721,6 +768,11 @@ export async function renderFactoryBoardHtml(
     throw new Error("view must be a FactoryBoardView");
   }
   const generatedAt = now.toISOString();
+  const refreshActive =
+    options?.refreshBoundarySeconds !== undefined &&
+    Number.isFinite(options.refreshBoundarySeconds) &&
+    options.refreshBoundarySeconds > 0;
+  const refreshBoundarySeconds = refreshActive ? options!.refreshBoundarySeconds! : undefined;
   if (!view.ok) {
     return renderErrorHtml(view.error, generatedAt);
   }
@@ -770,11 +822,22 @@ export async function renderFactoryBoardHtml(
 
   // Preserve caller book order for empty-snapshot books still listed in books? Only snapshot books form lanes.
 
+  const lifecycleAttrs = refreshActive
+    ? ` data-lifecycle="refresh" data-refresh-boundary-seconds="${attr(String(refreshBoundarySeconds))}"`
+    : ` data-lifecycle="oneshot"`;
+  const refreshMeta = refreshActive
+    ? `
+<meta http-equiv="refresh" content="${attr(String(refreshBoundarySeconds))}"/>`
+    : "";
+  const refreshNote = refreshActive
+    ? `\n    · refresh ≤ ${escapeHtml(String(refreshBoundarySeconds))}s`
+    : "";
+
   return `<!DOCTYPE html>
-<html lang="zh-CN" data-generated-at="${attr(generatedAt)}" data-board="true" data-threshold-flying-ms="${attr(String(UNACCEPTED_FLYING_MS))}" data-threshold-watch-ms="${attr(String(UNACCEPTED_WATCH_MS))}">
+<html lang="zh-CN" data-generated-at="${attr(generatedAt)}" data-board="true" data-threshold-flying-ms="${attr(String(UNACCEPTED_FLYING_MS))}" data-threshold-watch-ms="${attr(String(UNACCEPTED_WATCH_MS))}"${lifecycleAttrs}>
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>${refreshMeta}
 <title>工厂进度板</title>
 <style>${boardStyles()}
 </style>
@@ -782,7 +845,7 @@ export async function renderFactoryBoardHtml(
 <body>
 <header class="page">
   <h1>工厂进度板 · 驿传轨迹</h1>
-  <p class="generated">generated-at <time datetime="${attr(generatedAt)}">${escapeHtml(generatedAt)}</time></p>
+  <p class="generated">generated-at <time datetime="${attr(generatedAt)}">${escapeHtml(generatedAt)}</time>${refreshNote}</p>
   <p class="thresholds" data-thresholds="true">
     <span>未受理阈值：</span>
     <span data-threshold-flying-ms="${attr(String(UNACCEPTED_FLYING_MS))}">&lt;${UNACCEPTED_FLYING_MS}ms 在飞</span>
@@ -884,9 +947,138 @@ export async function writeFactoryBoardPage(input: {
   view: FactoryBoardView;
   now: Date;
   outputPath: string;
+  refreshBoundarySeconds?: number;
 }): Promise<{ outputPath: string; html: string }> {
   const gate = await assertOutputOutsideAllLedgers(input.books, input.outputPath);
-  const html = await renderFactoryBoardHtml(input.books, input.view, input.now);
+  const html = await renderFactoryBoardHtml(
+    input.books,
+    input.view,
+    input.now,
+    input.refreshBoundarySeconds !== undefined
+      ? { refreshBoundarySeconds: input.refreshBoundarySeconds }
+      : undefined,
+  );
   const outputPath = await writeHtmlAtomically(gate.outputAbsolute, html, gate.ledgerRoots);
   return { outputPath, html };
+}
+
+const defaultBoardScheduler: FactoryBoardScheduler = {
+  every(ms, tick) {
+    const timer = setInterval(tick, ms);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  },
+};
+
+/**
+ * Production board lifecycle: write immediately, then regenerate on the declared
+ * refresh boundary so the same viewing surface observes new runs / generated-at.
+ * Snapshot bindings stay fixed; each tick re-reads ledgers (read-only).
+ * Stop cancels further regeneration. A post-start regeneration failure faults the
+ * lifecycle with the original cause (no silent continuation).
+ */
+export function startFactoryBoardPage(input: {
+  books: readonly FactoryBoardBook[];
+  view: FactoryBoardView;
+  outputPath: string;
+  refreshBoundarySeconds?: number;
+  clock?: FactoryBoardClock;
+  scheduler?: FactoryBoardScheduler;
+}): FactoryBoardPageHandle {
+  const refreshBoundarySeconds = input.refreshBoundarySeconds ?? DEFAULT_REFRESH_BOUNDARY_SECONDS;
+  if (!(refreshBoundarySeconds > 0) || !Number.isFinite(refreshBoundarySeconds)) {
+    throw new Error("refreshBoundarySeconds must be a positive finite number");
+  }
+  const clock = input.clock ?? (() => new Date());
+  const scheduler = input.scheduler ?? defaultBoardScheduler;
+
+  let stopped = false;
+  let cancel: (() => void) | undefined;
+  let inFlight: Promise<void> | undefined;
+  let lastRejection: unknown;
+  let closedSettled = false;
+  let resolveClosed!: () => void;
+  let rejectClosed!: (error: unknown) => void;
+  const closed = new Promise<void>((resolve, reject) => {
+    resolveClosed = resolve;
+    rejectClosed = reject;
+  });
+  void closed.catch(() => undefined);
+
+  const fault = (error: unknown): void => {
+    if (lastRejection !== undefined) return;
+    lastRejection = error;
+    stopped = true;
+    cancel?.();
+    cancel = undefined;
+    if (!closedSettled) {
+      closedSettled = true;
+      rejectClosed(error);
+    }
+  };
+
+  const settleClean = (): void => {
+    if (closedSettled) return;
+    closedSettled = true;
+    resolveClosed();
+  };
+
+  const writeOnce = async (): Promise<{ outputPath: string; html: string }> => {
+    if (stopped && lastRejection === undefined) {
+      throw new Error("factory board page lifecycle already stopped");
+    }
+    if (lastRejection !== undefined) throw lastRejection;
+    return writeFactoryBoardPage({
+      books: input.books,
+      view: input.view,
+      now: clock(),
+      outputPath: input.outputPath,
+      refreshBoundarySeconds,
+    });
+  };
+
+  const queueWrite = (): void => {
+    if (stopped || lastRejection !== undefined) return;
+    inFlight = (inFlight ?? Promise.resolve()).then(async () => {
+      if (stopped || lastRejection !== undefined) return;
+      try {
+        await writeOnce();
+      } catch (error) {
+        fault(error);
+      }
+    });
+  };
+
+  const started = writeOnce()
+    .then((first) => {
+      if (stopped || lastRejection !== undefined) return first;
+      const intervalMs = Math.max(1, Math.round(refreshBoundarySeconds * 1000));
+      cancel = scheduler.every(intervalMs, () => {
+        queueWrite();
+      });
+      return first;
+    })
+    .catch((error) => {
+      fault(error);
+      throw error;
+    });
+
+  const outputPath = resolve(input.outputPath);
+
+  return {
+    outputPath,
+    started,
+    closed,
+    async stop() {
+      stopped = true;
+      cancel?.();
+      cancel = undefined;
+      await started.catch(() => undefined);
+      if (inFlight) await inFlight.catch(() => undefined);
+      if (lastRejection !== undefined) {
+        throw lastRejection;
+      }
+      settleClean();
+    },
+  };
 }
