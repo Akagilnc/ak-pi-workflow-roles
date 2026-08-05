@@ -68,7 +68,8 @@ export type TicketTrajectoryPageHandle = {
 
 type SessionRow = Record<string, unknown>;
 
-type ParsedRun = {
+/** One ledger run as loaded by the S1 tracer (shared with the S2 board). */
+export type TicketTrajectoryRun = {
   runId: string;
   ledgerCoord: string;
   evidenceHref: string;
@@ -85,6 +86,8 @@ type ParsedRun = {
   provider: string;
   thinking: string;
 };
+
+type ParsedRun = TicketTrajectoryRun;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -392,6 +395,85 @@ async function listRunIds(ledgerDir: string, issueNumber: number): Promise<strin
   }
 }
 
+function sortRuns(runs: readonly ParsedRun[]): ParsedRun[] {
+  return [...runs].sort((a, b) => {
+    const at = a.startedAt ?? "";
+    const bt = b.startedAt ?? "";
+    if (at !== bt) return at.localeCompare(bt);
+    return a.runId.localeCompare(b.runId);
+  });
+}
+
+/**
+ * Render station/run blocks from already-loaded S1 runs.
+ * Shared by the single-ticket page and the S2 factory board (no second receipt parser).
+ */
+export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajectoryRun[]): string {
+  const stationOrder: string[] = [];
+  const byStation = new Map<string, ParsedRun[]>();
+  const sortedRuns = sortRuns(runs);
+  for (const run of sortedRuns) {
+    if (!byStation.has(run.station)) {
+      byStation.set(run.station, []);
+      stationOrder.push(run.station);
+    }
+    byStation.get(run.station)!.push(run);
+  }
+
+  return stationOrder
+    .map((station) => {
+      const rounds = byStation.get(station)!;
+      const stationLabel = station === "unknown" ? "未知站" : station;
+      const roundHtml = rounds
+        .map((run) => {
+          const resultDisplay = run.hasResult
+            ? run.resultStatus ||
+              (run.legStatuses.length > 0 ? formatLegStatusesForDisplay(run.legStatuses) : "")
+            : "";
+          // Machine channel: space-separated closed-enum tokens (no custom status dialect).
+          const legStatusesAttr = run.legStatuses.join(" ");
+          return [
+            `<article class="run"`,
+            ` data-run-id="${attr(run.runId)}"`,
+            ` data-station="${attr(run.station)}"`,
+            ` data-station-source="${attr(run.stationSource)}"`,
+            ` data-ledger-coord="${attr(run.ledgerCoord)}"`,
+            ` data-attempt-count="${attr(String(run.attemptCount))}"`,
+            ` data-has-result="${run.hasResult ? "true" : "false"}"`,
+            ` data-result-status="${attr(run.resultStatus)}"`,
+            ` data-leg-statuses="${attr(legStatusesAttr)}"`,
+            ` data-model="${attr(run.model)}"`,
+            ` data-provider="${attr(run.provider)}"`,
+            ` data-thinking="${attr(run.thinking)}"`,
+            `>`,
+            `<header class="run-head">`,
+            `<span class="run-id">${escapeHtml(run.runId)}</span>`,
+            run.model || run.provider || run.thinking
+              ? `<span class="run-model">${escapeHtml([run.provider, run.model].filter(Boolean).join("/"))}${run.thinking ? ` · ${escapeHtml(run.thinking)}` : ""}</span>`
+              : "",
+            `</header>`,
+            `<p class="run-meta">`,
+            `<span class="attempts">attempts: ${run.attemptCount}</span>`,
+            run.hasResult
+              ? `<span class="result">result: ${escapeHtml(resultDisplay)}</span>`
+              : `<span class="result">result: (none — attempts only)</span>`,
+            `</p>`,
+            `<p class="ledger"><a data-ledger-link="${attr(run.ledgerCoord)}" href="${attr(run.evidenceHref)}">${escapeHtml(run.ledgerCoord)}</a></p>`,
+            `</article>`,
+          ].join("");
+        })
+        .join("\n");
+
+      return [
+        `<section class="station" data-station-block="${attr(station)}" data-round-count="${rounds.length}">`,
+        `<h2 class="station-title">${escapeHtml(stationLabel)} · ${rounds.length} 轮</h2>`,
+        roundHtml,
+        `</section>`,
+      ].join("\n");
+    })
+    .join("\n");
+}
+
 function renderHtml(input: {
   issueNumber: number;
   generatedAt: string;
@@ -404,73 +486,8 @@ function renderHtml(input: {
     Number.isFinite(input.refreshBoundarySeconds) &&
     input.refreshBoundarySeconds > 0;
   const refreshBoundarySeconds = refreshActive ? input.refreshBoundarySeconds! : undefined;
-  // Group by station preserving first-seen chronological order.
-  const stationOrder: string[] = [];
-  const byStation = new Map<string, ParsedRun[]>();
-  const sortedRuns = [...input.runs].sort((a, b) => {
-    const at = a.startedAt ?? "";
-    const bt = b.startedAt ?? "";
-    if (at !== bt) return at.localeCompare(bt);
-    return a.runId.localeCompare(b.runId);
-  });
-  for (const run of sortedRuns) {
-    if (!byStation.has(run.station)) {
-      byStation.set(run.station, []);
-      stationOrder.push(run.station);
-    }
-    byStation.get(run.station)!.push(run);
-  }
-
-  const stationBlocks = stationOrder.map((station) => {
-    const rounds = byStation.get(station)!;
-    const stationLabel = station === "unknown" ? "未知站" : station;
-    const roundHtml = rounds
-      .map((run) => {
-        const resultDisplay = run.hasResult
-          ? run.resultStatus ||
-            (run.legStatuses.length > 0 ? formatLegStatusesForDisplay(run.legStatuses) : "")
-          : "";
-        // Machine channel: space-separated closed-enum tokens (no custom status dialect).
-        const legStatusesAttr = run.legStatuses.join(" ");
-        return [
-          `<article class="run"`,
-          ` data-run-id="${attr(run.runId)}"`,
-          ` data-station="${attr(run.station)}"`,
-          ` data-station-source="${attr(run.stationSource)}"`,
-          ` data-ledger-coord="${attr(run.ledgerCoord)}"`,
-          ` data-attempt-count="${attr(String(run.attemptCount))}"`,
-          ` data-has-result="${run.hasResult ? "true" : "false"}"`,
-          ` data-result-status="${attr(run.resultStatus)}"`,
-          ` data-leg-statuses="${attr(legStatusesAttr)}"`,
-          ` data-model="${attr(run.model)}"`,
-          ` data-provider="${attr(run.provider)}"`,
-          ` data-thinking="${attr(run.thinking)}"`,
-          `>`,
-          `<header class="run-head">`,
-          `<span class="run-id">${escapeHtml(run.runId)}</span>`,
-          run.model || run.provider || run.thinking
-            ? `<span class="run-model">${escapeHtml([run.provider, run.model].filter(Boolean).join("/"))}${run.thinking ? ` · ${escapeHtml(run.thinking)}` : ""}</span>`
-            : "",
-          `</header>`,
-          `<p class="run-meta">`,
-          `<span class="attempts">attempts: ${run.attemptCount}</span>`,
-          run.hasResult
-            ? `<span class="result">result: ${escapeHtml(resultDisplay)}</span>`
-            : `<span class="result">result: (none — attempts only)</span>`,
-          `</p>`,
-          `<p class="ledger"><a data-ledger-link="${attr(run.ledgerCoord)}" href="${attr(run.evidenceHref)}">${escapeHtml(run.ledgerCoord)}</a></p>`,
-          `</article>`,
-        ].join("");
-      })
-      .join("\n");
-
-    return [
-      `<section class="station" data-station-block="${attr(station)}" data-round-count="${rounds.length}">`,
-      `<h2 class="station-title">${escapeHtml(stationLabel)} · ${rounds.length} 轮</h2>`,
-      roundHtml,
-      `</section>`,
-    ].join("\n");
-  });
+  const sortedRuns = sortRuns(input.runs);
+  const stationBlocks = renderTicketTrajectoryStationHtml(sortedRuns);
 
   const lifecycleAttrs = refreshActive
     ? ` data-lifecycle="refresh" data-refresh-boundary-seconds="${attr(String(refreshBoundarySeconds))}"`
@@ -518,11 +535,31 @@ function renderHtml(input: {
   <p class="generated">generated-at <time datetime="${attr(input.generatedAt)}">${escapeHtml(input.generatedAt)}</time>${refreshNote}</p>
 </header>
 <main data-run-count="${sortedRuns.length}">
-${stationBlocks.join("\n") || "<p data-empty=\"true\">no runs</p>"}
+${stationBlocks || "<p data-empty=\"true\">no runs</p>"}
 </main>
 </body>
 </html>
 `;
+}
+
+/**
+ * Load one ticket's runs via the S1 tracer path (read-only ledger scan).
+ * Factory board reuses this — no parallel receipt parser.
+ */
+export async function loadTicketTrajectoryRuns(
+  ledgerDir: string,
+  issueNumber: number,
+): Promise<TicketTrajectoryRun[]> {
+  if (!Number.isInteger(issueNumber) || issueNumber < 1) {
+    throw new Error("issueNumber must be a positive integer");
+  }
+  const root = resolve(ledgerDir);
+  const runIds = await listRunIds(root, issueNumber);
+  const runs: ParsedRun[] = [];
+  for (const runId of runIds) {
+    runs.push(await parseRun(root, issueNumber, runId));
+  }
+  return runs;
 }
 
 /**
@@ -539,12 +576,7 @@ export async function renderTicketTrajectoryHtml(
     throw new Error("ticketSnapshot.issueNumber must be a positive integer");
   }
   const issueNumber = ticketSnapshot.issueNumber;
-  const root = resolve(ledgerDir);
-  const runIds = await listRunIds(root, issueNumber);
-  const runs: ParsedRun[] = [];
-  for (const runId of runIds) {
-    runs.push(await parseRun(root, issueNumber, runId));
-  }
+  const runs = await loadTicketTrajectoryRuns(ledgerDir, issueNumber);
   const generatedAt = now.toISOString();
   // One-shot by default: only an explicit positive bound declares self-refresh,
   // and only callers that actually regenerate (startTicketTrajectoryPage) pass it.
