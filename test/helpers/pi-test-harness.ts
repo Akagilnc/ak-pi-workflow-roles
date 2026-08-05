@@ -35,8 +35,8 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
+  ActivationGitRepositoryRequiredError,
   activationWaitingLedgerPath,
-  isNonGitRepositoryActivationError,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
   type AcceptedActivationFact,
@@ -909,9 +909,14 @@ export async function withInProcessPi<T>(
   try {
     bookKey = resolveBookKeyFromGit(options.cwd);
   } catch (error) {
-    // Only the documented non-git cwd case may continue with a non-ledger fallback.
-    // Permission, topology, filesystem, and unknown errors retain cause and fail.
-    if (!isNonGitRepositoryActivationError(error)) throw error;
+    // Only the typed non-git discovery rejection may continue with a non-ledger fallback.
+    // Missing binary, permission, and unknown errors retain cause and fail closed.
+    if (!(error instanceof ActivationGitRepositoryRequiredError)) throw error;
+    const causeCode = error.cause !== null && typeof error.cause === "object" && "code" in error.cause
+      && typeof (error.cause as { code: unknown }).code === "string"
+      ? (error.cause as { code: string }).code
+      : undefined;
+    if (causeCode === "ENOENT" || causeCode === "EACCES" || causeCode === "EPERM") throw error;
     bookKey = undefined;
   }
   if (bookKey === undefined) {

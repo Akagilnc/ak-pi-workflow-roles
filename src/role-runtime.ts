@@ -67,6 +67,7 @@ export { activationTraceRecordSchema, namedActivationCause } from "./activation-
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 export {
   ACCEPTED_ACTIVATION_EVENT,
+  ActivationGitRepositoryRequiredError,
   activationBookDirectory,
   activationWaitingLedgerPath,
   appendAcceptedActivationFact,
@@ -74,7 +75,6 @@ export {
   buildAcceptedActivationFact,
   correlationIdentityFromEnv,
   durableSessionPointer,
-  isNonGitRepositoryActivationError,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
   serializeAcceptedActivationFact,
