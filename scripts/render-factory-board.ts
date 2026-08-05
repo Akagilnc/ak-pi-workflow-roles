@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * Internal entry for the factory board full view (S2).
+ * Internal entry for the factory board full view (S2+S3).
  *
  * Not a public role CLI (ADR 0052). Not registered as a package bin.
  *
  * Book→repo bindings are explicit flags — never guessed from git remote.
+ * S3 current-state / wallclock / cost are computed inside the render seam from
+ * ledger runs + injected now — this script only supplies bindings and clock.
  *
  *   npx tsx scripts/render-factory-board.ts \
  *     --book ak-pi-workflow-roles=~/.ak-roles/books/ak-pi-workflow-roles:Akagilnc/ak-pi-workflow-roles \

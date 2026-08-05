@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
@@ -19,6 +19,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 import {
+  UNACCEPTED_FLYING_MS,
+  UNACCEPTED_WATCH_MS,
   renderFactoryBoardHtml,
   writeFactoryBoardPage,
   type FactoryBoardBook,
@@ -749,6 +751,537 @@ test("nested A→B→C is one rooted whole-family with each ticket rendered once
       elementsWith(html, "data-family").filter((el) => el["data-parent"] === "11").length,
       0,
     );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S3 — latest-run four-state, wallclock, cost (production seam only)
+// ---------------------------------------------------------------------------
+
+async function writeRunSession(
+  ledgerDir: string,
+  issueNumber: number,
+  runId: string,
+  rows: unknown[],
+  options?: { invocationRole?: string; mtime?: Date; axisLegs?: Array<{ name: string; rows: unknown[] }> },
+): Promise<string> {
+  const sessionDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId, "session");
+  await mkdir(sessionDir, { recursive: true });
+  const sessionPath = join(sessionDir, "session.jsonl");
+  await writeFile(sessionPath, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+  if (options?.invocationRole) {
+    await writeFile(
+      join(ledgerDir, "issues", String(issueNumber), "runs", runId, "invocation.json"),
+      JSON.stringify({ role: options.invocationRole }),
+      "utf8",
+    );
+  }
+  if (options?.axisLegs) {
+    const legsDir = join(sessionDir, "reviewer-legs");
+    await mkdir(legsDir, { recursive: true });
+    for (const leg of options.axisLegs) {
+      const legPath = join(legsDir, `${leg.name}.jsonl`);
+      await writeFile(legPath, leg.rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+      if (options.mtime) await utimes(legPath, options.mtime, options.mtime);
+    }
+  }
+  if (options?.mtime) await utimes(sessionPath, options.mtime, options.mtime);
+  return sessionPath;
+}
+
+function sessionHeader(ts: string, id = "s1"): unknown {
+  return { type: "session", version: 3, id, timestamp: ts, cwd: "/tmp" };
+}
+
+function assistantUsage(ts: string, costTotal: number, totalTokens: number): unknown {
+  return {
+    type: "message",
+    timestamp: ts,
+    message: {
+      role: "assistant",
+      model: "m",
+      provider: "p",
+      content: [{ type: "text", text: "ok" }],
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal },
+      },
+    },
+  };
+}
+
+/** Minimal accepted coder terminating result (typed contract). */
+function acceptedCoderFinal(ts: string, costTotal = 0.01, totalTokens = 10): unknown[] {
+  return [
+    {
+      type: "message",
+      timestamp: ts,
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "t1", name: "ak_coder_output", arguments: {} }],
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal },
+        },
+      },
+    },
+    {
+      type: "message",
+      timestamp: ts,
+      message: {
+        role: "toolResult",
+        toolCallId: "t1",
+        toolName: "ak_coder_output",
+        isError: false,
+        content: [],
+        details: {
+          status: "completed",
+          report: "done",
+        },
+      },
+    },
+  ];
+}
+
+test("S3 four-state is mutually exclusive and decided only by the latest run", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-state-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const nowMs = now.getTime();
+
+    // #1 closed with runs
+    await writeRunSession(
+      ledgerDir,
+      1,
+      "coder-done@x",
+      [sessionHeader("2026-08-01T00:00:00.000Z"), ...acceptedCoderFinal("2026-08-01T00:01:00.000Z", 0.02, 20)],
+      { mtime: new Date(nowMs - 60_000) },
+    );
+    // #2 pending zero-run open
+    await mkdir(join(ledgerDir, "issues", "2"), { recursive: true });
+    // #3 latest unaccepted flying (<2min mtime)
+    await writeRunSession(
+      ledgerDir,
+      3,
+      "coder-fly@x",
+      [
+        sessionHeader("2026-08-05T11:59:00.000Z"),
+        assistantUsage("2026-08-05T11:59:30.000Z", 0.05, 50),
+      ],
+      { invocationRole: "coder", mtime: new Date(nowMs - 30_000) },
+    );
+    // #4 latest unaccepted watch (2–15min)
+    await writeRunSession(
+      ledgerDir,
+      4,
+      "coder-watch@x",
+      [
+        sessionHeader("2026-08-05T11:50:00.000Z"),
+        assistantUsage("2026-08-05T11:51:00.000Z", 0.06, 60),
+      ],
+      { invocationRole: "coder", mtime: new Date(nowMs - 5 * 60_000) },
+    );
+    // #5 latest unaccepted suspect (>15min) — dead latest stays suspect
+    await writeRunSession(
+      ledgerDir,
+      5,
+      "coder-dead@x",
+      [
+        sessionHeader("2026-08-05T10:00:00.000Z"),
+        assistantUsage("2026-08-05T10:05:00.000Z", 0.07, 70),
+      ],
+      { invocationRole: "coder", mtime: new Date(nowMs - 40 * 60_000) },
+    );
+    // #6 #127-morph: historical unaccepted then latest accepted → accepted-awaiting
+    await writeRunSession(
+      ledgerDir,
+      6,
+      "review-fail@x",
+      [
+        sessionHeader("2026-08-04T10:00:00.000Z"),
+        assistantUsage("2026-08-04T10:10:00.000Z", 0.11, 100),
+      ],
+      { invocationRole: "reviewer", mtime: new Date(nowMs - 86_400_000) },
+    );
+    await writeRunSession(
+      ledgerDir,
+      6,
+      "coder-ok@x",
+      [
+        sessionHeader("2026-08-05T08:00:00.000Z"),
+        ...acceptedCoderFinal("2026-08-05T08:05:00.000Z", 0.22, 200),
+      ],
+      { mtime: new Date(nowMs - 3_600_000) },
+    );
+    // #7 pending + blocked badge (badge must not change state)
+    await mkdir(join(ledgerDir, "issues", "7"), { recursive: true });
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 1, title: "closed", state: "closed" }),
+                ticket({ issueNumber: 2, title: "pending", state: "open" }),
+                ticket({ issueNumber: 3, title: "fly", state: "open" }),
+                ticket({ issueNumber: 4, title: "watch", state: "open" }),
+                ticket({ issueNumber: 5, title: "suspect", state: "open" }),
+                ticket({ issueNumber: 6, title: "127-morph", state: "open" }),
+                ticket({
+                  issueNumber: 7,
+                  title: "blocked-pending",
+                  state: "open",
+                  blockedBy: [{ issueNumber: 6, state: "open" }],
+                }),
+              ],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    // Thresholds page-visible
+    assert.equal(
+      elementsWith(html, "data-threshold-flying-ms")[0]?.["data-threshold-flying-ms"],
+      String(UNACCEPTED_FLYING_MS),
+    );
+    assert.equal(
+      elementsWith(html, "data-threshold-watch-ms")[0]?.["data-threshold-watch-ms"],
+      String(UNACCEPTED_WATCH_MS),
+    );
+
+    const by = (n: number) =>
+      elementsWith(html, "data-ticket").find((t) => t["data-book"] === "roles" && t["data-ticket"] === String(n));
+
+    assert.equal(by(1)?.["data-current-state"], "closed");
+    assert.equal(by(2)?.["data-current-state"], "pending");
+    assert.equal(by(2)?.["data-pending"], "true");
+    assert.equal(by(3)?.["data-current-state"], "unaccepted-flying");
+    assert.equal(by(4)?.["data-current-state"], "unaccepted-watch");
+    assert.equal(by(5)?.["data-current-state"], "unaccepted-suspect");
+    assert.equal(by(6)?.["data-current-state"], "accepted-awaiting");
+    // blocked badge stacks; state remains pending
+    assert.equal(by(7)?.["data-current-state"], "pending");
+    assert.equal(by(7)?.["data-blocked-by"], "6");
+    assert.ok(
+      elementsWith(html, "data-blocked-badge").some(
+        (b) => b["data-blocked-badge"] === "6" && b["data-ticket"] === "7",
+      ),
+    );
+
+    // Unaccepted legs expose leg age + last activity
+    assert.ok(by(3)?.["data-leg-age-ms"] !== undefined);
+    assert.equal(Number(by(3)?.["data-leg-age-ms"]), 60_000);
+    assert.ok(by(3)?.["data-last-activity-mtime-ms"] !== undefined);
+    assert.equal(by(5)?.["data-current-state"], "unaccepted-suspect");
+    assert.ok(Number(by(5)?.["data-leg-age-ms"]) > UNACCEPTED_WATCH_MS);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("S3 wallclock: only current latest unaccepted ends at now; historical unaccepted stay capped", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-wall-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    // Historical unaccepted: 10:00–10:05 (=300000ms)
+    await writeRunSession(
+      ledgerDir,
+      10,
+      "old-unaccepted@x",
+      [
+        sessionHeader("2026-08-05T10:00:00.000Z"),
+        assistantUsage("2026-08-05T10:05:00.000Z", 0.01, 10),
+      ],
+      { invocationRole: "coder", mtime: new Date("2026-08-05T10:05:00.000Z") },
+    );
+    // Latest unaccepted: 11:00–11:01; mtime stale enough for suspect but wall uses now
+    await writeRunSession(
+      ledgerDir,
+      10,
+      "latest-unaccepted@x",
+      [
+        sessionHeader("2026-08-05T11:00:00.000Z"),
+        assistantUsage("2026-08-05T11:01:00.000Z", 0.02, 20),
+      ],
+      { invocationRole: "coder", mtime: new Date("2026-08-05T11:01:00.000Z") },
+    );
+
+    const nowA = new Date("2026-08-05T12:00:00.000Z");
+    const nowB = new Date("2026-08-05T13:00:00.000Z");
+    const view: FactoryBoardView = {
+      ok: true,
+      snapshot: {
+        books: [
+          {
+            bookKey: "roles",
+            owner: "acme",
+            repo: "roles",
+            tickets: [ticket({ issueNumber: 10, title: "wall", state: "open" })],
+          },
+        ],
+      },
+    };
+    const htmlA = await renderFactoryBoardHtml([{ bookKey: "roles", ledgerDir }], view, nowA);
+    const htmlB = await renderFactoryBoardHtml([{ bookKey: "roles", ledgerDir }], view, nowB);
+
+    const oldA = elementsWith(htmlA, "data-run-id").find((r) => r["data-run-id"] === "old-unaccepted@x");
+    const latestA = elementsWith(htmlA, "data-run-id").find((r) => r["data-run-id"] === "latest-unaccepted@x");
+    const oldB = elementsWith(htmlB, "data-run-id").find((r) => r["data-run-id"] === "old-unaccepted@x");
+    const latestB = elementsWith(htmlB, "data-run-id").find((r) => r["data-run-id"] === "latest-unaccepted@x");
+    assert.ok(oldA && latestA && oldB && latestB);
+
+    // Historical capped at last record: 5 minutes
+    assert.equal(oldA["data-wall-ms"], "300000");
+    assert.equal(oldB["data-wall-ms"], "300000", "historical unaccepted must not inflate with now");
+
+    // Latest unaccepted: 11:00 → nowA 12:00 = 3600000; → nowB 13:00 = 7200000
+    assert.equal(latestA["data-wall-ms"], "3600000");
+    assert.equal(latestB["data-wall-ms"], "7200000");
+
+    const ticketA = elementsWith(htmlA, "data-ticket").find((t) => t["data-ticket"] === "10");
+    const ticketB = elementsWith(htmlB, "data-ticket").find((t) => t["data-ticket"] === "10");
+    assert.ok(ticketA && ticketB);
+    // Ticket construction wall = sum of run walls (no axis here)
+    assert.equal(Number(ticketA["data-wall-ms"]), 300000 + 3600000);
+    assert.equal(Number(ticketB["data-wall-ms"]), 300000 + 7200000);
+    // Landing cycle is separate: first start 10:00 → now
+    assert.equal(ticketA["data-landing-cycle-ms"], String(2 * 3600_000));
+    assert.equal(ticketB["data-landing-cycle-ms"], String(3 * 3600_000));
+    assert.notEqual(ticketA["data-landing-cycle-ms"], ticketA["data-wall-ms"]);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("S3 cost/tokens aggregate per station and ticket; axis legs fold into station; sort control present", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-cost-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+
+    // Reviewer parent + two axis legs
+    await writeRunSession(
+      ledgerDir,
+      20,
+      "review-axis@x",
+      [
+        sessionHeader("2026-08-05T09:00:00.000Z"),
+        assistantUsage("2026-08-05T09:10:00.000Z", 1.0, 1000),
+      ],
+      {
+        invocationRole: "reviewer",
+        mtime: new Date(now.getTime() - 3600_000),
+        axisLegs: [
+          {
+            name: "standards",
+            rows: [
+              sessionHeader("2026-08-05T09:01:00.000Z", "leg-s"),
+              assistantUsage("2026-08-05T09:03:00.000Z", 0.25, 250),
+            ],
+          },
+          {
+            name: "spec",
+            rows: [
+              sessionHeader("2026-08-05T09:01:00.000Z", "leg-p"),
+              assistantUsage("2026-08-05T09:04:00.000Z", 0.4, 400),
+            ],
+          },
+        ],
+      },
+    );
+    // Second ticket cheaper coder accepted
+    await writeRunSession(
+      ledgerDir,
+      21,
+      "coder-cheap@x",
+      [
+        sessionHeader("2026-08-05T08:00:00.000Z"),
+        ...acceptedCoderFinal("2026-08-05T08:02:00.000Z", 0.05, 50),
+      ],
+      { mtime: new Date(now.getTime() - 7200_000) },
+    );
+
+    // #130-style multi-round auditor costs visible: two auditor runs on #22
+    await writeRunSession(
+      ledgerDir,
+      22,
+      "auditor-1@x",
+      [
+        sessionHeader("2026-08-05T07:00:00.000Z"),
+        assistantUsage("2026-08-05T07:05:00.000Z", 0.3, 300),
+      ],
+      { invocationRole: "auditor", mtime: new Date(now.getTime() - 10_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir,
+      22,
+      "auditor-2@x",
+      [
+        sessionHeader("2026-08-05T07:30:00.000Z"),
+        assistantUsage("2026-08-05T07:40:00.000Z", 0.5, 500),
+      ],
+      { invocationRole: "auditor", mtime: new Date(now.getTime() - 9_000_000) },
+    );
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 20, title: "axis", state: "open" }),
+                ticket({ issueNumber: 21, title: "cheap", state: "open" }),
+                ticket({ issueNumber: 22, title: "multi-auditor", state: "open" }),
+              ],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    const t20 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "20");
+    const t21 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "21");
+    const t22 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "22");
+    assert.ok(t20 && t21 && t22);
+
+    // Parent 1.0 + legs 0.25 + 0.4 = 1.65
+    assert.equal(Number(t20["data-cost-usd"]), 1.65);
+    assert.equal(Number(t20["data-total-tokens"]), 1650);
+    assert.equal(Number(t21["data-cost-usd"]), 0.05);
+    assert.equal(Number(t22["data-cost-usd"]), 0.8);
+    assert.equal(Number(t22["data-total-tokens"]), 800);
+
+    const axisRun = elementsWith(html, "data-run-id").find((r) => r["data-run-id"] === "review-axis@x");
+    assert.ok(axisRun);
+    assert.equal(Number(axisRun["data-cost-usd"]), 1.65);
+    assert.equal(Number(axisRun["data-total-tokens"]), 1650);
+    // axis wall = 2min + 3min = 300000; parent wall extended to now from 09:00 → 12:00 = 10800000
+    assert.equal(Number(axisRun["data-axis-wall-ms"]), 2 * 60_000 + 3 * 60_000);
+
+    const reviewerStation = elementsWith(html, "data-station-block").find(
+      (s) => s["data-station-block"] === "reviewer",
+    );
+    assert.ok(reviewerStation);
+    assert.equal(Number(reviewerStation["data-station-cost-usd"]), 1.65);
+    // station wall includes parent wallMs + axisWallMs
+    assert.equal(
+      Number(reviewerStation["data-station-wall-ms"]),
+      Number(axisRun["data-wall-ms"]) + Number(axisRun["data-axis-wall-ms"]),
+    );
+
+    const auditorStation = elementsWith(html, "data-station-block").find(
+      (s) => s["data-station-block"] === "auditor",
+    );
+    assert.ok(auditorStation, "#130 multi-round auditor station visible");
+    assert.equal(Number(auditorStation["data-station-cost-usd"]), 0.8);
+    assert.equal(auditorStation["data-round-count"], "2");
+
+    // Sort control present (burn sort)
+    assert.ok(elementsWith(html, "data-sort-control").length >= 1);
+    assert.match(html, /cost-desc/);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("S3 #127 fixture latest unaccepted stays mechanical; accepted-awaiting when latest accepted", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-127-"));
+  try {
+    const rolesLedger = join(workspace, "ledgers", "roles");
+    await cp(fixtureLedger, rolesLedger, { recursive: true });
+    // Fixture #127 latest is review-026 unaccepted → suspect under far-future now
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir: rolesLedger }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 127, title: "child with runs", state: "open" })],
+            },
+          ],
+        },
+      },
+      now,
+    );
+    const t = elementsWith(html, "data-ticket").find((x) => x["data-ticket"] === "127");
+    assert.ok(t);
+    // latest run unaccepted → one of the three unaccepted bands (mtime of fixture is old → suspect)
+    assert.match(t["data-current-state"] ?? "", /^unaccepted-/);
+
+    // Known fixture costs roll up
+    const plan = elementsWith(html, "data-run-id").find((r) => r["data-run-id"] === "plan-court-001@ak-roles-127");
+    assert.ok(plan);
+    assert.ok(Number(plan["data-cost-usd"]) > 0.9);
+    assert.equal(plan["data-has-result"], "true");
+    // ticket cost is sum of runs
+    const runCosts = elementsWith(html, "data-run-id").map((r) => Number(r["data-cost-usd"]));
+    const sum = runCosts.reduce((a, b) => a + b, 0);
+    assert.ok(Math.abs(Number(t["data-cost-usd"]) - sum) < 1e-9);
+
+    // Append a later accepted run → current state becomes accepted-awaiting (#127 morph)
+    await writeRunSession(
+      rolesLedger,
+      127,
+      "coder-final@ak-roles-127",
+      [
+        sessionHeader("2026-08-05T11:00:00.000Z"),
+        ...acceptedCoderFinal("2026-08-05T11:05:00.000Z", 0.01, 10),
+      ],
+      { mtime: new Date(now.getTime() - 60_000) },
+    );
+    const html2 = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir: rolesLedger }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 127, title: "child with runs", state: "open" })],
+            },
+          ],
+        },
+      },
+      now,
+    );
+    const t2 = elementsWith(html2, "data-ticket").find((x) => x["data-ticket"] === "127");
+    assert.equal(t2?.["data-current-state"], "accepted-awaiting");
+    // Historical unaccepted review-005s wall stays capped (not now-extended)
+    const zero = elementsWith(html2, "data-run-id").find((r) => r["data-run-id"] === "review-005s@ak-roles-127");
+    assert.ok(zero);
+    assert.equal(zero["data-wall-ms"], "337448");
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
