@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   copyFile,
   cp,
@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -27,12 +27,17 @@ import {
 import {
   createAgentSession,
   DefaultResourceLoader,
+  type ExtensionContext,
   type InlineExtension,
   ModelRuntime,
   SessionManager,
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import {
+  activationWaitingLedgerPath,
+  type AcceptedActivationFact,
+} from "../../src/activation-ledger.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -588,6 +593,46 @@ export async function withHermeticHome<T>(
       await rm(home, { recursive: true, force: true });
     }
   });
+}
+
+/** Sole machine ledger home under a hermetic process home (ADR 0048). */
+export function machineLedgerHome(home: string): string {
+  return join(home, ".ak-roles");
+}
+
+/** Book key for a git cwd whose common-dir host basename is the directory name. */
+export function activationBookKeyFor(cwd: string): string {
+  return basename(cwd);
+}
+
+/** ExtensionContext that exercises production book-key + session pointer paths. */
+export function activationExtensionContext(input: {
+  cwd: string;
+  mode?: ExtensionContext["mode"];
+  sessionDir?: string;
+  sessionFile?: string;
+  abort?: () => void;
+}): ExtensionContext {
+  const sessionDir = input.sessionDir ?? join(input.cwd, "session");
+  return {
+    mode: input.mode ?? "print",
+    cwd: input.cwd,
+    abort: input.abort ?? (() => {}),
+    sessionManager: {
+      getSessionDir: () => sessionDir,
+      getSessionFile: () => input.sessionFile,
+    },
+  } as unknown as ExtensionContext;
+}
+
+/** Read accepted-activation facts from the sole machine home for one book. */
+export function readAcceptedActivationFacts(home: string, bookKey: string): AcceptedActivationFact[] {
+  const path = activationWaitingLedgerPath(machineLedgerHome(home), bookKey);
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as AcceptedActivationFact);
 }
 
 /**

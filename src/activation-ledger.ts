@@ -36,13 +36,12 @@ export type AcceptedActivationFactInput = {
   readonly correlation: ActivationCorrelationIdentity;
 };
 
-/** Package-owned machine home (ADR 0048). Host may override via AK_ROLES_HOME. */
-export function resolveActivationLedgerHome(
-  env: NodeJS.ProcessEnv = process.env,
-  home: () => string = homedir,
-): string {
-  const override = env.AK_ROLES_HOME;
-  if (typeof override === "string" && override.length > 0) return override;
+/**
+ * Sole package-owned machine home (ADR 0048 / #78): one enumerable family under
+ * the process home directory. No env override — relative or invocation-varying
+ * homes would split the family and can write into a consumer repository.
+ */
+export function resolveActivationLedgerHome(home: () => string = homedir): string {
   return join(home(), ".ak-roles");
 }
 

@@ -27,7 +27,7 @@ import {
   type JudgeVerdict,
   type SoulAuditInput,
 } from "../../src/role-runtime.ts";
-import { testActivationLedgerDeps } from "../helpers/activation-ledger.ts";
+import { activationExtensionContext, withHermeticHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Tool = {
@@ -144,7 +144,25 @@ function toolCallContext(
 
 
 function installRoleRuntime(deps: Parameters<typeof createRoleRuntimeExtension>[0]) {
-  return createRoleRuntimeExtension({ ...testActivationLedgerDeps().deps, ...deps });
+  return createRoleRuntimeExtension(deps);
+}
+
+async function withActivationHome<T>(run: (home: string) => Promise<T>): Promise<T> {
+  return withHermeticHome({ prefix: "ak-judge-role-" }, async ({ home }) => run(home));
+}
+
+function activationCtx(home: string, extras: Record<string, unknown> = {}): ExtensionContext {
+  // Prefer a real in-memory SessionManager when callers need full session APIs (Navigator).
+  // Default mode stays undefined so failInfrastructure does not stamp process.exitCode unless a test opts in.
+  const sessionManager = SessionManager.inMemory(home);
+  return {
+    cwd: home,
+    sessionManager,
+    abort: () => {},
+    ...extras,
+    cwd: home,
+    sessionManager,
+  } as unknown as ExtensionContext;
 }
 
 async function startJudge(
@@ -154,16 +172,18 @@ async function startJudge(
   transcriptFromContext: (ctx: ExtensionContext) => string = () =>
     "review evidence and adjudication",
 ) {
-  const harness = extensionHarness("judge");
-  installRoleRuntime({
-    loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
-    transcriptFromContext,
-    auditSoulCompliance,
-  })(harness.pi as ExtensionAPI);
-  await harness.handlers.get("session_start")?.({}, {});
-  const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
-  return { harness, tool };
+  return withActivationHome(async (home) => {
+    const harness = extensionHarness("judge");
+    installRoleRuntime({
+      loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
+      transcriptFromContext,
+      auditSoulCompliance,
+    })(harness.pi as ExtensionAPI);
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
+    assert.ok(tool);
+    return { harness, tool };
+  });
 }
 
 test("stable factory registers the complete typed role flag set and stays inert without a role", async () => {
@@ -664,53 +684,55 @@ test("packaged infrastructure failure silence correlates the exact output call i
       },
     });
     extension(harness.pi as ExtensionAPI);
-    const ctx = { sessionManager: SessionManager.inMemory(), cwd: "/repo", mode: "print" } as any;
-    await harness.handlers.get("session_start")?.({}, ctx);
-    assert.ok(navigator);
-    navigator.prepare();
-    await preparationReadyPromise;
-    await preparationStartedPromise;
-    assert.ok(navigatorTool);
-    const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
-    assert.ok(tool);
-    const verdict = { judgeStatus: "converged" };
-    await assert.rejects(
-      tool.execute("failed-output", verdict, undefined, undefined, toolCallContext([{ id: "failed-output", arguments: verdict }])),
-      /provider quota exhausted/,
-    );
-    const sibling = { toolName: "read", toolCallId: "sibling", isError: false, details: {} };
-    const failure = { toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "failed-output", isError: true, details: { message: "native provider wording" } };
-    const wrong = { ...failure, toolCallId: "other-output" };
-    await harness.handlers.get("tool_result")?.(wrong, ctx);
-    let failureSettlement: unknown;
-    if (order === "failure-first") {
-      failureSettlement = harness.handlers.get("tool_result")?.(failure, ctx);
-      await harness.handlers.get("tool_result")?.(sibling, ctx);
-    } else {
-      await harness.handlers.get("tool_result")?.(sibling, ctx);
-      failureSettlement = harness.handlers.get("tool_result")?.(failure, ctx);
-    }
-    let drained = false;
-    void Promise.resolve(failureSettlement).then(() => { drained = true; });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(drained, false, "in-flight healthy preparation must hold the output settlement");
-    assert.deepEqual(events, [], "infrastructure failure must not publish advice");
-    releasePreparation();
-    await failureSettlement;
-    assert.equal(drained, true);
-    const settlement = entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
-    assert.ok(settlement?.data);
-    const { invocationId, ...typedSettlement } = settlement.data;
-    assert.equal(typeof invocationId, "string");
-    assert.deepEqual(typedSettlement, {
-      subjectKey: "/repo/.ak/work/issues/28",
-      role: "judge",
-      phase: null,
-      kind: "role_infrastructure_failure",
+    await withActivationHome(async (home) => {
+      const ctx = activationCtx(home, { mode: "print" });
+      await harness.handlers.get("session_start")?.({}, ctx);
+      assert.ok(navigator);
+      navigator.prepare();
+      await preparationReadyPromise;
+      await preparationStartedPromise;
+      assert.ok(navigatorTool);
+      const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
+      assert.ok(tool);
+      const verdict = { judgeStatus: "converged" };
+      await assert.rejects(
+        tool.execute("failed-output", verdict, undefined, undefined, toolCallContext([{ id: "failed-output", arguments: verdict }])),
+        /provider quota exhausted/,
+      );
+      const sibling = { toolName: "read", toolCallId: "sibling", isError: false, details: {} };
+      const failure = { toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: "failed-output", isError: true, details: { message: "native provider wording" } };
+      const wrong = { ...failure, toolCallId: "other-output" };
+      await harness.handlers.get("tool_result")?.(wrong, ctx);
+      let failureSettlement: unknown;
+      if (order === "failure-first") {
+        failureSettlement = harness.handlers.get("tool_result")?.(failure, ctx);
+        await harness.handlers.get("tool_result")?.(sibling, ctx);
+      } else {
+        await harness.handlers.get("tool_result")?.(sibling, ctx);
+        failureSettlement = harness.handlers.get("tool_result")?.(failure, ctx);
+      }
+      let drained = false;
+      void Promise.resolve(failureSettlement).then(() => { drained = true; });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(drained, false, "in-flight healthy preparation must hold the output settlement");
+      assert.deepEqual(events, [], "infrastructure failure must not publish advice");
+      releasePreparation();
+      await failureSettlement;
+      assert.equal(drained, true);
+      const settlement = entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
+      assert.ok(settlement?.data);
+      const { invocationId, ...typedSettlement } = settlement.data;
+      assert.equal(typeof invocationId, "string");
+      assert.deepEqual(typedSettlement, {
+        subjectKey: "/repo/.ak/work/issues/28",
+        role: "judge",
+        phase: null,
+        kind: "role_infrastructure_failure",
+      });
+      assert.equal(events.length, 0, "no late Navigator message may follow infrastructure silence");
+      await harness.handlers.get("agent_settled")?.({}, ctx);
+      process.exitCode = previousExitCode;
     });
-    assert.equal(events.length, 0, "no late Navigator message may follow infrastructure silence");
-    await harness.handlers.get("agent_settled")?.({}, ctx);
-    process.exitCode = previousExitCode;
   }
 });
 
@@ -723,10 +745,12 @@ test("judge role fails before adjudication when its soul is empty", async () => 
   });
 
   extension(harness.pi as ExtensionAPI);
-  await assert.rejects(
-    Promise.resolve(harness.handlers.get("session_start")?.({}, {})),
-    /Judge soul is empty/,
-  );
+  await withActivationHome(async (home) => {
+    await assert.rejects(
+      Promise.resolve(harness.handlers.get("session_start")?.({}, activationCtx(home))),
+      /Judge soul is empty/,
+    );
+  });
   assert.equal(harness.tools.has(JUDGE_OUTPUT_TOOL_NAME), false);
 });
 
@@ -752,7 +776,9 @@ test("coder plan loads its task without construction skill and returns planned",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
 
-  await harness.handlers.get("session_start")?.({}, {});
+  await withActivationHome(async (home) => {
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   const promptResult = await harness.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE" },
     {},
@@ -821,7 +847,9 @@ test("coder apply accepts an unfinished handoff with typed remaining scope", asy
     transcriptFromContext: () => "",
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
-  await harness.handlers.get("session_start")?.({}, {});
+  await withActivationHome(async (home) => {
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const unfinished = {
@@ -866,7 +894,9 @@ test("coder apply binds completion to the immediately following canonical tdd ex
       transcriptFromContext: () => '<skill name="tdd" location="/copied/transcript">',
       auditSoulCompliance: async () => ({ status: "pass" }),
     })(harness.pi as ExtensionAPI);
-    await harness.handlers.get("session_start")?.({}, {});
+    await withActivationHome(async (home) => {
+      await harness.handlers.get("session_start")?.({}, activationCtx(home));
+    });
     return harness;
   };
   const submitCompleted = async (harness: Awaited<ReturnType<typeof start>>, id: string) => {
@@ -1057,7 +1087,9 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
       auditSoulCompliance: async () => ({ status: "pass" }),
       auditFixerCompliance: async () => { audits += 1; return { status: "pass" }; },
     })(harness.pi as ExtensionAPI);
-    await assert.rejects(Promise.resolve(harness.handlers.get("session_start")?.({}, {})), row.diagnostic);
+    await withActivationHome(async (home) => {
+      await assert.rejects(Promise.resolve(harness.handlers.get("session_start")?.({}, activationCtx(home))), row.diagnostic);
+    });
     assert.equal(audits, 0);
     assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), false);
     assert.equal(harness.handlers.has("before_agent_start"), true);
@@ -1072,7 +1104,9 @@ test("undeclared prerequisite submissions are correctable before audit and decla
     transcriptFromContext: () => "record", auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: async (input) => { seen.push(input); return { status: "pass", usage }; },
   })(harness.pi as ExtensionAPI);
-  await harness.handlers.get("session_start")?.({}, {});
+  await withActivationHome(async (home) => {
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
   const candidate = (prerequisiteId: string) => ({ status: "refused", report: "Blocked.", classResults: [{ name: "Policy", disposition: "refused", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId, evidence: "Choice absent." } }] });
   await assert.rejects(tool.execute("bad", candidate("other"), undefined, undefined, toolCallContext([{ id: "bad", name: FIXER_OUTPUT_TOOL_NAME }])), /Fixer output/);
@@ -1128,7 +1162,9 @@ test("declared plan refusal reaches exactly one fresh audit", async () => {
     transcriptFromContext: () => "plan-record", auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: async (input) => { auditInputs.push(input); return { status: "pass", usage }; },
   })(harness.pi as ExtensionAPI);
-  await harness.handlers.get("session_start")?.({}, {});
+  await withActivationHome(async (home) => {
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
   const candidate = { status: "refused", report: "Blocked.", remainingScope: "policy", blocker: { cause: "prerequisite_unmet", prerequisiteId: "owner.choice", evidence: "Choice absent." } };
   const accepted = await tool.execute("plan-refused", candidate, undefined, undefined, toolCallContext([{ id: "plan-refused", name: FIXER_OUTPUT_TOOL_NAME }]));
@@ -1157,7 +1193,9 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
   });
 
   extension(harness.pi as ExtensionAPI);
-  await harness.handlers.get("session_start")?.({}, {});
+  await withActivationHome(async (home) => {
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   const promptResult = await harness.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE SYSTEM PROMPT" },
     {},
@@ -1219,7 +1257,9 @@ test("Fixer prospective prerequisite decisions survive the production submission
     auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: audit,
   })(harness.pi as ExtensionAPI);
-  await harness.handlers.get("session_start")?.({}, {});
+  await withActivationHome(async (home) => {
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME); assert.ok(tool);
   const productionBeforeRegressionRefusal = {
     status: "refused", report: "Both repairs and regressions exist, but commit ordering cannot be rewritten.",
@@ -1273,7 +1313,9 @@ test("fixer output must be the sole call in its assistant batch", async () => {
     auditSoulCompliance: async () => ({ status: "pass" }),
     auditFixerCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
-  await harness.handlers.get("session_start")?.({}, {});
+  await withActivationHome(async (home) => {
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   const tool = harness.tools.get(FIXER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const output = { status: "completed", report: "Repaired and verified.", classResults: [{ name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }] };
@@ -1329,7 +1371,9 @@ test("fixer activation leaves its tool surface unchanged", async () => {
     auditSoulCompliance: async () => ({ status: "pass" }),
   })(harness.pi as ExtensionAPI);
 
-  await harness.handlers.get("session_start")?.({}, {});
+  await withActivationHome(async (home) => {
+    await harness.handlers.get("session_start")?.({}, activationCtx(home));
+  });
   assert.deepEqual(harness.activeToolSets, []);
   assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), true);
 });

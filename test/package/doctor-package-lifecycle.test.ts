@@ -41,9 +41,9 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
           "extensions/role-runtime.ts",
         );
         const sessionDir = resolve(home, "doctor-pi-session");
-        const ledgerHome = resolve(home, "ak-roles-home");
         // Production activation requires a git cwd (ADR 0048); seed the consumer fixture.
         // With a git root present, Doctor case identity becomes repo-relative (stableRunsIdentity).
+        // Sole machine ledger home is ~/.ak-roles under the hermetic HOME (ADR 0048).
         execFileSync("git", ["init", "-b", "main"], { cwd: fixture, stdio: "ignore" });
         const caseIdentityPath = ".ak/work/issues/58/runs";
         assert.notEqual(installedRoot, packageRoot);
@@ -81,7 +81,6 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
               HOME: home,
               PI_CODING_AGENT_DIR: agentDir,
               PI_OFFLINE: "1",
-              AK_ROLES_HOME: ledgerHome,
               AK_CORRELATION_ID: "doctor-fresh-corr",
               AK_DOCTOR_FRESH_CASE_PATH: caseIdentityPath,
               AK_DOCTOR_FRESH_ISSUE: "58",
@@ -146,7 +145,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
 
         // Envelope activation fact (outside locator-focused tests): points at the durable Pi session.
         const bookKey = "consumer"; // cloneSharedColdInstall dest basename under home/consumer
-        const ledgerPath = activationWaitingLedgerPath(ledgerHome, bookKey);
+        const ledgerPath = activationWaitingLedgerPath(resolve(home, ".ak-roles"), bookKey);
         const factLines = (await readFile(ledgerPath, "utf8")).trim().split("\n");
         assert.equal(factLines.length, 1, `expected one activation fact at ${ledgerPath}`);
         const fact = JSON.parse(factLines[0]!) as AcceptedActivationFact;

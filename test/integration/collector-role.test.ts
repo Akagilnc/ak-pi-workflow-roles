@@ -38,7 +38,6 @@ import {
   createRoleRuntimeExtension,
   type ActivationTraceRecord,
 } from "../../src/role-runtime.ts";
-import { testActivationLedgerDeps } from "../helpers/activation-ledger.ts";
 import {
   createFakeGitHubTransport,
   sampleIssueComment,
@@ -200,7 +199,6 @@ test("collector activation fails closed for unsupported mode and missing flags w
         faux,
         modelsPath: null,
         extensionFactories: [createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
           loadJudgeSoul: async () => "judge",
           loadCollectorSoul: async () => COLLECTOR_SOUL,
           createCollectorTransport: () => transport,
@@ -263,7 +261,6 @@ test("collector replaces first input entirely, strips images, and rejects later 
         faux,
         modelsPath: null,
         extensionFactories: [createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
           loadJudgeSoul: async () => "judge",
           loadCollectorSoul: async () => COLLECTOR_SOUL,
           createCollectorTransport: () => transport,
@@ -380,7 +377,6 @@ test("observe content exposes exact-head qualifying review for content-only vali
         faux,
         modelsPath: null,
         extensionFactories: [createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
           loadJudgeSoul: async () => "judge",
           loadCollectorSoul: async () => COLLECTOR_SOUL,
           createCollectorTransport: () => transport,
@@ -525,7 +521,6 @@ test("observe content exposes authenticated request-marker so wait/missing path 
         faux,
         modelsPath: null,
         extensionFactories: [createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
           loadJudgeSoul: async () => "judge",
           loadCollectorSoul: async () => COLLECTOR_SOUL,
           createCollectorTransport: () => transport,
@@ -654,7 +649,6 @@ async function runCollectorSession(input: {
       faux,
       modelsPath: null,
       extensionFactories: [createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
         loadJudgeSoul: async () => "judge",
         loadCollectorSoul: async () => COLLECTOR_SOUL,
         createCollectorTransport: () => input.transport,
@@ -817,7 +811,6 @@ test("collector startup fails closed on required tool collision with zero GitHub
             });
           },
           createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
             loadJudgeSoul: async () => "judge",
             loadCollectorSoul: async () => COLLECTOR_SOUL,
             createCollectorTransport: () => transport,
@@ -873,7 +866,6 @@ test("collector startup with no prompt still exits nonzero on shutdown", async (
         faux,
         modelsPath: null,
         extensionFactories: [createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
           loadJudgeSoul: async () => "judge",
           loadCollectorSoul: async () => COLLECTOR_SOUL,
           createCollectorTransport: () => transport,
@@ -937,7 +929,6 @@ test("collector rejects invalid manifest before provider or GitHub side effects"
         faux,
         modelsPath: null,
         extensionFactories: [createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
           loadJudgeSoul: async () => "judge",
           loadCollectorSoul: async () => COLLECTOR_SOUL,
           createCollectorTransport: () => transport,
@@ -1121,7 +1112,6 @@ async function runSchemaAcceptedControl(input: {
       faux,
       modelsPath: null,
       extensionFactories: [createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
         loadJudgeSoul: async () => "judge",
         loadCollectorSoul: async () => COLLECTOR_SOUL,
         createCollectorTransport: () => input.transport,
@@ -1308,7 +1298,6 @@ test("F3-required-tool-absence", async () => {
               return orig(tool as never);
             }) as typeof pi.registerTool;
             createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
               loadJudgeSoul: async () => "judge",
               loadCollectorSoul: async () => COLLECTOR_SOUL,
               createCollectorTransport: () => transport,
@@ -1409,7 +1398,6 @@ test("F3-loaded-skill-startup-fail-closed", async () => {
             });
           },
           createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
             loadJudgeSoul: async () => "judge",
             loadCollectorSoul: async () => COLLECTOR_SOUL,
             createCollectorTransport: () => transport,
@@ -1643,7 +1631,6 @@ test("F3-ambient-commands", async () => {
             });
           },
           createRoleRuntimeExtension({
-          ...testActivationLedgerDeps().deps,
             loadJudgeSoul: async () => "judge",
             loadCollectorSoul: async () => COLLECTOR_SOUL,
             createCollectorTransport: () => transport,
