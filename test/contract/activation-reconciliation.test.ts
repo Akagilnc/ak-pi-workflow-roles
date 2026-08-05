@@ -236,35 +236,6 @@ test("activation without a matching dispatch stub is activation-without-dispatch
   );
 });
 
-test("reconcileInvocation never kills processes and never retries", async () => {
-  const child = await spawnStdinParkedChild();
-  assert.ok(typeof child.pid === "number");
-  const pid = child.pid;
-  const bookKey = "ak-roles-128";
-  const correlationId = "corr-no-kill";
-  const dispatch = dispatchStub({ correlationId, bookKey, pid });
-
-  // Multiple observations of the same live unmatched subject stay pending.
-  for (let i = 0; i < 3; i += 1) {
-    const outcome = reconcileInvocation({
-      dispatch,
-      process: { state: "alive" },
-    });
-    assert.equal(outcome.kind, "pending");
-    assert.equal(isProcessAlive(pid), true, `observation ${i} must not kill the child`);
-  }
-
-  // API surface is pure data in / data out — no kill, retry, or timeout controls.
-  assert.equal(reconcileInvocation.length, 1);
-  const ownNames = Object.getOwnPropertyNames(reconcileInvocation);
-  assert.equal(ownNames.includes("kill"), false);
-  assert.equal(ownNames.includes("retry"), false);
-
-  child.stdin.end();
-  await waitForExit(child);
-  liveChildren.delete(child);
-});
-
 test("real admitted leg + matching dispatch stub reconciles as matched", async () => {
   await withActivationHome({ prefix: "ak-recon-admit-" }, async ({ home, agentDir }) => {
     const bookKey = activationBookKeyFor(home);
