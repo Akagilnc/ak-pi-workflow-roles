@@ -71,6 +71,28 @@ npm access list collaborators @akagilnc/pi-workflow-roles
 
 Do not rename on unauthenticated guesses. If `npm whoami` returns `ENEEDAUTH`, leave the name unchanged and record the auth blocker; do not claim publishability.
 
+
+
+
+
+### Authenticated refresh (2026-08-05T14:04Z, post `npm login`)
+
+Read-only probes only; no `npm publish`.
+
+| Probe | Result |
+| --- | --- |
+| `npm whoami` | `akagilnc` |
+| `npm view @ak/pi-workflow-roles` | `E404 Not found` |
+| `npm org ls ak` | `ak - owner` |
+| `npm access list packages @ak` | `exit 0` |
+| `npm access list collaborators @ak/pi-workflow-roles` | `E403 Forbidden` |
+| `npm view @akagilnc/pi-workflow-roles` | `E404 Not found` |
+| `npm access list collaborators @akagilnc/pi-workflow-roles` | `E404 Package not found` |
+| `npm access list packages @akagilnc` | `exit 0` |
+| `npm view ak-pi-workflow-roles` | `E404 Not found` |
+
+**Decision unchanged:** maintainer `akagilnc`; settled name remains `@akagilnc/pi-workflow-roles` (fallback #1). Own-scope reachable (collaborators E404 = package absent). Foreign `@ak` collaborators E403. No publish performed.
+
 ## License posture
 
 - Project license: **Apache-2.0** (`package.json` `"license": "Apache-2.0"` + root `LICENSE` = complete Apache License 2.0 text).
