@@ -11,6 +11,26 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
+import {
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  createStreamIdleGuard,
+  isStreamIdleTimeoutError,
+  type StreamIdleGuardTimers,
+} from "./stream-idle-guard.ts";
+
+export {
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  STREAM_IDLE_TIMEOUT_CODE,
+  StreamIdleTimeoutError,
+  createStreamIdleGuard,
+  isStreamIdleTimeoutError,
+} from "./stream-idle-guard.ts";
+export type {
+  StreamIdleGuard,
+  StreamIdleGuardOptions,
+  StreamIdleGuardTimers,
+} from "./stream-idle-guard.ts";
+
 const COMPLIANCE_REQUEST_TIMEOUT_MS = 183000;
 
 export type ComplianceCompletion = (
@@ -429,6 +449,10 @@ export function readComplianceDecision(
   }
 }
 
+function throwIfStreamIdleTimedOut(reason: unknown): void {
+  if (isStreamIdleTimeoutError(reason)) throw reason;
+}
+
 export async function runComplianceAudit(options: {
   tool: ReturnType<typeof createComplianceDecisionTool>;
   systemPrompt: string;
@@ -438,6 +462,9 @@ export async function runComplianceAudit(options: {
   runCompletion?: ComplianceCompletion;
   context: ExtensionContext;
   signal?: AbortSignal;
+  /** Idle silence budget (first wait + between events). Default 600s (#102). */
+  idleTimeoutMs?: number;
+  idleTimers?: StreamIdleGuardTimers;
 }): Promise<ComplianceDecision> {
   const model = options.context.model;
   if (model === undefined) {
@@ -448,54 +475,114 @@ export async function runComplianceAudit(options: {
     options.context,
     options.roleLabel,
   );
-  const complete =
-    options.runCompletion ??
-    ((auditModel: Model<Api>, context: Context, request: ProviderStreamOptions) => {
-      const provider = options.context.modelRegistry.getProvider(
-        auditModel.provider,
-      );
-      if (provider === undefined) {
-        throw new Error(
-          `${options.roleLabel} provider not found: ${auditModel.provider}`,
+  const idle = createStreamIdleGuard({
+    idleTimeoutMs: options.idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+    ...(options.signal === undefined ? {} : { parentSignal: options.signal }),
+    ...(options.idleTimers === undefined ? {} : { timers: options.idleTimers }),
+  });
+  try {
+    const baseOnPayload = singleComplianceToolCallPayload(
+      dispatch.model,
+      options.tool.name,
+    );
+    const onPayload: ProviderStreamOptions["onPayload"] = (payload, payloadModel) => {
+      idle.poke();
+      if (baseOnPayload === undefined) return payload;
+      return baseOnPayload(payload, payloadModel);
+    };
+    const onResponse: ProviderStreamOptions["onResponse"] = () => {
+      idle.poke();
+    };
+    const complete =
+      options.runCompletion ??
+      (async (auditModel: Model<Api>, context: Context, request: ProviderStreamOptions) => {
+        const provider = options.context.modelRegistry.getProvider(
+          auditModel.provider,
         );
-      }
-      return provider.stream(auditModel, context, request).result();
-    });
-  const onPayload = singleComplianceToolCallPayload(
-    dispatch.model,
-    options.tool.name,
-  );
-  const response = await complete(
-    dispatch.model,
-    {
-      systemPrompt: options.systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content: [{
-            type: "text",
-            text: `${options.serializedInput}\n<decision_tool_contract>\n${complianceDecisionArgumentInstructions}\n</decision_tool_contract>`,
-          }],
-          timestamp: Date.now(),
-        },
-      ],
-      tools: [options.tool],
-    },
-    {
-      ...dispatch.auth,
-      timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
-      maxTokens: 2048,
-      cacheRetention: "none",
-      sessionId: uuidv7(),
-      toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
-      ...(onPayload === undefined ? {} : { onPayload }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    },
-  );
-  retainComplianceResponse(options.context, response);
-  return readComplianceDecision(
-    response,
-    options.tool.name,
-    options.invalidDecisionLabel,
-  );
+        if (provider === undefined) {
+          throw new Error(
+            `${options.roleLabel} provider not found: ${auditModel.provider}`,
+          );
+        }
+        const stream = provider.stream(auditModel, context, request);
+        for await (const _event of stream) {
+          idle.poke();
+        }
+        return stream.result();
+      });
+
+    let response: AssistantMessage;
+    try {
+      response = await new Promise<AssistantMessage>((resolve, reject) => {
+        const onAbort = (): void => {
+          reject(
+            isStreamIdleTimeoutError(idle.signal.reason)
+              ? idle.signal.reason
+              : idle.signal.reason instanceof Error
+                ? idle.signal.reason
+                : new Error(String(idle.signal.reason ?? "aborted")),
+          );
+        };
+        if (idle.signal.aborted) {
+          onAbort();
+          return;
+        }
+        idle.signal.addEventListener("abort", onAbort, { once: true });
+        void complete(
+          dispatch.model,
+          {
+            systemPrompt: options.systemPrompt,
+            messages: [
+              {
+                role: "user",
+                content: [{
+                  type: "text",
+                  text: `${options.serializedInput}\n<decision_tool_contract>\n${complianceDecisionArgumentInstructions}\n</decision_tool_contract>`,
+                }],
+                timestamp: Date.now(),
+              },
+            ],
+            tools: [options.tool],
+          },
+          {
+            ...dispatch.auth,
+            timeoutMs: COMPLIANCE_REQUEST_TIMEOUT_MS,
+            maxTokens: 2048,
+            cacheRetention: "none",
+            sessionId: uuidv7(),
+            toolChoice: complianceToolChoice(dispatch.model, options.tool.name),
+            onPayload,
+            onResponse,
+            signal: idle.signal,
+          },
+        ).then(
+          (value) => {
+            idle.signal.removeEventListener("abort", onAbort);
+            resolve(value);
+          },
+          (error: unknown) => {
+            idle.signal.removeEventListener("abort", onAbort);
+            if (isStreamIdleTimeoutError(idle.signal.reason)) {
+              reject(idle.signal.reason);
+              return;
+            }
+            reject(error);
+          },
+        );
+      });
+    } catch (error) {
+      throwIfStreamIdleTimedOut(idle.signal.reason);
+      throw error;
+    }
+
+    throwIfStreamIdleTimedOut(idle.signal.reason);
+    retainComplianceResponse(options.context, response);
+    return readComplianceDecision(
+      response,
+      options.tool.name,
+      options.invalidDecisionLabel,
+    );
+  } finally {
+    idle.dispose();
+  }
 }
