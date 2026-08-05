@@ -56,7 +56,7 @@ import {
   resolvePackageEntrypoint,
   runNodeSubprocess,
   runPiSubprocess,
-  seedGitRepository,
+  withActivationHome,
   withHermeticHome,
   withInProcessPi,
   withColdInstalledPackage,
@@ -105,19 +105,8 @@ async function readLatestSession(directory: string): Promise<PersistedEntry[]> {
 }
 
 
-/** Activation-owned hermetic home: explicit git substrate (ADR 0048). */
-async function withPackageActivationHome<T>(
-  options: { prefix?: string },
-  scenario: (fixture: { home: string; agentDir: string }) => Promise<T>,
-): Promise<T> {
-  return withHermeticHome(options, async (fixture) => {
-    seedGitRepository(fixture.home);
-    return scenario(fixture);
-  });
-}
-
 async function runOrdinaryNavigatorObservation(extensionPath: string) {
-  return withPackageActivationHome(
+  return withActivationHome(
     { prefix: "ak-navigator-current-" },
     async ({ home, agentDir }) => {
       const issueRoot = resolve(home, ".ak/work/issues/28");
@@ -240,7 +229,7 @@ test("packed package includes Doctor role, evidence flag, and runtime dependenci
 });
 
 test("cold-installed package audits all four roles from editable Souls", async () => {
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-auditor-package-" },
     async ({ home }) => {
       await withColdInstalledPackage(home, async ({ installedRoot, installed }) => {
@@ -546,7 +535,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
   const manifest = await loadRawPackageManifest();
   const judgeSoul =
     (await readFile(resolve(packageRoot, "souls/judge.md"), "utf8")).trim();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-role-integration-" },
     async ({ agentDir }) => {
       const faux = fauxProvider({
@@ -760,7 +749,7 @@ test("packaged judge crosses Pi's loader, schema, persisted batch, auth-resolved
 });
 
 test("cold-installed live help follows the loaded extension and changes on the next hint", async () => {
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-live-help-cold-" },
     async ({ home }) => {
       await withColdInstalledPackage(home, async ({ fixture, installedRoot, installed }) => {
@@ -976,7 +965,7 @@ test("cold-installed live help follows the loaded extension and changes on the n
 
 test("normal packaged Navigator presents independently in print and JSON and reuses one subject session", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-entrypoint-integration-" },
     async ({ agentDir, home }) => {
       const issueRoot = resolve(home, ".ak/work/issues/28");
@@ -1121,7 +1110,7 @@ test("normal packaged Navigator presents independently in print and JSON and reu
 
 test("normal packaged Navigator drains one healthy preparation across recommendation and silent settlements", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-drain-matrix-" },
     async ({ home, agentDir }) => {
       const issueRoot = resolve(home, ".ak/work/issues/28");
@@ -1218,7 +1207,7 @@ test("normal packaged Navigator drains one healthy preparation across recommenda
 
 test("ongoing packaged session drains pre-output role failure and prepares a fresh next invocation", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-pre-output-failure-" },
     async ({ home, agentDir }) => {
       const issueRoot = resolve(home, ".ak/work/issues/pre-output-failure");
@@ -1294,7 +1283,7 @@ test("ongoing packaged session drains pre-output role failure and prepares a fre
 
 test("normal packaged context-loader failure is typed unavailable and preserves the role Receipt", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-context-loader-failure-" },
     async ({ home, agentDir }) => {
       const issueRoot = resolve(home, ".ak/work/issues/28");
@@ -1333,7 +1322,7 @@ test("normal packaged context-loader failure is typed unavailable and preserves 
 
 test("normal packaged Navigator failures remain typed, native-cause, and Receipt-preserving across the cause matrix", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-failure-matrix-" },
     async ({ home, agentDir }) => {
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -1442,7 +1431,7 @@ test("normal packaged Navigator failures remain typed, native-cause, and Receipt
 
 test("normal packaged roles retain typed cross-role Navigator continuity and isolate subjects", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-cross-role-integration-" },
     async ({ home, agentDir }) => {
       const issueRoot = resolve(home, ".ak/work/ad-hoc");
@@ -1596,7 +1585,7 @@ test("normal packaged roles retain typed cross-role Navigator continuity and iso
 
 test("packaged role-input outside /.ak/work/ with no authority file projects exact input bytes", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-input-outside-work-" },
     async ({ home, agentDir }) => {
       const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -1673,7 +1662,7 @@ test("packaged role-input outside /.ak/work/ with no authority file projects exa
 
 test("fresh packaged processes resume cross-role Navigator route memory and isolate subjects", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-navigator-fresh-process-integration-" },
     async ({ home, agentDir }) => {
       const root = resolve(home, ".ak/work/fresh-ad-hoc");
@@ -1748,7 +1737,7 @@ test("fresh packaged processes resume cross-role Navigator route memory and isol
 
 test("packaged judge escalation emits one typed human decision", async () => {
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-judge-escalation-integration-" },
     async ({ agentDir }) => {
       const faux = fauxProvider({
@@ -1853,7 +1842,7 @@ test("packaged coder apply proves canonical native tdd expansion including colli
     },
   ] as const;
   for (const row of rows) {
-    await withPackageActivationHome(
+    await withActivationHome(
       { prefix: "ak-coder-integration-" },
       async ({ home, agentDir }) => {
         const { path: tddSkillTargetPath, raw: tddSkillRaw } =
@@ -1977,7 +1966,7 @@ test("packaged fixer applies its both-phase bash seatbelt, retains its tool surf
     "git clean",
     "git checkout --",
   ] as const;
-  await withPackageActivationHome(
+  await withActivationHome(
     { prefix: "ak-fixer-integration-" },
     async ({ home, agentDir }) => {
       const packetPath = resolve(home, "fix-packet.json");
@@ -2181,7 +2170,7 @@ function parseToolExecutionObservations(stderr: string): ToolExecutionObservatio
 test("installed composition emits admitted-role tool-execution JSONL on stderr for real bash output and never for Navigator prepare", async () => {
   assert.equal(TOOL_EXECUTION_UPDATE_HEARTBEAT, "output-driven");
   const manifest = await loadRawPackageManifest();
-  await withPackageActivationHome({ prefix: "ak-tool-observation-" }, async ({ home, agentDir }) => {
+  await withActivationHome({ prefix: "ak-tool-observation-" }, async ({ home, agentDir }) => {
     const issueRoot = resolve(home, ".ak/work/issues/79");
     await mkdir(issueRoot, { recursive: true });
     const sessionDirectory = resolve(

@@ -60,6 +60,7 @@ import {
   readAcceptedActivationFacts,
   runNodeSubprocess,
   seedGitRepository,
+  withActivationHome,
   withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
@@ -332,8 +333,7 @@ function runtimeHarness(options: {
 }
 
 test("every registered whole-activation rejection terminates nonzero with a named cause before a model turn", async () => {
-  await withHermeticHome({ prefix: "ak-act-reject-" }, async ({ home }) => {
-    seedGitRepository(home);
+  await withActivationHome({ prefix: "ak-act-reject-" }, async ({ home }) => {
     for (const entry of PACKAGED_ROLE_REGISTRY) {
       process.exitCode = undefined;
       const traces: ActivationTraceRecord[] = [];
@@ -395,8 +395,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
 
 test("every registered role writes exactly one accepted-activation fact after admission", async () => {
   assert.ok(PACKAGED_ROLE_REGISTRY.some((entry) => entry.role === "collector"), "Collector must remain in the #52 registry gate");
-  await withHermeticHome({ prefix: "ak-act-admit-" }, async ({ home }) => {
-    seedGitRepository(home);
+  await withActivationHome({ prefix: "ak-act-admit-" }, async ({ home }) => {
     const fixtureRoot = join(home, "admit-fixtures");
     mkdirSync(fixtureRoot, { recursive: true });
     const bookKey = activationBookKeyFor(home);
@@ -487,8 +486,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
 });
 
 test("unselected role and unsupported role leave zero accepted-activation facts", async () => {
-  await withHermeticHome({ prefix: "ak-act-unsel-" }, async ({ home }) => {
-    seedGitRepository(home);
+  await withActivationHome({ prefix: "ak-act-unsel-" }, async ({ home }) => {
     process.exitCode = undefined;
     const unselected = registryPi({ role: undefined });
     createRoleRuntimeExtension({
@@ -640,8 +638,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
 });
 
 test("append failure preserves original cause, aborts nonzero, and blocks provider turns", async () => {
-  await withHermeticHome({ prefix: "ak-act-append-" }, async ({ home }) => {
-    seedGitRepository(home);
+  await withActivationHome({ prefix: "ak-act-append-" }, async ({ home }) => {
     process.exitCode = undefined;
     const bookKey = activationBookKeyFor(home);
     // Persist the durable session principal, then lock the book dir so O_APPEND fails.
@@ -927,8 +924,7 @@ appendAcceptedActivationToBook({
 });
 
 test("ledger append and durable session admission reject symlink component escapes", async () => {
-  await withHermeticHome({ prefix: "ak-act-symlink-" }, async ({ home }) => {
-    seedGitRepository(home);
+  await withActivationHome({ prefix: "ak-act-symlink-" }, async ({ home }) => {
     const bookKey = activationBookKeyFor(home);
     const ledgerHome = machineLedgerHome(home);
     const outside = join(home, "outside-ledger");
@@ -1006,8 +1002,7 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
 });
 
 test("failed trace emission cannot mask the activation cause or skip termination", async () => {
-  await withHermeticHome({ prefix: "ak-act-trace-" }, async ({ home }) => {
-    seedGitRepository(home);
+  await withActivationHome({ prefix: "ak-act-trace-" }, async ({ home }) => {
     const activationError = new TypeError("soul unavailable");
     const traceError = new Error("trace unavailable");
     let writes = 0;
@@ -1081,8 +1076,7 @@ test("default trace and tool observation writers retry short writes and reject s
 
 for (const [mode, expected] of [["print", 1], ["json", 1], ["tui", undefined], ["rpc", undefined]] as const) {
   test(`activation failure applies ${mode} exit-code policy`, async () => {
-    await withHermeticHome({ prefix: `ak-act-mode-${mode}-` }, async ({ home }) => {
-      seedGitRepository(home);
+    await withActivationHome({ prefix: `ak-act-mode-${mode}-` }, async ({ home }) => {
       process.exitCode = undefined;
       const h = runtimeHarness({ home, mode });
       await assert.rejects(async () => h.handler("session_start")({}, h.ctx));
@@ -1213,8 +1207,7 @@ test("observation face rejects throttleMs override at the typed call site and ig
 });
 
 test("shared role runtime registers tool observation only after admitted activation and never writes stdout", async () => {
-  await withHermeticHome({ prefix: "ak-act-obs-" }, async ({ home }) => {
-    seedGitRepository(home);
+  await withActivationHome({ prefix: "ak-act-obs-" }, async ({ home }) => {
     const observations: ToolExecutionObservationRecord[] = [];
     const { pi, handlers } = registryPi({ role: "judge" });
     createRoleRuntimeExtension({
@@ -1280,8 +1273,7 @@ test("production observation mono clock is monotonic and not wall-clock Date.now
 });
 
 test("observation writer failure aborts through real ExtensionRunner emit with original cause", async () => {
-  await withHermeticHome({ prefix: "ak-tool-obs-fail-" }, async ({ home, agentDir }) => {
-    seedGitRepository(home);
+  await withActivationHome({ prefix: "ak-tool-obs-fail-" }, async ({ home, agentDir }) => {
     const faux = fauxProvider({ api: "ak-tool-obs-fail", provider: "ak-tool-obs-fail" });
     const writerError = new Error("stderr unavailable");
     const priorExitCode = process.exitCode;
