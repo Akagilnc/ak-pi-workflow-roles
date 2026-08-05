@@ -22,6 +22,7 @@ import type { ExtensionAPI, ExtensionContext, ExtensionError } from "@earendil-w
 import { Value } from "typebox/value";
 import {
   ACCEPTED_ACTIVATION_EVENT,
+  ACCEPTED_ACTIVATION_FACT_KEYS,
   ActivationBarrierError,
   ActivationGitRepositoryRequiredError,
   ActivationLedgerError,
@@ -96,7 +97,6 @@ const emptyDoctorCost = {
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
 
-const CONTENT_MARKERS = ["PROMPT_SECRET_BYTES", "transcript-body", "--ak-role", "excerpt-text"];
 const HOST_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"] as const;
 
 /** Lightweight #52 registry pi mock — not a parallel activation harness. */
@@ -688,7 +688,7 @@ test("append failure preserves original cause, aborts nonzero, and blocks provid
   });
 });
 
-test("accepted-activation fact is closed at the typed API and serializes zero known content bytes", () => {
+test("accepted-activation fact is closed at the typed API and serializes only descriptor index keys", () => {
   const closed: AcceptedActivationFact = {
     event: ACCEPTED_ACTIVATION_EVENT,
     role: "judge",
@@ -697,6 +697,7 @@ test("accepted-activation fact is closed at the typed API and serializes zero kn
     session: { kind: "session-file", path: "/home/session.jsonl" },
     correlation: { kind: "caller", id: "c1" },
   };
+  const injectedExtraKeys = ["prompt", "transcript", "argv", "excerpt", "content"] as const;
   const smuggled = {
     ...closed,
     prompt: "PROMPT_SECRET_BYTES",
@@ -705,14 +706,17 @@ test("accepted-activation fact is closed at the typed API and serializes zero kn
     excerpt: "excerpt-text",
     content: "nope",
   } as AcceptedActivationFact & Record<string, unknown>;
-  // Closed whitelist at the typed construction API — not via serialized key spellings.
+  // Closed at the typed construction API via descriptor-driven projection.
   assert.deepEqual(buildAcceptedActivationFact(smuggled), closed);
 
-  const line = serializeAcceptedActivationFact(smuggled);
-  // Parseability only — do not freeze field names, order, or full shape.
-  JSON.parse(line);
-  for (const marker of CONTENT_MARKERS) {
-    assert.equal(line.includes(marker), false, `serialized fact must not contain ${marker}`);
+  const parsed = JSON.parse(serializeAcceptedActivationFact(smuggled)) as Record<string, unknown>;
+  // Machine contract: emitted keys are exactly the package-owned index descriptor.
+  assert.deepEqual(
+    Object.keys(parsed).sort(),
+    [...ACCEPTED_ACTIVATION_FACT_KEYS].sort(),
+  );
+  for (const key of injectedExtraKeys) {
+    assert.equal(Object.hasOwn(parsed, key), false, `descriptor projection must omit injected ${key}`);
   }
   assert.deepEqual(correlationIdentityFromEnv({}), { kind: "absent" });
   assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "" }), { kind: "absent" });

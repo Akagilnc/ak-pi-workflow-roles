@@ -67,6 +67,7 @@ export { activationTraceRecordSchema, namedActivationCause } from "./activation-
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 export {
   ACCEPTED_ACTIVATION_EVENT,
+  ACCEPTED_ACTIVATION_FACT_KEYS,
   ActivationGitRepositoryRequiredError,
   ActivationLedgerError,
   ActivationSessionFileMissingError,
@@ -84,6 +85,7 @@ export {
 export type {
   AcceptedActivationFact,
   AcceptedActivationFactInput,
+  AcceptedActivationFactKey,
   ActivationCorrelationIdentity,
   ActivationSessionManager,
   ActivationSessionPointer,
