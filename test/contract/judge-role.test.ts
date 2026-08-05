@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import { fauxAssistantMessage, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
@@ -28,7 +29,7 @@ import {
   type JudgeVerdict,
   type SoulAuditInput,
 } from "../../src/role-runtime.ts";
-import { activationExtensionContext, seedGitRepository, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository, withHermeticHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Tool = {
@@ -156,9 +157,11 @@ async function withActivationHome<T>(run: (home: string) => Promise<T>): Promise
 }
 
 function activationCtx(home: string, extras: Record<string, unknown> = {}): ExtensionContext {
-  // Durable session principal under the hermetic home (activation rejects in-memory / --no-session).
+  // Durable session principal under the machine ledger book (ADR 0048).
   // Default mode stays undefined so failInfrastructure does not stamp process.exitCode unless a test opts in.
-  const sessionManager = SessionManager.create(home, join(home, "session"));
+  const sessionDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-role", "session");
+  mkdirSync(sessionDir, { recursive: true });
+  const sessionManager = SessionManager.create(home, sessionDir);
   return {
     abort: () => {},
     ...extras,

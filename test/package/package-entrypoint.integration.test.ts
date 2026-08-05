@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -121,7 +121,17 @@ async function runOrdinaryNavigatorObservation(extensionPath: string) {
     { prefix: "ak-navigator-current-" },
     async ({ home, agentDir }) => {
       const issueRoot = resolve(home, ".ak/work/issues/28");
-      const sessionDirectory = resolve(issueRoot, "runs/judge/session");
+      await mkdir(issueRoot, { recursive: true });
+      // Role session under ledger book (ADR 0048); Navigator subject still derives from issueRoot cwd.
+      const sessionDirectory = resolve(
+        home,
+        ".ak-roles",
+        "books",
+        basename(home),
+        "runs",
+        "judge-navigator",
+        "session",
+      );
       await mkdir(sessionDirectory, { recursive: true });
       await writeFile(resolve(issueRoot, "authority.md"), "owner authority for ordinary Navigator observation\n", "utf8");
       await writeFile(resolve(agentDir, "navigator-model.json"), JSON.stringify({ model: "ak-audit-failure/faux-1" }), "utf8");
@@ -2160,7 +2170,16 @@ test("installed composition emits admitted-role tool-execution JSONL on stderr f
   const manifest = await loadRawPackageManifest();
   await withPackageActivationHome({ prefix: "ak-tool-observation-" }, async ({ home, agentDir }) => {
     const issueRoot = resolve(home, ".ak/work/issues/79");
-    const sessionDirectory = resolve(issueRoot, "runs/judge/session");
+    await mkdir(issueRoot, { recursive: true });
+    const sessionDirectory = resolve(
+      home,
+      ".ak-roles",
+      "books",
+      basename(home),
+      "runs",
+      "judge-tool-observation",
+      "session",
+    );
     await mkdir(sessionDirectory, { recursive: true });
     await writeFile(resolve(issueRoot, "authority.md"), "owner authority for tool observation\n", "utf8");
     await writeFile(

@@ -1,6 +1,6 @@
-import { constants, mkdirSync, openSync, closeSync, writeSync } from "node:fs";
+import { constants, mkdirSync, openSync, closeSync, statSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 
 /** Caller-preassigned correlation id, or an explicit absent identity (never empty string). */
@@ -70,16 +70,99 @@ export function correlationIdentityFromEnv(
   return { kind: "absent" };
 }
 
-export function durableSessionPointer(sessionManager: {
-  getSessionFile?(): string | undefined;
-}): ActivationSessionPointer {
+/** True when candidate resolves strictly inside root (boundary-safe; not a string-prefix check). */
+function pathContainedIn(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+function errnoCode(error: unknown): string | undefined {
+  return error !== null && typeof error === "object" && "code" in error
+    && typeof (error as { code: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : undefined;
+}
+
+/**
+ * Admit only a durable Pi session file principal under the resolved machine ledger
+ * book (ADR 0048). Non-empty getSessionFile is not enough: reject relative paths,
+ * paths outside the book, directories, and paths whose file and session-dir parent
+ * are both missing. Original filesystem causes are retained.
+ *
+ * A missing file whose parent session-dir already exists under the book is admitted:
+ * upstream Pi defers the first exclusive create until an assistant message, so the
+ * path is the durable principal before bytes land (see SessionManager._persist).
+ */
+export function durableSessionPointer(
+  sessionManager: {
+    getSessionFile?(): string | undefined;
+  },
+  options: {
+    ledgerHome: string;
+    bookKey: string;
+  },
+): ActivationSessionPointer {
   const file = sessionManager.getSessionFile?.();
-  if (typeof file === "string" && file.length > 0) {
-    return { kind: "session-file", path: file };
+  if (typeof file !== "string" || file.length === 0) {
+    throw new Error(
+      "Workflow role activation requires a durable Pi session file principal (getSessionFile); directory-only or --no-session invocations are rejected",
+    );
   }
-  throw new Error(
-    "Workflow role activation requires a durable Pi session file principal (getSessionFile); directory-only or --no-session invocations are rejected",
-  );
+  if (!isAbsolute(file)) {
+    throw new Error(
+      `Workflow role activation requires an absolute durable session file path under the machine ledger book; got relative path: ${file}`,
+    );
+  }
+  const resolvedFile = resolve(file);
+  const bookRoot = resolve(activationBookDirectory(options.ledgerHome, options.bookKey));
+  if (!pathContainedIn(bookRoot, resolvedFile)) {
+    throw new Error(
+      `Workflow role activation requires the durable session file principal under the machine ledger book (${bookRoot}); got: ${resolvedFile}`,
+    );
+  }
+
+  let info: ReturnType<typeof statSync>;
+  try {
+    info = statSync(resolvedFile);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw new Error(
+        `Workflow role activation failed to stat durable session file (${resolvedFile}): ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    // File not yet written (Pi deferred create). Parent session-dir must already exist
+    // under the book so the pointer is a prepared durable path, not a fabricated string.
+    const parentPath = dirname(resolvedFile);
+    try {
+      const parent = statSync(parentPath);
+      if (!parent.isDirectory()) {
+        throw new Error(
+          `Workflow role activation durable session parent is not a directory: ${parentPath}`,
+          { cause: error },
+        );
+      }
+    } catch (parentError) {
+      if (errnoCode(parentError) === undefined && parentError instanceof Error) throw parentError;
+      throw new Error(
+        `Workflow role activation durable session file does not exist: ${resolvedFile}`,
+        { cause: error },
+      );
+    }
+    return { kind: "session-file", path: resolvedFile };
+  }
+
+  if (info.isDirectory()) {
+    throw new Error(
+      `Workflow role activation durable session principal must be a file, not a directory: ${resolvedFile}`,
+    );
+  }
+  if (!info.isFile()) {
+    throw new Error(
+      `Workflow role activation durable session principal is not a regular file: ${resolvedFile}`,
+    );
+  }
+  return { kind: "session-file", path: resolvedFile };
 }
 
 /**
