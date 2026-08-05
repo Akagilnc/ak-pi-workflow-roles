@@ -37,7 +37,7 @@ function deriveSession(content: string, id: string): SessionDerivation {
 
 /** Read Pi's retained session directory as the sole raw material for one case. */
 export async function loadDoctorCase(runsPath: string): Promise<DoctorCase> {
-  const root = await realpath(runsPath); const match = root.split(sep).join("/").match(/\/\.ak\/work\/issues\/([1-9]\d*)\/runs$/); if (!match) throw new Error("Doctor case must be an .ak/work/issues/<n>/runs directory");
+  const root = await realpath(runsPath); const match = root.split(sep).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/); if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/issues/<n>/runs directory");
   const evidence: DoctorEvidenceEntry[] = [], sessions: DoctorCaseCost["sessions"] = [], statuses: DoctorCaseCost["statuses"] = [], commits: DoctorCaseCost["commits"] = [];
   const turns: DoctorCount = { count: 0, sources: [] }, calls: DoctorCount = { count: 0, sources: [] }, tokens: DoctorCount = { count: 0, sources: [] };
   for (const path of await discoverCaseFiles(root)) { const id = relative(root, path).split(sep).join("/"); const bytes = await readFile(path); const content = bytes.toString("utf8"); const kind = id.endsWith(".jsonl") ? "session" : "stderr"; evidence.push({ id, kind, byteLength: bytes.byteLength, contentLength: content.length, sha256: sha256Hex(bytes), content }); if (kind === "stderr") continue; const result = deriveSession(content, id); sessions.push(result.session); statuses.push(...result.statuses); commits.push(...result.commits); accumulate(turns, result.turns, id); accumulate(calls, result.calls, id); accumulate(tokens, result.tokens, id); }

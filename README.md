@@ -291,7 +291,7 @@ Doctor reads one retained Pi-native case and exposes only the bounded evidence r
 
 ```bash
 pi --no-extensions -e /path/to/extensions/role-runtime.ts \
-  --ak-role doctor --ak-doctor-case .ak/work/issues/40/runs \
+  --ak-role doctor --ak-doctor-case ~/.ak-roles/books/<book>/issues/40/runs \
   --mode json -p "Produce this case's process-cost diagnosis." \
   >/dev/null 2>stderr.log </dev/null
 ```
