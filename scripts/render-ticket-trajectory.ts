@@ -12,6 +12,9 @@
  * Optional --watch starts the production page lifecycle (regenerate on the
  * declared refresh boundary). Stop with Ctrl-C / SIGINT / SIGTERM.
  *
+ * One-shot (default) writes a page that does NOT advertise refresh.
+ * --watch writes a page that declares the bound and actually regenerates.
+ *
  * Output MUST sit outside the ledger. The ledger is read-only.
  */
 import { resolve } from "node:path";
@@ -28,7 +31,7 @@ function usage(): never {
   --issue             issue number
   --out               HTML output path (must be outside the ledger)
   --watch             keep regenerating within the refresh boundary until stopped
-  --refresh-seconds   refresh boundary in seconds (default ${DEFAULT_REFRESH_BOUNDARY_SECONDS})
+  --refresh-seconds   refresh boundary in seconds when --watch (default ${DEFAULT_REFRESH_BOUNDARY_SECONDS})
 `);
   process.exit(2);
 }
@@ -37,6 +40,11 @@ function arg(name: string): string | undefined {
   const idx = process.argv.indexOf(name);
   if (idx < 0) return undefined;
   return process.argv[idx + 1];
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? error.message;
+  return String(error);
 }
 
 const ledger = arg("--ledger");
@@ -60,12 +68,12 @@ if (!(refreshBoundarySeconds > 0) || !Number.isFinite(refreshBoundarySeconds)) {
 }
 
 if (!watch) {
+  // One-shot: no refresh declaration — page lifecycle matches actual behavior.
   const result = await writeTicketTrajectoryPage({
     ledgerDir: resolve(ledger),
     ticketSnapshot: { issueNumber },
     now: new Date(),
     outputPath: resolve(out),
-    refreshBoundarySeconds,
   });
   console.error(`wrote ${result.outputPath}`);
   process.exit(0);
@@ -78,13 +86,39 @@ const handle = startTicketTrajectoryPage({
   refreshBoundarySeconds,
 });
 
-const first = await handle.started;
-console.error(`wrote ${first.outputPath}; watching every ${refreshBoundarySeconds}s (stop with SIGINT)`);
+let exiting = false;
+const exitOnce = (code: number): void => {
+  if (exiting) return;
+  exiting = true;
+  process.exit(code);
+};
+
+// Post-start regeneration fault must terminate the process non-zero with cause.
+void handle.closed.then(
+  () => undefined,
+  (error) => {
+    console.error(formatError(error));
+    exitOnce(1);
+  },
+);
+
+try {
+  const first = await handle.started;
+  console.error(`wrote ${first.outputPath}; watching every ${refreshBoundarySeconds}s (stop with SIGINT)`);
+} catch (error) {
+  console.error(formatError(error));
+  exitOnce(1);
+}
 
 const shutdown = async (signal: string) => {
   console.error(`stopping on ${signal}`);
-  await handle.stop();
-  process.exit(0);
+  try {
+    await handle.stop();
+    exitOnce(0);
+  } catch (error) {
+    console.error(formatError(error));
+    exitOnce(1);
+  }
 };
 
 process.on("SIGINT", () => {
