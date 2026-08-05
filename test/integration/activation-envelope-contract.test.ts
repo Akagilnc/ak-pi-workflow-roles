@@ -1035,6 +1035,41 @@ test("ledger append rejects pre-existing root symlink escape without writing out
   });
 });
 
+test("ledger append rejects cross-book waiting.jsonl symlink without writing the target book", async () => {
+  await withActivationHome({ prefix: "ak-act-cross-book-symlink-" }, async ({ home }) => {
+    const sourceBook = activationBookKeyFor(home);
+    const targetBook = `${sourceBook}-other`;
+    const ledgerHome = machineLedgerHome(home);
+    const sourceLedger = join(ledgerHome, "books", sourceBook, "waiting.jsonl");
+    const targetLedger = join(ledgerHome, "books", targetBook, "waiting.jsonl");
+    mkdirSync(dirname(sourceLedger), { recursive: true });
+    mkdirSync(dirname(targetLedger), { recursive: true });
+    writeFileSync(targetLedger, "");
+    // Waiting path for the computed book redirects into another book still inside the home.
+    symlinkSync(targetLedger, sourceLedger);
+
+    assert.throws(
+      () => appendAcceptedActivationFact(
+        sourceLedger,
+        buildAcceptedActivationFact({
+          role: "judge",
+          observedAt: "2025-01-01T00:00:00.000Z",
+          bookKey: sourceBook,
+          session: { kind: "session-file", path: join(home, "s.jsonl") },
+          correlation: { kind: "absent" },
+        }),
+        { ledgerHome },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ActivationLedgerError);
+        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+        return true;
+      },
+    );
+    assert.equal(readFileSync(targetLedger, "utf8"), "");
+  });
+});
+
 test("ledger append and durable session admission reject symlink component escapes", async () => {
   await withActivationHome({ prefix: "ak-act-symlink-" }, async ({ home }) => {
     const bookKey = activationBookKeyFor(home);
