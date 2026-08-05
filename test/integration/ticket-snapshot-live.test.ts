@@ -22,6 +22,7 @@ const FROZEN_FAMILY_ISSUE_NUMBERS = [78, 127, 128, 130] as const;
 
 test("live GitHub snapshot keeps #78 family parent and blocked_by edges", async () => {
   const transport = createGhTicketSnapshotTransport(createGhApiRunner());
+  // Named closed/open drills keep frozen family members present even when not in the open list.
   const snapshot = await fetchBoardSnapshot({
     bindings: [{ bookKey: "ak-pi-workflow-roles", owner: OWNER, repo: REPO }],
     closedIssueNumbersByBook: {
