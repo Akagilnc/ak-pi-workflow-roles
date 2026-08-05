@@ -17,7 +17,7 @@ test("fresh Pi process loads the installed Doctor extension and completes one au
     { prefix: "ak-doctor-fresh-process-" },
     async ({ home, agentDir }) => {
       await withColdInstalledPackage(home, async ({ fixture, installedRoot }) => {
-        const runsPath = resolve(fixture, ".ak/work/issues/58/runs");
+        const runsPath = resolve(fixture, ".ak-roles/books/demo-book/issues/58/runs");
         await mkdir(resolve(runsPath, "case/session"), { recursive: true });
         const activatedRunsPath = await realpath(runsPath);
         await writeFile(
