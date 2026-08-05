@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdtemp, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
@@ -73,9 +73,11 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
   const html = await renderTicketTrajectoryHtml(fixtureLedger, snapshot, now);
   assert.equal(await treeFingerprint(fixtureLedger), before, "ledger fixture must stay byte-identical");
 
-  // Generation time + refresh boundary (machine keys).
+  // Generation time + one-shot lifecycle (unique seam does not advertise refresh).
   assert.match(html, /data-generated-at="2026-08-05T12:00:00\.000Z"/);
-  assert.match(html, new RegExp(`data-refresh-boundary-seconds="${DEFAULT_REFRESH_BOUNDARY_SECONDS}"`));
+  assert.match(html, /data-lifecycle="oneshot"/);
+  assert.doesNotMatch(html, /data-refresh-boundary-seconds=/);
+  assert.doesNotMatch(html, /http-equiv="refresh"/i);
   assert.match(html, /data-issue="127"/);
 
   // Morph A: plan-court — 5 terminating attempts, only final accepted counts as result.
@@ -119,6 +121,14 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
   assert.equal(fixer["data-has-result"], "true");
   assert.equal(fixer["data-result-status"], "completed");
 
+  // Collector accepted terminal receipt projects nonempty typed result (leg states).
+  const collector = runById(html, "collector-001@ak-roles-127");
+  assert.equal(collector["data-station"], "collector");
+  assert.equal(collector["data-station-source"], "tool");
+  assert.equal(collector["data-has-result"], "true");
+  assert.equal(collector["data-result-status"], "valid");
+  assert.notEqual(collector["data-result-status"], "");
+
   // Four-layer station chain on authentic home-ledger run shapes (not renamed props).
   // Layer 2 — invocation.json role, no terminating tool (real doctor-live-accept run).
   const invOnly = runById(html, "doctor-live-accept-001@ak-pi-workflow-roles-issue40");
@@ -140,9 +150,9 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
 
   // Every fixture run appears exactly once.
   const runs = elementsWith(html, "data-run-id");
-  assert.equal(runs.length, 7);
+  assert.equal(runs.length, 8);
   const ids = new Set(runs.map((r) => r["data-run-id"]));
-  assert.equal(ids.size, 7);
+  assert.equal(ids.size, 8);
 
   // Responsive single-page foundation (viewport + single root document).
   assert.match(html, /name="viewport"/i);
@@ -153,7 +163,7 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
 test("each run evidence link resolves to the run ledger path, with typed data-ledger-coord", async () => {
   const html = await renderTicketTrajectoryHtml(fixtureLedger, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z"));
   const links = elementsWith(html, "data-ledger-link");
-  assert.equal(links.length, 7);
+  assert.equal(links.length, 8);
 
   for (const link of links) {
     const coord = link["data-ledger-link"];
@@ -299,8 +309,10 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     assert.equal(first.outputPath, await realpath(outputPath));
     let html = await readFile(outputPath, "utf8");
     assert.match(html, /data-generated-at="2026-08-05T16:00:00\.000Z"/);
-    assert.equal(elementsWith(html, "data-run-id").length, 7);
+    assert.equal(elementsWith(html, "data-run-id").length, 8);
+    assert.match(html, /data-lifecycle="refresh"/);
     assert.match(html, /data-refresh-boundary-seconds="1"/);
+    assert.match(html, /http-equiv="refresh"/i);
     assert.equal(ticks.length, 1, "lifecycle arms a real scheduler tick");
 
     // New run arrives in the ledger (copy of an authentic accepted run under a new id).
@@ -321,7 +333,7 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     }
     assert.match(html, /data-generated-at="2026-08-05T16:00:10\.000Z"/);
     assert.ok(elementsWith(html, "data-run-id").some((r) => r["data-run-id"] === "coder-apply-001@ak-roles-127"));
-    assert.equal(elementsWith(html, "data-run-id").length, 8);
+    assert.equal(elementsWith(html, "data-run-id").length, 9);
 
     // Stop — further ticks must not rewrite the page.
     await handle.stop();
@@ -399,4 +411,161 @@ test("empty/minimal ticket snapshot still requires issueNumber for S1 single-tic
     () => renderTicketTrajectoryHtml(fixtureLedger, {} as TicketSnapshot, new Date()),
     /issueNumber/,
   );
+});
+
+test("one-shot write does not declare refresh; lifecycle start does and regenerates", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-lifecycle-decl-"));
+  try {
+    const ledgerCopy = join(workspace, "ledger");
+    await cp(fixtureLedger, ledgerCopy, { recursive: true });
+    const oneshotPath = join(workspace, "out", "oneshot.html");
+    const livePath = join(workspace, "out", "live.html");
+
+    const oneshot = await writeTicketTrajectoryPage({
+      ledgerDir: ledgerCopy,
+      ticketSnapshot: { issueNumber: 127 },
+      now: new Date("2026-08-05T17:00:00.000Z"),
+      outputPath: oneshotPath,
+    });
+    assert.match(oneshot.html, /data-lifecycle="oneshot"/);
+    assert.doesNotMatch(oneshot.html, /data-refresh-boundary-seconds=/);
+    assert.doesNotMatch(oneshot.html, /http-equiv="refresh"/i);
+    assert.doesNotMatch(oneshot.html, /refresh ≤/);
+
+    const ticks: Array<() => void> = [];
+    const scheduler: TrajectoryScheduler = {
+      every(_ms, tick) {
+        ticks.push(tick);
+        return () => {
+          const idx = ticks.indexOf(tick);
+          if (idx >= 0) ticks.splice(idx, 1);
+        };
+      },
+    };
+    const handle = startTicketTrajectoryPage({
+      ledgerDir: ledgerCopy,
+      ticketSnapshot: { issueNumber: 127 },
+      outputPath: livePath,
+      refreshBoundarySeconds: DEFAULT_REFRESH_BOUNDARY_SECONDS,
+      clock: () => new Date("2026-08-05T17:00:00.000Z"),
+      scheduler,
+    });
+    const first = await handle.started;
+    assert.match(first.html, /data-lifecycle="refresh"/);
+    assert.match(
+      first.html,
+      new RegExp(`data-refresh-boundary-seconds="${DEFAULT_REFRESH_BOUNDARY_SECONDS}"`),
+    );
+    assert.match(first.html, /http-equiv="refresh"/i);
+    assert.equal(ticks.length, 1, "refresh declaration is backed by a live scheduler");
+    await handle.stop();
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("post-start regeneration failure faults the lifecycle with the original cause", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-fault-"));
+  try {
+    const ledgerCopy = join(workspace, "ledger");
+    await cp(fixtureLedger, ledgerCopy, { recursive: true });
+    const outputPath = join(workspace, "out", "live.html");
+
+    let nowMs = Date.parse("2026-08-05T18:00:00.000Z");
+    const ticks: Array<() => void> = [];
+    const scheduler: TrajectoryScheduler = {
+      every(_ms, tick) {
+        ticks.push(tick);
+        return () => {
+          const idx = ticks.indexOf(tick);
+          if (idx >= 0) ticks.splice(idx, 1);
+        };
+      },
+    };
+
+    const handle = startTicketTrajectoryPage({
+      ledgerDir: ledgerCopy,
+      ticketSnapshot: { issueNumber: 127 },
+      outputPath,
+      refreshBoundarySeconds: 1,
+      clock: () => new Date(nowMs),
+      scheduler,
+    });
+
+    await handle.started;
+    assert.equal(ticks.length, 1);
+
+    // Force a post-start write failure: replace the output path with a directory.
+    await rm(outputPath, { force: true });
+    await mkdir(outputPath);
+
+    nowMs = Date.parse("2026-08-05T18:00:10.000Z");
+    ticks[0]!();
+
+    // closed must reject with the original cause (not hang / not resolve clean).
+    const closedError = await new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("closed did not settle after fault")), 1000);
+      handle.closed.then(
+        () => {
+          clearTimeout(timer);
+          reject(new Error("closed resolved after regeneration fault"));
+        },
+        (error) => {
+          clearTimeout(timer);
+          resolve(error);
+        },
+      );
+    });
+    assert.ok(closedError instanceof Error, "fault retains an Error cause");
+    assert.equal(ticks.length, 0, "fault cancels further regeneration");
+
+    // stop surfaces the same original cause — no silent success.
+    await assert.rejects(() => handle.stop(), (error: unknown) => error === closedError);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("malformed invocation.json and unexpected path resolution retain their causes", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-evidence-"));
+  try {
+    const ledgerCopy = join(workspace, "ledger");
+    await cp(fixtureLedger, ledgerCopy, { recursive: true });
+
+    // Malformed existing invocation.json must fail with parse cause — not fall back to name/unknown.
+    const invPath = join(
+      ledgerCopy,
+      "issues/127/runs/doctor-live-accept-001@ak-pi-workflow-roles-issue40/invocation.json",
+    );
+    await writeFile(invPath, "{not-json", "utf8");
+    await assert.rejects(
+      () => renderTicketTrajectoryHtml(ledgerCopy, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z")),
+      (error: unknown) => error instanceof SyntaxError,
+    );
+
+    // Unexpected realpath failure (symlink cycle on ledger root) must not be
+    // relabeled as a lexical path at the write/output gate.
+    const cycleA = join(workspace, "cycle-a");
+    const cycleB = join(workspace, "cycle-b");
+    const loopLedger = join(workspace, "loop-ledger");
+    await symlink(cycleB, cycleA);
+    await symlink(cycleA, cycleB);
+    await symlink(cycleA, loopLedger);
+
+    await assert.rejects(
+      () =>
+        writeTicketTrajectoryPage({
+          ledgerDir: loopLedger,
+          ticketSnapshot: { issueNumber: 127 },
+          now: new Date("2026-08-05T12:00:00.000Z"),
+          outputPath: join(workspace, "out", "loop.html"),
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        (error as NodeJS.ErrnoException).code === "ELOOP",
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
 });

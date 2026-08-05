@@ -185,7 +185,15 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
     case JUDGE_OUTPUT_TOOL_NAME: return { status: (details as JudgeVerdict).judgeStatus };
     case DOCTOR_OUTPUT_TOOL_NAME: return { status: (details as DoctorOutput).status };
     case MERGER_OUTPUT_TOOL_NAME: { const output = details as MergerOutput; return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) }; }
-    case COLLECTOR_OUTPUT_TOOL: return {};
+    case COLLECTOR_OUTPUT_TOOL: {
+      // Collector has no receipt-level status field; legs carry the typed terminal
+      // collection states (valid | unavailable | missing). Project a nonempty
+      // deterministic summary of those states — never tool-call prose.
+      const rank: Record<string, number> = { missing: 0, unavailable: 1, valid: 2 };
+      const unique = [...new Set((details as CollectorReceipt).legs.map((leg) => leg.status))];
+      unique.sort((a, b) => (rank[a] ?? 99) - (rank[b] ?? 99));
+      return { status: unique.join("+") };
+    }
   }
 }
 

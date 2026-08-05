@@ -14,7 +14,9 @@
  * validation count as round results. Prior rejected attempts stay attempts.
  *
  * Page lifecycle: startTicketTrajectoryPage owns refresh regeneration to an
- * explicit output path outside the ledger; caller stops the handle.
+ * explicit output path outside the ledger and declares the bound; one-shot
+ * write does not advertise refresh. Regeneration faults surface the original
+ * cause via handle.closed / stop(). Caller stops the handle.
  */
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -50,7 +52,16 @@ export type TicketTrajectoryPageHandle = {
   readonly outputPath: string;
   /** Settles when the first page write finishes (or rejects on first failure). */
   readonly started: Promise<{ outputPath: string; html: string }>;
-  /** Stop further regeneration. In-flight write is awaited. */
+  /**
+   * Settles when the lifecycle ends.
+   * Resolves on a clean stop with no regeneration fault; rejects with the
+   * original cause when a post-start regeneration fails (or the initial write fails).
+   */
+  readonly closed: Promise<void>;
+  /**
+   * Stop further regeneration. In-flight write is awaited.
+   * Re-throws the original regeneration failure when the lifecycle faulted.
+   */
   stop: () => Promise<void>;
 };
 
@@ -77,6 +88,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+
+/** realpath when the node exists; lexical path only for recognized absence — never for other errors. */
+async function realpathOrLexicalIfMissing(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (isMissingPathError(error)) return path;
+    throw error;
+  }
 }
 
 const TOOL_TO_ROLE: ReadonlyMap<string, string> = new Map(
@@ -243,7 +264,9 @@ async function readInvocation(runDir: string): Promise<InvocationInfo | undefine
     }
     return info;
   } catch (error) {
-    if (isMissingPathError(error) || error instanceof SyntaxError) return undefined;
+    // Only genuine absence activates the invocation fallback. Malformed JSON and
+    // unexpected IO failures retain their cause — never relabeled as "no invocation."
+    if (isMissingPathError(error)) return undefined;
     throw error;
   }
 }
@@ -282,7 +305,7 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
 async function parseRun(ledgerDir: string, issueNumber: number, runId: string): Promise<ParsedRun> {
   const runDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId);
   const ledgerCoord = ["issues", String(issueNumber), "runs", runId].join("/");
-  const evidenceTarget = await realpath(runDir).catch(() => runDir);
+  const evidenceTarget = await realpathOrLexicalIfMissing(runDir);
   const evidenceHref = pathToFileURL(evidenceTarget).href;
   const sessionFiles = await listSessionFiles(join(runDir, "session"));
   const rows: SessionRow[] = [];
@@ -346,9 +369,15 @@ async function listRunIds(ledgerDir: string, issueNumber: number): Promise<strin
 function renderHtml(input: {
   issueNumber: number;
   generatedAt: string;
-  refreshBoundarySeconds: number;
+  /** When set, page declares a refresh bound backed by active regeneration. Omit for one-shot. */
+  refreshBoundarySeconds?: number;
   runs: ParsedRun[];
 }): string {
+  const refreshActive =
+    input.refreshBoundarySeconds !== undefined &&
+    Number.isFinite(input.refreshBoundarySeconds) &&
+    input.refreshBoundarySeconds > 0;
+  const refreshBoundarySeconds = refreshActive ? input.refreshBoundarySeconds! : undefined;
   // Group by station preserving first-seen chronological order.
   const stationOrder: string[] = [];
   const byStation = new Map<string, ParsedRun[]>();
@@ -410,16 +439,25 @@ function renderHtml(input: {
     ].join("\n");
   });
 
+  const lifecycleAttrs = refreshActive
+    ? ` data-lifecycle="refresh" data-refresh-boundary-seconds="${attr(String(refreshBoundarySeconds))}"`
+    : ` data-lifecycle="oneshot"`;
+  const refreshMeta = refreshActive
+    ? `
+<meta http-equiv="refresh" content="${attr(String(refreshBoundarySeconds))}"/>`
+    : "";
+  const refreshNote = refreshActive
+    ? `\n    · refresh ≤ ${escapeHtml(String(refreshBoundarySeconds))}s`
+    : "";
+
   return `<!DOCTYPE html>
 <html lang="zh-CN"
   data-issue="${attr(String(input.issueNumber))}"
-  data-generated-at="${attr(input.generatedAt)}"
-  data-refresh-boundary-seconds="${attr(String(input.refreshBoundarySeconds))}"
+  data-generated-at="${attr(input.generatedAt)}"${lifecycleAttrs}
 >
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<meta http-equiv="refresh" content="${attr(String(input.refreshBoundarySeconds))}"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>${refreshMeta}
 <title>Ticket #${escapeHtml(String(input.issueNumber))} trajectory</title>
 <style>
   :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.45; }
@@ -444,8 +482,7 @@ function renderHtml(input: {
 <body>
 <header class="page">
   <h1>Ticket #${escapeHtml(String(input.issueNumber))} · 驿传轨迹</h1>
-  <p class="generated">generated-at <time datetime="${attr(input.generatedAt)}">${escapeHtml(input.generatedAt)}</time>
-    · refresh ≤ ${escapeHtml(String(input.refreshBoundarySeconds))}s</p>
+  <p class="generated">generated-at <time datetime="${attr(input.generatedAt)}">${escapeHtml(input.generatedAt)}</time>${refreshNote}</p>
 </header>
 <main data-run-count="${sortedRuns.length}">
 ${stationBlocks.join("\n") || "<p data-empty=\"true\">no runs</p>"}
@@ -476,8 +513,16 @@ export async function renderTicketTrajectoryHtml(
     runs.push(await parseRun(root, issueNumber, runId));
   }
   const generatedAt = now.toISOString();
-  const refreshBoundarySeconds = options?.refreshBoundarySeconds ?? DEFAULT_REFRESH_BOUNDARY_SECONDS;
-  return renderHtml({ issueNumber, generatedAt, refreshBoundarySeconds, runs });
+  // One-shot by default: only an explicit positive bound declares self-refresh,
+  // and only callers that actually regenerate (startTicketTrajectoryPage) pass it.
+  return renderHtml({
+    issueNumber,
+    generatedAt,
+    runs,
+    ...(options?.refreshBoundarySeconds !== undefined
+      ? { refreshBoundarySeconds: options.refreshBoundarySeconds }
+      : {}),
+  });
 }
 
 function isPathInside(parent: string, child: string): boolean {
@@ -494,7 +539,14 @@ export async function assertTrajectoryOutputOutsideLedger(
   ledgerDir: string,
   outputPath: string,
 ): Promise<{ ledgerRoot: string; outputAbsolute: string; prospectiveReal: string }> {
-  const ledgerRoot = await realpath(resolve(ledgerDir)).catch(async () => resolve(ledgerDir));
+  const ledgerResolved = resolve(ledgerDir);
+  let ledgerRoot: string;
+  try {
+    ledgerRoot = await realpath(ledgerResolved);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    ledgerRoot = ledgerResolved;
+  }
   const outputAbsolute = resolve(outputPath);
 
   // Walk up until an existing filesystem node is found; realpath that prefix
@@ -615,7 +667,8 @@ const defaultScheduler: TrajectoryScheduler = {
 /**
  * Production page lifecycle: write immediately, then regenerate on the declared
  * refresh boundary so the same viewing surface observes new runs / generated-at.
- * Stop cancels further regeneration. Ledger remains read-only.
+ * Stop cancels further regeneration. A post-start regeneration failure faults the
+ * lifecycle with the original cause (no silent continuation). Ledger remains read-only.
  */
 export function startTicketTrajectoryPage(input: {
   ledgerDir: string;
@@ -636,9 +689,39 @@ export function startTicketTrajectoryPage(input: {
   let cancel: (() => void) | undefined;
   let inFlight: Promise<void> | undefined;
   let lastRejection: unknown;
+  let closedSettled = false;
+  let resolveClosed!: () => void;
+  let rejectClosed!: (error: unknown) => void;
+  const closed = new Promise<void>((resolve, reject) => {
+    resolveClosed = resolve;
+    rejectClosed = reject;
+  });
+  // Prevent unhandled-rejection crashes when callers only await stop()/started.
+  void closed.catch(() => undefined);
+
+  const fault = (error: unknown): void => {
+    if (lastRejection !== undefined) return;
+    lastRejection = error;
+    stopped = true;
+    cancel?.();
+    cancel = undefined;
+    if (!closedSettled) {
+      closedSettled = true;
+      rejectClosed(error);
+    }
+  };
+
+  const settleClean = (): void => {
+    if (closedSettled) return;
+    closedSettled = true;
+    resolveClosed();
+  };
 
   const writeOnce = async (): Promise<{ outputPath: string; html: string }> => {
-    if (stopped) throw new Error("ticket trajectory page lifecycle already stopped");
+    if (stopped && lastRejection === undefined) {
+      throw new Error("ticket trajectory page lifecycle already stopped");
+    }
+    if (lastRejection !== undefined) throw lastRejection;
     return writeTicketTrajectoryPage({
       ledgerDir: input.ledgerDir,
       ticketSnapshot: input.ticketSnapshot,
@@ -648,31 +731,29 @@ export function startTicketTrajectoryPage(input: {
     });
   };
 
-  const queueWrite = (): Promise<void> => {
-    const run = async (): Promise<void> => {
-      if (stopped) return;
-      await writeOnce();
-    };
-    inFlight = (inFlight ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(run)
-      .catch((error) => {
-        lastRejection = error;
-      });
-    return inFlight;
+  const queueWrite = (): void => {
+    if (stopped || lastRejection !== undefined) return;
+    inFlight = (inFlight ?? Promise.resolve()).then(async () => {
+      if (stopped || lastRejection !== undefined) return;
+      try {
+        await writeOnce();
+      } catch (error) {
+        fault(error);
+      }
+    });
   };
 
   const started = writeOnce()
     .then((first) => {
-      if (stopped) return first;
+      if (stopped || lastRejection !== undefined) return first;
       const intervalMs = Math.max(1, Math.round(refreshBoundarySeconds * 1000));
       cancel = scheduler.every(intervalMs, () => {
-        void queueWrite();
+        queueWrite();
       });
       return first;
     })
     .catch((error) => {
-      stopped = true;
+      fault(error);
       throw error;
     });
 
@@ -682,6 +763,7 @@ export function startTicketTrajectoryPage(input: {
   return {
     outputPath,
     started,
+    closed,
     async stop() {
       stopped = true;
       cancel?.();
@@ -689,9 +771,10 @@ export function startTicketTrajectoryPage(input: {
       await started.catch(() => undefined);
       if (inFlight) await inFlight.catch(() => undefined);
       if (lastRejection !== undefined) {
-        // Surface the last regeneration failure after stop so callers can audit.
-        // Initial failure already rejects `started`.
+        // closed already rejected with the original cause
+        throw lastRejection;
       }
+      settleClean();
     },
   };
 }
