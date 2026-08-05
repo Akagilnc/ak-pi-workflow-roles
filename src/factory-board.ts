@@ -671,28 +671,9 @@ function boardStyles(): string {
 `;
 }
 
-/** Burn/ticket sort key carried on rendered lane nodes (article or family). */
-export type FactoryBoardSortMode = "ticket-asc" | "cost-desc" | "cost-asc";
-
-/** Pure comparator for lane entries — shared by page script and executable proofs. */
-export function compareFactoryBoardSort(
-  a: { ticketNumber: number; costUsd: number },
-  b: { ticketNumber: number; costUsd: number },
-  mode: FactoryBoardSortMode,
-): number {
-  if (mode === "cost-desc") {
-    const d = b.costUsd - a.costUsd;
-    if (d !== 0) return d;
-  } else if (mode === "cost-asc") {
-    const d = a.costUsd - b.costUsd;
-    if (d !== 0) return d;
-  }
-  return a.ticketNumber - b.ticketNumber;
-}
-
 function boardSortScript(): string {
   // Presentation-only reorder; machine facts stay on data-* attrs.
-  // Comparator body mirrors compareFactoryBoardSort (ticket-asc / cost-desc / cost-asc).
+  // Singular render-seam comparator lives only in this embedded page script.
   // Family lane entries carry aggregate data-cost-usd (parent + descendants) so nested
   // per-ticket burns (e.g. #130 under #78) participate without flattening the S2 nest.
   return `<script>

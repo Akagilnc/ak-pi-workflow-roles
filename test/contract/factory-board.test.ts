@@ -23,13 +23,11 @@ import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
   UNACCEPTED_FLYING_MS,
   UNACCEPTED_WATCH_MS,
-  compareFactoryBoardSort,
   renderFactoryBoardHtml,
   startFactoryBoardPage,
   writeFactoryBoardPage,
   type FactoryBoardBook,
   type FactoryBoardScheduler,
-  type FactoryBoardSortMode,
   type FactoryBoardView,
 } from "../../src/factory-board.ts";
 import {
@@ -41,6 +39,16 @@ import {
   type TicketSnapshotTransport,
 } from "../../src/ticket-snapshot.ts";
 import type { GhApiRunner, GhApiResponse } from "../../src/collector-github.ts";
+import {
+  acceptedFacts,
+  isTerminatingToolName,
+  validateAcceptedDetails,
+  AcceptedDetailsContractError,
+  type TerminatingToolName,
+} from "../../src/package-contracts/terminating-tools.ts";
+
+/** Page sort modes advertised by the embedded production control (not a board export). */
+type BoardPageSortMode = "ticket-asc" | "cost-desc" | "cost-asc";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureLedger = join(packageRoot, "test/fixtures/ticket-trajectory/ledger");
@@ -221,7 +229,7 @@ class BoardSortElement {
 function executeProductionBoardSort(
   html: string,
   bookKey: string,
-  mode: FactoryBoardSortMode,
+  mode: BoardPageSortMode,
 ): Array<Record<string, string>> {
   const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch?.[1], "production board must embed sort script");
@@ -1529,17 +1537,6 @@ test("S3 cost/tokens aggregate per station and ticket; axis legs fold into stati
       executeProductionBoardSort(html, "roles", "ticket-asc").map(laneSortIdentity),
       [20, 21, 22],
     );
-    // TS comparator stays aligned with the page script (shared contract, not the sole proof)
-    const laneEntries = [t20, t21, t22].map((el) => ({
-      ticketNumber: Number(el["data-ticket"]),
-      costUsd: Number(el["data-cost-usd"]),
-    }));
-    assert.deepEqual(
-      [...laneEntries]
-        .sort((a, b) => compareFactoryBoardSort(a, b, "cost-desc"))
-        .map((e) => e.ticketNumber),
-      [20, 22, 21],
-    );
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -1652,16 +1649,9 @@ test("S3 production sort: #130 per-ticket burn participates under native #78 fam
     const asc = executeProductionBoardSort(html, "roles", "cost-asc").map(laneSortIdentity);
     assert.deepEqual(asc, [40, 50, 78]);
 
-    // Counterfactual: parent-only key would put family last on cost-desc — prove aggregate matters
-    const parentOnlyDesc = [
-      { ticketNumber: 78, costUsd: Number(t78["data-cost-usd"]) },
-      { ticketNumber: 50, costUsd: Number(t50["data-cost-usd"]) },
-      { ticketNumber: 40, costUsd: 0.05 },
-    ]
-      .sort((a, b) => compareFactoryBoardSort(a, b, "cost-desc"))
-      .map((e) => e.ticketNumber);
-    assert.deepEqual(parentOnlyDesc, [50, 40, 78], "parent-only key would bury #130 burn");
-    assert.notDeepEqual(desc, parentOnlyDesc);
+    // Counterfactual: parent-only costs (0.01 / 1.0 / 0.05) would bury the family on cost-desc.
+    // Production order above differs because the family key carries #130's nested burn.
+    assert.notDeepEqual(desc, [50, 40, 78], "aggregate #130 burn must move family off parent-only order");
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -1902,10 +1892,90 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-test("S3 true-home acceptance: frozen #127, active leg, #130 cost reconciliation", async () => {
+/**
+ * Independent accepted-toolResult scan — uses package terminating-tool contracts only,
+ * not the board/trajectory loader — so true-home #127 trajectory acceptance can reconcile
+ * rendered result fields against ledger bytes without coupling to current-state selection.
+ */
+async function independentAcceptedTrajectory(
+  ledgerDir: string,
+  issueNumber: number,
+): Promise<Array<{ runId: string; resultStatus: string }>> {
+  const runsDir = join(ledgerDir, "issues", String(issueNumber), "runs");
+  let runIds: string[] = [];
+  try {
+    runIds = (await readdir(runsDir, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+
+  const accepted: Array<{ runId: string; resultStatus: string }> = [];
+  for (const runId of runIds) {
+    const sessionDir = join(runsDir, runId, "session");
+    let files: string[] = [];
+    try {
+      files = (await readdir(sessionDir, { withFileTypes: true }))
+        .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
+        .map((e) => join(sessionDir, e.name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+
+    let hasResult = false;
+    let resultStatus = "";
+    for (const file of files) {
+      const text = await readFile(file, "utf8");
+      for (const line of text.split("\n")) {
+        if (!line.trim()) continue;
+        let row: Record<string, unknown>;
+        try {
+          const parsed: unknown = JSON.parse(line);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+          row = parsed as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        const message =
+          row.message && typeof row.message === "object" && !Array.isArray(row.message)
+            ? (row.message as Record<string, unknown>)
+            : undefined;
+        if (!message || message.role !== "toolResult") continue;
+        if (typeof message.toolName !== "string" || !isTerminatingToolName(message.toolName)) {
+          continue;
+        }
+        if (message.isError === true) continue;
+        if (!message.details || typeof message.details !== "object" || Array.isArray(message.details)) {
+          continue;
+        }
+        try {
+          const details = validateAcceptedDetails(
+            message.toolName as TerminatingToolName,
+            message.details,
+          );
+          const facts = acceptedFacts(message.toolName as TerminatingToolName, details);
+          hasResult = true;
+          resultStatus = facts.status ?? "";
+        } catch (error) {
+          if (error instanceof AcceptedDetailsContractError) continue;
+          throw error;
+        }
+      }
+    }
+    if (hasResult) accepted.push({ runId, resultStatus });
+  }
+  return accepted;
+}
+
+test("S3 true-home acceptance: #127 accepted trajectory, active leg, #130 cost reconciliation", async () => {
   const homeLedger =
     process.env.AK_FACTORY_BOARD_HOME_LEDGER?.trim() ||
     join(homedir(), ".ak-roles", "books", "ak-pi-workflow-roles");
+  const home127 = join(homeLedger, "issues", "127");
   const home130 = join(homeLedger, "issues", "130");
   const home139 = join(homeLedger, "issues", "139");
   if (!(await pathExists(home130))) {
@@ -1916,13 +1986,17 @@ test("S3 true-home acceptance: frozen #127, active leg, #130 cost reconciliation
   const workspace = await mkdtemp(join(tmpdir(), "factory-board-s3-true-home-"));
   try {
     const ledgerDir = join(workspace, "ledger");
-    // 1) Frozen authentic #127 accepted-after-rejections (fixture prefix, no mutable tail)
-    await cp(join(fixtureLedger, "issues", "127"), join(ledgerDir, "issues", "127"), {
+
+    // 1) Exact true-home #127 bytes — no fixture transplant, no tail deletion/substitution.
+    // Accepted toolResult trajectory is asserted independently of whichever later run
+    // currently controls current-state (frozen accepted-awaiting lives in its own test).
+    assert.ok(
+      await pathExists(home127),
+      "true-home acceptance requires home #127 (authentic accepted-toolResult trajectory)",
+    );
+    await cp(home127, join(ledgerDir, "issues", "127"), {
       recursive: true,
-    });
-    await rm(join(ledgerDir, "issues", "127", "runs", "review-026@ak-roles-127"), {
-      recursive: true,
-      force: true,
+      preserveTimestamps: true,
     });
 
     // 2) True-home #130 bytes (closed multi-round reviewer burn)
@@ -1946,6 +2020,16 @@ test("S3 true-home acceptance: frozen #127, active leg, #130 cost reconciliation
 
     // Plant zero-run #78 so native family edge is present for sort participation.
     await mkdir(join(ledgerDir, "issues", "78"), { recursive: true });
+
+    const expected127 = await independentAcceptedTrajectory(ledgerDir, 127);
+    assert.ok(
+      expected127.length >= 1,
+      "true-home #127 must contain at least one accepted terminating toolResult",
+    );
+    // Named authentic accepted receipt that exists on the owner true ledger.
+    const namedFixer = expected127.find((r) => r.runId === "fixer-apply-001@ak-roles-127");
+    assert.ok(namedFixer, "true-home #127 must keep named fixer-apply-001 accepted receipt");
+    assert.equal(namedFixer.resultStatus, "completed");
 
     const expected130 = await independentIssueUsage(ledgerDir, 130);
     assert.ok(expected130.runCount >= 1, "#130 must have runs");
@@ -1998,12 +2082,31 @@ test("S3 true-home acceptance: frozen #127, active leg, #130 cost reconciliation
     assert.equal(t130["data-parent-issue"], "78");
     assert.equal(t127["data-parent-issue"], "78");
 
-    // Frozen #127 counterexample
-    assert.equal(t127["data-current-state"], "accepted-awaiting");
-    const acceptedFixer = elementsWith(html, "data-run-id").find(
-      (r) => r["data-run-id"] === "fixer-apply-001@ak-roles-127",
+    // #127 true trajectory: every independently accepted toolResult is rendered as accepted,
+    // regardless of which later run owns data-current-state.
+    const runs127 = elementsWith(html, "data-run-id").filter(
+      (r) => (r["data-ledger-coord"] ?? "").includes("issues/127/runs/"),
     );
-    assert.equal(acceptedFixer?.["data-has-result"], "true");
+    assert.ok(runs127.length >= expected127.length, "board retains true-home #127 runs");
+    for (const expected of expected127) {
+      const row = runs127.find((r) => r["data-run-id"] === expected.runId);
+      assert.ok(row, `true-home #127 accepted run visible: ${expected.runId}`);
+      assert.equal(row["data-has-result"], "true", `${expected.runId} accepted toolResult`);
+      assert.equal(
+        row["data-result-status"],
+        expected.resultStatus,
+        `${expected.runId} status from accepted toolResult`,
+      );
+    }
+    // Named anchor receipt stays projected even when later unaccepted/error runs control state.
+    const namedOnBoard = runs127.find((r) => r["data-run-id"] === "fixer-apply-001@ak-roles-127");
+    assert.equal(namedOnBoard?.["data-has-result"], "true");
+    assert.equal(namedOnBoard?.["data-result-status"], "completed");
+    assert.ok(
+      t127["data-current-state"] === "accepted-awaiting" ||
+        (t127["data-current-state"] ?? "").startsWith("unaccepted-"),
+      "current state remains a mechanical latest-run partition; not asserted from fixture freeze",
+    );
 
     // #130 totals reconcile with independent true-byte scan (human read-ledger oracle)
     assert.equal(Number(t130["data-run-count"]), expected130.runCount);
