@@ -13,6 +13,10 @@
  *     --out /tmp/factory-board.html
  *
  * Output MUST sit outside every ledger. Ledgers are read-only.
+ *
+ * When --out is present but explicit --book binding is absent or malformed,
+ * write a binding error page (data-board-error=binding) then exit nonzero —
+ * do not terminate before any page exists.
  */
 import { resolve } from "node:path";
 
@@ -62,30 +66,32 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-/** Parse `key=ledgerDir:owner/repo` */
-function parseBook(raw: string): { book: FactoryBoardBook; binding: BookRepoBinding } {
+type ParsedBook =
+  | { ok: true; book: FactoryBoardBook; binding: BookRepoBinding }
+  | { ok: false; message: string };
+
+/** Parse `key=ledgerDir:owner/repo` without terminating — caller owns disposition. */
+function parseBook(raw: string): ParsedBook {
   const eq = raw.indexOf("=");
   if (eq <= 0) {
-    console.error(`invalid --book (expected key=ledgerDir:owner/repo): ${raw}`);
-    process.exit(2);
+    return { ok: false, message: `invalid --book (expected key=ledgerDir:owner/repo): ${raw}` };
   }
   const bookKey = raw.slice(0, eq);
   const rest = raw.slice(eq + 1);
   const colon = rest.lastIndexOf(":");
   if (colon <= 0) {
-    console.error(`invalid --book (missing :owner/repo): ${raw}`);
-    process.exit(2);
+    return { ok: false, message: `invalid --book (missing :owner/repo): ${raw}` };
   }
   const ledgerDir = rest.slice(0, colon);
   const repoPart = rest.slice(colon + 1);
   const slash = repoPart.indexOf("/");
   if (slash <= 0 || slash === repoPart.length - 1) {
-    console.error(`invalid --book (owner/repo): ${raw}`);
-    process.exit(2);
+    return { ok: false, message: `invalid --book (owner/repo): ${raw}` };
   }
   const owner = repoPart.slice(0, slash);
   const repo = repoPart.slice(slash + 1);
   return {
+    ok: true,
     book: { bookKey, ledgerDir: resolve(ledgerDir) },
     binding: { bookKey, owner, repo },
   };
@@ -115,12 +121,47 @@ function parseClosed(raw: string): { bookKey: string; numbers: number[] } {
 const bookArgs = allArgs("--book");
 const closedArgs = allArgs("--closed");
 const out = arg("--out");
-if (bookArgs.length === 0 || !out) usage();
+// Without --out there is no page destination — usage only.
+if (!out) usage();
+
+const outputPath = resolve(out);
+
+async function writeBindingFailurePage(message: string, books: readonly FactoryBoardBook[] = []): Promise<never> {
+  const view: FactoryBoardView = {
+    ok: false,
+    error: {
+      kind: "binding",
+      message,
+    },
+  };
+  try {
+    const result = await writeFactoryBoardPage({
+      books,
+      view,
+      now: new Date(),
+      outputPath,
+    });
+    console.error(`wrote ${result.outputPath} (error page)`);
+    console.error(message);
+  } catch (error) {
+    console.error(formatError(error));
+    process.exit(1);
+  }
+  process.exit(1);
+}
+
+if (bookArgs.length === 0) {
+  await writeBindingFailurePage("explicit --book binding required (key=ledgerDir:owner/repo)");
+}
 
 const books: FactoryBoardBook[] = [];
 const bindings: BookRepoBinding[] = [];
 for (const raw of bookArgs) {
   const parsed = parseBook(raw);
+  if (!parsed.ok) {
+    // Malformed binding: still emit the requested page as binding failure.
+    await writeBindingFailurePage(parsed.message, books);
+  }
   books.push(parsed.book);
   bindings.push(parsed.binding);
 }
@@ -172,7 +213,7 @@ try {
     books,
     view,
     now: new Date(),
-    outputPath: resolve(out),
+    outputPath,
   });
   console.error(`wrote ${result.outputPath}${view.ok ? "" : " (error page)"}`);
   process.exit(view.ok ? 0 : 1);
