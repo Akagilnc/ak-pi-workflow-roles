@@ -27,6 +27,7 @@ import {
 import {
   createAgentSession,
   DefaultResourceLoader,
+  type ExtensionAPI,
   type ExtensionContext,
   type InlineExtension,
   ModelRuntime,
@@ -618,6 +619,48 @@ export async function withActivationHome<T>(
 /** Sole machine ledger home under a hermetic process home (ADR 0048). */
 export function machineLedgerHome(home: string): string {
   return join(home, ".ak-roles");
+}
+
+export type CapturedExtensionHandler = (
+  event: Record<string, unknown>,
+  ctx: ExtensionContext,
+) => unknown;
+
+/**
+ * Minimum handler-level probe for topology/failure paths that withInProcessPi
+ * cannot reach (custom session principals, non-git cwd, append errno, pre-admission
+ * observation, mode exit policy, activation-trace masking, rejection barrier).
+ * Prefer withInProcessPi + createRoleRuntimeExtension for all-role admission,
+ * cardinality, and correlation coverage. Seed only the tool names a role's
+ * activate() requires; do not grow this into a parallel registry owner.
+ */
+export function captureExtensionHandlers(
+  install: (pi: ExtensionAPI) => void,
+  options: {
+    getFlag?: (name: string) => unknown;
+    seedToolNames?: readonly string[];
+  } = {},
+): {
+  handlers: Map<string, CapturedExtensionHandler[]>;
+} {
+  const handlers = new Map<string, CapturedExtensionHandler[]>();
+  const tools = new Map<string, { name: string }>();
+  for (const name of options.seedToolNames ?? []) tools.set(name, { name });
+  let activeTools: string[] = [];
+  const pi = {
+    registerFlag() {},
+    registerTool(tool: { name: string }) { tools.set(tool.name, tool); },
+    setActiveTools(names: string[]) { activeTools = [...names]; },
+    getActiveTools() { return [...activeTools]; },
+    getAllTools() { return [...tools.values()]; },
+    getCommands() { return []; },
+    getFlag(name: string) { return options.getFlag?.(name); },
+    on(name: string, handler: CapturedExtensionHandler) {
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+    },
+  } as unknown as ExtensionAPI;
+  install(pi);
+  return { handlers };
 }
 
 /** Book key for a git cwd whose common-dir host basename is the directory name. */
