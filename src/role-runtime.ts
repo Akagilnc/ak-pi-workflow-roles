@@ -68,7 +68,6 @@ export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-
 export {
   ACCEPTED_ACTIVATION_EVENT,
   ACCEPTED_ACTIVATION_FACT_KEYS,
-  ACTIVATION_LEDGER_APPEND_OPEN_FLAGS,
   ActivationGitRepositoryRequiredError,
   ActivationLedgerError,
   ActivationSessionFileMissingError,

@@ -16,13 +16,8 @@ import {
   errorText,
 } from "./activation-ledger-topology.ts";
 
-/**
- * Kernel open flags for waiting.jsonl append.
- * O_NOFOLLOW refuses a final-component symlink at open (closes the lstat→open
- * TOCTOU window); O_APPEND|O_CREAT|O_WRONLY is the shared append contract.
- * Typed bare seam — tests assert these bits; production open uses only this value.
- */
-export const ACTIVATION_LEDGER_APPEND_OPEN_FLAGS =
+/** Private open flags: O_NOFOLLOW closes the lstat→open TOCTOU window. */
+const ACTIVATION_LEDGER_APPEND_OPEN_FLAGS =
   constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW;
 
 export {
