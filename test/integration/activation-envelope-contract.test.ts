@@ -18,7 +18,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import test, { afterEach } from "node:test";
 import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
-import type { ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionError } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
   ACCEPTED_ACTIVATION_EVENT,
@@ -57,7 +57,6 @@ import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   activationBookKeyFor,
   activationExtensionContext,
-  captureExtensionHandlers,
   machineLedgerHome,
   packageRoot,
   persistActivationSessionFile,
@@ -69,6 +68,42 @@ import {
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
 import { reviewerPromptIdentity } from "../../src/reviewer-prompt-identity.ts";
+
+type CapturedExtensionHandler = (
+  event: Record<string, unknown>,
+  ctx: ExtensionContext,
+) => unknown;
+
+/**
+ * Local handler-level fixture for activation-envelope topology/failure paths that
+ * withInProcessPi cannot reach. Not a shared harness — keep narrow to this seam.
+ */
+function captureExtensionHandlers(
+  install: (pi: ExtensionAPI) => void,
+  options: {
+    getFlag?: (name: string) => unknown;
+  } = {},
+): {
+  handlers: Map<string, CapturedExtensionHandler[]>;
+} {
+  const handlers = new Map<string, CapturedExtensionHandler[]>();
+  const tools = new Map<string, { name: string }>();
+  let activeTools: string[] = [];
+  const pi = {
+    registerFlag() {},
+    registerTool(tool: { name: string }) { tools.set(tool.name, tool); },
+    setActiveTools(names: string[]) { activeTools = [...names]; },
+    getActiveTools() { return [...activeTools]; },
+    getAllTools() { return [...tools.values()]; },
+    getCommands() { return []; },
+    getFlag(name: string) { return options.getFlag?.(name); },
+    on(name: string, handler: CapturedExtensionHandler) {
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+    },
+  } as unknown as ExtensionAPI;
+  install(pi);
+  return { handlers };
+}
 
 function sha256Hex(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
