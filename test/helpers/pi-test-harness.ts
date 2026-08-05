@@ -576,30 +576,34 @@ export interface PiManagedInstall {
 }
 
 /**
- * Install one packed artifact into an isolated Pi private npm root so `ak-role`
- * is discovered through Pi's npm bin directory (ADR 0052 distribution shape).
+ * Install one packed artifact through Pi's user install owner (`pi install` →
+ * PackageManager) so `ak-role` is discovered via Pi's private npm bin (ADR 0052).
  */
 export async function installPackedArtifactIntoPiNpm(
   agentDir: string,
+  home: string,
 ): Promise<PiManagedInstall> {
   const pack = await getSharedIsolatedPack();
+  const source = `npm:@akagilnc/pi-workflow-roles@file:${pack.tarball}`;
+  const result = await runPiSubprocess(["install", source], {
+    cwd: home,
+    timeoutMs: 120_000,
+    env: {
+      ...process.env,
+      HOME: home,
+      PI_CODING_AGENT_DIR: agentDir,
+      PI_OFFLINE: "1",
+    },
+  });
+  if (result.timedOut) {
+    throw new Error(`pi install timed out for ${source}`);
+  }
+  if (result.code !== 0) {
+    throw new Error(
+      `pi install failed (code ${String(result.code)}): ${result.stderr || result.stdout}`,
+    );
+  }
   const npmRoot = piPrivateNpmRoot(agentDir);
-  await mkdir(npmRoot, { recursive: true });
-  await writeFile(
-    resolve(npmRoot, "package.json"),
-    JSON.stringify({ name: "pi-extensions", private: true }, null, 2),
-  );
-  await execFileAsync(
-    "npm",
-    [
-      "install",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      `file:${pack.tarball}`,
-    ],
-    { cwd: npmRoot, maxBuffer: 10 * 1024 * 1024, timeout: 120_000 },
-  );
   const installedRoot = resolve(
     npmRoot,
     "node_modules",

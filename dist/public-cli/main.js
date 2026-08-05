@@ -7,12 +7,12 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname2, join as join3 } from "node:path";
+import { dirname as dirname2, join as join4 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir2 } from "node:os";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -8226,6 +8226,83 @@ async function loadCredentialProviders(agentDir) {
   }
 }
 
+// src/public-cli/explicit-internal.ts
+import { spawn } from "node:child_process";
+import { join as join2 } from "node:path";
+function resolveInternalRoleEntrypoint(packageRoot2) {
+  return join2(packageRoot2, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
+}
+function buildExplicitInternalActivationArgs(packageRoot2, extraArgs = []) {
+  return [
+    "--no-extensions",
+    "-e",
+    resolveInternalRoleEntrypoint(packageRoot2),
+    ...extraArgs
+  ];
+}
+var defaultExplicitInternalPiRunner = async (args, options) => {
+  const command = options.env.PI_BINARY ?? "pi";
+  return await new Promise((resolveResult, reject) => {
+    const child = spawn(command, [...args], {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, options.timeoutMs ?? 3e4);
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolveResult({
+        code,
+        stdout,
+        stderr,
+        timedOut,
+        args: [...args]
+      });
+    });
+  });
+};
+async function runExplicitInternalActivation(options) {
+  const args = buildExplicitInternalActivationArgs(
+    options.packageRoot,
+    options.extraArgs ?? []
+  );
+  const runner = options.runner ?? defaultExplicitInternalPiRunner;
+  return await runner(args, {
+    cwd: options.cwd,
+    ...options.timeoutMs === void 0 ? {} : { timeoutMs: options.timeoutMs },
+    env: {
+      ...process.env,
+      ...options.env,
+      HOME: options.home,
+      PI_CODING_AGENT_DIR: options.agentDir
+    }
+  });
+}
+var EXPLICIT_INTERNAL_LOAD_PROBE_ARGS = [
+  "--no-skills",
+  "--no-prompt-templates",
+  "--no-themes",
+  "--no-context-files",
+  "--no-session",
+  "--help"
+];
+
 // src/public-cli/cli.ts
 var THINKING_LEVELS2 = /* @__PURE__ */ new Set([
   "off",
@@ -8250,7 +8327,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir2();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join2(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join3(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -8479,6 +8556,26 @@ async function runAkRole(argv, env) {
     }
     const roleNames = listHelpCapabilities().filter((cap) => cap.kind === "role").map((cap) => cap.name);
     if (roleNames.includes(parsed.command)) {
+      const agentDir = resolveAgentDir(env, home);
+      const load = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs: EXPLICIT_INTERNAL_LOAD_PROBE_ARGS,
+        cwd: env.cwd ?? process.cwd(),
+        home,
+        agentDir,
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+      if (load.timedOut || load.code !== 0) {
+        io.stderr(
+          `ak-role: failed to load installed role runtime for '${parsed.command}'
+`
+        );
+        if (load.stderr.length > 0) {
+          io.stderr(load.stderr.endsWith("\n") ? load.stderr : `${load.stderr}
+`);
+        }
+        return { exitCode: 1 };
+      }
       io.stderr(
         `ak-role: role run for '${parsed.command}' is not available in this install slice
 `
@@ -8501,6 +8598,6 @@ async function runAkRole(argv, env) {
 
 // src/public-cli/main.ts
 var here = dirname2(fileURLToPath(import.meta.url));
-var packageRoot = join3(here, "..", "..");
+var packageRoot = join4(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

@@ -19,12 +19,22 @@ import {
   type PublicCliConfig,
 } from "./config.ts";
 import {
+  EXPLICIT_INTERNAL_LOAD_PROBE_ARGS,
+  runExplicitInternalActivation,
+  type ExplicitInternalPiRunner,
+} from "./explicit-internal.ts";
+import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   isPublicCliSupportCommand,
   isPublicConfigurableSeat,
   listHelpCapabilities,
   type PublicThinkingLevel,
 } from "./registry.ts";
+
+export {
+  buildExplicitInternalActivationArgs,
+  resolveInternalRoleEntrypoint,
+} from "./explicit-internal.ts";
 
 export type CliIo = {
   stdout: (text: string) => void;
@@ -34,9 +44,13 @@ export type CliIo = {
 export type CliEnv = {
   home?: string;
   agentDir?: string;
+  /** Process cwd for any Pi subprocess owned by ak-role. */
+  cwd?: string;
   packageRoot: string;
   credentials?: CredentialProviders;
   io?: CliIo;
+  /** Injectable Pi runner (tests); production resolves `pi` on PATH. */
+  piRunner?: ExplicitInternalPiRunner;
 };
 
 export type CliResult = {
@@ -74,26 +88,6 @@ function resolveAgentDir(env: CliEnv, home: string): string {
     process.env.PI_CODING_AGENT_DIR ??
     join(home, ".pi", "agent")
   );
-}
-
-export function resolveInternalRoleEntrypoint(packageRoot: string): string {
-  return join(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
-}
-
-/**
- * Explicit one-invocation Internal activation args for the installed package copy.
- * Ordinary Pi package auto-registration does not include this entrypoint (ADR 0052).
- */
-export function buildExplicitInternalActivationArgs(
-  packageRoot: string,
-  extraArgs: readonly string[] = [],
-): string[] {
-  return [
-    "--no-extensions",
-    "-e",
-    resolveInternalRoleEntrypoint(packageRoot),
-    ...extraArgs,
-  ];
 }
 
 type ParsedGlobal = {
@@ -369,11 +363,31 @@ export async function runAkRole(
       throw new CliUsageError(`unhandled support command: ${parsed.command}`);
     }
 
-    // Callable role names are discoverable via help/roles; run surface is #106+.
+    // Callable role names are discoverable via help/roles; full run surface is #106+.
+    // This slice still crosses the ak-role-owned explicit Internal load boundary once
+    // so install/discovery coupling is proven without settling a role receipt.
     const roleNames = listHelpCapabilities()
       .filter((cap) => cap.kind === "role")
       .map((cap) => cap.name);
     if ((roleNames as string[]).includes(parsed.command)) {
+      const agentDir = resolveAgentDir(env, home);
+      const load = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs: EXPLICIT_INTERNAL_LOAD_PROBE_ARGS,
+        cwd: env.cwd ?? process.cwd(),
+        home,
+        agentDir,
+        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
+      });
+      if (load.timedOut || load.code !== 0) {
+        io.stderr(
+          `ak-role: failed to load installed role runtime for '${parsed.command}'\n`,
+        );
+        if (load.stderr.length > 0) {
+          io.stderr(load.stderr.endsWith("\n") ? load.stderr : `${load.stderr}\n`);
+        }
+        return { exitCode: 1 };
+      }
       io.stderr(
         `ak-role: role run for '${parsed.command}' is not available in this install slice\n`,
       );
