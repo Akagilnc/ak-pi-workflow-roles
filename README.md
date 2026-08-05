@@ -2,6 +2,24 @@
 
 Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
 
+## Public CLI (`ak-role`)
+
+The only supported external interface is the `ak-role` executable (ADR 0052). Install the package through Pi so the executable and role runtime share one package copy, then put Pi’s private npm bin directory on `PATH`:
+
+```bash
+pi install npm:@akagilnc/pi-workflow-roles
+# user scope installs under ~/.pi/agent/npm/ — add its node_modules/.bin to PATH once
+export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
+
+ak-role roles                 # seven callable roles + automatic Navigator + effective model/thinking
+ak-role config set judge openai-codex/gpt-5.6-sol:high
+ak-role help                  # capabilities from the typed public registry
+```
+
+Ordinary `pi` startup after install does **not** auto-register the Internal `--ak-role` flag. Package developers may still load `extensions/role-runtime.ts` explicitly with `pi -e` for low-level diagnosis; that seam is not a public contract.
+
+Role runs through `ak-role <role> …` land in follow-on issues (#106+). This package slice ships install, discovery, `roles`, `config`, and layered help first.
+
 ## 班子（唐宋官署命名）
 
 角色按唐宋官署／官职命名，判据与被否方案见 [ADR 0051](docs/adr/0051-roles-are-named-after-tang-song-offices.md)。**朝廷对应：皇帝＝陛下，宰相＝调用者，百官＝各角色。** 工厂没有政事堂——中枢是陛下。百官各司其职，彼此制衡，共同完成从谋划、建设、审查到收敛的完整流程。
@@ -35,12 +53,15 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
-## Quick start: invoke the Judge from a fresh session
+## Internal development seam: invoke a role with raw Pi
 
-Install once (project-local), or pass `-e /absolute/path/to/ak-pi-workflow-roles` on each invocation instead:
+> Development / diagnosis only. External callers should use [`ak-role`](#public-cli-ak-role).
+
+Install once (project-local), or pass `-e /absolute/path/to/extensions/role-runtime.ts` on each invocation instead:
 
 ```bash
-pi install -l /absolute/path/to/ak-pi-workflow-roles
+# Explicit load of the Internal entrypoint (not package auto-registration):
+pi --no-extensions -e /absolute/path/to/extensions/role-runtime.ts --ak-role judge --help
 ```
 
 **1. Feed materials through the filesystem.** Roles read files with their own tools; write what you want adjudicated into a file and name its path in the prompt.
