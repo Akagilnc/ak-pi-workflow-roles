@@ -99,47 +99,9 @@ export function serializeAcceptedActivationFact(fact: AcceptedActivationFact): s
 }
 
 /**
- * Run body then cleanups without letting cleanup erase the primary failure.
- * Primary remains AggregateError.cause / errors[0]; cleanup is retained as nested evidence.
- */
-function settleWithCleanup(body: () => void, cleanups: ReadonlyArray<() => void>): void {
-  let primaryFailure: unknown;
-  try {
-    body();
-  } catch (error) {
-    primaryFailure = error;
-  }
-
-  const failures: unknown[] = [];
-  for (const cleanup of cleanups) {
-    try {
-      cleanup();
-    } catch (error) {
-      failures.push(error);
-    }
-  }
-
-  if (failures.length > 0) {
-    const cleanupFailure =
-      failures.length === 1
-        ? failures[0]
-        : new AggregateError(failures, "activation ledger cleanup failed", { cause: failures[0] });
-    if (primaryFailure !== undefined) {
-      throw new AggregateError(
-        [primaryFailure, cleanupFailure],
-        "activation ledger operation and cleanup failed",
-        { cause: primaryFailure },
-      );
-    }
-    throw cleanupFailure;
-  }
-
-  if (primaryFailure !== undefined) throw primaryFailure;
-}
-
-/**
  * Bare O_APPEND write of one complete line under an absolute ledger home.
  * Private helper: production-bound to writeSync; owns open/write/close honesty only.
+ * Close failure cannot mask open/write; simultaneous close is nested evidence.
  */
 function appendActivationLedgerLine(
   ledgerPath: string,
@@ -159,38 +121,47 @@ function appendActivationLedgerLine(
 
   const bytes = Buffer.isBuffer(line) ? line : Buffer.from(line);
   let ledgerFd: number | undefined;
+  let primaryFailure: unknown;
+  try {
+    try {
+      ledgerFd = openSync(
+        resolvedLedger,
+        constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY,
+        0o644,
+      );
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to open ledger file (${resolvedLedger}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
 
-  settleWithCleanup(
-    () => {
-      try {
-        ledgerFd = openSync(
-          resolvedLedger,
-          constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY,
-          0o644,
-        );
-      } catch (error) {
-        throw new ActivationLedgerError(
-          `activation ledger failed to open ledger file (${resolvedLedger}): ${errorText(error)}`,
-          { cause: error },
+    const written = writeSync(ledgerFd, bytes, 0, bytes.length, null);
+    if (written !== bytes.length) {
+      throw new ActivationLedgerError(
+        `activation ledger short write: wrote ${written} of ${bytes.length} bytes to ${resolvedLedger}`,
+      );
+    }
+  } catch (error) {
+    primaryFailure = error;
+  }
+
+  if (ledgerFd !== undefined) {
+    try {
+      closeSync(ledgerFd);
+    } catch (closeFailure) {
+      if (primaryFailure !== undefined) {
+        throw new AggregateError(
+          [primaryFailure, closeFailure],
+          "activation ledger operation and close failed",
+          { cause: primaryFailure },
         );
       }
+      throw closeFailure;
+    }
+  }
 
-      const written = writeSync(ledgerFd, bytes, 0, bytes.length, null);
-      if (written !== bytes.length) {
-        throw new ActivationLedgerError(
-          `activation ledger short write: wrote ${written} of ${bytes.length} bytes to ${resolvedLedger}`,
-        );
-      }
-    },
-    [
-      () => {
-        if (ledgerFd === undefined) return;
-        const fd = ledgerFd;
-        ledgerFd = undefined;
-        closeSync(fd);
-      },
-    ],
-  );
+  if (primaryFailure !== undefined) throw primaryFailure;
 }
 
 /**
@@ -198,7 +169,7 @@ function appendActivationLedgerLine(
  * Shared-ledger contract: concurrent successful append-only producers cannot
  * overwrite one another. A short write is an honest infrastructure failure
  * (ADR 0049) — no non-append rollback/truncate. Close failure cannot mask the
- * primary write cause; cleanup evidence is retained.
+ * primary write cause; simultaneous close evidence is retained.
  */
 export function appendAcceptedActivationFact(
   ledgerPath: string,

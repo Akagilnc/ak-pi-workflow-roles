@@ -6,6 +6,7 @@ import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } fro
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { pathContainedIn, resolveActivationLedgerHome } from "./activation-ledger-topology.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
@@ -155,14 +156,24 @@ function issueRoot(value) {
   const issue = normalized.slice(index + marker.length).split("/")[0]?.split("#")[0];
   return issue === void 0 || issue === "" ? void 0 : normalized.slice(0, index + marker.length) + issue;
 }
+function workIdentityFromCwd(cwd) {
+  const resolvedCwd = resolve(cwd, ".");
+  const cwdIssue = issueRoot(resolvedCwd);
+  if (cwdIssue !== void 0) return cwdIssue;
+  if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
+  return void 0;
+}
+function isMachineLedgerSessionPath(sessionPath) {
+  return pathContainedIn(resolve(resolveActivationLedgerHome()), resolve(sessionPath));
+}
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
-    const resolvedCwd = resolve(cwd, ".");
-    const cwdIssue = issueRoot(resolvedCwd);
-    if (cwdIssue !== void 0) return cwdIssue;
-    if (resolvedCwd.includes("/.ak/work/")) return resolvedCwd;
+    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
   }
   const resolvedSession = resolve(cwd, sessionDir || ".ak/work");
+  if (isMachineLedgerSessionPath(resolvedSession)) {
+    return workIdentityFromCwd(cwd) ?? resolve(cwd, ".ak/work");
+  }
   const issue = issueRoot(resolvedSession);
   if (issue !== void 0) return issue;
   const runsMarker = "/runs/";
