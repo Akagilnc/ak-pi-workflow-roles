@@ -40,6 +40,21 @@ export type ActivationCorrelationIdentity =
 export const ACCEPTED_ACTIVATION_EVENT = "accepted-activation" as const;
 
 /**
+ * Package-owned index-only top-level keys for accepted-activation facts (ADR 0049).
+ * Sole machine key contract: projection and tests consume this descriptor — not prose markers.
+ */
+export const ACCEPTED_ACTIVATION_FACT_KEYS = Object.freeze([
+  "event",
+  "role",
+  "observedAt",
+  "bookKey",
+  "session",
+  "correlation",
+] as const);
+
+export type AcceptedActivationFactKey = (typeof ACCEPTED_ACTIVATION_FACT_KEYS)[number];
+
+/**
  * Closed activation fact: index fields only (ADR 0049).
  * No prompt, transcript, argv, excerpt, or other content.
  */
@@ -51,6 +66,15 @@ export type AcceptedActivationFact = {
   readonly session: ActivationSessionPointer;
   readonly correlation: ActivationCorrelationIdentity;
 };
+
+// Keys tuple ↔ fact type must stay exact (compile fail on drift; no second field list).
+type ExactKeyMatch<T, K extends PropertyKey> =
+  Exclude<keyof T, K> | Exclude<K, keyof T> extends never ? true : never;
+const _acceptedActivationFactKeysMatch: ExactKeyMatch<
+  AcceptedActivationFact,
+  AcceptedActivationFactKey
+> = true;
+void _acceptedActivationFactKeysMatch;
 
 /** Trusted typed inputs for building the closed fact (canonical fact minus event discriminant). */
 export type AcceptedActivationFactInput = Omit<AcceptedActivationFact, "event">;
@@ -70,13 +94,13 @@ export function correlationIdentityFromEnv(
 }
 
 /**
- * Sole closed whitelist projection for accepted-activation facts (ADR 0049).
- * Build and serialize both consume this — zero content keys, no dual projection drift.
+ * Descriptor-driven top-level pick: only ACCEPTED_ACTIVATION_FACT_KEYS leave this boundary.
+ * Nested session/correlation are rebuilt closed before the pick (ADR 0049 zero-content by construction).
  */
 function projectAcceptedActivationFact(
   input: AcceptedActivationFactInput,
 ): AcceptedActivationFact {
-  return {
+  const closed: AcceptedActivationFact = {
     event: ACCEPTED_ACTIVATION_EVENT,
     role: input.role,
     observedAt: input.observedAt,
@@ -86,14 +110,18 @@ function projectAcceptedActivationFact(
       ? { kind: "caller", id: input.correlation.id }
       : { kind: "absent" },
   };
+  // Descriptor is the sole top-level emission contract (typed pick; no content keys).
+  return Object.fromEntries(
+    ACCEPTED_ACTIVATION_FACT_KEYS.map((key) => [key, closed[key]]),
+  ) as AcceptedActivationFact;
 }
 
-/** Construct the closed fact from trusted typed inputs only (whitelist — no content keys). */
+/** Construct the closed fact from trusted typed inputs only (descriptor projection — no content keys). */
 export function buildAcceptedActivationFact(input: AcceptedActivationFactInput): AcceptedActivationFact {
   return projectAcceptedActivationFact(input);
 }
 
-/** Serialize only the closed index fields (whitelist projection — no content keys). */
+/** Serialize only the closed index fields (descriptor projection — no content keys). */
 export function serializeAcceptedActivationFact(fact: AcceptedActivationFact): string {
   return `${JSON.stringify(projectAcceptedActivationFact(fact))}\n`;
 }
