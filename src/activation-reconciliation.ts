@@ -4,21 +4,6 @@ import type { AcceptedActivationFact } from "./activation-ledger.ts";
 export const DISPATCH_STUB_EVENT = "dispatch-stub" as const;
 
 /**
- * Package-owned index-only top-level keys for dispatch-stub facts (ADR 0049).
- * Sole machine key contract for the #78↔#11 typed producer seam — not a JSONL
- * line schema and not a validator.
- */
-export const DISPATCH_STUB_FACT_KEYS = Object.freeze([
-  "event",
-  "observedAt",
-  "bookKey",
-  "dispatch",
-  "correlation",
-] as const);
-
-export type DispatchStubFactKey = (typeof DISPATCH_STUB_FACT_KEYS)[number];
-
-/**
  * Non-content dispatch pointer. Carries process identity or an opaque ref —
  * never prompt/argv/content bytes (ADR 0049).
  */
@@ -38,22 +23,15 @@ export type DispatchStubFact = {
   readonly correlation: { readonly kind: "caller"; readonly id: string };
 };
 
-// Keys tuple ↔ fact type must stay exact (compile fail on drift).
-type ExactKeyMatch<T, K extends PropertyKey> =
-  Exclude<keyof T, K> | Exclude<K, keyof T> extends never ? true : never;
-const _dispatchStubFactKeysMatch: ExactKeyMatch<DispatchStubFact, DispatchStubFactKey> = true;
-void _dispatchStubFactKeysMatch;
-
 /** Trusted typed inputs for building the closed dispatch stub (fact minus event discriminant). */
 export type DispatchStubFactInput = Omit<DispatchStubFact, "event">;
 
 /**
  * Construct the closed dispatch stub from trusted typed inputs only.
- * Descriptor-driven top-level pick: only DISPATCH_STUB_FACT_KEYS leave this boundary.
  * Nested dispatch/correlation are rebuilt closed (ADR 0049 zero-content by construction).
  */
 export function buildDispatchStubFact(input: DispatchStubFactInput): DispatchStubFact {
-  const closed: DispatchStubFact = {
+  return {
     event: DISPATCH_STUB_EVENT,
     observedAt: input.observedAt,
     bookKey: input.bookKey,
@@ -62,9 +40,6 @@ export function buildDispatchStubFact(input: DispatchStubFactInput): DispatchStu
       : { kind: "opaque", ref: input.dispatch.ref },
     correlation: { kind: "caller", id: input.correlation.id },
   };
-  return Object.fromEntries(
-    DISPATCH_STUB_FACT_KEYS.map((key) => [key, closed[key]]),
-  ) as DispatchStubFact;
 }
 
 /**

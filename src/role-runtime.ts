@@ -92,7 +92,6 @@ export type {
 } from "./activation-ledger.ts";
 export {
   DISPATCH_STUB_EVENT,
-  DISPATCH_STUB_FACT_KEYS,
   buildDispatchStubFact,
   reconcileInvocation,
 } from "./activation-reconciliation.ts";
@@ -100,7 +99,6 @@ export type {
   DispatchPointer,
   DispatchStubFact,
   DispatchStubFactInput,
-  DispatchStubFactKey,
   ProcessLivenessFact,
   ReconciliationOutcome,
   ReconciliationSubject,

@@ -1,24 +1,12 @@
 const DISPATCH_STUB_EVENT = "dispatch-stub";
-const DISPATCH_STUB_FACT_KEYS = Object.freeze([
-  "event",
-  "observedAt",
-  "bookKey",
-  "dispatch",
-  "correlation"
-]);
-const _dispatchStubFactKeysMatch = true;
-void _dispatchStubFactKeysMatch;
 function buildDispatchStubFact(input) {
-  const closed = {
+  return {
     event: DISPATCH_STUB_EVENT,
     observedAt: input.observedAt,
     bookKey: input.bookKey,
     dispatch: input.dispatch.kind === "process" ? { kind: "process", pid: input.dispatch.pid } : { kind: "opaque", ref: input.dispatch.ref },
     correlation: { kind: "caller", id: input.correlation.id }
   };
-  return Object.fromEntries(
-    DISPATCH_STUB_FACT_KEYS.map((key) => [key, closed[key]])
-  );
 }
 function callerCorrelationId(correlation) {
   return correlation.kind === "caller" ? correlation.id : void 0;
@@ -68,7 +56,6 @@ function reconcileInvocation(subject) {
 }
 export {
   DISPATCH_STUB_EVENT,
-  DISPATCH_STUB_FACT_KEYS,
   buildDispatchStubFact,
   reconcileInvocation
 };

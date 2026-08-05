@@ -8,7 +8,6 @@ import {
 } from "../../src/activation-ledger.ts";
 import {
   DISPATCH_STUB_EVENT,
-  DISPATCH_STUB_FACT_KEYS,
   buildDispatchStubFact,
   reconcileInvocation,
   type DispatchStubFact,
@@ -118,7 +117,6 @@ test("dispatch stub fact is closed at the typed API and omits injected content k
     dispatch: { kind: "process", pid: 42 },
     correlation: { kind: "caller", id: "c-keys" },
   };
-  const injectedExtraKeys = ["prompt", "transcript", "argv", "excerpt", "content"] as const;
   const smuggled = {
     ...closed,
     prompt: "PROMPT_SECRET_BYTES",
@@ -128,14 +126,6 @@ test("dispatch stub fact is closed at the typed API and omits injected content k
     content: "nope",
   } as DispatchStubFact & Record<string, unknown>;
   assert.deepEqual(buildDispatchStubFact(smuggled), closed);
-  const projected = buildDispatchStubFact(smuggled) as Record<string, unknown>;
-  for (const key of injectedExtraKeys) {
-    assert.equal(Object.hasOwn(projected, key), false, `descriptor projection must omit injected ${key}`);
-  }
-  // Descriptor is the sole top-level emission contract (compile-time keys match + runtime pick).
-  for (const key of DISPATCH_STUB_FACT_KEYS) {
-    assert.equal(Object.hasOwn(projected, key), true, `descriptor key ${key} must be present`);
-  }
 });
 
 test("normal dispatch + accepted activation reconciles as matched", () => {
