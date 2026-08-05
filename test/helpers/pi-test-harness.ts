@@ -580,9 +580,6 @@ export async function withHermeticHome<T>(
     );
     const agentDir = resolve(home, ".pi-agent");
     await mkdir(agentDir, { recursive: true });
-    // Packaged role activation requires a git cwd (ADR 0048). Seed the hermetic
-    // home so nested issue roots and cwd=home resolve a common-dir book key.
-    execFileSync("git", ["init", "-b", "main"], { cwd: home, stdio: "ignore" });
     const previousHome = process.env.HOME;
     process.env.HOME = home;
     try {
@@ -595,6 +592,11 @@ export async function withHermeticHome<T>(
   });
 }
 
+/** Explicit git substrate for activation fixtures (ADR 0048). Not a generic home default. */
+export function seedGitRepository(cwd: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
+}
+
 /** Sole machine ledger home under a hermetic process home (ADR 0048). */
 export function machineLedgerHome(home: string): string {
   return join(home, ".ak-roles");
@@ -605,22 +607,28 @@ export function activationBookKeyFor(cwd: string): string {
   return basename(cwd);
 }
 
-/** ExtensionContext that exercises production book-key + session pointer paths. */
+/**
+ * ExtensionContext that exercises production book-key + durable session-file paths.
+ * Pass `sessionFile: null` only when testing the missing-principal rejection.
+ */
 export function activationExtensionContext(input: {
   cwd: string;
   mode?: ExtensionContext["mode"];
   sessionDir?: string;
-  sessionFile?: string;
+  sessionFile?: string | null;
   abort?: () => void;
 }): ExtensionContext {
   const sessionDir = input.sessionDir ?? join(input.cwd, "session");
+  const sessionFile = input.sessionFile === null
+    ? undefined
+    : input.sessionFile ?? join(sessionDir, "session.jsonl");
   return {
     mode: input.mode ?? "print",
     cwd: input.cwd,
     abort: input.abort ?? (() => {}),
     sessionManager: {
       getSessionDir: () => sessionDir,
-      getSessionFile: () => input.sessionFile,
+      getSessionFile: () => sessionFile,
     },
   } as unknown as ExtensionContext;
 }
@@ -824,7 +832,19 @@ export async function withInProcessPi<T>(
     systemPrompt: options.systemPrompt,
   });
   await loader.reload();
-  const sessionManager = SessionManager.inMemory(options.cwd);
+  // Keep in-memory session-dir semantics (empty getSessionDir) so Navigator subject
+  // derivation from cwd/.ak/work stays intact, while exposing a durable file principal
+  // for activation ledger admission (ADR 0048 — no directory-pointer degradation).
+  const memorySession = SessionManager.inMemory(options.cwd);
+  const durableSessionFile = resolve(options.agentDir, "sessions", "inprocess-session.jsonl");
+  await mkdir(dirname(durableSessionFile), { recursive: true });
+  const sessionManager = new Proxy(memorySession, {
+    get(target, property, receiver) {
+      if (property === "getSessionFile") return () => durableSessionFile;
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
   const { session, extensionsResult } = await createAgentSession({
     cwd: options.cwd,
     agentDir: options.agentDir,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import test from "node:test";
 
 import { fauxAssistantMessage, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
@@ -27,7 +28,7 @@ import {
   type JudgeVerdict,
   type SoulAuditInput,
 } from "../../src/role-runtime.ts";
-import { activationExtensionContext, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { activationExtensionContext, seedGitRepository, withHermeticHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type Tool = {
@@ -148,16 +149,17 @@ function installRoleRuntime(deps: Parameters<typeof createRoleRuntimeExtension>[
 }
 
 async function withActivationHome<T>(run: (home: string) => Promise<T>): Promise<T> {
-  return withHermeticHome({ prefix: "ak-judge-role-" }, async ({ home }) => run(home));
+  return withHermeticHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
+    seedGitRepository(home);
+    return run(home);
+  });
 }
 
 function activationCtx(home: string, extras: Record<string, unknown> = {}): ExtensionContext {
-  // Prefer a real in-memory SessionManager when callers need full session APIs (Navigator).
+  // Durable session principal under the hermetic home (activation rejects in-memory / --no-session).
   // Default mode stays undefined so failInfrastructure does not stamp process.exitCode unless a test opts in.
-  const sessionManager = SessionManager.inMemory(home);
+  const sessionManager = SessionManager.create(home, join(home, "session"));
   return {
-    cwd: home,
-    sessionManager,
     abort: () => {},
     ...extras,
     cwd: home,

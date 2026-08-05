@@ -16,6 +16,7 @@ import { runFixerAuditFailureCli } from "../helpers/fixer-audit-cli.ts";
 import {
   packageRoot,
   runPiSubprocess,
+  seedGitRepository,
   withHermeticHome,
   withInProcessPi,
   writeTestSkill,
@@ -24,37 +25,41 @@ import { COMPLIANCE_RESPONSE_ENTRY_TYPE } from "../../src/compliance-transport.t
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/role-runtime.ts";
 
 async function runCli(mode: "print" | "json") {
-  const args = [
-    "--no-extensions",
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-context-files",
-    "--no-session",
-    "-e",
-    resolve(packageRoot, "extensions/role-runtime.ts"),
-    "-e",
-    resolve(packageRoot, "test/fixtures/audit-failure-provider.ts"),
-    "--ak-role",
-    "judge",
-    "--provider",
-    "ak-audit-failure",
-    "--model",
-    "faux-1",
-    ...(mode === "print" ? ["-p", "Judge."] : ["--mode", "json", "Judge."]),
-  ];
-
   return withHermeticHome(
     { prefix: "ak-audit-cli-" },
-    async ({ agentDir }) =>
-      runPiSubprocess(args, {
+    async ({ home, agentDir }) => {
+      const sessionDirectory = resolve(home, ".ak-roles/books/ak-roles-127/runs/audit-cli/session");
+      await mkdir(sessionDirectory, { recursive: true });
+      const args = [
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+        "--session-dir",
+        sessionDirectory,
+        "-e",
+        resolve(packageRoot, "extensions/role-runtime.ts"),
+        "-e",
+        resolve(packageRoot, "test/fixtures/audit-failure-provider.ts"),
+        "--ak-role",
+        "judge",
+        "--provider",
+        "ak-audit-failure",
+        "--model",
+        "faux-1",
+        ...(mode === "print" ? ["-p", "Judge."] : ["--mode", "json", "Judge."]),
+      ];
+      return runPiSubprocess(args, {
         cwd: packageRoot,
         env: {
           ...process.env,
+          HOME: home,
           PI_CODING_AGENT_DIR: agentDir,
           PI_OFFLINE: "1",
         },
-      }),
+      });
+    },
   );
 }
 
@@ -77,6 +82,7 @@ async function runTimeoutCli(mode: "print" | "json") {
   return withHermeticHome(
     { prefix: "ak-audit-timeout-" },
     async ({ home, agentDir }) => {
+      seedGitRepository(home);
       const sessionDirectory = resolve(home, "runs/judge/session");
       await mkdir(sessionDirectory, { recursive: true });
       const args = [
@@ -128,6 +134,7 @@ async function runHealthyNavigatorAuditFailureCli(mode: "print" | "json") {
   return withHermeticHome(
     { prefix: "ak-audit-navigator-" },
     async ({ home, agentDir }) => {
+      seedGitRepository(home);
       const issueRoot = resolve(home, ".ak/work/issues/28");
       const sessionDirectory = resolve(issueRoot, "runs/judge/session");
       await mkdir(sessionDirectory, { recursive: true });
@@ -243,6 +250,8 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
           ],
         }),
       );
+      const sessionDirectory = resolve(home, ".ak-roles/books/review-target/runs/reviewer-fatal/session");
+      await mkdir(sessionDirectory, { recursive: true });
       const args = [
         "--no-extensions",
         "--no-skills",
@@ -251,7 +260,8 @@ async function runReviewerCli(mode: "print" | "json", stage: ReviewerFailureStag
         "--no-prompt-templates",
         "--no-themes",
         "--no-context-files",
-        "--no-session",
+        "--session-dir",
+        sessionDirectory,
         "-e",
         resolve(packageRoot, "extensions/role-runtime.ts"),
         "-e",
@@ -301,13 +311,16 @@ async function runCoderSkillFailureCli(
           "---\nname: tdd\ndescription: empty fixture\n---\n\n",
         );
       }
+      const sessionDirectory = resolve(home, ".ak-roles/books/ak-roles-127/runs/coder-skill-fatal/session");
+      await mkdir(sessionDirectory, { recursive: true });
       const args = [
         "--no-extensions",
         "--no-skills",
         "--no-prompt-templates",
         "--no-themes",
         "--no-context-files",
-        "--no-session",
+        "--session-dir",
+        sessionDirectory,
         "-e",
         resolve(packageRoot, "extensions/role-runtime.ts"),
         "-e",

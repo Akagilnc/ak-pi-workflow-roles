@@ -54,6 +54,7 @@ import {
   packageRoot,
   readAcceptedActivationFacts,
   runNodeSubprocess,
+  seedGitRepository,
   withHermeticHome,
   withInProcessPi,
 } from "../helpers/pi-test-harness.ts";
@@ -327,6 +328,7 @@ function runtimeHarness(options: {
 
 test("every registered whole-activation rejection terminates nonzero with a named cause before a model turn", async () => {
   await withHermeticHome({ prefix: "ak-act-reject-" }, async ({ home }) => {
+    seedGitRepository(home);
     for (const entry of PACKAGED_ROLE_REGISTRY) {
       process.exitCode = undefined;
       const traces: ActivationTraceRecord[] = [];
@@ -389,6 +391,7 @@ test("every registered whole-activation rejection terminates nonzero with a name
 test("every registered role writes exactly one accepted-activation fact after admission", async () => {
   assert.ok(PACKAGED_ROLE_REGISTRY.some((entry) => entry.role === "collector"), "Collector must remain in the #52 registry gate");
   await withHermeticHome({ prefix: "ak-act-admit-" }, async ({ home }) => {
+    seedGitRepository(home);
     const fixtureRoot = join(home, "admit-fixtures");
     mkdirSync(fixtureRoot, { recursive: true });
     const bookKey = activationBookKeyFor(home);
@@ -467,6 +470,7 @@ test("every registered role writes exactly one accepted-activation fact after ad
 
 test("unselected role and unsupported role leave zero accepted-activation facts", async () => {
   await withHermeticHome({ prefix: "ak-act-unsel-" }, async ({ home }) => {
+    seedGitRepository(home);
     process.exitCode = undefined;
     const unselected = registryPi({ role: undefined });
     createRoleRuntimeExtension({
@@ -494,7 +498,7 @@ test("unselected role and unsupported role leave zero accepted-activation facts"
   });
 });
 
-test("non-git cwd fails before model dispatch with zero accepted facts", async () => {
+test("non-git cwd and missing durable session fail before model dispatch with zero accepted facts", async () => {
   await withHermeticHome({ prefix: "ak-act-nongit-" }, async ({ home }) => {
     process.exitCode = undefined;
     let aborts = 0;
@@ -507,36 +511,65 @@ test("non-git cwd fails before model dispatch with zero accepted facts", async (
       auditSoulCompliance: async () => ({ status: "pass" }),
       activationTraceWriter: () => {},
     })(pi);
-    const nonGit = mkdtempSync(join(tmpdir(), "ak-nongit-"));
-    try {
-      const ctx = activationExtensionContext({
-        cwd: nonGit,
-        abort() { aborts++; },
-      });
-      await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.match(error.message, /git rev-parse --git-common-dir/);
-        assert.ok(error.cause !== undefined, "original git cause must be retained");
-        return true;
-      });
-      assert.equal(soulLoads, 0, "activation stage must not run before book-key resolution");
-      assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
-      assert.equal(existsSync(join(machineLedgerHome(home), "books")), false);
-      assert.equal(aborts, 1);
-      assert.equal(process.exitCode, 1);
-      await assert.rejects(async () => {
-        for (const before of handlers.get("before_agent_start") ?? []) await before({}, ctx);
-        providerTurns++;
-      }, (error: unknown) => error instanceof ActivationBarrierError);
-      assert.equal(providerTurns, 0);
-    } finally {
-      rmSync(nonGit, { recursive: true, force: true });
-    }
+    // Hermetic home is intentionally not a git repo (generic withHermeticHome has no git substrate).
+    const ctx = activationExtensionContext({
+      cwd: home,
+      abort() { aborts++; },
+    });
+    await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /git rev-parse --git-common-dir/);
+      assert.ok(error.cause !== undefined, "original git cause must be retained");
+      return true;
+    });
+    assert.equal(soulLoads, 0, "activation stage must not run before book-key resolution");
+    assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
+    assert.equal(existsSync(join(machineLedgerHome(home), "books")), false);
+    assert.equal(aborts, 1);
+    assert.equal(process.exitCode, 1);
+    await assert.rejects(async () => {
+      for (const before of handlers.get("before_agent_start") ?? []) await before({}, ctx);
+      providerTurns++;
+    }, (error: unknown) => error instanceof ActivationBarrierError);
+    assert.equal(providerTurns, 0);
+
+    // Missing durable session principal fails closed (no directory-pointer degradation).
+    process.exitCode = undefined;
+    aborts = 0;
+    soulLoads = 0;
+    providerTurns = 0;
+    seedGitRepository(home);
+    const missingSession = registryPi({ role: "judge" });
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => { soulLoads += 1; return "LAW"; },
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+      activationTraceWriter: () => {},
+    })(missingSession.pi);
+    const noSessionCtx = activationExtensionContext({
+      cwd: home,
+      sessionFile: null,
+      abort() { aborts++; },
+    });
+    await assert.rejects(
+      async () => missingSession.handlers.get("session_start")?.[0]?.({ reason: "startup" }, noSessionCtx),
+      (error: unknown) => error instanceof Error && /durable Pi session file principal/.test(error.message),
+    );
+    assert.equal(soulLoads, 0, "activation stage must not run without a durable session principal");
+    assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 0);
+    assert.equal(aborts, 1);
+    assert.equal(process.exitCode, 1);
+    await assert.rejects(async () => {
+      for (const before of missingSession.handlers.get("before_agent_start") ?? []) await before({}, noSessionCtx);
+      providerTurns++;
+    }, (error: unknown) => error instanceof ActivationBarrierError);
+    assert.equal(providerTurns, 0);
   });
 });
 
 test("append failure preserves original cause, aborts nonzero, and blocks provider turns", async () => {
   await withHermeticHome({ prefix: "ak-act-append-" }, async ({ home }) => {
+    seedGitRepository(home);
     process.exitCode = undefined;
     // Make the sole machine home unwritable so production O_APPEND fails with the OS cause.
     const ledgerHome = machineLedgerHome(home);
@@ -678,14 +711,15 @@ appendAcceptedActivationFact(ledgerPath, buildAcceptedActivationFact({
   rmSync(root, { recursive: true, force: true });
 });
 
-test("real subprocess activation writes one enumerable fact; non-git writes none", async () => {
+test("real subprocess activation writes one enumerable fact under production home/session topology", async () => {
   await withHermeticHome({ prefix: "ak-act-subproc-" }, async ({ home, agentDir }) => {
     const repo = join(home, "repo-main");
     mkdirSync(repo);
-    execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "ignore" });
+    seedGitRepository(repo);
     const sessionDir = join(home, ".ak-roles", "books", "repo-main", "sessions", "run-1");
     mkdirSync(sessionDir, { recursive: true });
 
+    // Focused process boundary for production topology only — registry owns cardinality/failure classes.
     const ok = await runNodeSubprocess([
       "--import", "tsx", "-e",
       `
@@ -736,43 +770,6 @@ await handlers.get("session_start")[0]({ reason: "startup" }, ctx);
     assert.deepEqual(fact.session, { kind: "session-file", path: join(sessionDir, "session.jsonl") });
     assert.deepEqual(fact.correlation, { kind: "caller", id: "subproc-1" });
     assert.deepEqual(readdirSync(join(home, ".ak-roles", "books")).sort(), ["repo-main"]);
-
-    const nonGit = mkdtempSync(join(tmpdir(), "ak-truly-nongit-"));
-    const emptyHome = join(home, "empty-home");
-    mkdirSync(emptyHome);
-    const bad = await runNodeSubprocess([
-      "--import", "tsx", "-e",
-      `
-import { createRoleRuntimeExtension } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, "src/role-runtime.ts")).href)};
-const handlers = new Map();
-const pi = {
-  registerFlag() {}, registerTool() {}, setActiveTools() {}, getActiveTools() { return []; }, getAllTools() { return []; },
-  getFlag(name) { return name === "ak-role" ? "judge" : undefined; },
-  on(name, handler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
-};
-createRoleRuntimeExtension({
-  loadJudgeSoul: async () => "LAW",
-  transcriptFromContext: () => "",
-  auditSoulCompliance: async () => ({ status: "pass" }),
-  activationTraceWriter: () => {},
-})(pi);
-const ctx = { mode: "print", cwd: process.env.REPO_CWD, abort() {}, sessionManager: { getSessionDir: () => "/tmp", getSessionFile: () => undefined } };
-try {
-  await handlers.get("session_start")[0]({ reason: "startup" }, ctx);
-  process.exitCode = 0;
-} catch (error) {
-  process.exitCode = 1;
-  if (!(error instanceof Error) || !/git rev-parse --git-common-dir/.test(error.message)) process.exitCode = 2;
-}
-`,
-    ], {
-      cwd: packageRoot,
-      env: { ...process.env, REPO_CWD: nonGit, HOME: emptyHome },
-      timeoutMs: 20_000,
-    });
-    assert.equal(bad.code, 1, bad.stderr);
-    assert.equal(readdirSync(emptyHome).length, 0);
-    rmSync(nonGit, { recursive: true, force: true });
   });
 });
 
@@ -781,7 +778,6 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
   const result = await runFixerAuditFailureCli({
     packet: "Apply the assigned repair.\n",
     prerequisites: { prerequisites: [] },
-    noSession: true,
     timeoutMs: 15_000,
     prefix: "ak-fixer-activation-incident-",
   });
@@ -806,6 +802,7 @@ test("incident 2026-08-02: malformed Fixer prerequisites fail the real Pi subpro
 
 test("failed trace emission cannot mask the activation cause or skip termination", async () => {
   await withHermeticHome({ prefix: "ak-act-trace-" }, async ({ home }) => {
+    seedGitRepository(home);
     const activationError = new TypeError("soul unavailable");
     const traceError = new Error("trace unavailable");
     let writes = 0;
@@ -880,6 +877,7 @@ test("default trace and tool observation writers retry short writes and reject s
 for (const [mode, expected] of [["print", 1], ["json", 1], ["tui", undefined], ["rpc", undefined]] as const) {
   test(`activation failure applies ${mode} exit-code policy`, async () => {
     await withHermeticHome({ prefix: `ak-act-mode-${mode}-` }, async ({ home }) => {
+      seedGitRepository(home);
       process.exitCode = undefined;
       const h = runtimeHarness({ home, mode });
       await assert.rejects(async () => h.handler("session_start")({}, h.ctx));
@@ -1011,6 +1009,7 @@ test("observation face rejects throttleMs override at the typed call site and ig
 
 test("shared role runtime registers tool observation only after admitted activation and never writes stdout", async () => {
   await withHermeticHome({ prefix: "ak-act-obs-" }, async ({ home }) => {
+    seedGitRepository(home);
     const observations: ToolExecutionObservationRecord[] = [];
     const { pi, handlers } = registryPi({ role: "judge" });
     createRoleRuntimeExtension({
@@ -1077,6 +1076,7 @@ test("production observation mono clock is monotonic and not wall-clock Date.now
 
 test("observation writer failure aborts through real ExtensionRunner emit with original cause", async () => {
   await withHermeticHome({ prefix: "ak-tool-obs-fail-" }, async ({ home, agentDir }) => {
+    seedGitRepository(home);
     const faux = fauxProvider({ api: "ak-tool-obs-fail", provider: "ak-tool-obs-fail" });
     const writerError = new Error("stderr unavailable");
     const priorExitCode = process.exitCode;
