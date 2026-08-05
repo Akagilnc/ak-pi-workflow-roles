@@ -22,11 +22,7 @@ const liveChildren = new Set<ParkedChild>();
 
 afterEach(() => {
   for (const child of liveChildren) {
-    try {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    } catch {
-      // best-effort test cleanup only — production reconciler never kills
-    }
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }
   liveChildren.clear();
 });
