@@ -775,6 +775,7 @@ test("Reviewer fatal audit stages fail closed in-process without a receipt", asy
         let sawError = false;
         await withInProcessPi(
           {
+            activationLedgerSession: true,
             cwd,
             agentDir: resolve(agentDir, stage),
             faux,

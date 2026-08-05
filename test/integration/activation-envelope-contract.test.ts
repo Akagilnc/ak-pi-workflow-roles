@@ -795,6 +795,53 @@ test("book key follows git common-dir host basename across worktrees, rename, an
   }
 });
 
+test("git spawn infrastructure failures retain identity and do not masquerade as non-git", () => {
+  const root = mkdtempSync(join(tmpdir(), "ak-book-infra-"));
+  try {
+    const cwd = join(root, "workspace");
+    mkdirSync(cwd);
+    // Empty PATH makes spawn of `git` fail with ENOENT — infrastructure, not non-git cwd.
+    const emptyBin = join(root, "empty-bin");
+    mkdirSync(emptyBin);
+    const previousPath = process.env.PATH;
+    try {
+      process.env.PATH = emptyBin;
+      assert.throws(
+        () => resolveBookKeyFromGit(cwd),
+        (error: unknown) => {
+          assert.equal(
+            error instanceof ActivationGitRepositoryRequiredError,
+            false,
+            "ENOENT must not become ActivationGitRepositoryRequiredError",
+          );
+          assert.ok(error !== null && typeof error === "object" && "code" in error);
+          assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
+          return true;
+        },
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+
+    // Control: a real git child that exits nonzero remains the typed non-git error.
+    assert.throws(
+      () => resolveBookKeyFromGit(cwd),
+      (error: unknown) => {
+        assert.ok(error instanceof ActivationGitRepositoryRequiredError);
+        assert.equal(error.code, "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED");
+        assert.ok(error.cause !== undefined);
+        const cause = error.cause as { status?: unknown };
+        assert.equal(typeof cause.status, "number");
+        assert.notEqual(cause.status, 0);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("concurrent child processes append intact JSONL records with exact cardinality", async () => {
   const root = mkdtempSync(join(tmpdir(), "ak-ledger-conc-"));
   const ledgerHome = join(root, "home");
@@ -1243,6 +1290,7 @@ test("observation writer failure aborts through real ExtensionRunner emit with o
     const extensionErrors: ExtensionError[] = [];
     try {
       await withInProcessPi({
+        activationLedgerSession: true,
         cwd: home,
         agentDir,
         faux,

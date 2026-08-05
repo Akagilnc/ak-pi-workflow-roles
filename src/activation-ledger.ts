@@ -399,8 +399,8 @@ function envWithoutGitDiscovery(base: NodeJS.ProcessEnv = process.env): NodeJS.P
 }
 
 /**
- * Typed book-key discovery failure: cwd is not an admissible git repository.
- * Original git/exec cause is retained for infrastructure classification (ENOENT/EACCES).
+ * Typed book-key discovery failure: a git child ran and reported non-repository status.
+ * Original git cause (nonzero exit) is retained. Spawn/OS failures never become this type.
  */
 export class ActivationGitRepositoryRequiredError extends Error {
   readonly code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED" as const;
@@ -413,9 +413,25 @@ export class ActivationGitRepositoryRequiredError extends Error {
   }
 }
 
+/** Spawn/OS failure identity for the git child — not a repository-status result. */
+function isGitSpawnInfrastructureError(error: unknown): boolean {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  const code = (error as { code: unknown }).code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
+}
+
+/** True when the git child process started and exited with a typed nonzero status. */
+function gitChildExitedNonzero(error: unknown): boolean {
+  if (error === null || typeof error !== "object" || !("status" in error)) return false;
+  const status = (error as { status: unknown }).status;
+  return typeof status === "number" && status !== 0;
+}
+
 /**
  * Book key = basename of the git common-dir host directory (ADR 0048).
- * Worktrees resolve to the main repository host. Non-git cwd retains the original git cause.
+ * Worktrees resolve to the main repository host.
+ * A git child that exits nonzero becomes ActivationGitRepositoryRequiredError with cause;
+ * spawn/infrastructure failures (ENOENT/EACCES/EPERM) retain their own identity.
  * Discovery is bound to `cwd` only — caller-controlled GIT_DIR / GIT_COMMON_DIR /
  * work-tree / ceiling / discovery env cannot redirect the lookup.
  */
@@ -429,12 +445,20 @@ export function resolveBookKeyFromGit(cwd: string): string {
       env: envWithoutGitDiscovery(),
     }).trim();
   } catch (error) {
-    const err = error as NodeJS.ErrnoException & { stderr?: string | Buffer };
+    // Infrastructure (missing binary, permission) keeps its own identity.
+    // Only a git child that ran and returned nonzero may become the typed non-git error.
+    // Do not classify by stderr prose.
+    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
+      throw error;
+    }
+    const err = error as { stderr?: string | Buffer; message?: string };
     const detail = typeof err.stderr === "string"
       ? err.stderr.trim()
       : Buffer.isBuffer(err.stderr)
       ? err.stderr.toString("utf8").trim()
-      : err.message;
+      : typeof err.message === "string"
+      ? err.message
+      : "";
     throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
   }
   if (commonDir.length === 0) {
@@ -451,8 +475,17 @@ export function resolveBookKeyFromGit(cwd: string): string {
   return bookKey;
 }
 
-/** Construct the closed fact from trusted typed inputs only (whitelist — no content keys). */
-export function buildAcceptedActivationFact(input: AcceptedActivationFactInput): AcceptedActivationFact {
+/**
+ * Sole closed whitelist projection for accepted-activation facts (ADR 0049).
+ * Build and serialize both consume this — zero content keys, no dual projection drift.
+ */
+function projectAcceptedActivationFact(input: {
+  readonly role: string;
+  readonly observedAt: string;
+  readonly bookKey: string;
+  readonly session: ActivationSessionPointer;
+  readonly correlation: ActivationCorrelationIdentity;
+}): AcceptedActivationFact {
   return {
     event: ACCEPTED_ACTIVATION_EVENT,
     role: input.role,
@@ -465,18 +498,14 @@ export function buildAcceptedActivationFact(input: AcceptedActivationFactInput):
   };
 }
 
+/** Construct the closed fact from trusted typed inputs only (whitelist — no content keys). */
+export function buildAcceptedActivationFact(input: AcceptedActivationFactInput): AcceptedActivationFact {
+  return projectAcceptedActivationFact(input);
+}
+
 /** Serialize only the closed index fields (whitelist projection — no content keys). */
 export function serializeAcceptedActivationFact(fact: AcceptedActivationFact): string {
-  return `${JSON.stringify({
-    event: fact.event,
-    role: fact.role,
-    observedAt: fact.observedAt,
-    bookKey: fact.bookKey,
-    session: { kind: "session-file", path: fact.session.path },
-    correlation: fact.correlation.kind === "caller"
-      ? { kind: "caller", id: fact.correlation.id }
-      : { kind: "absent" },
-  })}\n`;
+  return `${JSON.stringify(projectAcceptedActivationFact(fact))}\n`;
 }
 
 /**

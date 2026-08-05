@@ -46,39 +46,27 @@ pi install -l /absolute/path/to/ak-pi-workflow-roles
 **1. Feed materials through the filesystem.** Roles read files with their own tools; write what you want adjudicated into a file and name its path in the prompt.
 
 ```bash
-BOOK=~/.ak-roles/books/<git-common-dir-host-basename>
-RUN="$BOOK/issues/<issue>/runs/<invocation>"
-mkdir -p "$RUN/session"
-cat > "$RUN/packet.md" <<'EOF'
+mkdir -p /tmp/court/session
+cat > /tmp/court/packet.md <<'EOF'
 Adjudicate <what>. Evidence: <paths>. Questions: <numbered list>.
 EOF
 ```
 
-**2. Ignite.** Close stdin (`</dev/null` — pi drains a non-TTY stdin to EOF before doing any work, so an unclosed background pipe parks the invocation forever; upstream earendil-works/pi#2078). Discard stdout (an unbounded JSON event stream). Keep stderr and the session directory — they are the run's records. The durable `--session-dir` must sit under the machine ledger home (ADR 0048); `/tmp` and consumer-repo paths are rejected at activation.
+**2. Ignite.** Close stdin (`</dev/null` — pi drains a non-TTY stdin to EOF before doing any work, so an unclosed background pipe parks the invocation forever; upstream earendil-works/pi#2078). Discard stdout (an unbounded JSON event stream). Keep stderr and the session directory — they are the run's records.
 
 ```bash
-pi --ak-role judge --mode json --session-dir "$RUN/session" \
-  -p "Adjudicate per the packet at $RUN/packet.md. Read it in full first." \
-  >/dev/null 2>"$RUN/stderr.log" </dev/null
+pi --ak-role judge --mode json --session-dir /tmp/court/session \
+  -p "Adjudicate per the packet at /tmp/court/packet.md. Read it in full first." \
+  >/dev/null 2>/tmp/court/stderr.log </dev/null
 ```
 
-**3. Read the verdict from the session file, not stdout.** The authoritative receipt is the accepted `ak_judge_output` tool call recorded in `$RUN/session/*.jsonl`; its `arguments` carry the verdict (shape: [Verdict contract](#verdict-contract)). Plain assistant text is never a completed verdict.
+**3. Read the verdict from the session file, not stdout.** The authoritative receipt is the accepted `ak_judge_output` tool call recorded in `/tmp/court/session/*.jsonl`; its `arguments` carry the verdict (shape: [Verdict contract](#verdict-contract)). Plain assistant text is never a completed verdict.
 
 ```bash
-grep -o '"judgeStatus":"[a-z]*"' "$RUN/session"/*.jsonl | tail -1
+grep -o '"judgeStatus":"[a-z]*"' /tmp/court/session/*.jsonl | tail -1
 ```
 
 Judge needs no other flags. Roles with mandatory flags: Fixer (`--ak-fixer-phase`, `--ak-fix-packet`), Reviewer (`--ak-review-task`, `--ak-review-capabilities`), Coder (`--ak-coder-phase`, `--ak-coder-task`) — see each role's section. An ignition that cannot activate its role exits nonzero; nothing falls back to uncaged pi.
-
-### Activation ledger (host channels)
-
-After a packaged role is admitted, the shared envelope appends one index-only fact to the machine ledger home (ADR 0047/0048/0049). This is not a CLI flag surface:
-
-| Host env | Meaning |
-| --- | --- |
-| `AK_CORRELATION_ID` | Optional caller-preassigned correlation id, stored as-is on the accepted-activation fact. When unset, blank, or whitespace-only, the fact records a typed `{ "kind": "absent" }` identity (never an empty string). Non-blank values are preserved verbatim. |
-
-Layout: `~/.ak-roles/books/<git-common-dir-host-basename>/waiting.jsonl` (sole machine home under the process home directory; ADR 0048). Book key is the basename of the host directory of `git rev-parse --git-common-dir` (worktrees join the main repo’s book). Non-git cwd is rejected before model dispatch. The durable session principal must be an absolute path under that same book (file or prepared session-dir parent); relative paths, `/tmp`, consumer-repository paths, and directory principals are rejected before model dispatch. Facts hold only event, role, observed time, book key, durable session pointer, and correlation — zero prompt/transcript/argv/excerpt bytes.
 
 ## Navigator attendance
 
@@ -248,15 +236,13 @@ Supported one-shot launch profile (required shape):
 
 ```bash
 pi --no-extensions -e <package-extension> --no-skills --no-prompt-templates \
-  --no-context-files \
-  --session-dir ~/.ak-roles/books/<git-common-dir-host-basename>/issues/<issue>/runs/<invocation>/session \
-  --mode json --ak-role collector \
+  --no-context-files --no-session --mode json --ak-role collector \
   --ak-collector-repo <owner/repo> --ak-collector-pr <n> \
   --ak-collector-legs <manifest.json> -p "Start collection." \
   >/dev/null 2>stderr.log </dev/null
 ```
 
-That profile means: `--no-skills`; `--no-extensions` with only the explicit Collector package extension; no prompt templates; no context files; a durable `--session-dir` under the machine ledger home (not `--no-session`); exactly one print/JSON prompt. Do not load Skills, ambient extensions, prompt templates, or context files alongside Collector. The future public CLI (#11) owns computing the session path; this retained profile only records the durable-session shape.
+That profile means: `--no-skills`; `--no-extensions` with only the explicit Collector package extension; no prompt templates; no context files; exactly one print/JSON prompt. Do not load Skills, ambient extensions, prompt templates, or context files alongside Collector.
 
 Legs-only caller example (`--ak-collector-legs`):
 
