@@ -12,9 +12,13 @@
  *
  * Receipt trust: only successful toolResults that pass typed contract
  * validation count as round results. Prior rejected attempts stay attempts.
+ *
+ * Page lifecycle: startTicketTrajectoryPage owns refresh regeneration to an
+ * explicit output path outside the ledger; caller stops the handle.
  */
-import { mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   AcceptedDetailsContractError,
@@ -35,11 +39,27 @@ export type TicketSnapshot = {
 
 export type StationSource = "tool" | "invocation" | "name" | "unknown";
 
+/** Injected clock + scheduler so tests drive the production lifecycle without wall sleep. */
+export type TrajectoryClock = () => Date;
+export type TrajectoryScheduler = {
+  /** Schedule `tick` every `ms` milliseconds; return a cancel function. */
+  every: (ms: number, tick: () => void) => () => void;
+};
+
+export type TicketTrajectoryPageHandle = {
+  readonly outputPath: string;
+  /** Settles when the first page write finishes (or rejects on first failure). */
+  readonly started: Promise<{ outputPath: string; html: string }>;
+  /** Stop further regeneration. In-flight write is awaited. */
+  stop: () => Promise<void>;
+};
+
 type SessionRow = Record<string, unknown>;
 
 type ParsedRun = {
   runId: string;
   ledgerCoord: string;
+  evidenceHref: string;
   startedAt?: string;
   station: string;
   stationSource: StationSource;
@@ -95,17 +115,32 @@ function attr(value: string): string {
   return escapeHtml(value);
 }
 
-async function readJsonl(path: string): Promise<SessionRow[]> {
+/**
+ * Read session JSONL with honest live-tail semantics:
+ * a malformed line is tolerated only when it is the unfinished tail
+ * (no non-empty line follows). Mid-file corruption after which more
+ * records exist must fail loudly — never silently under-count.
+ */
+export async function readLedgerSessionJsonl(path: string): Promise<SessionRow[]> {
   const text = await readFile(path, "utf8");
+  const lines = text.split("\n");
   const rows: SessionRow[] = [];
-  for (const line of text.split("\n")) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
     if (!line.trim()) continue;
     try {
       const row: unknown = JSON.parse(line);
       if (isRecord(row)) rows.push(row);
     } catch (error) {
-      if (error instanceof SyntaxError) break; // truncated tail — stop, keep prior rows
-      throw error;
+      if (!(error instanceof SyntaxError)) throw error;
+      const hasRecordAfter = lines.slice(index + 1).some((candidate) => candidate.trim().length > 0);
+      if (hasRecordAfter) {
+        throw new Error(
+          `malformed JSONL record in middle of ${path} at line ${index + 1}: ${error.message}`,
+        );
+      }
+      // truncated live tail — keep prior complete rows
+      break;
     }
   }
   return rows;
@@ -247,10 +282,12 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
 async function parseRun(ledgerDir: string, issueNumber: number, runId: string): Promise<ParsedRun> {
   const runDir = join(ledgerDir, "issues", String(issueNumber), "runs", runId);
   const ledgerCoord = ["issues", String(issueNumber), "runs", runId].join("/");
+  const evidenceTarget = await realpath(runDir).catch(() => runDir);
+  const evidenceHref = pathToFileURL(evidenceTarget).href;
   const sessionFiles = await listSessionFiles(join(runDir, "session"));
   const rows: SessionRow[] = [];
   for (const file of sessionFiles) {
-    rows.push(...(await readJsonl(file)));
+    rows.push(...(await readLedgerSessionJsonl(file)));
   }
 
   let startedAt: string | undefined;
@@ -282,6 +319,7 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
   return {
     runId,
     ledgerCoord,
+    evidenceHref,
     ...(startedAt !== undefined ? { startedAt } : {}),
     station,
     stationSource,
@@ -358,7 +396,7 @@ function renderHtml(input: {
             ? `<span class="result">result: ${escapeHtml(run.resultStatus)}</span>`
             : `<span class="result">result: (none — attempts only)</span>`,
           `</p>`,
-          `<p class="ledger"><a data-ledger-link="${attr(run.ledgerCoord)}" href="#${attr(run.ledgerCoord)}">${escapeHtml(run.ledgerCoord)}</a></p>`,
+          `<p class="ledger"><a data-ledger-link="${attr(run.ledgerCoord)}" href="${attr(run.evidenceHref)}">${escapeHtml(run.ledgerCoord)}</a></p>`,
           `</article>`,
         ].join("");
       })
@@ -448,8 +486,96 @@ function isPathInside(parent: string, child: string): boolean {
 }
 
 /**
- * Page lifecycle: render via the unique seam and write ONLY to an explicit
- * path outside the ledger. Caller owns output location and process lifetime.
+ * Resolve the prospective on-disk target of outputPath and refuse any landing
+ * inside the ledger — including when the path, a parent, or a trailing segment
+ * is a symlink into the ledger tree.
+ */
+export async function assertTrajectoryOutputOutsideLedger(
+  ledgerDir: string,
+  outputPath: string,
+): Promise<{ ledgerRoot: string; outputAbsolute: string; prospectiveReal: string }> {
+  const ledgerRoot = await realpath(resolve(ledgerDir)).catch(async () => resolve(ledgerDir));
+  const outputAbsolute = resolve(outputPath);
+
+  // Walk up until an existing filesystem node is found; realpath that prefix
+  // and rejoin the missing tail so symlink parents are fully followed.
+  const missingTail: string[] = [];
+  let cursor = outputAbsolute;
+  for (;;) {
+    try {
+      await lstat(cursor);
+      break;
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      const parent = dirname(cursor);
+      if (parent === cursor) break;
+      missingTail.push(basename(cursor));
+      cursor = parent;
+    }
+  }
+
+  let realPrefix: string;
+  try {
+    realPrefix = await realpath(cursor);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    realPrefix = resolve(cursor);
+  }
+
+  const prospectiveReal =
+    missingTail.length === 0 ? realPrefix : resolve(realPrefix, ...missingTail.reverse());
+
+  if (isPathInside(ledgerRoot, prospectiveReal) || isPathInside(ledgerRoot, realPrefix)) {
+    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
+  }
+
+  // Lexical absolute path must also stay outside (defense in depth before mkdir).
+  if (isPathInside(ledgerRoot, outputAbsolute)) {
+    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
+  }
+
+  return { ledgerRoot, outputAbsolute, prospectiveReal };
+}
+
+async function writeHtmlAtomicallyOutsideLedger(input: {
+  ledgerRoot: string;
+  outputAbsolute: string;
+  html: string;
+}): Promise<string> {
+  const parent = dirname(input.outputAbsolute);
+  await mkdir(parent, { recursive: true });
+
+  // Re-resolve after mkdir: a race or symlink parent must still land outside.
+  const parentReal = await realpath(parent);
+  if (isPathInside(input.ledgerRoot, parentReal)) {
+    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
+  }
+
+  const destinationReal = resolve(parentReal, basename(input.outputAbsolute));
+  if (isPathInside(input.ledgerRoot, destinationReal)) {
+    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
+  }
+
+  // Refuse to write through an existing symlink whose target is inside the ledger.
+  try {
+    const existing = await lstat(input.outputAbsolute);
+    if (existing.isSymbolicLink()) {
+      const target = await realpath(input.outputAbsolute);
+      if (isPathInside(input.ledgerRoot, target)) {
+        throw new Error("ticket trajectory outputPath must be outside the ledger directory");
+      }
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+  }
+
+  await writeFile(input.outputAbsolute, input.html, "utf8");
+  return realpath(input.outputAbsolute);
+}
+
+/**
+ * Page write seam: render via the unique seam and write ONLY to an explicit
+ * path outside the ledger. Caller owns output location.
  */
 export async function writeTicketTrajectoryPage(input: {
   ledgerDir: string;
@@ -458,21 +584,7 @@ export async function writeTicketTrajectoryPage(input: {
   outputPath: string;
   refreshBoundarySeconds?: number;
 }): Promise<{ outputPath: string; html: string }> {
-  const ledgerRoot = await realpath(resolve(input.ledgerDir)).catch(async () => resolve(input.ledgerDir));
-  const outputResolved = resolve(input.outputPath);
-
-  // Ensure we never write into the ledger tree (including not-yet-created paths).
-  let outputParent = dirname(outputResolved);
-  try {
-    outputParent = await realpath(outputParent);
-  } catch (error) {
-    if (!isMissingPathError(error)) throw error;
-    // parent may not exist yet — compare resolved absolute paths
-  }
-
-  if (isPathInside(ledgerRoot, outputResolved) || isPathInside(ledgerRoot, outputParent)) {
-    throw new Error("ticket trajectory outputPath must be outside the ledger directory");
-  }
+  const gate = await assertTrajectoryOutputOutsideLedger(input.ledgerDir, input.outputPath);
 
   const html = await renderTicketTrajectoryHtml(
     input.ledgerDir,
@@ -483,9 +595,103 @@ export async function writeTicketTrajectoryPage(input: {
       : undefined,
   );
 
-  await mkdir(dirname(outputResolved), { recursive: true });
-  await writeFile(outputResolved, html, "utf8");
-  const outputPath = await realpath(outputResolved);
+  const outputPath = await writeHtmlAtomicallyOutsideLedger({
+    ledgerRoot: gate.ledgerRoot,
+    outputAbsolute: gate.outputAbsolute,
+    html,
+  });
   return { outputPath, html };
 }
 
+const defaultScheduler: TrajectoryScheduler = {
+  every(ms, tick) {
+    const timer = setInterval(tick, ms);
+    // Allow the process to exit naturally if the caller forgets stop in scripts.
+    timer.unref?.();
+    return () => clearInterval(timer);
+  },
+};
+
+/**
+ * Production page lifecycle: write immediately, then regenerate on the declared
+ * refresh boundary so the same viewing surface observes new runs / generated-at.
+ * Stop cancels further regeneration. Ledger remains read-only.
+ */
+export function startTicketTrajectoryPage(input: {
+  ledgerDir: string;
+  ticketSnapshot: TicketSnapshot;
+  outputPath: string;
+  refreshBoundarySeconds?: number;
+  clock?: TrajectoryClock;
+  scheduler?: TrajectoryScheduler;
+}): TicketTrajectoryPageHandle {
+  const refreshBoundarySeconds = input.refreshBoundarySeconds ?? DEFAULT_REFRESH_BOUNDARY_SECONDS;
+  if (!(refreshBoundarySeconds > 0) || !Number.isFinite(refreshBoundarySeconds)) {
+    throw new Error("refreshBoundarySeconds must be a positive finite number");
+  }
+  const clock = input.clock ?? (() => new Date());
+  const scheduler = input.scheduler ?? defaultScheduler;
+
+  let stopped = false;
+  let cancel: (() => void) | undefined;
+  let inFlight: Promise<void> | undefined;
+  let lastRejection: unknown;
+
+  const writeOnce = async (): Promise<{ outputPath: string; html: string }> => {
+    if (stopped) throw new Error("ticket trajectory page lifecycle already stopped");
+    return writeTicketTrajectoryPage({
+      ledgerDir: input.ledgerDir,
+      ticketSnapshot: input.ticketSnapshot,
+      now: clock(),
+      outputPath: input.outputPath,
+      refreshBoundarySeconds,
+    });
+  };
+
+  const queueWrite = (): Promise<void> => {
+    const run = async (): Promise<void> => {
+      if (stopped) return;
+      await writeOnce();
+    };
+    inFlight = (inFlight ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(run)
+      .catch((error) => {
+        lastRejection = error;
+      });
+    return inFlight;
+  };
+
+  const started = writeOnce()
+    .then((first) => {
+      if (stopped) return first;
+      const intervalMs = Math.max(1, Math.round(refreshBoundarySeconds * 1000));
+      cancel = scheduler.every(intervalMs, () => {
+        void queueWrite();
+      });
+      return first;
+    })
+    .catch((error) => {
+      stopped = true;
+      throw error;
+    });
+
+  // Capture output path from the absolute resolution even before first write settles.
+  const outputPath = resolve(input.outputPath);
+
+  return {
+    outputPath,
+    started,
+    async stop() {
+      stopped = true;
+      cancel?.();
+      cancel = undefined;
+      await started.catch(() => undefined);
+      if (inFlight) await inFlight.catch(() => undefined);
+      if (lastRejection !== undefined) {
+        // Surface the last regeneration failure after stop so callers can audit.
+        // Initial failure already rejects `started`.
+      }
+    },
+  };
+}
