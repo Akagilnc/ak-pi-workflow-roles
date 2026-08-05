@@ -77,6 +77,16 @@ function activeBlockedBy(ticket: SnapshotTicket): number[] {
     .sort((a, b) => a - b);
 }
 
+/** First duplicated bookKey in order, or null when all unique. */
+function firstDuplicateBookKey(keys: readonly string[]): string | null {
+  const seen = new Set<string>();
+  for (const key of keys) {
+    if (seen.has(key)) return key;
+    seen.add(key);
+  }
+  return null;
+}
+
 function renderErrorHtml(error: FactoryBoardError, generatedAt: string): string {
   const bookAttr =
     error.bookKey !== undefined && error.bookKey !== ""
@@ -175,12 +185,13 @@ function renderTicketArticle(input: {
 function renderFamily(input: {
   bookKey: string;
   parent: PreparedTicket;
-  children: PreparedTicket[];
+  /** Whole in-snapshot descendant set (not only direct children). */
+  descendants: PreparedTicket[];
 }): string {
-  const childCount = input.children.length;
-  const pendingCount = input.children.filter((c) => c.pending).length;
-  const closedCount = input.children.filter((c) => c.ticket.state === "closed").length;
-  const childHtml = input.children
+  const childCount = input.descendants.length;
+  const pendingCount = input.descendants.filter((c) => c.pending).length;
+  const closedCount = input.descendants.filter((c) => c.ticket.state === "closed").length;
+  const childHtml = input.descendants
     .map((child) =>
       renderTicketArticle({ bookKey: input.bookKey, prepared: child, nested: true }),
     )
@@ -217,6 +228,49 @@ function renderFamily(input: {
   ].join("");
 }
 
+/** Direct in-snapshot children keyed by parent issue number. */
+function buildDirectChildrenByParent(
+  prepared: ReadonlyMap<number, PreparedTicket>,
+): Map<number, PreparedTicket[]> {
+  const childrenByParent = new Map<number, PreparedTicket[]>();
+  for (const item of prepared.values()) {
+    const parent = item.ticket.parentIssueNumber;
+    if (parent === null) continue;
+    if (!prepared.has(parent)) continue; // parent not in snapshot — child stays top-level
+    const list = childrenByParent.get(parent) ?? [];
+    list.push(item);
+    childrenByParent.set(parent, list);
+  }
+  for (const list of childrenByParent.values()) {
+    list.sort((a, b) => a.ticket.issueNumber - b.ticket.issueNumber);
+  }
+  return childrenByParent;
+}
+
+/**
+ * Walk native parent edges from a root and collect every in-snapshot descendant
+ * once (BFS). Intermediate parents are members of the root family, not new roots.
+ */
+function collectDescendants(
+  rootIssueNumber: number,
+  childrenByParent: ReadonlyMap<number, PreparedTicket[]>,
+): PreparedTicket[] {
+  const out: PreparedTicket[] = [];
+  const seen = new Set<number>();
+  const queue = [...(childrenByParent.get(rootIssueNumber) ?? [])];
+  while (queue.length > 0) {
+    const item = queue.shift()!;
+    const n = item.ticket.issueNumber;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(item);
+    const kids = childrenByParent.get(n);
+    if (kids) queue.push(...kids);
+  }
+  out.sort((a, b) => a.ticket.issueNumber - b.ticket.issueNumber);
+  return out;
+}
+
 async function prepareTicket(
   ledgerDir: string,
   ticket: SnapshotTicket,
@@ -237,37 +291,34 @@ async function renderLaneHtml(bookKey: string, ledgerDir: string, tickets: reado
     prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket));
   }
 
-  const childrenByParent = new Map<number, PreparedTicket[]>();
-  for (const item of prepared.values()) {
-    const parent = item.ticket.parentIssueNumber;
-    if (parent === null) continue;
-    if (!prepared.has(parent)) continue; // parent not in snapshot — render child top-level
-    const list = childrenByParent.get(parent) ?? [];
-    list.push(item);
-    childrenByParent.set(parent, list);
-  }
+  const childrenByParent = buildDirectChildrenByParent(prepared);
+
+  // Tickets that appear as a child of any in-snapshot parent.
+  const nestedInSnapshot = new Set<number>();
   for (const list of childrenByParent.values()) {
-    list.sort((a, b) => a.ticket.issueNumber - b.ticket.issueNumber);
+    for (const child of list) nestedInSnapshot.add(child.ticket.issueNumber);
   }
 
-  const nestedChildren = new Set<number>();
-  for (const list of childrenByParent.values()) {
-    for (const child of list) nestedChildren.add(child.ticket.issueNumber);
-  }
+  // Family roots = in-snapshot tickets with descendants that are not themselves
+  // nested under another in-snapshot parent. One rooted whole-family aggregate.
+  const familyRoots = [...childrenByParent.keys()]
+    .filter((parentNum) => !nestedInSnapshot.has(parentNum))
+    .sort((a, b) => a - b);
 
-  // Family roots = tickets that have in-snapshot children. Sort by issue number.
-  const familyParents = [...childrenByParent.keys()].sort((a, b) => a - b);
-  const familyHtml = familyParents
-    .map((parentNum) => {
-      const parent = prepared.get(parentNum)!;
-      const children = childrenByParent.get(parentNum)!;
-      return renderFamily({ bookKey, parent, children });
+  const renderedInFamily = new Set<number>();
+  const familyHtml = familyRoots
+    .map((rootNum) => {
+      const parent = prepared.get(rootNum)!;
+      const descendants = collectDescendants(rootNum, childrenByParent);
+      renderedInFamily.add(rootNum);
+      for (const d of descendants) renderedInFamily.add(d.ticket.issueNumber);
+      return renderFamily({ bookKey, parent, descendants });
     })
     .join("\n");
 
+  // Every ticket renders exactly once: family members are excluded from top-level.
   const topLevel = [...prepared.values()]
-    .filter((item) => !nestedChildren.has(item.ticket.issueNumber))
-    .filter((item) => !childrenByParent.has(item.ticket.issueNumber))
+    .filter((item) => !renderedInFamily.has(item.ticket.issueNumber))
     .sort((a, b) => a.ticket.issueNumber - b.ticket.issueNumber);
 
   const topHtml = topLevel
@@ -353,6 +404,30 @@ export async function renderFactoryBoardHtml(
   const generatedAt = now.toISOString();
   if (!view.ok) {
     return renderErrorHtml(view.error, generatedAt);
+  }
+
+  // Fail closed on duplicate bookKey — never Map-last-wins across lanes/ledgers.
+  const duplicateKey = firstDuplicateBookKey(books.map((b) => b.bookKey));
+  if (duplicateKey !== null) {
+    return renderErrorHtml(
+      {
+        kind: "binding",
+        bookKey: duplicateKey,
+        message: `duplicate bookKey in books: ${duplicateKey}`,
+      },
+      generatedAt,
+    );
+  }
+  const duplicateSnapKey = firstDuplicateBookKey(view.snapshot.books.map((b) => b.bookKey));
+  if (duplicateSnapKey !== null) {
+    return renderErrorHtml(
+      {
+        kind: "binding",
+        bookKey: duplicateSnapKey,
+        message: `duplicate bookKey in snapshot: ${duplicateSnapKey}`,
+      },
+      generatedAt,
+    );
   }
 
   const bookByKey = new Map(books.map((b) => [b.bookKey, b]));
