@@ -36,18 +36,6 @@ export type AcceptedActivationFactInput = {
   readonly correlation: ActivationCorrelationIdentity;
 };
 
-const CONTENT_LIKE_KEYS = [
-  "prompt",
-  "transcript",
-  "argv",
-  "excerpt",
-  "excerpts",
-  "content",
-  "body",
-  "message",
-  "messages",
-] as const;
-
 /** Package-owned machine home (ADR 0048). Host may override via AK_ROLES_HOME. */
 export function resolveActivationLedgerHome(
   env: NodeJS.ProcessEnv = process.env,
@@ -147,9 +135,9 @@ export function buildAcceptedActivationFact(input: AcceptedActivationFactInput):
   };
 }
 
-/** Serialize only the closed index fields. Extra content-like keys are never emitted. */
+/** Serialize only the closed index fields (whitelist projection — no content keys). */
 export function serializeAcceptedActivationFact(fact: AcceptedActivationFact): string {
-  const record: Record<string, unknown> = {
+  return `${JSON.stringify({
     event: fact.event,
     role: fact.role,
     observedAt: fact.observedAt,
@@ -160,11 +148,7 @@ export function serializeAcceptedActivationFact(fact: AcceptedActivationFact): s
     correlation: fact.correlation.kind === "caller"
       ? { kind: "caller", id: fact.correlation.id }
       : { kind: "absent" },
-  };
-  for (const key of CONTENT_LIKE_KEYS) {
-    delete record[key];
-  }
-  return `${JSON.stringify(record)}\n`;
+  })}\n`;
 }
 
 /**
