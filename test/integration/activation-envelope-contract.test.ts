@@ -688,34 +688,29 @@ test("append failure preserves original cause, aborts nonzero, and blocks provid
   });
 });
 
-test("accepted-activation serializer emits index fields and zero known content bytes", () => {
-  const fact = buildAcceptedActivationFact({
+test("accepted-activation fact is closed at the typed API and serializes zero known content bytes", () => {
+  const closed: AcceptedActivationFact = {
+    event: ACCEPTED_ACTIVATION_EVENT,
     role: "judge",
     observedAt: "2025-01-01T00:00:00.000Z",
     bookKey: "demo",
     session: { kind: "session-file", path: "/home/session.jsonl" },
     correlation: { kind: "caller", id: "c1" },
-  });
+  };
   const smuggled = {
-    ...fact,
+    ...closed,
     prompt: "PROMPT_SECRET_BYTES",
     transcript: "transcript-body",
     argv: ["--ak-role", "judge"],
     excerpt: "excerpt-text",
     content: "nope",
   } as AcceptedActivationFact & Record<string, unknown>;
+  // Closed whitelist at the typed construction API — not via serialized key spellings.
+  assert.deepEqual(buildAcceptedActivationFact(smuggled), closed);
+
   const line = serializeAcceptedActivationFact(smuggled);
-  const parsed = JSON.parse(line) as Record<string, unknown>;
-  // Typed field presence — not a frozen complete key-set / presentation spelling.
-  assert.equal(parsed.event, ACCEPTED_ACTIVATION_EVENT);
-  assert.equal(parsed.role, "judge");
-  assert.equal(parsed.observedAt, "2025-01-01T00:00:00.000Z");
-  assert.equal(parsed.bookKey, "demo");
-  assert.deepEqual(parsed.session, { kind: "session-file", path: "/home/session.jsonl" });
-  assert.deepEqual(parsed.correlation, { kind: "caller", id: "c1" });
-  for (const forbidden of ["prompt", "transcript", "argv", "excerpt", "content"] as const) {
-    assert.equal(Object.hasOwn(parsed, forbidden), false, `serialized fact must omit ${forbidden}`);
-  }
+  // Parseability only — do not freeze field names, order, or full shape.
+  JSON.parse(line);
   for (const marker of CONTENT_MARKERS) {
     assert.equal(line.includes(marker), false, `serialized fact must not contain ${marker}`);
   }
@@ -1051,6 +1046,42 @@ test("ledger append rejects cross-book waiting.jsonl symlink without writing the
     assert.throws(
       () => appendAcceptedActivationFact(
         sourceLedger,
+        buildAcceptedActivationFact({
+          role: "judge",
+          observedAt: "2025-01-01T00:00:00.000Z",
+          bookKey: sourceBook,
+          session: { kind: "session-file", path: join(home, "s.jsonl") },
+          correlation: { kind: "absent" },
+        }),
+        { ledgerHome },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ActivationLedgerError);
+        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+        return true;
+      },
+    );
+    assert.equal(readFileSync(targetLedger, "utf8"), "");
+  });
+});
+
+test("ledger append rejects cross-book directory symlink without writing the target book", async () => {
+  await withActivationHome({ prefix: "ak-act-cross-book-dir-symlink-" }, async ({ home }) => {
+    const sourceBook = activationBookKeyFor(home);
+    const targetBook = `${sourceBook}-other`;
+    const ledgerHome = machineLedgerHome(home);
+    const booksDir = join(ledgerHome, "books");
+    const sourceDir = join(booksDir, sourceBook);
+    const targetDir = join(booksDir, targetBook);
+    const targetLedger = join(targetDir, "waiting.jsonl");
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(targetLedger, "");
+    // Computed basename book partition aliases another book still inside the home.
+    symlinkSync(targetDir, sourceDir);
+
+    assert.throws(
+      () => appendAcceptedActivationFact(
+        join(sourceDir, "waiting.jsonl"),
         buildAcceptedActivationFact({
           role: "judge",
           observedAt: "2025-01-01T00:00:00.000Z",

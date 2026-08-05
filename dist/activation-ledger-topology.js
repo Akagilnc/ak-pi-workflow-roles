@@ -149,24 +149,9 @@ function ensureRealDirectoryTree(root, targetDir) {
       }
     }
     if (st.isSymbolicLink()) {
-      let realNext;
-      try {
-        realNext = realpathSync(lexicalCursor);
-      } catch (error) {
-        throw new ActivationLedgerError(
-          `activation ledger symlink component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
-          { cause: error }
-        );
-      }
-      if (realNext !== realRoot && !pathContainedIn(realRoot, realNext)) {
-        throw new ActivationLedgerError(
-          `activation ledger path component escapes ledger home via symlink (${lexicalCursor} -> ${realNext})`
-        );
-      }
-      if (!statSync(realNext).isDirectory()) {
-        throw new ActivationLedgerError(`activation ledger path component is not a directory: ${realNext}`);
-      }
-      continue;
+      throw new ActivationLedgerError(
+        `activation ledger path component is a symbolic link: ${lexicalCursor}`
+      );
     }
     if (!st.isDirectory()) {
       throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);

@@ -115,11 +115,12 @@ function assertPhysicalLedgerRoot(absoluteRoot: string): void {
 }
 
 /**
- * Create `targetDir` (and missing parents) under `root` without following pre-existing
- * symlink components that escape the real root. Returns the real path of `targetDir`.
- * The configured root itself must be a physical directory — a pre-existing root symlink
- * is rejected before realpath/creation so the package-owned machine home cannot redirect
- * into a consumer repository. Original filesystem causes are retained.
+ * Create `targetDir` (and missing parents) under `root` as a physical directory chain.
+ * Every path component under the configured root is type-identified with lstat: a
+ * pre-existing symlink is never admitted — even when its target remains inside the
+ * machine home — so basename book partitions cannot alias across books (ADR 0048).
+ * The configured root itself must be a physical directory. Physical realpath
+ * containment and native filesystem causes are retained.
  */
 export function ensureRealDirectoryTree(root: string, targetDir: string): string {
   if (!isAbsolute(root)) {
@@ -134,7 +135,7 @@ export function ensureRealDirectoryTree(root: string, targetDir: string): string
   }
 
   // Type-identity the configured root before realpath/creation. Nested component
-  // containment below still applies once the root is a physical directory.
+  // physical identity and containment below still apply once the root is physical.
   assertPhysicalLedgerRoot(absoluteRoot);
 
   let realRoot: string;
@@ -198,25 +199,12 @@ export function ensureRealDirectoryTree(root: string, targetDir: string): string
       }
     }
 
+    // Book partitions and every parent under the machine home must be physical
+    // owned directories — in-home directory symlinks alias partitions (cross-book).
     if (st.isSymbolicLink()) {
-      let realNext: string;
-      try {
-        realNext = realpathSync(lexicalCursor);
-      } catch (error) {
-        throw new ActivationLedgerError(
-          `activation ledger symlink component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
-          { cause: error },
-        );
-      }
-      if (realNext !== realRoot && !pathContainedIn(realRoot, realNext)) {
-        throw new ActivationLedgerError(
-          `activation ledger path component escapes ledger home via symlink (${lexicalCursor} -> ${realNext})`,
-        );
-      }
-      if (!statSync(realNext).isDirectory()) {
-        throw new ActivationLedgerError(`activation ledger path component is not a directory: ${realNext}`);
-      }
-      continue;
+      throw new ActivationLedgerError(
+        `activation ledger path component is a symbolic link: ${lexicalCursor}`,
+      );
     }
 
     if (!st.isDirectory()) {
