@@ -4,7 +4,7 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 import { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_DESCRIPTION, DOCTOR_OUTPUT_TOOL_NAME, DoctorEvidenceStore, doctorEvidenceReadSchema, doctorSubmissionSchema, validateDoctorOutput, type DoctorCase } from "./doctor-contracts.ts";
 
 export { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME };
-export const DOCTOR_CASE_FLAG = { name: "ak-doctor-case", definition: { description: "Retained .ak/work/issues/<n>/runs directory", type: "string" as const } } as const;
+export const DOCTOR_CASE_FLAG = { name: "ak-doctor-case", definition: { description: "Retained .ak-roles/books/<book>/issues/<n>/runs directory", type: "string" as const } } as const;
 export type DoctorRoleDependencies = { loadSoul(): Promise<string>; loadCase(path: string): Promise<DoctorCase>; auditCompliance(input: DoctorAuditInput, options: { context: ExtensionContext; signal?: AbortSignal }): Promise<ComplianceDecision> };
 export type DoctorAuditInput = import("./doctor-auditor.ts").DoctorAuditInput;
 function singleton(toolCallId: string, ctx: ExtensionContext) { const leaf = ctx.sessionManager.getLeafEntry(); if (leaf?.type !== "message" || leaf.message.role !== "assistant") throw new Error("Doctor output must be the sole final tool call"); const calls = leaf.message.content.filter((part) => part.type === "toolCall"); if (calls.length !== 1 || calls[0]?.id !== toolCallId || calls[0]?.name !== DOCTOR_OUTPUT_TOOL_NAME) throw new Error("Doctor output must be the sole final tool call"); }
