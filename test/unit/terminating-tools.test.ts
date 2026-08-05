@@ -25,7 +25,7 @@ test("accepted-details validation distinguishes contract rejection from unexpect
   );
 });
 
-test("acceptedFacts projects nonempty Collector status from typed leg terminal states", () => {
+test("acceptedFacts projects Collector leg terminal states as a typed set, not a joined status string", () => {
   const base = {
     host: "github.com" as const,
     repository: "acme/widgets",
@@ -48,7 +48,9 @@ test("acceptedFacts projects nonempty Collector status from typed leg terminal s
       { legId: "a", status: "valid" as const, rationale: "ok", evidenceRefs: ["e1"] },
     ],
   } as CollectorReceipt;
-  assert.deepEqual(acceptedFacts(COLLECTOR_OUTPUT_TOOL, validOnly), { status: "valid" });
+  assert.deepEqual(acceptedFacts(COLLECTOR_OUTPUT_TOOL, validOnly), {
+    legStatuses: ["valid"],
+  });
 
   const mixed = {
     ...base,
@@ -56,9 +58,16 @@ test("acceptedFacts projects nonempty Collector status from typed leg terminal s
       { legId: "a", status: "valid" as const, rationale: "ok", evidenceRefs: ["e1"] },
       { legId: "b", status: "missing" as const, rationale: "gone", evidenceRefs: ["e2"] },
       { legId: "c", status: "unavailable" as const, rationale: "later", evidenceRefs: ["e3"] },
+      { legId: "d", status: "valid" as const, rationale: "again", evidenceRefs: ["e4"] },
     ],
   } as CollectorReceipt;
-  assert.deepEqual(acceptedFacts(COLLECTOR_OUTPUT_TOOL, mixed), {
-    status: "missing+unavailable+valid",
-  });
+  const facts = acceptedFacts(COLLECTOR_OUTPUT_TOOL, mixed);
+  // Mixed legs recover item-by-item from the typed field — no delimiter split.
+  assert.equal(facts.status, undefined);
+  assert.ok(facts.legStatuses);
+  assert.deepEqual([...facts.legStatuses!], ["missing", "unavailable", "valid"]);
+  assert.ok(facts.legStatuses!.includes("missing"));
+  assert.ok(facts.legStatuses!.includes("unavailable"));
+  assert.ok(facts.legStatuses!.includes("valid"));
+  assert.equal(facts.legStatuses!.length, 3);
 });

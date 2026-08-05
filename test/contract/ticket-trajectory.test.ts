@@ -2,13 +2,14 @@
  * S1 single-ticket trajectory — external behavior at the unique seam
  * `(ledgerDir, ticketSnapshot, now) → HTML` and the page lifecycle entry.
  *
- * Fixtures are clipped real ledger session bytes (trust morphs from #127;
- * station-layer runs keep authentic home-ledger directory names + bytes).
- * Assertions read machine data-* keys / hrefs only (anchoring constitution).
+ * Fixtures under issues/127 are clipped authentic #127 home-ledger bytes.
+ * issues/40 and issues/44 hold auxiliary authentic counterexamples at their
+ * real coordinates (not smuggled under 127). Assertions read machine data-*
+ * keys / hrefs only (anchoring constitution).
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
+import { cp, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
@@ -23,6 +24,7 @@ import {
   type TicketSnapshot,
   type TrajectoryScheduler,
 } from "../../src/ticket-trajectory.ts";
+import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 const fixtureLedger = join(packageRoot, "test/fixtures/ticket-trajectory/ledger");
@@ -66,6 +68,20 @@ function runById(html: string, runId: string): Record<string, string> {
   return hit;
 }
 
+function manualScheduler(): { scheduler: TrajectoryScheduler; ticks: Array<() => void> } {
+  const ticks: Array<() => void> = [];
+  const scheduler: TrajectoryScheduler = {
+    every(_ms, tick) {
+      ticks.push(tick);
+      return () => {
+        const idx = ticks.indexOf(tick);
+        if (idx >= 0) ticks.splice(idx, 1);
+      };
+    },
+  };
+  return { scheduler, ticks };
+}
+
 test("unique seam renders #127 fixture trajectory: stations, attempts, trusted results only", async () => {
   const before = await treeFingerprint(fixtureLedger);
   const now = new Date("2026-08-05T12:00:00.000Z");
@@ -75,9 +91,8 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
 
   // Generation time + one-shot lifecycle (unique seam does not advertise refresh).
   assert.match(html, /data-generated-at="2026-08-05T12:00:00\.000Z"/);
-  assert.match(html, /data-lifecycle="oneshot"/);
-  assert.doesNotMatch(html, /data-refresh-boundary-seconds=/);
-  assert.doesNotMatch(html, /http-equiv="refresh"/i);
+  assert.equal(elementsWith(html, "data-lifecycle")[0]?.["data-lifecycle"], "oneshot");
+  assert.equal(elementsWith(html, "data-refresh-boundary-seconds").length, 0);
   assert.match(html, /data-issue="127"/);
 
   // Morph A: plan-court — 5 terminating attempts, only final accepted counts as result.
@@ -121,38 +136,25 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
   assert.equal(fixer["data-has-result"], "true");
   assert.equal(fixer["data-result-status"], "completed");
 
-  // Collector accepted terminal receipt projects nonempty typed result (leg states).
-  const collector = runById(html, "collector-001@ak-roles-127");
-  assert.equal(collector["data-station"], "collector");
-  assert.equal(collector["data-station-source"], "tool");
-  assert.equal(collector["data-has-result"], "true");
-  assert.equal(collector["data-result-status"], "valid");
-  assert.notEqual(collector["data-result-status"], "");
-
-  // Four-layer station chain on authentic home-ledger run shapes (not renamed props).
-  // Layer 2 — invocation.json role, no terminating tool (real doctor-live-accept run).
-  const invOnly = runById(html, "doctor-live-accept-001@ak-pi-workflow-roles-issue40");
-  assert.equal(invOnly["data-station"], "doctor");
+  // Four-layer station chain on authentic coordinates.
+  // Layer 1 — terminating tool (above: plan-court / coder / fixer / review-005s).
+  // Layer 2 — invocation.json role, no terminating tool (authentic review-026).
+  const invOnly = runById(html, "review-026@ak-roles-127");
+  assert.equal(invOnly["data-station"], "reviewer");
   assert.equal(invOnly["data-station-source"], "invocation");
   assert.equal(invOnly["data-has-result"], "false");
 
-  // Layer 3 — name heuristic when no tool and no invocation role (real review-002s).
+  // Layer 3 — name heuristic when no tool and no invocation role (authentic review-002s).
   const named = runById(html, "review-002s@ak-roles-127");
   assert.equal(named["data-station"], "reviewer");
   assert.equal(named["data-station-source"], "name");
   assert.equal(named["data-has-result"], "false");
 
-  // Layer 4 — unknown station listed, count not dropped (real prerequisite-* run; inv has no role).
-  const mystery = runById(html, "prerequisite-repaired-head-greens@ak-pi-workflow-roles-issue44");
-  assert.equal(mystery["data-station"], "unknown");
-  assert.equal(mystery["data-station-source"], "unknown");
-  assert.equal(mystery["data-has-result"], "false");
-
-  // Every fixture run appears exactly once.
+  // Every #127 fixture run appears exactly once.
   const runs = elementsWith(html, "data-run-id");
-  assert.equal(runs.length, 8);
+  assert.equal(runs.length, 6);
   const ids = new Set(runs.map((r) => r["data-run-id"]));
-  assert.equal(ids.size, 8);
+  assert.equal(ids.size, 6);
 
   // Responsive single-page foundation (viewport + single root document).
   assert.match(html, /name="viewport"/i);
@@ -160,21 +162,176 @@ test("unique seam renders #127 fixture trajectory: stations, attempts, trusted r
   assert.equal((html.match(/<html\b/gi) ?? []).length, 1);
 });
 
+test("auxiliary fixtures at authentic issue coords cover invocation-unknown station layers", async () => {
+  // Layer 2 auxiliary (issue 40 doctor) — real home path, not smuggled under 127.
+  const doctorHtml = await renderTicketTrajectoryHtml(
+    fixtureLedger,
+    { issueNumber: 40 },
+    new Date("2026-08-05T12:00:00.000Z"),
+  );
+  const doctor = runById(doctorHtml, "doctor-live-accept-001@ak-pi-workflow-roles-issue40");
+  assert.equal(doctor["data-station"], "doctor");
+  assert.equal(doctor["data-station-source"], "invocation");
+  assert.equal(doctor["data-has-result"], "false");
+  assert.equal(
+    doctor["data-ledger-coord"],
+    "issues/40/runs/doctor-live-accept-001@ak-pi-workflow-roles-issue40",
+  );
+
+  // Layer 4 — unknown station listed, count not dropped (issue 44; inv has no role).
+  const unknownHtml = await renderTicketTrajectoryHtml(
+    fixtureLedger,
+    { issueNumber: 44 },
+    new Date("2026-08-05T12:00:00.000Z"),
+  );
+  const mystery = runById(
+    unknownHtml,
+    "prerequisite-repaired-head-greens@ak-pi-workflow-roles-issue44",
+  );
+  assert.equal(mystery["data-station"], "unknown");
+  assert.equal(mystery["data-station-source"], "unknown");
+  assert.equal(mystery["data-has-result"], "false");
+  assert.equal(
+    mystery["data-ledger-coord"],
+    "issues/44/runs/prerequisite-repaired-head-greens@ak-pi-workflow-roles-issue44",
+  );
+});
+
+test("trajectory surfaces Collector legStatuses as typed items without parsing a joined status", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-collector-"));
+  try {
+    const runDir = join(workspace, "issues/9/runs/collector-mixed@demo/session");
+    await mkdir(runDir, { recursive: true });
+    // Synthetic temp ledger only — proves the typed surface; not a #127 home-ledger claim.
+    const details = {
+      host: "github.com",
+      repository: "acme/widgets",
+      prNumber: 1,
+      manifestDigest: "b".repeat(64),
+      activationTime: "2024-01-01T00:00:00.000Z",
+      deadlineTime: "2024-01-01T01:00:00.000Z",
+      finalObservationTime: "2024-01-01T00:30:00.000Z",
+      finalSnapshotId: "snap-1",
+      targetHead: "head-c",
+      reports: [
+        {
+          kind: "review",
+          legId: "a",
+          report: "ok",
+          reviewedHead: "head-c",
+          headRelation: "current",
+          windowRelation: "within",
+          evidenceRefs: ["e1"],
+        },
+      ],
+      legs: [
+        { legId: "a", status: "valid", rationale: "ok", evidenceRefs: ["e1"] },
+        { legId: "b", status: "missing", rationale: "gone", evidenceRefs: ["e2"] },
+        { legId: "c", status: "unavailable", rationale: "later", evidenceRefs: ["e3"] },
+      ],
+      requestAttempts: [],
+      snapshots: [
+        {
+          snapshotId: "snap-1",
+          observedAt: "2024-01-01T00:00:00.000Z",
+          completedAt: "2024-01-01T00:00:00.000Z",
+          completedMono: 0,
+          host: "github.com",
+          repository: "acme/widgets",
+          prNumber: 1,
+          prState: "OPEN",
+          headOid: "head-c",
+          complete: true,
+          evidenceIds: ["e1"],
+          pageDiagnostics: [{ path: "/reviews", page: 1, status: 200, itemCount: 1 }],
+          normalizedByteLength: 1,
+        },
+      ],
+      evidenceRecords: [
+        {
+          evidenceId: "e1",
+          kind: "review",
+          versionId: "v1",
+          contentDigest: "c".repeat(64),
+          firstObservedAt: "2024-01-01T00:00:00.000Z",
+          raw: { clipped: true },
+        },
+      ],
+    };
+    const rows = [
+      {
+        type: "session",
+        version: 3,
+        id: "tmp-collector",
+        timestamp: "2026-08-05T10:00:00.000Z",
+        cwd: "/tmp",
+      },
+      {
+        type: "message",
+        id: "a1",
+        parentId: null,
+        timestamp: "2026-08-05T10:00:01.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "c1", name: COLLECTOR_OUTPUT_TOOL, arguments: details }],
+          api: "openai-responses",
+          provider: "test",
+          model: "m",
+          stopReason: "toolUse",
+          timestamp: 1,
+        },
+      },
+      {
+        type: "message",
+        id: "r1",
+        parentId: "a1",
+        timestamp: "2026-08-05T10:00:02.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "c1",
+          toolName: COLLECTOR_OUTPUT_TOOL,
+          content: [{ type: "text", text: "Collector receipt accepted" }],
+          details,
+        },
+      },
+    ];
+    await writeFile(
+      join(runDir, "session.jsonl"),
+      rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const html = await renderTicketTrajectoryHtml(workspace, { issueNumber: 9 }, new Date("2026-08-05T12:00:00.000Z"));
+    const run = runById(html, "collector-mixed@demo");
+    assert.equal(run["data-station"], "collector");
+    assert.equal(run["data-has-result"], "true");
+    // No receipt-level status dialect — typed leg set only.
+    assert.equal(run["data-result-status"], "");
+    const recovered = (run["data-leg-statuses"] ?? "").split(/\s+/).filter(Boolean);
+    assert.deepEqual(recovered, ["missing", "unavailable", "valid"]);
+    assert.ok(recovered.includes("missing"));
+    assert.ok(recovered.includes("unavailable"));
+    assert.ok(recovered.includes("valid"));
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("each run evidence link resolves to the run ledger path, with typed data-ledger-coord", async () => {
   const html = await renderTicketTrajectoryHtml(fixtureLedger, { issueNumber: 127 }, new Date("2026-08-05T12:00:00.000Z"));
   const links = elementsWith(html, "data-ledger-link");
-  assert.equal(links.length, 8);
+  assert.equal(links.length, 6);
 
-  for (const link of links) {
-    const coord = link["data-ledger-link"];
+  for (const linkEl of links) {
+    const coord = linkEl["data-ledger-link"];
     assert.ok(coord, "data-ledger-link present");
     assert.match(coord!, /^issues\/127\/runs\//);
     // Must not be a dead in-page fragment.
-    assert.ok(link.href, "href present");
-    assert.notEqual(link.href![0], "#");
-    assert.match(link.href!, /^file:/);
+    assert.ok(linkEl.href, "href present");
+    assert.notEqual(linkEl.href![0], "#");
+    assert.match(linkEl.href!, /^file:/);
 
-    const url = new URL(link.href!);
+    const url = new URL(linkEl.href!);
     assert.equal(url.protocol, "file:");
     const targetPath = fileURLToPath(url);
     const expected = await realpath(join(fixtureLedger, ...coord!.split("/")));
@@ -187,7 +344,7 @@ test("each run evidence link resolves to the run ledger path, with typed data-le
   }
 });
 
-test("page lifecycle writes only outside the ledger and blocks symlink escapes", async () => {
+test("page lifecycle writes only outside the ledger; hard link cannot smuggle bytes back", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-out-"));
   try {
     const ledgerCopy = join(workspace, "ledger");
@@ -206,7 +363,40 @@ test("page lifecycle writes only outside the ledger and blocks symlink escapes",
     assert.equal(written.outputPath, await realpath(outputPath));
     const html = await readFile(outputPath, "utf8");
     assert.match(html, /data-generated-at="2026-08-05T15:30:00\.000Z"/);
+    // One-shot write path does not declare a refresh bound.
+    assert.equal(elementsWith(html, "data-lifecycle")[0]?.["data-lifecycle"], "oneshot");
+    assert.equal(elementsWith(html, "data-refresh-boundary-seconds").length, 0);
     assert.equal(await treeFingerprint(ledgerCopy), before);
+
+    // Hard link: external outputPath shares an inode with a ledger file.
+    // Write must replace the external dirent without mutating ledger bytes.
+    const ledgerTwin = join(ledgerCopy, "issues", "127", "hardlink-twin.html");
+    const hardOut = join(workspace, "hard-out.html");
+    await writeFile(ledgerTwin, "LEDGER-PROTECTED\n", "utf8");
+    await link(ledgerTwin, hardOut);
+    const beforeTwin = await readFile(ledgerTwin, "utf8");
+    const beforeIno = (await lstat(ledgerTwin)).ino;
+    assert.equal((await lstat(hardOut)).ino, beforeIno);
+    const beforeLedger = await treeFingerprint(ledgerCopy);
+
+    const hardWritten = await writeTicketTrajectoryPage({
+      ledgerDir: ledgerCopy,
+      ticketSnapshot: { issueNumber: 127 },
+      now,
+      outputPath: hardOut,
+    });
+    assert.equal(hardWritten.outputPath, await realpath(hardOut));
+    const externalHtml = await readFile(hardOut, "utf8");
+    assert.match(externalHtml, /data-issue="127"/);
+    assert.notEqual(externalHtml, beforeTwin);
+    // Ledger twin keeps original bytes and inode; external dirent is a new inode.
+    assert.equal(await readFile(ledgerTwin, "utf8"), beforeTwin);
+    assert.equal((await lstat(ledgerTwin)).ino, beforeIno);
+    assert.notEqual((await lstat(hardOut)).ino, beforeIno);
+    // Fingerprint excludes only the twin we added before the write — recompute without twin change.
+    assert.equal(await readFile(ledgerTwin, "utf8"), "LEDGER-PROTECTED\n");
+    // Full tree fingerprint: twin content unchanged; no other ledger writes.
+    assert.equal(await treeFingerprint(ledgerCopy), beforeLedger);
 
     // Refuse writing into the ledger tree (lexical path).
     await assert.rejects(
@@ -219,14 +409,13 @@ test("page lifecycle writes only outside the ledger and blocks symlink escapes",
         }),
       /outside|ledger|output/i,
     );
-    assert.equal(await treeFingerprint(ledgerCopy), before);
 
     // Output path is a symlink into the ledger — must refuse; ledger bytes unchanged.
     const injected = join(ledgerCopy, "injected.html");
     const symlinkOut = join(workspace, "escape-link.html");
     await writeFile(injected, "BEFORE\n", "utf8");
     const beforeInjected = await readFile(injected, "utf8");
-    const beforeLedger = await treeFingerprint(ledgerCopy);
+    const beforeLedger2 = await treeFingerprint(ledgerCopy);
     await symlink(injected, symlinkOut);
     await assert.rejects(
       () =>
@@ -239,7 +428,7 @@ test("page lifecycle writes only outside the ledger and blocks symlink escapes",
       /outside|ledger|output/i,
     );
     assert.equal(await readFile(injected, "utf8"), beforeInjected);
-    assert.equal(await treeFingerprint(ledgerCopy), beforeLedger);
+    assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
 
     // Parent directory symlink into the ledger — refuse missing-tail create.
     const parentLink = join(workspace, "parent-link");
@@ -254,7 +443,7 @@ test("page lifecycle writes only outside the ledger and blocks symlink escapes",
         }),
       /outside|ledger|output/i,
     );
-    assert.equal(await treeFingerprint(ledgerCopy), beforeLedger);
+    assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
 
     // Nested missing tail under a symlink parent still blocked.
     await assert.rejects(
@@ -267,8 +456,7 @@ test("page lifecycle writes only outside the ledger and blocks symlink escapes",
         }),
       /outside|ledger|output/i,
     );
-    assert.equal(await treeFingerprint(ledgerCopy), beforeLedger);
-    // Ensure no file was created inside ledger via the parent link.
+    assert.equal(await treeFingerprint(ledgerCopy), beforeLedger2);
     await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "via-parent.html")), /ENOENT/);
     await assert.rejects(() => lstat(join(ledgerCopy, "issues", "127", "nested")), /ENOENT/);
   } finally {
@@ -285,16 +473,7 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     const outputPath = join(workspace, "out", "live.html");
 
     let nowMs = Date.parse("2026-08-05T16:00:00.000Z");
-    const ticks: Array<() => void> = [];
-    const scheduler: TrajectoryScheduler = {
-      every(_ms, tick) {
-        ticks.push(tick);
-        return () => {
-          const idx = ticks.indexOf(tick);
-          if (idx >= 0) ticks.splice(idx, 1);
-        };
-      },
-    };
+    const { scheduler, ticks } = manualScheduler();
 
     const handle = startTicketTrajectoryPage({
       ledgerDir: ledgerCopy,
@@ -308,11 +487,14 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     const first = await handle.started;
     assert.equal(first.outputPath, await realpath(outputPath));
     let html = await readFile(outputPath, "utf8");
-    assert.match(html, /data-generated-at="2026-08-05T16:00:00\.000Z"/);
-    assert.equal(elementsWith(html, "data-run-id").length, 8);
-    assert.match(html, /data-lifecycle="refresh"/);
-    assert.match(html, /data-refresh-boundary-seconds="1"/);
-    assert.match(html, /http-equiv="refresh"/i);
+    // Keyed lifecycle facts (one place): refresh bound is declared and backed by a scheduler.
+    assert.equal(elementsWith(html, "data-lifecycle")[0]?.["data-lifecycle"], "refresh");
+    assert.equal(
+      elementsWith(html, "data-refresh-boundary-seconds")[0]?.["data-refresh-boundary-seconds"],
+      "1",
+    );
+    assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T16:00:00.000Z");
+    assert.equal(elementsWith(html, "data-run-id").length, 6);
     assert.equal(ticks.length, 1, "lifecycle arms a real scheduler tick");
 
     // New run arrives in the ledger (copy of an authentic accepted run under a new id).
@@ -324,26 +506,24 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     // Advance clock and fire the production scheduler tick (not a manual second render call).
     nowMs = Date.parse("2026-08-05T16:00:10.000Z");
     ticks[0]!();
-    // Allow queued async write to settle.
     await new Promise((r) => setTimeout(r, 50));
     for (let i = 0; i < 20; i += 1) {
       html = await readFile(outputPath, "utf8");
       if (html.includes('data-generated-at="2026-08-05T16:00:10.000Z"')) break;
       await new Promise((r) => setTimeout(r, 20));
     }
-    assert.match(html, /data-generated-at="2026-08-05T16:00:10\.000Z"/);
+    assert.equal(elementsWith(html, "data-generated-at")[0]?.["data-generated-at"], "2026-08-05T16:00:10.000Z");
     assert.ok(elementsWith(html, "data-run-id").some((r) => r["data-run-id"] === "coder-apply-001@ak-roles-127"));
-    assert.equal(elementsWith(html, "data-run-id").length, 9);
+    assert.equal(elementsWith(html, "data-run-id").length, 7);
 
     // Stop — further ticks must not rewrite the page.
     await handle.stop();
     assert.equal(ticks.length, 0, "stop cancels scheduler");
     const frozen = await readFile(outputPath, "utf8");
-    const frozenAt = frozen.match(/data-generated-at="([^"]+)"/)?.[1];
+    const frozenAt = elementsWith(frozen, "data-generated-at")[0]?.["data-generated-at"];
     assert.equal(frozenAt, "2026-08-05T16:00:10.000Z");
 
     nowMs = Date.parse("2026-08-05T16:00:20.000Z");
-    // Even if a stale tick reference existed, stop gate blocks writes; fire nothing registered.
     assert.equal(ticks.length, 0);
     await new Promise((r) => setTimeout(r, 30));
     assert.equal(await readFile(outputPath, "utf8"), frozen);
@@ -351,6 +531,9 @@ test("production lifecycle regenerates within refresh boundary and stops", async
     // Lifecycle only wrote outside; ledger changed only by the test's explicit run copy.
     assert.equal(await treeFingerprint(ledgerCopy), afterAdd);
     assert.notEqual(afterAdd, before);
+
+    // Default boundary constant remains the production default (no second lifecycle tracer).
+    assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -393,7 +576,6 @@ test("JSONL middle corruption fails loudly; unfinished tail stays tolerable", as
     const sessionPath = join(planSessionDir, sessionFile!);
     const original = await readFile(sessionPath, "utf8");
     const lines = original.split("\n");
-    // Inject a broken line early, keep later real records (including the accepted toolResult).
     const broken = [lines[0], "THIS_IS_NOT_JSON", ...lines.slice(1)].join("\n");
     await writeFile(sessionPath, broken, "utf8");
 
@@ -413,57 +595,6 @@ test("empty/minimal ticket snapshot still requires issueNumber for S1 single-tic
   );
 });
 
-test("one-shot write does not declare refresh; lifecycle start does and regenerates", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-lifecycle-decl-"));
-  try {
-    const ledgerCopy = join(workspace, "ledger");
-    await cp(fixtureLedger, ledgerCopy, { recursive: true });
-    const oneshotPath = join(workspace, "out", "oneshot.html");
-    const livePath = join(workspace, "out", "live.html");
-
-    const oneshot = await writeTicketTrajectoryPage({
-      ledgerDir: ledgerCopy,
-      ticketSnapshot: { issueNumber: 127 },
-      now: new Date("2026-08-05T17:00:00.000Z"),
-      outputPath: oneshotPath,
-    });
-    assert.match(oneshot.html, /data-lifecycle="oneshot"/);
-    assert.doesNotMatch(oneshot.html, /data-refresh-boundary-seconds=/);
-    assert.doesNotMatch(oneshot.html, /http-equiv="refresh"/i);
-    assert.doesNotMatch(oneshot.html, /refresh ≤/);
-
-    const ticks: Array<() => void> = [];
-    const scheduler: TrajectoryScheduler = {
-      every(_ms, tick) {
-        ticks.push(tick);
-        return () => {
-          const idx = ticks.indexOf(tick);
-          if (idx >= 0) ticks.splice(idx, 1);
-        };
-      },
-    };
-    const handle = startTicketTrajectoryPage({
-      ledgerDir: ledgerCopy,
-      ticketSnapshot: { issueNumber: 127 },
-      outputPath: livePath,
-      refreshBoundarySeconds: DEFAULT_REFRESH_BOUNDARY_SECONDS,
-      clock: () => new Date("2026-08-05T17:00:00.000Z"),
-      scheduler,
-    });
-    const first = await handle.started;
-    assert.match(first.html, /data-lifecycle="refresh"/);
-    assert.match(
-      first.html,
-      new RegExp(`data-refresh-boundary-seconds="${DEFAULT_REFRESH_BOUNDARY_SECONDS}"`),
-    );
-    assert.match(first.html, /http-equiv="refresh"/i);
-    assert.equal(ticks.length, 1, "refresh declaration is backed by a live scheduler");
-    await handle.stop();
-  } finally {
-    await rm(workspace, { recursive: true, force: true });
-  }
-});
-
 test("post-start regeneration failure faults the lifecycle with the original cause", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "ticket-trajectory-fault-"));
   try {
@@ -472,16 +603,7 @@ test("post-start regeneration failure faults the lifecycle with the original cau
     const outputPath = join(workspace, "out", "live.html");
 
     let nowMs = Date.parse("2026-08-05T18:00:00.000Z");
-    const ticks: Array<() => void> = [];
-    const scheduler: TrajectoryScheduler = {
-      every(_ms, tick) {
-        ticks.push(tick);
-        return () => {
-          const idx = ticks.indexOf(tick);
-          if (idx >= 0) ticks.splice(idx, 1);
-        };
-      },
-    };
+    const { scheduler, ticks } = manualScheduler();
 
     const handle = startTicketTrajectoryPage({
       ledgerDir: ledgerCopy,
@@ -535,7 +657,7 @@ test("malformed invocation.json and unexpected path resolution retain their caus
     // Malformed existing invocation.json must fail with parse cause — not fall back to name/unknown.
     const invPath = join(
       ledgerCopy,
-      "issues/127/runs/doctor-live-accept-001@ak-pi-workflow-roles-issue40/invocation.json",
+      "issues/127/runs/review-026@ak-roles-127/invocation.json",
     );
     await writeFile(invPath, "{not-json", "utf8");
     await assert.rejects(

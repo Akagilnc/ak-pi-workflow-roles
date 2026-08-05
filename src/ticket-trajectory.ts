@@ -18,7 +18,8 @@
  * write does not advertise refresh. Regeneration faults surface the original
  * cause via handle.closed / stop(). Caller stops the handle.
  */
-import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -76,7 +77,10 @@ type ParsedRun = {
   stationSource: StationSource;
   attemptCount: number;
   hasResult: boolean;
+  /** Receipt-level status when the terminating contract carries one. */
   resultStatus: string;
+  /** Collector typed leg terminal states (distinct, stable order). */
+  legStatuses: readonly string[];
   model: string;
   provider: string;
   thinking: string;
@@ -193,12 +197,14 @@ function extractTerminatingLifecycle(rows: SessionRow[]): {
   toolNames: string[];
   hasResult: boolean;
   resultStatus: string;
+  legStatuses: readonly string[];
 } {
   let callAttempts = 0;
   let resultAttempts = 0;
   const toolNames: string[] = [];
   let hasResult = false;
   let resultStatus = "";
+  let legStatuses: readonly string[] = [];
 
   for (const row of rows) {
     const message = isRecord(row.message) ? row.message : undefined;
@@ -225,6 +231,7 @@ function extractTerminatingLifecycle(rows: SessionRow[]): {
         const facts = acceptedFacts(message.toolName as TerminatingToolName, details);
         hasResult = true;
         resultStatus = facts.status ?? "";
+        legStatuses = facts.legStatuses ?? [];
       } catch (error) {
         if (error instanceof AcceptedDetailsContractError) continue;
         throw error;
@@ -234,7 +241,12 @@ function extractTerminatingLifecycle(rows: SessionRow[]): {
 
   // Prefer toolCall count; fall back to toolResult count when calls were clipped away.
   const attemptCount = callAttempts > 0 ? callAttempts : resultAttempts;
-  return { attemptCount, toolNames, hasResult, resultStatus };
+  return { attemptCount, toolNames, hasResult, resultStatus, legStatuses };
+}
+
+/** Human-read formatting only — machines consume legStatuses typed field / data attr items. */
+function formatLegStatusesForDisplay(legStatuses: readonly string[]): string {
+  return legStatuses.join(", ");
 }
 
 type InvocationInfo = {
@@ -349,6 +361,7 @@ async function parseRun(ledgerDir: string, issueNumber: number, runId: string): 
     attemptCount: lifecycle.attemptCount,
     hasResult: lifecycle.hasResult,
     resultStatus: lifecycle.resultStatus,
+    legStatuses: lifecycle.legStatuses,
     model,
     provider,
     thinking,
@@ -400,6 +413,12 @@ function renderHtml(input: {
     const stationLabel = station === "unknown" ? "未知站" : station;
     const roundHtml = rounds
       .map((run) => {
+        const resultDisplay = run.hasResult
+          ? run.resultStatus ||
+            (run.legStatuses.length > 0 ? formatLegStatusesForDisplay(run.legStatuses) : "")
+          : "";
+        // Machine channel: space-separated closed-enum tokens (no custom status dialect).
+        const legStatusesAttr = run.legStatuses.join(" ");
         return [
           `<article class="run"`,
           ` data-run-id="${attr(run.runId)}"`,
@@ -409,6 +428,7 @@ function renderHtml(input: {
           ` data-attempt-count="${attr(String(run.attemptCount))}"`,
           ` data-has-result="${run.hasResult ? "true" : "false"}"`,
           ` data-result-status="${attr(run.resultStatus)}"`,
+          ` data-leg-statuses="${attr(legStatusesAttr)}"`,
           ` data-model="${attr(run.model)}"`,
           ` data-provider="${attr(run.provider)}"`,
           ` data-thinking="${attr(run.thinking)}"`,
@@ -422,7 +442,7 @@ function renderHtml(input: {
           `<p class="run-meta">`,
           `<span class="attempts">attempts: ${run.attemptCount}</span>`,
           run.hasResult
-            ? `<span class="result">result: ${escapeHtml(run.resultStatus)}</span>`
+            ? `<span class="result">result: ${escapeHtml(resultDisplay)}</span>`
             : `<span class="result">result: (none — attempts only)</span>`,
           `</p>`,
           `<p class="ledger"><a data-ledger-link="${attr(run.ledgerCoord)}" href="${attr(run.evidenceHref)}">${escapeHtml(run.ledgerCoord)}</a></p>`,
@@ -589,6 +609,11 @@ export async function assertTrajectoryOutputOutsideLedger(
   return { ledgerRoot, outputAbsolute, prospectiveReal };
 }
 
+/**
+ * Write HTML to an explicit path outside the ledger without following an
+ * existing destination inode (hard link / prior file). Temp file + rename
+ * replaces the directory entry so a hard-linked ledger twin keeps its bytes.
+ */
 async function writeHtmlAtomicallyOutsideLedger(input: {
   ledgerRoot: string;
   outputAbsolute: string;
@@ -621,7 +646,16 @@ async function writeHtmlAtomicallyOutsideLedger(input: {
     if (!isMissingPathError(error)) throw error;
   }
 
-  await writeFile(input.outputAbsolute, input.html, "utf8");
+  // Same-directory temp + rename: does not open/truncate an existing inode, so a
+  // hard link from outputPath into the ledger cannot smuggle writes back home.
+  const temporary = join(parent, `.ticket-trajectory-${randomUUID()}.html.tmp`);
+  try {
+    await writeFile(temporary, input.html, "utf8");
+    await rename(temporary, input.outputAbsolute);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
   return realpath(input.outputAbsolute);
 }
 
