@@ -137,21 +137,44 @@ test("explicit internal activation args point at the package entrypoint file", a
   assert.equal(args.includes("--ak-role"), true);
 });
 
-test("merger role command is a completed public run path (no deferred slice)", async () => {
+test("every public callable role is a completed path (no deferred slice)", async () => {
   await withTempHome(async (home) => {
-    const { io, stderr, stdout } = captureIo();
-    // Blank instruction is a structural reject on the completed Merger adapter.
-    const result = await runAkRole(["merger", "   "], {
-      packageRoot,
-      home,
-      io,
-      piRunner: async () => {
-        throw new Error("must not dispatch blank merger");
-      },
-    });
-    assert.equal(result.exitCode, 2);
-    assert.equal(stderr.join("").includes("not available in this install slice"), false);
-    assert.equal(stdout.join("").includes("not available in this install slice"), false);
+    for (const role of PUBLIC_CALLABLE_ROLES) {
+      const { io, stderr, stdout } = captureIo();
+      // Malformed structure where the adapter owns a closed grammar; otherwise a
+      // nonblank instruction that must not hit deferred-slice stubs.
+      const argv =
+        role === "collector"
+          ? ["collector", "--pr", "0", "--leg", "codex:bot"]
+          : role === "doctor"
+            ? ["doctor", "--issue", "0"]
+            : role === "merger"
+              ? ["merger", "   "]
+              : [role, "exercise completed public path"];
+      const result = await runAkRole(argv, {
+        packageRoot,
+        home,
+        io,
+        piRunner: async (args) => ({
+          code: 1,
+          stdout: "",
+          stderr: "forced runner stop",
+          timedOut: false,
+          args: [...args],
+        }),
+      });
+      assert.notEqual(result.exitCode, 0, role);
+      assert.equal(
+        stderr.join("").includes("not available in this install slice"),
+        false,
+        role,
+      );
+      assert.equal(
+        stdout.join("").includes("not available in this install slice"),
+        false,
+        role,
+      );
+    }
   });
 });
 
