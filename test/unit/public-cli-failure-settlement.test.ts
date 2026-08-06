@@ -222,6 +222,39 @@ test("malformed CLI structure rejects before admission with no model dispatch", 
   });
 });
 
+test("empty --project= rejects structurally before admission with no model dispatch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    let dispatched = 0;
+    const result = await runAkRole(["judge", "--project=", "task"], {
+      packageRoot,
+      home,
+      cwd: project,
+      io,
+      piRunner: async (args) => {
+        dispatched += 1;
+        return {
+          code: 0,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
+    // Empty project must not resolve("") → cwd and complete admission/dispatch.
+    assert.equal(result.exitCode, 2);
+    assert.equal(dispatched, 0);
+    assert.equal(stdout.length, 0);
+    assert.equal(stderr.length >= 1, true);
+    assert.match(stderr[0]!, /--project requires a path/);
+    assert.equal(result.terminal, undefined);
+  });
+});
+
 test("well-formed nonexistent domain facts are not semantically pre-rejected", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");

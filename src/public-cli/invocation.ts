@@ -55,6 +55,14 @@ export type ParseJudgeArgvResult = {
   project?: string;
 };
 
+/** Reject missing/blank path values so empty overrides cannot silently degrade. */
+function requireOptionPath(flag: "--project" | "--attach", value: string | undefined): string {
+  if (value === undefined || value.trim() === "") {
+    throw new CliUsageError(`${flag} requires a path`);
+  }
+  return value;
+}
+
 /**
  * Parse Judge-specific argv after the `judge` token.
  * Rejects any public burden selector/hint and unknown flags.
@@ -72,23 +80,21 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
       break;
     }
     if (token === "--attach") {
-      const value = tokens.shift();
-      if (value === undefined) throw new CliUsageError("--attach requires a path");
-      attachmentPaths.push(value);
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
       continue;
     }
     if (token.startsWith("--attach=")) {
-      attachmentPaths.push(token.slice("--attach=".length));
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length)),
+      );
       continue;
     }
     if (token === "--project") {
-      const value = tokens.shift();
-      if (value === undefined) throw new CliUsageError("--project requires a path");
-      project = value;
+      project = requireOptionPath("--project", tokens.shift());
       continue;
     }
     if (token.startsWith("--project=")) {
-      project = token.slice("--project=".length);
+      project = requireOptionPath("--project", token.slice("--project=".length));
       continue;
     }
     // Judge owns burden inference — no public burden selector or hint.
@@ -167,6 +173,10 @@ export type AdmitJudgeInvocationOptions = {
 export async function admitJudgeInvocation(
   options: AdmitJudgeInvocationOptions,
 ): Promise<AdmittedJudgeInvocation> {
+  // Empty project override must not reach resolve("") → cwd (silent default).
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
   const projectRoot = resolve(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);

@@ -8693,6 +8693,12 @@ function uuidv7(now = Date.now()) {
 
 // src/public-cli/invocation.ts
 var EMPTY_INVOCATION_TRANSPORT_ENVELOPE = "[ak-role:structurally-empty-request]";
+function requireOptionPath(flag, value) {
+  if (value === void 0 || value.trim() === "") {
+    throw new CliUsageError(`${flag} requires a path`);
+  }
+  return value;
+}
 function parseJudgeArgv(args) {
   const attachmentPaths = [];
   let project;
@@ -8705,23 +8711,21 @@ function parseJudgeArgv(args) {
       break;
     }
     if (token === "--attach") {
-      const value = tokens.shift();
-      if (value === void 0) throw new CliUsageError("--attach requires a path");
-      attachmentPaths.push(value);
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
       continue;
     }
     if (token.startsWith("--attach=")) {
-      attachmentPaths.push(token.slice("--attach=".length));
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length))
+      );
       continue;
     }
     if (token === "--project") {
-      const value = tokens.shift();
-      if (value === void 0) throw new CliUsageError("--project requires a path");
-      project = value;
+      project = requireOptionPath("--project", tokens.shift());
       continue;
     }
     if (token.startsWith("--project=")) {
-      project = token.slice("--project=".length);
+      project = requireOptionPath("--project", token.slice("--project=".length));
       continue;
     }
     if (token === "--burden" || token.startsWith("--burden=") || token === "--ak-judge-burden" || token.startsWith("--ak-judge-burden=") || token === "--judge-burden" || token.startsWith("--judge-burden=")) {
@@ -8769,6 +8773,9 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   };
 }
 async function admitJudgeInvocation(options) {
+  if (options.project !== void 0) {
+    requireOptionPath("--project", options.project);
+  }
   const projectRoot = resolve3(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
