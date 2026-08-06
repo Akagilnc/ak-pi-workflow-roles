@@ -137,14 +137,16 @@ Keep the Doctor invocation and the case it diagnoses in the same main-repository
 
 ```bash
 CASE_RUNS="$HOME/.ak-roles/books/<main-repository-directory>/issues/<case-issue>/runs"
-test "$RUN" != "$CASE_RUNS" && [[ "$RUN" != "$CASE_RUNS/"* ]]
-
-pi --no-extensions -e "$ROLE_EXTENSION" \
-  --ak-role doctor \
-  --ak-doctor-case "$CASE_RUNS" \
-  --session-dir "$RUN/session" --mode json \
-  -p "Produce this case's process-cost diagnosis." \
-  >/dev/null 2>"$RUN/stderr.log" </dev/null
+if [[ "$RUN" == "$CASE_RUNS" || "$RUN" == "$CASE_RUNS/"* ]]; then
+  printf '%s\n' "Doctor RUN must be outside CASE_RUNS" >&2
+else
+  pi --no-extensions -e "$ROLE_EXTENSION" \
+    --ak-role doctor \
+    --ak-doctor-case "$CASE_RUNS" \
+    --session-dir "$RUN/session" --mode json \
+    -p "Produce this case's process-cost diagnosis." \
+    >/dev/null 2>"$RUN/stderr.log" </dev/null
+fi
 ```
 
 ### Merger
