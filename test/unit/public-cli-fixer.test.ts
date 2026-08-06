@@ -1,0 +1,1129 @@
+/**
+ * #110 public Fixer path — common Invocation, structural prerequisites,
+ * optional package diagnosing-bugs (available, not forced), shared Terminal.
+ */
+import assert from "node:assert/strict";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { execFileSync } from "node:child_process";
+
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import {
+  loadPackagedMethodSkillMaterial,
+  observePackagedMethodSkillInvocation,
+  resolvePackagedMethodSkillPath,
+} from "../../src/package-resources/method-skill.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
+import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import {
+  buildFixerActivationExtraArgs,
+  buildFixerResumeActivationExtraArgs,
+} from "../../src/public-cli/fixer-run.ts";
+import {
+  admitFixerInvocation,
+  parseFixerArgv,
+} from "../../src/public-cli/invocation.ts";
+import { RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
+import {
+  extractFixerMethodInvocations,
+  extractFixerRoleOutcome,
+  settleFixerTerminalResult,
+} from "../../src/public-cli/settlement.ts";
+import {
+  exitCodeForTerminalOutcome,
+  isLawfulTypedTerminalOutcome,
+} from "../../src/public-cli/terminal.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { completed, refused, shaA } from "../helpers/fixer-fixtures.ts";
+import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
+
+async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
+  const home = await mkdtemp(join(tmpdir(), "ak-public-cli-fixer-"));
+  try {
+    return await scenario(home);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+function captureIo() {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  return {
+    stdout,
+    stderr,
+    io: {
+      stdout: (text: string) => {
+        stdout.push(text);
+      },
+      stderr: (text: string) => {
+        stderr.push(text);
+      },
+    },
+  };
+}
+
+function seedGitProject(root: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "fixer@test.local"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Fixer Test"], { cwd: root });
+  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
+}
+
+test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus prerequisites path", () => {
+  const isUsage = (error: unknown): boolean =>
+    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
+
+  assert.deepEqual(parseFixerArgv(["Repair the class."]), {
+    phase: "apply",
+    instruction: "Repair the class.",
+    attachmentPaths: [],
+  });
+  assert.deepEqual(parseFixerArgv(["plan", "Propose the repair."]), {
+    phase: "plan",
+    instruction: "Propose the repair.",
+    attachmentPaths: [],
+  });
+  assert.deepEqual(
+    parseFixerArgv([
+      "apply",
+      "--prerequisites",
+      "prereq.json",
+      "--attach",
+      "a.md",
+      "--project",
+      "/tmp/p",
+      "Settle findings.",
+    ]),
+    {
+      phase: "apply",
+      instruction: "Settle findings.",
+      attachmentPaths: ["a.md"],
+      prerequisitesPath: "prereq.json",
+      project: "/tmp/p",
+    },
+  );
+  assert.throws(() => parseFixerArgv(["--unknown-flag"]), isUsage);
+  assert.throws(() => parseFixerArgv(["--prerequisites", ""]), isUsage);
+  assert.throws(() => parseFixerArgv(["--project", "", "task"]), isUsage);
+});
+
+test("admitFixerInvocation freezes prerequisites and rejects malformed grammar structurally", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    await assert.rejects(
+      () =>
+        admitFixerInvocation({
+          home,
+          cwd: project,
+          phase: "apply",
+          instruction: "   ",
+          attachmentPaths: [],
+        }),
+      (error: unknown) =>
+        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
+    );
+
+    const badPrereq = join(home, "bad-prereq.json");
+    await writeFile(badPrereq, JSON.stringify([{ id: "bad/id", requirement: "x" }]), "utf8");
+    await assert.rejects(
+      () =>
+        admitFixerInvocation({
+          home,
+          cwd: project,
+          phase: "apply",
+          instruction: "Repair with bad prereq grammar.",
+          attachmentPaths: [],
+          prerequisitesPath: badPrereq,
+        }),
+      (error: unknown) =>
+        error instanceof CliUsageError &&
+        error.code === "AK_ROLE_USAGE" &&
+        /prerequisite/i.test(error.message),
+    );
+
+    const goodPrereq = join(home, "good-prereq.json");
+    await writeFile(
+      goodPrereq,
+      JSON.stringify([
+        { id: "owner.choice", requirement: "Owner selects the public contract." },
+      ]),
+      "utf8",
+    );
+    const source = join(home, "notes.txt");
+    await writeFile(source, "attachment-v1", "utf8");
+    const admitted = await admitFixerInvocation({
+      home,
+      cwd: project,
+      phase: "plan",
+      instruction: "Plan the class repair.",
+      attachmentPaths: [source],
+      prerequisitesPath: goodPrereq,
+      createRunId: () => "run-fixer-plan-001",
+    });
+    assert.equal(admitted.role, "fixer");
+    assert.equal(admitted.phase, "plan");
+    assert.equal(admitted.instruction, "Plan the class repair.");
+    assert.equal(await readFile(admitted.packetPath, "utf8"), "Plan the class repair.");
+    assert.equal(admitted.prerequisites.length, 1);
+    assert.equal(admitted.prerequisites[0]!.id, "owner.choice");
+    assert.equal(typeof admitted.prerequisitesPath, "string");
+    assert.equal(
+      JSON.parse(await readFile(admitted.prerequisitesPath!, "utf8"))[0].id,
+      "owner.choice",
+    );
+    assert.equal(admitted.attachments.length, 1);
+    assert.equal(await readFile(admitted.attachments[0]!.frozenPath, "utf8"), "attachment-v1");
+
+    const bookKey = resolveBookKeyFromGit(project);
+    assert.equal(
+      admitted.runDirectory,
+      join(home, ".ak-roles", "books", bookKey, "runs", "run-fixer-plan-001@fixer"),
+    );
+    const persisted = JSON.parse(
+      await readFile(admitted.admittedRequestPath, "utf8"),
+    ) as { phase: string; role: string; prerequisites: unknown[] };
+    assert.equal(persisted.role, "fixer");
+    assert.equal(persisted.phase, "plan");
+    assert.equal(persisted.prerequisites.length, 1);
+  });
+});
+
+test("buildFixerActivationExtraArgs pins package diagnosing-bugs without forcing skill text in prompt", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const apply = await admitFixerInvocation({
+      home,
+      cwd: project,
+      phase: "apply",
+      instruction: "Apply the approved repair.",
+      attachmentPaths: [],
+      createRunId: () => "run-fixer-apply-args",
+    });
+    const applyArgs = buildFixerActivationExtraArgs(apply, { packageRoot });
+    assert.equal(applyArgs.includes("--no-skills"), true);
+    assert.equal(applyArgs.includes("--skill"), true);
+    const skillIdx = applyArgs.indexOf("--skill");
+    assert.equal(
+      applyArgs[skillIdx + 1]?.includes("resources/methods/diagnosing-bugs/SKILL.md"),
+      true,
+    );
+    assert.equal(applyArgs.includes("--ak-fixer-phase"), true);
+    assert.equal(applyArgs[applyArgs.indexOf("--ak-fixer-phase") + 1], "apply");
+    assert.equal(applyArgs[applyArgs.indexOf("--ak-fix-packet") + 1], apply.packetPath);
+    // Diagnosis is available but not forced into the first prompt transport.
+    const prompt = applyArgs[applyArgs.length - 1]!;
+    assert.equal(prompt.includes("/skill:diagnosing-bugs"), false);
+    assert.equal(prompt.includes("Apply the approved repair."), true);
+    assert.equal(
+      applyArgs.some((a) => a.includes(".agents/skills")),
+      false,
+    );
+
+    const prereq = join(home, "prereq.json");
+    await writeFile(
+      prereq,
+      JSON.stringify([{ id: "repo.ready", requirement: "Repository is ready." }]),
+      "utf8",
+    );
+    const plan = await admitFixerInvocation({
+      home,
+      cwd: project,
+      phase: "plan",
+      instruction: "Plan only.",
+      attachmentPaths: [],
+      prerequisitesPath: prereq,
+      createRunId: () => "run-fixer-plan-args",
+    });
+    const planArgs = buildFixerActivationExtraArgs(plan, { packageRoot });
+    assert.equal(planArgs.includes("--skill"), true);
+    assert.equal(planArgs[planArgs.indexOf("--ak-fixer-phase") + 1], "plan");
+    assert.equal(planArgs.includes("--ak-fixer-prerequisites"), true);
+    assert.equal(
+      planArgs[planArgs.indexOf("--ak-fixer-prerequisites") + 1],
+      plan.prerequisitesPath,
+    );
+
+    const resume = buildFixerResumeActivationExtraArgs(apply, { packageRoot });
+    assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
+    assert.equal(resume.includes(apply.instruction), false);
+    assert.equal(resume.includes("--skill"), true);
+    assert.equal(resume[resume.indexOf("--ak-fixer-phase") + 1], "apply");
+  });
+});
+
+test("lawful fixer Terminal records diagnosis provenance and optional invocation observation", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const admitted = await admitFixerInvocation({
+      home,
+      cwd: project,
+      phase: "apply",
+      instruction: "Repair the unsettled class.",
+      attachmentPaths: [],
+      createRunId: () => "run-fixer-settle-001",
+    });
+    await mkdir(admitted.sessionDirectory, { recursive: true });
+    const material = await loadPackagedMethodSkillMaterial(
+      packageRoot,
+      "diagnosing-bugs",
+    );
+    const configuredPath = resolvePackagedMethodSkillPath(
+      packageRoot,
+      "diagnosing-bugs",
+    );
+    const skillBody = `References are relative to ${material.rootDirectory}.\n\n${material.body}`;
+    const skillPrompt = `<skill name="diagnosing-bugs" location="${configuredPath}">\n${skillBody}\n</skill>\n\nDiagnose the root cause.`;
+    assert.deepEqual(
+      observePackagedMethodSkillInvocation(skillPrompt, {
+        name: "diagnosing-bugs",
+        allowedLocations: [configuredPath, material.skillPath],
+      }),
+      { name: "diagnosing-bugs", location: configuredPath },
+    );
+    // Ambient home path must not count as package invocation.
+    assert.equal(
+      observePackagedMethodSkillInvocation(
+        `<skill name="diagnosing-bugs" location="/tmp/home/.agents/skills/diagnosing-bugs/SKILL.md">\n${skillBody}\n</skill>\n\nx`,
+        { name: "diagnosing-bugs", allowedLocations: [configuredPath] },
+      ),
+      undefined,
+    );
+
+    const receipt = {
+      status: "completed" as const,
+      report: "Root cause repaired across the class; diagnosis was used once.",
+      classResults: [
+        {
+          name: "ParserCase",
+          disposition: "completed" as const,
+          searchScope: "all parser entry points",
+          exceptions: [],
+          commitSha: "a".repeat(40),
+        },
+      ],
+    };
+    const sessionLines = [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: skillPrompt }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "f1",
+          toolName: FIXER_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: receipt,
+        },
+      }),
+    ];
+    await writeFile(admitted.sessionFile, `${sessionLines.join("\n")}\n`, "utf8");
+
+    const entries = sessionLines.map((line) => JSON.parse(line));
+    const extracted = extractFixerRoleOutcome(entries);
+    assert.equal(extracted?.outcome.role, "fixer");
+    assert.equal(extracted?.outcome.status, "completed");
+    const invocations = extractFixerMethodInvocations(entries, {
+      allowedLocations: [configuredPath, material.skillPath],
+    });
+    assert.equal(invocations.length, 1);
+    assert.equal(invocations[0]!.name, "diagnosing-bugs");
+
+    const terminal = await settleFixerTerminalResult(admitted, {
+      methodProvenance: material.provenance,
+      methodSkillPath: material.skillPath,
+      methodSkillConfiguredPath: configuredPath,
+    });
+    assert.equal(terminal.roleOutcome.role, "fixer");
+    assert.equal(terminal.roleOutcome.kind, "accepted");
+    assert.equal(terminal.roleOutcome.status, "completed");
+    assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+
+    const evidence = JSON.parse(
+      await readFile(
+        terminal.artifacts.find((a) => a.kind === "evidence")!.path,
+        "utf8",
+      ),
+    ) as {
+      methodProvenance: {
+        name: string;
+        packageAdaptation: string;
+        upstream: { commit: string; attribution: string };
+      };
+      methodInvocationObserved: boolean;
+      methodInvocations: Array<{ name: string; location: string }>;
+    };
+    assert.equal(evidence.methodProvenance.name, "diagnosing-bugs");
+    assert.equal(
+      evidence.methodProvenance.packageAdaptation,
+      "fixer-boundary-no-external-skill-chain",
+    );
+    assert.equal(evidence.methodProvenance.upstream.attribution, "mattpocock/skills");
+    assert.equal(evidence.methodInvocationObserved, true);
+    assert.equal(evidence.methodInvocations.length, 1);
+    assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
+
+    // Without skill expansion, provenance remains and invocation is not forced/observed.
+    const noDiag = await admitFixerInvocation({
+      home,
+      cwd: project,
+      phase: "apply",
+      instruction: "Repair without diagnosis.",
+      attachmentPaths: [],
+      createRunId: () => "run-fixer-settle-002",
+    });
+    await mkdir(noDiag.sessionDirectory, { recursive: true });
+    await writeFile(
+      noDiag.sessionFile,
+      `${JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "f2",
+          toolName: FIXER_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: receipt,
+        },
+      })}\n`,
+      "utf8",
+    );
+    const terminalNoDiag = await settleFixerTerminalResult(noDiag, {
+      methodProvenance: material.provenance,
+      methodSkillPath: material.skillPath,
+      methodSkillConfiguredPath: configuredPath,
+    });
+    const evidenceNoDiag = JSON.parse(
+      await readFile(
+        terminalNoDiag.artifacts.find((a) => a.kind === "evidence")!.path,
+        "utf8",
+      ),
+    ) as { methodInvocationObserved: boolean; methodInvocations: unknown[] };
+    assert.equal(evidenceNoDiag.methodInvocationObserved, false);
+    assert.equal(evidenceNoDiag.methodInvocations.length, 0);
+  });
+});
+
+test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prerequisites", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    {
+      const { io, stderr } = captureIo();
+      const result = await runAkRole(["fixer", "plan", "   "], {
+        packageRoot,
+        home,
+        cwd: project,
+        io,
+        piRunner: async () => {
+          throw new Error("must not dispatch");
+        },
+      });
+      assert.equal(result.exitCode, 2);
+      assert.equal(stderr.join("").length > 0, true);
+    }
+
+    {
+      const bad = join(home, "bad.json");
+      await writeFile(bad, "{", "utf8");
+      const { io } = captureIo();
+      const result = await runAkRole(
+        ["fixer", "--project", project, "--prerequisites", bad, "Repair."],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          io,
+          piRunner: async () => {
+            throw new Error("must not dispatch malformed prereq");
+          },
+        },
+      );
+      assert.equal(result.exitCode, 2);
+    }
+
+    {
+      const { io, stdout } = captureIo();
+      let captured: string[] | undefined;
+      const result = await runAkRole(
+        [
+          "fixer",
+          "plan",
+          "--project",
+          project,
+          "Propose the first repair plan.",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-cli-fixer-plan",
+          io,
+          piRunner: async (args) => {
+            captured = [...args];
+            const sessionIdx = args.indexOf("--session");
+            const sessionFile = args[sessionIdx + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            const receipt = {
+              status: "planned",
+              report: "Plan: inspect root cause; diagnosis available if needed.",
+            };
+            await writeFile(
+              sessionFile,
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "p1",
+                  toolName: FIXER_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: receipt,
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stdout: "",
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(result.exitCode, 0, stdout.join("") || "fixer plan failed");
+      assert.equal(Array.isArray(captured), true);
+      assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "plan");
+      assert.equal(captured!.includes("--skill"), true);
+      assert.equal(
+        captured![captured!.indexOf("--skill") + 1]?.includes(
+          "resources/methods/diagnosing-bugs/SKILL.md",
+        ),
+        true,
+      );
+      // Not forced: first prompt must not auto-inject skill invocation.
+      assert.equal(
+        captured![captured!.length - 1]?.includes("/skill:diagnosing-bugs"),
+        false,
+      );
+      assert.equal(result.terminal?.roleOutcome.role, "fixer");
+      assert.equal(
+        result.terminal?.roleOutcome.kind === "accepted"
+          ? result.terminal.roleOutcome.status
+          : undefined,
+        "planned",
+      );
+      await access(
+        join(
+          home,
+          ".ak-roles",
+          "books",
+          resolveBookKeyFromGit(project),
+          "runs",
+          "run-cli-fixer-plan@fixer",
+          "admitted-request.json",
+        ),
+      );
+    }
+
+    {
+      const { io } = captureIo();
+      let captured: string[] | undefined;
+      await runAkRole(
+        ["fixer", "--project", project, "Settle the approved repair."],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-cli-fixer-apply",
+          io,
+          piRunner: async (args) => {
+            captured = [...args];
+            return {
+              code: 1,
+              stdout: "",
+              stderr: "forced stop before model",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.equal(Array.isArray(captured), true);
+      assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "apply");
+      assert.equal(captured!.includes("--skill"), true);
+      assert.equal(
+        captured![captured!.indexOf("--skill") + 1]?.includes(
+          "resources/methods/diagnosing-bugs/SKILL.md",
+        ),
+        true,
+      );
+    }
+  });
+});
+
+test("ak-role resume continues fixer with preserved plan phase and exact session", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-cli-fixer-resume-plan";
+    const instruction = "Propose the first repair plan for resume.";
+
+    {
+      const { io } = captureIo();
+      const first = await runAkRole(
+        ["fixer", "plan", "--project", project, instruction],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "xai",
+            });
+            return {
+              code: 1,
+              stdout: "",
+              stderr: "quota",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.ok(first.terminal?.resume, "fixer plan 429 must be resumable");
+      assert.equal(first.terminal?.roleOutcome.role, "fixer");
+    }
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@fixer`,
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    const admitted = JSON.parse(
+      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+    ) as { phase: string; role: string; packetPath: string };
+    assert.equal(admitted.role, "fixer");
+    assert.equal(admitted.phase, "plan");
+
+    const { io, stdout } = captureIo();
+    let resumeArgs: string[] | undefined;
+    const resumed = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io,
+      piRunner: async (args) => {
+        resumeArgs = [...args];
+        assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
+        assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
+        assert.equal(args[args.indexOf("--ak-fix-packet") + 1], admitted.packetPath);
+        assert.equal(args.includes("--skill"), true);
+        assert.equal(args.includes(instruction), false);
+        assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
+        assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
+        await writeFile(
+          join(sessionDirectory, "session.jsonl"),
+          `${JSON.stringify({
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolCallId: "r1",
+              toolName: FIXER_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: {
+                status: "planned",
+                report: "Resumed plan remains plan phase.",
+              },
+            },
+          })}\n`,
+          "utf8",
+        );
+        return {
+          code: 0,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
+    assert.equal(resumed.exitCode, 0, stdout.join("") || "fixer resume failed");
+    assert.equal(Array.isArray(resumeArgs), true);
+    assert.equal(resumed.terminal?.roleOutcome.role, "fixer");
+    assert.equal(
+      resumed.terminal?.roleOutcome.kind === "accepted"
+        ? resumed.terminal.roleOutcome.status
+        : undefined,
+      "planned",
+    );
+  });
+});
+
+function fixerSessionLine(details: unknown): string {
+  return `${JSON.stringify({
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolCallId: "f-out",
+      toolName: FIXER_OUTPUT_TOOL_NAME,
+      isError: false,
+      details,
+    },
+  })}\n`;
+}
+
+async function settleFixerSession(
+  admitted: Awaited<ReturnType<typeof admitFixerInvocation>>,
+  details: unknown,
+) {
+  await mkdir(admitted.sessionDirectory, { recursive: true });
+  await writeFile(admitted.sessionFile, fixerSessionLine(details), "utf8");
+  const material = await loadPackagedMethodSkillMaterial(
+    packageRoot,
+    "diagnosing-bugs",
+  );
+  return settleFixerTerminalResult(admitted, {
+    methodProvenance: material.provenance,
+    methodSkillPath: material.skillPath,
+    methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+      packageRoot,
+      "diagnosing-bugs",
+    ),
+  });
+}
+
+test("public CLI retains declared prerequisite_unmet judgment as accepted Terminal (not usage/failure)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const prereqPath = join(home, "prereq.json");
+    await writeFile(
+      prereqPath,
+      JSON.stringify([
+        {
+          id: "owner.choice",
+          requirement: "Owner selects the public contract surface.",
+        },
+      ]),
+      "utf8",
+    );
+
+    // Production seam: admit valid prerequisites, then settle a phase-legal plan refusal
+    // that judges the declared prerequisite unmet — must stay accepted Terminal exit 0.
+    const admitted = await admitFixerInvocation({
+      home,
+      cwd: project,
+      phase: "plan",
+      instruction: "Plan only after owner choice is present.",
+      attachmentPaths: [],
+      prerequisitesPath: prereqPath,
+      createRunId: () => "run-fixer-prereq-unmet",
+    });
+    assert.equal(admitted.prerequisites[0]!.id, "owner.choice");
+
+    const receipt = {
+      status: "refused" as const,
+      report: "Cannot plan: declared owner choice is absent.",
+      remainingScope: "the entire plan assignment",
+      blocker: {
+        cause: "prerequisite_unmet" as const,
+        prerequisiteId: "owner.choice",
+        evidence: "No owner decision is recorded in the packet attachments.",
+      },
+    };
+
+    const terminal = await settleFixerSession(admitted, receipt);
+    assert.equal(terminal.roleOutcome.kind, "accepted");
+    assert.equal(terminal.roleOutcome.role, "fixer");
+    assert.equal(
+      terminal.roleOutcome.kind === "accepted"
+        ? terminal.roleOutcome.status
+        : undefined,
+      "refused",
+    );
+    assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), true);
+    assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 0);
+    assert.equal(terminal.roleOutcome.decisiveFacts.fixerStatus, "refused");
+    assert.equal(
+      terminal.roleOutcome.decisiveFacts.blockerCause,
+      "prerequisite_unmet",
+    );
+    assert.equal(
+      terminal.roleOutcome.decisiveFacts.prerequisiteId,
+      "owner.choice",
+    );
+    assert.equal(
+      terminal.roleOutcome.decisiveFacts.remainingScope,
+      "the entire plan assignment",
+    );
+    // Not a controlled-failure face.
+    assert.equal(
+      Object.hasOwn(terminal.roleOutcome, "cause"),
+      false,
+    );
+
+    // Full public CLI path: same judgment exits 0 with retained blocker facts.
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      [
+        "fixer",
+        "plan",
+        "--project",
+        project,
+        "--prerequisites",
+        prereqPath,
+        "Plan only after owner choice is present.",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-fixer-prereq-unmet",
+        io,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await mkdir(join(sessionFile, ".."), { recursive: true });
+          await writeFile(sessionFile, fixerSessionLine(receipt), "utf8");
+          return {
+            code: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+    assert.equal(result.exitCode, 0, stdout.join("") || "prereq_unmet refused failed");
+    assert.equal(stderr.join("").length, 0);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+    assert.equal(
+      result.terminal!.roleOutcome.kind === "accepted"
+        ? result.terminal!.roleOutcome.status
+        : undefined,
+      "refused",
+    );
+    assert.equal(
+      result.terminal!.roleOutcome.decisiveFacts.blockerCause,
+      "prerequisite_unmet",
+    );
+    assert.equal(
+      result.terminal!.roleOutcome.decisiveFacts.prerequisiteId,
+      "owner.choice",
+    );
+    assert.equal(Object.hasOwn(result.terminal!.roleOutcome, "cause"), false);
+  });
+});
+
+test("public Fixer unfinished/refused/partially_completed/audit_escalation hand off via shared Terminal exit 0", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const unfinishedReceipt = {
+      status: "unfinished" as const,
+      report: "Stopped mid-class; remaining work is typed.",
+      remainingScope: "TransportCase remaining assertions",
+      classResults: [completed("ParserCase", shaA)],
+    };
+    const applyRefusedReceipt = {
+      status: "refused" as const,
+      report: "All classes blocked by authority boundary.",
+      classResults: [
+        {
+          name: "PolicyCase",
+          disposition: "refused" as const,
+          remainingScope: "policy surface",
+          blocker: {
+            cause: "authority_violation" as const,
+            evidence: "Packet forbids editing policy files.",
+          },
+        },
+      ],
+    };
+    const partialReceipt = {
+      status: "partially_completed" as const,
+      report: "One class repaired; one refused.",
+      classResults: [completed("ParserCase", shaA), refused("TransportCase")],
+    };
+    const escalation = {
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: ["soul procedure conflict"],
+      decisionGate: {
+        question: "Which authority controls this Fixer gate?",
+        options: ["owner", "caller"],
+      },
+    };
+
+    // extract path: each lawful status keeps typed meaning on the shared face.
+    const unfinishedExtracted = extractFixerRoleOutcome([
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: FIXER_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: unfinishedReceipt,
+        },
+      },
+    ]);
+    assert.ok(unfinishedExtracted);
+    assert.equal(unfinishedExtracted.outcome.kind, "accepted");
+    assert.equal(unfinishedExtracted.outcome.status, "unfinished");
+    assert.equal(
+      unfinishedExtracted.outcome.decisiveFacts.fixerStatus,
+      "unfinished",
+    );
+    assert.equal(
+      unfinishedExtracted.outcome.decisiveFacts.remainingScope,
+      unfinishedReceipt.remainingScope,
+    );
+    assert.equal(unfinishedExtracted.outcome.decisiveFacts.classResultCount, 1);
+
+    const refusedExtracted = extractFixerRoleOutcome([
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: FIXER_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: applyRefusedReceipt,
+        },
+      },
+    ]);
+    assert.ok(refusedExtracted);
+    assert.equal(refusedExtracted.outcome.kind, "accepted");
+    assert.equal(refusedExtracted.outcome.status, "refused");
+    assert.equal(refusedExtracted.outcome.decisiveFacts.fixerStatus, "refused");
+    assert.equal(
+      refusedExtracted.outcome.decisiveFacts.classDispositions,
+      "PolicyCase:refused",
+    );
+    assert.equal(
+      refusedExtracted.outcome.decisiveFacts.blockerCauses,
+      "authority_violation",
+    );
+
+    const partialExtracted = extractFixerRoleOutcome([
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: FIXER_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: partialReceipt,
+        },
+      },
+    ]);
+    assert.ok(partialExtracted);
+    assert.equal(partialExtracted.outcome.kind, "accepted");
+    assert.equal(partialExtracted.outcome.status, "partially_completed");
+    assert.equal(
+      partialExtracted.outcome.decisiveFacts.fixerStatus,
+      "partially_completed",
+    );
+    assert.equal(partialExtracted.outcome.decisiveFacts.classResultCount, 2);
+    assert.equal(
+      partialExtracted.outcome.decisiveFacts.classDispositions,
+      "ParserCase:completed,TransportCase:refused",
+    );
+    assert.equal(
+      partialExtracted.outcome.decisiveFacts.blockerCauses,
+      "prerequisite_unmet",
+    );
+    assert.equal(
+      partialExtracted.outcome.decisiveFacts.prerequisiteIds,
+      "repository.ready",
+    );
+
+    const escalationExtracted = extractFixerRoleOutcome([
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: FIXER_OUTPUT_TOOL_NAME,
+          isError: false,
+          details: escalation,
+        },
+      },
+    ]);
+    assert.ok(escalationExtracted);
+    assert.equal(escalationExtracted.outcome.kind, "audit_escalation");
+    assert.equal(escalationExtracted.outcome.status, "audit_escalation");
+    assert.equal(
+      escalationExtracted.outcome.decisiveFacts.kind,
+      AUDIT_ESCALATION_KIND,
+    );
+    assert.equal(escalationExtracted.output, undefined);
+
+    // settle + runAkRole production path for each lawful status → exit 0.
+    const cases: Array<{
+      runId: string;
+      phase: "plan" | "apply";
+      details: unknown;
+      kind: "accepted" | "audit_escalation";
+      status: string;
+      factKey: string;
+      factValue: unknown;
+    }> = [
+      {
+        runId: "run-fixer-status-unfinished",
+        phase: "apply",
+        details: unfinishedReceipt,
+        kind: "accepted",
+        status: "unfinished",
+        factKey: "fixerStatus",
+        factValue: "unfinished",
+      },
+      {
+        runId: "run-fixer-status-refused",
+        phase: "apply",
+        details: applyRefusedReceipt,
+        kind: "accepted",
+        status: "refused",
+        factKey: "blockerCauses",
+        factValue: "authority_violation",
+      },
+      {
+        runId: "run-fixer-status-partial",
+        phase: "apply",
+        details: partialReceipt,
+        kind: "accepted",
+        status: "partially_completed",
+        factKey: "fixerStatus",
+        factValue: "partially_completed",
+      },
+      {
+        runId: "run-fixer-status-escalate",
+        phase: "apply",
+        details: escalation,
+        kind: "audit_escalation",
+        status: "audit_escalation",
+        factKey: "kind",
+        factValue: AUDIT_ESCALATION_KIND,
+      },
+    ];
+
+    for (const row of cases) {
+      const admitted = await admitFixerInvocation({
+        home,
+        cwd: project,
+        phase: row.phase,
+        instruction: `Exercise ${row.status} settlement.`,
+        attachmentPaths: [],
+        createRunId: () => `${row.runId}-settle`,
+      });
+      const settled = await settleFixerSession(admitted, row.details);
+      assert.equal(settled.roleOutcome.kind, row.kind, row.status);
+      assert.equal(settled.roleOutcome.role, "fixer", row.status);
+      assert.equal(
+        settled.roleOutcome.kind === "accepted" ||
+          settled.roleOutcome.kind === "audit_escalation"
+          ? settled.roleOutcome.status
+          : undefined,
+        row.status,
+      );
+      assert.equal(
+        settled.roleOutcome.decisiveFacts[row.factKey],
+        row.factValue,
+        row.status,
+      );
+      assert.equal(isLawfulTypedTerminalOutcome(settled.roleOutcome), true);
+      assert.equal(exitCodeForTerminalOutcome(settled.roleOutcome), 0);
+
+      const { io, stdout } = captureIo();
+      const cliArgs =
+        row.phase === "plan"
+          ? (["fixer", "plan", "--project", project, `CLI ${row.status}`] as string[])
+          : (["fixer", "--project", project, `CLI ${row.status}`] as string[]);
+      const result = await runAkRole(cliArgs, {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => row.runId,
+        io,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await mkdir(join(sessionFile, ".."), { recursive: true });
+          await writeFile(sessionFile, fixerSessionLine(row.details), "utf8");
+          return {
+            code: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      });
+      assert.equal(
+        result.exitCode,
+        0,
+        `${row.status}: ${stdout.join("") || "nonzero exit"}`,
+      );
+      assert.ok(result.terminal, row.status);
+      assert.equal(result.terminal!.roleOutcome.kind, row.kind, row.status);
+      assert.equal(
+        result.terminal!.roleOutcome.kind === "accepted" ||
+          result.terminal!.roleOutcome.kind === "audit_escalation"
+          ? result.terminal!.roleOutcome.status
+          : undefined,
+        row.status,
+      );
+      assert.equal(
+        result.terminal!.roleOutcome.decisiveFacts[row.factKey],
+        row.factValue,
+        row.status,
+      );
+      assert.equal(
+        isLawfulTypedTerminalOutcome(result.terminal!.roleOutcome),
+        true,
+        row.status,
+      );
+    }
+  });
+});

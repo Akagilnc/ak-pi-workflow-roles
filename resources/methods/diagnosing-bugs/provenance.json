@@ -1,0 +1,31 @@
+{
+  "name": "diagnosing-bugs",
+  "kind": "role-method-skill",
+  "upstream": {
+    "repository": "https://github.com/mattpocock/skills",
+    "path": "skills/engineering/diagnosing-bugs",
+    "commit": "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    "tag": "v1.2.2",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Matt Pocock",
+    "attribution": "mattpocock/skills"
+  },
+  "packageAdaptation": "fixer-boundary-no-external-skill-chain",
+  "files": {
+    "SKILL.md": {
+      "sha256": "20cb4ec08e2dd914a1a493afac8ece6d15b14c36243eba21e628f96638db64af",
+      "byteLength": 8672,
+      "gitBlob": "439bd76c1dbf1933d018625efff1b89afa31e057"
+    },
+    "agents/openai.yaml": {
+      "sha256": "3e430dbe4334a87597488c060cb3dc3786bb00c9182877d6f5ec41f62490e90b",
+      "byteLength": 103,
+      "gitBlob": "a13a755a77634ce61a649a3a0d905a66d3865b35"
+    },
+    "scripts/hitl-loop.template.sh": {
+      "sha256": "b2932630950e5210075bcd6f850e5accf30c101c5367b29eac3a29b4dd8084c8",
+      "byteLength": 1164,
+      "gitBlob": "40afc4652f6f52fc117b2b00e1fa65fcec235838"
+    }
+  }
+}

@@ -31,6 +31,12 @@ import {
   parseCollectorRepository,
   type CollectorRepository,
 } from "../collector-config.ts";
+import {
+  FixerPacketValidationError,
+  parseFixerPrerequisites,
+  type FixerPrerequisite,
+} from "../package-contracts/fixer-packet.ts";
+import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -88,6 +94,18 @@ export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
   readonly taskPath: string;
 };
 
+export type AdmittedFixerInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "fixer";
+  /** Explicit plan or default apply — preserved through admission and continuation. */
+  readonly phase: FixerPhase;
+  /** Durable opaque instruction path consumed by internal --ak-fix-packet. */
+  readonly packetPath: string;
+  /** Optional durable prerequisites JSON path for --ak-fixer-prerequisites. */
+  readonly prerequisitesPath?: string;
+  /** Structurally validated prerequisite declarations frozen at admission. */
+  readonly prerequisites: readonly FixerPrerequisite[];
+};
+
 export type CollectorLegDeclaration = {
   readonly id: string;
   readonly expectedAuthors: readonly string[];
@@ -115,6 +133,7 @@ export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCoderInvocation
+  | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
   | AdmittedDoctorInvocation;
 
@@ -128,6 +147,15 @@ export type ParseCoderArgvResult = {
   phase: CoderPhase;
   instruction: string;
   attachmentPaths: string[];
+  project?: string;
+};
+
+export type ParseFixerArgvResult = {
+  phase: FixerPhase;
+  instruction: string;
+  attachmentPaths: string[];
+  /** Optional path to structurally valid prerequisite JSON array. */
+  prerequisitesPath?: string;
   project?: string;
 };
 
@@ -150,7 +178,10 @@ export type ParseDoctorArgvResult = {
 };
 
 /** Reject missing/blank path values so empty overrides cannot silently degrade. */
-function requireOptionPath(flag: "--project" | "--attach", value: string | undefined): string {
+function requireOptionPath(
+  flag: "--project" | "--attach" | "--prerequisites",
+  value: string | undefined,
+): string {
   if (value === undefined || value.trim() === "") {
     throw new CliUsageError(`${flag} requires a path`);
   }
@@ -267,6 +298,73 @@ export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
     phase,
     instruction: positional.join(" "),
     attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+  };
+}
+
+/**
+ * Parse Fixer-specific argv after the `fixer` token.
+ * Phase defaults to apply; explicit `plan` or `apply` as the first positional is preserved.
+ * Common Invocation flags: --attach / --project. Role-specific: optional --prerequisites.
+ */
+export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  let prerequisitesPath: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+
+  while (tokens.length > 0) {
+    const token = tokens.shift()!;
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length)),
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token === "--prerequisites") {
+      prerequisitesPath = requireOptionPath("--prerequisites", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--prerequisites=")) {
+      prerequisitesPath = requireOptionPath(
+        "--prerequisites",
+        token.slice("--prerequisites=".length),
+      );
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown fixer option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  let phase: FixerPhase = "apply";
+  if (positional[0] === "plan" || positional[0] === "apply") {
+    phase = positional.shift() as FixerPhase;
+  }
+
+  return {
+    phase,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
     ...(project === undefined ? {} : { project }),
   };
 }
@@ -548,6 +646,162 @@ export async function admitCoderInvocation(
  */
 export function buildCoderTransportPrompt(
   admitted: AdmittedCoderInvocation,
+): string {
+  const lines: string[] = [admitted.instruction];
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export type AdmitFixerInvocationOptions = {
+  home: string;
+  cwd: string;
+  phase: FixerPhase;
+  instruction: string;
+  attachmentPaths: readonly string[];
+  /** Optional caller path to prerequisite JSON array; malformed grammar rejects here. */
+  prerequisitesPath?: string;
+  project?: string;
+  createRunId?: () => string;
+};
+
+/**
+ * Admit a Fixer Role run on the common Invocation request plus optional prerequisites.
+ * Nonblank instruction remains authoritative. Phase defaults to apply at parse time.
+ * Prerequisite grammar is structural; unmet/insufficient prerequisites stay Fixer judgments.
+ */
+export async function admitFixerInvocation(
+  options: AdmitFixerInvocationOptions,
+): Promise<AdmittedFixerInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const instruction = options.instruction;
+  if (instruction.trim() === "") {
+    throw new CliUsageError(
+      "fixer requires a nonblank repair instruction",
+    );
+  }
+  if (options.phase !== "plan" && options.phase !== "apply") {
+    throw new CliUsageError("fixer phase must be plan or apply");
+  }
+
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@fixer`,
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const attachments: FrozenAttachment[] = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i]!,
+        attachmentsDirectory,
+        i,
+      ),
+    );
+  }
+
+  let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
+  let prerequisitesPath: string | undefined;
+  if (options.prerequisitesPath !== undefined) {
+    const absolutePrereq = isAbsolute(options.prerequisitesPath)
+      ? options.prerequisitesPath
+      : resolve(options.prerequisitesPath);
+    let source: string;
+    try {
+      source = await readFile(absolutePrereq, "utf8");
+    } catch (error) {
+      throw new CliUsageError(
+        `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
+        { cause: error },
+      );
+    }
+    try {
+      prerequisites = parseFixerPrerequisites(source);
+    } catch (error) {
+      if (error instanceof FixerPacketValidationError) {
+        throw new CliUsageError(error.message, { cause: error });
+      }
+      throw error;
+    }
+    prerequisitesPath = join(runDirectory, "prerequisites.json");
+    await writeFile(
+      prerequisitesPath,
+      `${JSON.stringify(prerequisites, null, 2)}\n`,
+      "utf8",
+    );
+  }
+
+  const packetPath = join(runDirectory, "fix-packet.md");
+  await writeFile(packetPath, instruction, "utf8");
+
+  const admitted = {
+    role: "fixer" as const,
+    phase: options.phase,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    packetPath,
+    ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
+    prerequisites: prerequisites.map((entry) => ({
+      id: entry.id,
+      requirement: entry.requirement,
+    })),
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+
+  return {
+    role: "fixer",
+    phase: options.phase,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    packetPath,
+    ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
+    prerequisites,
+  };
+}
+
+/**
+ * Build the Pi prompt transport for an admitted Fixer request.
+ * Instruction bytes live at packetPath; prerequisites at optional path.
+ * Diagnosis method is available via package --skill, not forced into this prompt.
+ */
+export function buildFixerTransportPrompt(
+  admitted: AdmittedFixerInvocation,
 ): string {
   const lines: string[] = [admitted.instruction];
   if (admitted.attachments.length > 0) {
