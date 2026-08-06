@@ -7,7 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { type Context, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
-import { withColdInstalledPackage, withHermeticHome, withInProcessPi, withProcessCwd, writeTestSkill } from "../helpers/pi-test-harness.ts";
+import { withColdInstalledPackage, withHermeticHome, withInProcessPi, withProcessCwd } from "../helpers/pi-test-harness.ts";
 
 const exec = promisify(execFile);
 const Agent = "Agent";
@@ -27,16 +27,15 @@ async function git(cwd: string, ...args: string[]) { return (await exec("git", [
 
 test("installed npm tarball runs the complete established-Spec Reviewer lifecycle", async () => {
   await withHermeticHome({ prefix: "ak-reviewer-package-" }, async ({ home }) => {
-    const { path: skillPath } = await writeTestSkill(home, "code-review");
-    const skillRaw = await readFile(new URL("../fixtures/canonical-code-review-SKILL.md", import.meta.url), "utf8");
-    await writeFile(skillPath, skillRaw);
-
+    // Package-owned code-review (#111): empty home; skill path from installed package tree.
+    // Ambient home code-review must not steal /skill:code-review expansion from the package binding.
     await withColdInstalledPackage(home, async ({ fixture, pack, installedRoot }) => {
       assert.ok(pack.files.some((file) => file.path === "src/reviewer-dispatch.ts"));
       assert.ok(pack.files.some((file) => file.path === "src/reviewer-pinned-git.ts"));
-      // Package-owned method Skills under resources/methods/ are shipped (#109);
+      // Package-owned method Skills under resources/methods/ are shipped (#109/#111);
       // ambient top-level SKILL.md trees remain excluded.
       assert.ok(pack.files.some((file) => file.path === "resources/methods/tdd/SKILL.md"));
+      assert.ok(pack.files.some((file) => file.path === "resources/methods/code-review/SKILL.md"));
       assert.equal(
         pack.files.some(
           (file) =>
@@ -45,6 +44,9 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
         ),
         false,
       );
+
+      const skillPath = resolve(installedRoot, "resources/methods/code-review/SKILL.md");
+      const skillRaw = await readFile(skillPath, "utf8");
 
       const agentDir = resolve(fixture, ".pi-agent");
       await git(fixture, "init");

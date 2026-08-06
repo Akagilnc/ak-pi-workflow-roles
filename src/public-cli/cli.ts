@@ -21,8 +21,6 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import {
-  EXPLICIT_INTERNAL_LOAD_PROBE_ARGS,
-  runExplicitInternalActivation,
   type ExplicitInternalPiRunner,
 } from "./explicit-internal.ts";
 import {
@@ -890,35 +888,8 @@ export async function runAkRole(
       };
     }
 
-    // Remaining callable roles land in later #11 children.
-    const roleNames = listHelpCapabilities()
-      .filter((cap) => cap.kind === "role")
-      .map((cap) => cap.name);
-    if ((roleNames as string[]).includes(parsed.command)) {
-      const agentDir = resolveAgentDir(env, home);
-      const load = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs: EXPLICIT_INTERNAL_LOAD_PROBE_ARGS,
-        cwd: env.cwd ?? process.cwd(),
-        home,
-        agentDir,
-        ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-      });
-      if (load.timedOut || load.code !== 0) {
-        io.stderr(
-          `ak-role: failed to load installed role runtime for '${parsed.command}'\n`,
-        );
-        if (load.stderr.length > 0) {
-          io.stderr(load.stderr.endsWith("\n") ? load.stderr : `${load.stderr}\n`);
-        }
-        return { exitCode: 1 };
-      }
-      io.stderr(
-        `ak-role: role run for '${parsed.command}' is not available in this install slice\n`,
-      );
-      return { exitCode: 2 };
-    }
-
+    // #115: every PUBLIC_CALLABLE_ROLE has a completed handler above. Unknown
+    // tokens (including misspelled role names) are structural rejects.
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof CliUsageError) {
