@@ -1,9 +1,31 @@
 /**
  * Terminal result: typed semantic regions for one admitted Role run (ADR 0052 / #106).
  * Presentation may rearrange labels/order; only regions and typed facts are stable.
+ *
+ * Free-text cells are JSON-string encoded so legitimate newlines/tabs cannot forge
+ * extra rows or shift column boundaries (note / fix.summary / decision question / reason).
  */
 import { renderPublicAkRoleCommand } from "./command-renderer.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
+
+/** Encode one free-text Terminal cell. JSON string form cannot embed raw tab/newline. */
+export function encodeTerminalField(value: string): string {
+  return JSON.stringify(value);
+}
+
+/** Decode one free-text Terminal cell produced by encodeTerminalField. */
+export function decodeTerminalField(encoded: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(encoded);
+  } catch (error) {
+    throw new TypeError("terminal free-text field is not valid JSON", { cause: error });
+  }
+  if (typeof parsed !== "string") {
+    throw new TypeError("terminal free-text field must decode to a string");
+  }
+  return parsed;
+}
 
 export type TerminalArtifactRef = {
   kind: "report" | "evidence" | "error";
@@ -89,29 +111,31 @@ export function formatTerminalResult(result: TerminalResult): string {
   const lines: string[] = [];
   lines.push("role\toutcome\tstatus");
   lines.push(
-    `${result.roleOutcome.role}\t${result.roleOutcome.kind}\t${result.roleOutcome.status}`,
+    `${result.roleOutcome.role}\t${result.roleOutcome.kind}\t${encodeTerminalField(result.roleOutcome.status)}`,
   );
   const facts = result.roleOutcome.decisiveFacts;
   for (const [key, value] of Object.entries(facts)) {
     if (value === undefined) continue;
     const rendered =
       typeof value === "string" ? value : JSON.stringify(value);
-    lines.push(`fact\t${key}\t${rendered}`);
+    lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
   }
   lines.push(`navigator\t${result.navigator.disposition}`);
   if (result.navigator.disposition === "recommendation") {
     lines.push(
       `next\t${result.navigator.next.role}\t${result.navigator.next.phase ?? "none"}`,
     );
-    lines.push(`reason\t${result.navigator.reason}`);
-    lines.push(`command\t${result.navigator.command}`);
+    lines.push(`reason\t${encodeTerminalField(result.navigator.reason)}`);
+    lines.push(`command\t${encodeTerminalField(result.navigator.command)}`);
   } else if (result.navigator.disposition === "unavailable") {
-    lines.push(`unavailable\t${result.navigator.source}\t${result.navigator.reason}`);
+    lines.push(
+      `unavailable\t${result.navigator.source}\t${encodeTerminalField(result.navigator.reason)}`,
+    );
   }
   for (const artifact of result.artifacts) {
-    lines.push(`artifact\t${artifact.kind}\t${artifact.path}`);
+    lines.push(`artifact\t${artifact.kind}\t${encodeTerminalField(artifact.path)}`);
   }
-  lines.push(`run\t${result.runId}`);
+  lines.push(`run\t${encodeTerminalField(result.runId)}`);
   return `${lines.join("\n")}\n`;
 }
 
@@ -153,7 +177,8 @@ export function parseTerminalResultRegions(text: string): {
     const cols = line.split("\t");
     const head = cols[0];
     if (head === "fact" && cols[1] !== undefined && cols[2] !== undefined) {
-      facts[cols[1]] = cols.slice(2).join("\t");
+      // Encoded key/value are each one cell; join is belt-and-suspenders if a producer drifts.
+      facts[decodeTerminalField(cols[1])] = decodeTerminalField(cols.slice(2).join("\t"));
       continue;
     }
     if (head === "navigator" && cols[1] !== undefined) {
@@ -166,24 +191,27 @@ export function parseTerminalResultRegions(text: string): {
       continue;
     }
     if (head === "reason") {
-      reason = cols.slice(1).join("\t");
+      reason = decodeTerminalField(cols.slice(1).join("\t"));
       continue;
     }
     if (head === "command") {
-      command = cols.slice(1).join("\t");
+      command = decodeTerminalField(cols.slice(1).join("\t"));
       continue;
     }
     if (head === "unavailable") {
       unavailableSource = cols[1];
-      unavailableReason = cols.slice(2).join("\t");
+      unavailableReason = decodeTerminalField(cols.slice(2).join("\t"));
       continue;
     }
     if (head === "artifact" && cols[1] !== undefined && cols[2] !== undefined) {
-      artifacts.push({ kind: cols[1], path: cols.slice(2).join("\t") });
+      artifacts.push({
+        kind: cols[1],
+        path: decodeTerminalField(cols.slice(2).join("\t")),
+      });
       continue;
     }
     if (head === "run") {
-      runId = cols[1];
+      runId = decodeTerminalField(cols.slice(1).join("\t"));
       continue;
     }
     // role outcome data row: role \t kind \t status
@@ -196,7 +224,7 @@ export function parseTerminalResultRegions(text: string): {
     ) {
       role = cols[0];
       outcomeKind = cols[1];
-      status = cols[2];
+      status = decodeTerminalField(cols[2]!);
     }
   }
   return {
