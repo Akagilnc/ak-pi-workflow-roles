@@ -1454,10 +1454,12 @@ test("judge output must be the sole call in its assistant batch", async () => {
 });
 
 test(
-  "accepted role terminal races production 3s Navigator grace through role-runtime to Terminal",
-  { timeout: 15_000 },
-  async () => {
-    assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 3_000);
+  "accepted role terminal races production 10s Navigator grace through role-runtime to Terminal",
+  async (t) => {
+    // Advance production setTimeout grace on the Node test clock (doctor/compliance precedent).
+    // Do not sleep the real 10s wall clock or assert Date.now bounds.
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
     const modelRoot = await mkdtemp(join(tmpdir(), "ak-judge-grace-model-"));
     const modelSettingPath = join(modelRoot, "navigator-model.json");
@@ -1531,24 +1533,19 @@ test(
         attendance.prepare();
         await preparationStartedPromise;
 
-        const started = Date.now();
-        await harness.handlers.get("tool_result")?.({
+        // Real role-runtime tool_result → raceNavigatorGrace(default setTimeout sleep).
+        // Start the handler, flush to the production timer, then advance the grace ceiling.
+        const toolResultPending = harness.handlers.get("tool_result")?.({
           toolName: JUDGE_OUTPUT_TOOL_NAME,
           toolCallId: "accepted-grace",
           isError: false,
           details: { judgeStatus: "converged", note: "ok" },
         }, ctx);
-        const elapsed = Date.now() - started;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await toolResultPending;
 
-        // Production constant is the bound — not an injected short helper delay.
-        assert.ok(
-          elapsed >= NAVIGATOR_POST_ROLE_GRACE_MS - 50,
-          `grace should wait ~${NAVIGATOR_POST_ROLE_GRACE_MS}ms, elapsed=${elapsed}`,
-        );
-        assert.ok(
-          elapsed < NAVIGATOR_POST_ROLE_GRACE_MS + 1_000,
-          `grace upper bound breached: elapsed=${elapsed}`,
-        );
         assert.ok(disposeCalls >= 1, "late attendance must be disposed after grace timeout");
 
         await harness.handlers.get("agent_settled")?.({}, ctx);
@@ -1566,7 +1563,9 @@ test(
 
         // Late preparation completion must not overwrite the grace unavailable fact.
         releasePreparation();
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        const lateDrain = new Promise<void>((resolve) => setTimeout(resolve, 20));
+        t.mock.timers.tick(20);
+        await lateDrain;
         assert.equal(
           events.some(
             (event) =>
