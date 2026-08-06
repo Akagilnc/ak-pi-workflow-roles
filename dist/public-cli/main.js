@@ -9671,7 +9671,9 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
       terminal: lawful
     };
   }
-  const sessionProviderStop = result2.timedOut || result2.code !== 0 ? await readSessionProviderStop(admitted.sessionDirectory) : void 0;
+  const sessionProviderStop = await readSessionProviderStop(
+    admitted.sessionDirectory
+  );
   const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
   const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
   const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
