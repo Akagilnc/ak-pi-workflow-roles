@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
+import type { ControlledFailureCause } from "./terminal.ts";
 
 export function resolveInternalRoleEntrypoint(packageRoot: string): string {
   return join(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
@@ -28,6 +29,51 @@ export function buildExplicitInternalActivationArgs(
   ];
 }
 
+/** Production-owned typed failure carried on a resolved runner result. */
+export type ExplicitInternalKnownFailure = {
+  readonly cause: ControlledFailureCause;
+  readonly identity?: {
+    readonly name?: string;
+    readonly code?: string | number;
+  };
+  /**
+   * Optional diagnostic already owned by a typed production field (e.g. session
+   * assistant errorMessage). Settlement prefers this over child stderr selection.
+   */
+  readonly diagnostic?: string;
+};
+
+/**
+ * Produce a typed provider knownFailure from a native session assistant stop.
+ * Source fields are session-typed (stopReason / errorMessage / provider) — never
+ * child stderr prose. Used by the public classifier after a real Pi child exits.
+ */
+export function knownFailureFromProviderStop(input: {
+  readonly stopReason?: string;
+  readonly errorMessage?: string | null;
+  readonly provider?: string;
+  readonly model?: string;
+}): ExplicitInternalKnownFailure | undefined {
+  if (input.stopReason !== "error") return undefined;
+  const diagnostic =
+    typeof input.errorMessage === "string" && input.errorMessage.trim() !== ""
+      ? input.errorMessage.trim()
+      : "provider failure";
+  const identity: { name: string; code?: string } = {
+    name: "ProviderStopError",
+  };
+  if (typeof input.provider === "string" && input.provider.trim() !== "") {
+    identity.code = input.provider;
+  } else if (typeof input.model === "string" && input.model.trim() !== "") {
+    identity.code = input.model;
+  }
+  return {
+    cause: "provider",
+    identity,
+    diagnostic,
+  };
+}
+
 export type ExplicitInternalPiResult = {
   code: number | null;
   stdout: string;
@@ -35,7 +81,42 @@ export type ExplicitInternalPiResult = {
   timedOut: boolean;
   /** Full argv passed to the Pi process (includes explicit -e load). */
   args: string[];
+  /**
+   * Production-owned typed failure channel. Set only when the runner already
+   * knows the cause without stderr-prose inference. Settlement trusts this over
+   * the nonzero→activation default.
+   */
+  knownFailure?: ExplicitInternalKnownFailure;
 };
+
+/**
+ * Thrown activation failure with a production-owned typed cause.
+ * Prefer this over ad-hoc Error property tags so settlement retains typed identity.
+ */
+export class ExplicitInternalActivationError extends Error {
+  readonly knownCause: ControlledFailureCause;
+  readonly failureCode?: string | number;
+
+  constructor(
+    message: string,
+    options: {
+      knownCause: ControlledFailureCause;
+      code?: string | number;
+      name?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(
+      message,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = options.name ?? "ExplicitInternalActivationError";
+    this.knownCause = options.knownCause;
+    if (options.code !== undefined) {
+      this.failureCode = options.code;
+    }
+  }
+}
 
 export type ExplicitInternalPiRunner = (
   args: readonly string[],

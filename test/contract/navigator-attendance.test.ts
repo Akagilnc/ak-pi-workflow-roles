@@ -652,7 +652,7 @@ test("settlement decoration carries recommendation only; unavailable and silence
   );
 });
 
-test("session placement is stable, colocated, and isolates ad hoc subjects", () => {
+test("session placement is stable, colocated, and isolates ad hoc subjects", async () => {
   const base = { cwd: "/repo", sessionManager: { getSessionDir: () => "", getSessionId: () => "x" } } as never;
   const issue = subjectPath("/repo/.ak/work/issues/28/runs/one/session", "/repo");
   const relativeIssue = subjectPath(".ak/work/issues/28/runs/two/session", "/repo");
@@ -718,6 +718,42 @@ test("session placement is stable, colocated, and isolates ad hoc subjects", () 
     subjectPath(spellingOnlySession, "/repo"),
     "/repo/.ak-roles/books/repo/issues/28",
   );
+  // Physical identity: realpath asymmetry (macOS /var ↔ /private/var) must not
+  // demote a ledger session into a non-issue subject (Navigator attendance flake class).
+  await (async () => {
+    const home = await mkdtemp(join(tmpdir(), "ak-nav-physical-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const { realpathSync } = await import("node:fs");
+      const issue = resolve(home, ".ak/work/issues/28");
+      await mkdir(issue, { recursive: true });
+      const session = resolve(
+        home,
+        ".ak-roles",
+        "books",
+        "h",
+        "runs",
+        "judge-navigator",
+        "session",
+      );
+      await mkdir(session, { recursive: true });
+      const realSession = realpathSync(session);
+      // Mixed lexical/physical must still classify as ledger and keep issue subject.
+      assert.equal(subjectPath(session, issue), issue);
+      assert.equal(subjectPath(realSession, issue), issue);
+      assert.equal(
+        navigatorSessionDirectory(
+          { cwd: issue, sessionManager: { getSessionDir: () => realSession } } as never,
+        ),
+        join(issue, "runs", "navigator"),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  })();
   assert.equal(
     navigatorSessionDirectory(
       { cwd: "/repo", sessionManager: { getSessionDir: () => ledgerSession } } as never,
@@ -1133,6 +1169,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
           return {
             prepare() {},
             setWorkContext() {},
+            warmHelp() {},
             isPreparing: () => false,
             settle: async () => {},
             dispose() {},

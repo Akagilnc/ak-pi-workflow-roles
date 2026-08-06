@@ -5,7 +5,7 @@ import {
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /**
  * Typed activation-ledger path/fs failure. Callers discriminate with instanceof/code;
@@ -52,6 +52,37 @@ export function activationWaitingLedgerPath(ledgerHome: string, bookKey: string)
 export function pathContainedIn(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+/**
+ * Physical path identity: realpath the longest existing prefix, then rejoin any
+ * not-yet-created suffix. Collapses macOS `/var` ↔ `/private/var` so containment
+ * checks do not depend on which side was realpath'd first.
+ */
+export function physicalPathIdentity(path: string): string {
+  const absolute = resolve(path);
+  const missing: string[] = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync(cursor);
+      return missing.length === 0 ? real : join(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        // Non-absence failures keep lexical resolve — callers still get a path.
+        return absolute;
+      }
+      const parent = dirname(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+
+/** Containment under physical path identity (symlink-stable). */
+export function physicallyContainedIn(root: string, candidate: string): boolean {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
 }
 
 export function errnoCode(error: unknown): string | undefined {

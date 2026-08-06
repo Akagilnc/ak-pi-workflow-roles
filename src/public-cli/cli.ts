@@ -34,6 +34,11 @@ import {
   listHelpCapabilities,
   type PublicThinkingLevel,
 } from "./registry.ts";
+import {
+  formatCliDiagnostic,
+  presentStructuralRejection,
+} from "./settlement.ts";
+import type { TerminalResult } from "./terminal.ts";
 
 export {
   buildExplicitInternalActivationArgs,
@@ -63,6 +68,8 @@ export type CliEnv = {
 
 export type CliResult = {
   exitCode: number;
+  /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
+  terminal?: TerminalResult;
 };
 
 const THINKING_LEVELS = new Set([
@@ -383,6 +390,7 @@ export async function runAkRole(
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
+          credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
@@ -399,7 +407,10 @@ export async function runAkRole(
         io,
         parseJudgeArgv,
       );
-      return { exitCode: result.exitCode };
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
     }
 
     // Remaining callable roles land in later #11 children.
@@ -434,11 +445,20 @@ export async function runAkRole(
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof CliUsageError) {
-      io.stderr(`ak-role: ${error.message}\n`);
+      // Non-judge structural paths share the same rejection presenter as Judge.
+      presentStructuralRejection(error, io);
       return { exitCode: 2 };
     }
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr(`ak-role: ${message}\n`);
+    // Unrecognized outer failure: retain actual name/message identity (no wash).
+    if (error instanceof Error) {
+      const label =
+        error.name !== "" && error.name !== "Error"
+          ? `${error.name}: ${error.message}`
+          : error.message;
+      io.stderr(formatCliDiagnostic(label || error.name || "unrecognized exception"));
+      return { exitCode: 1 };
+    }
+    io.stderr(formatCliDiagnostic(String(error)));
     return { exitCode: 1 };
   }
 }
