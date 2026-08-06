@@ -96,13 +96,15 @@ export function validateAcceptedLifecycle(toolName, argumentsValue, detailsValue
         throw new Error("accepted tool lifecycle details mismatch");
     return details;
 }
+const COLLECTOR_LEG_STATUS_RANK = {
+    missing: 0,
+    unavailable: 1,
+    valid: 2,
+};
 export function acceptedFacts(toolName, details) {
     switch (toolName) {
         case CODER_OUTPUT_TOOL_NAME:
-        case FIXER_OUTPUT_TOOL_NAME: {
-            const output = details;
-            return { status: output.status, ...("commitSha" in output && output.commitSha ? { commit: output.commitSha } : {}) };
-        }
+        case FIXER_OUTPUT_TOOL_NAME: return { status: details.status };
         case REVIEWER_OUTPUT_TOOL_NAME: return { status: details.status };
         case JUDGE_OUTPUT_TOOL_NAME: return { status: details.judgeStatus };
         case DOCTOR_OUTPUT_TOOL_NAME: return { status: details.status };
@@ -110,7 +112,13 @@ export function acceptedFacts(toolName, details) {
             const output = details;
             return { status: output.status, ...(output.status === "completed" ? { commit: output.mergeCommitId } : {}) };
         }
-        case COLLECTOR_OUTPUT_TOOL: return {};
+        case COLLECTOR_OUTPUT_TOOL: {
+            // Collector has no receipt-level status; legs carry typed terminal states.
+            // Keep the distinct set as a typed field — never join into a display string here.
+            const unique = [...new Set(details.legs.map((leg) => leg.status))];
+            unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
+            return { legStatuses: unique };
+        }
     }
 }
 /** Deep structural equality for lifecycle agreement checks. */

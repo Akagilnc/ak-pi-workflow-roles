@@ -34,7 +34,9 @@ import {
 } from "./collector-role.ts";
 import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
-import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorPhase, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { EMPTY_INVOCATION_TRANSPORT_ENVELOPE } from "./public-cli/invocation.ts";
+import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationResult } from "./audit-escalation.ts";
 import {
@@ -415,7 +417,8 @@ export function createRoleRuntimeExtension(
         // Replacement is keyed by typed subject provenance, never prose prefixes.
         if (navigatorWorkContext.subjectProvenance === "placeholder") {
           const subject = event.prompt.trim();
-          if (subject !== "") {
+          // Public empty-request transport envelope is not semantic task content.
+          if (subject !== "" && subject !== EMPTY_INVOCATION_TRANSPORT_ENVELOPE) {
             const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
             const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
             navigatorWorkContext = {
@@ -440,7 +443,41 @@ export function createRoleRuntimeExtension(
         isRoleInfrastructureFailure ? { ...event, details: buildNavigatorInfrastructureFailureFact() } : event,
       );
       if (settlement !== undefined) {
-        const pending = navigatorAttendance.settle(settlement);
+        const attendance = navigatorAttendance;
+        const workContext = navigatorWorkContext;
+        const pending = (async () => {
+          // Accepted role terminal starts the post-role Navigator grace (#101/#106).
+          if (settlement.kind !== "accepted") {
+            await attendance.settle(settlement);
+            return;
+          }
+          const settlePromise = attendance.settle(settlement);
+          const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
+          if (raced.status === "timeout") {
+            if (pendingNavigatorPresentation === undefined) {
+              const report: NavigatorReport = {
+                disposition: "unavailable",
+                unavailableReason: "Navigator exceeded post-role delivery grace",
+                unavailableSource: "unknown",
+                unavailableCause: "unknown",
+              };
+              const navigatorEvent: NavigatorEvent = {
+                version: 1,
+                disposition: "unavailable",
+                invocationId: "post-role-grace-timeout",
+                role,
+                phase: navigatorPhase(pi, role),
+                subjectKey: workContext?.subjectKey ?? "",
+                unavailableReason: "Navigator exceeded post-role delivery grace",
+                unavailableSource: "unknown",
+                unavailableCause: "unknown",
+              };
+              pendingNavigatorPresentation = { event: navigatorEvent, report };
+            }
+            attendance.dispose();
+            void settlePromise.catch(() => undefined);
+          }
+        })();
         pendingNavigatorSettlement = pending;
         await pending;
       }
