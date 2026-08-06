@@ -24,6 +24,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   ExplicitInternalActivationError,
+  knownFailureFromProviderStop,
 } from "../../src/public-cli/explicit-internal.ts";
 import {
   boundConciseDiagnostic,
@@ -31,6 +32,7 @@ import {
   CONCISE_DIAGNOSTIC_MAX_CHARS,
   exitCodeForTerminalOutcome,
   extractJudgeRoleOutcome,
+  extractSessionProviderStop,
   formatFailureStderrDiagnostic,
   isChildDiagnosticFloodLine,
   isChildDiagnosticHelpFooterLine,
@@ -1312,5 +1314,239 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
     assert.equal(result.terminal!.roleOutcome.status, "converged");
     assert.equal(result.terminal!.runId, "run-prefer-lawful-001");
+  });
+});
+
+test("post-admission stderr.log EISDIR settles via controlled path with Terminal and Error Artifact", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "stderr log blocked"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-stderr-log-eisdir-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          // stderr.log as a directory makes the post-admission writeFile raise EISDIR.
+          await mkdir(join(runDir, "stderr.log"), { recursive: true });
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          return {
+            code: 1,
+            stdout: "",
+            stderr: "child failed after admission\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "unrecognized",
+      identityCode: "EISDIR",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      identity?: { code?: string | number };
+    };
+    assert.equal(errorBody.cause, "unrecognized");
+    assert.equal(errorBody.identity?.code, "EISDIR");
+    // Must not bypass to outer raw catch (no Terminal / no Error Artifact).
+    assert.equal(stdout.length, 1);
+    assert.equal(result.terminal !== undefined, true);
+  });
+});
+
+test("multiline thrown diagnostic keeps full artifact identity and one stderr line", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const multiline = [
+      "provider boom with details",
+      "    at Object.fn (vendor/stack.js:1:1)",
+      "    at processTicksAndRejections (node:internal/process/task_queues:95:5)",
+      "event: tool_call continuation",
+      "tokens=999 tool_calls=3",
+    ].join("\n");
+    const result = await runAkRole(
+      ["judge", "--project", project, "multiline throw"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-multiline-throw-001",
+        io,
+        piRunner: async () => {
+          const error = new Error(multiline);
+          error.name = "UpstreamProviderError";
+          throw error;
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "unrecognized",
+      diagnosticEquals: multiline,
+      identityName: "UpstreamProviderError",
+    });
+    // Durable Terminal/Artifact keep the full original diagnostic (newlines intact).
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.diagnostic, multiline);
+      assert.equal(terminal.roleOutcome.diagnostic.includes("\n"), true);
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      diagnostic: string;
+    };
+    assert.equal(errorBody.diagnostic, multiline);
+    // stderr presentation is exactly one nonblank line, no stack/event/token flood.
+    const presented = stderr[0]!;
+    assert.equal(presented.split("\n").filter((line) => line.trim() !== "").length, 1);
+    assert.equal(presented.includes("at Object.fn"), false);
+    assert.equal(presented.includes("event:"), false);
+    assert.equal(presented.includes("tokens="), false);
+    assert.equal(presented.includes("provider boom with details"), true);
+    // Helper contract: presentation collapses multiline thrown diagnostics.
+    const helper = formatFailureStderrDiagnostic({
+      cause: "unrecognized",
+      diagnostic: multiline,
+    });
+    assert.equal(helper.split("\n").filter((line) => line.trim() !== "").length, 1);
+    assert.equal(helper.includes("at Object.fn"), false);
+  });
+});
+
+test("session provider-stop produces provider cause without injected knownFailure", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    // Real production shape: default runner never sets knownFailure; Pi leaves a
+    // native assistant stopReason=error in the session (print-mode provider path).
+    // Credentials are present so the credential channel cannot supply the cause.
+    const result = await runAkRole(
+      ["--model", "xai/grok-4:off", "judge", "--project", project, "session provider stop"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-session-provider-stop-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            [
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "user",
+                  content: [{ type: "text", text: "go" }],
+                },
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "WebSocket error",
+                  provider: "xai",
+                  model: "grok-4",
+                  api: "openai-responses",
+                },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          return {
+            code: 1,
+            stdout: "",
+            // Deliberately misleading prose — cause must come from session stop, not stderr.
+            stderr: "activation wrapper exited nonzero\n",
+            timedOut: false,
+            args: [...args],
+            // deliberately omit knownFailure
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticEquals: "WebSocket error",
+      identityName: "ProviderStopError",
+      identityCode: "xai",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(terminal.roleOutcome.diagnostic, "WebSocket error");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+      identity?: { name?: string; code?: string | number };
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.diagnostic, "WebSocket error");
+    assert.equal(errorBody.identity?.name, "ProviderStopError");
+    assert.equal(errorBody.identity?.code, "xai");
+    // Typed seam unit: stopReason error → knownFailure provider; other stops ignored.
+    const fromStop = knownFailureFromProviderStop({
+      stopReason: "error",
+      errorMessage: "WebSocket error",
+      provider: "xai",
+    });
+    assert.equal(fromStop?.cause, "provider");
+    assert.equal(fromStop?.identity?.name, "ProviderStopError");
+    assert.equal(fromStop?.diagnostic, "WebSocket error");
+    assert.equal(
+      knownFailureFromProviderStop({ stopReason: "end_turn", errorMessage: "ok" }),
+      undefined,
+    );
+    assert.deepEqual(
+      extractSessionProviderStop([
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "WebSocket error",
+            provider: "xai",
+          },
+        },
+      ]),
+      {
+        stopReason: "error",
+        errorMessage: "WebSocket error",
+        provider: "xai",
+      },
+    );
   });
 });

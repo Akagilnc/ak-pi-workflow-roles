@@ -36,7 +36,43 @@ export type ExplicitInternalKnownFailure = {
     readonly name?: string;
     readonly code?: string | number;
   };
+  /**
+   * Optional diagnostic already owned by a typed production field (e.g. session
+   * assistant errorMessage). Settlement prefers this over child stderr selection.
+   */
+  readonly diagnostic?: string;
 };
+
+/**
+ * Produce a typed provider knownFailure from a native session assistant stop.
+ * Source fields are session-typed (stopReason / errorMessage / provider) — never
+ * child stderr prose. Used by the public classifier after a real Pi child exits.
+ */
+export function knownFailureFromProviderStop(input: {
+  readonly stopReason?: string;
+  readonly errorMessage?: string | null;
+  readonly provider?: string;
+  readonly model?: string;
+}): ExplicitInternalKnownFailure | undefined {
+  if (input.stopReason !== "error") return undefined;
+  const diagnostic =
+    typeof input.errorMessage === "string" && input.errorMessage.trim() !== ""
+      ? input.errorMessage.trim()
+      : "provider failure";
+  const identity: { name: string; code?: string } = {
+    name: "ProviderStopError",
+  };
+  if (typeof input.provider === "string" && input.provider.trim() !== "") {
+    identity.code = input.provider;
+  } else if (typeof input.model === "string" && input.model.trim() !== "") {
+    identity.code = input.model;
+  }
+  return {
+    cause: "provider",
+    identity,
+    diagnostic,
+  };
+}
 
 export type ExplicitInternalPiResult = {
   code: number | null;

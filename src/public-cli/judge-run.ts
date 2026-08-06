@@ -6,6 +6,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  knownFailureFromProviderStop,
   runExplicitInternalActivation,
   type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
@@ -30,6 +31,7 @@ import {
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
+  readSessionProviderStop,
   settleJudgeFailureTerminalResult,
   trySettleJudgeTerminalResult,
 } from "./settlement.ts";
@@ -137,6 +139,7 @@ async function presentControlledFailure(
       readonly name?: string;
       readonly code?: string | number;
     };
+    knownDiagnostic?: string;
   },
   io: CliIo,
 ): Promise<{
@@ -161,6 +164,9 @@ async function presentControlledFailure(
     ...(failureInput.knownIdentity === undefined
       ? {}
       : { knownIdentity: failureInput.knownIdentity }),
+    ...(failureInput.knownDiagnostic === undefined
+      ? {}
+      : { knownDiagnostic: failureInput.knownDiagnostic }),
     ...(session === undefined ? {} : { session }),
   });
   const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
@@ -250,11 +256,25 @@ export async function runPublicJudge(
     );
   }
 
-  await writeFile(
-    join(admitted.runDirectory, "stderr.log"),
-    result.stderr,
-    "utf8",
-  );
+  // Post-admission durable IO stays on the controlled-failure path (including stderr.log).
+  try {
+    await writeFile(
+      join(admitted.runDirectory, "stderr.log"),
+      result.stderr,
+      "utf8",
+    );
+  } catch (error) {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: result.code,
+        stderr: result.stderr,
+        thrown: error,
+      },
+      io,
+    );
+  }
 
   // Prefer a lawful typed terminal result from the session even when the child
   // exit is nonzero — infrastructure noise must not wash a completed outcome.
@@ -283,14 +303,23 @@ export async function runPublicJudge(
     };
   }
 
-  // Production-owned typed cause channel — runner result first, else credential
-  // absence for the selected public provider on a failed child. Never inferred
-  // from stderr wording. Zero-exit missing-terminal stays session/output.
+  // Production-owned typed cause channel — never inferred from stderr wording.
+  // Order: runner knownFailure → session provider-stop → credential absence.
+  // Zero-exit missing-terminal stays session/output when no typed source applies.
+  const sessionProviderStop =
+    result.timedOut || result.code !== 0
+      ? await readSessionProviderStop(admitted.sessionDirectory)
+      : undefined;
+  const sessionProviderFailure =
+    sessionProviderStop === undefined
+      ? undefined
+      : knownFailureFromProviderStop(sessionProviderStop);
   const credentialFailure =
     result.timedOut || result.code !== 0
       ? knownFailureForMissingProviderCredential(env.model, env.credentials)
       : undefined;
-  const knownFailure = result.knownFailure ?? credentialFailure;
+  const knownFailure =
+    result.knownFailure ?? sessionProviderFailure ?? credentialFailure;
   return await presentControlledFailure(
     admitted,
     {
@@ -304,6 +333,9 @@ export async function runPublicJudge(
             ...(knownFailure.identity === undefined
               ? {}
               : { knownIdentity: knownFailure.identity }),
+            ...(knownFailure.diagnostic === undefined
+              ? {}
+              : { knownDiagnostic: knownFailure.diagnostic }),
           }),
     },
     io,
