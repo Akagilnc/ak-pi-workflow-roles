@@ -55,7 +55,7 @@ When a Role run is interrupted by an observed typed Codex/xAI HTTP 429 and has n
 ak-role --model xai/grok-4.5:high resume <runId>
 ```
 
-At the current mainline slice, Judge and Coder are the completed public run paths. `roles` lists the full callable registry, but the remaining role adapters are still landing under #110–#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
+At the current mainline slice, Judge, Coder, and Collector are the completed public run paths. `roles` lists the full callable registry, but the remaining role adapters are still landing under #110–#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
 
 ### Call Coder
 
@@ -76,6 +76,25 @@ ak-role coder apply \
 ```
 
 Apply binds the package-owned Matt TDD method from the installed package (including `tests.md` and `mocking.md`) without ambient home Skill discovery or network fetch. Lawful Terminal results and Artifact refs use the same success interface as Judge.
+
+### Call Collector
+
+Collector accepts an explicit positive PR number and repeatable leg declarations (`id:author[,author...]`). Repository defaults from the project’s `origin` GitHub remote; pass `--repo owner/repo` to override. Optional instruction and `--attach` / `--project` follow the common Invocation request. The adapter assembles the retained leg manifest — callers do not author internal JSON or invent expected authors from prose:
+
+```bash
+ak-role collector \
+  --pr 42 \
+  --leg codex:CodexBot \
+  --leg cursor:cursor-bot,cursor-bot-2
+
+ak-role collector \
+  --project /path/to/project \
+  --repo OtherOrg/OtherRepo \
+  --pr 7 \
+  --leg codex:CodexBot
+```
+
+Well-formed but nonexistent PRs or authors are not rejected by CLI preflight; Collector reports them through its existing typed receipt. Collector is one-shot (no `ak-role resume`). Lawful Terminal results and Artifact refs use the same success interface as Judge and Coder.
 
 ## 班子（唐宋官署命名）
 
@@ -246,9 +265,9 @@ v1 supports `github.com` only. There is no default leg/bot: callers must supply 
 
 **Collector forbids every Skill**, including command-only Skills (`disable-model-invocation: true` / prompt-excluded but command-present). Skills are not part of the supported Collector surface.
 
-The public adapter will accept a PR, repository identity, and explicit leg/expected-author declarations, then assemble Collector's retained manifest. Callers will not construct the internal manifest or raw-Pi isolation profile themselves.
+The public adapter accepts a PR, repository identity, and explicit leg/expected-author declarations, then assembles Collector's retained manifest. Callers do not construct the internal manifest or raw-Pi isolation profile themselves.
 
-> **Public invocation status:** the `ak-role collector` adapter is still landing under #112. Collector keeps a persistent correlated session; the former public-looking `--no-session` recipe was incorrect and has been removed.
+> **Public invocation:** use `ak-role collector` (see **Call Collector** above). Collector keeps a persistent correlated session under the #78 ledger book; the former public-looking `--no-session` recipe was incorrect and has been removed.
 
 Runtime behavior highlights:
 

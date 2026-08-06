@@ -109,6 +109,27 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       true,
       "public bin must preserve coder phase on activation/resume",
     );
+    // #112 public Collector adapter must ship in the installed bin.
+    assert.equal(
+      /command\s*===\s*[\"']collector[\"']|case\s*[\"']collector[\"']/.test(committedText),
+      true,
+      "public bin must ship collector command dispatch",
+    );
+    assert.equal(
+      committedText.includes("validateAcceptedCollectorReceipt"),
+      true,
+      "public bin must ship Collector receipt validation before lawful settlement",
+    );
+    assert.equal(
+      committedText.includes("ak-collector-legs"),
+      true,
+      "public bin must pin collector legs flag on activation",
+    );
+    assert.equal(
+      committedText.includes("loadCollectorManifest"),
+      true,
+      "public bin must assemble retained collector manifests via loadCollectorManifest",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

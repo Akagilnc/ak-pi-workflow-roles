@@ -172,7 +172,7 @@ test("non-Judge role command goes through ak-role-owned explicit Internal load b
 test("role command reports load failure when explicit Internal spawn fails", async () => {
   await withTempHome(async (home) => {
     const { io, stderr } = captureIo();
-    // Use a role that is still deferred in this slice (not judge/coder).
+    // Use a role that is still deferred in this slice (not judge/coder/collector).
     const result = await runAkRole(["reviewer"], {
       packageRoot,
       home,

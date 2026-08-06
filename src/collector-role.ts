@@ -5,6 +5,7 @@ import type {
 import type { Static } from "typebox";
 
 import {
+  COLLECTOR_FIXED_KICKOFF,
   loadCollectorManifest,
   parseCollectorPrNumber,
   parseCollectorRepository,
@@ -35,15 +36,13 @@ import {
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
 
+export { COLLECTOR_FIXED_KICKOFF } from "./collector-config.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 };
-
-export const COLLECTOR_FIXED_KICKOFF =
-  "Start collection for the validated runtime-owned target and leg manifest. Use only Collector tools. Classify from cited ledger evidence. Submit exactly one ak_collector_output when terminal.";
 
 export const COLLECTOR_REQUIRED_TOOLS = [
   COLLECTOR_OBSERVE_TOOL,

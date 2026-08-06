@@ -25,8 +25,9 @@ import {
   runExplicitInternalActivation,
   type ExplicitInternalPiRunner,
 } from "./explicit-internal.ts";
-import { parseCoderArgv, parseJudgeArgv } from "./invocation.ts";
+import { parseCoderArgv, parseCollectorArgv, parseJudgeArgv } from "./invocation.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
+import { runPublicCollector } from "./collector-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
@@ -69,6 +70,10 @@ export type CliEnv = {
   coderExtraPiArgs?: readonly string[];
   /** Override Coder role-run timeout (tests). */
   coderTimeoutMs?: number;
+  /** Extra Pi args for Collector runs (tests: faux provider). */
+  collectorExtraPiArgs?: readonly string[];
+  /** Override Collector role-run timeout (tests). */
+  collectorTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -385,6 +390,11 @@ export async function runAkRole(
         resumeRunId === undefined || resumeRunId.trim() === ""
           ? undefined
           : await peekRoleRunRole(home, resumeRunId);
+      if (resumeRole === "collector") {
+        throw new CliUsageError(
+          "collector role runs are one-shot and cannot be resumed",
+        );
+      }
       const resumeSeatRole = resumeRole === "coder" ? "coder" : "judge";
       // Temporary model/thinking override for this resume only — never persists.
       const seat = resolveEffectiveSeat(
@@ -532,6 +542,49 @@ export async function runAkRole(
         },
         io,
         parseCoderArgv,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Collector public run path from explicit PR + leg declarations (#112).
+    if (parsed.command === "collector") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "collector",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicCollector(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(env.collectorExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.collectorExtraPiArgs }),
+          ...(env.collectorTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.collectorTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        parseCollectorArgv,
       );
       return {
         exitCode: result.exitCode,

@@ -7,12 +7,12 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname5, join as join11 } from "node:path";
+import { dirname as dirname5, join as join12 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -21,10 +21,411 @@ import { dirname, join } from "node:path";
 
 // src/package-contracts/collector-output.ts
 var COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
+var COLLECTOR_HOST = "github.com";
+function fail(message) {
+  throw new Error(message);
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function requireNonEmptyString(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    fail(`${label} is invalid`);
+  }
+  return value;
+}
+function requireStringArray(value, label) {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item.length > 0)) {
+    fail(`${label} is invalid`);
+  }
+  return value;
+}
+function assertClosedKeys(value, required, optional, label) {
+  const allowed = /* @__PURE__ */ new Set([...required, ...optional]);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) fail(`${label} has unknown key ${key}`);
+  }
+  for (const key of required) {
+    if (!Object.hasOwn(value, key)) fail(`${label} missing key ${key}`);
+  }
+}
+function validatePageDiagnostics(value, label) {
+  if (!isRecord(value)) fail(`${label} is invalid`);
+  assertClosedKeys(value, ["path", "page", "status", "itemCount"], ["linkHeader"], label);
+  if (typeof value.page !== "number" || !Number.isInteger(value.page)) {
+    fail(`${label}.page is invalid`);
+  }
+  if (typeof value.status !== "number" || !Number.isInteger(value.status)) {
+    fail(`${label}.status is invalid`);
+  }
+  if (typeof value.itemCount !== "number" || !Number.isInteger(value.itemCount)) {
+    fail(`${label}.itemCount is invalid`);
+  }
+  const out = {
+    path: requireNonEmptyString(value.path, `${label}.path`),
+    page: value.page,
+    status: value.status,
+    itemCount: value.itemCount
+  };
+  if (value.linkHeader !== void 0) {
+    out.linkHeader = requireNonEmptyString(value.linkHeader, `${label}.linkHeader`);
+  }
+  return out;
+}
+function validateReport(value, index) {
+  if (!isRecord(value)) fail(`Collector receipt reports[${index}] is invalid`);
+  if (value.kind === "review") {
+    assertClosedKeys(
+      value,
+      [
+        "kind",
+        "legId",
+        "report",
+        "reviewedHead",
+        "headRelation",
+        "windowRelation",
+        "evidenceRefs"
+      ],
+      [],
+      `reports[${index}]`
+    );
+    return {
+      kind: "review",
+      legId: requireNonEmptyString(value.legId, `reports[${index}].legId`),
+      report: requireNonEmptyString(value.report, `reports[${index}].report`),
+      reviewedHead: requireNonEmptyString(
+        value.reviewedHead,
+        `reports[${index}].reviewedHead`
+      ),
+      headRelation: requireNonEmptyString(
+        value.headRelation,
+        `reports[${index}].headRelation`
+      ),
+      windowRelation: requireNonEmptyString(
+        value.windowRelation,
+        `reports[${index}].windowRelation`
+      ),
+      evidenceRefs: requireStringArray(
+        value.evidenceRefs,
+        `reports[${index}].evidenceRefs`
+      )
+    };
+  }
+  if (value.kind === "terminal-fact") {
+    assertClosedKeys(
+      value,
+      ["kind", "legId", "terminalStatus", "report", "windowRelation", "evidenceRefs"],
+      ["targetSnapshotHead", "scope"],
+      `reports[${index}]`
+    );
+    if (value.terminalStatus !== "unavailable" && value.terminalStatus !== "missing") {
+      fail(`reports[${index}].terminalStatus is invalid`);
+    }
+    const out = {
+      kind: "terminal-fact",
+      legId: requireNonEmptyString(value.legId, `reports[${index}].legId`),
+      terminalStatus: value.terminalStatus,
+      report: requireNonEmptyString(value.report, `reports[${index}].report`),
+      windowRelation: requireNonEmptyString(
+        value.windowRelation,
+        `reports[${index}].windowRelation`
+      ),
+      evidenceRefs: requireStringArray(
+        value.evidenceRefs,
+        `reports[${index}].evidenceRefs`
+      )
+    };
+    if (value.targetSnapshotHead !== void 0) {
+      out.targetSnapshotHead = requireNonEmptyString(
+        value.targetSnapshotHead,
+        `reports[${index}].targetSnapshotHead`
+      );
+    }
+    if (value.scope !== void 0) {
+      if (value.scope !== "global") fail(`reports[${index}].scope is invalid`);
+      out.scope = "global";
+    }
+    return out;
+  }
+  fail(`reports[${index}].kind is invalid`);
+}
+function validateLeg(value, index) {
+  if (!isRecord(value)) fail(`Collector receipt legs[${index}] is invalid`);
+  assertClosedKeys(
+    value,
+    ["legId", "status", "rationale", "evidenceRefs"],
+    [],
+    `legs[${index}]`
+  );
+  if (value.status !== "valid" && value.status !== "unavailable" && value.status !== "missing") {
+    fail(`legs[${index}].status is invalid`);
+  }
+  return {
+    legId: requireNonEmptyString(value.legId, `legs[${index}].legId`),
+    status: value.status,
+    rationale: requireNonEmptyString(value.rationale, `legs[${index}].rationale`),
+    evidenceRefs: requireStringArray(value.evidenceRefs, `legs[${index}].evidenceRefs`)
+  };
+}
+function validateAttempt(value, index) {
+  if (!isRecord(value)) fail(`requestAttempts[${index}] is invalid`);
+  assertClosedKeys(
+    value,
+    [
+      "attemptId",
+      "legId",
+      "observedHead",
+      "snapshotId",
+      "marker",
+      "body",
+      "startedAt",
+      "status"
+    ],
+    ["responseDiagnostics", "commentEvidenceId", "recoverySnapshotId"],
+    `requestAttempts[${index}]`
+  );
+  const statuses = [
+    "started",
+    "succeeded",
+    "rejected",
+    "ambiguous_loss",
+    "recovered"
+  ];
+  if (!statuses.includes(value.status)) {
+    fail(`requestAttempts[${index}].status is invalid`);
+  }
+  const out = {
+    attemptId: requireNonEmptyString(value.attemptId, `requestAttempts[${index}].attemptId`),
+    legId: requireNonEmptyString(value.legId, `requestAttempts[${index}].legId`),
+    observedHead: requireNonEmptyString(
+      value.observedHead,
+      `requestAttempts[${index}].observedHead`
+    ),
+    snapshotId: requireNonEmptyString(
+      value.snapshotId,
+      `requestAttempts[${index}].snapshotId`
+    ),
+    marker: requireNonEmptyString(value.marker, `requestAttempts[${index}].marker`),
+    body: requireNonEmptyString(value.body, `requestAttempts[${index}].body`),
+    startedAt: requireNonEmptyString(
+      value.startedAt,
+      `requestAttempts[${index}].startedAt`
+    ),
+    status: value.status
+  };
+  if (value.responseDiagnostics !== void 0) {
+    out.responseDiagnostics = requireNonEmptyString(
+      value.responseDiagnostics,
+      `requestAttempts[${index}].responseDiagnostics`
+    );
+  }
+  if (value.commentEvidenceId !== void 0) {
+    out.commentEvidenceId = requireNonEmptyString(
+      value.commentEvidenceId,
+      `requestAttempts[${index}].commentEvidenceId`
+    );
+  }
+  if (value.recoverySnapshotId !== void 0) {
+    out.recoverySnapshotId = requireNonEmptyString(
+      value.recoverySnapshotId,
+      `requestAttempts[${index}].recoverySnapshotId`
+    );
+  }
+  return out;
+}
+function validateSnapshot(value, index) {
+  if (!isRecord(value)) fail(`snapshots[${index}] is invalid`);
+  assertClosedKeys(
+    value,
+    [
+      "snapshotId",
+      "observedAt",
+      "completedAt",
+      "completedMono",
+      "host",
+      "repository",
+      "prNumber",
+      "prState",
+      "headOid",
+      "complete",
+      "evidenceIds",
+      "pageDiagnostics",
+      "normalizedByteLength"
+    ],
+    [],
+    `snapshots[${index}]`
+  );
+  if (value.host !== COLLECTOR_HOST) fail(`snapshots[${index}].host is invalid`);
+  if (typeof value.prNumber !== "number" || !Number.isInteger(value.prNumber)) {
+    fail(`snapshots[${index}].prNumber is invalid`);
+  }
+  if (typeof value.completedMono !== "number" || !Number.isFinite(value.completedMono)) {
+    fail(`snapshots[${index}].completedMono is invalid`);
+  }
+  if (typeof value.complete !== "boolean") {
+    fail(`snapshots[${index}].complete is invalid`);
+  }
+  if (typeof value.normalizedByteLength !== "number") {
+    fail(`snapshots[${index}].normalizedByteLength is invalid`);
+  }
+  if (!Array.isArray(value.pageDiagnostics)) {
+    fail(`snapshots[${index}].pageDiagnostics is invalid`);
+  }
+  return {
+    snapshotId: requireNonEmptyString(value.snapshotId, `snapshots[${index}].snapshotId`),
+    observedAt: requireNonEmptyString(value.observedAt, `snapshots[${index}].observedAt`),
+    completedAt: requireNonEmptyString(value.completedAt, `snapshots[${index}].completedAt`),
+    completedMono: value.completedMono,
+    host: COLLECTOR_HOST,
+    repository: requireNonEmptyString(value.repository, `snapshots[${index}].repository`),
+    prNumber: value.prNumber,
+    prState: requireNonEmptyString(value.prState, `snapshots[${index}].prState`),
+    headOid: requireNonEmptyString(value.headOid, `snapshots[${index}].headOid`),
+    complete: value.complete,
+    evidenceIds: requireStringArray(value.evidenceIds, `snapshots[${index}].evidenceIds`),
+    pageDiagnostics: value.pageDiagnostics.map(
+      (item, pageIndex) => validatePageDiagnostics(item, `snapshots[${index}].pageDiagnostics[${pageIndex}]`)
+    ),
+    normalizedByteLength: value.normalizedByteLength
+  };
+}
+function validateEvidence(value, index) {
+  if (!isRecord(value)) fail(`evidenceRecords[${index}] is invalid`);
+  assertClosedKeys(
+    value,
+    ["evidenceId", "kind", "versionId", "contentDigest", "firstObservedAt", "raw"],
+    [],
+    `evidenceRecords[${index}]`
+  );
+  return {
+    evidenceId: requireNonEmptyString(
+      value.evidenceId,
+      `evidenceRecords[${index}].evidenceId`
+    ),
+    kind: requireNonEmptyString(value.kind, `evidenceRecords[${index}].kind`),
+    versionId: requireNonEmptyString(
+      value.versionId,
+      `evidenceRecords[${index}].versionId`
+    ),
+    contentDigest: requireNonEmptyString(
+      value.contentDigest,
+      `evidenceRecords[${index}].contentDigest`
+    ),
+    firstObservedAt: requireNonEmptyString(
+      value.firstObservedAt,
+      `evidenceRecords[${index}].firstObservedAt`
+    ),
+    raw: value.raw
+  };
+}
+function validateAcceptedCollectorReceipt(value) {
+  if (!isRecord(value)) fail("Collector receipt must be an object");
+  if (Object.hasOwn(value, "legs") && !Object.hasOwn(value, "host") && !Object.hasOwn(value, "reports")) {
+    fail("Collector generated legs-only output is not an accepted receipt");
+  }
+  assertClosedKeys(
+    value,
+    [
+      "host",
+      "repository",
+      "prNumber",
+      "manifestDigest",
+      "activationTime",
+      "deadlineTime",
+      "finalObservationTime",
+      "finalSnapshotId",
+      "targetHead",
+      "reports",
+      "legs",
+      "requestAttempts",
+      "snapshots",
+      "evidenceRecords"
+    ],
+    [],
+    "Collector receipt"
+  );
+  if (value.host !== COLLECTOR_HOST) fail("Collector receipt host is invalid");
+  if (typeof value.repository !== "string" || value.repository.trim() === "") {
+    fail("Collector receipt repository is invalid");
+  }
+  if (typeof value.prNumber !== "number" || !Number.isInteger(value.prNumber)) {
+    fail("Collector receipt prNumber is invalid");
+  }
+  if (typeof value.manifestDigest !== "string" || value.manifestDigest === "") {
+    fail("Collector receipt manifestDigest is invalid");
+  }
+  if (typeof value.activationTime !== "string" || value.activationTime === "") {
+    fail("Collector receipt activationTime is invalid");
+  }
+  if (typeof value.deadlineTime !== "string" || value.deadlineTime === "") {
+    fail("Collector receipt deadlineTime is invalid");
+  }
+  if (typeof value.finalObservationTime !== "string" || value.finalObservationTime === "") {
+    fail("Collector receipt finalObservationTime is invalid");
+  }
+  if (typeof value.finalSnapshotId !== "string" || value.finalSnapshotId === "") {
+    fail("Collector receipt finalSnapshotId is invalid");
+  }
+  if (typeof value.targetHead !== "string" || value.targetHead === "") {
+    fail("Collector receipt targetHead is invalid");
+  }
+  if (!Array.isArray(value.reports) || value.reports.length === 0) {
+    fail("Collector receipt reports are invalid");
+  }
+  if (!Array.isArray(value.legs) || value.legs.length === 0) {
+    fail("Collector receipt legs are invalid");
+  }
+  if (!Array.isArray(value.requestAttempts)) {
+    fail("Collector receipt requestAttempts are invalid");
+  }
+  if (!Array.isArray(value.snapshots) || value.snapshots.length === 0) {
+    fail("Collector receipt snapshots are invalid");
+  }
+  if (!Array.isArray(value.evidenceRecords)) {
+    fail("Collector receipt evidenceRecords are invalid");
+  }
+  if (value.reports.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
+    fail("Collector receipt reports contain invalid entries");
+  }
+  if (value.legs.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
+    fail("Collector receipt legs contain invalid entries");
+  }
+  if (value.snapshots.some(
+    (item) => item === null || typeof item !== "object" || Array.isArray(item)
+  )) {
+    fail("Collector receipt snapshots contain invalid entries");
+  }
+  if (value.evidenceRecords.some(
+    (item) => item === null || typeof item !== "object" || Array.isArray(item)
+  )) {
+    fail("Collector receipt evidenceRecords contain invalid entries");
+  }
+  if (value.requestAttempts.some(
+    (item) => item === null || typeof item !== "object" || Array.isArray(item)
+  )) {
+    fail("Collector receipt requestAttempts contain invalid entries");
+  }
+  return {
+    host: COLLECTOR_HOST,
+    repository: value.repository,
+    prNumber: value.prNumber,
+    manifestDigest: value.manifestDigest,
+    activationTime: value.activationTime,
+    deadlineTime: value.deadlineTime,
+    finalObservationTime: value.finalObservationTime,
+    finalSnapshotId: value.finalSnapshotId,
+    targetHead: value.targetHead,
+    reports: value.reports.map(validateReport),
+    legs: value.legs.map(validateLeg),
+    requestAttempts: value.requestAttempts.map(validateAttempt),
+    snapshots: value.snapshots.map(validateSnapshot),
+    evidenceRecords: value.evidenceRecords.map(validateEvidence)
+  };
+}
 
 // src/package-contracts/judge-output.ts
 var JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
-function isRecord(value) {
+function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function hasExactKeys(value, expected) {
@@ -32,7 +433,7 @@ function hasExactKeys(value, expected) {
   return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
 }
 function validateAcceptedJudgeDetails(verdict) {
-  if (!isRecord(verdict)) throw new Error("Judge verdict must be an object");
+  if (!isRecord2(verdict)) throw new Error("Judge verdict must be an object");
   if (verdict.note !== void 0 && (typeof verdict.note !== "string" || verdict.note.trim().length === 0)) {
     throw new Error("Judge note must be a non-blank string when provided");
   }
@@ -47,7 +448,7 @@ function validateAcceptedJudgeDetails(verdict) {
     if (!Array.isArray(value) || value.length === 0) return false;
     const names = /* @__PURE__ */ new Set();
     return value.every((entry) => {
-      if (!isRecord(entry) || !hasExactKeys(entry, ["name", "owner", "boundary", "disposition"])) {
+      if (!isRecord2(entry) || !hasExactKeys(entry, ["name", "owner", "boundary", "disposition"])) {
         return false;
       }
       for (const key of ["name", "owner", "boundary", "disposition"]) {
@@ -73,7 +474,7 @@ function validateAcceptedJudgeDetails(verdict) {
     return { judgeStatus: "converged", ...note, ...evidence };
   }
   if (verdict.judgeStatus === "continue") {
-    if (!hasExactKeys(verdict, withOptionalFields(["judgeStatus", "fix", "classes"])) || !isRecord(verdict.fix) || !hasExactKeys(verdict.fix, ["summary"]) || typeof verdict.fix.summary !== "string" || verdict.fix.summary.trim().length === 0 || !validClasses(verdict.classes)) {
+    if (!hasExactKeys(verdict, withOptionalFields(["judgeStatus", "fix", "classes"])) || !isRecord2(verdict.fix) || !hasExactKeys(verdict.fix, ["summary"]) || typeof verdict.fix.summary !== "string" || verdict.fix.summary.trim().length === 0 || !validClasses(verdict.classes)) {
       throw new Error("Judge continue requires fix.summary and nonempty unique comma-free classes");
     }
     return {
@@ -89,7 +490,7 @@ function validateAcceptedJudgeDetails(verdict) {
     if (!hasExactKeys(
       verdict,
       withOptionalFields(["judgeStatus", "decisionGate"])
-    ) || !isRecord(gate) || !hasExactKeys(gate, ["question", "options"]) || typeof gate.question !== "string" || gate.question.trim().length === 0 || !Array.isArray(gate.options) || gate.options.length === 0 || !gate.options.every(
+    ) || !isRecord2(gate) || !hasExactKeys(gate, ["question", "options"]) || typeof gate.question !== "string" || gate.question.trim().length === 0 || !Array.isArray(gate.options) || gate.options.length === 0 || !gate.options.every(
       (option) => typeof option === "string" && option.trim().length > 0
     )) {
       throw new Error(
@@ -2283,8 +2684,8 @@ function ScriptMapping(input) {
 function IsMatch(value) {
   return IsEqual(value.length, 2);
 }
-function Match2(input, ok, fail) {
-  return IsMatch(input) ? ok(input[0], input[1]) : fail();
+function Match2(input, ok, fail3) {
+  return IsMatch(input) ? ok(input[0], input[1]) : fail3();
 }
 
 // node_modules/typebox/build/type/script/token/internal/take.mjs
@@ -8438,10 +8839,11 @@ var EXPLICIT_INTERNAL_LOAD_PROBE_ARGS = [
 ];
 
 // src/public-cli/invocation.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
   mkdir as mkdir2,
-  readFile as readFile2,
+  readFile as readFile3,
   writeFile as writeFile2
 } from "node:fs/promises";
 import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve3 } from "node:path";
@@ -8693,6 +9095,225 @@ function resolveBookKeyFromGit(cwd) {
   return bookKey;
 }
 
+// src/collector-config.ts
+import { createHash as createHash2 } from "node:crypto";
+import { readFile as readFile2 } from "node:fs/promises";
+var COLLECTOR_LEG_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
+var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
+var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target and leg manifest. Use only Collector tools. Classify from cited ledger evidence. Submit exactly one ak_collector_output when terminal.";
+function fail2(message, cause) {
+  throw new Error(message, cause === void 0 ? void 0 : { cause });
+}
+function isAsciiControlOrNonAscii(input) {
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i);
+    if (code <= 31 || code === 127 || code > 127) return true;
+  }
+  return false;
+}
+function parseCollectorRepository(raw) {
+  if (typeof raw !== "string") {
+    fail2("Collector repository must be a string owner/repo");
+  }
+  const display = raw.trim();
+  if (display !== raw) {
+    fail2("Collector repository must not include surrounding whitespace");
+  }
+  if (display.length === 0) {
+    fail2("Collector repository is required");
+  }
+  if (isAsciiControlOrNonAscii(display)) {
+    fail2("Collector repository must be conservative ASCII without control bytes");
+  }
+  if (display.includes("://") || display.includes("?") || display.includes("#") || display.includes("@") || display.includes("%") || display.includes("\\") || display.includes(" ")) {
+    fail2("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
+  }
+  const parts = display.split("/");
+  if (parts.length !== 2) {
+    fail2("Collector repository must contain exactly one '/' separating owner and repo");
+  }
+  const [ownerDisplay, repoDisplay] = parts;
+  if (ownerDisplay === void 0 || repoDisplay === void 0) {
+    fail2("Collector repository must contain exactly one '/' separating owner and repo");
+  }
+  if (ownerDisplay.length === 0 || repoDisplay.length === 0 || ownerDisplay === "." || ownerDisplay === ".." || repoDisplay === "." || repoDisplay === "..") {
+    fail2("Collector repository rejects empty, '.', or '..' segments");
+  }
+  if (!COLLECTOR_OWNER_PATTERN.test(ownerDisplay)) {
+    fail2("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
+  }
+  if (!COLLECTOR_REPO_PATTERN.test(repoDisplay)) {
+    fail2("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
+  }
+  const owner = ownerDisplay.toLowerCase();
+  const repo = repoDisplay.toLowerCase();
+  return {
+    display,
+    canonical: `${owner}/${repo}`,
+    owner,
+    repo
+  };
+}
+function parseCollectorPrNumber(raw) {
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    fail2("Collector pull request number is required");
+  }
+  const text = String(raw).trim();
+  if (text !== String(raw).trim() || text !== String(raw)) {
+  }
+  if (typeof raw === "string") {
+    if (!/^[1-9][0-9]*$/.test(raw)) {
+      fail2("Collector pull request number must be a positive safe integer string");
+    }
+  } else if (typeof raw === "number") {
+    if (!Number.isSafeInteger(raw) || raw < 1) {
+      fail2("Collector pull request number must be a positive safe integer");
+    }
+    return raw;
+  }
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    fail2("Collector pull request number must be a positive safe integer");
+  }
+  return value;
+}
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hasRequiredKeys(value, required) {
+  return required.every((key) => Object.hasOwn(value, key));
+}
+function canonicalizeAuthor(raw, legId) {
+  if (typeof raw !== "string") {
+    fail2(`Collector leg "${legId}" expectedAuthors entries must be strings`);
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    fail2(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
+  }
+  if (trimmed !== raw.trim()) {
+  }
+  return trimmed.toLowerCase();
+}
+function canonicalizeLeg(raw, index) {
+  if (!isPlainObject(raw)) {
+    fail2(`Collector manifest legs[${index}] must be an object`);
+  }
+  const hasRequest = Object.hasOwn(raw, "request");
+  if (!hasRequiredKeys(raw, ["id", "expectedAuthors"])) {
+    fail2(`Collector manifest legs[${index}] is missing required keys`);
+  }
+  const id = raw["id"];
+  if (typeof id !== "string" || !COLLECTOR_LEG_ID_PATTERN.test(id)) {
+    fail2(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
+  }
+  const authorsRaw = raw["expectedAuthors"];
+  if (!Array.isArray(authorsRaw) || authorsRaw.length < 1) {
+    fail2(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
+  }
+  const expectedAuthors = [];
+  const seenAuthors = /* @__PURE__ */ new Set();
+  for (const entry of authorsRaw) {
+    const author = canonicalizeAuthor(entry, id);
+    if (seenAuthors.has(author)) {
+      fail2(`Collector leg "${id}" has duplicate expected author "${author}"`);
+    }
+    seenAuthors.add(author);
+    expectedAuthors.push(author);
+  }
+  let requestBody;
+  if (hasRequest) {
+    const request = raw["request"];
+    if (!isPlainObject(request) || !hasRequiredKeys(request, ["body"])) {
+      fail2(`Collector leg "${id}" request must be an object with body`);
+    }
+    const body = request["body"];
+    if (typeof body !== "string") {
+      fail2(`Collector leg "${id}" request body must be a string`);
+    }
+    if (body.trim().length === 0) {
+      fail2(`Collector leg "${id}" request body must be trim-non-empty`);
+    }
+    requestBody = body;
+  }
+  return requestBody === void 0 ? { id, expectedAuthors } : { id, expectedAuthors, requestBody };
+}
+function stableCanonicalJson(manifest) {
+  const legs = manifest.legs.map((leg) => {
+    const base = {
+      id: leg.id,
+      expectedAuthors: [...leg.expectedAuthors]
+    };
+    if (leg.requestBody !== void 0) {
+      base["request"] = { body: leg.requestBody };
+    }
+    return base;
+  });
+  return `${JSON.stringify({ legs })}
+`;
+}
+async function loadCollectorManifest(path) {
+  let bytes;
+  try {
+    bytes = await readFile2(path);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    fail2(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
+  }
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    fail2("Collector leg manifest must be UTF-8 JSON");
+  }
+  if (text.charCodeAt(0) === 65279) {
+    text = text.slice(1);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    fail2(`Collector leg manifest is not valid JSON: ${detail}`, error);
+  }
+  if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
+    fail2("Collector manifest must be an object with legs");
+  }
+  const legsRaw = parsed["legs"];
+  if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
+    fail2("Collector manifest legs must be a non-empty array");
+  }
+  const legs = [];
+  const seenIds = /* @__PURE__ */ new Set();
+  const authorOwners = /* @__PURE__ */ new Map();
+  for (let index = 0; index < legsRaw.length; index += 1) {
+    const leg = canonicalizeLeg(legsRaw[index], index);
+    if (seenIds.has(leg.id)) {
+      fail2(`Collector manifest has duplicate leg id "${leg.id}"`);
+    }
+    seenIds.add(leg.id);
+    for (const author of leg.expectedAuthors) {
+      const owner = authorOwners.get(author);
+      if (owner !== void 0) {
+        fail2(
+          `Collector expected author "${author}" overlaps across legs "${owner}" and "${leg.id}"`
+        );
+      }
+      authorOwners.set(author, leg.id);
+    }
+    legs.push(leg);
+  }
+  const canonicalJson2 = stableCanonicalJson({ legs });
+  const digest = createHash2("sha256").update(canonicalJson2, "utf8").digest("hex");
+  return {
+    legs,
+    canonicalJson: canonicalJson2,
+    digest,
+    sourcePath: path
+  };
+}
+
 // src/uuidv7.ts
 import { randomBytes } from "node:crypto";
 function uuidv7(now = Date.now()) {
@@ -8826,7 +9447,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile2(absolute);
+  const bytes = await readFile3(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
   const frozenPath = join4(destinationDir, name);
   await writeFile2(frozenPath, bytes);
@@ -9007,14 +9628,329 @@ function buildCoderTransportPrompt(admitted) {
   }
   return lines.join("\n");
 }
+function parseCollectorLegDeclaration(raw) {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new CliUsageError("collector --leg requires id:author[,author...]");
+  }
+  const colon = trimmed.indexOf(":");
+  if (colon <= 0 || colon === trimmed.length - 1) {
+    throw new CliUsageError(
+      `collector --leg must be id:author[,author...], got ${raw}`
+    );
+  }
+  const id = trimmed.slice(0, colon);
+  if (!COLLECTOR_LEG_ID_PATTERN.test(id)) {
+    throw new CliUsageError(
+      `collector leg id must match ^[a-z][a-z0-9._-]{0,63}$, got ${id}`
+    );
+  }
+  const authorsPart = trimmed.slice(colon + 1);
+  const expectedAuthors = [];
+  for (const piece of authorsPart.split(",")) {
+    if (piece.trim() === "" || piece !== piece.trim()) {
+      if (piece.trim() === "") {
+        throw new CliUsageError(
+          `collector --leg ${id} has an empty expected author slot`
+        );
+      }
+      throw new CliUsageError(
+        `collector --leg ${id} expected author must not include surrounding whitespace`
+      );
+    }
+    expectedAuthors.push(piece);
+  }
+  if (expectedAuthors.length === 0) {
+    throw new CliUsageError(
+      `collector --leg ${id} requires at least one expected author`
+    );
+  }
+  return { id, expectedAuthors };
+}
+function parsePositivePrOption(raw) {
+  if (raw === void 0 || raw.trim() === "") {
+    throw new CliUsageError("--pr requires a positive pull request number");
+  }
+  try {
+    return parseCollectorPrNumber(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(detail, { cause: error });
+  }
+}
+function parseRepoOption(raw) {
+  if (raw === void 0 || raw.trim() === "") {
+    throw new CliUsageError("--repo requires owner/repo");
+  }
+  return raw;
+}
+function parseCollectorArgv(args) {
+  const attachmentPaths = [];
+  let project;
+  let repo;
+  let prNumber;
+  const legs = [];
+  const positional = [];
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    const token = tokens.shift();
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length))
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token === "--pr") {
+      prNumber = parsePositivePrOption(tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--pr=")) {
+      prNumber = parsePositivePrOption(token.slice("--pr=".length));
+      continue;
+    }
+    if (token === "--repo") {
+      repo = parseRepoOption(tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--repo=")) {
+      repo = parseRepoOption(token.slice("--repo=".length));
+      continue;
+    }
+    if (token === "--leg") {
+      const value = tokens.shift();
+      if (value === void 0 || value.trim() === "") {
+        throw new CliUsageError("--leg requires id:author[,author...]");
+      }
+      legs.push(parseCollectorLegDeclaration(value));
+      continue;
+    }
+    if (token.startsWith("--leg=")) {
+      legs.push(parseCollectorLegDeclaration(token.slice("--leg=".length)));
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown collector option: ${token}`);
+    }
+    positional.push(token);
+  }
+  if (prNumber === void 0) {
+    throw new CliUsageError("collector requires --pr <positive-integer>");
+  }
+  if (legs.length === 0) {
+    throw new CliUsageError(
+      "collector requires at least one --leg id:author[,author...]"
+    );
+  }
+  return {
+    prNumber,
+    legs,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project },
+    ...repo === void 0 ? {} : { repo }
+  };
+}
+function resolveGitHubRemoteRepository(projectRoot) {
+  let remoteUrl;
+  try {
+    remoteUrl = execFileSync2("git", ["remote", "get-url", "origin"], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+  } catch (error) {
+    throw new CliUsageError(
+      "collector requires a github.com origin remote or an explicit --repo owner/repo",
+      { cause: error }
+    );
+  }
+  if (remoteUrl.length === 0) {
+    throw new CliUsageError(
+      "collector requires a github.com origin remote or an explicit --repo owner/repo"
+    );
+  }
+  const ownerRepo = ownerRepoFromGitHubRemoteUrl(remoteUrl);
+  if (ownerRepo === void 0) {
+    throw new CliUsageError(
+      `collector origin remote must be a github.com owner/repo URL, got ${remoteUrl}`
+    );
+  }
+  try {
+    return parseCollectorRepository(ownerRepo);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(detail, { cause: error });
+  }
+}
+function ownerRepoFromGitHubRemoteUrl(remoteUrl) {
+  const trimmed = remoteUrl.trim();
+  const scp = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i.exec(trimmed);
+  if (scp) {
+    return `${scp[1]}/${stripGitSuffix(scp[2])}`;
+  }
+  const ssh = /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(
+    trimmed
+  );
+  if (ssh) {
+    return `${ssh[1]}/${stripGitSuffix(ssh[2])}`;
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return void 0;
+  }
+  if (!/^github\.com$/i.test(parsed.hostname)) return void 0;
+  const parts = parsed.pathname.split("/").filter((p) => p.length > 0);
+  if (parts.length < 2) return void 0;
+  return `${parts[0]}/${stripGitSuffix(parts[1])}`;
+}
+function stripGitSuffix(name) {
+  return name.toLowerCase().endsWith(".git") ? name.slice(0, -4) : name;
+}
+async function admitCollectorInvocation(options) {
+  if (options.project !== void 0) {
+    requireOptionPath("--project", options.project);
+  }
+  if (options.legs.length === 0) {
+    throw new CliUsageError(
+      "collector requires at least one --leg id:author[,author...]"
+    );
+  }
+  let prNumber;
+  try {
+    prNumber = parseCollectorPrNumber(options.prNumber);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(detail, { cause: error });
+  }
+  const projectRoot = resolve3(options.project ?? options.cwd);
+  let repository;
+  if (options.repo !== void 0) {
+    try {
+      repository = parseCollectorRepository(options.repo);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new CliUsageError(detail, { cause: error });
+    }
+  } else {
+    repository = resolveGitHubRemoteRepository(projectRoot);
+  }
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join4(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@collector`
+  );
+  const sessionDirectory = join4(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join4(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments = [];
+  const attachmentPaths = options.attachmentPaths ?? [];
+  for (let i = 0; i < attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        attachmentPaths[i],
+        attachmentsDirectory,
+        i
+      )
+    );
+  }
+  const legsPath = join4(runDirectory, "legs.json");
+  const assembled = {
+    legs: options.legs.map((leg) => ({
+      id: leg.id,
+      expectedAuthors: [...leg.expectedAuthors]
+    }))
+  };
+  await writeFile2(legsPath, `${JSON.stringify(assembled, null, 2)}
+`, "utf8");
+  let manifestDigest;
+  try {
+    const manifest = await loadCollectorManifest(legsPath);
+    manifestDigest = manifest.digest;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(detail, { cause: error });
+  }
+  const instruction = options.instruction ?? "";
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "collector",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    prNumber,
+    repository: repository.canonical,
+    repositoryDisplay: repository.display,
+    legsPath,
+    manifestDigest,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind
+    }))
+  };
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  await writeFile2(
+    admittedRequestPath,
+    `${JSON.stringify(admitted, null, 2)}
+`,
+    "utf8"
+  );
+  return {
+    role: "collector",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    prNumber,
+    repository,
+    legsPath,
+    manifestDigest
+  };
+}
+function buildCollectorTransportPrompt(_admitted) {
+  return COLLECTOR_FIXED_KICKOFF;
+}
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
 import { join as join9 } from "node:path";
 
 // src/package-resources/method-skill.ts
-import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile3, realpath } from "node:fs/promises";
+import { createHash as createHash3 } from "node:crypto";
+import { readFile as readFile4, realpath } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
   constructor(skillName, path, cause) {
@@ -9065,7 +10001,7 @@ var SEALED_UNCHANGED_METHOD_PINS = Object.freeze({
 function gitBlobOid(bytes) {
   const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
   const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
-  return createHash2("sha1").update(header).update(body).digest("hex");
+  return createHash3("sha1").update(header).update(body).digest("hex");
 }
 function stripSkillFrontmatter(content) {
   if (!content.startsWith("---")) return content;
@@ -9083,11 +10019,11 @@ function resolvePackagedMethodSkillRoot(packageRoot2, name) {
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
   return join5(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
-function isRecord2(value) {
+function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseProvenance(raw, expectedName) {
-  if (!isRecord2(raw)) {
+  if (!isRecord3(raw)) {
     throw new Error(`Packaged method provenance must be an object for ${expectedName}`);
   }
   if (raw.name !== expectedName) {
@@ -9101,7 +10037,7 @@ function parseProvenance(raw, expectedName) {
   if (typeof raw.packageAdaptation !== "string" || raw.packageAdaptation.trim() === "") {
     throw new Error(`Packaged method provenance packageAdaptation must be nonblank`);
   }
-  if (!isRecord2(raw.upstream)) {
+  if (!isRecord3(raw.upstream)) {
     throw new Error(`Packaged method provenance upstream must be an object`);
   }
   const upstream = raw.upstream;
@@ -9128,12 +10064,12 @@ function parseProvenance(raw, expectedName) {
       `Packaged method provenance upstream must include nonblank tag or version`
     );
   }
-  if (!isRecord2(raw.files)) {
+  if (!isRecord3(raw.files)) {
     throw new Error(`Packaged method provenance files must be an object`);
   }
   const files = {};
   for (const [rel, entry] of Object.entries(raw.files)) {
-    if (!isRecord2(entry)) {
+    if (!isRecord3(entry)) {
       throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
     }
     if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
@@ -9214,7 +10150,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const provenancePath = join5(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile3(provenancePath, "utf8");
+    provenanceRaw = await readFile4(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -9232,7 +10168,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     const absolute = join5(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile3(absolute);
+      bytes = await readFile4(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -9248,7 +10184,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let raw;
   try {
     skillPath = await realpath(skillPathConfigured);
-    raw = await readFile3(skillPath, "utf8");
+    raw = await readFile4(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -9278,7 +10214,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
 }
 
 // src/public-cli/run-lifecycle.ts
-import { lstat as lstat2, open, readdir, readFile as readFile4, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { lstat as lstat2, open, readdir, readFile as readFile5, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
 var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
@@ -9304,7 +10240,7 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile4(typedProviderHttpPath(runDirectory), "utf8")
+      await readFile5(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -9337,7 +10273,7 @@ async function writeRoleRunState(runDirectory, record2) {
 async function readRoleRunState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile4(join6(runDirectory, RUN_STATE_FILE), "utf8")
+      await readFile5(join6(runDirectory, RUN_STATE_FILE), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -9346,7 +10282,9 @@ async function readRoleRunState(runDirectory) {
     if (typeof record2.runId !== "string" || record2.runId.trim() === "") {
       return void 0;
     }
-    if (record2.role !== "judge" && record2.role !== "coder") return void 0;
+    if (record2.role !== "judge" && record2.role !== "coder" && record2.role !== "collector") {
+      return void 0;
+    }
     if (record2.state !== "admitted" && record2.state !== "running" && record2.state !== "resumable" && record2.state !== "terminal") {
       return void 0;
     }
@@ -9539,7 +10477,7 @@ async function loadResumableRunRecord(home, runId) {
   let taskPath;
   try {
     const raw = JSON.parse(
-      await readFile4(run.admittedRequestPath, "utf8")
+      await readFile5(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record2 = raw;
@@ -9656,7 +10594,7 @@ async function peekRoleRunRole(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { readFile as readFile5, writeFile as writeFile4 } from "node:fs/promises";
+import { readFile as readFile6, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname4, join as join7 } from "node:path";
 
 // src/audit-escalation.ts
@@ -9823,7 +10761,7 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile5(sessionFile, "utf8");
+    await readFile6(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError(error)) return { state: "missing" };
@@ -9952,7 +10890,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile5(sessionFile, "utf8");
+  const text = await readFile6(sessionFile, "utf8");
   const entries = [];
   for (const line of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -9987,7 +10925,7 @@ async function readSessionProviderStop(sessionFile) {
     return void 0;
   }
 }
-function isRecord3(value) {
+function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function judgeDecisiveFacts(verdict) {
@@ -10014,6 +10952,15 @@ function coderDecisiveFacts(output) {
   }
   facts.reportPresent = output.report.trim().length > 0;
   return facts;
+}
+function collectorDecisiveFacts(receipt) {
+  return {
+    repository: receipt.repository,
+    prNumber: receipt.prNumber,
+    targetHead: receipt.targetHead,
+    manifestDigest: receipt.manifestDigest,
+    legStatuses: receipt.legs.map((leg) => `${leg.legId}:${leg.status}`).join(",")
+  };
 }
 function extractJudgeRoleOutcome(entries) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -10055,11 +11002,11 @@ function extractNavigatorFact(entries) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord3(details)) continue;
+      if (!isRecord4(details)) continue;
       const disposition = details.disposition;
       if (disposition === "recommendation") {
         const next = details.next;
-        if (!isRecord3(next) || typeof next.role !== "string") {
+        if (!isRecord4(next) || typeof next.role !== "string") {
           return {
             disposition: "unavailable",
             source: "unknown",
@@ -10067,7 +11014,7 @@ function extractNavigatorFact(entries) {
           };
         }
         const reason = typeof details.reason === "string" ? details.reason : "";
-        const route = Array.isArray(details.route) ? details.route.filter(isRecord3).map((target) => ({
+        const route = Array.isArray(details.route) ? details.route.filter(isRecord4).map((target) => ({
           role: String(target.role),
           phase: navigatorPhaseValue(target.phase)
         })) : void 0;
@@ -10277,6 +11224,101 @@ async function settleLawfulCoderTerminalResult(admitted, options = {}) {
     artifacts,
     runId: admitted.runId
   };
+}
+async function publishCollectorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join7(artifactsDir, "report.json");
+  const evidencePath = join7(artifactsDir, "evidence.json");
+  await writeFile4(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "collector",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...options.collectorReceipt === void 0 ? {} : { receipt: options.collectorReceipt }
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  await writeFile4(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "collector",
+        prNumber: admitted.prNumber,
+        repository: admitted.repository.canonical,
+        legsPath: admitted.legsPath,
+        manifestDigest: admitted.manifestDigest,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength
+        }))
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath }
+  ];
+}
+function extractCollectorRoleOutcome(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
+    if (message.isError === true) continue;
+    try {
+      const receipt = validateAcceptedCollectorReceipt(message.details);
+      const outcome = {
+        kind: "accepted",
+        role: "collector",
+        status: "collected",
+        decisiveFacts: collectorDecisiveFacts(receipt)
+      };
+      return { receipt, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return void 0;
+}
+async function settleLawfulCollectorTerminalResult(admitted) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const extracted = extractCollectorRoleOutcome(entries);
+  if (extracted === void 0) return void 0;
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishCollectorArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    { collectorReceipt: extracted.receipt }
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId
+  };
+}
+async function trySettleCollectorTerminalResult(admitted) {
+  return settleLawfulCollectorTerminalResult(admitted);
 }
 async function trySettleCoderTerminalResult(admitted, options = {}) {
   return settleLawfulCoderTerminalResult(admitted, options);
@@ -11157,6 +12199,212 @@ async function runPublicCoderResume(argv, env, io) {
   });
 }
 
+// src/public-cli/collector-run.ts
+import { writeFile as writeFile7 } from "node:fs/promises";
+import { join as join10 } from "node:path";
+function buildModelArgs3(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildCollectorActivationExtraArgs(admitted, options = {}) {
+  const prompt = buildCollectorTransportPrompt(admitted);
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "collector",
+    "--ak-collector-repo",
+    admitted.repository.display,
+    "--ak-collector-pr",
+    String(admitted.prNumber),
+    "--ak-collector-legs",
+    admitted.legsPath,
+    "--mode",
+    "json",
+    ...buildModelArgs3(options.model),
+    prompt
+  ];
+}
+async function presentControlledFailure3(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...session === void 0 ? {} : { session }
+  });
+  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  const terminal = await settleFailureTerminalResult(
+    admitted,
+    failure,
+    { disposition: "no-advice" }
+  );
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedCollector(input) {
+  const { admitted, env, io, extraArgs, lease } = input;
+  try {
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure3(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile7(
+        join10(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleCollectorTerminalResult(admitted);
+    } catch (error) {
+      return await presentControlledFailure3(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionFile
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure3(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : {
+          knownCause: knownFailure.cause,
+          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+        }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
+  let admitted;
+  try {
+    const parsed = parseCollectorArgv2(argv);
+    admitted = await admitCollectorInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      prNumber: parsed.prNumber,
+      legs: parsed.legs,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...parsed.repo === void 0 ? {} : { repo: parsed.repo },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const extraArgs = buildCollectorActivationExtraArgs(admitted, {
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedCollector({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease
+  });
+}
+
 // src/public-cli/cli.ts
 var THINKING_LEVELS2 = /* @__PURE__ */ new Set([
   "off",
@@ -11181,7 +12429,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join10(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join11(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -11405,6 +12653,11 @@ async function runAkRole(argv, env) {
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
       const resumeRunId = parsed.args[0];
       const resumeRole = resumeRunId === void 0 || resumeRunId.trim() === "" ? void 0 : await peekRoleRunRole(home, resumeRunId);
+      if (resumeRole === "collector") {
+        throw new CliUsageError(
+          "collector role runs are one-shot and cannot be resumed"
+        );
+      }
       const resumeSeatRole = resumeRole === "coder" ? "coder" : "judge";
       const seat = resolveEffectiveSeat(
         config,
@@ -11526,6 +12779,40 @@ async function runAkRole(argv, env) {
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
     }
+    if (parsed.command === "collector") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "collector",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicCollector(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+          ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...env.collectorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.collectorExtraPiArgs },
+          ...env.collectorTimeoutMs === void 0 ? {} : { timeoutMs: env.collectorTimeoutMs },
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+        },
+        io,
+        parseCollectorArgv
+      );
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
+    }
     const roleNames = listHelpCapabilities().filter((cap) => cap.kind === "role").map((cap) => cap.name);
     if (roleNames.includes(parsed.command)) {
       const agentDir = resolveAgentDir(env, home);
@@ -11572,6 +12859,6 @@ async function runAkRole(argv, env) {
 
 // src/public-cli/main.ts
 var here = dirname5(fileURLToPath(import.meta.url));
-var packageRoot = join11(here, "..", "..");
+var packageRoot = join12(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

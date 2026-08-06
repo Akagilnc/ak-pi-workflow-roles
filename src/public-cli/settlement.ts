@@ -14,6 +14,11 @@ import {
   type JudgeVerdict,
 } from "../package-contracts/judge-output.ts";
 import {
+  COLLECTOR_OUTPUT_TOOL,
+  validateAcceptedCollectorReceipt,
+  type CollectorReceipt,
+} from "../package-contracts/collector-output.ts";
+import {
   CODER_OUTPUT_TOOL_NAME,
   validateAcceptedCoderDetails,
   type CoderOutput,
@@ -23,6 +28,7 @@ import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
+  type AdmittedCollectorInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -533,6 +539,20 @@ function coderDecisiveFacts(output: CoderOutput): Record<string, unknown> {
   return facts;
 }
 
+function collectorDecisiveFacts(
+  receipt: CollectorReceipt,
+): Record<string, unknown> {
+  return {
+    repository: receipt.repository,
+    prNumber: receipt.prNumber,
+    targetHead: receipt.targetHead,
+    manifestDigest: receipt.manifestDigest,
+    legStatuses: receipt.legs
+      .map((leg) => `${leg.legId}:${leg.status}`)
+      .join(","),
+  };
+}
+
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
 export type LawfulJudgeRoleOutcome = Extract<
   TerminalRoleOutcome,
@@ -943,6 +963,141 @@ export async function settleCoderTerminalResult(
     );
   }
   return settled;
+}
+
+export async function publishCollectorArtifacts(
+  admitted: AdmittedCollectorInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  sessionDirectory: string,
+  options: {
+    readonly collectorReceipt?: CollectorReceipt;
+  } = {},
+): Promise<TerminalArtifactRef[]> {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join(artifactsDir, "report.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "collector",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...(options.collectorReceipt === undefined
+          ? {}
+          : { receipt: options.collectorReceipt }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "collector",
+        prNumber: admitted.prNumber,
+        repository: admitted.repository.canonical,
+        legsPath: admitted.legsPath,
+        manifestDigest: admitted.manifestDigest,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
+/** Lawful Collector accepted outcome extracted from session. */
+export type LawfulCollectorRoleOutcome = {
+  kind: "accepted";
+  role: "collector";
+  /** Collector has no status leaf — synthesize a stable collected marker. */
+  status: "collected";
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+export function extractCollectorRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulCollectorRoleOutcome; receipt: CollectorReceipt } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
+    if (message.isError === true) continue;
+    try {
+      const receipt = validateAcceptedCollectorReceipt(message.details);
+      const outcome: LawfulCollectorRoleOutcome = {
+        kind: "accepted",
+        role: "collector",
+        status: "collected",
+        decisiveFacts: collectorDecisiveFacts(receipt),
+      };
+      return { receipt, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function settleLawfulCollectorTerminalResult(
+  admitted: AdmittedCollectorInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractCollectorRoleOutcome(entries);
+  if (extracted === undefined) return undefined;
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishCollectorArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    { collectorReceipt: extracted.receipt },
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
+}
+
+/** Settle a lawful Collector Terminal from the admitted session. */
+export async function settleCollectorTerminalResult(
+  admitted: AdmittedCollectorInvocation,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulCollectorTerminalResult(admitted);
+  if (settled === undefined) {
+    throw new Error(
+      "Collector Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Collector Terminal; undefined only for genuine absence. */
+export async function trySettleCollectorTerminalResult(
+  admitted: AdmittedCollectorInvocation,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulCollectorTerminalResult(admitted);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */
