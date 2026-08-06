@@ -8870,10 +8870,23 @@ var WRITER_LOCK_FILE = "writer.lock";
 function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
 }
+function typedProviderHttpPath(runDirectory) {
+  return join5(runDirectory, TYPED_HTTP_FILE);
+}
+async function clearTypedProviderHttpObservation(runDirectory) {
+  try {
+    await unlink(typedProviderHttpPath(runDirectory));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile3(join5(runDirectory, TYPED_HTTP_FILE), "utf8")
+      await readFile3(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
@@ -9166,6 +9179,12 @@ function isLawfulTypedTerminalOutcome(outcome) {
 }
 function exitCodeForTerminalOutcome(outcome) {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+var REDACTED_RUN_ID_TOKEN = "[run-id]";
+function redactExactRunId(text, runId) {
+  if (runId.length === 0) return text;
+  if (!text.includes(runId)) return text;
+  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
 }
 function recommendationNavigatorFact(input) {
   void input.modelCommand;
@@ -9591,14 +9610,30 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
     { kind: "evidence", path: evidencePath }
   ];
 }
-async function settleLawfulJudgeTerminalResult(admitted) {
-  let entries;
+async function readLawfulSettlementEntries(admitted) {
   try {
-    entries = await readLatestSessionEntries(admitted.sessionDirectory);
+    return await readLatestSessionEntries(admitted.sessionDirectory);
   } catch (error) {
     if (isMissingPathError(error)) return void 0;
     throw error instanceof Error && error.knownCause === "session" ? error : sessionReadFailure(error, "session unreadable");
   }
+}
+async function readLawfulJudgeRoleOutcome(admitted) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  return extractJudgeRoleOutcome(entries);
+}
+async function hasLawfulJudgeTerminalResult(admitted) {
+  try {
+    const outcome = await readLawfulJudgeRoleOutcome(admitted);
+    return outcome !== void 0 && isLawfulTypedTerminalOutcome(outcome);
+  } catch {
+    return false;
+  }
+}
+async function settleLawfulJudgeTerminalResult(admitted) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
   const roleOutcome = extractJudgeRoleOutcome(entries);
   if (roleOutcome === void 0) {
     return void 0;
@@ -9757,6 +9792,28 @@ async function publishFailureArtifacts(admitted, failure) {
     { kind: "evidence", path: evidenceWrite.path }
   ];
 }
+function redactDecisiveFactsForPublicTerminal(facts, runId) {
+  const out = {};
+  for (const [key, value] of Object.entries(facts)) {
+    out[key] = typeof value === "string" ? redactExactRunId(value, runId) : value;
+  }
+  return out;
+}
+function redactNavigatorFactForPublicTerminal(navigator, runId) {
+  if (navigator.disposition === "recommendation") {
+    return {
+      ...navigator,
+      reason: redactExactRunId(navigator.reason, runId)
+    };
+  }
+  if (navigator.disposition === "unavailable") {
+    return {
+      ...navigator,
+      reason: redactExactRunId(navigator.reason, runId)
+    };
+  }
+  return navigator;
+}
 async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts = {
@@ -9769,6 +9826,26 @@ async function settleJudgeFailureTerminalResult(admitted, failure, navigator = {
   if (failure.identity?.code !== void 0) {
     decisiveFacts.errorCode = failure.identity.code;
   }
+  if (options.resume !== void 0) {
+    const publicDiagnostic = redactExactRunId(failure.diagnostic, admitted.runId);
+    const publicFacts = redactDecisiveFactsForPublicTerminal(
+      { ...decisiveFacts, diagnostic: publicDiagnostic },
+      admitted.runId
+    );
+    const roleOutcome2 = {
+      kind: "failure",
+      role: "judge",
+      cause: failure.cause,
+      diagnostic: publicDiagnostic,
+      decisiveFacts: publicFacts
+    };
+    return {
+      roleOutcome: roleOutcome2,
+      navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
+      artifacts: [],
+      resume: options.resume
+    };
+  }
   const roleOutcome = {
     kind: "failure",
     role: "judge",
@@ -9776,14 +9853,6 @@ async function settleJudgeFailureTerminalResult(admitted, failure, navigator = {
     diagnostic: failure.diagnostic,
     decisiveFacts
   };
-  if (options.resume !== void 0) {
-    return {
-      roleOutcome,
-      navigator,
-      artifacts: [],
-      resume: options.resume
-    };
-  }
   return {
     roleOutcome,
     navigator,
@@ -9878,9 +9947,10 @@ async function presentControlledFailure(admitted, failureInput, io) {
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
+  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
   const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
   const resumable = isV1ResumableFailure({
-    hasLawfulTerminalResult: false,
+    hasLawfulTerminalResult,
     ...typedHttp429 === void 0 ? {} : { typedHttp429 }
   });
   if (resumable && typedHttp429 !== void 0) {
@@ -9905,6 +9975,7 @@ async function dispatchAdmittedJudge(input) {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
     await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
     const childEnv = {
       ...process.env,
       HOME: env.home,

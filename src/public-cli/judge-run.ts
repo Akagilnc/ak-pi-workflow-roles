@@ -26,6 +26,7 @@ import {
 } from "./config.ts";
 import {
   acquireRunWriterLease,
+  clearTypedProviderHttpObservation,
   isV1ResumableFailure,
   loadResumableJudgeRun,
   markRunAdmitted,
@@ -43,6 +44,7 @@ import {
   exitCodeForTerminalOutcome,
   formatCliDiagnostic,
   formatTerminalResult,
+  hasLawfulJudgeTerminalResult,
   inspectJudgeSession,
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
@@ -217,10 +219,13 @@ async function presentControlledFailure(
     ...(session === undefined ? {} : { session }),
   });
 
-  // v1 resume: only observed typed HTTP 429 with no lawful terminal.
+  // v1 resume: only *this attempt's* typed HTTP 429 with independently confirmed
+  // absence of a lawful Judge result. Lawful presence is session-owned and must
+  // not depend on artifact publication success.
+  const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
   const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
   const resumable = isV1ResumableFailure({
-    hasLawfulTerminalResult: false,
+    hasLawfulTerminalResult,
     ...(typedHttp429 === undefined ? {} : { typedHttp429 }),
   });
   if (resumable && typedHttp429 !== undefined) {
@@ -259,6 +264,9 @@ async function dispatchAdmittedJudge(input: {
   const { admitted, env, io, extraArgs, lease } = input;
   try {
     await markRunRunning(admitted.runDirectory);
+    // Attempt-scoped observation: drop any prior dispatch's 429 evidence so only
+    // the current initial/resume attempt can qualify v1 resume.
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
 
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,

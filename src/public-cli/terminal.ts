@@ -103,6 +103,19 @@ export type TerminalResume = {
   readonly command: string;
 };
 
+/** Public free-text stand-in when an exact Role run ID is stripped outside resume.command. */
+export const REDACTED_RUN_ID_TOKEN = "[run-id]" as const;
+
+/**
+ * Remove an exact Role run ID from untrusted free text at the public Terminal boundary.
+ * Private durable artifacts keep the original bytes; only resume.command may disclose it.
+ */
+export function redactExactRunId(text: string, runId: string): string {
+  if (runId.length === 0) return text;
+  if (!text.includes(runId)) return text;
+  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
+}
+
 /**
  * One admitted Role run's typed Terminal aggregate.
  * Resumable failures carry `resume` and must not re-disclose the run ID via
