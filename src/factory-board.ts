@@ -7,8 +7,10 @@
  * - now: injected clock for unaccepted bands, leg age, wall-now rule
  *
  * Reuses S1 tracer (`loadTicketTrajectoryRuns` + station HTML) for each ticket.
- * Owns swimlanes, family aggregation, blocked badges, closed drill, and S3
- * latest-run four-state / wallclock / cost aggregation (no parallel receipt parser).
+ * Owns per-book lanes, #162 yamen-column placement (ADR 0053 totality table),
+ * family aggregation + 已完成列 clusters, unknown badge, page filters, blocked
+ * badges, closed drill, and S3 latest-run state / wallclock / cost aggregation
+ * (no parallel receipt parser).
  *
  * Page lifecycle: startFactoryBoardPage owns refresh regeneration to an explicit
  * output path outside every ledger and declares the bound; one-shot write does
