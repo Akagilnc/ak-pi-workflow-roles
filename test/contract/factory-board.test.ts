@@ -7,9 +7,11 @@
  * Assertions read machine data-* keys only (anchoring constitution).
  */
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
@@ -189,12 +191,17 @@ function topLevelLaneEntries(html: string, bookKey: string): Array<Record<string
   return filtered.map((e) => e.attrs);
 }
 
-/** Minimal Element surface used by the production board sort script. */
+/**
+ * Singular fake-DOM harness for the production board page script
+ * (sort + project/family filters + unknown badge). One surface for every page-script test.
+ */
 class BoardSortElement {
   nodeType = 1;
   childNodes: BoardSortElement[] = [];
   parentNode: BoardSortElement | null = null;
   value = "";
+  textContent = "";
+  readonly style: Record<string, string> = {};
   private readonly attrs: Record<string, string>;
   private readonly listeners = new Map<string, Array<() => void>>();
 
@@ -206,12 +213,20 @@ class BoardSortElement {
     return this.childNodes;
   }
 
+  get firstChild(): BoardSortElement | null {
+    return this.childNodes[0] ?? null;
+  }
+
   getAttribute(name: string): string | null {
     return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name]! : null;
   }
 
   hasAttribute(name: string): boolean {
     return Object.prototype.hasOwnProperty.call(this.attrs, name);
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attrs[name] = value;
   }
 
   appendChild(child: BoardSortElement): BoardSortElement {
@@ -225,6 +240,15 @@ class BoardSortElement {
     return child;
   }
 
+  removeChild(child: BoardSortElement): BoardSortElement {
+    const idx = this.childNodes.indexOf(child);
+    if (idx >= 0) {
+      this.childNodes.splice(idx, 1);
+      child.parentNode = null;
+    }
+    return child;
+  }
+
   addEventListener(type: string, fn: () => void): void {
     const list = this.listeners.get(type) ?? [];
     list.push(fn);
@@ -233,6 +257,45 @@ class BoardSortElement {
 
   dispatchEvent(type: string): void {
     for (const fn of this.listeners.get(type) ?? []) fn();
+  }
+
+  private matches(selector: string): boolean {
+    const m = selector.match(/^\[([a-z0-9-]+)(?:="([^"]*)")?\]$/);
+    if (!m) return false;
+    if (!this.hasAttribute(m[1]!)) return false;
+    return m[2] === undefined || this.getAttribute(m[1]!) === m[2];
+  }
+
+  private walk(predicate: (el: BoardSortElement) => boolean, out: BoardSortElement[]): void {
+    for (const child of this.childNodes) {
+      if (predicate(child)) out.push(child);
+      child.walk(predicate, out);
+    }
+  }
+
+  querySelector(selector: string): BoardSortElement | null {
+    const out: BoardSortElement[] = [];
+    this.walk((el) => el.matches(selector), out);
+    return out[0] ?? null;
+  }
+
+  querySelectorAll(selector: string): BoardSortElement[] {
+    const out: BoardSortElement[] = [];
+    this.walk((el) => el.matches(selector), out);
+    return out;
+  }
+}
+
+class BoardSortDocument {
+  readonly root = new BoardSortElement();
+  createElement(_tag: string): BoardSortElement {
+    return new BoardSortElement();
+  }
+  querySelector(selector: string): BoardSortElement | null {
+    return this.root.querySelector(selector);
+  }
+  querySelectorAll(selector: string): BoardSortElement[] {
+    return this.root.querySelectorAll(selector);
   }
 }
 
@@ -3107,6 +3170,1782 @@ test("production factory-board lifecycle regenerates within refresh boundary and
     assert.equal(await treeFingerprint(ledgerDir), afterAdd);
 
     assert.equal(DEFAULT_REFRESH_BOUNDARY_SECONDS, 30);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #162 kanban — yamen columns, escalate overlay, completed-column clusters
+// ---------------------------------------------------------------------------
+
+/** Minimal accepted judge terminating result (typed contract). */
+function acceptedJudgeFinal(ts: string, verdict: unknown, costTotal = 0.01, totalTokens = 10): unknown[] {
+  return [
+    {
+      type: "message",
+      timestamp: ts,
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "j1", name: "ak_judge_output", arguments: {} }],
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal },
+        },
+      },
+    },
+    {
+      type: "message",
+      timestamp: ts,
+      message: {
+        role: "toolResult",
+        toolCallId: "j1",
+        toolName: "ak_judge_output",
+        isError: false,
+        content: [],
+        details: verdict,
+      },
+    },
+  ];
+}
+
+/** Column container keys for one book, in document order (data-* only — no tag/nest coupling). */
+function laneColumnOrder(html: string, bookKey: string): string[] {
+  const order: string[] = [];
+  for (const el of elementsWith(html, "data-column")) {
+    if (el["data-book"] === bookKey && el["data-column"]) order.push(el["data-column"]);
+  }
+  return order;
+}
+
+/** Column-level entry identities (standalone ticket / family root / cluster), skipping nested cards. */
+function columnEntryOrder(html: string, bookKey: string, columnKey: string): string[] {
+  const out: string[] = [];
+  // Walk open tags in document order; column-level entries carry data-placement and are not nested.
+  for (const m of html.matchAll(/<[a-zA-Z][^>]*\bdata-placement="[^"]*"[^>]*>/g)) {
+    const attrs = attrsFromOpenTag(m[0]!);
+    if (attrs["data-book"] !== bookKey) continue;
+    if (attrs["data-placement"] !== columnKey) continue;
+    if (attrs["data-nested"] === "true") continue;
+    if (attrs["data-family"] === "true") {
+      out.push(attrs["data-parent"] ?? "?");
+      continue;
+    }
+    if (attrs["data-family-cluster"] !== undefined) {
+      out.push(attrs["data-family-cluster"]!);
+      continue;
+    }
+    if (attrs["data-ticket"] !== undefined) {
+      out.push(attrs["data-ticket"]!);
+    }
+  }
+  return out;
+}
+
+function placementOf(html: string, bookKey: string, issueNumber: number): string | undefined {
+  return elementsWith(html, "data-ticket").find(
+    (t) => t["data-book"] === bookKey && t["data-ticket"] === String(issueNumber),
+  )?.["data-placement"];
+}
+
+/** Breadcrumb steps for one ticket, ordered by data-breadcrumb-step. */
+function breadcrumbStepsOf(html: string, issueNumber: number): Array<Record<string, string>> {
+  const card = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === String(issueNumber));
+  assert.ok(card, `ticket #${issueNumber}`);
+  // Scope steps from this ticket marker until the next data-ticket marker.
+  const marker = `data-ticket="${issueNumber}"`;
+  const start = html.indexOf(marker);
+  assert.ok(start >= 0, `ticket marker #${issueNumber}`);
+  const after = html.slice(start);
+  const next = after.slice(marker.length).search(/data-ticket="\d+"/);
+  const scope = next >= 0 ? after.slice(0, marker.length + next) : after;
+  const steps = elementsWith(scope, "data-breadcrumb-step");
+  return steps.sort((a, b) => Number(a["data-breadcrumb-step"]) - Number(b["data-breadcrumb-step"]));
+}
+
+test("kanban placement totality: every ticket lands in its yamen column or the unknown set", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-place-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const nowMs = now.getTime();
+
+    // #1 closed with an accepted coder run → 已完成
+    await writeRunSession(
+      ledgerDir, 1, "coder-done@x",
+      [sessionHeader("2026-08-05T08:00:00.000Z"), ...acceptedCoderFinal("2026-08-05T08:05:00.000Z", 0.02, 20)],
+      { mtime: new Date(nowMs - 14_400_000) },
+    );
+    // #2 open zero-run → 待发
+    await mkdir(join(ledgerDir, "issues", "2"), { recursive: true });
+    // #3 judge-only history, latest judge converged → 大理寺(审票)
+    await writeRunSession(
+      ledgerDir, 3, "plan-court-only@x",
+      [sessionHeader("2026-08-05T09:00:00.000Z"), ...acceptedJudgeFinal("2026-08-05T09:05:00.000Z", { judgeStatus: "converged" }, 0.03, 30)],
+      { mtime: new Date(nowMs - 10_200_000) },
+    );
+    // #4 coder first, then judge converged → 刑部(判卷)
+    await writeRunSession(
+      ledgerDir, 4, "coder-start@x",
+      [sessionHeader("2026-08-05T08:00:00.000Z"), ...acceptedCoderFinal("2026-08-05T08:05:00.000Z", 0.01, 10)],
+      { mtime: new Date(nowMs - 14_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir, 4, "judge-after-coder@x",
+      [sessionHeader("2026-08-05T10:00:00.000Z"), ...acceptedJudgeFinal("2026-08-05T10:05:00.000Z", { judgeStatus: "converged" }, 0.04, 40)],
+      { mtime: new Date(nowMs - 7_000_000) },
+    );
+    // #5 latest coder unaccepted flying (30s) → 将作监
+    await writeRunSession(
+      ledgerDir, 5, "coder-fly@x",
+      [sessionHeader("2026-08-05T11:58:00.000Z"), assistantUsage("2026-08-05T11:58:30.000Z", 0.05, 50)],
+      { invocationRole: "coder", mtime: new Date(nowMs - 30_000) },
+    );
+    // #13 latest coder unaccepted flying (60s) → 将作监, older activity sorts after #5
+    await writeRunSession(
+      ledgerDir, 13, "coder-fly-older@x",
+      [sessionHeader("2026-08-05T11:57:00.000Z"), assistantUsage("2026-08-05T11:57:30.000Z", 0.06, 60)],
+      { invocationRole: "coder", mtime: new Date(nowMs - 60_000) },
+    );
+    // #6 latest fixer accepted → 刑部
+    await writeRunSession(
+      ledgerDir, 6, "fixer-done@x",
+      [
+        sessionHeader("2026-08-05T10:30:00.000Z"),
+        {
+          type: "message",
+          timestamp: "2026-08-05T11:00:00.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", id: "f1", name: "ak_fixer_output", arguments: {} }],
+            usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 10, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.07 } },
+          },
+        },
+        {
+          type: "message",
+          timestamp: "2026-08-05T11:00:30.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: "f1",
+            toolName: "ak_fixer_output",
+            isError: false,
+            content: [],
+            details: {
+              status: "completed",
+              report: "fixed",
+              classResults: [
+                { name: "c1", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc123" },
+              ],
+            },
+          },
+        },
+      ],
+      { mtime: new Date(nowMs - 3_600_000) },
+    );
+    // #7 latest reviewer unaccepted watch → 刑部
+    await writeRunSession(
+      ledgerDir, 7, "review-watch@x",
+      [sessionHeader("2026-08-05T11:40:00.000Z"), assistantUsage("2026-08-05T11:41:00.000Z", 0.08, 80)],
+      { invocationRole: "reviewer", mtime: new Date(nowMs - 5 * 60_000) },
+    );
+    // #8 latest collector unaccepted → 门下省
+    await writeRunSession(
+      ledgerDir, 8, "collector-fly@x",
+      [sessionHeader("2026-08-05T11:59:00.000Z"), assistantUsage("2026-08-05T11:59:20.000Z", 0.09, 90)],
+      { invocationRole: "collector", mtime: new Date(nowMs - 20_000) },
+    );
+    // #10 latest auditor (non-resident station) → 非常驻列
+    await writeRunSession(
+      ledgerDir, 10, "audit-fly@x",
+      [sessionHeader("2026-08-05T11:58:30.000Z"), assistantUsage("2026-08-05T11:58:50.000Z", 0.1, 100)],
+      { invocationRole: "auditor", mtime: new Date(nowMs - 25_000) },
+    );
+    // #14 marshal-driven run → 刑部列 (ADR 0053; correlation seat pending, station already maps)
+    await writeRunSession(
+      ledgerDir, 14, "marshal-drive@x",
+      [sessionHeader("2026-08-05T11:57:00.000Z"), assistantUsage("2026-08-05T11:57:30.000Z", 0.14, 140)],
+      { invocationRole: "marshal", mtime: new Date(nowMs - 40_000) },
+    );
+    // #9 latest run without any session → unknown station → 未知集 (no column)
+    await mkdir(join(ledgerDir, "issues", "9", "runs", "mystery@x"), { recursive: true });
+    // #11 judge-only escalate → 大理寺(审票) with escalate overlay
+    await writeRunSession(
+      ledgerDir, 11, "court-escalate@x",
+      [
+        sessionHeader("2026-08-05T11:00:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T11:50:00.000Z",
+          { judgeStatus: "escalate", decisionGate: { question: "q", options: ["a", "b"] } },
+          0.11, 110,
+        ),
+      ],
+      { mtime: new Date(nowMs - 600_000) },
+    );
+    // #12 coder history then judge escalate → 刑部 with escalate overlay (原地换色不改归列)
+    await writeRunSession(
+      ledgerDir, 12, "coder-before@x",
+      [sessionHeader("2026-08-05T08:30:00.000Z"), ...acceptedCoderFinal("2026-08-05T08:35:00.000Z", 0.01, 10)],
+      { mtime: new Date(nowMs - 12_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir, 12, "judge-escalate-late@x",
+      [
+        sessionHeader("2026-08-05T11:10:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T11:55:00.000Z",
+          { judgeStatus: "escalate", decisionGate: { question: "q2", options: ["c", "d"] } },
+          0.12, 120,
+        ),
+      ],
+      { mtime: new Date(nowMs - 300_000) },
+    );
+    // #15 latest judge + only historical unknown → 大理寺(审票) (unknown 史不算开工证据)
+    await writeRunSession(
+      ledgerDir, 15, "mystery-hist@x",
+      [sessionHeader("2026-08-05T08:10:00.000Z"), assistantUsage("2026-08-05T08:15:00.000Z", 0.01, 10)],
+      { mtime: new Date(nowMs - 13_800_000) },
+    );
+    await writeRunSession(
+      ledgerDir, 15, "judge-after-unknown@x",
+      [sessionHeader("2026-08-05T10:20:00.000Z"), ...acceptedJudgeFinal("2026-08-05T10:25:00.000Z", { judgeStatus: "converged" }, 0.05, 50)],
+      { mtime: new Date(nowMs - 5_700_000) },
+    );
+    // #16 latest unknown + historical known coder → 未知集 (latest unknown 不因历史改列)
+    await writeRunSession(
+      ledgerDir, 16, "coder-hist@x",
+      [sessionHeader("2026-08-05T08:20:00.000Z"), ...acceptedCoderFinal("2026-08-05T08:25:00.000Z", 0.01, 10)],
+      { mtime: new Date(nowMs - 12_900_000) },
+    );
+    await writeRunSession(
+      ledgerDir, 16, "mystery-latest@x",
+      [sessionHeader("2026-08-05T11:20:00.000Z"), assistantUsage("2026-08-05T11:21:00.000Z", 0.02, 20)],
+      { mtime: new Date(nowMs - 2_400_000) },
+    );
+    // #17 retained closed + latest unknown → 已完成 (closed 优先于 unknown)
+    await writeRunSession(
+      ledgerDir, 17, "mystery-closed@x",
+      [sessionHeader("2026-08-05T07:00:00.000Z"), assistantUsage("2026-08-05T07:05:00.000Z", 0.01, 10)],
+      { mtime: new Date(nowMs - 18_000_000) },
+    );
+
+    const before = await treeFingerprint(ledgerDir);
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 1, title: "closed", state: "closed", closedAt: "2026-08-05T09:00:00.000Z" }),
+                ticket({ issueNumber: 2, title: "pending", state: "open" }),
+                ticket({ issueNumber: 3, title: "court-only", state: "open" }),
+                ticket({ issueNumber: 4, title: "judge-after-coder", state: "open" }),
+                ticket({ issueNumber: 5, title: "coder-fly", state: "open" }),
+                ticket({ issueNumber: 6, title: "fixer-done", state: "open" }),
+                ticket({ issueNumber: 7, title: "review-watch", state: "open" }),
+                ticket({ issueNumber: 8, title: "collector-fly", state: "open" }),
+                ticket({ issueNumber: 9, title: "mystery", state: "open" }),
+                ticket({ issueNumber: 10, title: "audit-fly", state: "open" }),
+                ticket({ issueNumber: 11, title: "court-escalate", state: "open" }),
+                ticket({ issueNumber: 12, title: "marshal-escalate", state: "open" }),
+                ticket({ issueNumber: 13, title: "coder-fly-older", state: "open" }),
+                ticket({ issueNumber: 14, title: "marshal-drive", state: "open" }),
+                ticket({ issueNumber: 15, title: "judge-after-unknown", state: "open" }),
+                ticket({ issueNumber: 16, title: "unknown-after-coder", state: "open" }),
+                ticket({
+                  issueNumber: 17,
+                  title: "closed-unknown",
+                  state: "closed",
+                  closedAt: "2026-08-05T08:00:00.000Z",
+                }),
+              ],
+            },
+          ],
+        },
+      },
+      now,
+    );
+    assert.equal(await treeFingerprint(ledgerDir), before, "kanban render stays read-only");
+
+    // Placement totality table (priority order: retained closed → pending → unknown →
+    // judge double-position → known-station columns).
+    assert.equal(placementOf(html, "roles", 1), "done");
+    assert.equal(placementOf(html, "roles", 2), "pending");
+    assert.equal(placementOf(html, "roles", 3), "court", "judge without identified non-judge history → 大理寺(审票)");
+    assert.equal(placementOf(html, "roles", 4), "marshal", "latest judge + historical coder → 刑部(判卷)");
+    assert.equal(placementOf(html, "roles", 5), "coder");
+    assert.equal(placementOf(html, "roles", 6), "marshal", "fixer latest → 刑部");
+    assert.equal(placementOf(html, "roles", 7), "marshal", "reviewer latest → 刑部");
+    assert.equal(placementOf(html, "roles", 8), "collector");
+    assert.equal(placementOf(html, "roles", 10), "other:auditor", "known non-resident station forms its own column");
+    assert.equal(placementOf(html, "roles", 14), "marshal", "marshal-driven runs land in 刑部 (ADR 0053)");
+    assert.equal(placementOf(html, "roles", 9), "unknown", "unknown latest station never forms a column");
+    assert.equal(placementOf(html, "roles", 11), "court", "escalate overlay does not change placement (judge-only)");
+    assert.equal(placementOf(html, "roles", 12), "marshal", "escalate overlay does not change placement (with coder history)");
+    // 归列交叉 Red（#162 Testing Decisions）
+    assert.equal(placementOf(html, "roles", 15), "court", "latest judge + only historical unknown → 大理寺(审票)");
+    assert.equal(placementOf(html, "roles", 16), "unknown", "latest unknown + historical known → 未知集");
+    assert.equal(placementOf(html, "roles", 17), "done", "retained closed + latest unknown → 已完成 (closed 优先)");
+
+    // Escalate overlay: state value distinct, placement unchanged.
+    const t11 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "11");
+    const t12 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "12");
+    assert.equal(t11?.["data-current-state"], "escalate-awaiting");
+    assert.equal(t12?.["data-current-state"], "escalate-awaiting");
+    // Non-escalate accepted tickets keep accepted-awaiting.
+    const t3 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "3");
+    assert.equal(t3?.["data-current-state"], "accepted-awaiting");
+
+    // Six resident columns always present; non-resident only when occupied, before 已完成.
+    assert.deepEqual(laneColumnOrder(html, "roles"), [
+      "pending",
+      "court",
+      "coder",
+      "marshal",
+      "collector",
+      "other:auditor",
+      "done",
+    ]);
+    // Empty resident columns still render with mechanical zero count.
+    const columns = elementsWith(html, "data-column").filter((c) => c["data-book"] === "roles");
+    // Every resident key is present (this fixture fills them all except none empty here).
+    for (const key of ["pending", "court", "coder", "marshal", "collector", "done"]) {
+      assert.ok(columns.some((c) => c["data-column"] === key), `resident column ${key} always present`);
+    }
+
+    // Column-internal order: 在飞 → 观察 → 疑挂 → 已交卷(escalate 同档), 同档末次活动降序.
+    assert.deepEqual(columnEntryOrder(html, "roles", "coder"), ["5", "13"], "flying coder tickets: newest activity first");
+    assert.deepEqual(
+      columnEntryOrder(html, "roles", "marshal"),
+      ["14", "7", "12", "6", "4"],
+      "flying band first (marshal drive), then watch; awaiting/escalate share a band by last activity desc",
+    );
+
+    // Unknown set: badge count + item, and the card is reachable from the unknown container.
+    const badge = elementsWith(html, "data-unknown-badge")[0];
+    assert.ok(badge, "unknown badge present");
+    assert.equal(badge["data-unknown-count"], "2");
+    assert.ok(
+      elementsWith(html, "data-unknown-item").some(
+        (el) => el["data-unknown-item"] === "9" && el["data-book"] === "roles",
+      ),
+      "unknown badge expands to the same mechanical set",
+    );
+    assert.ok(
+      elementsWith(html, "data-unknown-item").some(
+        (el) => el["data-unknown-item"] === "16" && el["data-book"] === "roles",
+      ),
+      "latest-unknown-with-known-history stays in the unknown set",
+    );
+    const unknownSet = elementsWith(html, "data-unknown-set")[0];
+    assert.ok(unknownSet, "unknown container present in the lane");
+    // Unknown cards are not inside any column container.
+    for (const col of laneColumnOrder(html, "roles")) {
+      assert.ok(!columnEntryOrder(html, "roles", col).includes("9"), `#9 must not sit in column ${col}`);
+      assert.ok(!columnEntryOrder(html, "roles", col).includes("16"), `#16 must not sit in column ${col}`);
+    }
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban completed column: family clusters, open-root extraction, closedAt-desc order", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-done-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+
+    // Open-root family: #20 root (zero-run), #21 open coder child, #22 closed child.
+    await mkdir(join(ledgerDir, "issues", "20"), { recursive: true });
+    await writeRunSession(
+      ledgerDir, 21, "coder-child@x",
+      [sessionHeader("2026-08-05T09:00:00.000Z"), ...acceptedCoderFinal("2026-08-05T09:05:00.000Z", 0.5, 500)],
+      { mtime: new Date(now.getTime() - 10_800_000) },
+    );
+    await writeRunSession(
+      ledgerDir, 22, "coder-closed-child@x",
+      [sessionHeader("2026-08-04T09:00:00.000Z"), ...acceptedCoderFinal("2026-08-04T09:05:00.000Z", 2.0, 2000)],
+      { mtime: new Date(now.getTime() - 86_400_000) },
+    );
+    // Closed-root family: #30 root + #31 child, both closed (zero-run closed is lawful).
+    await mkdir(join(ledgerDir, "issues", "30"), { recursive: true });
+    await mkdir(join(ledgerDir, "issues", "31"), { recursive: true });
+    // #40 closed single.
+    await mkdir(join(ledgerDir, "issues", "40"), { recursive: true });
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 20, title: "open root", state: "open" }),
+                ticket({ issueNumber: 21, title: "open child", state: "open", parentIssueNumber: 20 }),
+                ticket({
+                  issueNumber: 22,
+                  title: "closed child",
+                  state: "closed",
+                  parentIssueNumber: 20,
+                  closedAt: "2026-08-05T11:00:00.000Z",
+                }),
+                ticket({ issueNumber: 30, title: "closed root", state: "closed", closedAt: "2026-08-05T10:00:00.000Z" }),
+                ticket({
+                  issueNumber: 31,
+                  title: "closed child of closed root",
+                  state: "closed",
+                  parentIssueNumber: 30,
+                  closedAt: "2026-08-05T09:00:00.000Z",
+                }),
+                ticket({ issueNumber: 40, title: "closed single", state: "closed", closedAt: "2026-08-05T08:00:00.000Z" }),
+              ],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    // Open-root family section sits by the ROOT's placement (待发), aggregates all descendants.
+    const family20 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "20");
+    assert.ok(family20);
+    assert.equal(family20["data-placement"], "pending");
+    assert.equal(family20["data-child-count"], "2");
+    assert.equal(family20["data-closed-count"], "1");
+    assert.equal(Number(family20["data-cost-usd"]), 2.5, "family aggregate still covers open + closed descendants");
+
+    // Open child #21 is an independent card placed by its own latest run (not nested).
+    assert.equal(placementOf(html, "roles", 21), "coder");
+    const t21 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "21");
+    assert.ok(t21);
+    assert.notEqual(t21["data-nested"], "true", "open child card is independent, not nested");
+
+    // Closed child #22 is extracted to the 已完成 cluster of its family (父开子关 → 族簇嵌套).
+    assert.equal(placementOf(html, "roles", 22), "done");
+    const cluster = elementsWith(html, "data-family-cluster").find((c) => c["data-family-cluster"] === "20");
+    assert.ok(cluster, "completed family cluster for open-root family");
+    const t22 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "22");
+    assert.ok(t22);
+    assert.equal(t22["data-nested"], "true", "cluster child is mechanically nested");
+    assert.equal(t22["data-parent-issue"], "20", "extracted cluster child keeps its native parent edge");
+
+    // Closed-root family travels whole into 已完成 (父卡置顶、子卡缩进嵌套).
+    const family30 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "30");
+    assert.ok(family30);
+    assert.equal(family30["data-placement"], "done");
+    const t31 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "31");
+    assert.ok(t31, "closed-root family nests its closed child");
+    assert.equal(t31["data-nested"], "true", "closed-root child stays nested");
+    assert.equal(t31["data-parent-issue"], "30");
+
+    // 已完成 column order: closedAt desc (cluster 11:00 → family30 10:00 → single 08:00).
+    assert.deepEqual(columnEntryOrder(html, "roles", "done"), ["20", "30", "40"]);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #162 retention — merge+24h window, family shared parent clock, drill residency
+// ---------------------------------------------------------------------------
+
+const RETENTION_NOW = "2026-08-06T12:00:00.000Z";
+
+type RetentionScenario = {
+  openNodes: unknown[];
+  closedPages: Array<{ nodes: unknown[]; hasNextPage: boolean; endCursor: string | null }>;
+  drillNodes?: Record<number, unknown>;
+};
+
+function closedNode(number: number, closedAt: string, parent: number | null): unknown {
+  return {
+    number,
+    title: `closed-${number}`,
+    state: "CLOSED",
+    closedAt,
+    milestone: null,
+    parent: parent === null ? null : { number: parent },
+    blockedBy: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+  };
+}
+
+function retentionRunner(scenario: RetentionScenario, counters?: { closedDrainCalls: number }): GhApiRunner {
+  return async (args) => {
+    const queryArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("query="));
+    const query = queryArg?.slice("query=".length) ?? "";
+    const afterArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("after="));
+    const after = afterArg ? afterArg.slice("after=".length) : null;
+    const ok = (data: unknown): GhApiResponse => ({
+      status: 200,
+      headers: {},
+      bodyText: JSON.stringify({ data }),
+    });
+
+    if (query.includes("issues(states: OPEN")) {
+      return ok({
+        repository: {
+          issues: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: scenario.openNodes,
+          },
+        },
+      });
+    }
+    if (query.includes("issues(states: CLOSED")) {
+      if (counters) counters.closedDrainCalls += 1;
+      const pageIndex = after === "cursor-closed-1" ? 1 : 0;
+      const page = scenario.closedPages[pageIndex];
+      if (!page) throw new Error(`unexpected closed drain page (after=${after})`);
+      return ok({
+        repository: {
+          issues: {
+            pageInfo: { hasNextPage: page.hasNextPage, endCursor: page.endCursor },
+            nodes: page.nodes,
+          },
+        },
+      });
+    }
+    const drillMatch = query.match(/c0: issue\(number: (\d+)\)/);
+    if (drillMatch && scenario.drillNodes) {
+      const node = scenario.drillNodes[Number(drillMatch[1])];
+      if (!node) throw new Error(`unexpected drill ${drillMatch[1]}`);
+      return ok({ repository: { c0: node } });
+    }
+    throw new Error(`unexpected graphql query: ${query.slice(0, 120)}`);
+  };
+}
+
+test("retention drain refuses silent truncation and validates the injected clock", async () => {
+  const truncated: GhApiRunner = async (args) => {
+    const queryArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("query="));
+    const query = queryArg?.slice("query=".length) ?? "";
+    const ok = (data: unknown): GhApiResponse => ({
+      status: 200,
+      headers: {},
+      bodyText: JSON.stringify({ data }),
+    });
+    if (query.includes("issues(states: OPEN")) {
+      return ok({ repository: { issues: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } });
+    }
+    if (query.includes("issues(states: CLOSED")) {
+      return ok({
+        repository: {
+          issues: {
+            // no pageInfo — completeness cannot be established
+            nodes: [closedNode(60, "2026-08-06T11:00:00.000Z", null)],
+          },
+        },
+      });
+    }
+    throw new Error(`unexpected graphql query: ${query.slice(0, 120)}`);
+  };
+  await assert.rejects(
+    () =>
+      createGhTicketSnapshotTransport(truncated).listBookTickets({
+        owner: "acme",
+        repo: "roles",
+        closedIssueNumbers: [],
+        retentionNow: new Date(RETENTION_NOW),
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /pageInfo missing|completeness/i);
+      return true;
+    },
+  );
+
+  const passthrough = retentionRunner({ openNodes: [], closedPages: [{ nodes: [], hasNextPage: false, endCursor: null }] });
+  await assert.rejects(
+    () =>
+      createGhTicketSnapshotTransport(passthrough).listBookTickets({
+        owner: "acme",
+        repo: "roles",
+        closedIssueNumbers: [],
+        retentionNow: new Date("not-a-date"),
+      }),
+    /retentionNow/i,
+  );
+});
+
+test("fetchBoardSnapshot passes retentionNow through only when supplied", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const transport: TicketSnapshotTransport = {
+    async listBookTickets(input) {
+      calls.push({ ...input });
+      return [];
+    },
+  };
+  await fetchBoardSnapshot({
+    bindings: [{ bookKey: "roles", owner: "acme", repo: "roles" }],
+    transport,
+  });
+  assert.deepEqual(calls[0], { owner: "acme", repo: "roles", closedIssueNumbers: [] });
+
+  await fetchBoardSnapshot({
+    bindings: [{ bookKey: "roles", owner: "acme", repo: "roles" }],
+    retentionNow: new Date(RETENTION_NOW),
+    transport,
+  });
+  assert.equal((calls[1]?.["retentionNow"] as Date | undefined)?.toISOString(), RETENTION_NOW);
+});
+
+/**
+ * #162 retention Red through the production path only:
+ * createGhTicketSnapshotTransport → fetchBoardSnapshot → startFactoryBoardPage.loadView
+ * (tick by tick) → HTML. Never hand-return a snapshot that already contains closed tickets.
+ */
+test("retention tracer: transport→fetch→watch loadView→HTML (window, family clock, drill)", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-retention-tracer-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    // Zero-run issue dirs so the render seam can join every retained ticket.
+    for (const n of [10, 11, 20, 21, 30, 31, 40, 41, 50]) {
+      await mkdir(join(ledgerDir, "issues", String(n)), { recursive: true });
+    }
+    const before = await treeFingerprint(ledgerDir);
+    const outputPath = join(workspace, "out", "board.html");
+    let nowMs = Date.parse(RETENTION_NOW);
+    const { scheduler, ticks } = manualBoardScheduler();
+    const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
+
+    const counters = { closedDrainCalls: 0 };
+    const runner = retentionRunner(
+      {
+        openNodes: [
+          {
+            number: 10,
+            title: "open-root",
+            state: "OPEN",
+            closedAt: null,
+            milestone: null,
+            parent: null,
+            blockedBy: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+          },
+        ],
+        closedPages: [
+          {
+            nodes: [
+              // A: child closed 48h ago under open root → 陪跑 retained
+              closedNode(11, "2026-08-04T12:00:00.000Z", 10),
+              // B: root closed 25h ago; child closed 1h ago → family exits by root clock
+              closedNode(20, "2026-08-05T11:00:00.000Z", null),
+              closedNode(21, "2026-08-06T11:00:00.000Z", 20),
+              // C: root closed 1h ago; child closed 25h ago → whole family retained
+              closedNode(30, "2026-08-06T11:00:00.000Z", null),
+            ],
+            hasNextPage: true,
+            endCursor: "cursor-closed-1",
+          },
+          {
+            nodes: [
+              closedNode(31, "2026-08-05T11:00:00.000Z", 30),
+              // boundary: exactly closedAt+24h == now → expired
+              closedNode(40, "2026-08-05T12:00:00.000Z", null),
+              // boundary +1ms → retained at RETENTION_NOW; exits on the next tick
+              closedNode(41, "2026-08-05T12:00:00.001Z", null),
+              // drill candidate: clock-expired but named → fetched via closedIssueNumbers
+              closedNode(50, "2026-08-03T12:00:00.000Z", null),
+            ],
+            hasNextPage: false,
+            endCursor: null,
+          },
+        ],
+        drillNodes: { 50: closedNode(50, "2026-08-03T12:00:00.000Z", null) },
+      },
+      counters,
+    );
+    const transport = createGhTicketSnapshotTransport(runner);
+
+    let loadCalls = 0;
+    const handle = startFactoryBoardPage({
+      books,
+      loadView: async () => {
+        loadCalls += 1;
+        // Production CLI shape: adapter + retentionNow clock, never a hand-built closed snapshot.
+        const snapshot = await fetchBoardSnapshot({
+          bindings: [{ bookKey: "roles", owner: "acme", repo: "roles" }],
+          closedIssueNumbersByBook: { roles: [50] },
+          retentionNow: new Date(nowMs),
+          transport,
+        });
+        return { ok: true, snapshot };
+      },
+      outputPath,
+      refreshBoundarySeconds: 1,
+      clock: () => new Date(nowMs),
+      scheduler,
+    });
+
+    const first = await handle.started;
+    assert.equal(first.outputPath, await realpath(outputPath));
+    let html = await readFile(outputPath, "utf8");
+    assert.equal(loadCalls, 1, "loadView supplies the startup snapshot too (not fixed at start)");
+    assert.ok(counters.closedDrainCalls >= 2, "closed drain paginates to completion on the production path");
+
+    const present = () =>
+      new Set(
+        elementsWith(html, "data-ticket")
+          .filter((t) => t["data-book"] === "roles")
+          .map((t) => Number(t["data-ticket"])),
+      );
+    let onBoard = present();
+    assert.deepEqual(
+      [...onBoard].sort((a, b) => a - b),
+      [10, 11, 30, 31, 41, 50],
+      "HTML shows open + retained + drill only",
+    );
+    assert.ok(!onBoard.has(20) && !onBoard.has(21), "family exits together by the root closedAt clock");
+    assert.ok(!onBoard.has(40), "exactly closedAt+24h is expired");
+    assert.ok(onBoard.has(41), "just-inside 24h window is retained on the board");
+    assert.ok(onBoard.has(11), "closed child 陪跑 under open parent");
+    assert.equal(placementOf(html, "roles", 11), "done", "陪跑 closed child lands in 已完成 cluster");
+    assert.equal(
+      elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "11")?.["data-parent-issue"],
+      "10",
+      "family edge facts survive outside the OPEN query onto the page",
+    );
+    const family10 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "10");
+    assert.ok(family10, "open root family section is on the board");
+    assert.equal(family10["data-placement"], "pending", "open root places the family by its own facts");
+    assert.ok(onBoard.has(31), "old child rides the family clock while the root stays in window");
+    const family30 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "30");
+    assert.ok(family30, "closed-root family travels whole into 已完成");
+    assert.equal(family30["data-placement"], "done");
+    assert.equal(placementOf(html, "roles", 31), "done");
+    assert.ok(onBoard.has(50), "named closed drill is resident regardless of the window");
+    assert.equal(placementOf(html, "roles", 50), "done");
+    assert.equal(placementOf(html, "roles", 41), "done", "just-closed retained ticket lands in 已完成");
+
+    // Next tick: advance past #41's closedAt+24h so the same transport path drops it.
+    nowMs = Date.parse("2026-08-06T12:00:00.002Z");
+    ticks[0]!();
+    for (let i = 0; i < 25; i += 1) {
+      html = await readFile(outputPath, "utf8");
+      if (loadCalls >= 2 && html.includes('data-generated-at="2026-08-06T12:00:00.002Z"')) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.ok(loadCalls >= 2, "each tick re-loads the snapshot through the adapter");
+    assert.equal(
+      elementsWith(html, "data-generated-at")[0]?.["data-generated-at"],
+      "2026-08-06T12:00:00.002Z",
+    );
+    onBoard = present();
+    assert.ok(!onBoard.has(41), "24h exit is observed on the next watch tick");
+    assert.deepEqual(
+      [...onBoard].sort((a, b) => a - b),
+      [10, 11, 30, 31, 50],
+      "remaining retained + drill set after the window tick",
+    );
+    assert.ok(onBoard.has(11), "open-parent 陪跑 survives the tick");
+    assert.ok(onBoard.has(50), "named drill stays across ticks");
+    assert.equal(await treeFingerprint(ledgerDir), before, "retention watch path stays read-only");
+
+    await handle.stop();
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("watch lifecycle faults loadView failures and requires view or loadView", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-watch-fault-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
+    const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
+    const nowMs = Date.parse("2026-08-05T16:00:00.000Z");
+
+    const failing = startFactoryBoardPage({
+      books,
+      loadView: async () => {
+        throw new Error("snapshot source exploded");
+      },
+      outputPath: join(workspace, "out", "board2.html"),
+      refreshBoundarySeconds: 1,
+      clock: () => new Date(nowMs),
+      scheduler: manualBoardScheduler().scheduler,
+    });
+    await assert.rejects(failing.started, /snapshot source exploded/);
+    await assert.rejects(() => failing.stop(), /snapshot source exploded/);
+
+    assert.throws(
+      () =>
+        startFactoryBoardPage({
+          books,
+          outputPath: join(workspace, "out", "board3.html"),
+          refreshBoundarySeconds: 1,
+        }),
+      /view or loadView/i,
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown set, read-only", async () => {
+  const kanbanFixtureLedger = join(packageRoot, "test/fixtures/factory-board-kanban/ledger");
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-fixture-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    await cp(kanbanFixtureLedger, ledgerDir, { recursive: true });
+    // #127's authentic cut already lives in the S1 fixture tree — compose, don't duplicate.
+    await cp(
+      join(fixtureLedger, "issues", "127"),
+      join(ledgerDir, "issues", "127"),
+      { recursive: true },
+    );
+
+    const before = await treeFingerprint(ledgerDir);
+    const now = new Date("2026-08-06T12:00:00.000Z");
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 45, title: "final authority judge", state: "open" }),
+                ticket({ issueNumber: 78, title: "court-only parent", state: "open" }),
+                ticket({ issueNumber: 104, title: "judge after construction", state: "open" }),
+                ticket({ issueNumber: 127, title: "hot child", state: "open", parentIssueNumber: 78 }),
+                ticket({ issueNumber: 140, title: "marshal design court", state: "open" }),
+              ],
+            },
+          ],
+        },
+      },
+      now,
+    );
+    assert.equal(await treeFingerprint(ledgerDir), before, "authentic-cut fixture render is read-only");
+
+    // #45 — run without any session bytes → unknown station → 未知集 (badge, no column).
+    assert.equal(placementOf(html, "roles", 45), "unknown");
+    assert.equal(elementsWith(html, "data-unknown-badge")[0]?.["data-unknown-count"], "1");
+    assert.ok(
+      elementsWith(html, "data-unknown-item").some(
+        (el) => el["data-unknown-item"] === "45" && el["data-book"] === "roles",
+      ),
+    );
+
+    // #78 — judge-only authentic history → 大理寺(审票); escalate in history does not
+    // flip the latest converged state (escalate overlay belongs to the latest run only).
+    const family78 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "78");
+    assert.ok(family78);
+    assert.equal(family78["data-placement"], "court");
+    assert.equal(family78["data-child-count"], "1");
+    const t78 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "78");
+    assert.equal(t78?.["data-current-state"], "accepted-awaiting");
+    const escalatedHistorical = elementsWith(html, "data-run-id").find(
+      (r) => r["data-run-id"] === "design-court-r2@ak-pi-workflow-roles",
+    );
+    assert.equal(escalatedHistorical?.["data-result-status"], "escalate", "authentic escalate receipt stays visible in history");
+
+    // #104 — latest judge with coder/fixer/reviewer history → 刑部(判卷).
+    assert.equal(placementOf(html, "roles", 104), "marshal");
+    const t104 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "104");
+    assert.equal(t104?.["data-current-state"], "accepted-awaiting");
+
+    // #140 — single judge court run → 大理寺(审票).
+    assert.equal(placementOf(html, "roles", 140), "court");
+
+    // #127 — open child rides its own latest run (reviewer) → 刑部, independent card
+    // with the native family edge + 族徽章, not nested inside the family section.
+    assert.equal(placementOf(html, "roles", 127), "marshal");
+    const t127 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "127");
+    assert.equal(t127?.["data-parent-issue"], "78");
+    assert.notEqual(t127?.["data-nested"], "true", "open child card is not nested");
+    assert.ok(
+      elementsWith(html, "data-family-badge").some(
+        (b) => b["data-family-badge"] === "78" && b["data-book"] === "roles",
+      ),
+      "family badge marks independent child cards",
+    );
+
+    // Six resident columns always; no unknown column; court and marshal occupied.
+    assert.deepEqual(laneColumnOrder(html, "roles"), [
+      "pending",
+      "court",
+      "coder",
+      "marshal",
+      "collector",
+      "done",
+    ]);
+    const colByKey = new Map(
+      elementsWith(html, "data-column")
+        .filter((c) => c["data-book"] === "roles")
+        .map((c) => [c["data-column"], c["data-column-count"]]),
+    );
+    assert.equal(colByKey.get("pending"), "0");
+    assert.equal(colByKey.get("coder"), "0");
+    assert.equal(colByKey.get("collector"), "0");
+    assert.equal(colByKey.get("done"), "0");
+    assert.ok(Number(colByKey.get("court")) >= 1);
+    assert.ok(Number(colByKey.get("marshal")) >= 1);
+    // Marshal column-internal: 在飞/观察/疑挂 band floats above 已交卷.
+    const marshalOrder = columnEntryOrder(html, "roles", "marshal");
+    assert.ok(marshalOrder.includes("104") && marshalOrder.includes("127"));
+    const t127State = t127?.["data-current-state"] ?? "";
+    if (t127State.startsWith("unaccepted-")) {
+      assert.ok(
+        marshalOrder.indexOf("127") < marshalOrder.indexOf("104"),
+        "unaccepted #127 floats above accepted #104 in 刑部",
+      );
+    }
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #162 fake-DOM — production page script via the singular BoardSortElement harness
+// ---------------------------------------------------------------------------
+
+function pageEl(attrs: Record<string, string>, ...children: BoardSortElement[]): BoardSortElement {
+  const el = new BoardSortElement(attrs);
+  for (const child of children) el.appendChild(child);
+  return el;
+}
+
+/** Production page script body extracted from the rendered board HTML. */
+function productionPageScriptBody(html: string): string {
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch?.[1], "production board must embed the page script");
+  return scriptMatch[1]!;
+}
+
+type KanbanFakePage = {
+  document: BoardSortDocument;
+  sortSel: BoardSortElement;
+  projectSel: BoardSortElement;
+  familySel: BoardSortElement;
+  badge: BoardSortElement;
+  badgeSummary: BoardSortElement;
+  lanes: Record<string, BoardSortElement>;
+  columns: Record<string, BoardSortElement>;
+};
+
+/**
+ * Fake page mirroring the production structure: two books, family 78 with open
+ * child 127 (marshal) under a court family section, lone 104, pending 2,
+ * unknown 9 (roles) and unknown 26 (orch).
+ */
+function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
+  const document = new BoardSortDocument();
+
+  const sortSel = new BoardSortElement({ "data-sort-control": "true" });
+  sortSel.value = "ticket-asc";
+  const projectSel = new BoardSortElement({ "data-project-filter": "true" });
+  projectSel.value = "roles";
+  const familySel = new BoardSortElement({ "data-family-filter": "true" });
+  familySel.appendChild(Object.assign(new BoardSortElement(), { value: "all" }));
+  familySel.value = "all";
+  const badgeSummary = new BoardSortElement({ "data-unknown-badge-summary": "true" });
+  const unknownItem9 = new BoardSortElement({ "data-unknown-item": "9", "data-book": "roles" });
+  const unknownItem26 = new BoardSortElement({ "data-unknown-item": "26", "data-book": "orch" });
+  const badge = pageEl(
+    { "data-unknown-badge": "true", "data-unknown-count": "1" },
+    badgeSummary,
+    pageEl({}, unknownItem9, unknownItem26),
+  );
+
+  const article2 = new BoardSortElement({
+    "data-ticket": "2",
+    "data-book": "roles",
+    "data-placement": "pending",
+    "data-ticket-state": "open",
+    "data-title": "pending",
+    "data-cost-usd": "0",
+  });
+  const pendingRoles = pageEl(
+    { "data-column": "pending", "data-book": "roles", "data-column-count": "1" },
+    pageEl({}, new BoardSortElement({ "data-column-count-label": "true" })),
+    article2,
+  );
+  const family78 = new BoardSortElement({
+    "data-family": "true",
+    "data-parent": "78",
+    "data-book": "roles",
+    "data-placement": "court",
+    "data-cost-usd": "5.01",
+  });
+  const courtRoles = pageEl(
+    { "data-column": "court", "data-book": "roles", "data-column-count": "1" },
+    pageEl({}, new BoardSortElement({ "data-column-count-label": "true" })),
+    family78,
+  );
+  const article127 = new BoardSortElement({
+    "data-ticket": "127",
+    "data-book": "roles",
+    "data-placement": "marshal",
+    "data-ticket-state": "open",
+    "data-parent-issue": "78",
+    "data-title": "hot child",
+    "data-cost-usd": "5",
+  });
+  const article104 = new BoardSortElement({
+    "data-ticket": "104",
+    "data-book": "roles",
+    "data-placement": "marshal",
+    "data-ticket-state": "open",
+    "data-title": "judge after construction",
+    "data-cost-usd": "0.5",
+  });
+  const marshalRoles = pageEl(
+    { "data-column": "marshal", "data-book": "roles", "data-column-count": "2" },
+    pageEl({}, new BoardSortElement({ "data-column-count-label": "true" })),
+    article104,
+    article127,
+  );
+  const article9 = new BoardSortElement({
+    "data-ticket": "9",
+    "data-book": "roles",
+    "data-placement": "unknown",
+    "data-ticket-state": "open",
+    "data-title": "mystery",
+    "data-cost-usd": "0",
+  });
+  const unknownSetRoles = pageEl({ "data-unknown-set": "true", "data-book": "roles" }, article9);
+  const laneTicketsRoles = pageEl(
+    { "data-lane-tickets": "roles" },
+    pendingRoles,
+    courtRoles,
+    marshalRoles,
+    unknownSetRoles,
+  );
+  const laneRoles = pageEl({ "data-lane": "roles", "data-book": "roles" }, laneTicketsRoles);
+
+  const article26 = new BoardSortElement({
+    "data-ticket": "26",
+    "data-book": "orch",
+    "data-placement": "unknown",
+    "data-ticket-state": "open",
+    "data-title": "orch mystery",
+    "data-cost-usd": "0",
+  });
+  const unknownSetOrch = pageEl({ "data-unknown-set": "true", "data-book": "orch" }, article26);
+  const laneTicketsOrch = pageEl({ "data-lane-tickets": "orch" }, unknownSetOrch);
+  const laneOrch = pageEl({ "data-lane": "orch", "data-book": "orch" }, laneTicketsOrch);
+  laneOrch.style.display = "none";
+
+  document.root.appendChild(sortSel);
+  document.root.appendChild(projectSel);
+  document.root.appendChild(familySel);
+  document.root.appendChild(badge);
+  document.root.appendChild(laneRoles);
+  document.root.appendChild(laneOrch);
+
+  vm.runInNewContext(scriptBody, { document });
+
+  return {
+    document,
+    sortSel,
+    projectSel,
+    familySel,
+    badge,
+    badgeSummary,
+    lanes: { roles: laneRoles, orch: laneOrch },
+    columns: { pending: pendingRoles, court: courtRoles, marshal: marshalRoles },
+  };
+}
+
+test("kanban page script: per-column sort never moves cards across columns", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-script-sort-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 1, title: "pending", state: "open" })],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+    const page = buildKanbanFakePage(productionPageScriptBody(html));
+
+    const marshalOrder = () =>
+      page.columns["marshal"]!.children
+        .filter((el) => el.hasAttribute("data-ticket"))
+        .map((el) => el.getAttribute("data-ticket"));
+
+    page.sortSel.value = "cost-desc";
+    page.sortSel.dispatchEvent("change");
+    assert.deepEqual(marshalOrder(), ["127", "104"], "cost-desc inside the marshal column");
+
+    page.sortSel.value = "cost-asc";
+    page.sortSel.dispatchEvent("change");
+    assert.deepEqual(marshalOrder(), ["104", "127"], "cost-asc inside the marshal column");
+
+    page.sortSel.value = "ticket-asc";
+    page.sortSel.dispatchEvent("change");
+    assert.deepEqual(marshalOrder(), ["104", "127"]);
+    // Cards never leak across columns: pending/court/unknown memberships unchanged.
+    assert.ok(page.columns["pending"]!.children.some((el) => el.getAttribute("data-ticket") === "2"));
+    assert.ok(page.columns["court"]!.children.some((el) => el.hasAttribute("data-family")));
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban page script: project and family filters drive lanes, badge count, column counts", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-kanban-script-filter-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 1, title: "pending", state: "open" })],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+    const page = buildKanbanFakePage(productionPageScriptBody(html));
+
+    // Family options for the default project: only parents with an open child (#78 via #127).
+    const familyValues = () => page.familySel.children.map((o) => o.value);
+    assert.deepEqual(familyValues(), ["all"], "initial server-rendered options are replaced by script rebuild only on project change");
+
+    // Select family 78: parent + children stay, everything else hides; counts follow.
+    familySelRebuild(page);
+    // After rebuild, family options carry mechanical child counts (data-family-option / data-child-count).
+    const opt78 = page.familySel.children.find((o) => o.value === "78");
+    assert.ok(opt78, "family option for open-child parent");
+    assert.equal(opt78.getAttribute("data-family-option"), "78");
+    assert.equal(opt78.getAttribute("data-child-count"), "1", "open-parent option carries child count");
+
+    page.familySel.value = "78";
+    page.familySel.dispatchEvent("change");
+    const visible = (el: BoardSortElement) => el.style.display !== "none";
+    const marshalCards = page.columns["marshal"]!.children.filter((el) => el.hasAttribute("data-ticket"));
+    assert.ok(visible(marshalCards.find((el) => el.getAttribute("data-ticket") === "127")!), "child of selected family stays");
+    assert.ok(!visible(marshalCards.find((el) => el.getAttribute("data-ticket") === "104")!), "unrelated card hides");
+    assert.ok(!visible(page.columns["pending"]!.children.find((el) => el.getAttribute("data-ticket") === "2")!), "lone pending card hides");
+    assert.equal(page.columns["marshal"]!.getAttribute("data-column-count"), "1", "column count follows the filtered set");
+    assert.equal(page.columns["pending"]!.getAttribute("data-column-count"), "0");
+    // Unknown badge consumes the same filtered set: #9 is not in family 78 → count 0.
+    assert.equal(page.badge.getAttribute("data-unknown-count"), "0");
+    assert.equal(page.badgeSummary.textContent, "未知票 ×0");
+
+    // Back to all: badge returns to the project count.
+    page.familySel.value = "all";
+    page.familySel.dispatchEvent("change");
+    assert.equal(page.badge.getAttribute("data-unknown-count"), "1");
+    assert.equal(page.columns["marshal"]!.getAttribute("data-column-count"), "2");
+
+    // Switch project to orch: roles lane hides, badge counts orch unknowns, options rebuild.
+    page.projectSel.value = "orch";
+    page.projectSel.dispatchEvent("change");
+    assert.equal(page.lanes["roles"]!.style.display, "none");
+    assert.equal(page.lanes["orch"]!.style.display, "");
+    assert.equal(page.badge.getAttribute("data-unknown-count"), "1", "orch has its own unknown ticket");
+    assert.deepEqual(familyValues(), ["all"], "orch has no open-child parents");
+    assert.equal(page.familySel.value, "all", "family filter resets on project switch");
+
+    // Switch back to roles: family options rebuild from the roles cards.
+    page.projectSel.value = "roles";
+    page.projectSel.dispatchEvent("change");
+    assert.equal(page.lanes["roles"]!.style.display, "");
+    assert.deepEqual(familyValues(), ["all", "78"], "roles family options rebuilt from card facts");
+    assert.equal(
+      page.familySel.children.find((o) => o.value === "78")?.getAttribute("data-child-count"),
+      "1",
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+/** Drive the script's own option rebuild path (project switch) without changing the value. */
+function familySelRebuild(page: KanbanFakePage): void {
+  const current = page.projectSel.value;
+  page.projectSel.value = current;
+  page.projectSel.dispatchEvent("change");
+}
+
+// ---------------------------------------------------------------------------
+// #162 presentation contract — breadcrumb, six resident columns, state strip,
+// family option child count (S2 true entry; data-* oracles only)
+// ---------------------------------------------------------------------------
+
+function findChromeExecutable(): string | null {
+  const candidates = [
+    join(
+      homedir(),
+      "Library/Caches/ms-playwright/chromium-1234/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    ),
+    join(
+      homedir(),
+      "Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    ),
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return null;
+}
+
+async function freePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const s = createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const addr = s.address();
+      if (!addr || typeof addr === "string") {
+        s.close();
+        reject(new Error("no port"));
+        return;
+      }
+      const port = addr.port;
+      s.close((err) => (err ? reject(err) : resolve(port)));
+    });
+  });
+}
+
+/**
+ * Headless Chrome computed-style probe for ticket top strips + state dots.
+ * Locates cards by data-ticket and their data-state-dot; reads border-top,
+ * data-state-strip, and the dot's computed color (same-hue oracle).
+ */
+async function ticketStripComputedStyles(
+  html: string,
+  issueNumbers: readonly number[],
+): Promise<
+  Map<
+    number,
+    {
+      borderTopWidth: string;
+      borderTopColor: string;
+      stateStrip: string | null;
+      dotColor: string;
+    }
+  >
+> {
+  const chrome = findChromeExecutable();
+  assert.ok(chrome, "Chrome/Chromium required for state-strip computed-style proof");
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-strip-"));
+  const htmlPath = join(workspace, "board.html");
+  await writeFile(htmlPath, html, "utf8");
+  const port = await freePort();
+  const userDataDir = join(workspace, "chrome-profile");
+  await mkdir(userDataDir, { recursive: true });
+  const chromeProc = spawn(
+    chrome,
+    [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${userDataDir}`,
+      "--remote-allow-origins=*",
+      "--headless=new",
+      "--disable-gpu",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "about:blank",
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  try {
+    // Wait for DevTools endpoint.
+    let version: { webSocketDebuggerUrl?: string } | null = null;
+    for (let i = 0; i < 50; i += 1) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+        if (res.ok) {
+          version = (await res.json()) as { webSocketDebuggerUrl?: string };
+          if (version.webSocketDebuggerUrl) break;
+        }
+      } catch {
+        // retry
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(version?.webSocketDebuggerUrl, "Chrome DevTools endpoint did not come up");
+
+    const ws = new WebSocket(version.webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("CDP websocket failed")), { once: true });
+    });
+
+    let nextId = 1;
+    const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+    ws.addEventListener("message", (ev) => {
+      const msg = JSON.parse(String(ev.data)) as {
+        id?: number;
+        result?: unknown;
+        error?: { message?: string };
+        method?: string;
+        params?: { sessionId?: string; message?: string };
+      };
+      // Flatten session-target events if any
+      if (msg.method === "Target.receivedMessageFromTarget" && msg.params?.message) {
+        const inner = JSON.parse(msg.params.message) as {
+          id?: number;
+          result?: unknown;
+          error?: { message?: string };
+        };
+        if (inner.id !== undefined && pending.has(inner.id)) {
+          const p = pending.get(inner.id)!;
+          pending.delete(inner.id);
+          if (inner.error) p.reject(new Error(inner.error.message ?? "cdp error"));
+          else p.resolve(inner.result);
+        }
+        return;
+      }
+      if (msg.id !== undefined && pending.has(msg.id)) {
+        const p = pending.get(msg.id)!;
+        pending.delete(msg.id);
+        if (msg.error) p.reject(new Error(msg.error.message ?? "cdp error"));
+        else p.resolve(msg.result);
+      }
+    });
+
+    const send = (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+      const id = nextId++;
+      const payload = JSON.stringify({ id, method, params });
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        ws.send(payload);
+      });
+    };
+
+    // Attach to the only available target (browser-level targets list).
+    const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as Array<{
+      id: string;
+      type: string;
+      webSocketDebuggerUrl?: string;
+    }>;
+    const pageTarget = targets.find((t) => t.type === "page") ?? targets[0];
+    assert.ok(pageTarget?.webSocketDebuggerUrl, "no page target");
+
+    // Prefer a dedicated page socket for simpler command routing.
+    ws.close();
+    const pageWs = new WebSocket(pageTarget.webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => {
+      pageWs.addEventListener("open", () => resolve(), { once: true });
+      pageWs.addEventListener("error", () => reject(new Error("page CDP failed")), { once: true });
+    });
+    const pagePending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+    pageWs.addEventListener("message", (ev) => {
+      const msg = JSON.parse(String(ev.data)) as {
+        id?: number;
+        result?: unknown;
+        error?: { message?: string };
+      };
+      if (msg.id !== undefined && pagePending.has(msg.id)) {
+        const p = pagePending.get(msg.id)!;
+        pagePending.delete(msg.id);
+        if (msg.error) p.reject(new Error(msg.error.message ?? "cdp error"));
+        else p.resolve(msg.result);
+      }
+    });
+    const pageSend = (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        pagePending.set(id, { resolve, reject });
+        pageWs.send(JSON.stringify({ id, method, params }));
+      });
+    };
+
+    await pageSend("Page.enable");
+    const fileUrl = `file://${htmlPath}`;
+    await pageSend("Page.navigate", { url: fileUrl });
+    // Wait for load
+    await new Promise((r) => setTimeout(r, 200));
+    await pageSend("Runtime.enable");
+
+    const expression = `(() => {
+      const want = ${JSON.stringify(issueNumbers.map(String))};
+      const out = {};
+      for (const n of want) {
+        const el = document.querySelector('[data-ticket="' + n + '"]');
+        if (!el) { out[n] = null; continue; }
+        const cs = getComputedStyle(el);
+        const dot = el.querySelector('[data-state-dot]');
+        const dotColor = dot ? getComputedStyle(dot).color : null;
+        out[n] = {
+          borderTopWidth: cs.borderTopWidth,
+          borderTopColor: cs.borderTopColor,
+          stateStrip: el.getAttribute('data-state-strip'),
+          dotColor,
+        };
+      }
+      return out;
+    })()`;
+    const evalResult = (await pageSend("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+    })) as {
+      result?: {
+        value?: Record<
+          string,
+          {
+            borderTopWidth: string;
+            borderTopColor: string;
+            stateStrip: string | null;
+            dotColor: string | null;
+          } | null
+        >;
+      };
+    };
+    const value = evalResult.result?.value ?? {};
+    const map = new Map<
+      number,
+      {
+        borderTopWidth: string;
+        borderTopColor: string;
+        stateStrip: string | null;
+        dotColor: string;
+      }
+    >();
+    for (const n of issueNumbers) {
+      const row = value[String(n)];
+      assert.ok(row, `ticket #${n} missing in computed-style probe`);
+      assert.ok(row.dotColor, `ticket #${n} missing data-state-dot computed color`);
+      map.set(n, { ...row, dotColor: row.dotColor });
+    }
+    pageWs.close();
+    return map;
+  } finally {
+    chromeProc.kill("SIGKILL");
+    await rm(workspace, { recursive: true, force: true });
+  }
+}
+
+test("kanban presentation: six resident columns always, empty count 0, other on demand", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-six-cols-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    // Only a pending ticket — five other resident columns must still appear empty.
+    await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 1, title: "only pending", state: "open" })],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+    assert.deepEqual(laneColumnOrder(html, "roles"), [
+      "pending",
+      "court",
+      "coder",
+      "marshal",
+      "collector",
+      "done",
+    ]);
+    const counts = new Map(
+      elementsWith(html, "data-column")
+        .filter((c) => c["data-book"] === "roles")
+        .map((c) => [c["data-column"]!, c["data-column-count"]!]),
+    );
+    assert.equal(counts.get("pending"), "1");
+    for (const key of ["court", "coder", "marshal", "collector", "done"]) {
+      assert.equal(counts.get(key), "0", `${key} empty resident column keeps count 0`);
+    }
+    assert.ok(!counts.has("other:auditor"), "non-resident column absent when empty");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban presentation: ledger-order breadcrumb collapses, marks return and rejected", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-breadcrumb-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const nowMs = now.getTime();
+
+    // judge continue, judge continue (collapse ×2 rejected), coder done, judge converged (return)
+    await writeRunSession(
+      ledgerDir,
+      7,
+      "judge-r1@x",
+      [
+        sessionHeader("2026-08-05T08:00:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T08:05:00.000Z",
+          {
+            judgeStatus: "continue",
+            fix: { summary: "fix" },
+            classes: [{ name: "c", owner: "o", boundary: "b", disposition: "d" }],
+          },
+          0.01,
+          10,
+        ),
+      ],
+      { mtime: new Date(nowMs - 14_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir,
+      7,
+      "judge-r2@x",
+      [
+        sessionHeader("2026-08-05T09:00:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T09:05:00.000Z",
+          {
+            judgeStatus: "continue",
+            fix: { summary: "fix2" },
+            classes: [{ name: "c2", owner: "o", boundary: "b", disposition: "d" }],
+          },
+          0.02,
+          20,
+        ),
+      ],
+      { mtime: new Date(nowMs - 10_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir,
+      7,
+      "coder-1@x",
+      [sessionHeader("2026-08-05T10:00:00.000Z"), ...acceptedCoderFinal("2026-08-05T10:05:00.000Z", 0.03, 30)],
+      { mtime: new Date(nowMs - 7_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir,
+      7,
+      "judge-final@x",
+      [
+        sessionHeader("2026-08-05T11:00:00.000Z"),
+        ...acceptedJudgeFinal("2026-08-05T11:05:00.000Z", { judgeStatus: "converged" }, 0.04, 40),
+      ],
+      { mtime: new Date(nowMs - 3_000_000) },
+    );
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 7, title: "loop", state: "open" })],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    const steps = breadcrumbStepsOf(html, 7);
+    assert.equal(steps.length, 3, "judge×2 + coder + judge → 3 collapsed steps");
+    assert.equal(steps[0]?.["data-station"], "judge");
+    assert.equal(steps[0]?.["data-step-count"], "2");
+    assert.equal(steps[0]?.["data-return"], "false");
+    assert.equal(steps[0]?.["data-rejected"], "true", "continue results mark the step rejected");
+    assert.equal(steps[1]?.["data-station"], "coder");
+    assert.equal(steps[1]?.["data-step-count"], "1");
+    assert.equal(steps[1]?.["data-rejected"], "false");
+    assert.equal(steps[2]?.["data-station"], "judge");
+    assert.equal(steps[2]?.["data-return"], "true", "reappearance after another station is a return");
+    assert.equal(steps[2]?.["data-rejected"], "false");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban presentation: family options carry mechanical open-child count", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-family-opt-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    await mkdir(join(ledgerDir, "issues", "10"), { recursive: true });
+    await mkdir(join(ledgerDir, "issues", "11"), { recursive: true });
+    await mkdir(join(ledgerDir, "issues", "12"), { recursive: true });
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 10, title: "parent", state: "open" }),
+                ticket({ issueNumber: 11, title: "child a", state: "open", parentIssueNumber: 10 }),
+                ticket({ issueNumber: 12, title: "child b", state: "open", parentIssueNumber: 10 }),
+              ],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+    const options = elementsWith(html, "data-family-option");
+    assert.equal(options.length, 1);
+    assert.equal(options[0]?.["data-family-option"], "10");
+    assert.equal(options[0]?.["data-child-count"], "2");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban presentation: five-state strip via data-state-strip + browser computed top border", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-strip-states-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const nowMs = now.getTime();
+
+    // #1 flying (<2min)
+    await writeRunSession(
+      ledgerDir, 1, "fly@x",
+      [sessionHeader("2026-08-05T11:59:00.000Z"), assistantUsage("2026-08-05T11:59:30.000Z", 0.01, 10)],
+      { invocationRole: "coder", mtime: new Date(nowMs - 30_000) },
+    );
+    // #2 watch (2–15min)
+    await writeRunSession(
+      ledgerDir, 2, "watch@x",
+      [sessionHeader("2026-08-05T11:50:00.000Z"), assistantUsage("2026-08-05T11:51:00.000Z", 0.02, 20)],
+      { invocationRole: "coder", mtime: new Date(nowMs - 5 * 60_000) },
+    );
+    // #3 suspect (>15min)
+    await writeRunSession(
+      ledgerDir, 3, "suspect@x",
+      [sessionHeader("2026-08-05T11:00:00.000Z"), assistantUsage("2026-08-05T11:01:00.000Z", 0.03, 30)],
+      { invocationRole: "coder", mtime: new Date(nowMs - 20 * 60_000) },
+    );
+    // #4 accepted-awaiting
+    await writeRunSession(
+      ledgerDir, 4, "accepted@x",
+      [sessionHeader("2026-08-05T10:00:00.000Z"), ...acceptedCoderFinal("2026-08-05T10:05:00.000Z", 0.04, 40)],
+      { mtime: new Date(nowMs - 7_000_000) },
+    );
+    // #5 escalate-awaiting
+    await writeRunSession(
+      ledgerDir, 5, "esc@x",
+      [
+        sessionHeader("2026-08-05T10:30:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T10:35:00.000Z",
+          { judgeStatus: "escalate", decisionGate: { question: "q", options: ["a", "b"] } },
+          0.05,
+          50,
+        ),
+      ],
+      { mtime: new Date(nowMs - 5_000_000) },
+    );
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 1, title: "fly", state: "open" }),
+                ticket({ issueNumber: 2, title: "watch", state: "open" }),
+                ticket({ issueNumber: 3, title: "suspect", state: "open" }),
+                ticket({ issueNumber: 4, title: "accepted", state: "open" }),
+                ticket({ issueNumber: 5, title: "esc", state: "open" }),
+              ],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    const expected: Record<number, string> = {
+      1: "unaccepted-flying",
+      2: "unaccepted-watch",
+      3: "unaccepted-suspect",
+      4: "accepted-awaiting",
+      5: "escalate-awaiting",
+    };
+    for (const [n, state] of Object.entries(expected)) {
+      const t = elementsWith(html, "data-ticket").find((el) => el["data-ticket"] === n);
+      assert.equal(t?.["data-current-state"], state);
+      assert.equal(t?.["data-state-strip"], state, "strip key mirrors current state");
+      assert.ok(
+        elementsWith(html, "data-state-label").some(
+          (el) => el["data-state-label"] === state,
+        ),
+        `state dot label present for ${state}`,
+      );
+    }
+
+    const styles = await ticketStripComputedStyles(html, [1, 2, 3, 4, 5]);
+    const colors = new Set<string>();
+    for (const n of [1, 2, 3, 4, 5] as const) {
+      const row = styles.get(n)!;
+      assert.equal(row.stateStrip, expected[n]);
+      const widthPx = Number.parseFloat(row.borderTopWidth);
+      assert.ok(Number.isFinite(widthPx) && widthPx > 0, `#${n} top border width must be non-zero`);
+      assert.match(
+        row.borderTopColor,
+        /^(rgb(a)?\(|color\()/,
+        `#${n} top border resolves to a color`,
+      );
+      assert.match(
+        row.dotColor,
+        /^(rgb(a)?\(|color\()/,
+        `#${n} state dot resolves to a color`,
+      );
+      // Same-hue contract: top strip color equals the state-dot computed color.
+      assert.equal(
+        row.borderTopColor,
+        row.dotColor,
+        `#${n} (${expected[n]}) top border must equal data-state-dot color`,
+      );
+      colors.add(row.borderTopColor);
+    }
+    // All five states must resolve to mutually distinct computed colors.
+    assert.equal(
+      colors.size,
+      5,
+      `expected 5 distinct strip colors across five states, got ${colors.size}: ${[...colors].join("; ")}`,
+    );
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

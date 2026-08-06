@@ -7,6 +7,9 @@
  * Book→repo bindings are explicit flags — never guessed from git remote.
  * S3 current-state / wallclock / cost are computed inside the render seam from
  * ledger runs + injected now — this script only supplies bindings and clock.
+ * #162: the default board supplies merge+24h retention candidates (family shared
+ * parent clock) from the snapshot seam; --watch re-loads the snapshot every tick
+ * (the startup snapshot is never pinned).
  *
  *   npx tsx scripts/render-factory-board.ts \
  *     --book ak-pi-workflow-roles=~/.ak-roles/books/ak-pi-workflow-roles:Akagilnc/ak-pi-workflow-roles \
@@ -202,42 +205,51 @@ for (const raw of closedArgs) {
   ];
 }
 
-let view: FactoryBoardView;
-try {
-  const snapshot = await fetchBoardSnapshot({
-    bindings,
-    closedIssueNumbersByBook,
-    transport: createGhTicketSnapshotTransport(createGhApiRunner()),
-  });
-  view = { ok: true, snapshot };
-} catch (error) {
-  if (error instanceof TicketSnapshotBindingError) {
-    view = {
-      ok: false,
-      error: {
-        kind: "binding",
-        message: error.message,
-        ...(error.bookKey ? { bookKey: error.bookKey } : {}),
-      },
-    };
-  } else if (error instanceof TicketSnapshotApiError) {
-    view = {
-      ok: false,
-      error: {
-        kind: "api",
-        message: error.message,
-        ...(error.bookKey ? { bookKey: error.bookKey } : {}),
-      },
-    };
-  } else {
-    console.error(formatError(error));
-    process.exit(1);
+const transport = createGhTicketSnapshotTransport(createGhApiRunner());
+
+/**
+ * Default-board snapshot load (#162): open set + named drills + merge+24h retention
+ * candidates, clock injected per call so watch ticks re-derive the candidate set.
+ * Binding/API failures become loud error views; unexpected errors propagate.
+ */
+async function loadBoardView(): Promise<FactoryBoardView> {
+  try {
+    const snapshot = await fetchBoardSnapshot({
+      bindings,
+      closedIssueNumbersByBook,
+      retentionNow: new Date(),
+      transport,
+    });
+    return { ok: true, snapshot };
+  } catch (error) {
+    if (error instanceof TicketSnapshotBindingError) {
+      return {
+        ok: false,
+        error: {
+          kind: "binding",
+          message: error.message,
+          ...(error.bookKey ? { bookKey: error.bookKey } : {}),
+        },
+      };
+    }
+    if (error instanceof TicketSnapshotApiError) {
+      return {
+        ok: false,
+        error: {
+          kind: "api",
+          message: error.message,
+          ...(error.bookKey ? { bookKey: error.bookKey } : {}),
+        },
+      };
+    }
+    throw error;
   }
 }
 
 if (!watch) {
   // One-shot: no refresh declaration — page lifecycle matches actual behavior.
   try {
+    const view = await loadBoardView();
     const result = await writeFactoryBoardPage({
       books,
       view,
@@ -252,10 +264,15 @@ if (!watch) {
   }
 }
 
-// Watch: declare refresh bound and regenerate within it (snapshot fixed; ledgers re-read).
+// Watch: declare refresh bound and regenerate within it. The snapshot is re-loaded
+// every tick (not pinned at startup); ledgers stay read-only.
+let lastView: FactoryBoardView | undefined;
 const handle = startFactoryBoardPage({
   books,
-  view,
+  loadView: async () => {
+    lastView = await loadBoardView();
+    return lastView;
+  },
   outputPath,
   refreshBoundarySeconds,
 });
@@ -277,10 +294,11 @@ void handle.closed.then(
 
 try {
   const first = await handle.started;
+  const firstOk = lastView?.ok !== false;
   console.error(
-    `wrote ${first.outputPath}${view.ok ? "" : " (error page)"}; watching every ${refreshBoundarySeconds}s (stop with SIGINT)`,
+    `wrote ${first.outputPath}${firstOk ? "" : " (error page)"}; watching every ${refreshBoundarySeconds}s (stop with SIGINT)`,
   );
-  if (!view.ok) {
+  if (!firstOk) {
     await handle.stop().catch(() => undefined);
     exitOnce(1);
   }
