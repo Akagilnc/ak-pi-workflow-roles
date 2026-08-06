@@ -47,16 +47,19 @@ Runnable installation and role examples will be added only after #115 proves the
 
 The source tree retains an explicitly loadable raw-Pi seam for package development and low-level diagnosis. It is intentionally absent from public installation help and is **not** an external package interface. The following commands are for contributors working from this repository before #11 lands.
 
-Set the extension and create a retained run directory first:
+Set the extension and create the retained machine-ledger run first:
 
 ```bash
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 ROLE_EXTENSION="$REPO_ROOT/extensions/role-runtime.ts"
-RUN="$REPO_ROOT/.ak/work/manual/runs/<invocation>"
+RUN="$HOME/.ak-roles/books/<main-repository-directory>/issues/<issue>/runs/<invocation>@<source-tree>"
 mkdir -p "$RUN/session"
+printf '%s\n' \
+  '{"role":"<role>","issue":<issue>,"invocation":"<invocation>","sourceTree":"<source-tree>","model":"<provider/model>","thinking":"<level>"}' \
+  >"$RUN/invocation.json"
 ```
 
-Replace `<invocation>` and every other angle-bracket placeholder. Keep the session and stderr from the same run. Closing stdin avoids a non-TTY invocation waiting for EOF.
+Replace every angle-bracket placeholder, including the role recorded in `invocation.json`. The book key is the main repository directory name, not a linked-worktree name. Keep `session/`, `stderr.log`, and `invocation.json` together in that run. Close stdin to avoid a non-TTY invocation waiting for EOF, and discard the unbounded stdout event-stream copy; the session is authoritative evidence.
 
 ### Judge
 
@@ -65,7 +68,7 @@ pi --no-extensions -e "$ROLE_EXTENSION" \
   --ak-role judge \
   --session-dir "$RUN/session" --mode json \
   -p "Adjudicate the materials at <path>; infer the applicable burden." \
-  >"$RUN/stdout.jsonl" 2>"$RUN/stderr.log" </dev/null
+  >/dev/null 2>"$RUN/stderr.log" </dev/null
 ```
 
 ### Fixer
@@ -77,7 +80,7 @@ pi --no-extensions -e "$ROLE_EXTENSION" \
   --ak-fix-packet <fix-packet.md> \
   --session-dir "$RUN/session" --mode json \
   -p "Apply the admitted repair packet." \
-  >"$RUN/stdout.jsonl" 2>"$RUN/stderr.log" </dev/null
+  >/dev/null 2>"$RUN/stderr.log" </dev/null
 ```
 
 Add `--ak-fixer-prerequisites <prerequisites.json>` when the packet declares typed prerequisites. Use phase `plan` for inspection and planning without edits.
@@ -92,7 +95,7 @@ pi --no-extensions -e "$ROLE_EXTENSION" \
   --ak-coder-task <approved-plan.md> \
   --session-dir "$RUN/session" --mode json \
   -p "Apply the admitted implementation plan." \
-  >"$RUN/stdout.jsonl" 2>"$RUN/stderr.log" </dev/null
+  >/dev/null 2>"$RUN/stderr.log" </dev/null
 ```
 
 Use phase `plan` to prepare a plan without edits. Until #109 lands, this internal path requires the canonical home TDD Skill shown above.
@@ -107,7 +110,7 @@ pi --no-extensions -e "$ROLE_EXTENSION" \
   --ak-review-capabilities <review-capabilities.json> \
   --session-dir "$RUN/session" --mode json \
   -p "Review the admitted fixed target." \
-  >"$RUN/stdout.jsonl" 2>"$RUN/stderr.log" </dev/null
+  >/dev/null 2>"$RUN/stderr.log" </dev/null
 ```
 
 The capability file must be bound to the exact task bytes as described in [Reviewer](#reviewer). Until #111 lands, this internal path requires the canonical home code-review Skill shown above.
@@ -123,7 +126,7 @@ pi --no-extensions -e "$ROLE_EXTENSION" \
   --ak-collector-legs <manifest.json> \
   --session-dir "$RUN/session" --mode json \
   -p "Start collection." \
-  >"$RUN/stdout.jsonl" 2>"$RUN/stderr.log" </dev/null
+  >/dev/null 2>"$RUN/stderr.log" </dev/null
 ```
 
 Collector requires persistent session evidence; do not add `--no-session`.
@@ -136,7 +139,7 @@ pi --no-extensions -e "$ROLE_EXTENSION" \
   --ak-doctor-case "$HOME/.ak-roles/books/<book>/issues/<issue>/runs" \
   --session-dir "$RUN/session" --mode json \
   -p "Produce this case's process-cost diagnosis." \
-  >"$RUN/stdout.jsonl" 2>"$RUN/stderr.log" </dev/null
+  >/dev/null 2>"$RUN/stderr.log" </dev/null
 ```
 
 ### Merger
@@ -149,7 +152,7 @@ pi --no-extensions -e "$ROLE_EXTENSION" \
   --ak-merger-input <merger-input-v1.json> \
   --session-dir "$RUN/session" --mode json \
   -p "Resolve the admitted merge or escalate the required decision." \
-  >"$RUN/stdout.jsonl" 2>"$RUN/stderr.log" </dev/null
+  >/dev/null 2>"$RUN/stderr.log" </dev/null
 ```
 
 These commands expose internal flags and Pi-native output only because the public CLI is unfinished. Once #11 lands, external documentation will replace them with `ak-role` commands and a direct Terminal result.
