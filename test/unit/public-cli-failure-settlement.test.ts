@@ -27,7 +27,6 @@ import {
   knownFailureFromProviderStop,
 } from "../../src/public-cli/explicit-internal.ts";
 import {
-  boundConciseDiagnostic,
   classifyPostAdmissionFailure,
   CONCISE_DIAGNOSTIC_MAX_CHARS,
   exitCodeForTerminalOutcome,
@@ -610,14 +609,9 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.diagnostic, full);
       }
-      // Presentation is bounded.
-      const presented = formatFailureStderrDiagnostic({
-        cause: "activation",
-        diagnostic: full,
-      });
-      assert.equal(presented.includes(boundConciseDiagnostic(full)), true);
-      assert.ok(stderr[0]!.length < full.length + 32);
-      assert.equal(stderr[0]!.includes("…") || stderr[0]!.length <= CONCISE_DIAGNOSTIC_MAX_CHARS + 20, true);
+      // Presentation bound is length/count only (AC6) — never ellipsis glyph or truncated prose.
+      // Helper already asserts one nonblank stderr line and CONCISE_DIAGNOSTIC_MAX_CHARS + 32.
+      assert.ok(stderr[0]!.length < full.length);
     }
   });
 });
