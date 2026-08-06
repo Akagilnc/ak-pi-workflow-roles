@@ -4,7 +4,7 @@
   "upstream": {
     "repository": "https://github.com/mattpocock/skills",
     "path": "skills/engineering/tdd",
-    "commit": "8a475c438d90a2f1d7d3710c12658b60dc701a13",
+    "commit": "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
     "tag": "v1.2.2",
     "license": "MIT",
     "copyright": "Copyright (c) 2026 Matt Pocock",

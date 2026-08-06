@@ -170,7 +170,7 @@ test("packed artifact ships package-owned tdd method with companions and provena
     assert.equal(provenance.upstream.path, "skills/engineering/tdd");
     assert.equal(
       provenance.upstream.commit,
-      "8a475c438d90a2f1d7d3710c12658b60dc701a13",
+      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
     );
     assert.equal(provenance.upstream.tag, "v1.2.2");
     assert.equal(provenance.upstream.attribution, "mattpocock/skills");

@@ -14,7 +14,7 @@ commit/tag identity, per-file digests and git blob OIDs, and attribution under
 `resources/methods/<name>/provenance.json`.
 
 - `tdd` — shipped unchanged under `resources/methods/tdd/` from upstream
-  `skills/engineering/tdd` at commit `8a475c438d90a2f1d7d3710c12658b60dc701a13`
+  `skills/engineering/tdd` at commit `8b36d4fb2635b3c21998dcd8144439c9e5ba7302`
   (tag `v1.2.2`) (#109)
 - `code-review` — later method-bearing role ticket
 - `diagnosing-bugs` — later method-bearing role ticket

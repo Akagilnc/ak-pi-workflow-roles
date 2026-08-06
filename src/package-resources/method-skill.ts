@@ -100,7 +100,7 @@ export const SEALED_UNCHANGED_METHOD_PINS: Readonly<
   >
 > = Object.freeze({
   tdd: Object.freeze({
-    commit: "8a475c438d90a2f1d7d3710c12658b60dc701a13",
+    commit: "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
     tag: "v1.2.2",
     path: "skills/engineering/tdd",
     files: Object.freeze({
