@@ -3,6 +3,8 @@
  * ak-role collector → real Pi + shared role-runtime envelope → Collector observe
  * under a controlled GitHub fixture → typed Terminal + actual #78 waiting index.
  * Model provider and `gh` are fixtures; activation/settlement/index are production.
+ * Missing-path time control is an external virtual system-time fixture only —
+ * production extensions/role-runtime.ts is never replaced.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -11,12 +13,18 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
+import {
+  ACCEPTED_ACTIVATION_EVENT,
+  ACCEPTED_ACTIVATION_FACT_KEYS,
+  type AcceptedActivationFact,
+} from "../../src/activation-ledger.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "../../src/public-cli/registry.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   packageRoot,
   piCli,
+  readAcceptedActivationFacts,
   runPiSubprocess,
 } from "../helpers/pi-test-harness.ts";
 
@@ -99,13 +107,12 @@ async function runPublicCollectorTracer(input: {
   instructionNote: string;
   ghMode: GhMode;
   providerPath: string;
-  /** When set, replace the production role-runtime -e load with this fixture. */
-  runtimePath?: string;
 }): Promise<{
   exitCode: number;
   terminal: NonNullable<Awaited<ReturnType<typeof runAkRole>>["terminal"]> | undefined;
   stdout: string[];
   stderr: string[];
+  piArgs: string[];
 }> {
   const agentDir = join(input.home, ".pi", "agent");
   await mkdir(agentDir, { recursive: true });
@@ -114,6 +121,7 @@ async function runPublicCollectorTracer(input: {
 
   const stdout: string[] = [];
   const stderr: string[] = [];
+  let piArgs: string[] = [];
   const productionRuntime = productionRoleRuntimePath();
 
   const result = await runAkRole(
@@ -152,17 +160,25 @@ async function runPublicCollectorTracer(input: {
         },
       },
       piRunner: async (args, options) => {
-        const rewritten = args.flatMap((arg) => {
-          if (
-            input.runtimePath !== undefined &&
-            (arg === productionRuntime || arg.endsWith(`/${INTERNAL_ROLE_ENTRYPOINT_RELATIVE}`) || arg.endsWith(`\\${INTERNAL_ROLE_ENTRYPOINT_RELATIVE}`))
-          ) {
-            return [input.runtimePath];
-          }
-          return [arg];
-        });
+        piArgs = [...args];
+        // Production envelope only — never rewrite the role-runtime entrypoint.
+        assert.equal(
+          args.includes(productionRuntime) ||
+            args.some(
+              (arg) =>
+                arg.endsWith(`/${INTERNAL_ROLE_ENTRYPOINT_RELATIVE}`) ||
+                arg.endsWith(`\\${INTERNAL_ROLE_ENTRYPOINT_RELATIVE}`),
+            ),
+          true,
+          `expected production runtime ${productionRuntime} in ${JSON.stringify(args)}`,
+        );
+        assert.equal(
+          args.some((arg) => arg.includes("collector-missing-runtime")),
+          false,
+          "must not load a fixture role-runtime override",
+        );
         const pathWithFakeGh = `${ghBinDir}:${dirname(piCli)}:${options.env.PATH ?? process.env.PATH ?? ""}`;
-        const subprocess = await runPiSubprocess([...rewritten], {
+        const subprocess = await runPiSubprocess([...args], {
           cwd: options.cwd,
           env: {
             ...options.env,
@@ -178,7 +194,7 @@ async function runPublicCollectorTracer(input: {
           stdout: subprocess.stdout,
           stderr: subprocess.stderr,
           timedOut: subprocess.timedOut,
-          args: [...rewritten],
+          args: [...args],
         };
       },
     },
@@ -189,30 +205,80 @@ async function runPublicCollectorTracer(input: {
     terminal: result.terminal,
     stdout,
     stderr,
+    piArgs,
   };
 }
 
-async function assertWaitingIndexZeroContent(input: {
+/**
+ * ADR 0049 / AC5: parse JSONL and assert AcceptedActivationFact via the exact
+ * descriptor keys, nested caller correlation, session pointer, and object-level
+ * absence of content fields — no regex/string-layout dependence.
+ */
+function assertWaitingIndexZeroContent(input: {
   home: string;
   project: string;
   correlationId: string;
-  instructionNote: string;
-  authorToken: string;
-}): Promise<void> {
+}): void {
   const bookKey = resolveBookKeyFromGit(input.project);
-  const indexPath = join(input.home, ".ak-roles", "books", bookKey, "waiting.jsonl");
-  const indexText = await readFile(indexPath, "utf8");
-  assert.match(indexText, /"event":"accepted-activation"/);
-  assert.match(indexText, /"role":"collector"/);
-  assert.match(indexText, new RegExp(`"id":"${input.correlationId}"`));
-  assert.match(indexText, /"kind":"session-file"/);
+  const facts = readAcceptedActivationFacts(input.home, bookKey);
+  assert.ok(facts.length >= 1, "waiting index must record at least one accepted-activation fact");
 
-  // ADR 0049 zero-content: no instruction, manifest, receipt, or evidence body.
-  assert.equal(indexText.includes(input.instructionNote), false);
-  assert.equal(indexText.includes(input.authorToken), false);
-  assert.equal(indexText.includes("ak_collector_output"), false);
-  assert.equal(indexText.includes("evidenceRecords"), false);
-  assert.equal(indexText.includes("Start collection for the validated"), false);
+  const collectorFacts = facts.filter((fact) => fact.role === "collector");
+  assert.ok(
+    collectorFacts.length >= 1,
+    "waiting index must record a collector accepted-activation fact",
+  );
+
+  const descriptorKeys = [...ACCEPTED_ACTIVATION_FACT_KEYS];
+  for (const fact of collectorFacts) {
+    assert.deepEqual(
+      Object.keys(fact).sort(),
+      [...descriptorKeys].sort(),
+      "AcceptedActivationFact top-level keys must match ACCEPTED_ACTIVATION_FACT_KEYS exactly",
+    );
+    assert.equal(fact.event, ACCEPTED_ACTIVATION_EVENT);
+    assert.equal(fact.role, "collector");
+    assert.equal(typeof fact.observedAt, "string");
+    assert.equal(fact.observedAt.length > 0, true);
+    assert.equal(typeof fact.bookKey, "string");
+    assert.equal(fact.bookKey.length > 0, true);
+
+    // Nested session pointer — kind + path only.
+    assert.deepEqual(Object.keys(fact.session).sort(), ["kind", "path"]);
+    assert.equal(fact.session.kind, "session-file");
+    assert.equal(typeof fact.session.path, "string");
+    assert.equal(fact.session.path.length > 0, true);
+
+    // Nested caller correlation identity.
+    assert.equal(fact.correlation.kind, "caller");
+    if (fact.correlation.kind !== "caller") {
+      assert.fail("expected caller correlation");
+    }
+    assert.deepEqual(Object.keys(fact.correlation).sort(), ["id", "kind"]);
+    assert.equal(fact.correlation.id, input.correlationId);
+
+    // Object-level absence of content fields (ADR 0049 zero-content by construction).
+    const record = fact as AcceptedActivationFact & Record<string, unknown>;
+    for (const contentKey of [
+      "prompt",
+      "transcript",
+      "argv",
+      "excerpt",
+      "content",
+      "instruction",
+      "evidenceRecords",
+      "receipt",
+      "legs",
+      "manifest",
+      "ak_collector_output",
+    ] as const) {
+      assert.equal(
+        Object.hasOwn(record, contentKey),
+        false,
+        `accepted-activation fact must not carry content field ${contentKey}`,
+      );
+    }
+  }
 }
 
 test(
@@ -234,7 +300,7 @@ test(
       const instructionNote = "PUBLIC-COLLECTOR-404-MUST-NOT-ENTER-INDEX";
       const authorToken = "definitely-not-a-real-bot";
 
-      const { exitCode, terminal, stderr } = await runPublicCollectorTracer({
+      const { exitCode, terminal, stderr, piArgs } = await runPublicCollectorTracer({
         home,
         project,
         pr: "999999",
@@ -273,12 +339,10 @@ test(
         false,
       );
 
-      await assertWaitingIndexZeroContent({
+      assertWaitingIndexZeroContent({
         home,
         project,
         correlationId,
-        instructionNote,
-        authorToken,
       });
 
       const bookKey = resolveBookKeyFromGit(project);
@@ -296,6 +360,7 @@ test(
       assert.equal(legs.legs[0]?.id, "codex");
       assert.deepEqual(legs.legs[0]?.expectedAuthors, [authorToken]);
       assert.equal(piCli.endsWith("/pi"), true);
+      assert.ok(piArgs.length > 0, "pi must have been dispatched");
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -316,16 +381,12 @@ test(
         packageRoot,
         "test/fixtures/collector-missing-provider.ts",
       );
-      const runtimePath = resolve(
-        packageRoot,
-        "test/fixtures/collector-missing-runtime.ts",
-      );
       const correlationId = "corr-112-collector-missing";
       const runId = "run-e2e-collector-missing";
       const instructionNote = "PUBLIC-COLLECTOR-MISSING-MUST-NOT-ENTER-INDEX";
       const authorToken = "definitely-not-a-real-bot";
 
-      const { exitCode, terminal, stderr } = await runPublicCollectorTracer({
+      const { exitCode, terminal, stderr, piArgs } = await runPublicCollectorTracer({
         home,
         project,
         pr: "42",
@@ -335,7 +396,6 @@ test(
         instructionNote,
         ghMode: "open-pr-empty",
         providerPath,
-        runtimePath,
       });
 
       assert.notEqual(
@@ -358,12 +418,10 @@ test(
         "acme/widgets",
       );
 
-      await assertWaitingIndexZeroContent({
+      assertWaitingIndexZeroContent({
         home,
         project,
         correlationId,
-        instructionNote,
-        authorToken,
       });
 
       // Success artifact carries the receipt; waiting index stays zero-content.
@@ -383,6 +441,27 @@ test(
       };
       assert.equal(report.receipt?.legs?.[0]?.legId, "codex");
       assert.equal(report.receipt?.legs?.[0]?.status, "missing");
+
+      // One tracer: production envelope + provider fixture only.
+      assert.equal(
+        piArgs.filter((arg) => arg === "-e").length >= 1,
+        true,
+      );
+      assert.equal(
+        piArgs.some(
+          (arg) =>
+            arg.endsWith(`/${INTERNAL_ROLE_ENTRYPOINT_RELATIVE}`) ||
+            arg.endsWith(`\\${INTERNAL_ROLE_ENTRYPOINT_RELATIVE}`) ||
+            arg === productionRoleRuntimePath(),
+        ),
+        true,
+        "must traverse unmodified production extensions/role-runtime.ts",
+      );
+      assert.equal(
+        piArgs.includes(providerPath),
+        true,
+        "provider fixture may control observations",
+      );
     } finally {
       await rm(home, { recursive: true, force: true });
     }

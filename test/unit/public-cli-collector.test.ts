@@ -258,6 +258,55 @@ test("resolveGitHubRemoteRepository reads origin owner/repo and rejects non-gith
     await mkdir(none, { recursive: true });
     seedGitProject(none);
     assert.throws(() => resolveGitHubRemoteRepository(none), isUsage);
+
+    // Extra path / non-identity URL material is not a repository remote.
+    const nonRepositoryRemotes = [
+      "https://github.com/owner/repo/extra",
+      "https://github.com/owner/repo/issues/1",
+      "https://github.com/owner/repo.git/info",
+      "https://github.com/owner/repo?tab=readme",
+      "https://github.com/owner/repo#readme",
+      "git@github.com:owner/repo/extra.git",
+      "ssh://git@github.com/owner/repo/extra",
+    ] as const;
+    for (const [index, remoteUrl] of nonRepositoryRemotes.entries()) {
+      const bad = join(home, `non-repo-${index}`);
+      await mkdir(bad, { recursive: true });
+      seedGitProject(bad, remoteUrl);
+      assert.throws(
+        () => resolveGitHubRemoteRepository(bad),
+        isUsage,
+        remoteUrl,
+      );
+    }
+  });
+});
+
+test("runAkRole collector rejects origin extra-path URL before dispatch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project, "https://github.com/owner/repo/extra");
+
+    let dispatched = false;
+    const captured = captureIo();
+    const result = await runAkRole(
+      ["collector", "--pr", "1", "--leg", "codex:bot", "--project", project],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: false },
+        io: captured.io,
+        piRunner: async () => {
+          dispatched = true;
+          throw new Error("collector must not dispatch for non-repository origin URL");
+        },
+      },
+    );
+    assert.equal(result.exitCode, 2);
+    assert.equal(dispatched, false, "zero dispatch on structural origin reject");
+    assert.equal(captured.stdout.join(""), "");
   });
 });
 
