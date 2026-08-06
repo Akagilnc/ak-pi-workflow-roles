@@ -510,7 +510,7 @@ function renderTicketArticle(input: {
     `<h3 class="ticket-title">#${escapeHtml(ticketNo)} · ${escapeHtml(ticket.title)}</h3>`,
     breadcrumb,
     `<p class="ticket-meta">`,
-    `<span class="state" data-state-label="${attr(currentState)}"><span class="state-dot" aria-hidden="true" data-state-dot="true">●</span> ${escapeHtml(currentStateLabel(currentState))}</span>`,
+    `<span class="state" data-state-label="${attr(currentState)}" title="${attr(currentStateLabel(currentState))}"><span class="state-dot" aria-hidden="true" data-state-dot="true">●</span><span class="state-label"> ${escapeHtml(currentStateLabel(currentState))}</span></span>`,
     yamenTag,
     familyBadge,
     milestone ? `<span class="milestone">milestone: ${escapeHtml(milestone)}</span>` : `<span class="milestone">milestone: —</span>`,
@@ -522,7 +522,7 @@ function renderTicketArticle(input: {
     `</p>`,
     `</header>`,
     runs.length > 0
-      ? `<details class="ticket-body" data-drill="${attr(String(ticket.issueNumber))}"${state === "closed" ? " open" : ""}><summary>轨迹 · ${runs.length} run(s) · $${escapeHtml(formatUsdPrecise(costUsd))}</summary>${trajectory}</details>`
+      ? `<details class="ticket-body" data-drill="${attr(String(ticket.issueNumber))}"><summary>明细 · ${runs.length} 腿</summary>${trajectory}</details>`
       : trajectory,
     `</article>`,
   ].join("");
@@ -595,8 +595,8 @@ function renderFamily(input: {
     `</p>`,
     `</header>`,
     `<div class="family-parent">${parentBlock}</div>`,
-    `<details class="family-children" data-family-expand="${attr(String(input.parent.ticket.issueNumber))}" open>`,
-    `<summary>展开子轨迹（${childCount}）</summary>`,
+    `<details class="family-children" data-family-expand="${attr(String(input.parent.ticket.issueNumber))}">`,
+    `<summary>子轨迹（${childCount}）</summary>`,
     input.nestChildren ? childrenBlock : `<ul class="family-child-index-list">${childrenBlock}</ul>`,
     `</details>`,
     `</section>`,
@@ -1048,9 +1048,9 @@ function boardStyles(): string {
     margin: 1rem 0;
   }
   .lane-title { margin: 0 0 0.75rem; font-size: 1.2rem; }
-  .lane-columns { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-start; }
+  .lane-columns { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 0.75rem; align-items: flex-start; }
   .column {
-    flex: 1 1 14rem;
+    flex: 1 0 14rem;
     min-width: 13rem;
     border: 1px solid color-mix(in srgb, CanvasText 14%, Canvas);
     border-radius: 0.5rem;
@@ -1058,10 +1058,18 @@ function boardStyles(): string {
   }
   .column-title { margin: 0 0 0.4rem; font-size: 0.95rem; }
   .column-count { opacity: 0.75; font-weight: 400; }
-  .unknown-set { flex-basis: 100%; }
+  .unknown-set { flex: 1 0 14rem; min-width: 13rem; }
   .family-cluster { margin: 0.4rem 0; }
   .family-cluster-title { margin: 0.2rem 0; font-size: 0.85rem; opacity: 0.85; }
   .family-child-index-list { margin: 0.25rem 0; padding-left: 1.2rem; font-size: 0.88rem; }
+  .ticket-meta .state-label,
+  .ticket-meta .milestone,
+  .ticket-meta .cost,
+  .ticket-meta .wall,
+  .ticket-meta .landing,
+  .ticket-meta .leg-age,
+  .ticket-meta .last-activity { display: none; }
+  .family-agg .cost { display: none; }
   .state-dot { font-size: 0.8em; }
   .yamen-tag, .family-badge {
     display: inline-block;
@@ -1199,25 +1207,40 @@ function boardPageScript(): string {
     nodes.sort(function (a, b) { return compareEntries(a, b, mode); });
     nodes.forEach(function (n) { container.appendChild(n); });
   }
+  function applySort(mode) {
+    doc.querySelectorAll('[data-lane-tickets]').forEach(function (lane) {
+      var groups = kids(lane).filter(function (el) {
+        return el.nodeType === 1 && (el.hasAttribute('data-column') || el.hasAttribute('data-unknown-set'));
+      });
+      if (groups.length > 0) {
+        groups.forEach(function (g) { sortEntries(g, mode); });
+      } else {
+        sortEntries(lane, mode);
+      }
+    });
+  }
   var sel = doc.querySelector('[data-sort-control]');
+  var projectSel = doc.querySelector('[data-project-filter]');
+  var familySel = doc.querySelector('[data-family-filter]');
+  var filterStore = (function () {
+    try { return JSON.parse(localStorage.getItem('ak-board-filters') || '{}'); } catch (e) { return {}; }
+  })();
+  function persistFilters() {
+    try {
+      localStorage.setItem('ak-board-filters', JSON.stringify({
+        project: projectSel ? projectSel.value : '',
+        family: familySel ? familySel.value : 'all',
+        sort: sel ? sel.value : ''
+      }));
+    } catch (e) {}
+  }
   if (sel) {
     sel.addEventListener('change', function () {
-      var mode = sel.value;
-      doc.querySelectorAll('[data-lane-tickets]').forEach(function (lane) {
-        var groups = kids(lane).filter(function (el) {
-          return el.nodeType === 1 && (el.hasAttribute('data-column') || el.hasAttribute('data-unknown-set'));
-        });
-        if (groups.length > 0) {
-          groups.forEach(function (g) { sortEntries(g, mode); });
-        } else {
-          sortEntries(lane, mode);
-        }
-      });
+      applySort(sel.value);
+      persistFilters();
     });
   }
 
-  var projectSel = doc.querySelector('[data-project-filter]');
-  var familySel = doc.querySelector('[data-family-filter]');
   var badge = doc.querySelector('[data-unknown-badge]');
 
   function parentEdgesByBook() {
@@ -1251,7 +1274,7 @@ function boardPageScript(): string {
     }
     return [];
   }
-  function rebuildFamilyOptions() {
+  function rebuildFamilyOptions(restoreStored) {
     if (!familySel || !projectSel) return;
     var book = projectSel.value;
     var openChildParents = {};
@@ -1290,7 +1313,12 @@ function boardPageScript(): string {
           n
         );
       });
-    familySel.value = 'all';
+    var wantFam = restoreStored && filterStore.family ? String(filterStore.family) : 'all';
+    var hasFam = false;
+    kids(familySel).forEach(function (o) {
+      if (o.value === wantFam) hasFam = true;
+    });
+    familySel.value = hasFam ? wantFam : 'all';
   }
   function applyFilters() {
     var book = projectSel ? projectSel.value : '';
@@ -1332,14 +1360,38 @@ function boardPageScript(): string {
   }
   if (projectSel) {
     projectSel.addEventListener('change', function () {
-      rebuildFamilyOptions();
+      rebuildFamilyOptions(false);
       applyFilters();
+      persistFilters();
     });
   }
   if (familySel) {
     familySel.addEventListener('change', function () {
       applyFilters();
+      persistFilters();
     });
+  }
+  if (projectSel) {
+    var restoredProject = false;
+    if (filterStore.project) {
+      kids(projectSel).forEach(function (o) {
+        if (o.value === filterStore.project && projectSel.value !== o.value) {
+          projectSel.value = o.value;
+          restoredProject = true;
+        }
+      });
+    }
+    if (restoredProject) {
+      rebuildFamilyOptions(true);
+    } else if (filterStore.family && String(filterStore.family) !== 'all') {
+      kids(familySel || []).forEach(function (o) {
+        if (o.value === String(filterStore.family)) familySel.value = o.value;
+      });
+    }
+  }
+  if (sel && filterStore.sort) {
+    sel.value = filterStore.sort;
+    applySort(sel.value);
   }
   if (projectSel) applyFilters();
 })();
