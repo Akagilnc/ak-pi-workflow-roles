@@ -36,6 +36,7 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 import { createDoctorRoleRuntime, type DoctorAuditInput } from "./doctor-role.ts";
 import { decorateSettlementWithNavigation, formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import { EMPTY_INVOCATION_TRANSPORT_ENVELOPE } from "./public-cli/invocation.ts";
+import { recordTypedProviderHttpStatus } from "./public-cli/run-lifecycle.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationResult } from "./audit-escalation.ts";
@@ -706,6 +707,25 @@ export function createRoleRuntimeExtension(
     });
     pi.on("tool_execution_end", async (event, ctx) => {
       await observe(() => observationFace.onEnd(event), ctx);
+    });
+
+    // Public Role run: record typed provider HTTP status for v1 resume (#108).
+    // Latest typed response is authoritative; only a current Codex/xAI 429 is
+    // retained — never prose classification or an earlier within-attempt 429.
+    pi.on("after_provider_response", async (event, ctx) => {
+      const runDir = process.env.AK_ROLE_RUN_DIR;
+      if (typeof runDir !== "string" || runDir.trim() === "") return;
+      const provider = ctx.model?.provider;
+      if (typeof provider !== "string" || provider.trim() === "") return;
+      try {
+        await recordTypedProviderHttpStatus(runDir, {
+          httpStatus: event.status,
+          provider,
+        });
+      } catch {
+        // Observation is best-effort relative to the live provider stream;
+        // settlement still owns failure presentation.
+      }
     });
 
     pi.on("session_start", async (event, ctx) => {

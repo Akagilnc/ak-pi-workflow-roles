@@ -97,12 +97,45 @@ export type TerminalNavigatorFact =
       reason: string;
     };
 
+/** Present only when a controlled failure is v1-resumable (typed HTTP 429). */
+export type TerminalResume = {
+  /** Complete public command; run ID is revealed only here. */
+  readonly command: string;
+};
+
+/** Public free-text stand-in when an exact Role run ID is stripped outside resume.command. */
+export const REDACTED_RUN_ID_TOKEN = "[run-id]" as const;
+
+/**
+ * Remove an exact Role run ID from untrusted free text at the public Terminal boundary.
+ * Private durable artifacts keep the original bytes; only resume.command may disclose it.
+ */
+export function redactExactRunId(text: string, runId: string): string {
+  if (runId.length === 0) return text;
+  if (!text.includes(runId)) return text;
+  return text.split(runId).join(REDACTED_RUN_ID_TOKEN);
+}
+
+/**
+ * One admitted Role run's typed Terminal aggregate.
+ * Resumable failures carry `resume` and must not re-disclose the run ID via
+ * top-level `runId` or public artifact path components — only `resume.command`.
+ */
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
-  runId: string;
-};
+} & (
+  | {
+      /** Resumable failure: run ID appears only inside resume.command. */
+      resume: TerminalResume;
+      runId?: undefined;
+    }
+  | {
+      runId: string;
+      resume?: undefined;
+    }
+);
 
 /**
  * Build a recommendation navigator fact. Command is always registry-rendered;
@@ -175,6 +208,11 @@ export function formatTerminalResult(result: TerminalResult): string {
   for (const artifact of result.artifacts) {
     lines.push(`artifact\t${artifact.kind}\t${encodeTerminalField(artifact.path)}`);
   }
-  lines.push(`run\t${encodeTerminalField(result.runId)}`);
+  if (result.resume !== undefined) {
+    // Resumable failure: run ID is revealed only inside the complete resume command.
+    lines.push(`resume\t${encodeTerminalField(result.resume.command)}`);
+  } else if (result.runId !== undefined) {
+    lines.push(`run\t${encodeTerminalField(result.runId)}`);
+  }
   return `${lines.join("\n")}\n`;
 }

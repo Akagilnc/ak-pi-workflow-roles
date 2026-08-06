@@ -67,6 +67,22 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       true,
       "public bin must ship Judge verdict validation before lawful settlement",
     );
+    // #108 resume path must be in the installed bin, not only in tsx source tests.
+    assert.equal(
+      committedText.includes("ak-role resume"),
+      true,
+      "public bin must ship complete ak-role resume command rendering",
+    );
+    assert.equal(
+      committedText.includes("typed-provider-http.json"),
+      true,
+      "public bin must ship typed HTTP 429 observation file seam",
+    );
+    assert.equal(
+      /case\s*[\"']resume[\"']|command\s*===\s*[\"']resume[\"']/.test(committedText),
+      true,
+      "public bin must ship resume command dispatch",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
