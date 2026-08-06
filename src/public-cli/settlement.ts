@@ -23,8 +23,8 @@ import {
 
 export { formatTerminalResult };
 
-/** Post-role Navigator delivery grace (Issue #11 / #101 / #106). */
-export const NAVIGATOR_POST_ROLE_GRACE_MS = 3_000;
+/** Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159). */
+export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
 
 type SessionMessage = {
   role?: string;
