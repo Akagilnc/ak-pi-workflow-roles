@@ -406,6 +406,21 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(authGuidance.diagnostic, primaryAuthDiagnostic);
   assert.equal(authGuidance.identity?.name, "MissingProviderCredential");
   assert.equal(authGuidance.identity?.code, "xai");
+
+  // AC2: timedOut must not wash a co-present typed knownCause identity/diagnostic.
+  const timedOutWithProvider = classifyPostAdmissionFailure({
+    timedOut: true,
+    code: null,
+    stderr: floodStderr(),
+    knownCause: "provider",
+    knownIdentity: { name: "ProviderStopError", code: "openai-codex" },
+    knownDiagnostic: "rate limited",
+  });
+  assert.equal(timedOutWithProvider.cause, "provider");
+  assert.equal(timedOutWithProvider.diagnostic, "rate limited");
+  assert.equal(timedOutWithProvider.identity?.name, "ProviderStopError");
+  assert.equal(timedOutWithProvider.identity?.code, "openai-codex");
+  assert.equal(timedOutWithProvider.details?.timedOut, true);
 });
 
 test("failure settlement durably records Error Artifact before presentation returns", async () => {
@@ -1861,6 +1876,65 @@ test("session provider-stop produces provider cause without injected knownFailur
         provider: "xai",
       },
     );
+    // AC5: later non-error assistant stop closes the trajectory — do not reach
+    // back past it to an older provider error (would wash final no-lawful-output).
+    assert.equal(
+      extractSessionProviderStop([
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "older provider boom",
+            provider: "openai-codex",
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "retry" }],
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "end_turn",
+            content: [{ type: "text", text: "could not finish" }],
+            provider: "openai-codex",
+          },
+        },
+      ]),
+      undefined,
+    );
+    // Latest assistant error still counts even with earlier non-error turns.
+    assert.deepEqual(
+      extractSessionProviderStop([
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "end_turn",
+            provider: "xai",
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "final provider boom",
+            provider: "xai",
+          },
+        },
+      ]),
+      {
+        stopReason: "error",
+        errorMessage: "final provider boom",
+        provider: "xai",
+      },
+    );
   });
 });
 
@@ -1957,5 +2031,174 @@ test("zero-exit session provider-stop retains provider cause (not washed to outp
       stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
       1,
     );
+  });
+});
+
+test("timedOut with session provider-stop retains provider identity (AC2)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      [
+        "--model",
+        "xai/grok-4:off",
+        "judge",
+        "--project",
+        project,
+        "timeout co-present with provider stop",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-timeout-provider-stop-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            [
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "provider hung then killed",
+                  provider: "xai",
+                  model: "grok-4",
+                },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          return {
+            code: null,
+            stdout: "",
+            stderr: "still running\n",
+            timedOut: true,
+            args: [...args],
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticEquals: "provider hung then killed",
+      identityName: "ProviderStopError",
+      identityCode: "xai",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.diagnostic, "provider hung then killed");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+      identity?: { name?: string; code?: string | number };
+      details?: { timedOut?: boolean };
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.diagnostic, "provider hung then killed");
+    assert.equal(errorBody.identity?.name, "ProviderStopError");
+    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(errorBody.details?.timedOut, true);
+  });
+});
+
+test("older provider error then later end_turn settles as output not provider (AC5)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      [
+        "--model",
+        "xai/grok-4:off",
+        "judge",
+        "--project",
+        project,
+        "recovered after provider error without lawful output",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-stale-provider-error-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            [
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "older provider boom",
+                  provider: "xai",
+                  model: "grok-4",
+                },
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "user",
+                  content: [{ type: "text", text: "retry" }],
+                },
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  stopReason: "end_turn",
+                  content: [{ type: "text", text: "could not call the tool" }],
+                  provider: "xai",
+                  model: "grok-4",
+                },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          return {
+            code: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "output",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "output");
+      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      identity?: { name?: string };
+    };
+    assert.equal(errorBody.cause, "output");
+    assert.notEqual(errorBody.identity?.name, "ProviderStopError");
   });
 });
