@@ -8694,6 +8694,10 @@ function uuidv7(now = Date.now()) {
 
 // src/public-cli/invocation.ts
 var EMPTY_INVOCATION_TRANSPORT_ENVELOPE = "[ak-role:structurally-empty-request]";
+var ROLE_RUN_SESSION_FILE_NAME = "session.jsonl";
+function roleRunSessionFile(sessionDirectory) {
+  return join4(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
+}
 function requireOptionPath(flag, value) {
   if (value === void 0 || value.trim() === "") {
     throw new CliUsageError(`${flag} requires a path`);
@@ -8787,6 +8791,7 @@ async function admitJudgeInvocation(options) {
     `${runId}@judge`
   );
   const sessionDirectory = join4(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
   const attachmentsDirectory = join4(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -8830,6 +8835,7 @@ async function admitJudgeInvocation(options) {
     attachments,
     runDirectory,
     sessionDirectory,
+    sessionFile,
     admittedRequestPath
   };
 }
@@ -8860,7 +8866,7 @@ import { writeFile as writeFile5 } from "node:fs/promises";
 import { join as join7 } from "node:path";
 
 // src/public-cli/run-lifecycle.ts
-import { open, readdir, readFile as readFile3, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { lstat as lstat2, open, readdir, readFile as readFile3, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
 var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
@@ -8937,6 +8943,7 @@ async function readRoleRunState(runDirectory) {
     if (typeof record.sessionDirectory !== "string") return void 0;
     if (typeof record.admittedRequestPath !== "string") return void 0;
     const runDir = typeof record.runDirectory === "string" && record.runDirectory.trim() !== "" ? record.runDirectory : runDirectory;
+    const sessionFile = typeof record.sessionFile === "string" && record.sessionFile.trim() !== "" ? record.sessionFile : roleRunSessionFile(record.sessionDirectory);
     let resumable;
     if (record.resumable !== void 0 && record.resumable !== null) {
       if (typeof record.resumable === "object" && !Array.isArray(record.resumable)) {
@@ -8953,6 +8960,7 @@ async function readRoleRunState(runDirectory) {
       bookKey: record.bookKey,
       projectRoot: record.projectRoot,
       sessionDirectory: record.sessionDirectory,
+      sessionFile,
       runDirectory: runDir,
       admittedRequestPath: record.admittedRequestPath,
       ...resumable === void 0 ? {} : { resumable }
@@ -8969,6 +8977,7 @@ async function markRunAdmitted(admitted) {
     bookKey: admitted.bookKey,
     projectRoot: admitted.projectRoot,
     sessionDirectory: admitted.sessionDirectory,
+    sessionFile: admitted.sessionFile,
     admittedRequestPath: admitted.admittedRequestPath
   });
 }
@@ -8984,6 +8993,7 @@ async function markRunRunning(runDirectory) {
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
     sessionDirectory: current.sessionDirectory,
+    sessionFile: current.sessionFile,
     admittedRequestPath: current.admittedRequestPath
   });
 }
@@ -9010,8 +9020,18 @@ async function markRunTerminal(runDirectory) {
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
     sessionDirectory: current.sessionDirectory,
+    sessionFile: current.sessionFile,
     admittedRequestPath: current.admittedRequestPath
   });
+}
+async function isSessionPrincipalAvailable(sessionFile) {
+  if (sessionFile.trim() === "") return false;
+  try {
+    const st = await lstat2(sessionFile);
+    return st.isFile() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 var RunWriterLeaseHeldError = class extends Error {
   code = "AK_RUN_WRITER_LEASE_HELD";
@@ -9090,6 +9110,11 @@ async function loadResumableJudgeRun(home, runId) {
   if (run.state !== "resumable" || run.resumable === void 0) {
     throw new CliUsageError(`role run is not resumable: ${runId}`);
   }
+  if (!await isSessionPrincipalAvailable(run.sessionFile)) {
+    throw new CliUsageError(
+      `role run Pi session principal is unavailable: ${runId}`
+    );
+  }
   let instruction = "";
   let instructionEmpty = true;
   let attachments = [];
@@ -9124,6 +9149,7 @@ async function loadResumableJudgeRun(home, runId) {
     attachments,
     runDirectory: run.runDirectory,
     sessionDirectory: run.sessionDirectory,
+    sessionFile: run.sessionFile,
     admittedRequestPath: run.admittedRequestPath
   };
   return {
@@ -9135,7 +9161,7 @@ async function loadResumableJudgeRun(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { readdir as readdir2, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
+import { readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
 import { dirname as dirname4, join as join6 } from "node:path";
 
 // src/audit-escalation.ts
@@ -9300,13 +9326,12 @@ function formatFailureStderrDiagnostic(failure) {
 function presentStructuralRejection(error, io) {
   io.stderr(formatCliDiagnostic(error.message));
 }
-async function inspectJudgeSession(sessionDirectory) {
+async function inspectJudgeSession(sessionFile) {
   try {
-    const files = (await readdir2(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
-    if (files.length === 0) return { state: "missing" };
-    await readFile4(join6(sessionDirectory, files.at(-1)), "utf8");
+    await readFile4(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
+    if (isMissingPathError(error)) return { state: "missing" };
     return {
       state: "unreadable",
       diagnostic: error instanceof Error ? error.message || error.name : String(error)
@@ -9431,10 +9456,8 @@ function sessionReadFailure(error, fallbackMessage) {
   failed.knownCause = "session";
   return failed;
 }
-async function readLatestSessionEntries(sessionDirectory) {
-  const files = (await readdir2(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
-  if (files.length === 0) return [];
-  const text = await readFile4(join6(sessionDirectory, files.at(-1)), "utf8");
+async function readBoundSessionEntries(sessionFile) {
+  const text = await readFile4(sessionFile, "utf8");
   const entries = [];
   for (const line of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -9461,9 +9484,9 @@ function extractSessionProviderStop(entries) {
   }
   return void 0;
 }
-async function readSessionProviderStop(sessionDirectory) {
+async function readSessionProviderStop(sessionFile) {
   try {
-    const entries = await readLatestSessionEntries(sessionDirectory);
+    const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);
   } catch {
     return void 0;
@@ -9591,6 +9614,7 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
       {
         runId: admitted.runId,
         sessionDirectory,
+        sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -9612,7 +9636,7 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
 }
 async function readLawfulSettlementEntries(admitted) {
   try {
-    return await readLatestSessionEntries(admitted.sessionDirectory);
+    return await readBoundSessionEntries(admitted.sessionFile);
   } catch (error) {
     if (isMissingPathError(error)) return void 0;
     throw error instanceof Error && error.knownCause === "session" ? error : sessionReadFailure(error, "session unreadable");
@@ -9770,6 +9794,7 @@ async function publishFailureArtifacts(admitted, failure) {
   const evidencePayload = {
     runId: admitted.runId,
     sessionDirectory: admitted.sessionDirectory,
+    sessionFile: admitted.sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     attachments: admitted.attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -9905,6 +9930,9 @@ function buildJudgeActivationExtraArgs(admitted, options = {}) {
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
+    // Exact Pi session file principal (SessionManager.open), not directory-latest.
+    "--session",
+    admitted.sessionFile,
     "--session-dir",
     admitted.sessionDirectory,
     ...options.extraPiArgs ?? [],
@@ -9922,7 +9950,8 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
-    "--continue",
+    "--session",
+    admitted.sessionFile,
     "--session-dir",
     admitted.sessionDirectory,
     ...options.extraPiArgs ?? [],
@@ -9936,7 +9965,7 @@ function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
 }
 async function presentControlledFailure(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
-  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionDirectory) : void 0;
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
@@ -9949,7 +9978,10 @@ async function presentControlledFailure(admitted, failureInput, io) {
   });
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
   const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
-  const resumable = isV1ResumableFailure({
+  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+    admitted.sessionFile
+  );
+  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
     hasLawfulTerminalResult,
     ...typedHttp429 === void 0 ? {} : { typedHttp429 }
   });
@@ -10044,7 +10076,7 @@ async function dispatchAdmittedJudge(input) {
       };
     }
     const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionDirectory
+      admitted.sessionFile
     );
     const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;

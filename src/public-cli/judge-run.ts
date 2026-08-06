@@ -27,6 +27,7 @@ import {
 import {
   acquireRunWriterLease,
   clearTypedProviderHttpObservation,
+  isSessionPrincipalAvailable,
   isV1ResumableFailure,
   loadResumableJudgeRun,
   markRunAdmitted,
@@ -133,6 +134,9 @@ export function buildJudgeActivationExtraArgs(
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
+    // Exact Pi session file principal (SessionManager.open), not directory-latest.
+    "--session",
+    admitted.sessionFile,
     "--session-dir",
     admitted.sessionDirectory,
     ...(options.extraPiArgs ?? []),
@@ -148,6 +152,7 @@ export function buildJudgeActivationExtraArgs(
 /**
  * Build Internal activation args that reopen the exact Pi session for resume.
  * Does not resubmit the admitted instruction; uses the package resume envelope.
+ * Reopens the durable session file principal explicitly — never --continue latest.
  */
 export function buildJudgeResumeActivationExtraArgs(
   admitted: AdmittedJudgeInvocation,
@@ -161,7 +166,8 @@ export function buildJudgeResumeActivationExtraArgs(
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
-    "--continue",
+    "--session",
+    admitted.sessionFile,
     "--session-dir",
     admitted.sessionDirectory,
     ...(options.extraPiArgs ?? []),
@@ -200,7 +206,7 @@ async function presentControlledFailure(
     !hasThrown &&
     !failureInput.timedOut &&
     failureInput.knownCause === undefined
-      ? await inspectJudgeSession(admitted.sessionDirectory)
+      ? await inspectJudgeSession(admitted.sessionFile)
       : undefined;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
@@ -220,14 +226,19 @@ async function presentControlledFailure(
   });
 
   // v1 resume: only *this attempt's* typed HTTP 429 with independently confirmed
-  // absence of a lawful Judge result. Lawful presence is session-owned and must
-  // not depend on artifact publication success.
+  // absence of a lawful Judge result, and a durable exact Pi session principal.
+  // Lawful presence is session-owned and must not depend on artifact publication.
   const hasLawfulTerminalResult = await hasLawfulJudgeTerminalResult(admitted);
   const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
-  const resumable = isV1ResumableFailure({
-    hasLawfulTerminalResult,
-    ...(typedHttp429 === undefined ? {} : { typedHttp429 }),
-  });
+  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+    admitted.sessionFile,
+  );
+  const resumable =
+    sessionPrincipalAvailable &&
+    isV1ResumableFailure({
+      hasLawfulTerminalResult,
+      ...(typedHttp429 === undefined ? {} : { typedHttp429 }),
+    });
   if (resumable && typedHttp429 !== undefined) {
     await markRunResumable(admitted.runDirectory, typedHttp429);
   } else {
@@ -345,7 +356,7 @@ async function dispatchAdmittedJudge(input: {
 
     // Production-owned typed cause channel — never inferred from stderr wording.
     const sessionProviderStop = await readSessionProviderStop(
-      admitted.sessionDirectory,
+      admitted.sessionFile,
     );
     const sessionProviderFailure =
       sessionProviderStop === undefined

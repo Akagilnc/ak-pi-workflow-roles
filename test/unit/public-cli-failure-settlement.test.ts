@@ -467,6 +467,7 @@ test("failure settlement durably records Error Artifact before presentation retu
       attachments: [],
       runDirectory,
       sessionDirectory: join(runDirectory, "session"),
+      sessionFile: join(runDirectory, "session", "session.jsonl"),
       admittedRequestPath: join(runDirectory, "admitted-request.json"),
     };
     await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
@@ -1040,6 +1041,7 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
         attachments: [],
         runDirectory,
         sessionDirectory: join(runDirectory, "session"),
+        sessionFile: join(runDirectory, "session", "session.jsonl"),
         admittedRequestPath: join(runDirectory, "admitted-request.json"),
       };
       await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");

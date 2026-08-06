@@ -127,6 +127,7 @@ test(
         runId: "run-e2e-judge-001",
         runDirectory: runDir,
         sessionDirectory: join(runDir, "session"),
+        sessionFile: join(runDir, "session", "session.jsonl"),
         projectRoot: project,
         bookKey,
         instruction: "Canonical nonblank prose Judge request for navigation.",

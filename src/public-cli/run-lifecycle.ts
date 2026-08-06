@@ -4,7 +4,7 @@
  * v1 resume is limited to an observed typed HTTP 429 on Codex/xAI with no
  * lawful role terminal result. Prose is never regex-classified as quota evidence.
  */
-import { open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -12,7 +12,11 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import type { AdmittedJudgeInvocation, FrozenAttachment } from "./invocation.ts";
+import {
+  roleRunSessionFile,
+  type AdmittedJudgeInvocation,
+  type FrozenAttachment,
+} from "./invocation.ts";
 
 /** Providers eligible for v1 typed-429 resume (Codex / xAI only). */
 export const V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"] as const;
@@ -32,6 +36,8 @@ export type RoleRunRecord = {
   readonly bookKey: string;
   readonly projectRoot: string;
   readonly sessionDirectory: string;
+  /** Exact Pi session file principal reopened on resume (not directory-latest). */
+  readonly sessionFile: string;
   readonly runDirectory: string;
   readonly admittedRequestPath: string;
   /** Present only while state === "resumable". */
@@ -184,6 +190,12 @@ export async function readRoleRunState(
       typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
         ? record.runDirectory
         : runDirectory;
+    // Prefer durable principal; fall back only for in-progress records that
+    // predate the field but still own a private session directory.
+    const sessionFile =
+      typeof record.sessionFile === "string" && record.sessionFile.trim() !== ""
+        ? record.sessionFile
+        : roleRunSessionFile(record.sessionDirectory);
     let resumable: TypedHttp429Observation | undefined;
     if (record.resumable !== undefined && record.resumable !== null) {
       if (
@@ -207,6 +219,7 @@ export async function readRoleRunState(
       bookKey: record.bookKey,
       projectRoot: record.projectRoot,
       sessionDirectory: record.sessionDirectory,
+      sessionFile,
       runDirectory: runDir,
       admittedRequestPath: record.admittedRequestPath,
       ...(resumable === undefined ? {} : { resumable }),
@@ -226,6 +239,7 @@ export async function markRunAdmitted(
     bookKey: admitted.bookKey,
     projectRoot: admitted.projectRoot,
     sessionDirectory: admitted.sessionDirectory,
+    sessionFile: admitted.sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
   });
 }
@@ -243,6 +257,7 @@ export async function markRunRunning(runDirectory: string): Promise<void> {
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
     sessionDirectory: current.sessionDirectory,
+    sessionFile: current.sessionFile,
     admittedRequestPath: current.admittedRequestPath,
   });
 }
@@ -274,8 +289,25 @@ export async function markRunTerminal(runDirectory: string): Promise<void> {
     bookKey: current.bookKey,
     projectRoot: current.projectRoot,
     sessionDirectory: current.sessionDirectory,
+    sessionFile: current.sessionFile,
     admittedRequestPath: current.admittedRequestPath,
   });
+}
+
+/**
+ * True when the durable Pi session file principal exists as a regular file.
+ * Resume must reopen this exact principal; directory-latest is not identity.
+ */
+export async function isSessionPrincipalAvailable(
+  sessionFile: string,
+): Promise<boolean> {
+  if (sessionFile.trim() === "") return false;
+  try {
+    const st = await lstat(sessionFile);
+    return st.isFile() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 export class RunWriterLeaseHeldError extends Error {
@@ -392,6 +424,12 @@ export async function loadResumableJudgeRun(
   if (run.state !== "resumable" || run.resumable === undefined) {
     throw new CliUsageError(`role run is not resumable: ${runId}`);
   }
+  // Exact Pi session principal must be present before resume dispatches.
+  if (!(await isSessionPrincipalAvailable(run.sessionFile))) {
+    throw new CliUsageError(
+      `role run Pi session principal is unavailable: ${runId}`,
+    );
+  }
   // Reconstruct admitted identity from durable run record + admitted-request.json.
   let instruction = "";
   let instructionEmpty = true;
@@ -427,6 +465,7 @@ export async function loadResumableJudgeRun(
     attachments,
     runDirectory: run.runDirectory,
     sessionDirectory: run.sessionDirectory,
+    sessionFile: run.sessionFile,
     admittedRequestPath: run.admittedRequestPath,
   };
   return {
