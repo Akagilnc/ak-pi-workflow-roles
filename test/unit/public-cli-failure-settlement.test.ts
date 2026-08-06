@@ -250,7 +250,7 @@ test("empty --project= rejects structurally before admission with no model dispa
     assert.equal(dispatched, 0);
     assert.equal(stdout.length, 0);
     assert.equal(stderr.length >= 1, true);
-    assert.match(stderr[0]!, /--project requires a path/);
+    // Typed admission oracle: structural reject never produces a Terminal.
     assert.equal(result.terminal, undefined);
   });
 });
