@@ -1,24 +1,45 @@
 /**
  * Public Judge Role run: admit → explicit Internal activate → settle Terminal result.
+ * #107: controlled post-admission failures and human decisions settle honestly.
  */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  knownFailureFromProviderStop,
   runExplicitInternalActivation,
+  type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
+  type ExplicitInternalPiResult,
 } from "./explicit-internal.ts";
+import { CliUsageError } from "./cli-errors.ts";
 import {
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
-import type { SeatModelConfig } from "./config.ts";
 import {
+  missingPublicProviderCredential,
+  type CredentialProviders,
+  type SeatModelConfig,
+} from "./config.ts";
+import {
+  classifyPostAdmissionFailure,
+  exitCodeForTerminalOutcome,
   formatTerminalResult,
-  settleJudgeTerminalResult,
+  inspectJudgeSession,
+  isLawfulTypedTerminalOutcome,
+  presentFailureTerminal,
+  presentStructuralRejection,
+  readSessionProviderStop,
+  settleJudgeFailureTerminalResult,
+  trySettleJudgeTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
+import type {
+  ControlledFailureCause,
+  TerminalResult,
+} from "./terminal.ts";
 
 export type JudgeRunEnv = {
   home: string;
@@ -29,12 +50,40 @@ export type JudgeRunEnv = {
   piRunner?: ExplicitInternalPiRunner;
   /** Effective judge seat model (persistent/startup/invocation). */
   model?: SeatModelConfig;
+  /**
+   * Credential presence for public providers (auth.json shape).
+   * Used as the production-owned typed channel when a selected public provider
+   * has no configured credential — never inferred from child stderr prose.
+   */
+  credentials?: CredentialProviders;
   createRunId?: () => string;
   /** Extra Pi args inserted before the prompt (tests: faux provider extension). */
   extraPiArgs?: readonly string[];
   /** Override default role-run timeout. */
   timeoutMs?: number;
 };
+
+/**
+ * Production-owned provider failure when the selected public seat provider has
+ * no configured credential. Cause/identity come from CredentialProviders, not
+ * stderr wording. Runner-supplied knownFailure still wins over this annotation.
+ */
+export function knownFailureForMissingProviderCredential(
+  model: SeatModelConfig | undefined,
+  credentials: CredentialProviders | undefined,
+): ExplicitInternalKnownFailure | undefined {
+  if (model === undefined || credentials === undefined) return undefined;
+  if (!missingPublicProviderCredential(model.provider, credentials)) {
+    return undefined;
+  }
+  return {
+    cause: "provider",
+    identity: {
+      name: "MissingProviderCredential",
+      code: model.provider,
+    },
+  };
+}
 
 function buildModelArgs(model: SeatModelConfig | undefined): string[] {
   if (model === undefined) return [];
@@ -78,6 +127,59 @@ export function buildJudgeActivationExtraArgs(
   ];
 }
 
+async function presentControlledFailure(
+  admitted: AdmittedJudgeInvocation,
+  failureInput: {
+    timedOut: boolean;
+    code: number | null;
+    stderr: string;
+    thrown?: unknown;
+    knownCause?: ControlledFailureCause;
+    knownIdentity?: {
+      readonly name?: string;
+      readonly code?: string | number;
+    };
+    knownDiagnostic?: string;
+  },
+  io: CliIo,
+): Promise<{
+  exitCode: number;
+  admitted: AdmittedJudgeInvocation;
+  terminal: TerminalResult;
+}> {
+  // Own-key presence, not value: `throw undefined` must not look like "no throw".
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session =
+    !hasThrown &&
+    !failureInput.timedOut &&
+    failureInput.knownCause === undefined
+      ? await inspectJudgeSession(admitted.sessionDirectory)
+      : undefined;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...(hasThrown ? { thrown: failureInput.thrown } : {}),
+    ...(failureInput.knownCause === undefined
+      ? {}
+      : { knownCause: failureInput.knownCause }),
+    ...(failureInput.knownIdentity === undefined
+      ? {}
+      : { knownIdentity: failureInput.knownIdentity }),
+    ...(failureInput.knownDiagnostic === undefined
+      ? {}
+      : { knownDiagnostic: failureInput.knownDiagnostic }),
+    ...(session === undefined ? {} : { session }),
+  });
+  const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal,
+  };
+}
+
 export async function runPublicJudge(
   argv: readonly string[],
   env: JudgeRunEnv,
@@ -87,16 +189,30 @@ export async function runPublicJudge(
     attachmentPaths: string[];
     project?: string;
   },
-): Promise<{ exitCode: number; admitted?: AdmittedJudgeInvocation }> {
-  const parsed = parseJudgeArgv(argv);
-  const admitted = await admitJudgeInvocation({
-    home: env.home,
-    cwd: env.cwd,
-    instruction: parsed.instruction,
-    attachmentPaths: parsed.attachmentPaths,
-    ...(parsed.project === undefined ? {} : { project: parsed.project }),
-    ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-  });
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedJudgeInvocation;
+  terminal?: TerminalResult;
+}> {
+  // Structural parse/admit rejects before model dispatch via shared settlement presenter.
+  let admitted: AdmittedJudgeInvocation;
+  try {
+    const parsed = parseJudgeArgv(argv);
+    admitted = await admitJudgeInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...(parsed.project === undefined ? {} : { project: parsed.project }),
+      ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
 
   const extraArgs = buildJudgeActivationExtraArgs(admitted, {
     ...(env.model === undefined ? {} : { model: env.model }),
@@ -114,43 +230,110 @@ export async function runPublicJudge(
     childEnv.AK_CORRELATION_ID = env.correlationId;
   }
 
-  const result = await runExplicitInternalActivation({
-    packageRoot: env.packageRoot,
-    extraArgs,
-    cwd: admitted.projectRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    env: childEnv,
-    ...(env.timeoutMs === undefined ? { timeoutMs: 600_000 } : { timeoutMs: env.timeoutMs }),
-    ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-  });
-
-  await writeFile(
-    join(admitted.runDirectory, "stderr.log"),
-    result.stderr,
-    "utf8",
-  );
-
-  if (result.timedOut) {
-    io.stderr("ak-role: judge role run timed out\n");
-    return { exitCode: 1, admitted };
-  }
-  if (result.code !== 0) {
-    const last =
-      result.stderr.trim() === ""
-        ? ""
-        : `: ${result.stderr.trim().split("\n").at(-1)}`;
-    io.stderr(`ak-role: judge role run failed${last}\n`);
-    return { exitCode: 1, admitted };
-  }
-
+  let result: ExplicitInternalPiResult;
   try {
-    const terminal = await settleJudgeTerminalResult(admitted);
-    io.stdout(formatTerminalResult(terminal));
-    return { exitCode: 0, admitted };
+    result = await runExplicitInternalActivation({
+      packageRoot: env.packageRoot,
+      extraArgs,
+      cwd: admitted.projectRoot,
+      home: env.home,
+      agentDir: env.agentDir,
+      env: childEnv,
+      ...(env.timeoutMs === undefined
+        ? { timeoutMs: 600_000 }
+        : { timeoutMs: env.timeoutMs }),
+      ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr(`ak-role: ${message}\n`);
-    return { exitCode: 1, admitted };
+    // Post-admission exception — retain production-typed or actual diagnostic identity.
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+      },
+      io,
+    );
   }
+
+  // stderr.log is a best-effort ledger mirror. Failure must not displace an
+  // already-observed child cause or strand settlement in the outer raw catch —
+  // Terminal + Error Artifact remain the durable face (publication records IO trouble).
+  try {
+    await writeFile(
+      join(admitted.runDirectory, "stderr.log"),
+      result.stderr,
+      "utf8",
+    );
+  } catch {
+    // continue to lawful / controlled-failure settlement below
+  }
+
+  // Prefer a lawful typed terminal result from the session even when the child
+  // exit is nonzero — infrastructure noise must not wash a completed outcome.
+  // Absence → failure path below. Publication/IO exceptions retain typed identity.
+  let lawful: TerminalResult | undefined;
+  try {
+    lawful = await trySettleJudgeTerminalResult(admitted);
+  } catch (error) {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: result.code,
+        stderr: result.stderr,
+        thrown: error,
+      },
+      io,
+    );
+  }
+  if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    io.stdout(formatTerminalResult(lawful));
+    return {
+      exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+      admitted,
+      terminal: lawful,
+    };
+  }
+
+  // Production-owned typed cause channel — never inferred from stderr wording.
+  // Order: runner knownFailure → session provider-stop → credential absence.
+  // Session provider-stop is exit-code-independent: Pi may leave stopReason=error
+  // and still exit 0. Credential absence stays gated to failed/timed-out children.
+  // Zero-exit missing-terminal stays session/output when no typed source applies.
+  const sessionProviderStop = await readSessionProviderStop(
+    admitted.sessionDirectory,
+  );
+  const sessionProviderFailure =
+    sessionProviderStop === undefined
+      ? undefined
+      : knownFailureFromProviderStop(sessionProviderStop);
+  const credentialFailure =
+    result.timedOut || result.code !== 0
+      ? knownFailureForMissingProviderCredential(env.model, env.credentials)
+      : undefined;
+  const knownFailure =
+    result.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+  return await presentControlledFailure(
+    admitted,
+    {
+      timedOut: result.timedOut,
+      code: result.code,
+      stderr: result.stderr,
+      ...(knownFailure === undefined
+        ? {}
+        : {
+            knownCause: knownFailure.cause,
+            ...(knownFailure.identity === undefined
+              ? {}
+              : { knownIdentity: knownFailure.identity }),
+            ...(knownFailure.diagnostic === undefined
+              ? {}
+              : { knownDiagnostic: knownFailure.diagnostic }),
+          }),
+    },
+    io,
+  );
 }

@@ -50,11 +50,22 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       sha256(committed),
       "dist/public-cli/main.js drifted from src/public-cli — run: node scripts/build-package.mjs",
     );
-    // Behavioral marker for the #106 Terminal free-text seam (not a presentation freeze).
+    // Behavioral markers for public settlement seams (not presentation freezes).
+    const committedText = committed.toString("utf8");
     assert.equal(
-      committed.toString("utf8").includes("encodeTerminalField"),
+      committedText.includes("encodeTerminalField"),
       true,
       "public bin must ship Terminal free-text encoding",
+    );
+    assert.equal(
+      committedText.includes("settleJudgeFailureTerminalResult"),
+      true,
+      "public bin must ship controlled failure settlement",
+    );
+    assert.equal(
+      committedText.includes("validateAcceptedJudgeDetails"),
+      true,
+      "public bin must ship Judge verdict validation before lawful settlement",
     );
   } finally {
     await rm(dir, { recursive: true, force: true });

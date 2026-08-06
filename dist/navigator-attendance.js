@@ -6,7 +6,10 @@ import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } fro
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { pathContainedIn, resolveActivationLedgerHome } from "./activation-ledger-topology.js";
+import {
+  physicallyContainedIn,
+  resolveActivationLedgerHome
+} from "./activation-ledger-topology.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
@@ -164,7 +167,7 @@ function workIdentityFromCwd(cwd) {
   return void 0;
 }
 function isMachineLedgerSessionPath(sessionPath) {
-  return pathContainedIn(resolve(resolveActivationLedgerHome()), resolve(sessionPath));
+  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
@@ -327,6 +330,19 @@ function createNavigatorAttendance(options) {
   let settlementFailure;
   let preparationFailure;
   let disposed = false;
+  let warmedHelp;
+  const loadLiveHelp = async () => {
+    try {
+      return await Promise.all(
+        NAVIGATOR_TARGETS.map(async ({ role }) => ({
+          role,
+          help: await options.loadRoleHelp(role)
+        }))
+      );
+    } catch (error) {
+      throw navigatorUnavailableError("transport", error);
+    }
+  };
   const unavailable = (invocationId, reason) => {
     const failure = reason instanceof NavigatorUnavailableError ? reason : navigatorUnavailableError("unknown", reason);
     return {
@@ -341,24 +357,31 @@ function createNavigatorAttendance(options) {
     activeInvocationId = invocationId;
     if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
     let soul;
-    try {
-      soul = (await options.loadSoul()).trim();
-      if (!soul) throw new Error("Navigator soul is empty");
-    } catch (error) {
-      throw navigatorUnavailableError("context", error);
-    }
     let modelSetting;
-    try {
-      modelSetting = await readNavigatorModelSetting(options.modelSettingPath);
-    } catch (error) {
-      throw navigatorUnavailableError("model", error);
-    }
     let help;
-    try {
-      help = await Promise.all(NAVIGATOR_TARGETS.map(async ({ role }) => ({ role, help: await options.loadRoleHelp(role) })));
-    } catch (error) {
-      throw navigatorUnavailableError("transport", error);
-    }
+    const soulPromise = (async () => {
+      try {
+        const text = (await options.loadSoul()).trim();
+        if (!text) throw new Error("Navigator soul is empty");
+        return text;
+      } catch (error) {
+        throw navigatorUnavailableError("context", error);
+      }
+    })();
+    const modelPromise = (async () => {
+      try {
+        return await readNavigatorModelSetting(options.modelSettingPath);
+      } catch (error) {
+        throw navigatorUnavailableError("model", error);
+      }
+    })();
+    const helpPromise = warmedHelp ?? loadLiveHelp();
+    warmedHelp = void 0;
+    [soul, modelSetting, help] = await Promise.all([
+      soulPromise,
+      modelPromise,
+      helpPromise
+    ]);
     let model;
     try {
       model = parseNavigatorModelSetting(modelSetting);
@@ -497,6 +520,16 @@ ${helpContext}
       contextError = next.contextError;
       sessionDir = options.sessionDirectory?.(next.subjectKey) ?? options.sessionDir;
     },
+    /**
+     * Start live-help subprocesses during activation without beginning full
+     * preparation. Next prepare() consumes the warm result; a later prepare
+     * reloads so live help edits remain visible.
+     */
+    warmHelp() {
+      if (disposed || warmedHelp !== void 0 || preparation !== void 0) return;
+      warmedHelp = loadLiveHelp();
+      void warmedHelp.catch(() => void 0);
+    },
     prepare() {
       if (disposed || preparation !== void 0) return;
       preparationFailure = void 0;
@@ -613,6 +646,7 @@ ${helpContext}
   }
 }
 function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()) {
+  const sharedModelRuntime = ModelRuntime.create({ allowModelNetwork: false });
   return async ({ context, sessionDir, modelSettingPath, tool }) => {
     let configured;
     try {
@@ -786,7 +820,7 @@ function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigator
     };
     let modelRuntime;
     try {
-      modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
+      modelRuntime = await sharedModelRuntime;
       modelRuntime.registerNativeProvider(instrumentProvider(provider));
     } catch (error) {
       throw navigatorUnavailableError("session", error);
