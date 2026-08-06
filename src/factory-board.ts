@@ -1036,8 +1036,8 @@ async function renderLaneHtml(
 function boardStyles(): string {
   return `
   :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.45; }
-  body { margin: 0 auto; padding: 1rem; max-width: 72rem; }
-  header.page { margin-bottom: 1rem; }
+  body { margin: 0; padding: 1rem; }
+  header.page { margin-bottom: 1rem; max-width: 72rem; }
   .generated { font-size: 0.9rem; opacity: 0.8; }
   .thresholds { font-size: 0.85rem; opacity: 0.9; display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
   .controls { margin: 0.5rem 0 0; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; font-size: 0.9rem; }
