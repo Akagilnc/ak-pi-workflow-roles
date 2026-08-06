@@ -318,6 +318,12 @@ const shutdown = async (signal: string) => {
   }
 };
 
+// Keepalive: the default scheduler unrefs its interval (a test-suite courtesy so
+// injected-clock suites can exit); a production watch must own an explicit
+// referenced handle or the process exits silently after the first render.
+const keepalive = setInterval(() => undefined, 1 << 30);
+handle.closed.finally(() => clearInterval(keepalive));
+
 process.on("SIGINT", () => {
   void shutdown("SIGINT");
 });
