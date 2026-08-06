@@ -524,8 +524,8 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
       if (terminal.roleOutcome.kind === "failure") {
         assert.equal(terminal.roleOutcome.diagnostic.includes("tool_execution_end"), false);
       }
+      // stderr oracle is emission shape + non-flood — not selected diagnostic prose (AC6).
       assert.equal(stderr[0]!.includes("tool_execution_end"), false);
-      assert.equal(stderr[0]!.includes("provider rejected the request"), true);
     }
 
     // Counterexample 2: single oversized diagnostic line — durable full, presentation bound.
@@ -744,7 +744,7 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
       diagnosticEquals: "ECONNRESET from upstream",
       identityName: "RawSocketError",
     });
-    assert.equal(stderr[0]!.includes("ECONNRESET from upstream"), true);
+    // stderr: non-flood shape only — durable identity lives on Terminal/Error Artifact (AC6).
     assert.equal(stderr[0]!.includes("ak_judge_output"), false);
   });
 });
@@ -1317,6 +1317,71 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
   });
 });
 
+test("Error Artifact primary collision retains original failure cause with Terminal emission", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "activation then error artifact collision"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-error-artifact-collision-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          // Primary Error Artifact path occupied as a directory → writeFile EISDIR.
+          // Settlement must fall back durably and keep the original activation cause.
+          await mkdir(join(runDir, "artifacts", "error.json"), { recursive: true });
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          return {
+            code: 1,
+            stdout: "",
+            stderr: "Error: original activation boom\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "activation",
+      diagnosticEquals: "original activation boom",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      // Original controlled failure must not be washed to the publication errno.
+      assert.equal(terminal.roleOutcome.cause, "activation");
+      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      assert.equal(terminal.roleOutcome.diagnostic, "original activation boom");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+      publicationIssues?: Array<{ identity?: { code?: string | number } }>;
+    };
+    assert.equal(errorBody.cause, "activation");
+    assert.equal(errorBody.diagnostic, "original activation boom");
+    assert.ok(Array.isArray(errorBody.publicationIssues));
+    assert.ok(
+      errorBody.publicationIssues!.some((issue) => issue.identity?.code === "EISDIR"),
+      "durable fallback must retain the primary publication collision identity",
+    );
+    // One complete Terminal — must not escape to outer raw catch with zero stdout.
+    assert.equal(stdout.length, 1);
+    assert.equal(result.terminal !== undefined, true);
+  });
+});
+
 test("post-admission stderr.log EISDIR settles via controlled path with Terminal and Error Artifact", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -1419,12 +1484,12 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
     };
     assert.equal(errorBody.diagnostic, multiline);
     // stderr presentation is exactly one nonblank line, no stack/event/token flood.
+    // Do not assert selected diagnostic prose on stderr (AC6) — durable identity is above.
     const presented = stderr[0]!;
     assert.equal(presented.split("\n").filter((line) => line.trim() !== "").length, 1);
     assert.equal(presented.includes("at Object.fn"), false);
     assert.equal(presented.includes("event:"), false);
     assert.equal(presented.includes("tokens="), false);
-    assert.equal(presented.includes("provider boom with details"), true);
     // Helper contract: presentation collapses multiline thrown diagnostics.
     const helper = formatFailureStderrDiagnostic({
       cause: "unrecognized",
