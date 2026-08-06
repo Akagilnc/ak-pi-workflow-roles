@@ -55,7 +55,27 @@ When a Role run is interrupted by an observed typed Codex/xAI HTTP 429 and has n
 ak-role --model xai/grok-4.5:high resume <runId>
 ```
 
-At the current mainline slice, Judge is the completed public run path. `roles` lists the full callable registry, but the other role adapters are still landing under #109–#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
+At the current mainline slice, Judge and Coder are the completed public run paths. `roles` lists the full callable registry, but the remaining role adapters are still landing under #110–#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
+
+### Call Coder
+
+Coder accepts the common Invocation request (optional attachments, project override, nonblank task instruction). Phase defaults to `apply`; pass an explicit `plan` token to preserve plan through admission and any continuation:
+
+```bash
+ak-role coder \
+  --attach ./approved-plan.md \
+  "Implement the approved vertical slice."
+
+ak-role coder plan \
+  --project /path/to/project \
+  "Propose the first implementation plan for this task."
+
+ak-role coder apply \
+  --attach ./notes.md \
+  "Execute the approved plan and verify with package-owned TDD."
+```
+
+Apply binds the package-owned Matt TDD method from the installed package (including `tests.md` and `mocking.md`) without ambient home Skill discovery or network fetch. Lawful Terminal results and Artifact refs use the same success interface as Judge.
 
 ## 班子（唐宋官署命名）
 
@@ -178,18 +198,18 @@ Coder handles first implementation in two explicit phases:
 
 Either phase may return `refused` with authority and current-code evidence. During `apply`, Coder may also return `unfinished` with a nonblank typed `remainingScope` when this invocation has not settled the task; this is a resumable handoff, not a failure, and it does not waive any acceptance. A refusal does not require a commit and returns to the caller for disposition; Coder never emits `escalate`.
 
-> **Public invocation status:** the `ak-role coder` adapter and its package-owned TDD resource are still landing under #109. Callers must not bind a home-directory TDD Skill or use internal raw-Pi task flags as a substitute.
+Call Coder only through `ak-role coder` (ADR 0052). Do not bind a home-directory TDD Skill or use internal raw-Pi task flags as a substitute.
 
 Coder terminates through `ak_coder_output` with the same thin worker envelope:
 
 ```json
-{"status":"planned|completed|refused","report":"Markdown report","commitSha":"optional self-report"}
+{"status":"planned|completed|refused","report":"Markdown report"}
 {"status":"unfinished","report":"Markdown report","remainingScope":"nonblank typed remaining scope"}
 ```
 
-During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd`. The public adapter will bind the package-owned canonical Matt TDD Skill without ambient home-Skill discovery. A `completed` receipt is rejected unless the immediately following prompt proves Pi's exact native expansion of the complete canonical TDD Skill and original request; an evidence-bearing `refused` receipt does not require that proof or a commit.
+During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd` bound to the package-owned canonical Matt TDD Skill (`resources/methods/tdd/`, with companion testing and mocking material and exact upstream provenance). A `completed` receipt is rejected unless the immediately following prompt proves Pi's exact native expansion of the complete canonical TDD Skill and original request; an evidence-bearing `refused` receipt does not require that proof or a commit.
 
-The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the caller. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate. An unfinished receipt carries only its nonblank typed `remainingScope`; it does not carry commit identity or waive acceptance.
+The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the caller. These are report/audit requirements, not a second bundled Skill. Coder output has no `commitSha` field — the typed contract rejects it (ADR 0024). An unfinished receipt carries only its nonblank typed `remainingScope`; it does not carry commit identity or waive acceptance.
 
 ## Reviewer
 

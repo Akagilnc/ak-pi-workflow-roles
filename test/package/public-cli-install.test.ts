@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { access, chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -15,6 +16,15 @@ import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
 } from "../../src/public-cli/registry.ts";
+
+function seedGitProject(root: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "coder-install@test.local"], {
+    cwd: root,
+  });
+  execFileSync("git", ["config", "user.name", "Coder Install"], { cwd: root });
+  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
+}
 
 async function runAkRoleBin(
   bin: string,
@@ -252,6 +262,125 @@ child.on("close", (code, signal) => {
       true,
       `ak-role-owned explicit load must register --ak-role\nstdout:\n${loaded.stdout}\nstderr:\n${loaded.stderr}`,
     );
+  });
+});
+
+test("installed ak-role coder admits plan/apply and binds package-owned tdd without ambient home skills", async () => {
+  await withHermeticHome({ prefix: "ak-public-cli-coder-" }, async ({ home }) => {
+    const piAgentDir = resolve(home, ".pi", "agent");
+    await mkdir(piAgentDir, { recursive: true });
+    const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
+
+    // Packed install carries the complete TDD method tree + provenance.
+    for (const rel of [
+      "resources/methods/tdd/SKILL.md",
+      "resources/methods/tdd/tests.md",
+      "resources/methods/tdd/mocking.md",
+      "resources/methods/tdd/agents/openai.yaml",
+      "resources/methods/tdd/provenance.json",
+    ]) {
+      await access(resolve(installed.installedRoot, rel));
+    }
+    // Empty home: no ambient skills tree.
+    await assert.rejects(
+      () => access(resolve(home, ".agents", "skills")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+
+    const project = resolve(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    // Structural reject stays on the installed bin (not "unavailable slice").
+    const blank = await runAkRoleBin(
+      installed.akRoleBin,
+      ["coder", "plan", "--project", project, "   "],
+      { home, agentDir: piAgentDir },
+    );
+    assert.equal(blank.timedOut, false, blank.stderr);
+    assert.equal(blank.code, 2, blank.stderr);
+    assert.equal(blank.stderr.includes("not available in this install slice"), false);
+
+    // Record Pi argv owned by ak-role coder apply (package skill path must appear).
+    const shimDir = resolve(home, "pi-shim-coder");
+    await mkdir(shimDir, { recursive: true });
+    const argvLog = resolve(home, "ak-role-coder-pi-argv.json");
+    const shimPath = resolve(shimDir, "pi");
+    await writeFile(
+      shimPath,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+process.exit(1);
+`,
+      "utf8",
+    );
+    await chmod(shimPath, 0o755);
+
+    const apply = await runAkRoleBin(
+      installed.akRoleBin,
+      [
+        "coder",
+        "--project",
+        project,
+        "Implement the approved vertical slice with package TDD.",
+      ],
+      {
+        home,
+        agentDir: piAgentDir,
+        env: {
+          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+          PI_OFFLINE: "1",
+        },
+      },
+    );
+    assert.equal(apply.timedOut, false, apply.stderr);
+    assert.equal(apply.stderr.includes("not available in this install slice"), false);
+    const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+    assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "coder");
+    assert.equal(recorded[recorded.indexOf("--ak-coder-phase") + 1], "apply");
+    assert.equal(recorded.includes("--skill"), true);
+    const skillPath = recorded[recorded.indexOf("--skill") + 1]!;
+    assert.equal(skillPath.includes("resources/methods/tdd/SKILL.md"), true);
+    assert.equal(skillPath.includes(installed.installedRoot) || skillPath.includes("@akagilnc/pi-workflow-roles"), true);
+    assert.equal(skillPath.includes(".agents/skills"), false);
+
+    // Explicit plan omits package skill binding but preserves phase on the installed path.
+    const planArgvLog = resolve(home, "ak-role-coder-plan-pi-argv.json");
+    await writeFile(
+      shimPath,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+process.exit(1);
+`,
+      "utf8",
+    );
+    await chmod(shimPath, 0o755);
+    const plan = await runAkRoleBin(
+      installed.akRoleBin,
+      [
+        "coder",
+        "plan",
+        "--project",
+        project,
+        "Propose the first implementation plan.",
+      ],
+      {
+        home,
+        agentDir: piAgentDir,
+        env: {
+          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+          PI_OFFLINE: "1",
+        },
+      },
+    );
+    assert.equal(plan.timedOut, false, plan.stderr);
+    assert.equal(plan.stderr.includes("not available in this install slice"), false);
+    const planArgs = JSON.parse(await readFile(planArgvLog, "utf8")) as string[];
+    assert.equal(planArgs[planArgs.indexOf("--ak-role") + 1], "coder");
+    assert.equal(planArgs[planArgs.indexOf("--ak-coder-phase") + 1], "plan");
+    assert.equal(planArgs.includes("--skill"), false);
   });
 });
 

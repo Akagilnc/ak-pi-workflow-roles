@@ -83,6 +83,32 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       true,
       "public bin must ship resume command dispatch",
     );
+    // #109 public Coder adapter + package method seam must ship in the installed bin.
+    assert.equal(
+      /command\s*===\s*[\"']coder[\"']|case\s*[\"']coder[\"']/.test(committedText),
+      true,
+      "public bin must ship coder command dispatch",
+    );
+    assert.equal(
+      committedText.includes("resources/methods"),
+      true,
+      "public bin must bind package-owned method resource root",
+    );
+    assert.equal(
+      /resolvePackagedMethodSkillPath\([^)]*"tdd"/.test(committedText),
+      true,
+      "public bin must resolve the package-owned tdd skill path",
+    );
+    assert.equal(
+      committedText.includes("validateAcceptedCoderDetails"),
+      true,
+      "public bin must ship Coder success settlement validation",
+    );
+    assert.equal(
+      committedText.includes("ak-coder-phase"),
+      true,
+      "public bin must preserve coder phase on activation/resume",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
