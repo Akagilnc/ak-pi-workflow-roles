@@ -9070,21 +9070,24 @@ function classifyPostAdmissionFailure(input) {
       diagnostic: String(error)
     };
   }
-  if (input.timedOut) {
-    return {
-      cause: "timeout",
-      diagnostic: "judge role run timed out",
-      details: { timedOut: true, code: input.code }
-    };
-  }
   if (input.knownCause !== void 0) {
     const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "Judge Role run completed without a lawful typed terminal result" : `judge role run failed (${input.knownCause})`;
     const diagnostic = input.knownDiagnostic !== void 0 && input.knownDiagnostic.trim() !== "" ? input.knownDiagnostic : conciseChildDiagnostic(input.stderr, fallback);
     return {
       cause: input.knownCause,
       diagnostic,
-      details: { code: input.code },
+      details: {
+        code: input.code,
+        ...input.timedOut ? { timedOut: true } : {}
+      },
       ...input.knownIdentity === void 0 ? {} : { identity: input.knownIdentity }
+    };
+  }
+  if (input.timedOut) {
+    return {
+      cause: "timeout",
+      diagnostic: "judge role run timed out",
+      details: { timedOut: true, code: input.code }
     };
   }
   if (input.code !== 0) {
@@ -9163,7 +9166,7 @@ function extractSessionProviderStop(entries) {
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "assistant") continue;
-    if (message.stopReason !== "error") continue;
+    if (message.stopReason !== "error") return void 0;
     return {
       stopReason: "error",
       ...typeof message.errorMessage === "string" && message.errorMessage.trim() !== "" ? { errorMessage: message.errorMessage } : {},
