@@ -9793,14 +9793,6 @@ async function runExplicitInternalActivation(options) {
     }
   });
 }
-var EXPLICIT_INTERNAL_LOAD_PROBE_ARGS = [
-  "--no-skills",
-  "--no-prompt-templates",
-  "--no-themes",
-  "--no-context-files",
-  "--no-session",
-  "--help"
-];
 
 // src/public-cli/invocation.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
@@ -17489,34 +17481,6 @@ async function runAkRole(argv, env) {
         exitCode: result2.exitCode,
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
-    }
-    const roleNames = listHelpCapabilities().filter((cap) => cap.kind === "role").map((cap) => cap.name);
-    if (roleNames.includes(parsed.command)) {
-      const agentDir = resolveAgentDir(env, home);
-      const load = await runExplicitInternalActivation({
-        packageRoot: env.packageRoot,
-        extraArgs: EXPLICIT_INTERNAL_LOAD_PROBE_ARGS,
-        cwd: env.cwd ?? process.cwd(),
-        home,
-        agentDir,
-        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-      });
-      if (load.timedOut || load.code !== 0) {
-        io.stderr(
-          `ak-role: failed to load installed role runtime for '${parsed.command}'
-`
-        );
-        if (load.stderr.length > 0) {
-          io.stderr(load.stderr.endsWith("\n") ? load.stderr : `${load.stderr}
-`);
-        }
-        return { exitCode: 1 };
-      }
-      io.stderr(
-        `ak-role: role run for '${parsed.command}' is not available in this install slice
-`
-      );
-      return { exitCode: 2 };
     }
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
