@@ -151,8 +151,9 @@ async function assertPublicFailureSettlement(input: {
   assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
   assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
   assert.ok(terminal.navigator);
+  assert.equal(terminal.resume, undefined);
   assert.equal(typeof terminal.runId, "string");
-  assert.ok(terminal.runId.length > 0);
+  assert.ok(terminal.runId !== undefined && terminal.runId.length > 0);
   assert.ok(Array.isArray(terminal.artifacts));
   assert.ok(terminal.artifacts.length >= 1);
 
@@ -466,6 +467,7 @@ test("failure settlement durably records Error Artifact before presentation retu
       attachments: [],
       runDirectory,
       sessionDirectory: join(runDirectory, "session"),
+      sessionFile: join(runDirectory, "session", "session.jsonl"),
       admittedRequestPath: join(runDirectory, "admitted-request.json"),
     };
     await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");
@@ -1039,6 +1041,7 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
         attachments: [],
         runDirectory,
         sessionDirectory: join(runDirectory, "session"),
+        sessionFile: join(runDirectory, "session", "session.jsonl"),
         admittedRequestPath: join(runDirectory, "admitted-request.json"),
       };
       await writeFile(admitted.admittedRequestPath, "{}\n", "utf8");

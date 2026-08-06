@@ -34,6 +34,14 @@ export type FrozenAttachment = {
   readonly mediaKind: "regular-file";
 };
 
+/** Durable Pi session file principal name under a Role run's private session directory. */
+export const ROLE_RUN_SESSION_FILE_NAME = "session.jsonl" as const;
+
+/** Exact Pi session file principal path for a Role run session directory. */
+export function roleRunSessionFile(sessionDirectory: string): string {
+  return join(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
+}
+
 export type AdmittedJudgeInvocation = {
   readonly role: "judge";
   readonly runId: string;
@@ -46,6 +54,8 @@ export type AdmittedJudgeInvocation = {
   readonly attachments: readonly FrozenAttachment[];
   readonly runDirectory: string;
   readonly sessionDirectory: string;
+  /** Exact Pi session file principal (bound at admission; reopened on resume). */
+  readonly sessionFile: string;
   readonly admittedRequestPath: string;
 };
 
@@ -187,6 +197,7 @@ export async function admitJudgeInvocation(
     `${runId}@judge`,
   );
   const sessionDirectory = join(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
   const attachmentsDirectory = join(runDirectory, "attachments");
   ensureRealDirectoryTree(ledgerHome, sessionDirectory);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
@@ -232,6 +243,7 @@ export async function admitJudgeInvocation(
     attachments,
     runDirectory,
     sessionDirectory,
+    sessionFile,
     admittedRequestPath,
   };
 }
