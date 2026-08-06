@@ -12,6 +12,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -30,7 +32,95 @@ import {
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+
+/**
+ * Drive the production after_provider_response handler (role-runtime) so typed
+ * 429 evidence is written through the real observation seam — never by calling
+ * recordTypedProviderHttpStatus from a fake runner as a substitute.
+ */
+async function observeTyped429ViaProductionHandler(input: {
+  runDirectory: string;
+  provider: "openai-codex" | "xai";
+  httpStatus?: number;
+}): Promise<void> {
+  const handlers = new Map<
+    string,
+    (event: unknown, ctx: unknown) => unknown
+  >();
+  const pi = {
+    registerFlag() {},
+    getFlag() {
+      return undefined;
+    },
+    on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+      handlers.set(name, handler);
+    },
+    registerTool() {},
+    getAllTools() {
+      return [];
+    },
+    setActiveTools() {},
+  };
+  createRoleRuntimeExtension({
+    loadJudgeSoul: async () => "",
+    transcriptFromContext: () => "",
+    auditSoulCompliance: async () => ({ status: "pass" }),
+  })(pi as unknown as ExtensionAPI);
+
+  const handler = handlers.get("after_provider_response");
+  if (handler === undefined) {
+    throw new Error("production after_provider_response handler was not registered");
+  }
+
+  const previous = process.env.AK_ROLE_RUN_DIR;
+  process.env.AK_ROLE_RUN_DIR = input.runDirectory;
+  try {
+    await handler(
+      {
+        type: "after_provider_response",
+        status: input.httpStatus ?? 429,
+        headers: {},
+      },
+      { model: { provider: input.provider } },
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.AK_ROLE_RUN_DIR;
+    } else {
+      process.env.AK_ROLE_RUN_DIR = previous;
+    }
+  }
+}
+
+/** Typed-region proof: run ID appears only inside resume.command. */
+function assertRunIdOnlyInResumeCommand(
+  terminal: TerminalResult,
+  runId: string,
+): void {
+  assert.ok(terminal.resume, "resumable failure must carry typed resume region");
+  assert.equal(terminal.resume.command, renderResumeCommand(runId));
+  assert.equal(terminal.resume.command.includes(runId), true);
+  assert.equal(
+    terminal.runId,
+    undefined,
+    "top-level runId must be omitted on resumable failure Terminal",
+  );
+  const outsideResumeCommand = {
+    roleOutcome: terminal.roleOutcome,
+    navigator: terminal.navigator,
+    artifacts: terminal.artifacts,
+    runId: terminal.runId,
+    resumeKeys: terminal.resume === undefined ? [] : Object.keys(terminal.resume),
+  };
+  assert.equal(
+    JSON.stringify(outsideResumeCommand).includes(runId),
+    false,
+    "run ID must not appear outside resume.command in typed Terminal regions",
+  );
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-resume-"));
@@ -185,10 +275,10 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
         piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
-          // Durable typed observation written by production role-runtime channel.
           const runDir = join(sessionDir, "..");
-          await recordTypedProviderHttpStatus(runDir, {
-            httpStatus: 429,
+          // Production observation seam — not a direct recordTypedProviderHttpStatus stand-in.
+          await observeTyped429ViaProductionHandler({
+            runDirectory: runDir,
             provider: "openai-codex",
           });
           await writeSessionProviderStop(sessionDir, {
@@ -212,16 +302,18 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
     assert.equal(stderr.length, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    const resume = result.terminal!.resume;
-    assert.ok(resume, "resumable failure must carry typed resume region");
-    assert.equal(resume.command, renderResumeCommand(runId));
-    assert.equal(resume.command.includes(runId), true);
-    // Presentation reveals run id only inside the resume command.
+    assertRunIdOnlyInResumeCommand(result.terminal!, runId);
+    // Presentation may rearrange labels; only require the command text appears and
+    // the run ID does not appear outside that complete command string.
     const presented = stdout[0]!;
-    assert.equal(presented.includes(resume.command), true);
-    // Bare run-id cell must not appear when resume is present.
-    assert.equal(presented.includes(`\t"${runId}"\n`), false);
-    assert.equal(presented.includes(`\t${runId}\n`), false);
+    const resumeCommand = result.terminal!.resume!.command;
+    assert.equal(presented.includes(resumeCommand), true);
+    const presentedWithoutCommand = presented.split(resumeCommand).join("");
+    assert.equal(
+      presentedWithoutCommand.includes(runId),
+      false,
+      "presented Terminal must not disclose run ID outside resume.command",
+    );
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -232,6 +324,12 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
       "runs",
       `${runId}@judge`,
     );
+    // Durable observation + Error Artifact remain on disk even though public
+    // Terminal omits path refs that would re-disclose the run ID.
+    assert.deepEqual(await readTypedHttp429Observation(runDirectory), {
+      httpStatus: 429,
+      provider: "openai-codex",
+    });
     const durable = await readRoleRunState(runDirectory);
     assert.equal(durable?.state, "resumable");
     assert.deepEqual(durable?.resumable, {
@@ -309,8 +407,8 @@ test("lawful terminal result wins over typed 429 observation", async () => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           const runDir = join(sessionDir, "..");
-          await recordTypedProviderHttpStatus(runDir, {
-            httpStatus: 429,
+          await observeTyped429ViaProductionHandler({
+            runDirectory: runDir,
             provider: "xai",
           });
           await writeFile(
@@ -384,8 +482,8 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
-            await recordTypedProviderHttpStatus(join(sessionDir, ".."), {
-              httpStatus: 429,
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
               provider: "xai",
             });
             await writeSessionProviderStop(sessionDir, {
@@ -524,8 +622,8 @@ test("resume model override is temporary and does not rewrite persistent config"
         piRunner: async (args) => {
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
-          await recordTypedProviderHttpStatus(join(sessionDir, ".."), {
-            httpStatus: 429,
+          await observeTyped429ViaProductionHandler({
+            runDirectory: join(sessionDir, ".."),
             provider: "openai-codex",
           });
           await writeSessionProviderStop(sessionDir, {
@@ -685,8 +783,8 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       piRunner: async (args) => {
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
-        await recordTypedProviderHttpStatus(join(sessionDir, ".."), {
-          httpStatus: 429,
+        await observeTyped429ViaProductionHandler({
+          runDirectory: join(sessionDir, ".."),
           provider: "openai-codex",
         });
         await writeSessionProviderStop(sessionDir, {
@@ -799,8 +897,8 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
         },
       },
     );
-    assert.equal(withResume.resume?.command, renderResumeCommand(runId));
-    assert.equal(withResume.runId, runId);
+    assertRunIdOnlyInResumeCommand(withResume, runId);
+    assert.equal(withResume.artifacts.length, 0);
 
     await markRunTerminal(runDirectory);
     const without = await settleJudgeFailureTerminalResult(admitted, {
@@ -808,5 +906,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       diagnostic: "boom",
     });
     assert.equal(without.resume, undefined);
+    assert.equal(without.runId, runId);
+    assert.ok(without.artifacts.length > 0);
   });
 });
