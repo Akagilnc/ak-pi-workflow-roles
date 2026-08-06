@@ -4,7 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
@@ -166,16 +166,13 @@ export type SessionReadiness =
   | { readonly state: "present" };
 
 export async function inspectJudgeSession(
-  sessionDirectory: string,
+  sessionFile: string,
 ): Promise<SessionReadiness> {
   try {
-    const files = (await readdir(sessionDirectory))
-      .filter((file) => file.endsWith(".jsonl"))
-      .sort();
-    if (files.length === 0) return { state: "missing" };
-    await readFile(join(sessionDirectory, files.at(-1)!), "utf8");
+    await readFile(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
+    if (isMissingPathError(error)) return { state: "missing" };
     return {
       state: "unreadable",
       diagnostic:
@@ -420,14 +417,14 @@ function sessionReadFailure(
   return failed;
 }
 
-async function readLatestSessionEntries(
-  sessionDirectory: string,
+/**
+ * Read the exact bound Pi session file principal.
+ * Does not scan the session directory for "latest" — resume identity is the file.
+ */
+async function readBoundSessionEntries(
+  sessionFile: string,
 ): Promise<SessionEntry[]> {
-  const files = (await readdir(sessionDirectory))
-    .filter((file) => file.endsWith(".jsonl"))
-    .sort();
-  if (files.length === 0) return [];
-  const text = await readFile(join(sessionDirectory, files.at(-1)!), "utf8");
+  const text = await readFile(sessionFile, "utf8");
   const entries: SessionEntry[] = [];
   for (const line of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -476,9 +473,9 @@ export function extractSessionProviderStop(
   return undefined;
 }
 
-/** Read latest session entries and extract a typed provider-stop, if any. */
+/** Read the bound session principal and extract a typed provider-stop, if any. */
 export async function readSessionProviderStop(
-  sessionDirectory: string,
+  sessionFile: string,
 ): Promise<
   | {
       stopReason: "error";
@@ -489,7 +486,7 @@ export async function readSessionProviderStop(
   | undefined
 > {
   try {
-    const entries = await readLatestSessionEntries(sessionDirectory);
+    const entries = await readBoundSessionEntries(sessionFile);
     return extractSessionProviderStop(entries);
   } catch {
     return undefined;
@@ -651,6 +648,7 @@ export async function publishJudgeArtifacts(
       {
         runId: admitted.runId,
         sessionDirectory,
+        sessionFile: admitted.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         attachments: admitted.attachments.map((a) => ({
           provenancePath: a.provenancePath,
@@ -678,7 +676,7 @@ async function readLawfulSettlementEntries(
   admitted: AdmittedJudgeInvocation,
 ): Promise<SessionEntry[] | undefined> {
   try {
-    return await readLatestSessionEntries(admitted.sessionDirectory);
+    return await readBoundSessionEntries(admitted.sessionFile);
   } catch (error) {
     // Missing path is absence of a lawful outcome; callers classify via session inspect.
     if (isMissingPathError(error)) return undefined;
@@ -960,6 +958,7 @@ export async function publishFailureArtifacts(
   const evidencePayload: Record<string, unknown> = {
     runId: admitted.runId,
     sessionDirectory: admitted.sessionDirectory,
+    sessionFile: admitted.sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
     attachments: admitted.attachments.map((a) => ({
       provenancePath: a.provenancePath,

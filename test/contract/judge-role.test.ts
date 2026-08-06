@@ -310,6 +310,7 @@ test("after_provider_response production handler writes typed 429 into resumable
         attachments: [],
         runDirectory,
         sessionDirectory,
+        sessionFile: join(sessionDirectory, "session.jsonl"),
         admittedRequestPath,
       },
       { cause: "provider", diagnostic: "upstream declined this request" },

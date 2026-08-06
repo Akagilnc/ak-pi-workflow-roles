@@ -183,6 +183,7 @@ test("structurally empty request transports only the nonblank envelope", () => {
     attachments: [],
     runDirectory: "/r",
     sessionDirectory: "/r/session",
+    sessionFile: "/r/session/session.jsonl",
     admittedRequestPath: "/r/admitted-request.json",
   });
   assert.equal(empty, EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
@@ -207,6 +208,7 @@ test("structurally empty request transports only the nonblank envelope", () => {
     ],
     runDirectory: "/r",
     sessionDirectory: "/r/session",
+    sessionFile: "/r/session/session.jsonl",
     admittedRequestPath: "/r/admitted-request.json",
   });
   assert.equal(withAttach.startsWith(EMPTY_INVOCATION_TRANSPORT_ENVELOPE), true);
@@ -660,6 +662,7 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
       runId: "run-cli-judge-001",
       runDirectory: runDir,
       sessionDirectory: join(runDir, "session"),
+      sessionFile: join(runDir, "session", "session.jsonl"),
       projectRoot: project,
       bookKey,
       instruction: "Decide whether the attachment is sufficient.",
@@ -761,6 +764,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
       runId: "run-empty-001",
       runDirectory: runDir,
       sessionDirectory: join(runDir, "session"),
+      sessionFile: join(runDir, "session", "session.jsonl"),
       projectRoot: project,
       bookKey,
       instruction: "",

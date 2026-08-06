@@ -477,6 +477,10 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
               runDirectory: join(sessionDir, ".."),
               provider: "openai-codex",
             });
+            await writeSessionProviderStop(sessionDir, {
+              provider: "openai-codex",
+              errorMessage: "HTTP 429",
+            });
             return {
               code: 1,
               stdout: "",
@@ -518,8 +522,10 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
       io,
       piRunner: async (args) => {
         resumeDispatches += 1;
-        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-        await mkdir(sessionDir, { recursive: true });
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        // Bound principal remains; drop prior provider-stop so this attempt's
+        // timeout is not reclassified from stale session identity.
+        await writeFile(sessionFile, "\n", "utf8");
         // Deliberately do not write a fresh 429 observation.
         return {
           code: 1,
@@ -650,6 +656,10 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
           await observeTyped429ViaProductionHandler({
             runDirectory: join(sessionDir, ".."),
             provider: "openai-codex",
+          });
+          await writeSessionProviderStop(sessionDir, {
+            provider: "openai-codex",
+            errorMessage: `upstream quota for run ${runId}: HTTP 429`,
           });
           return {
             code: 1,
@@ -808,8 +818,11 @@ test("resume restores admitted identity and exact Pi session without resubmittin
         piRunner: async (args) => {
           resumeArgs = [...args];
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const sessionFile = args[args.indexOf("--session") + 1]!;
           assert.equal(sessionDir, sessionDirectory);
-          assert.equal(args.includes("--continue"), true);
+          assert.equal(sessionFile, join(sessionDirectory, "session.jsonl"));
+          // Exact principal reopen — never directory-latest --continue.
+          assert.equal(args.includes("--continue"), false);
           // Must not resubmit original instruction as a new prompt payload.
           assert.equal(args.includes(instruction), false);
           assert.equal(args.includes(RESUME_TRANSPORT_ENVELOPE), true);
@@ -859,6 +872,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
 
     const durable = await readRoleRunState(runDirectory);
     assert.equal(durable?.state, "terminal");
+    assert.equal(durable?.sessionFile, join(sessionDirectory, "session.jsonl"));
   });
 });
 
@@ -1135,6 +1149,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       `${runId}@judge`,
     );
     const sessionDirectory = join(runDirectory, "session");
+    const sessionFile = join(sessionDirectory, "session.jsonl");
     await mkdir(sessionDirectory, { recursive: true });
     const admittedRequestPath = join(runDirectory, "admitted-request.json");
     await writeFile(admittedRequestPath, "{}\n", "utf8");
@@ -1148,6 +1163,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       attachments: [],
       runDirectory,
       sessionDirectory,
+      sessionFile,
       admittedRequestPath,
     };
     await markRunAdmitted(admitted);
@@ -1177,5 +1193,245 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
     assert.equal(without.resume, undefined);
     assert.equal(without.runId, runId);
     assert.ok(without.artifacts.length > 0);
+  });
+});
+
+test("initial activation and resume bind the exact Pi session file principal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-session-principal-001";
+
+    let initialArgs: string[] | undefined;
+    {
+      const { io } = captureIo();
+      const first = await runAkRole(
+        ["judge", "--project", project, "bind exact session"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          piRunner: async (args) => {
+            initialArgs = [...args];
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "openai-codex",
+            });
+            await writeSessionProviderStop(sessionDir, {
+              provider: "openai-codex",
+              errorMessage: "rate limited",
+            });
+            return {
+              code: 1,
+              stdout: "",
+              stderr: "fail\n",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      assert.ok(first.terminal?.resume);
+    }
+
+    assert.ok(initialArgs);
+    const boundSession = initialArgs[initialArgs.indexOf("--session") + 1]!;
+    assert.equal(initialArgs.includes("--continue"), false);
+    assert.equal(boundSession.endsWith("/session/session.jsonl"), true);
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    const durable = await readRoleRunState(runDirectory);
+    assert.equal(durable?.sessionFile, boundSession);
+    assert.equal(durable?.state, "resumable");
+
+    const { io } = captureIo();
+    let resumeArgs: string[] | undefined;
+    const resumed = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io,
+      piRunner: async (args) => {
+        resumeArgs = [...args];
+        assert.equal(args[args.indexOf("--session") + 1], boundSession);
+        assert.equal(args.includes("--continue"), false);
+        await writeFile(
+          boundSession,
+          `${JSON.stringify({
+            type: "message",
+            message: {
+              role: "toolResult",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: false,
+              details: { judgeStatus: "converged", note: "principal ok" },
+            },
+          })}\n`,
+          "utf8",
+        );
+        return {
+          code: 0,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
+    assert.ok(resumeArgs);
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+  });
+});
+
+test("resume rejects when the exact Pi session principal is unavailable", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-missing-principal-001";
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    const sessionFile = join(sessionDirectory, "session.jsonl");
+    await mkdir(sessionDirectory, { recursive: true });
+    const admittedRequestPath = join(runDirectory, "admitted-request.json");
+    await writeFile(
+      admittedRequestPath,
+      `${JSON.stringify({
+        role: "judge",
+        instruction: "x",
+        instructionEmpty: false,
+        attachments: [],
+      })}\n`,
+      "utf8",
+    );
+    await markRunAdmitted({
+      role: "judge",
+      runId,
+      bookKey,
+      projectRoot: project,
+      instruction: "x",
+      instructionEmpty: false,
+      attachments: [],
+      runDirectory,
+      sessionDirectory,
+      sessionFile,
+      admittedRequestPath,
+    });
+    await markRunResumable(runDirectory, {
+      httpStatus: 429,
+      provider: "xai",
+    });
+    // Principal path is bound but the file itself is missing.
+
+    await assert.rejects(
+      () => loadResumableJudgeRun(home, runId),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Pi session principal is unavailable"),
+    );
+
+    const { io, stdout, stderr } = captureIo();
+    let dispatches = 0;
+    const blocked = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io,
+      piRunner: async (args) => {
+        dispatches += 1;
+        return {
+          code: 0,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          args: [...args],
+        };
+      },
+    });
+    assert.equal(dispatches, 0);
+    assert.equal(stdout.length, 0);
+    assert.notEqual(blocked.exitCode, 0);
+    assert.equal(
+      stderr.join("").includes("Pi session principal is unavailable"),
+      true,
+    );
+  });
+});
+
+test("typed 429 without a session principal is not offered as resumable", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-429-no-session-file";
+
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "no session file"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          // Typed 429 observation only — no session principal materialised.
+          await observeTyped429ViaProductionHandler({
+            runDirectory: join(sessionDir, ".."),
+            provider: "xai",
+          });
+          return {
+            code: 1,
+            stdout: "",
+            stderr: "fail\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(result.terminal?.resume, undefined);
+    assert.equal(stdout.join("").includes("ak-role resume"), false);
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    const durable = await readRoleRunState(runDirectory);
+    assert.equal(durable?.state, "terminal");
   });
 });
