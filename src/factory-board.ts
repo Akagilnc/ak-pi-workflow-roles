@@ -459,6 +459,7 @@ function renderTicketArticle(input: {
     input.familyRoot !== undefined
       ? `<span class="family-badge" data-family-badge="${attr(String(input.familyRoot))}" data-book="${attr(input.bookKey)}">族 #${escapeHtml(String(input.familyRoot))}</span>`
       : "";
+  const breadcrumb = runs.length > 0 ? renderBreadcrumbHtml(runs) : "";
 
   const ticketNo = String(ticket.issueNumber);
   const unaccepted =
@@ -488,7 +489,9 @@ function renderTicketArticle(input: {
     ` data-milestone="${attr(milestone)}"`,
     ` data-ticket-state="${attr(state)}"`,
     ` data-current-state="${attr(currentState)}"`,
+    ` data-state-strip="${attr(currentState)}"`,
     ` data-pending="${pending ? "true" : "false"}"`,
+    input.nested ? ` data-nested="true"` : "",
     ` data-blocked-by="${attr(blockedAttr)}"`,
     ` data-run-count="${attr(String(runs.length))}"`,
     ` data-cost-usd="${attr(formatUsd(costUsd))}"`,
@@ -505,8 +508,9 @@ function renderTicketArticle(input: {
     `>`,
     `<header class="ticket-head">`,
     `<h3 class="ticket-title">#${escapeHtml(ticketNo)} · ${escapeHtml(ticket.title)}</h3>`,
+    breadcrumb,
     `<p class="ticket-meta">`,
-    `<span class="state" data-state-label="${attr(currentState)}"><span class="state-dot" aria-hidden="true">●</span> ${escapeHtml(currentStateLabel(currentState))}</span>`,
+    `<span class="state" data-state-label="${attr(currentState)}"><span class="state-dot" aria-hidden="true" data-state-dot="true">●</span> ${escapeHtml(currentStateLabel(currentState))}</span>`,
     yamenTag,
     familyBadge,
     milestone ? `<span class="milestone">milestone: ${escapeHtml(milestone)}</span>` : `<span class="milestone">milestone: —</span>`,
@@ -744,8 +748,18 @@ function entryCompare(a: LaneEntry, b: LaneEntry): number {
   return a.issueNumber - b.issueNumber;
 }
 
-/** Fixed resident column order; non-resident columns slot before 已完成 by station name. */
-const RESIDENT_COLUMN_ORDER: readonly string[] = ["pending", "court", "coder", "marshal", "collector"];
+/**
+ * Six resident columns always render (empty ones carry data-column-count=0).
+ * Non-resident `other:*` columns slot before 已完成 when occupied.
+ */
+const RESIDENT_COLUMN_ORDER: readonly string[] = [
+  "pending",
+  "court",
+  "coder",
+  "marshal",
+  "collector",
+  "done",
+];
 
 const COLUMN_LABELS: Readonly<Record<string, string>> = {
   pending: "待发",
@@ -755,6 +769,80 @@ const COLUMN_LABELS: Readonly<Record<string, string>> = {
   collector: "门下省",
   done: "已完成",
 };
+
+/** Terminal result statuses that mark a breadcrumb station step as 被拒 (strikethrough). */
+const REJECTED_RESULT_STATUSES: ReadonlySet<string> = new Set(["continue", "refused", "rejected"]);
+
+type BreadcrumbStep = {
+  station: string;
+  count: number;
+  isReturn: boolean;
+  isRejected: boolean;
+};
+
+/**
+ * Compact ledger-order breadcrumb: consecutive same-station collapse (×N),
+ * ↩ when a station reappears after another, 被拒 when any run in the step was rejected.
+ */
+function buildBreadcrumbSteps(runs: readonly TicketTrajectoryRun[]): BreadcrumbStep[] {
+  const sorted = sortRunsByStart(runs);
+  if (sorted.length === 0) return [];
+  type Group = { station: string; runs: TicketTrajectoryRun[] };
+  const groups: Group[] = [];
+  for (const run of sorted) {
+    const last = groups.at(-1);
+    if (last && last.station === run.station) {
+      last.runs.push(run);
+    } else {
+      groups.push({ station: run.station, runs: [run] });
+    }
+  }
+  const seen = new Set<string>();
+  const steps: BreadcrumbStep[] = [];
+  for (const group of groups) {
+    const isReturn = seen.has(group.station);
+    seen.add(group.station);
+    const isRejected = group.runs.some(
+      (run) => run.hasResult && REJECTED_RESULT_STATUSES.has(run.resultStatus),
+    );
+    steps.push({
+      station: group.station,
+      count: group.runs.length,
+      isReturn,
+      isRejected,
+    });
+  }
+  return steps;
+}
+
+function renderBreadcrumbHtml(runs: readonly TicketTrajectoryRun[]): string {
+  const steps = buildBreadcrumbSteps(runs);
+  if (steps.length === 0) return "";
+  const parts = steps.map((step, index) => {
+    const label =
+      step.station === "unknown" ? "未知站" : (YAMEN_LABELS[step.station] ?? step.station);
+    return [
+      `<span class="breadcrumb-step${step.isRejected ? " breadcrumb-rejected" : ""}"`,
+      ` data-breadcrumb-step="${attr(String(index))}"`,
+      ` data-station="${attr(step.station)}"`,
+      ` data-step-count="${attr(String(step.count))}"`,
+      ` data-return="${step.isReturn ? "true" : "false"}"`,
+      ` data-rejected="${step.isRejected ? "true" : "false"}"`,
+      `>`,
+      step.isReturn ? `<span data-return-marker="true" aria-hidden="true">↩</span>` : "",
+      `<span data-step-label="true">${escapeHtml(label)}</span>`,
+      step.count > 1
+        ? `<span data-step-count-label="true">×${escapeHtml(String(step.count))}</span>`
+        : "",
+      `</span>`,
+    ].join("");
+  });
+  return [
+    `<nav class="breadcrumb" data-breadcrumb="true">`,
+    parts.join(`<span class="breadcrumb-sep" aria-hidden="true">→</span>`),
+    `</nav>`,
+  ].join("");
+}
 
 function columnLabel(key: string): string {
   if (key.startsWith("other:")) return `${key.slice("other:".length)}（非常驻）`;
@@ -895,19 +983,19 @@ async function renderLaneHtml(
   unknownEntries.sort(entryCompare);
   unknownTickets.sort((a, b) => a.issueNumber - b.issueNumber);
 
-  const residentColumns = RESIDENT_COLUMN_ORDER.filter((key) => byPlacement.has(key));
+  // Six resident columns always present (empty → count 0); non-resident only when occupied.
   const otherColumns = [...byPlacement.keys()]
     .filter((key) => key.startsWith("other:"))
     .sort((a, b) => a.localeCompare(b));
   const columnOrder = [
-    ...residentColumns,
+    ...RESIDENT_COLUMN_ORDER.slice(0, -1), // pending…collector
     ...otherColumns,
-    ...(byPlacement.has("done") ? ["done"] : []),
+    "done",
   ];
 
   const columnHtml = columnOrder
     .map((key) => {
-      const group = byPlacement.get(key)!.sort(entryCompare);
+      const group = (byPlacement.get(key) ?? []).slice().sort(entryCompare);
       return [
         `<div class="column column-${attr(key.startsWith("other:") ? "other" : key)}"`,
         ` data-column="${attr(key)}"`,
@@ -986,7 +1074,6 @@ function boardStyles(): string {
   .yamen-fixer { background: color-mix(in srgb, blueviolet 28%, Canvas); }
   .yamen-reviewer { background: color-mix(in srgb, deepskyblue 30%, Canvas); }
   .yamen-judge { background: color-mix(in srgb, palevioletred 30%, Canvas); }
-  .ticket.current-escalate-awaiting .state { color: color-mix(in srgb, darkorange 90%, CanvasText); }
   .unknown-badge { margin-left: auto; }
   .unknown-item { display: list-item; }
   .family {
@@ -1001,15 +1088,43 @@ function boardStyles(): string {
     border-top: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
     padding: 0.55rem 0;
   }
+  /* Five-state top strip: same hue family as the state dot (card stays put, strip changes). */
+  .ticket[data-state-strip="unaccepted-flying"] {
+    border-top: 3px solid color-mix(in srgb, seagreen 80%, CanvasText);
+  }
+  .ticket[data-state-strip="unaccepted-watch"] {
+    border-top: 3px solid color-mix(in srgb, goldenrod 85%, CanvasText);
+  }
+  .ticket[data-state-strip="unaccepted-suspect"] {
+    border-top: 3px solid color-mix(in srgb, tomato 85%, CanvasText);
+  }
+  .ticket[data-state-strip="accepted-awaiting"] {
+    border-top: 3px solid color-mix(in srgb, dodgerblue 75%, CanvasText);
+  }
+  .ticket[data-state-strip="escalate-awaiting"] {
+    border-top: 3px solid color-mix(in srgb, darkorange 90%, CanvasText);
+  }
   .ticket-child { margin-left: 0.75rem; padding-left: 0.5rem; border-left: 2px solid color-mix(in srgb, CanvasText 18%, Canvas); }
   .ticket-title { margin: 0; font-size: 1rem; }
+  .breadcrumb {
+    margin: 0.2rem 0 0.35rem;
+    font-size: 0.82rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.35rem;
+    align-items: center;
+    opacity: 0.92;
+  }
+  .breadcrumb-sep { opacity: 0.55; }
+  .breadcrumb-step[data-rejected="true"] { text-decoration: line-through; opacity: 0.75; }
   .ticket-meta { margin: 0.25rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem 0.85rem; font-size: 0.88rem; }
   .state { font-weight: 600; }
   .ticket.current-unaccepted-flying .state { color: color-mix(in srgb, seagreen 80%, CanvasText); }
-  .ticket.current-unaccepted-watch .state { color: color-mix(in srgb, darkorange 85%, CanvasText); }
+  .ticket.current-unaccepted-watch .state { color: color-mix(in srgb, goldenrod 85%, CanvasText); }
   .ticket.current-unaccepted-suspect .state { color: color-mix(in srgb, tomato 85%, CanvasText); }
   .ticket.current-pending .state { opacity: 0.85; }
   .ticket.current-accepted-awaiting .state { color: color-mix(in srgb, dodgerblue 75%, CanvasText); }
+  .ticket.current-escalate-awaiting .state { color: color-mix(in srgb, darkorange 90%, CanvasText); }
   .ticket.current-closed .state { opacity: 0.75; }
   .blocked-badge {
     display: inline-block;
@@ -1140,26 +1255,40 @@ function boardPageScript(): string {
     if (!familySel || !projectSel) return;
     var book = projectSel.value;
     var openChildParents = {};
+    var childCounts = {};
     var titles = {};
     doc.querySelectorAll('[data-ticket]').forEach(function (a) {
       if ((a.getAttribute('data-book') || '') !== book) return;
       titles[a.getAttribute('data-ticket')] = a.getAttribute('data-title') || '';
       if (a.getAttribute('data-ticket-state') !== 'open') return;
       var p = a.getAttribute('data-parent-issue');
-      if (p) openChildParents[p] = true;
+      if (p) {
+        openChildParents[p] = true;
+        childCounts[p] = (childCounts[p] || 0) + 1;
+      }
     });
     while (familySel.firstChild) familySel.removeChild(familySel.firstChild);
-    function addOpt(value, label) {
+    function addOpt(value, label, familyOption, childCount) {
       var opt = doc.createElement('option');
       opt.value = value;
       opt.textContent = label;
+      if (familyOption != null) {
+        opt.setAttribute('data-family-option', String(familyOption));
+        opt.setAttribute('data-child-count', String(childCount == null ? 0 : childCount));
+      }
       familySel.appendChild(opt);
     }
     addOpt('all', '全部');
     Object.keys(openChildParents)
       .sort(function (a, b) { return Number(a) - Number(b); })
       .forEach(function (p) {
-        addOpt(p, '族 #' + p + (titles[p] ? ' · ' + titles[p] : ''));
+        var n = childCounts[p] || 0;
+        addOpt(
+          p,
+          '族 #' + p + (titles[p] ? ' · ' + titles[p] : '') + ' · 子 ' + n,
+          p,
+          n
+        );
       });
     familySel.value = 'all';
   }
@@ -1299,19 +1428,26 @@ export async function renderFactoryBoardHtml(
     unknownByBook.set(bookSnap.bookKey, lane.unknownTickets);
   }
 
-  // Family dropdown (default book): parents with at least one open direct child.
+  // Family dropdown (default book): parents with at least one open direct child + mechanical child count.
   const defaultBookSnap = view.snapshot.books.find((b) => b.bookKey === defaultBookKey);
-  const familyOptions: Array<{ issueNumber: number; title: string }> = [];
+  const familyOptions: Array<{ issueNumber: number; title: string; childCount: number }> = [];
   if (defaultBookSnap) {
     const byNumber = new Map(defaultBookSnap.tickets.map((t) => [t.issueNumber, t]));
-    const parents = new Set<number>();
+    const openChildCountByParent = new Map<number, number>();
     for (const t of defaultBookSnap.tickets) {
-      if (t.state === "open" && t.parentIssueNumber !== null && byNumber.has(t.parentIssueNumber)) {
-        parents.add(t.parentIssueNumber);
-      }
+      if (t.state !== "open" || t.parentIssueNumber === null) continue;
+      if (!byNumber.has(t.parentIssueNumber)) continue;
+      openChildCountByParent.set(
+        t.parentIssueNumber,
+        (openChildCountByParent.get(t.parentIssueNumber) ?? 0) + 1,
+      );
     }
-    for (const n of [...parents].sort((a, b) => a - b)) {
-      familyOptions.push({ issueNumber: n, title: byNumber.get(n)?.title ?? "" });
+    for (const n of [...openChildCountByParent.keys()].sort((a, b) => a - b)) {
+      familyOptions.push({
+        issueNumber: n,
+        title: byNumber.get(n)?.title ?? "",
+        childCount: openChildCountByParent.get(n) ?? 0,
+      });
     }
   }
 
@@ -1325,7 +1461,7 @@ export async function renderFactoryBoardHtml(
     `<option value="all" selected>全部</option>`,
     ...familyOptions.map(
       (f) =>
-        `<option value="${attr(String(f.issueNumber))}">族 #${escapeHtml(String(f.issueNumber))} · ${escapeHtml(f.title)}</option>`,
+        `<option value="${attr(String(f.issueNumber))}" data-family-option="${attr(String(f.issueNumber))}" data-child-count="${attr(String(f.childCount))}">族 #${escapeHtml(String(f.issueNumber))} · ${escapeHtml(f.title)} · 子 ${escapeHtml(String(f.childCount))}</option>`,
     ),
   ].join("");
 

@@ -7,9 +7,11 @@
  * Assertions read machine data-* keys only (anchoring constitution).
  */
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import test from "node:test";
@@ -189,12 +191,17 @@ function topLevelLaneEntries(html: string, bookKey: string): Array<Record<string
   return filtered.map((e) => e.attrs);
 }
 
-/** Minimal Element surface used by the production board sort script. */
+/**
+ * Singular fake-DOM harness for the production board page script
+ * (sort + project/family filters + unknown badge). One surface for every page-script test.
+ */
 class BoardSortElement {
   nodeType = 1;
   childNodes: BoardSortElement[] = [];
   parentNode: BoardSortElement | null = null;
   value = "";
+  textContent = "";
+  readonly style: Record<string, string> = {};
   private readonly attrs: Record<string, string>;
   private readonly listeners = new Map<string, Array<() => void>>();
 
@@ -206,12 +213,20 @@ class BoardSortElement {
     return this.childNodes;
   }
 
+  get firstChild(): BoardSortElement | null {
+    return this.childNodes[0] ?? null;
+  }
+
   getAttribute(name: string): string | null {
     return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name]! : null;
   }
 
   hasAttribute(name: string): boolean {
     return Object.prototype.hasOwnProperty.call(this.attrs, name);
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attrs[name] = value;
   }
 
   appendChild(child: BoardSortElement): BoardSortElement {
@@ -225,6 +240,15 @@ class BoardSortElement {
     return child;
   }
 
+  removeChild(child: BoardSortElement): BoardSortElement {
+    const idx = this.childNodes.indexOf(child);
+    if (idx >= 0) {
+      this.childNodes.splice(idx, 1);
+      child.parentNode = null;
+    }
+    return child;
+  }
+
   addEventListener(type: string, fn: () => void): void {
     const list = this.listeners.get(type) ?? [];
     list.push(fn);
@@ -233,6 +257,45 @@ class BoardSortElement {
 
   dispatchEvent(type: string): void {
     for (const fn of this.listeners.get(type) ?? []) fn();
+  }
+
+  private matches(selector: string): boolean {
+    const m = selector.match(/^\[([a-z0-9-]+)(?:="([^"]*)")?\]$/);
+    if (!m) return false;
+    if (!this.hasAttribute(m[1]!)) return false;
+    return m[2] === undefined || this.getAttribute(m[1]!) === m[2];
+  }
+
+  private walk(predicate: (el: BoardSortElement) => boolean, out: BoardSortElement[]): void {
+    for (const child of this.childNodes) {
+      if (predicate(child)) out.push(child);
+      child.walk(predicate, out);
+    }
+  }
+
+  querySelector(selector: string): BoardSortElement | null {
+    const out: BoardSortElement[] = [];
+    this.walk((el) => el.matches(selector), out);
+    return out[0] ?? null;
+  }
+
+  querySelectorAll(selector: string): BoardSortElement[] {
+    const out: BoardSortElement[] = [];
+    this.walk((el) => el.matches(selector), out);
+    return out;
+  }
+}
+
+class BoardSortDocument {
+  readonly root = new BoardSortElement();
+  createElement(_tag: string): BoardSortElement {
+    return new BoardSortElement();
+  }
+  querySelector(selector: string): BoardSortElement | null {
+    return this.root.querySelector(selector);
+  }
+  querySelectorAll(selector: string): BoardSortElement[] {
+    return this.root.querySelectorAll(selector);
   }
 }
 
@@ -3150,104 +3213,58 @@ function acceptedJudgeFinal(ts: string, verdict: unknown, costTotal = 0.01, tota
   ];
 }
 
-/** Balanced <div> chunk starting at the div whose open tag carries `marker`. */
-function divChunk(html: string, marker: string): string {
-  const markerAt = html.indexOf(marker);
-  assert.ok(markerAt >= 0, `missing container ${marker}`);
-  const divStart = html.lastIndexOf("<div", markerAt);
-  assert.ok(divStart >= 0 && divStart <= markerAt, `container ${marker} must be a <div>`);
-  const contentStart = html.indexOf(">", markerAt) + 1;
-  let depth = 1;
-  let i = contentStart;
-  while (i < html.length) {
-    const nextOpen = html.indexOf("<div", i);
-    const nextClose = html.indexOf("</div>", i);
-    assert.ok(nextClose >= 0, `unbalanced <div> after ${marker}`);
-    if (nextOpen >= 0 && nextOpen < nextClose) {
-      depth += 1;
-      i = nextOpen + 4;
-      continue;
-    }
-    depth -= 1;
-    if (depth === 0) return html.slice(contentStart, nextClose);
-    i = nextClose + 6;
-  }
-  throw new Error(`unbalanced <div> after ${marker}`);
-}
-
-/** Balanced <section> chunk for the family section rooted at `parentIssue`. */
-function familySectionChunk(html: string, bookKey: string, parentIssue: number): string {
-  const marker = `data-parent="${parentIssue}"`;
-  const markerAt = html.indexOf(marker);
-  assert.ok(markerAt >= 0, `missing family section ${parentIssue}`);
-  const sectionStart = html.lastIndexOf("<section", markerAt);
-  assert.ok(sectionStart >= 0, `family ${parentIssue} must be a <section>`);
-  const openTag = html.slice(sectionStart, html.indexOf(">", markerAt) + 1);
-  assert.ok(openTag.includes(`data-book="${bookKey}"`), `family ${parentIssue} in book ${bookKey}`);
-  const contentStart = html.indexOf(">", markerAt) + 1;
-  let depth = 1;
-  let i = contentStart;
-  while (i < html.length) {
-    const nextOpen = html.indexOf("<section", i);
-    const nextClose = html.indexOf("</section>", i);
-    assert.ok(nextClose >= 0, `unbalanced <section> in family ${parentIssue}`);
-    if (nextOpen >= 0 && nextOpen < nextClose) {
-      depth += 1;
-      i = nextOpen + 8;
-      continue;
-    }
-    depth -= 1;
-    if (depth === 0) return html.slice(contentStart, nextClose);
-    i = nextClose + 10;
-  }
-  throw new Error(`unbalanced <section> in family ${parentIssue}`);
-}
-
-/** Lane chunk (data-lane-tickets container content) for one book. */
-function laneTicketsChunk(html: string, bookKey: string): string {
-  return divChunk(html, `data-lane-tickets="${bookKey}"`);
-}
-
-/** Column container keys in lane document order. */
+/** Column container keys for one book, in document order (data-* only — no tag/nest coupling). */
 function laneColumnOrder(html: string, bookKey: string): string[] {
-  const chunk = laneTicketsChunk(html, bookKey);
   const order: string[] = [];
-  for (const m of chunk.matchAll(/<div\b[^>]*\bdata-column="([^"]+)"[^>]*\bdata-book="([^"]+)"[^>]*>/g)) {
-    if (m[2] === bookKey) order.push(m[1]!);
+  for (const el of elementsWith(html, "data-column")) {
+    if (el["data-book"] === bookKey && el["data-column"]) order.push(el["data-column"]);
   }
   return order;
 }
 
-/** Entry identity order inside one column container (ticket / family root / cluster). */
+/** Column-level entry identities (standalone ticket / family root / cluster), skipping nested cards. */
 function columnEntryOrder(html: string, bookKey: string, columnKey: string): string[] {
-  const chunk = divChunk(html, `data-column="${columnKey}"`);
-  const out: Array<{ index: number; id: string }> = [];
-  for (const m of chunk.matchAll(/<(article|section|div)\b[^>]*\bdata-placement="[^"]*"[^>]*>/g)) {
-    const tag = m[0]!;
-    const attrs = attrsFromOpenTag(tag);
-    // Cluster/family member cards are nested — the cluster or family is the column entry.
-    if ((attrs.class ?? "").split(/\s+/).includes("ticket-child")) continue;
-    const id =
-      attrs["data-ticket"] ??
-      attrs["data-parent"] ??
-      attrs["data-family-cluster"] ??
-      "?";
-    out.push({ index: m.index ?? 0, id });
+  const out: string[] = [];
+  // Walk open tags in document order; column-level entries carry data-placement and are not nested.
+  for (const m of html.matchAll(/<[a-zA-Z][^>]*\bdata-placement="[^"]*"[^>]*>/g)) {
+    const attrs = attrsFromOpenTag(m[0]!);
+    if (attrs["data-book"] !== bookKey) continue;
+    if (attrs["data-placement"] !== columnKey) continue;
+    if (attrs["data-nested"] === "true") continue;
+    if (attrs["data-family"] === "true") {
+      out.push(attrs["data-parent"] ?? "?");
+      continue;
+    }
+    if (attrs["data-family-cluster"] !== undefined) {
+      out.push(attrs["data-family-cluster"]!);
+      continue;
+    }
+    if (attrs["data-ticket"] !== undefined) {
+      out.push(attrs["data-ticket"]!);
+    }
   }
-  out.sort((a, b) => a.index - b.index);
-  return out.map((e) => e.id);
-}
-
-function articleClass(html: string, issueNumber: number): string {
-  const m = html.match(new RegExp(`<article\\b[^>]*\\bdata-ticket="${issueNumber}"[^>]*>`));
-  assert.ok(m, `article for #${issueNumber}`);
-  return attrsFromOpenTag(m[0]).class ?? "";
+  return out;
 }
 
 function placementOf(html: string, bookKey: string, issueNumber: number): string | undefined {
   return elementsWith(html, "data-ticket").find(
     (t) => t["data-book"] === bookKey && t["data-ticket"] === String(issueNumber),
   )?.["data-placement"];
+}
+
+/** Breadcrumb steps for one ticket, ordered by data-breadcrumb-step. */
+function breadcrumbStepsOf(html: string, issueNumber: number): Array<Record<string, string>> {
+  const card = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === String(issueNumber));
+  assert.ok(card, `ticket #${issueNumber}`);
+  // Scope steps from this ticket marker until the next data-ticket marker.
+  const marker = `data-ticket="${issueNumber}"`;
+  const start = html.indexOf(marker);
+  assert.ok(start >= 0, `ticket marker #${issueNumber}`);
+  const after = html.slice(start);
+  const next = after.slice(marker.length).search(/data-ticket="\d+"/);
+  const scope = next >= 0 ? after.slice(0, marker.length + next) : after;
+  const steps = elementsWith(scope, "data-breadcrumb-step");
+  return steps.sort((a, b) => Number(a["data-breadcrumb-step"]) - Number(b["data-breadcrumb-step"]));
 }
 
 test("kanban placement totality: every ticket lands in its yamen column or the unknown set", async () => {
@@ -3447,7 +3464,7 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
     const t3 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "3");
     assert.equal(t3?.["data-current-state"], "accepted-awaiting");
 
-    // Fixed column order; non-resident columns appear only when occupied, before 已完成.
+    // Six resident columns always present; non-resident only when occupied, before 已完成.
     assert.deepEqual(laneColumnOrder(html, "roles"), [
       "pending",
       "court",
@@ -3457,6 +3474,12 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       "other:auditor",
       "done",
     ]);
+    // Empty resident columns still render with mechanical zero count.
+    const columns = elementsWith(html, "data-column").filter((c) => c["data-book"] === "roles");
+    // Every resident key is present (this fixture fills them all except none empty here).
+    for (const key of ["pending", "court", "coder", "marshal", "collector", "done"]) {
+      assert.ok(columns.some((c) => c["data-column"] === key), `resident column ${key} always present`);
+    }
 
     // Column-internal order: 在飞 → 观察 → 疑挂 → 已交卷(escalate 同档), 同档末次活动降序.
     assert.deepEqual(columnEntryOrder(html, "roles", "coder"), ["5", "13"], "flying coder tickets: newest activity first");
@@ -3556,35 +3579,29 @@ test("kanban completed column: family clusters, open-root extraction, closedAt-d
     assert.equal(family20["data-closed-count"], "1");
     assert.equal(Number(family20["data-cost-usd"]), 2.5, "family aggregate still covers open + closed descendants");
 
-    // Open child #21 is an independent card placed by its own latest run.
+    // Open child #21 is an independent card placed by its own latest run (not nested).
     assert.equal(placementOf(html, "roles", 21), "coder");
-    const fam20Chunk = familySectionChunk(html, "roles", 20);
-    assert.ok(
-      !fam20Chunk.includes('data-ticket="21"'),
-      "open child card is independent, not nested in the family section",
-    );
+    const t21 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "21");
+    assert.ok(t21);
+    assert.notEqual(t21["data-nested"], "true", "open child card is independent, not nested");
 
     // Closed child #22 is extracted to the 已完成 cluster of its family (父开子关 → 族簇嵌套).
     assert.equal(placementOf(html, "roles", 22), "done");
     const cluster = elementsWith(html, "data-family-cluster").find((c) => c["data-family-cluster"] === "20");
     assert.ok(cluster, "completed family cluster for open-root family");
-    const clusterChunk = divChunk(html, `data-family-cluster="20"`);
-    assert.ok(clusterChunk.includes('data-ticket="22"'), "closed child card nested in the cluster");
-    assert.ok(articleClass(html, 22).split(/\s+/).includes("ticket-child"), "cluster child keeps nested card class");
-    assert.equal(placementOf(html, "roles", 22), "done");
-    assert.equal(
-      elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "22")?.["data-parent-issue"],
-      "20",
-      "extracted cluster child keeps its native parent edge",
-    );
+    const t22 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "22");
+    assert.ok(t22);
+    assert.equal(t22["data-nested"], "true", "cluster child is mechanically nested");
+    assert.equal(t22["data-parent-issue"], "20", "extracted cluster child keeps its native parent edge");
 
     // Closed-root family travels whole into 已完成 (父卡置顶、子卡缩进嵌套).
     const family30 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "30");
     assert.ok(family30);
     assert.equal(family30["data-placement"], "done");
-    const fam30Chunk = familySectionChunk(html, "roles", 30);
-    assert.ok(fam30Chunk.includes('data-ticket="31"'), "closed-root family nests its closed child");
-    assert.ok(articleClass(html, 31).split(/\s+/).includes("ticket-child"), "closed-root child stays nested");
+    const t31 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "31");
+    assert.ok(t31, "closed-root family nests its closed child");
+    assert.equal(t31["data-nested"], "true", "closed-root child stays nested");
+    assert.equal(t31["data-parent-issue"], "30");
 
     // 已完成 column order: closedAt desc (cluster 11:00 → family30 10:00 → single 08:00).
     assert.deepEqual(columnEntryOrder(html, "roles", "done"), ["20", "30", "40"]);
@@ -4004,19 +4021,34 @@ test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown 
     assert.equal(placementOf(html, "roles", 127), "marshal");
     const t127 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "127");
     assert.equal(t127?.["data-parent-issue"], "78");
+    assert.notEqual(t127?.["data-nested"], "true", "open child card is not nested");
     assert.ok(
       elementsWith(html, "data-family-badge").some(
         (b) => b["data-family-badge"] === "78" && b["data-book"] === "roles",
       ),
       "family badge marks independent child cards",
     );
-    assert.ok(
-      !familySectionChunk(html, "roles", 78).includes('data-ticket="127"'),
-      "open child card is not nested in the family section",
-    );
 
-    // Column order for this authentic set: court before marshal; no unknown column.
-    assert.deepEqual(laneColumnOrder(html, "roles"), ["court", "marshal"]);
+    // Six resident columns always; no unknown column; court and marshal occupied.
+    assert.deepEqual(laneColumnOrder(html, "roles"), [
+      "pending",
+      "court",
+      "coder",
+      "marshal",
+      "collector",
+      "done",
+    ]);
+    const colByKey = new Map(
+      elementsWith(html, "data-column")
+        .filter((c) => c["data-book"] === "roles")
+        .map((c) => [c["data-column"], c["data-column-count"]]),
+    );
+    assert.equal(colByKey.get("pending"), "0");
+    assert.equal(colByKey.get("coder"), "0");
+    assert.equal(colByKey.get("collector"), "0");
+    assert.equal(colByKey.get("done"), "0");
+    assert.ok(Number(colByKey.get("court")) >= 1);
+    assert.ok(Number(colByKey.get("marshal")) >= 1);
     // Marshal column-internal: 在飞/观察/疑挂 band floats above 已交卷.
     const marshalOrder = columnEntryOrder(html, "roles", "marshal");
     assert.ok(marshalOrder.includes("104") && marshalOrder.includes("127"));
@@ -4033,119 +4065,11 @@ test("kanban authentic-cut fixtures #45/#78/#104/#140/#127: placements, unknown 
 });
 
 // ---------------------------------------------------------------------------
-// #162 fake-DOM — production page script: project/family filters, unknown badge,
-// per-column sort (the same script body the browser runs)
+// #162 fake-DOM — production page script via the singular BoardSortElement harness
 // ---------------------------------------------------------------------------
 
-class BoardPageElement {
-  nodeType = 1;
-  childNodes: BoardPageElement[] = [];
-  parentNode: BoardPageElement | null = null;
-  value = "";
-  textContent = "";
-  readonly style: Record<string, string> = {};
-  private readonly attrs: Record<string, string>;
-  private readonly listeners = new Map<string, Array<() => void>>();
-
-  constructor(attrs: Record<string, string> = {}) {
-    this.attrs = { ...attrs };
-  }
-
-  get children(): BoardPageElement[] {
-    return this.childNodes;
-  }
-
-  get firstChild(): BoardPageElement | null {
-    return this.childNodes[0] ?? null;
-  }
-
-  getAttribute(name: string): string | null {
-    return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name]! : null;
-  }
-
-  hasAttribute(name: string): boolean {
-    return Object.prototype.hasOwnProperty.call(this.attrs, name);
-  }
-
-  setAttribute(name: string, value: string): void {
-    this.attrs[name] = value;
-  }
-
-  appendChild(child: BoardPageElement): BoardPageElement {
-    if (child.parentNode) {
-      const sibs = child.parentNode.childNodes;
-      const idx = sibs.indexOf(child);
-      if (idx >= 0) sibs.splice(idx, 1);
-    }
-    child.parentNode = this;
-    this.childNodes.push(child);
-    return child;
-  }
-
-  removeChild(child: BoardPageElement): BoardPageElement {
-    const idx = this.childNodes.indexOf(child);
-    if (idx >= 0) {
-      this.childNodes.splice(idx, 1);
-      child.parentNode = null;
-    }
-    return child;
-  }
-
-  addEventListener(type: string, fn: () => void): void {
-    const list = this.listeners.get(type) ?? [];
-    list.push(fn);
-    this.listeners.set(type, list);
-  }
-
-  dispatchEvent(type: string): void {
-    for (const fn of this.listeners.get(type) ?? []) fn();
-  }
-
-  private matches(selector: string): boolean {
-    const m = selector.match(/^\[([a-z0-9-]+)(?:="([^"]*)")?\]$/);
-    if (!m) return false;
-    if (!this.hasAttribute(m[1]!)) return false;
-    return m[2] === undefined || this.getAttribute(m[1]!) === m[2];
-  }
-
-  private walk(predicate: (el: BoardPageElement) => boolean, out: BoardPageElement[]): void {
-    for (const child of this.childNodes) {
-      if (predicate(child)) out.push(child);
-      child.walk(predicate, out);
-    }
-  }
-
-  querySelector(selector: string): BoardPageElement | null {
-    const out: BoardPageElement[] = [];
-    this.walk((el) => el.matches(selector), out);
-    return out[0] ?? null;
-  }
-
-  querySelectorAll(selector: string): BoardPageElement[] {
-    const out: BoardPageElement[] = [];
-    this.walk((el) => el.matches(selector), out);
-    return out;
-  }
-}
-
-class BoardPageDocument {
-  readonly root = new BoardPageElement();
-  createElement(_tag: string): BoardPageElement {
-    return new BoardPageElement();
-  }
-  querySelector(selector: string): BoardPageElement | null {
-    return this.root.querySelector(selector);
-  }
-  querySelectorAll(selector: string): BoardPageElement[] {
-    return this.root.querySelectorAll(selector);
-  }
-}
-
-function pageEl(
-  attrs: Record<string, string>,
-  ...children: BoardPageElement[]
-): BoardPageElement {
-  const el = new BoardPageElement(attrs);
+function pageEl(attrs: Record<string, string>, ...children: BoardSortElement[]): BoardSortElement {
+  const el = new BoardSortElement(attrs);
   for (const child of children) el.appendChild(child);
   return el;
 }
@@ -4158,14 +4082,14 @@ function productionPageScriptBody(html: string): string {
 }
 
 type KanbanFakePage = {
-  document: BoardPageDocument;
-  sortSel: BoardPageElement;
-  projectSel: BoardPageElement;
-  familySel: BoardPageElement;
-  badge: BoardPageElement;
-  badgeSummary: BoardPageElement;
-  lanes: Record<string, BoardPageElement>;
-  columns: Record<string, BoardPageElement>;
+  document: BoardSortDocument;
+  sortSel: BoardSortElement;
+  projectSel: BoardSortElement;
+  familySel: BoardSortElement;
+  badge: BoardSortElement;
+  badgeSummary: BoardSortElement;
+  lanes: Record<string, BoardSortElement>;
+  columns: Record<string, BoardSortElement>;
 };
 
 /**
@@ -4174,25 +4098,25 @@ type KanbanFakePage = {
  * unknown 9 (roles) and unknown 26 (orch).
  */
 function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
-  const document = new BoardPageDocument();
+  const document = new BoardSortDocument();
 
-  const sortSel = new BoardPageElement({ "data-sort-control": "true" });
+  const sortSel = new BoardSortElement({ "data-sort-control": "true" });
   sortSel.value = "ticket-asc";
-  const projectSel = new BoardPageElement({ "data-project-filter": "true" });
+  const projectSel = new BoardSortElement({ "data-project-filter": "true" });
   projectSel.value = "roles";
-  const familySel = new BoardPageElement({ "data-family-filter": "true" });
-  familySel.appendChild(Object.assign(new BoardPageElement(), { value: "all" }));
+  const familySel = new BoardSortElement({ "data-family-filter": "true" });
+  familySel.appendChild(Object.assign(new BoardSortElement(), { value: "all" }));
   familySel.value = "all";
-  const badgeSummary = new BoardPageElement({ "data-unknown-badge-summary": "true" });
-  const unknownItem9 = new BoardPageElement({ "data-unknown-item": "9", "data-book": "roles" });
-  const unknownItem26 = new BoardPageElement({ "data-unknown-item": "26", "data-book": "orch" });
+  const badgeSummary = new BoardSortElement({ "data-unknown-badge-summary": "true" });
+  const unknownItem9 = new BoardSortElement({ "data-unknown-item": "9", "data-book": "roles" });
+  const unknownItem26 = new BoardSortElement({ "data-unknown-item": "26", "data-book": "orch" });
   const badge = pageEl(
     { "data-unknown-badge": "true", "data-unknown-count": "1" },
     badgeSummary,
     pageEl({}, unknownItem9, unknownItem26),
   );
 
-  const article2 = new BoardPageElement({
+  const article2 = new BoardSortElement({
     "data-ticket": "2",
     "data-book": "roles",
     "data-placement": "pending",
@@ -4202,10 +4126,10 @@ function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
   });
   const pendingRoles = pageEl(
     { "data-column": "pending", "data-book": "roles", "data-column-count": "1" },
-    pageEl({}, new BoardPageElement({ "data-column-count-label": "true" })),
+    pageEl({}, new BoardSortElement({ "data-column-count-label": "true" })),
     article2,
   );
-  const family78 = new BoardPageElement({
+  const family78 = new BoardSortElement({
     "data-family": "true",
     "data-parent": "78",
     "data-book": "roles",
@@ -4214,10 +4138,10 @@ function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
   });
   const courtRoles = pageEl(
     { "data-column": "court", "data-book": "roles", "data-column-count": "1" },
-    pageEl({}, new BoardPageElement({ "data-column-count-label": "true" })),
+    pageEl({}, new BoardSortElement({ "data-column-count-label": "true" })),
     family78,
   );
-  const article127 = new BoardPageElement({
+  const article127 = new BoardSortElement({
     "data-ticket": "127",
     "data-book": "roles",
     "data-placement": "marshal",
@@ -4226,7 +4150,7 @@ function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
     "data-title": "hot child",
     "data-cost-usd": "5",
   });
-  const article104 = new BoardPageElement({
+  const article104 = new BoardSortElement({
     "data-ticket": "104",
     "data-book": "roles",
     "data-placement": "marshal",
@@ -4236,11 +4160,11 @@ function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
   });
   const marshalRoles = pageEl(
     { "data-column": "marshal", "data-book": "roles", "data-column-count": "2" },
-    pageEl({}, new BoardPageElement({ "data-column-count-label": "true" })),
+    pageEl({}, new BoardSortElement({ "data-column-count-label": "true" })),
     article104,
     article127,
   );
-  const article9 = new BoardPageElement({
+  const article9 = new BoardSortElement({
     "data-ticket": "9",
     "data-book": "roles",
     "data-placement": "unknown",
@@ -4258,7 +4182,7 @@ function buildKanbanFakePage(scriptBody: string): KanbanFakePage {
   );
   const laneRoles = pageEl({ "data-lane": "roles", "data-book": "roles" }, laneTicketsRoles);
 
-  const article26 = new BoardPageElement({
+  const article26 = new BoardSortElement({
     "data-ticket": "26",
     "data-book": "orch",
     "data-placement": "unknown",
@@ -4370,9 +4294,15 @@ test("kanban page script: project and family filters drive lanes, badge count, c
 
     // Select family 78: parent + children stay, everything else hides; counts follow.
     familySelRebuild(page);
+    // After rebuild, family options carry mechanical child counts (data-family-option / data-child-count).
+    const opt78 = page.familySel.children.find((o) => o.value === "78");
+    assert.ok(opt78, "family option for open-child parent");
+    assert.equal(opt78.getAttribute("data-family-option"), "78");
+    assert.equal(opt78.getAttribute("data-child-count"), "1", "open-parent option carries child count");
+
     page.familySel.value = "78";
     page.familySel.dispatchEvent("change");
-    const visible = (el: BoardPageElement) => el.style.display !== "none";
+    const visible = (el: BoardSortElement) => el.style.display !== "none";
     const marshalCards = page.columns["marshal"]!.children.filter((el) => el.hasAttribute("data-ticket"));
     assert.ok(visible(marshalCards.find((el) => el.getAttribute("data-ticket") === "127")!), "child of selected family stays");
     assert.ok(!visible(marshalCards.find((el) => el.getAttribute("data-ticket") === "104")!), "unrelated card hides");
@@ -4403,6 +4333,10 @@ test("kanban page script: project and family filters drive lanes, badge count, c
     page.projectSel.dispatchEvent("change");
     assert.equal(page.lanes["roles"]!.style.display, "");
     assert.deepEqual(familyValues(), ["all", "78"], "roles family options rebuilt from card facts");
+    assert.equal(
+      page.familySel.children.find((o) => o.value === "78")?.getAttribute("data-child-count"),
+      "1",
+    );
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -4414,3 +4348,508 @@ function familySelRebuild(page: KanbanFakePage): void {
   page.projectSel.value = current;
   page.projectSel.dispatchEvent("change");
 }
+
+// ---------------------------------------------------------------------------
+// #162 presentation contract — breadcrumb, six resident columns, state strip,
+// family option child count (S2 true entry; data-* oracles only)
+// ---------------------------------------------------------------------------
+
+function findChromeExecutable(): string | null {
+  const candidates = [
+    join(
+      homedir(),
+      "Library/Caches/ms-playwright/chromium-1234/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    ),
+    join(
+      homedir(),
+      "Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    ),
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  ];
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  return null;
+}
+
+async function freePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const s = createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const addr = s.address();
+      if (!addr || typeof addr === "string") {
+        s.close();
+        reject(new Error("no port"));
+        return;
+      }
+      const port = addr.port;
+      s.close((err) => (err ? reject(err) : resolve(port)));
+    });
+  });
+}
+
+/**
+ * Headless Chrome computed-style probe for ticket top strips.
+ * Locates cards by data-ticket and reads border-top + data-state-strip.
+ */
+async function ticketStripComputedStyles(
+  html: string,
+  issueNumbers: readonly number[],
+): Promise<Map<number, { borderTopWidth: string; borderTopColor: string; stateStrip: string | null }>> {
+  const chrome = findChromeExecutable();
+  assert.ok(chrome, "Chrome/Chromium required for state-strip computed-style proof");
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-strip-"));
+  const htmlPath = join(workspace, "board.html");
+  await writeFile(htmlPath, html, "utf8");
+  const port = await freePort();
+  const userDataDir = join(workspace, "chrome-profile");
+  await mkdir(userDataDir, { recursive: true });
+  const chromeProc = spawn(
+    chrome,
+    [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${userDataDir}`,
+      "--remote-allow-origins=*",
+      "--headless=new",
+      "--disable-gpu",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "about:blank",
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  try {
+    // Wait for DevTools endpoint.
+    let version: { webSocketDebuggerUrl?: string } | null = null;
+    for (let i = 0; i < 50; i += 1) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+        if (res.ok) {
+          version = (await res.json()) as { webSocketDebuggerUrl?: string };
+          if (version.webSocketDebuggerUrl) break;
+        }
+      } catch {
+        // retry
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(version?.webSocketDebuggerUrl, "Chrome DevTools endpoint did not come up");
+
+    const ws = new WebSocket(version.webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("CDP websocket failed")), { once: true });
+    });
+
+    let nextId = 1;
+    const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+    ws.addEventListener("message", (ev) => {
+      const msg = JSON.parse(String(ev.data)) as {
+        id?: number;
+        result?: unknown;
+        error?: { message?: string };
+        method?: string;
+        params?: { sessionId?: string; message?: string };
+      };
+      // Flatten session-target events if any
+      if (msg.method === "Target.receivedMessageFromTarget" && msg.params?.message) {
+        const inner = JSON.parse(msg.params.message) as {
+          id?: number;
+          result?: unknown;
+          error?: { message?: string };
+        };
+        if (inner.id !== undefined && pending.has(inner.id)) {
+          const p = pending.get(inner.id)!;
+          pending.delete(inner.id);
+          if (inner.error) p.reject(new Error(inner.error.message ?? "cdp error"));
+          else p.resolve(inner.result);
+        }
+        return;
+      }
+      if (msg.id !== undefined && pending.has(msg.id)) {
+        const p = pending.get(msg.id)!;
+        pending.delete(msg.id);
+        if (msg.error) p.reject(new Error(msg.error.message ?? "cdp error"));
+        else p.resolve(msg.result);
+      }
+    });
+
+    const send = (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+      const id = nextId++;
+      const payload = JSON.stringify({ id, method, params });
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        ws.send(payload);
+      });
+    };
+
+    // Attach to the only available target (browser-level targets list).
+    const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as Array<{
+      id: string;
+      type: string;
+      webSocketDebuggerUrl?: string;
+    }>;
+    const pageTarget = targets.find((t) => t.type === "page") ?? targets[0];
+    assert.ok(pageTarget?.webSocketDebuggerUrl, "no page target");
+
+    // Prefer a dedicated page socket for simpler command routing.
+    ws.close();
+    const pageWs = new WebSocket(pageTarget.webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => {
+      pageWs.addEventListener("open", () => resolve(), { once: true });
+      pageWs.addEventListener("error", () => reject(new Error("page CDP failed")), { once: true });
+    });
+    const pagePending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+    pageWs.addEventListener("message", (ev) => {
+      const msg = JSON.parse(String(ev.data)) as {
+        id?: number;
+        result?: unknown;
+        error?: { message?: string };
+      };
+      if (msg.id !== undefined && pagePending.has(msg.id)) {
+        const p = pagePending.get(msg.id)!;
+        pagePending.delete(msg.id);
+        if (msg.error) p.reject(new Error(msg.error.message ?? "cdp error"));
+        else p.resolve(msg.result);
+      }
+    });
+    const pageSend = (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        pagePending.set(id, { resolve, reject });
+        pageWs.send(JSON.stringify({ id, method, params }));
+      });
+    };
+
+    await pageSend("Page.enable");
+    const fileUrl = `file://${htmlPath}`;
+    await pageSend("Page.navigate", { url: fileUrl });
+    // Wait for load
+    await new Promise((r) => setTimeout(r, 200));
+    await pageSend("Runtime.enable");
+
+    const expression = `(() => {
+      const want = ${JSON.stringify(issueNumbers.map(String))};
+      const out = {};
+      for (const n of want) {
+        const el = document.querySelector('[data-ticket="' + n + '"]');
+        if (!el) { out[n] = null; continue; }
+        const cs = getComputedStyle(el);
+        out[n] = {
+          borderTopWidth: cs.borderTopWidth,
+          borderTopColor: cs.borderTopColor,
+          stateStrip: el.getAttribute('data-state-strip'),
+        };
+      }
+      return out;
+    })()`;
+    const evalResult = (await pageSend("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+    })) as { result?: { value?: Record<string, { borderTopWidth: string; borderTopColor: string; stateStrip: string | null } | null> } };
+    const value = evalResult.result?.value ?? {};
+    const map = new Map<number, { borderTopWidth: string; borderTopColor: string; stateStrip: string | null }>();
+    for (const n of issueNumbers) {
+      const row = value[String(n)];
+      assert.ok(row, `ticket #${n} missing in computed-style probe`);
+      map.set(n, row);
+    }
+    pageWs.close();
+    return map;
+  } finally {
+    chromeProc.kill("SIGKILL");
+    await rm(workspace, { recursive: true, force: true });
+  }
+}
+
+test("kanban presentation: six resident columns always, empty count 0, other on demand", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-six-cols-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    // Only a pending ticket — five other resident columns must still appear empty.
+    await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 1, title: "only pending", state: "open" })],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+    assert.deepEqual(laneColumnOrder(html, "roles"), [
+      "pending",
+      "court",
+      "coder",
+      "marshal",
+      "collector",
+      "done",
+    ]);
+    const counts = new Map(
+      elementsWith(html, "data-column")
+        .filter((c) => c["data-book"] === "roles")
+        .map((c) => [c["data-column"]!, c["data-column-count"]!]),
+    );
+    assert.equal(counts.get("pending"), "1");
+    for (const key of ["court", "coder", "marshal", "collector", "done"]) {
+      assert.equal(counts.get(key), "0", `${key} empty resident column keeps count 0`);
+    }
+    assert.ok(!counts.has("other:auditor"), "non-resident column absent when empty");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban presentation: ledger-order breadcrumb collapses, marks return and rejected", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-breadcrumb-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const nowMs = now.getTime();
+
+    // judge continue, judge continue (collapse ×2 rejected), coder done, judge converged (return)
+    await writeRunSession(
+      ledgerDir,
+      7,
+      "judge-r1@x",
+      [
+        sessionHeader("2026-08-05T08:00:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T08:05:00.000Z",
+          {
+            judgeStatus: "continue",
+            fix: { summary: "fix" },
+            classes: [{ name: "c", owner: "o", boundary: "b", disposition: "d" }],
+          },
+          0.01,
+          10,
+        ),
+      ],
+      { mtime: new Date(nowMs - 14_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir,
+      7,
+      "judge-r2@x",
+      [
+        sessionHeader("2026-08-05T09:00:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T09:05:00.000Z",
+          {
+            judgeStatus: "continue",
+            fix: { summary: "fix2" },
+            classes: [{ name: "c2", owner: "o", boundary: "b", disposition: "d" }],
+          },
+          0.02,
+          20,
+        ),
+      ],
+      { mtime: new Date(nowMs - 10_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir,
+      7,
+      "coder-1@x",
+      [sessionHeader("2026-08-05T10:00:00.000Z"), ...acceptedCoderFinal("2026-08-05T10:05:00.000Z", 0.03, 30)],
+      { mtime: new Date(nowMs - 7_000_000) },
+    );
+    await writeRunSession(
+      ledgerDir,
+      7,
+      "judge-final@x",
+      [
+        sessionHeader("2026-08-05T11:00:00.000Z"),
+        ...acceptedJudgeFinal("2026-08-05T11:05:00.000Z", { judgeStatus: "converged" }, 0.04, 40),
+      ],
+      { mtime: new Date(nowMs - 3_000_000) },
+    );
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [ticket({ issueNumber: 7, title: "loop", state: "open" })],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    const steps = breadcrumbStepsOf(html, 7);
+    assert.equal(steps.length, 3, "judge×2 + coder + judge → 3 collapsed steps");
+    assert.equal(steps[0]?.["data-station"], "judge");
+    assert.equal(steps[0]?.["data-step-count"], "2");
+    assert.equal(steps[0]?.["data-return"], "false");
+    assert.equal(steps[0]?.["data-rejected"], "true", "continue results mark the step rejected");
+    assert.equal(steps[1]?.["data-station"], "coder");
+    assert.equal(steps[1]?.["data-step-count"], "1");
+    assert.equal(steps[1]?.["data-rejected"], "false");
+    assert.equal(steps[2]?.["data-station"], "judge");
+    assert.equal(steps[2]?.["data-return"], "true", "reappearance after another station is a return");
+    assert.equal(steps[2]?.["data-rejected"], "false");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban presentation: family options carry mechanical open-child count", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-family-opt-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    await mkdir(join(ledgerDir, "issues", "10"), { recursive: true });
+    await mkdir(join(ledgerDir, "issues", "11"), { recursive: true });
+    await mkdir(join(ledgerDir, "issues", "12"), { recursive: true });
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 10, title: "parent", state: "open" }),
+                ticket({ issueNumber: 11, title: "child a", state: "open", parentIssueNumber: 10 }),
+                ticket({ issueNumber: 12, title: "child b", state: "open", parentIssueNumber: 10 }),
+              ],
+            },
+          ],
+        },
+      },
+      new Date("2026-08-05T12:00:00.000Z"),
+    );
+    const options = elementsWith(html, "data-family-option");
+    assert.equal(options.length, 1);
+    assert.equal(options[0]?.["data-family-option"], "10");
+    assert.equal(options[0]?.["data-child-count"], "2");
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("kanban presentation: five-state strip via data-state-strip + browser computed top border", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-strip-states-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const nowMs = now.getTime();
+
+    // #1 flying (<2min)
+    await writeRunSession(
+      ledgerDir, 1, "fly@x",
+      [sessionHeader("2026-08-05T11:59:00.000Z"), assistantUsage("2026-08-05T11:59:30.000Z", 0.01, 10)],
+      { invocationRole: "coder", mtime: new Date(nowMs - 30_000) },
+    );
+    // #2 watch (2–15min)
+    await writeRunSession(
+      ledgerDir, 2, "watch@x",
+      [sessionHeader("2026-08-05T11:50:00.000Z"), assistantUsage("2026-08-05T11:51:00.000Z", 0.02, 20)],
+      { invocationRole: "coder", mtime: new Date(nowMs - 5 * 60_000) },
+    );
+    // #3 suspect (>15min)
+    await writeRunSession(
+      ledgerDir, 3, "suspect@x",
+      [sessionHeader("2026-08-05T11:00:00.000Z"), assistantUsage("2026-08-05T11:01:00.000Z", 0.03, 30)],
+      { invocationRole: "coder", mtime: new Date(nowMs - 20 * 60_000) },
+    );
+    // #4 accepted-awaiting
+    await writeRunSession(
+      ledgerDir, 4, "accepted@x",
+      [sessionHeader("2026-08-05T10:00:00.000Z"), ...acceptedCoderFinal("2026-08-05T10:05:00.000Z", 0.04, 40)],
+      { mtime: new Date(nowMs - 7_000_000) },
+    );
+    // #5 escalate-awaiting
+    await writeRunSession(
+      ledgerDir, 5, "esc@x",
+      [
+        sessionHeader("2026-08-05T10:30:00.000Z"),
+        ...acceptedJudgeFinal(
+          "2026-08-05T10:35:00.000Z",
+          { judgeStatus: "escalate", decisionGate: { question: "q", options: ["a", "b"] } },
+          0.05,
+          50,
+        ),
+      ],
+      { mtime: new Date(nowMs - 5_000_000) },
+    );
+
+    const html = await renderFactoryBoardHtml(
+      [{ bookKey: "roles", ledgerDir }],
+      {
+        ok: true,
+        snapshot: {
+          books: [
+            {
+              bookKey: "roles",
+              owner: "acme",
+              repo: "roles",
+              tickets: [
+                ticket({ issueNumber: 1, title: "fly", state: "open" }),
+                ticket({ issueNumber: 2, title: "watch", state: "open" }),
+                ticket({ issueNumber: 3, title: "suspect", state: "open" }),
+                ticket({ issueNumber: 4, title: "accepted", state: "open" }),
+                ticket({ issueNumber: 5, title: "esc", state: "open" }),
+              ],
+            },
+          ],
+        },
+      },
+      now,
+    );
+
+    const expected: Record<number, string> = {
+      1: "unaccepted-flying",
+      2: "unaccepted-watch",
+      3: "unaccepted-suspect",
+      4: "accepted-awaiting",
+      5: "escalate-awaiting",
+    };
+    for (const [n, state] of Object.entries(expected)) {
+      const t = elementsWith(html, "data-ticket").find((el) => el["data-ticket"] === n);
+      assert.equal(t?.["data-current-state"], state);
+      assert.equal(t?.["data-state-strip"], state, "strip key mirrors current state");
+      assert.ok(
+        elementsWith(html, "data-state-label").some(
+          (el) => el["data-state-label"] === state,
+        ),
+        `state dot label present for ${state}`,
+      );
+    }
+
+    const styles = await ticketStripComputedStyles(html, [1, 2, 3, 4, 5]);
+    const colors = new Set<string>();
+    for (const n of [1, 2, 3, 4, 5] as const) {
+      const row = styles.get(n)!;
+      assert.equal(row.stateStrip, expected[n]);
+      const widthPx = Number.parseFloat(row.borderTopWidth);
+      assert.ok(Number.isFinite(widthPx) && widthPx > 0, `#${n} top border width must be non-zero`);
+      assert.match(
+        row.borderTopColor,
+        /^(rgb(a)?\(|color\()/,
+        `#${n} top border resolves to a color`,
+      );
+      colors.add(row.borderTopColor);
+    }
+    // Five states must not collapse to a single computed color.
+    assert.ok(colors.size >= 4, `expected distinct strip colors across five states, got ${colors.size}: ${[...colors].join("; ")}`);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
