@@ -49,7 +49,8 @@ export type TerminalRoleName =
   | "fixer"
   | "collector"
   | "doctor"
-  | "reviewer";
+  | "reviewer"
+  | "merger";
 
 export type TerminalRoleOutcome =
   | {

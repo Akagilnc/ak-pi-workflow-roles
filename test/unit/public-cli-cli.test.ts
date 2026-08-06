@@ -137,58 +137,21 @@ test("explicit internal activation args point at the package entrypoint file", a
   assert.equal(args.includes("--ak-role"), true);
 });
 
-test("non-Judge role command goes through ak-role-owned explicit Internal load before deferring run", async () => {
+test("merger role command is a completed public run path (no deferred slice)", async () => {
   await withTempHome(async (home) => {
-    const { io, stderr } = captureIo();
-    let captured: string[] | undefined;
-    // Merger remains deferred in this slice (#114); completed roles no longer hit this path.
-    const result = await runAkRole(["merger"], {
+    const { io, stderr, stdout } = captureIo();
+    // Blank instruction is a structural reject on the completed Merger adapter.
+    const result = await runAkRole(["merger", "   "], {
       packageRoot,
       home,
       io,
-      piRunner: async (args) => {
-        captured = [...args];
-        return {
-          code: 0,
-          stdout: "",
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-        };
+      piRunner: async () => {
+        throw new Error("must not dispatch blank merger");
       },
     });
     assert.equal(result.exitCode, 2);
-    assert.match(stderr.join(""), /not available in this install slice/);
-    assert.equal(Array.isArray(captured), true);
-    assert.deepEqual(captured!.slice(0, 3), [
-      "--no-extensions",
-      "-e",
-      resolveInternalRoleEntrypoint(packageRoot),
-    ]);
-    assert.equal(captured!.includes("--help"), true);
-    assert.equal(captured!.includes("--no-session"), true);
-  });
-});
-
-test("role command reports load failure when explicit Internal spawn fails", async () => {
-  await withTempHome(async (home) => {
-    const { io, stderr } = captureIo();
-    // Use a role that is still deferred in this slice (not judge/coder/fixer/collector/doctor/reviewer).
-    const result = await runAkRole(["merger"], {
-      packageRoot,
-      home,
-      io,
-      piRunner: async (args) => ({
-        code: 1,
-        stdout: "",
-        stderr: "extension boom",
-        timedOut: false,
-        args: [...args],
-      }),
-    });
-    assert.equal(result.exitCode, 1);
-    assert.match(stderr.join(""), /failed to load installed role runtime/);
-    assert.match(stderr.join(""), /extension boom/);
+    assert.equal(stderr.join("").includes("not available in this install slice"), false);
+    assert.equal(stdout.join("").includes("not available in this install slice"), false);
   });
 });
 

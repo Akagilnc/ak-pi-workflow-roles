@@ -130,6 +130,24 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       true,
       "public bin must pin adapter-derived reviewer capabilities on activation",
     );
+    // #114 public Merger adapter + package merge-only method must ship in the installed bin.
+    assert.equal(
+      /command\s*===\s*["']merger["']|case\s*["']merger["']/.test(committedText),
+      true,
+      "public bin must ship merger command dispatch",
+    );
+    assert.equal(
+      /resolvePackagedMethodSkillPath\([^)]*"resolving-merge-conflicts"/.test(
+        committedText,
+      ),
+      true,
+      "public bin must resolve the package-owned resolving-merge-conflicts skill path",
+    );
+    assert.equal(
+      committedText.includes("ak-merger-input"),
+      true,
+      "public bin must pin derived merger input on activation",
+    );
     // #112 public Collector adapter must ship in the installed bin.
     assert.equal(
       /command\s*===\s*[\"']collector[\"']|case\s*[\"']collector[\"']/.test(committedText),
