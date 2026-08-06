@@ -210,9 +210,10 @@ child.on("close", (code, signal) => {
     );
     await chmod(shimPath, 0o755);
 
-    // Enter through installed ak-role: production must spawn Pi with explicit -e load
-    // of the same installed package copy (full role settlement remains #106+).
-    const throughAkRole = await runAkRoleBin(installed.akRoleBin, ["judge"], {
+    // Enter through installed ak-role on a role that still defers full settlement:
+    // production must spawn Pi with explicit -e load of the same installed copy.
+    // (Judge is the first complete public run path — covered by #106 tests.)
+    const throughAkRole = await runAkRoleBin(installed.akRoleBin, ["reviewer"], {
       home,
       agentDir: piAgentDir,
       env: {
