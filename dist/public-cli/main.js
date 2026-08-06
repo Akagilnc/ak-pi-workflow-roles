@@ -7,12 +7,12 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname5, join as join12 } from "node:path";
+import { dirname as dirname6, join as join14 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join11 } from "node:path";
+import { join as join13 } from "node:path";
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -533,6 +533,15 @@ function validateAcceptedJudgeDetails(verdict) {
 
 // src/exact-utf8.ts
 var decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+function exactUtf8(bytes, label) {
+  let text;
+  try {
+    text = decoder.decode(bytes);
+  } catch (error) {
+    throw new Error(`${label} is not valid UTF-8`, { cause: error });
+  }
+  return text;
+}
 
 // src/sha256.ts
 import { createHash } from "node:crypto";
@@ -562,9 +571,84 @@ var REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
   "minimum-necessary-test-cost": "minimum-necessary test cost",
   complexity: "complexity"
 });
+function manifestBytes(entries) {
+  return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map(({ bytes: _bytes, ...identity }) => identity) });
+}
+function verifyBundleIdentity(bundle) {
+  return bundle.entries.every((item) => exactUtf8(Buffer.from(item.bytes), item.id) === item.bytes && Buffer.byteLength(item.bytes) === item.utf8Length && sha256Hex(item.bytes) === item.sha256) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
+}
 
 // src/package-contracts/reviewer-output.ts
 var REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
+function isRecord3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function exactKeys(value, required, optional = []) {
+  const keys = Object.keys(value);
+  return required.every((key) => Object.hasOwn(value, key)) && keys.every((key) => required.includes(key) || optional.includes(key));
+}
+function validWorkspace(value) {
+  return value === "deleted" || value === "not-created" || isRecord3(value) && exactKeys(value, ["retained"]) && typeof value.retained === "string" && value.retained.length > 0;
+}
+function isReceiptText(value) {
+  return isRecord3(value) && exactKeys(value, ["text"]) && typeof value.text === "string";
+}
+var failures = /* @__PURE__ */ new Set(["cancelled", "provider", "snapshot", "workspace", "child", "unknown"]);
+function validateRuntimeReviewerReceipt(output) {
+  if (!isRecord3(output) || !exactKeys(output, ["version", "status", "reports", "outcomes", "identities"], ["diagnostic", "acceptedBatch"]) || output.version !== 2 || output.status !== "completed" && output.status !== "refused" || !isRecord3(output.reports) || !isRecord3(output.outcomes) || !isRecord3(output.identities)) throw new Error("Invalid Reviewer V2 receipt");
+  if (output.status === "completed" ? Object.hasOwn(output, "diagnostic") : typeof output.diagnostic !== "string" || output.diagnostic.trim().length === 0) throw new Error("Reviewer receipt diagnostic disagrees with status");
+  if (!exactKeys(output.reports, [], ["standards", "spec"]) || !exactKeys(output.outcomes, [], ["standards", "spec"]) || !exactKeys(output.identities, ["canonicalSkill"], ["construction", "target"])) throw new Error("Invalid Reviewer receipt projection keys");
+  const skill = output.identities.canonicalSkill;
+  if (!isReceiptText(skill)) throw new Error("Invalid canonical Skill content");
+  const hasBatch = Object.hasOwn(output, "acceptedBatch");
+  if (hasBatch !== Object.hasOwn(output.identities, "construction") || hasBatch !== Object.hasOwn(output.identities, "target") || hasBatch && (!isRecord3(output.acceptedBatch) || !isRecord3(output.identities.construction) || !isRecord3(output.identities.target))) throw new Error("Incomplete Reviewer accepted-batch identity");
+  let expectedLegs = [];
+  if (hasBatch) {
+    const acceptedBatch = output.acceptedBatch;
+    const construction = output.identities.construction;
+    const target = output.identities.target;
+    if (!exactKeys(acceptedBatch, ["identity", "legs"]) || typeof acceptedBatch.identity !== "string" || acceptedBatch.identity.length === 0 || !Array.isArray(acceptedBatch.legs) || acceptedBatch.legs.length !== 1 && acceptedBatch.legs.length !== 2) throw new Error("Invalid Reviewer accepted-batch projection");
+    expectedLegs = acceptedBatch.legs;
+    const expectedAxes2 = expectedLegs.map((leg) => leg.axis);
+    if (expectedAxes2[0] !== "standards" || expectedAxes2.length === 2 && expectedAxes2[1] !== "spec" || expectedLegs.some((leg) => !isRecord3(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isReceiptText(leg.prompt)))
+      throw new Error("Invalid Reviewer accepted-leg projection");
+    const objectId = (value) => typeof value === "string" && new RegExp(target.objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
+    if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord3(construction.bundle) || !verifyBundleIdentity(construction.bundle) || !exactKeys(target, ["repositoryRoot", "objectFormat", "targetHead", "refs"]) || typeof target.repositoryRoot !== "string" || target.repositoryRoot.length === 0 || target.objectFormat !== "sha1" && target.objectFormat !== "sha256" || !objectId(target.targetHead) || !isRecord3(target.refs) || Object.values(target.refs).some((ref) => !isRecord3(ref) || !exactKeys(ref, ["objectId", "peeledCommitId"]) || !objectId(ref.objectId) || ref.peeledCommitId !== null && !objectId(ref.peeledCommitId))) throw new Error("Invalid Reviewer construction or target identity");
+  }
+  for (const axis of ["standards", "spec"]) {
+    const report = output.reports[axis];
+    const outcome = output.outcomes[axis];
+    if (report !== void 0 && !isReceiptText(report)) throw new Error("Invalid Reviewer report text");
+    if (outcome === void 0) {
+      if (report !== void 0) throw new Error("Reviewer report lacks outcome");
+      continue;
+    }
+    if (!isRecord3(outcome) || !exactKeys(outcome, ["status", "prompt", "workspaceDisposition"], ["failure", "runtimeConstructionEvidence"]) || outcome.status !== "successful" && outcome.status !== "failed" || !isReceiptText(outcome.prompt) || !validWorkspace(outcome.workspaceDisposition)) throw new Error("Invalid Reviewer outcome");
+    const materialized = outcome.runtimeConstructionEvidence;
+    if (materialized !== void 0) {
+      const bundle = output.identities.construction.bundle;
+      const entries = bundle.entries;
+      if (!isRecord3(materialized) || !exactKeys(materialized, ["leg", "workspaceIdentity", "manifestSha256", "entries"]) || materialized.leg !== axis || typeof materialized.workspaceIdentity !== "string" || materialized.workspaceIdentity.length === 0 || materialized.manifestSha256 !== bundle.manifestSha256 || !Array.isArray(materialized.entries) || materialized.entries.length !== entries.length || materialized.entries.some((entry, index) => {
+        const expected = entries[index];
+        return !isRecord3(entry) || !exactKeys(entry, ["id", "relativeClonePath", "utf8Length", "sha256", "verified"]) || entry.verified !== true || entry.id !== expected.id || entry.relativeClonePath !== expected.relativeClonePath || entry.utf8Length !== expected.utf8Length || entry.sha256 !== expected.sha256;
+      })) throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
+    }
+    if (outcome.status === "successful") {
+      if (Object.hasOwn(outcome, "failure") || report === void 0 || materialized === void 0) throw new Error("Successful Reviewer outcome requires exactly one report and materialization evidence");
+    } else if (!failures.has(outcome.failure) || report !== void 0) throw new Error("Failed Reviewer outcome requires a classification and no report");
+  }
+  const expectedAxes = expectedLegs.map((leg) => leg.axis);
+  const outcomeAxes = Object.keys(output.outcomes);
+  if (hasBatch && (outcomeAxes.length !== expectedAxes.length || outcomeAxes.some((axis, index) => axis !== expectedAxes[index]))) throw new Error("Reviewer outcomes must exactly cover accepted legs in canonical order");
+  for (const [index, axis] of expectedAxes.entries()) {
+    const outcome = output.outcomes[axis];
+    const expectedPrompt = expectedLegs[index].prompt;
+    if (outcome.prompt.text !== expectedPrompt.text) throw new Error("Reviewer outcome prompt disagrees with accepted leg");
+  }
+  if (output.status === "completed" && (!hasBatch || Object.values(output.outcomes).some((item) => item.status !== "successful"))) throw new Error("Completed Reviewer receipt requires a successful accepted batch");
+  if (!hasBatch && (Object.keys(output.outcomes).length !== 0 || Object.keys(output.reports).length !== 0)) throw new Error("Pre-acceptance Reviewer refusal cannot contain outcomes or reports");
+  return output;
+}
 
 // node_modules/typebox/build/system/memory/memory.mjs
 var memory_exports = {};
@@ -2181,8 +2265,8 @@ function CreateObject(types, value) {
 }
 function FromUnionKey(types, value) {
   const flattened = Flatten(types);
-  const record2 = TryBuildRecord(flattened, value);
-  return IsSchema(record2) ? record2 : CreateObject(flattened, value);
+  const record5 = TryBuildRecord(flattened, value);
+  return IsSchema(record5) ? record5 : CreateObject(flattened, value);
 }
 
 // node_modules/typebox/build/type/engine/record/from_key.mjs
@@ -2708,8 +2792,8 @@ function ScriptMapping(input) {
 function IsMatch(value) {
   return IsEqual(value.length, 2);
 }
-function Match2(input, ok, fail3) {
-  return IsMatch(input) ? ok(input[0], input[1]) : fail3();
+function Match2(input, ok, fail5) {
+  return IsMatch(input) ? ok(input[0], input[1]) : fail5();
 }
 
 // node_modules/typebox/build/type/script/token/internal/take.mjs
@@ -4940,8 +5024,8 @@ function RestSpread(types) {
 }
 
 // node_modules/typebox/build/type/engine/instantiate.mjs
-function State(callstack, visited) {
-  return { callstack, visited };
+function State(callstack, visited2) {
+  return { callstack, visited: visited2 };
 }
 function CanInstantiate(types) {
   return guard_exports.ShiftLeft(types, (left, right) => IsRef(left) ? false : CanInstantiate(right), () => true);
@@ -7444,6 +7528,15 @@ var AssertError = class extends Error {
     });
   }
 };
+function Assert(...args) {
+  const [context, type, value] = arguments_exports.Match(args, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  const check = Check2(context, type, value);
+  if (!check)
+    throw new AssertError("Assert", value, Errors2(context, type, value));
+}
 
 // node_modules/typebox/build/value/clean/from_array.mjs
 function FromArray7(context, type, value) {
@@ -8244,7 +8337,7 @@ var DecodeError = class extends AssertError {
     super("Decode", value, errors);
   }
 };
-function Assert(context, type, value) {
+function Assert2(context, type, value) {
   if (!Check2(context, type, value))
     throw new DecodeError(value, Errors2(context, type, value));
   return value;
@@ -8258,9 +8351,16 @@ var Decoder = Pipeline([
   (context, type, value) => Default(context, type, value),
   (context, type, value) => Convert(context, type, value),
   (context, type, value) => Clean(context, type, value),
-  (context, type, value) => Assert(context, type, value),
+  (context, type, value) => Assert2(context, type, value),
   (context, type, value) => DecodeUnsafe(context, type, value)
 ]);
+function Decode10(...args) {
+  const [context, type, value] = arguments_exports.Match(args, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  return Decoder(context, type, value);
+}
 
 // node_modules/typebox/build/value/codec/encode.mjs
 var EncodeError = class extends AssertError {
@@ -8268,7 +8368,7 @@ var EncodeError = class extends AssertError {
     super("Encode", value, errors);
   }
 };
-function Assert2(context, type, value) {
+function Assert3(context, type, value) {
   if (!Check2(context, type, value))
     throw new EncodeError(value, Errors2(context, type, value));
   return value;
@@ -8283,8 +8383,248 @@ var Encoder = Pipeline([
   (context, type, value) => Default(context, type, value),
   (context, type, value) => Convert(context, type, value),
   (context, type, value) => Clean(context, type, value),
-  (context, type, value) => Assert2(context, type, value)
+  (context, type, value) => Assert3(context, type, value)
 ]);
+function Encode9(...args) {
+  const [context, type, value] = arguments_exports.Match(args, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  return Encoder(context, type, value);
+}
+
+// node_modules/typebox/build/value/codec/has.mjs
+function FromArray11(context, type) {
+  return IsCodec(type) || FromType24(context, type.items);
+}
+function FromCyclic10(context, type) {
+  return IsCodec(type) || FromRef9({ ...context, ...type.$defs }, Ref(type.$ref));
+}
+function FromIntersect10(context, type) {
+  return IsCodec(type) || type.allOf.some((type2) => FromType24(context, type2));
+}
+function FromObject15(context, type) {
+  return IsCodec(type) || guard_exports.Keys(type.properties).some((key) => {
+    return FromType24(context, type.properties[key]);
+  });
+}
+function FromRecord7(context, type) {
+  return IsCodec(type) || FromType24(context, RecordValue(type));
+}
+function FromRef9(context, type) {
+  if (visited.has(type.$ref))
+    return false;
+  visited.add(type.$ref);
+  return IsCodec(type) || guard_exports.HasPropertyKey(context, type.$ref) && FromType24(context, context[type.$ref]);
+}
+function FromTuple9(context, type) {
+  return IsCodec(type) || type.items.some((type2) => FromType24(context, type2));
+}
+function FromUnion13(context, type) {
+  return IsCodec(type) || type.anyOf.some((type2) => FromType24(context, type2));
+}
+function FromType24(context, type) {
+  return IsArray2(type) ? FromArray11(context, type) : IsCyclic(type) ? FromCyclic10(context, type) : IsIntersect(type) ? FromIntersect10(context, type) : IsObject2(type) ? FromObject15(context, type) : IsRecord(type) ? FromRecord7(context, type) : IsRef(type) ? FromRef9(context, type) : IsTuple(type) ? FromTuple9(context, type) : IsUnion(type) ? FromUnion13(context, type) : IsCodec(type);
+}
+var visited = /* @__PURE__ */ new Set();
+function HasCodec(...args) {
+  const [context, type] = arguments_exports.Match(args, {
+    2: (context2, type2) => [context2, type2],
+    1: (type2) => [{}, type2]
+  });
+  visited.clear();
+  return FromType24(context, type);
+}
+
+// node_modules/typebox/build/value/create/error.mjs
+var CreateError = class extends Error {
+  constructor(type, message) {
+    super(message);
+    this.type = type;
+  }
+};
+
+// node_modules/typebox/build/value/create/from_default.mjs
+function FromDefault2(_context, schema) {
+  return guard_exports.IsFunction(schema.default) ? schema.default(schema) : guard_exports.IsObject(schema.default) ? Clone2(schema.default) : schema.default;
+}
+
+// node_modules/typebox/build/value/create/from_array.mjs
+function FromArray12(context, type) {
+  if (IsUniqueItems(type) && !IsDefault(type))
+    throw new CreateError(type, "Arrays with uniqueItems constraints must specify a default annotation");
+  const length = IsMinItems(type) ? type.minItems : 0;
+  return Array.from({ length }, () => FromType25(context, type.items));
+}
+
+// node_modules/typebox/build/value/create/from_bigint.mjs
+function FromBigInt7(_context, type) {
+  return IsExclusiveMinimum(type) ? BigInt(type.exclusiveMinimum) + BigInt(1) : IsMinimum(type) ? BigInt(type.minimum) : BigInt(0);
+}
+
+// node_modules/typebox/build/value/create/from_boolean.mjs
+function FromBoolean7(_context, _type) {
+  return false;
+}
+
+// node_modules/typebox/build/value/create/from_constructor.mjs
+function FromConstructor2(context, type) {
+  const instanceType = FromType25(context, type.instanceType);
+  return class {
+    constructor() {
+      Object.assign(this, instanceType);
+    }
+  };
+}
+
+// node_modules/typebox/build/value/create/from_cyclic.mjs
+function FromCyclic11(context, type) {
+  return FromType25({ ...context, ...type.$defs }, Ref(type.$ref));
+}
+
+// node_modules/typebox/build/value/create/from_enum.mjs
+function FromEnum4(context, type) {
+  return FromType25(context, Evaluate(type));
+}
+
+// node_modules/typebox/build/value/create/from_function.mjs
+function FromFunction2(context, type) {
+  const returnType = FromType25(context, type.returnType);
+  return () => returnType;
+}
+
+// node_modules/typebox/build/value/create/from_integer.mjs
+function FromInteger2(_context, type) {
+  return IsExclusiveMinimum(type) && guard_exports.IsNumber(type.exclusiveMinimum) ? type.exclusiveMinimum + 1 : IsMinimum(type) ? type.minimum : 0;
+}
+
+// node_modules/typebox/build/value/create/from_intersect.mjs
+function FromIntersect11(context, type) {
+  const instantiated = Instantiate(context, type);
+  const evaluated = Evaluate(instantiated);
+  return FromType25(context, evaluated);
+}
+
+// node_modules/typebox/build/value/create/from_literal.mjs
+function FromLiteral7(_context, type) {
+  return type.const;
+}
+
+// node_modules/typebox/build/value/create/from_never.mjs
+function FromNever(_context, type) {
+  throw new CreateError(type, "Cannot create TNever types");
+}
+
+// node_modules/typebox/build/value/create/from_null.mjs
+function FromNull3(_context, _type) {
+  return null;
+}
+
+// node_modules/typebox/build/value/create/from_number.mjs
+function FromNumber6(_context, type) {
+  return IsExclusiveMinimum(type) && guard_exports.IsNumber(type.exclusiveMinimum) ? type.exclusiveMinimum + 1 : IsMinimum(type) ? type.minimum : 0;
+}
+
+// node_modules/typebox/build/value/create/from_object.mjs
+function FromObject16(context, type) {
+  const required = guard_exports.IsUndefined(type.required) ? [] : type.required;
+  return required.reduce((result2, key) => {
+    return { ...result2, [key]: FromType25(context, type.properties[key]) };
+  }, {});
+}
+
+// node_modules/typebox/build/value/create/from_record.mjs
+function FromRecord8(_context, type) {
+  if (IsMinProperties(type) && !IsDefault(type))
+    throw new CreateError(type, "Record with the minProperties constraint must have a default annotation");
+  return {};
+}
+
+// node_modules/typebox/build/value/create/from_ref.mjs
+function FromRef10(context, type) {
+  return guard_exports.HasPropertyKey(context, type.$ref) ? FromType25(context, context[type.$ref]) : (() => {
+    throw new CreateError(type, "Unable to deref Ref");
+  })();
+}
+
+// node_modules/typebox/build/value/create/from_string.mjs
+function FromString8(_context, type) {
+  const needsDefault = (IsPattern(type) || IsFormat(type)) && !IsDefault(type);
+  if (needsDefault)
+    throw Error("Strings with format or pattern constraints must specify default");
+  const minLength = IsMinLength3(type) ? type.minLength : 0;
+  return "".padEnd(minLength);
+}
+
+// node_modules/typebox/build/value/create/from_symbol.mjs
+function FromSymbol2(_context, _type) {
+  return /* @__PURE__ */ Symbol();
+}
+
+// node_modules/typebox/build/value/create/from_template_literal.mjs
+function FromTemplateLiteral5(context, type) {
+  const decoded = TemplateLiteralDecode(type.pattern);
+  if (IsString3(decoded))
+    throw new CreateError(type, "Unable to create TemplateLiteral due to infinite type expansion");
+  return FromType25(context, decoded);
+}
+
+// node_modules/typebox/build/value/create/from_tuple.mjs
+function FromTuple10(context, type) {
+  return Array.from({ length: type.minItems }, (_, i) => FromType25(context, type.items[i]));
+}
+
+// node_modules/typebox/build/value/create/from_undefined.mjs
+function FromUndefined3(_context, _type) {
+  return void 0;
+}
+
+// node_modules/typebox/build/value/create/from_union.mjs
+function FromUnion14(context, type) {
+  if (guard_exports.IsEqual(type.anyOf.length, 0)) {
+    throw Error("Unable to create Union with no variants");
+  }
+  return FromType25(context, type.anyOf[0]);
+}
+
+// node_modules/typebox/build/value/create/from_void.mjs
+function FromVoid2(_context, _type) {
+  return void 0;
+}
+
+// node_modules/typebox/build/value/create/from_type.mjs
+function FromType25(context, type) {
+  return (
+    // -----------------------------------------------------
+    // Default
+    // -----------------------------------------------------
+    IsDefault(type) ? FromDefault2(context, type) : (
+      // -----------------------------------------------------
+      // Types
+      // -----------------------------------------------------
+      IsArray2(type) ? FromArray12(context, type) : IsBigInt2(type) ? FromBigInt7(context, type) : IsBoolean3(type) ? FromBoolean7(context, type) : IsConstructor2(type) ? FromConstructor2(context, type) : IsCyclic(type) ? FromCyclic11(context, type) : IsEnum(type) ? FromEnum4(context, type) : IsFunction2(type) ? FromFunction2(context, type) : IsInteger2(type) ? FromInteger2(context, type) : IsIntersect(type) ? FromIntersect11(context, type) : IsLiteral(type) ? FromLiteral7(context, type) : IsNever(type) ? FromNever(context, type) : IsNull2(type) ? FromNull3(context, type) : IsNumber3(type) ? FromNumber6(context, type) : IsObject2(type) ? FromObject16(context, type) : IsRecord(type) ? FromRecord8(context, type) : IsRef(type) ? FromRef10(context, type) : IsString3(type) ? FromString8(context, type) : IsSymbol2(type) ? FromSymbol2(context, type) : IsTemplateLiteral(type) ? FromTemplateLiteral5(context, type) : IsTuple(type) ? FromTuple10(context, type) : IsUndefined2(type) ? FromUndefined3(context, type) : IsUnion(type) ? FromUnion14(context, type) : IsVoid(type) ? FromVoid2(context, type) : void 0
+    )
+  );
+}
+
+// node_modules/typebox/build/value/create/create.mjs
+function Create2(...args) {
+  const [context, type] = arguments_exports.Match(args, {
+    2: (context2, type2) => [context2, type2],
+    1: (type2) => [{}, type2]
+  });
+  return FromType25(context, type);
+}
+
+// node_modules/typebox/build/value/equal/equal.mjs
+function Equal(left, right) {
+  return guard_exports.IsDeepEqual(left, right);
+}
+
+// node_modules/typebox/build/value/hash/hash.mjs
+function Hash2(value) {
+  return hash_exports.Hash(value);
+}
 
 // node_modules/typebox/build/value/parse/parse.mjs
 var ParseError2 = class extends AssertError {
@@ -8292,7 +8632,7 @@ var ParseError2 = class extends AssertError {
     super("Parse", value, errors);
   }
 };
-function Assert3(context, type, value) {
+function Assert4(context, type, value) {
   if (!Check2(context, type, value))
     throw new ParseError2(value, Errors2(context, type, value));
   return value;
@@ -8302,8 +8642,107 @@ var Parser = Pipeline([
   (context, type, value) => Default(context, type, value),
   (context, type, value) => Convert(context, type, value),
   (context, type, value) => Clean(context, type, value),
-  (context, type, value) => Assert3(context, type, value)
+  (context, type, value) => Assert4(context, type, value)
 ]);
+function Parse(...args) {
+  const [context, type, value] = arguments_exports.Match(args, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  const checked = Check2(context, type, value);
+  if (checked)
+    return value;
+  if (settings_exports.Get().correctiveParse)
+    return Parser(context, type, value);
+  throw new ParseError2(value, Errors2(context, type, value));
+}
+
+// node_modules/typebox/build/value/delta/diff.mjs
+function CreateUpdate(path, value) {
+  return { type: "update", path, value };
+}
+function CreateInsert(path, value) {
+  return { type: "insert", path, value };
+}
+function CreateDelete(path) {
+  return { type: "delete", path };
+}
+function AssertCanDiffObject(value) {
+  if (guard_exports.IsObject(value) && guard_exports.IsEqual(guard_exports.Symbols(value).length, 0))
+    return;
+  throw new Error("Cannot create diffs for objects with symbols keys");
+}
+function* FromObject17(path, left, right) {
+  if (!guard_exports.IsObject(right) || guard_exports.IsArray(right))
+    return yield CreateUpdate(path, right);
+  AssertCanDiffObject(left);
+  AssertCanDiffObject(right);
+  const leftKeys = guard_exports.Keys(left);
+  const rightKeys = guard_exports.Keys(right);
+  for (const key of rightKeys) {
+    if (guard_exports.HasPropertyKey(left, key))
+      continue;
+    if (guard_exports.IsUnsafePropertyKey(key))
+      continue;
+    yield CreateInsert(`${path}/${key}`, right[key]);
+  }
+  for (const key of leftKeys) {
+    if (!guard_exports.HasPropertyKey(right, key))
+      continue;
+    if (guard_exports.IsUnsafePropertyKey(key))
+      continue;
+    if (Equal(left, right))
+      continue;
+    yield* FromValue4(`${path}/${key}`, left[key], right[key]);
+  }
+  for (const key of leftKeys) {
+    if (guard_exports.HasPropertyKey(right, key))
+      continue;
+    if (guard_exports.IsUnsafePropertyKey(key))
+      continue;
+    yield CreateDelete(`${path}/${key}`);
+  }
+}
+function* FromArray13(path, left, right) {
+  if (!guard_exports.IsArray(right))
+    return yield CreateUpdate(path, right);
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    yield* FromValue4(`${path}/${i}`, left[i], right[i]);
+  }
+  for (let i = 0; i < right.length; i++) {
+    if (i < left.length)
+      continue;
+    yield CreateInsert(`${path}/${i}`, right[i]);
+  }
+  for (let i = left.length - 1; i >= 0; i--) {
+    if (i < right.length)
+      continue;
+    yield CreateDelete(`${path}/${i}`);
+  }
+}
+function* FromTypedArray2(path, left, right) {
+  const typeLeft = globalThis.Object.getPrototypeOf(left).constructor.name;
+  const typeRight = globalThis.Object.getPrototypeOf(right).constructor.name;
+  const predicate = globals_exports.IsTypeArray(right) && guard_exports.IsEqual(left.length, right.length) && guard_exports.IsEqual(typeLeft, typeRight);
+  if (predicate) {
+    for (let index = 0; index < Math.min(left.length, right.length); index++) {
+      yield* FromValue4(`${path}/${index}`, left[index], right[index]);
+    }
+  } else {
+    return yield CreateUpdate(path, right);
+  }
+}
+function* FromUnknown(path, left, right) {
+  if (left === right)
+    return;
+  yield CreateUpdate(path, right);
+}
+function* FromValue4(path, left, right) {
+  return globals_exports.IsTypeArray(left) ? yield* FromTypedArray2(path, left, right) : guard_exports.IsArray(left) ? yield* FromArray13(path, left, right) : guard_exports.IsObject(left) ? yield* FromObject17(path, left, right) : yield* FromUnknown(path, left, right);
+}
+function Diff(current, next) {
+  return [...FromValue4("", current, next)];
+}
 
 // node_modules/typebox/build/value/delta/edit.mjs
 var Insert2 = _Object_({
@@ -8322,6 +8761,275 @@ var Delete2 = _Object_({
 });
 var Edit = Union([Insert2, Update2, Delete2]);
 
+// node_modules/typebox/build/value/delta/patch.mjs
+function IsRoot(edits) {
+  return edits.length > 0 && edits[0].path === "" && edits[0].type === "update";
+}
+function IsEmpty(edits) {
+  return edits.length === 0;
+}
+function Patch(current, edits) {
+  if (IsRoot(edits))
+    return Clone2(edits[0].value);
+  if (IsEmpty(edits))
+    return Clone2(current);
+  const clone = Clone2(current);
+  for (const edit of edits) {
+    switch (edit.type) {
+      case "insert": {
+        pointer_exports.Set(clone, edit.path, edit.value);
+        break;
+      }
+      case "update": {
+        pointer_exports.Set(clone, edit.path, edit.value);
+        break;
+      }
+      case "delete": {
+        pointer_exports.Delete(clone, edit.path);
+        break;
+      }
+    }
+  }
+  return clone;
+}
+
+// node_modules/typebox/build/value/repair/error.mjs
+var RepairError = class extends Error {
+  constructor(context, type, value, message) {
+    super(message);
+    this.context = context;
+    this.type = type;
+    this.value = value;
+  }
+};
+
+// node_modules/typebox/build/value/repair/from_array.mjs
+function MakeUnique(values) {
+  const [hashes, result2] = [/* @__PURE__ */ new Set(), []];
+  for (const value of values) {
+    const hash = Hash2(value);
+    if (hashes.has(hash))
+      continue;
+    hashes.add(hash);
+    result2.push(value);
+  }
+  return result2;
+}
+function FromArray14(context, type, value) {
+  if (Check2(context, type, value))
+    return value;
+  const created = guard_exports.IsArray(value) ? value : Create2(context, type);
+  const minimum = IsMinItems(type) && created.length < type.minItems ? [...created, ...Array.from({ length: type.minItems - created.length }, () => Create2(context, type))] : created;
+  const maximum = IsMaxItems(type) && minimum.length > type.maxItems ? minimum.slice(0, type.maxItems) : minimum;
+  const repaired = maximum.map((value2) => FromType26(context, type.items, value2));
+  if (!IsUniqueItems(type) || IsUniqueItems(type) && !guard_exports.IsEqual(type.uniqueItems, true))
+    return repaired;
+  const unique = MakeUnique(repaired);
+  if (!Check2(context, type, unique))
+    throw new RepairError(context, type, value, "Failed to repair Array due to uniqueItems constraint");
+  return unique;
+}
+
+// node_modules/typebox/build/value/repair/from_enum.mjs
+function FromEnum5(context, type, value) {
+  return FromType26(context, Evaluate(type), value);
+}
+
+// node_modules/typebox/build/value/repair/from_intersect.mjs
+function FromIntersect12(context, type, value) {
+  const instantiated = Instantiate(context, type);
+  const evaluated = Evaluate(instantiated);
+  return FromType26(context, evaluated, value);
+}
+
+// node_modules/typebox/build/value/repair/from_object.mjs
+function FromObject18(context, type, value) {
+  if (Check2(context, type, value))
+    return value;
+  if (!guard_exports.IsObjectNotArray(value))
+    return Create2(context, type);
+  const required = new Set(guard_exports.IsUndefined(type.required) ? [] : type.required);
+  const result2 = {};
+  for (const [key, schema] of guard_exports.Entries(type.properties)) {
+    if (!required.has(key) && guard_exports.IsUndefined(value[key]))
+      continue;
+    result2[key] = key in value ? FromType26(context, schema, value[key]) : Create2(context, schema);
+  }
+  const evaluatedKeys = guard_exports.Keys(type.properties);
+  if (IsAdditionalProperties(type) && guard_exports.IsObject(type.additionalProperties)) {
+    for (const key of guard_exports.Keys(value)) {
+      if (evaluatedKeys.includes(key))
+        continue;
+      result2[key] = FromType26(context, type.additionalProperties, value[key]);
+    }
+  }
+  return result2;
+}
+
+// node_modules/typebox/build/value/repair/from_record.mjs
+function FromRecord9(context, type, value) {
+  if (Check2(context, type, value))
+    return value;
+  if (guard_exports.IsNull(value) || !guard_exports.IsObject(value) || guard_exports.IsArray(value))
+    return Create2(context, type);
+  const recordKey = new RegExp(RecordPattern(type));
+  const recordValue = RecordValue(type);
+  const evaluatedKeys = /* @__PURE__ */ new Set();
+  const result2 = {};
+  for (const [key, value_] of guard_exports.Entries(value)) {
+    if (!recordKey.test(key))
+      continue;
+    result2[key] = FromType26(context, recordValue, value_);
+    evaluatedKeys.add(key);
+  }
+  if (IsAdditionalProperties(type)) {
+    for (const key of guard_exports.Keys(value)) {
+      if (evaluatedKeys.has(key))
+        continue;
+      result2[key] = FromType26(context, type.additionalProperties, value[key]);
+    }
+  }
+  return result2;
+}
+
+// node_modules/typebox/build/value/repair/from_ref.mjs
+function FromRef11(context, type, value) {
+  return guard_exports.HasPropertyKey(context, type.$ref) ? FromType26(context, context[type.$ref], value) : (() => {
+    throw new RepairError(context, type, value, "Unable to de-reference target type");
+  })();
+}
+
+// node_modules/typebox/build/value/repair/from_template_literal.mjs
+function FromTemplateLiteral6(context, type, value) {
+  const decoded = TemplateLiteralDecode(type.pattern);
+  return FromType26(context, decoded, value);
+}
+
+// node_modules/typebox/build/value/repair/from_tuple.mjs
+function FromTuple11(context, schema, value) {
+  if (Check2(context, schema, value))
+    return value;
+  if (!guard_exports.IsArray(value))
+    return Create2(context, schema);
+  return schema.items.map((schema2, index) => FromType26(context, schema2, value[index]));
+}
+
+// node_modules/typebox/build/value/shared/union_score_select.mjs
+function Deref(context, type, value) {
+  return IsRef(type) ? guard_exports.HasPropertyKey(context, type.$ref) ? Deref(context, context[type.$ref], value) : (() => {
+    throw new Error("Unable to Deref target");
+  })() : type;
+}
+function ScoreVariant(context, type, value) {
+  if (!(IsObject2(type) && guard_exports.IsObject(value)))
+    return 0;
+  const keys = guard_exports.Keys(value);
+  const entries = guard_exports.Entries(type.properties);
+  return entries.reduce((result2, [key, schema]) => {
+    const literal = IsLiteral(schema) && guard_exports.IsEqual(schema.const, value[key]) ? 100 : 0;
+    const checks = Check2(context, schema, value[key]) ? 10 : 0;
+    const exists = keys.includes(key) ? 1 : 0;
+    return result2 + (literal + checks + exists);
+  }, 0);
+}
+function UnionScoreSelect(context, type, value) {
+  const schemas = type.anyOf.map((schema) => Deref(context, schema, value));
+  let [select, best] = [schemas[0], 0];
+  for (const schema of schemas) {
+    const score = ScoreVariant(context, schema, value);
+    if (score > best) {
+      select = schema;
+      best = score;
+    }
+  }
+  return select;
+}
+
+// node_modules/typebox/build/value/repair/from_union.mjs
+function RepairUnion(context, type, value) {
+  const union = Union(Flatten(type.anyOf));
+  const schema = UnionScoreSelect(context, union, value);
+  return FromType26(context, schema, value);
+}
+function FromUnion15(context, type, value) {
+  if (Check2(context, type, value))
+    return Clone2(value);
+  if (IsDefault(type))
+    return Create2(context, type);
+  return RepairUnion(context, type, value);
+}
+
+// node_modules/typebox/build/value/repair/from_unknown.mjs
+function FromUnknown2(context, type, value) {
+  if (Check2(context, type, value))
+    return value;
+  const converted = Convert(context, type, value);
+  if (Check2(context, type, converted))
+    return converted;
+  return Create2(context, type);
+}
+
+// node_modules/typebox/build/value/repair/from_type.mjs
+function AssertRepairableValue(context, type, value) {
+  const unsupported = globals_exports.IsDate(value) || globals_exports.IsMap(value) || globals_exports.IsSet(value) || globals_exports.IsTypeArray(value) || guard_exports.IsConstructor(value) || guard_exports.IsFunction(value);
+  if (unsupported) {
+    throw new RepairError(context, type, value, "Value is not repairable");
+  }
+}
+function AssertRepairableType(context, type, value) {
+  const unsupported = IsConstructor2(type) || IsFunction2(type) || IsNever(type);
+  if (unsupported) {
+    throw new RepairError(context, type, value, "Type is not repairable");
+  }
+}
+function CreateWhenUndefined(context, type, value) {
+  return guard_exports.IsUndefined(value) && !IsUndefined2(type) ? Create2(context, type) : value;
+}
+function FinalizeRepair(context, type, repaired) {
+  return IsRefine(type) ? Check2(context, type, repaired) ? repaired : Create2(context, type) : repaired;
+}
+function FromType26(context, type, value) {
+  AssertRepairableValue(context, type, value);
+  AssertRepairableType(context, type, value);
+  const candidate = CreateWhenUndefined(context, type, value);
+  const repaired = IsArray2(type) ? FromArray14(context, type, candidate) : IsEnum(type) ? FromEnum5(context, type, candidate) : IsIntersect(type) ? FromIntersect12(context, type, candidate) : IsObject2(type) ? FromObject18(context, type, candidate) : IsRecord(type) ? FromRecord9(context, type, candidate) : IsRef(type) ? FromRef11(context, type, candidate) : IsTemplateLiteral(type) ? FromTemplateLiteral6(context, type, candidate) : IsTuple(type) ? FromTuple11(context, type, candidate) : IsUnion(type) ? FromUnion15(context, type, candidate) : FromUnknown2(context, type, candidate);
+  return FinalizeRepair(context, type, repaired);
+}
+
+// node_modules/typebox/build/value/repair/repair.mjs
+function Repair(...args) {
+  const [context, type, value] = arguments_exports.Match(args, {
+    3: (context2, type2, value2) => [context2, type2, value2],
+    2: (type2, value2) => [{}, type2, value2]
+  });
+  const repaired = FromType26(context, type, value);
+  Assert(context, type, repaired);
+  return repaired;
+}
+
+// node_modules/typebox/build/value/value.mjs
+var value_exports = {};
+__export(value_exports, {
+  Assert: () => Assert,
+  Check: () => Check2,
+  Clean: () => Clean,
+  Clone: () => Clone2,
+  Convert: () => Convert,
+  Create: () => Create2,
+  Decode: () => Decode10,
+  Default: () => Default,
+  Diff: () => Diff,
+  Encode: () => Encode9,
+  Equal: () => Equal,
+  Errors: () => Errors2,
+  HasCodec: () => HasCodec,
+  Hash: () => Hash2,
+  Parse: () => Parse,
+  Patch: () => Patch,
+  Pointer: () => pointer_exports,
+  Repair: () => Repair
+});
+
 // src/package-contracts/fixer-packet.ts
 var FIXER_PREREQUISITE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]*$";
 var fixerPrerequisiteSchema = typebox_exports.Object({
@@ -8329,6 +9037,70 @@ var fixerPrerequisiteSchema = typebox_exports.Object({
   requirement: typebox_exports.String({ pattern: "\\S" })
 }, { additionalProperties: false });
 var fixerPrerequisitesSchema = typebox_exports.Array(fixerPrerequisiteSchema);
+function causeMessage(cause) {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "string") return cause;
+  try {
+    return JSON.stringify(cause) ?? String(cause);
+  } catch {
+    return String(cause);
+  }
+}
+var FixerPacketValidationError = class extends Error {
+  code = "AK_INVALID_FIX_PACKET";
+  constructor(cause) {
+    const prefix = "Fixer prerequisites or instructions violate the invocation contract";
+    super(
+      cause === void 0 ? prefix : `${prefix}: ${causeMessage(cause)}`,
+      cause === void 0 ? void 0 : { cause }
+    );
+    this.name = "FixerPacketValidationError";
+  }
+};
+function fail2(cause) {
+  throw new FixerPacketValidationError(cause);
+}
+function parseFailure(value) {
+  if (!Array.isArray(value)) fail2(new Error("Fixer prerequisites must be a JSON array"));
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      fail2(new Error("Fixer prerequisite entry must be an object with id and requirement fields"));
+    }
+    const keys = Object.keys(entry);
+    if (keys.length !== 2 || !keys.includes("id") || !keys.includes("requirement")) {
+      fail2(new Error("Fixer prerequisite entry fields must be exactly id and requirement"));
+    }
+    if (typeof entry.id !== "string" || !new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(entry.id)) {
+      fail2(new Error(`Fixer prerequisite id violates pattern ${FIXER_PREREQUISITE_ID_PATTERN}`));
+    }
+    if (typeof entry.requirement !== "string" || !/\S/.test(entry.requirement)) {
+      fail2(new Error("Fixer prerequisite requirement must be nonblank"));
+    }
+  }
+  fail2(new Error("Fixer prerequisites violate the attachment schema"));
+}
+function validateFixerPrerequisites(value) {
+  if (!value_exports.Check(fixerPrerequisitesSchema, value)) parseFailure(value);
+  const entries = value;
+  const ids = /* @__PURE__ */ new Set();
+  const prerequisites = entries.map((entry) => {
+    if (ids.has(entry.id)) {
+      fail2(new Error(`Fixer prerequisites contain duplicate id: ${entry.id}`));
+    }
+    ids.add(entry.id);
+    return Object.freeze({ id: entry.id, requirement: entry.requirement });
+  });
+  return Object.freeze(prerequisites);
+}
+function parseFixerPrerequisites(source) {
+  let decoded;
+  try {
+    decoded = JSON.parse(source);
+  } catch (error) {
+    fail2(error);
+  }
+  return validateFixerPrerequisites(decoded);
+}
 
 // src/package-contracts/fixer-output.ts
 var FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
@@ -8360,13 +9132,111 @@ var fixerOutputSchema = typebox_exports.Union([
   typebox_exports.Object({ status: typebox_exports.Literal("refused"), report: nonblankTransportString, classResults: typebox_exports.Array(classResultSchema, { minItems: 1 }) }),
   typebox_exports.Object({ status: typebox_exports.Literal("partially_completed"), report: nonblankTransportString, classResults: typebox_exports.Array(classResultSchema, { minItems: 1 }) })
 ]);
+var record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var nonblank = (value) => typeof value === "string" && value.trim().length > 0;
+function fail3(constraint) {
+  throw new Error(`Fixer output violates ${constraint}`);
+}
+function blocker(value, path) {
+  if (!record(value)) fail3(`${path} object constraint`);
+  if (!nonblank(value.evidence)) fail3(`${path}.evidence nonblank constraint`);
+  if (value.cause === "authority_violation") {
+    if (Object.hasOwn(value, "prerequisiteId")) fail3(`${path} authority_violation prerequisiteId semantic-field constraint`);
+    return { cause: "authority_violation", evidence: value.evidence };
+  }
+  if (value.cause === "prerequisite_unmet") {
+    if (typeof value.prerequisiteId !== "string" || !new RegExp(FIXER_PREREQUISITE_ID_PATTERN).test(value.prerequisiteId)) fail3(`${path}.prerequisiteId pattern constraint`);
+    return { cause: "prerequisite_unmet", prerequisiteId: value.prerequisiteId, evidence: value.evidence };
+  }
+  fail3(`${path}.cause allowed-values constraint`);
+}
+function validateFixerOutput(value, phase) {
+  if (!record(value)) fail3("root object constraint");
+  if (!nonblank(value.report)) fail3("report nonblank constraint");
+  if (Object.hasOwn(value, "commitSha") || Object.hasOwn(value, "classesRepaired")) fail3("removed top-level commit semantic-field constraint");
+  if (value.status === "planned") {
+    if (phase === "apply") fail3("status phase constraint: apply forbids planned");
+    if (Object.hasOwn(value, "classResults") || Object.hasOwn(value, "remainingScope") || Object.hasOwn(value, "blocker") || Object.hasOwn(value, "commitSha")) fail3("status planned semantic-field combination constraint");
+    return { status: "planned", report: value.report };
+  }
+  if (value.status === "unfinished") {
+    if (phase === "plan") fail3("status phase constraint: plan forbids unfinished");
+    if (!nonblank(value.remainingScope)) fail3("remainingScope nonblank constraint");
+    if (Object.hasOwn(value, "blocker") || Object.hasOwn(value, "commitSha")) fail3("status unfinished semantic-field combination constraint");
+    if (!Object.hasOwn(value, "classResults")) return { status: "unfinished", report: value.report, remainingScope: value.remainingScope };
+    if (!Array.isArray(value.classResults) || value.classResults.length === 0) fail3("unfinished classResults nonempty array constraint");
+    const names2 = /* @__PURE__ */ new Set();
+    const classResults2 = value.classResults.map((item, index) => {
+      const path = `classResults[${index}]`;
+      if (!record(item) || item.disposition !== "completed") fail3(`${path} unfinished completed-only constraint`);
+      if (!nonblank(item.name)) fail3(`${path}.name nonblank constraint`);
+      if (names2.has(item.name)) fail3("classResults name unique constraint");
+      names2.add(item.name);
+      if (Object.hasOwn(item, "remainingScope") || Object.hasOwn(item, "blocker")) fail3(`${path} completed/refused semantic-field combination constraint`);
+      if (!nonblank(item.searchScope)) fail3(`${path}.searchScope nonblank constraint`);
+      if (!Array.isArray(item.exceptions)) fail3(`${path}.exceptions array constraint`);
+      const exceptions = item.exceptions.map((entry, exceptionIndex) => {
+        const exceptionPath = `${path}.exceptions[${exceptionIndex}]`;
+        if (!record(entry) || !nonblank(entry.where) || !nonblank(entry.reason)) fail3(`${exceptionPath} nonblank constraint`);
+        return { where: entry.where, reason: entry.reason };
+      });
+      if (!nonblank(item.commitSha)) fail3(`${path}.commitSha nonblank constraint`);
+      return { name: item.name, disposition: "completed", searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
+    });
+    return { status: "unfinished", report: value.report, remainingScope: value.remainingScope, classResults: classResults2 };
+  }
+  if (value.status === "refused" && Object.hasOwn(value, "remainingScope")) {
+    if (Object.hasOwn(value, "classResults")) fail3("status refused plan/apply semantic-field combination constraint");
+    if (phase === "apply") fail3("status phase constraint: apply refusal requires classResults");
+    if (!nonblank(value.remainingScope)) fail3("remainingScope nonblank constraint");
+    return { status: "refused", report: value.report, remainingScope: value.remainingScope, blocker: blocker(value.blocker, "blocker") };
+  }
+  if (phase === "plan") fail3("status phase constraint: plan permits planned or refused");
+  if (value.status !== "completed" && value.status !== "refused" && value.status !== "partially_completed") fail3("status allowed-values constraint");
+  if (!Array.isArray(value.classResults) || value.classResults.length === 0) fail3("classResults nonempty array constraint");
+  const names = /* @__PURE__ */ new Set();
+  let completed = 0, refused = 0;
+  const classResults = value.classResults.map((item, index) => {
+    const path = `classResults[${index}]`;
+    if (!record(item)) fail3(`${path} object constraint`);
+    if (!nonblank(item.name)) fail3(`${path}.name nonblank constraint`);
+    if (names.has(item.name)) fail3("classResults name unique constraint");
+    names.add(item.name);
+    if (item.disposition === "completed") {
+      if (Object.hasOwn(item, "remainingScope") || Object.hasOwn(item, "blocker")) fail3(`${path} completed/refused semantic-field combination constraint`);
+      if (!nonblank(item.searchScope)) fail3(`${path}.searchScope nonblank constraint`);
+      if (!Array.isArray(item.exceptions)) fail3(`${path}.exceptions array constraint`);
+      const exceptions = item.exceptions.map((entry, exceptionIndex) => {
+        const exceptionPath = `${path}.exceptions[${exceptionIndex}]`;
+        if (!record(entry)) fail3(`${exceptionPath} object constraint`);
+        if (!nonblank(entry.where)) fail3(`${exceptionPath}.where nonblank constraint`);
+        if (!nonblank(entry.reason)) fail3(`${exceptionPath}.reason nonblank constraint`);
+        return { where: entry.where, reason: entry.reason };
+      });
+      if (!nonblank(item.commitSha)) fail3(`${path}.commitSha nonblank constraint`);
+      completed++;
+      return { name: item.name, disposition: "completed", searchScope: item.searchScope, exceptions, commitSha: item.commitSha };
+    }
+    if (item.disposition === "refused") {
+      if (Object.hasOwn(item, "searchScope") || Object.hasOwn(item, "exceptions") || Object.hasOwn(item, "commitSha")) fail3(`${path} refused/completed semantic-field combination constraint`);
+      if (!nonblank(item.remainingScope)) fail3(`${path}.remainingScope nonblank constraint`);
+      refused++;
+      return { name: item.name, disposition: "refused", remainingScope: item.remainingScope, blocker: blocker(item.blocker, `${path}.blocker`) };
+    }
+    fail3(`${path}.disposition allowed-values constraint`);
+  });
+  if (value.status === "completed" && (refused !== 0 || completed === 0)) fail3("status completed disposition combination constraint");
+  if (value.status === "refused" && (completed !== 0 || refused === 0)) fail3("status refused disposition combination constraint");
+  if (value.status === "partially_completed" && (completed === 0 || refused === 0)) fail3("status partially_completed disposition combination constraint");
+  return { status: value.status, report: value.report, classResults };
+}
 
 // src/package-contracts/worker-output.ts
 var CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
-var record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var record2 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var exact = (value, keys) => Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 function validateAcceptedCoderDetails(output) {
-  if (!record(output)) throw new Error("Coder output must be an object");
+  if (!record2(output)) throw new Error("Coder output must be an object");
   const status = output.status;
   if (status === "unfinished") {
     if (!exact(output, ["status", "report", "remainingScope"]) || typeof output.report !== "string" || output.report.trim().length === 0 || typeof output.remainingScope !== "string" || output.remainingScope.trim().length === 0) {
@@ -8379,45 +9249,48 @@ function validateAcceptedCoderDetails(output) {
   }
   return { status, report: output.report };
 }
+function validateAcceptedWorkerDetails(output, roleLabel = "Coder") {
+  return roleLabel === "Fixer" ? validateFixerOutput(output) : validateAcceptedCoderDetails(output);
+}
 
 // src/doctor-contracts.ts
 var DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 var DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"];
-var nonblank = typebox_exports.String({ minLength: 1, pattern: "\\S" });
-var count = typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank) }, { additionalProperties: false });
-var evidenceIds = typebox_exports.Array(nonblank, { minItems: 1 });
-var guardrail = typebox_exports.Object({ answer: typebox_exports.Boolean(), evidenceIds, explanation: nonblank }, { additionalProperties: false });
+var nonblank2 = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+var count = typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank2) }, { additionalProperties: false });
+var evidenceIds = typebox_exports.Array(nonblank2, { minItems: 1 });
+var guardrail = typebox_exports.Object({ answer: typebox_exports.Boolean(), evidenceIds, explanation: nonblank2 }, { additionalProperties: false });
 var lastRealBite = typebox_exports.Union([
-  typebox_exports.Object({ kind: typebox_exports.Literal("actual"), targetKey: nonblank, evidenceId: nonblank }, { additionalProperties: false }),
-  typebox_exports.Object({ kind: typebox_exports.Literal("noRealBite"), targetKey: nonblank, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false })
+  typebox_exports.Object({ kind: typebox_exports.Literal("actual"), targetKey: nonblank2, evidenceId: nonblank2 }, { additionalProperties: false }),
+  typebox_exports.Object({ kind: typebox_exports.Literal("noRealBite"), targetKey: nonblank2, eligibleEvidenceIds: evidenceIds }, { additionalProperties: false })
 ]);
 var assetKinds = DOCTOR_TARGET_KINDS;
 var findingBody = {
   evidenceIds,
   disposition: typebox_exports.Union([typebox_exports.Literal("keep"), typebox_exports.Literal("thin"), typebox_exports.Literal("delete")]),
   guardrails: typebox_exports.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true }),
-  prescription: typebox_exports.Object({ kind: typebox_exports.Union([typebox_exports.Literal("retain"), typebox_exports.Literal("delete"), typebox_exports.Literal("simplify"), typebox_exports.Literal("patch"), typebox_exports.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: typebox_exports.Optional(nonblank) }, { additionalProperties: false }),
+  prescription: typebox_exports.Object({ kind: typebox_exports.Union([typebox_exports.Literal("retain"), typebox_exports.Literal("delete"), typebox_exports.Literal("simplify"), typebox_exports.Literal("patch"), typebox_exports.Literal("addMechanism")]), recommendation: nonblank2, necessityExplanation: typebox_exports.Optional(nonblank2) }, { additionalProperties: false }),
   lastRealBite
 };
 var finding = typebox_exports.Union([
-  typebox_exports.Object({ targetKey: nonblank, observation: nonblank, evidenceIds }, { additionalProperties: false }),
-  typebox_exports.Object({ targetKey: nonblank, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), assetEvidence: typebox_exports.Object({ targetKey: nonblank, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), evidenceId: nonblank }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false })
+  typebox_exports.Object({ targetKey: nonblank2, observation: nonblank2, evidenceIds }, { additionalProperties: false }),
+  typebox_exports.Object({ targetKey: nonblank2, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), assetEvidence: typebox_exports.Object({ targetKey: nonblank2, targetKind: typebox_exports.Union(assetKinds.map((kind) => typebox_exports.Literal(kind))), evidenceId: nonblank2 }, { additionalProperties: false }), ...findingBody }, { additionalProperties: false })
 ]);
-var caseIdentity = typebox_exports.Object({ issueNumber: typebox_exports.Integer({ minimum: 1 }), runsPath: nonblank }, { additionalProperties: false });
+var caseIdentity = typebox_exports.Object({ issueNumber: typebox_exports.Integer({ minimum: 1 }), runsPath: nonblank2 }, { additionalProperties: false });
 var cost = typebox_exports.Object({
   invocations: count,
   legs: count,
   modelApiTurns: count,
   outputTokens: count,
   toolCalls: count,
-  retries: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank), evidence: typebox_exports.Literal("literal run-dir naming") }, { additionalProperties: false }),
-  statuses: typebox_exports.Array(typebox_exports.Object({ source: nonblank, status: nonblank }, { additionalProperties: false })),
-  commits: typebox_exports.Array(typebox_exports.Object({ source: nonblank, commit: nonblank }, { additionalProperties: false })),
+  retries: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank2), evidence: typebox_exports.Literal("literal run-dir naming") }, { additionalProperties: false }),
+  statuses: typebox_exports.Array(typebox_exports.Object({ source: nonblank2, status: nonblank2 }, { additionalProperties: false })),
+  commits: typebox_exports.Array(typebox_exports.Object({ source: nonblank2, commit: nonblank2 }, { additionalProperties: false })),
   sessions: typebox_exports.Array(typebox_exports.Union([
-    typebox_exports.Object({ source: nonblank, startedAt: nonblank, endedAt: nonblank, wallMilliseconds: typebox_exports.Number({ minimum: 0 }), completion: typebox_exports.Literal("accepted") }, { additionalProperties: false }),
-    typebox_exports.Object({ source: nonblank, startedAt: typebox_exports.Optional(nonblank), endedAt: typebox_exports.Optional(nonblank), wallMilliseconds: typebox_exports.Optional(typebox_exports.Number({ minimum: 0 })), completion: typebox_exports.Literal("incomplete"), degradationReason: typebox_exports.Optional(nonblank) }, { additionalProperties: false })
+    typebox_exports.Object({ source: nonblank2, startedAt: nonblank2, endedAt: nonblank2, wallMilliseconds: typebox_exports.Number({ minimum: 0 }), completion: typebox_exports.Literal("accepted") }, { additionalProperties: false }),
+    typebox_exports.Object({ source: nonblank2, startedAt: typebox_exports.Optional(nonblank2), endedAt: typebox_exports.Optional(nonblank2), wallMilliseconds: typebox_exports.Optional(typebox_exports.Number({ minimum: 0 })), completion: typebox_exports.Literal("incomplete"), degradationReason: typebox_exports.Optional(nonblank2) }, { additionalProperties: false })
   ])),
-  outputBytes: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank), payload: typebox_exports.Literal("raw JSONL bytes"), providerWireBytes: typebox_exports.Literal("unavailable") }, { additionalProperties: false })
+  outputBytes: typebox_exports.Object({ count: typebox_exports.Integer({ minimum: 0 }), sources: typebox_exports.Array(nonblank2), payload: typebox_exports.Literal("raw JSONL bytes"), providerWireBytes: typebox_exports.Literal("unavailable") }, { additionalProperties: false })
 }, { additionalProperties: false });
 var doctorSubmissionSchema = typebox_exports.Union([
   typebox_exports.Object({
@@ -8427,15 +9300,25 @@ var doctorSubmissionSchema = typebox_exports.Union([
   }, { additionalProperties: false, description: "Single-case testimony, without requiring any prescription or reusable finding." }),
   typebox_exports.Object({
     status: typebox_exports.Literal("refused", { description: "Reserved for inability to support truthful case testimony, not for an unavailable prescription axis." }),
-    reason: nonblank,
-    missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank, targetKeys: typebox_exports.Array(nonblank, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 })
+    reason: nonblank2,
+    missingEvidence: typebox_exports.Array(typebox_exports.Object({ need: nonblank2, targetKeys: typebox_exports.Array(nonblank2, { minItems: 1 }) }, { additionalProperties: false }), { minItems: 1 })
   }, { additionalProperties: false, description: "Evidence is insufficient for truthful case testimony." })
 ]);
 var doctorOutputSchema = typebox_exports.Union([
   typebox_exports.Object({ status: typebox_exports.Literal("completed"), case: caseIdentity, findings: typebox_exports.Array(finding), cost }, { additionalProperties: false }),
   doctorSubmissionSchema.anyOf[1]
 ]);
-var doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: nonblank, offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0 })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
+var doctorEvidenceReadSchema = typebox_exports.Object({ evidenceId: nonblank2, offset: typebox_exports.Optional(typebox_exports.Integer({ minimum: 0 })), limit: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 4096 })) }, { additionalProperties: false });
+function validateRecordedDoctorOutput(value) {
+  if (!value_exports.Check(doctorOutputSchema, value)) throw new Error("Doctor output does not match its contract");
+  return value;
+}
+
+// src/git-object-id.ts
+var FULL_GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+function isFullGitObjectId(value) {
+  return typeof value === "string" && FULL_GIT_OBJECT_ID_RE.test(value);
+}
 
 // src/merger-contracts.ts
 var digestPattern = "^[0-9a-f]{64}$";
@@ -8457,6 +9340,15 @@ var mergerOutputSchema = typebox_exports.Union([
   typebox_exports.Object({ status: typebox_exports.Literal("escalate"), attemptId: typebox_exports.String({ minLength: 1 }), diagnosis: typebox_exports.String({ minLength: 1 }), report: typebox_exports.String({ minLength: 1 }) }, { additionalProperties: false })
 ]);
 var MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
+var record3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+var exact2 = (v, keys) => Object.keys(v).length === keys.length && keys.every((k) => Object.hasOwn(v, k));
+var blank = (v) => typeof v !== "string" || v.trim().length === 0;
+function validateMergerOutput(value, expectedAttemptId) {
+  if (!record3(value) || blank(value.attemptId) || blank(value.report) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch or blank report");
+  if (value.status === "completed" && exact2(value, ["status", "attemptId", "report", "mergeCommitId"]) && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
+  if (value.status === "escalate" && exact2(value, ["status", "attemptId", "diagnosis", "report"]) && !blank(value.diagnosis)) return structuredClone(value);
+  throw new Error("Merger output violates the exact completed|escalate contract");
+}
 
 // src/packaged-role-registry.ts
 var PACKAGED_ROLE_REGISTRY = [
@@ -8626,16 +9518,16 @@ function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
   }
-  const record2 = value;
-  if (record2.seats === void 0) {
+  const record5 = value;
+  if (record5.seats === void 0) {
     return { seats: {} };
   }
-  if (record2.seats === null || typeof record2.seats !== "object" || Array.isArray(record2.seats)) {
+  if (record5.seats === null || typeof record5.seats !== "object" || Array.isArray(record5.seats)) {
     throw new Error("public CLI config.seats must be an object");
   }
   const seats = {};
   for (const [key, raw] of Object.entries(
-    record2.seats
+    record5.seats
   )) {
     if (!PUBLIC_CONFIGURABLE_SEATS.includes(key)) {
       throw new Error(`unknown configurable seat in config: ${key}`);
@@ -8738,10 +9630,10 @@ function credentialProvidersFromAuthData(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
     return { "openai-codex": false, xai: false };
   }
-  const record2 = data;
+  const record5 = data;
   return {
-    "openai-codex": Object.prototype.hasOwnProperty.call(record2, "openai-codex"),
-    xai: Object.prototype.hasOwnProperty.call(record2, "xai")
+    "openai-codex": Object.prototype.hasOwnProperty.call(record5, "openai-codex"),
+    xai: Object.prototype.hasOwnProperty.call(record5, "xai")
   };
 }
 async function loadCredentialProviders(agentDir) {
@@ -8867,10 +9759,11 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 import {
   lstat,
   mkdir as mkdir2,
-  readFile as readFile3,
+  readFile as readFile4,
+  realpath as realpath2,
   writeFile as writeFile2
 } from "node:fs/promises";
-import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve4, sep as sep3 } from "node:path";
 
 // src/activation-ledger-topology.ts
 import {
@@ -9119,14 +10012,252 @@ function resolveBookKeyFromGit(cwd) {
   return bookKey;
 }
 
+// src/doctor-evidence.ts
+import { readdir, readFile as readFile2, realpath, stat } from "node:fs/promises";
+import { dirname as dirname4, relative as relative2, resolve as resolve3, sep as sep2 } from "node:path";
+
+// src/audit-escalation.ts
+var AUDIT_ESCALATION_KIND = "audit_escalation";
+function isAuditEscalationResult(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const result2 = value;
+  const gate = result2.decisionGate;
+  if (result2.kind !== AUDIT_ESCALATION_KIND || !Array.isArray(result2.conflicts) || result2.conflicts.length === 0 || !result2.conflicts.every(
+    (conflict) => typeof conflict === "string" && conflict.trim().length > 0
+  ) || typeof gate !== "object" || gate === null || Array.isArray(gate)) {
+    return false;
+  }
+  const gateRecord = gate;
+  return typeof gateRecord.question === "string" && gateRecord.question.trim().length > 0 && Array.isArray(gateRecord.options) && gateRecord.options.length > 0 && gateRecord.options.every(
+    (option) => typeof option === "string" && option.trim().length > 0
+  );
+}
+
+// src/package-contracts/terminating-tools.ts
+var TERMINATING_TOOL_NAMES = [
+  CODER_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
+  REVIEWER_OUTPUT_TOOL_NAME,
+  JUDGE_OUTPUT_TOOL_NAME,
+  COLLECTOR_OUTPUT_TOOL,
+  DOCTOR_OUTPUT_TOOL_NAME,
+  MERGER_OUTPUT_TOOL_NAME
+];
+function isTerminatingToolName(name) {
+  return TERMINATING_TOOL_NAMES.includes(name);
+}
+var AcceptedDetailsContractError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "AcceptedDetailsContractError";
+  }
+};
+function validateAcceptedDetails(toolName, details) {
+  if (isAuditEscalationResult(details)) {
+    throw new AcceptedDetailsContractError(
+      "audit escalation is not an accepted role receipt"
+    );
+  }
+  try {
+    switch (toolName) {
+      case CODER_OUTPUT_TOOL_NAME:
+        return validateAcceptedWorkerDetails(details, "Coder");
+      case FIXER_OUTPUT_TOOL_NAME:
+        return validateAcceptedWorkerDetails(details, "Fixer");
+      case REVIEWER_OUTPUT_TOOL_NAME:
+        return validateRuntimeReviewerReceipt(details);
+      case JUDGE_OUTPUT_TOOL_NAME:
+        return validateAcceptedJudgeDetails(details);
+      case COLLECTOR_OUTPUT_TOOL:
+        return validateAcceptedCollectorReceipt(details);
+      case DOCTOR_OUTPUT_TOOL_NAME:
+        return validateRecordedDoctorOutput(details);
+      case MERGER_OUTPUT_TOOL_NAME:
+        return validateMergerOutput(details);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.constructor === Error) throw new AcceptedDetailsContractError(error.message, { cause: error });
+    throw error;
+  }
+}
+var COLLECTOR_LEG_STATUS_RANK = {
+  missing: 0,
+  unavailable: 1,
+  valid: 2
+};
+function acceptedFacts(toolName, details) {
+  switch (toolName) {
+    case CODER_OUTPUT_TOOL_NAME:
+    case FIXER_OUTPUT_TOOL_NAME:
+      return { status: details.status };
+    case REVIEWER_OUTPUT_TOOL_NAME:
+      return { status: details.status };
+    case JUDGE_OUTPUT_TOOL_NAME:
+      return { status: details.judgeStatus };
+    case DOCTOR_OUTPUT_TOOL_NAME:
+      return { status: details.status };
+    case MERGER_OUTPUT_TOOL_NAME: {
+      const output = details;
+      return { status: output.status, ...output.status === "completed" ? { commit: output.mergeCommitId } : {} };
+    }
+    case COLLECTOR_OUTPUT_TOOL: {
+      const unique = [...new Set(details.legs.map((leg) => leg.status))];
+      unique.sort((a, b) => COLLECTOR_LEG_STATUS_RANK[a] - COLLECTOR_LEG_STATUS_RANK[b]);
+      return { legStatuses: unique };
+    }
+  }
+}
+
+// src/doctor-evidence.ts
+function record4(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+async function discoverCaseFiles(root) {
+  const found = [];
+  async function walk(dir, depth) {
+    for (const item of await readdir(dir, { withFileTypes: true })) {
+      const path = resolve3(dir, item.name);
+      if (item.isDirectory()) await walk(path, depth + 1);
+      else if (item.isFile() && (item.name.endsWith(".jsonl") || item.name === "stderr.log" && depth === 1)) found.push(path);
+    }
+  }
+  await walk(root, 0);
+  return found.sort();
+}
+function sourceList(count2, sources) {
+  return { count: count2, sources: [...new Set(sources)].sort() };
+}
+function accumulate(metric, value, source) {
+  metric.count += value;
+  if (value) metric.sources.push(source);
+}
+function timestamp(row) {
+  return typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp)) ? row.timestamp : void 0;
+}
+function isMissingPathError(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+async function stableRunsIdentity(root) {
+  let cursor = root;
+  while (true) {
+    try {
+      const git = await stat(resolve3(cursor, ".git"));
+      if (git.isDirectory() || git.isFile()) return relative2(cursor, root).split(sep2).join("/");
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+    }
+    const parent = dirname4(cursor);
+    if (parent === cursor) return root;
+    cursor = parent;
+  }
+}
+function deriveSession(content, id) {
+  const rows = [];
+  const degradationReasons = [];
+  for (const line of content.split("\n")) if (line.trim()) {
+    try {
+      const row = JSON.parse(line);
+      if (!record4(row)) {
+        degradationReasons.push(`non-object session row in ${id}`);
+        break;
+      }
+      rows.push(row);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        degradationReasons.push(`malformed JSON tail in ${id}: ${error.message}`);
+        break;
+      }
+      throw error;
+    }
+  }
+  const started = rows.find((row) => row.type === "session");
+  const startedAt = started && timestamp(started);
+  if (!startedAt) degradationReasons.push(`Pi session header is missing: ${id}`);
+  let accepted, observedCommit, turns = 0, calls = 0, tokens = 0;
+  const statuses = [], commits = [];
+  for (const row of rows) {
+    const message = record4(row.message) ? row.message : void 0;
+    if (message?.role === "assistant") {
+      for (const part of Array.isArray(message.content) ? message.content : []) if (record4(part) && part.type === "toolCall") calls++;
+      if (typeof message.responseId === "string") {
+        turns++;
+        const usage = record4(message.usage) ? message.usage : void 0;
+        if (usage && typeof usage.output === "number") tokens += usage.output;
+      }
+    }
+    if (message?.role === "toolResult" && message.isError !== true && typeof message.toolName === "string" && isTerminatingToolName(message.toolName) && record4(message.details)) {
+      let details;
+      try {
+        details = validateAcceptedDetails(message.toolName, message.details);
+      } catch (error) {
+        if (error instanceof AcceptedDetailsContractError) continue;
+        throw error;
+      }
+      accepted = row;
+      const facts = acceptedFacts(message.toolName, details);
+      if (facts.commit && facts.commit !== observedCommit) {
+        commits.push({ source: id, commit: facts.commit });
+        observedCommit = facts.commit;
+      }
+      statuses.length = 0;
+      if (facts.status !== void 0) {
+        statuses.push({ source: id, status: facts.status });
+      } else if (facts.legStatuses !== void 0 && facts.legStatuses.length > 0) {
+        for (const legStatus of facts.legStatuses) statuses.push({ source: id, status: legStatus });
+      } else {
+        statuses.push({ source: id, status: "unavailable (terminating receipt has no receipt-level status)" });
+      }
+    }
+  }
+  const acceptedAt = accepted && timestamp(accepted);
+  const final = acceptedAt ? accepted : rows.at(-1);
+  const endedAt = final && timestamp(final);
+  const wall = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : void 0;
+  if (wall !== void 0 && wall < 0) degradationReasons.push(`non-monotonic session timestamps in ${id}`);
+  const degradationReason = degradationReasons.length ? degradationReasons.join("; ") : void 0;
+  const complete = !!acceptedAt && !degradationReason && wall !== void 0 && wall >= 0;
+  const session = complete ? { source: id, startedAt, endedAt, wallMilliseconds: wall, completion: "accepted" } : { source: id, ...startedAt ? { startedAt } : {}, ...endedAt ? { endedAt } : {}, ...wall !== void 0 && wall >= 0 ? { wallMilliseconds: wall } : {}, completion: "incomplete", ...degradationReason ? { degradationReason } : {} };
+  return { session, turns, calls, tokens, statuses, commits };
+}
+async function loadDoctorCase(runsPath) {
+  const root = await realpath(runsPath);
+  const match = root.split(sep2).join("/").match(/\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/);
+  if (!match) throw new Error("Doctor case must be an .ak-roles/books/<book>/issues/<n>/runs directory");
+  const evidence = [], sessions = [], statuses = [], commits = [];
+  const turns = { count: 0, sources: [] }, calls = { count: 0, sources: [] }, tokens = { count: 0, sources: [] };
+  for (const path of await discoverCaseFiles(root)) {
+    const id = relative2(root, path).split(sep2).join("/");
+    const bytes = await readFile2(path);
+    const content = bytes.toString("utf8");
+    const kind = id.endsWith(".jsonl") ? "session" : "stderr";
+    evidence.push({ id, kind, byteLength: bytes.byteLength, contentLength: content.length, sha256: sha256Hex(bytes), content });
+    if (kind === "stderr") continue;
+    const result2 = deriveSession(content, id);
+    sessions.push(result2.session);
+    statuses.push(...result2.statuses);
+    commits.push(...result2.commits);
+    accumulate(turns, result2.turns, id);
+    accumulate(calls, result2.calls, id);
+    accumulate(tokens, result2.tokens, id);
+  }
+  const runDirs = (await readdir(root, { withFileTypes: true })).filter((item) => item.isDirectory()).map((item) => item.name).sort();
+  const legs = evidence.filter((entry) => entry.kind === "session").map((entry) => entry.id);
+  const retryDirs = runDirs.filter((name) => /(?:^|[-_])retry(?:[-_]|$)/i.test(name));
+  const rawBytes = evidence.filter((entry) => entry.kind === "session").reduce((sum, entry) => sum + entry.byteLength, 0);
+  const cost2 = { invocations: sourceList(runDirs.length, runDirs), legs: sourceList(legs.length, legs), modelApiTurns: sourceList(turns.count, turns.sources), outputTokens: sourceList(tokens.count, tokens.sources), toolCalls: sourceList(calls.count, calls.sources), retries: { ...sourceList(retryDirs.length, retryDirs), evidence: "literal run-dir naming" }, statuses, commits, sessions, outputBytes: { ...sourceList(rawBytes, legs), payload: "raw JSONL bytes", providerWireBytes: "unavailable" } };
+  return { version: 1, identity: { issueNumber: Number(match[1]), runsPath: await stableRunsIdentity(root) }, evidence, cost: cost2 };
+}
+
 // src/collector-config.ts
 import { createHash as createHash2 } from "node:crypto";
-import { readFile as readFile2 } from "node:fs/promises";
+import { readFile as readFile3 } from "node:fs/promises";
 var COLLECTOR_LEG_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target and leg manifest. Use only Collector tools. Classify from cited ledger evidence. Submit exactly one ak_collector_output when terminal.";
-function fail2(message, cause) {
+function fail4(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
 function isAsciiControlOrNonAscii(input) {
@@ -9138,37 +10269,37 @@ function isAsciiControlOrNonAscii(input) {
 }
 function parseCollectorRepository(raw) {
   if (typeof raw !== "string") {
-    fail2("Collector repository must be a string owner/repo");
+    fail4("Collector repository must be a string owner/repo");
   }
   const display = raw.trim();
   if (display !== raw) {
-    fail2("Collector repository must not include surrounding whitespace");
+    fail4("Collector repository must not include surrounding whitespace");
   }
   if (display.length === 0) {
-    fail2("Collector repository is required");
+    fail4("Collector repository is required");
   }
   if (isAsciiControlOrNonAscii(display)) {
-    fail2("Collector repository must be conservative ASCII without control bytes");
+    fail4("Collector repository must be conservative ASCII without control bytes");
   }
   if (display.includes("://") || display.includes("?") || display.includes("#") || display.includes("@") || display.includes("%") || display.includes("\\") || display.includes(" ")) {
-    fail2("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
+    fail4("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
   }
   const parts = display.split("/");
   if (parts.length !== 2) {
-    fail2("Collector repository must contain exactly one '/' separating owner and repo");
+    fail4("Collector repository must contain exactly one '/' separating owner and repo");
   }
   const [ownerDisplay, repoDisplay] = parts;
   if (ownerDisplay === void 0 || repoDisplay === void 0) {
-    fail2("Collector repository must contain exactly one '/' separating owner and repo");
+    fail4("Collector repository must contain exactly one '/' separating owner and repo");
   }
   if (ownerDisplay.length === 0 || repoDisplay.length === 0 || ownerDisplay === "." || ownerDisplay === ".." || repoDisplay === "." || repoDisplay === "..") {
-    fail2("Collector repository rejects empty, '.', or '..' segments");
+    fail4("Collector repository rejects empty, '.', or '..' segments");
   }
   if (!COLLECTOR_OWNER_PATTERN.test(ownerDisplay)) {
-    fail2("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
+    fail4("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
   }
   if (!COLLECTOR_REPO_PATTERN.test(repoDisplay)) {
-    fail2("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
+    fail4("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
   }
   const owner = ownerDisplay.toLowerCase();
   const repo = repoDisplay.toLowerCase();
@@ -9181,24 +10312,24 @@ function parseCollectorRepository(raw) {
 }
 function parseCollectorPrNumber(raw) {
   if (typeof raw !== "string" && typeof raw !== "number") {
-    fail2("Collector pull request number is required");
+    fail4("Collector pull request number is required");
   }
   const text = String(raw).trim();
   if (text !== String(raw).trim() || text !== String(raw)) {
   }
   if (typeof raw === "string") {
     if (!/^[1-9][0-9]*$/.test(raw)) {
-      fail2("Collector pull request number must be a positive safe integer string");
+      fail4("Collector pull request number must be a positive safe integer string");
     }
   } else if (typeof raw === "number") {
     if (!Number.isSafeInteger(raw) || raw < 1) {
-      fail2("Collector pull request number must be a positive safe integer");
+      fail4("Collector pull request number must be a positive safe integer");
     }
     return raw;
   }
   const value = Number(text);
   if (!Number.isSafeInteger(value) || value < 1) {
-    fail2("Collector pull request number must be a positive safe integer");
+    fail4("Collector pull request number must be a positive safe integer");
   }
   return value;
 }
@@ -9210,11 +10341,11 @@ function hasRequiredKeys(value, required) {
 }
 function canonicalizeAuthor(raw, legId) {
   if (typeof raw !== "string") {
-    fail2(`Collector leg "${legId}" expectedAuthors entries must be strings`);
+    fail4(`Collector leg "${legId}" expectedAuthors entries must be strings`);
   }
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    fail2(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
+    fail4(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
   }
   if (trimmed !== raw.trim()) {
   }
@@ -9222,26 +10353,26 @@ function canonicalizeAuthor(raw, legId) {
 }
 function canonicalizeLeg(raw, index) {
   if (!isPlainObject(raw)) {
-    fail2(`Collector manifest legs[${index}] must be an object`);
+    fail4(`Collector manifest legs[${index}] must be an object`);
   }
   const hasRequest = Object.hasOwn(raw, "request");
   if (!hasRequiredKeys(raw, ["id", "expectedAuthors"])) {
-    fail2(`Collector manifest legs[${index}] is missing required keys`);
+    fail4(`Collector manifest legs[${index}] is missing required keys`);
   }
   const id = raw["id"];
   if (typeof id !== "string" || !COLLECTOR_LEG_ID_PATTERN.test(id)) {
-    fail2(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
+    fail4(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
   }
   const authorsRaw = raw["expectedAuthors"];
   if (!Array.isArray(authorsRaw) || authorsRaw.length < 1) {
-    fail2(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
+    fail4(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
   }
   const expectedAuthors = [];
   const seenAuthors = /* @__PURE__ */ new Set();
   for (const entry of authorsRaw) {
     const author = canonicalizeAuthor(entry, id);
     if (seenAuthors.has(author)) {
-      fail2(`Collector leg "${id}" has duplicate expected author "${author}"`);
+      fail4(`Collector leg "${id}" has duplicate expected author "${author}"`);
     }
     seenAuthors.add(author);
     expectedAuthors.push(author);
@@ -9250,14 +10381,14 @@ function canonicalizeLeg(raw, index) {
   if (hasRequest) {
     const request = raw["request"];
     if (!isPlainObject(request) || !hasRequiredKeys(request, ["body"])) {
-      fail2(`Collector leg "${id}" request must be an object with body`);
+      fail4(`Collector leg "${id}" request must be an object with body`);
     }
     const body = request["body"];
     if (typeof body !== "string") {
-      fail2(`Collector leg "${id}" request body must be a string`);
+      fail4(`Collector leg "${id}" request body must be a string`);
     }
     if (body.trim().length === 0) {
-      fail2(`Collector leg "${id}" request body must be trim-non-empty`);
+      fail4(`Collector leg "${id}" request body must be trim-non-empty`);
     }
     requestBody = body;
   }
@@ -9280,16 +10411,16 @@ function stableCanonicalJson(manifest) {
 async function loadCollectorManifest(path) {
   let bytes;
   try {
-    bytes = await readFile2(path);
+    bytes = await readFile3(path);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    fail2(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
+    fail4(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
   }
   let text;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    fail2("Collector leg manifest must be UTF-8 JSON");
+    fail4("Collector leg manifest must be UTF-8 JSON");
   }
   if (text.charCodeAt(0) === 65279) {
     text = text.slice(1);
@@ -9299,14 +10430,14 @@ async function loadCollectorManifest(path) {
     parsed = JSON.parse(text);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    fail2(`Collector leg manifest is not valid JSON: ${detail}`, error);
+    fail4(`Collector leg manifest is not valid JSON: ${detail}`, error);
   }
   if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
-    fail2("Collector manifest must be an object with legs");
+    fail4("Collector manifest must be an object with legs");
   }
   const legsRaw = parsed["legs"];
   if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
-    fail2("Collector manifest legs must be a non-empty array");
+    fail4("Collector manifest legs must be a non-empty array");
   }
   const legs = [];
   const seenIds = /* @__PURE__ */ new Set();
@@ -9314,13 +10445,13 @@ async function loadCollectorManifest(path) {
   for (let index = 0; index < legsRaw.length; index += 1) {
     const leg = canonicalizeLeg(legsRaw[index], index);
     if (seenIds.has(leg.id)) {
-      fail2(`Collector manifest has duplicate leg id "${leg.id}"`);
+      fail4(`Collector manifest has duplicate leg id "${leg.id}"`);
     }
     seenIds.add(leg.id);
     for (const author of leg.expectedAuthors) {
       const owner = authorOwners.get(author);
       if (owner !== void 0) {
-        fail2(
+        fail4(
           `Collector expected author "${author}" overlaps across legs "${owner}" and "${leg.id}"`
         );
       }
@@ -9455,8 +10586,66 @@ function parseCoderArgv(args) {
     ...project === void 0 ? {} : { project }
   };
 }
+function parseFixerArgv(args) {
+  const attachmentPaths = [];
+  let project;
+  let prerequisitesPath;
+  const positional = [];
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    const token = tokens.shift();
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length))
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token === "--prerequisites") {
+      prerequisitesPath = requireOptionPath("--prerequisites", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--prerequisites=")) {
+      prerequisitesPath = requireOptionPath(
+        "--prerequisites",
+        token.slice("--prerequisites=".length)
+      );
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown fixer option: ${token}`);
+    }
+    positional.push(token);
+  }
+  let phase = "apply";
+  if (positional[0] === "plan" || positional[0] === "apply") {
+    phase = positional.shift();
+  }
+  return {
+    phase,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
+    ...project === void 0 ? {} : { project }
+  };
+}
 async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
-  const absolute = isAbsolute3(sourcePath) ? sourcePath : resolve3(sourcePath);
+  const absolute = isAbsolute3(sourcePath) ? sourcePath : resolve4(sourcePath);
   let st;
   try {
     st = await lstat(absolute);
@@ -9471,7 +10660,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
     );
   }
-  const bytes = await readFile3(absolute);
+  const bytes = await readFile4(absolute);
   const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
   const frozenPath = join4(destinationDir, name);
   await writeFile2(frozenPath, bytes);
@@ -9487,7 +10676,7 @@ async function admitJudgeInvocation(options) {
   if (options.project !== void 0) {
     requireOptionPath("--project", options.project);
   }
-  const projectRoot = resolve3(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
@@ -9579,7 +10768,7 @@ async function admitCoderInvocation(options) {
   if (options.phase !== "plan" && options.phase !== "apply") {
     throw new CliUsageError("coder phase must be plan or apply");
   }
-  const projectRoot = resolve3(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   const bookKey = resolveBookKeyFromGit(projectRoot);
   const ledgerHome = resolveActivationLedgerHome(() => options.home);
   const runId = (options.createRunId ?? uuidv7)();
@@ -9642,6 +10831,128 @@ async function admitCoderInvocation(options) {
   };
 }
 function buildCoderTransportPrompt(admitted) {
+  const lines = [admitted.instruction];
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
+async function admitFixerInvocation(options) {
+  if (options.project !== void 0) {
+    requireOptionPath("--project", options.project);
+  }
+  const instruction = options.instruction;
+  if (instruction.trim() === "") {
+    throw new CliUsageError(
+      "fixer requires a nonblank repair instruction"
+    );
+  }
+  if (options.phase !== "plan" && options.phase !== "apply") {
+    throw new CliUsageError("fixer phase must be plan or apply");
+  }
+  const projectRoot = resolve4(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join4(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@fixer`
+  );
+  const sessionDirectory = join4(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join4(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i],
+        attachmentsDirectory,
+        i
+      )
+    );
+  }
+  let prerequisites = Object.freeze([]);
+  let prerequisitesPath;
+  if (options.prerequisitesPath !== void 0) {
+    const absolutePrereq = isAbsolute3(options.prerequisitesPath) ? options.prerequisitesPath : resolve4(options.prerequisitesPath);
+    let source;
+    try {
+      source = await readFile4(absolutePrereq, "utf8");
+    } catch (error) {
+      throw new CliUsageError(
+        `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
+        { cause: error }
+      );
+    }
+    try {
+      prerequisites = parseFixerPrerequisites(source);
+    } catch (error) {
+      if (error instanceof FixerPacketValidationError) {
+        throw new CliUsageError(error.message, { cause: error });
+      }
+      throw error;
+    }
+    prerequisitesPath = join4(runDirectory, "prerequisites.json");
+    await writeFile2(
+      prerequisitesPath,
+      `${JSON.stringify(prerequisites, null, 2)}
+`,
+      "utf8"
+    );
+  }
+  const packetPath = join4(runDirectory, "fix-packet.md");
+  await writeFile2(packetPath, instruction, "utf8");
+  const admitted = {
+    role: "fixer",
+    phase: options.phase,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    packetPath,
+    ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
+    prerequisites: prerequisites.map((entry) => ({
+      id: entry.id,
+      requirement: entry.requirement
+    })),
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind
+    }))
+  };
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
+`, "utf8");
+  return {
+    role: "fixer",
+    phase: options.phase,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    packetPath,
+    ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
+    prerequisites
+  };
+}
+function buildFixerTransportPrompt(admitted) {
   const lines = [admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -9841,8 +11152,9 @@ function ownerRepoFromGitHubRemoteUrl(remoteUrl) {
     return void 0;
   }
   if (!/^github\.com$/i.test(parsed.hostname)) return void 0;
+  if (parsed.search !== "" || parsed.hash !== "") return void 0;
   const parts = parsed.pathname.split("/").filter((p) => p.length > 0);
-  if (parts.length < 2) return void 0;
+  if (parts.length !== 2) return void 0;
   return `${parts[0]}/${stripGitSuffix(parts[1])}`;
 }
 function stripGitSuffix(name) {
@@ -9864,7 +11176,7 @@ async function admitCollectorInvocation(options) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliUsageError(detail, { cause: error });
   }
-  const projectRoot = resolve3(options.project ?? options.cwd);
+  const projectRoot = resolve4(options.project ?? options.cwd);
   let repository;
   if (options.repo !== void 0) {
     try {
@@ -9967,6 +11279,278 @@ async function admitCollectorInvocation(options) {
 function buildCollectorTransportPrompt(_admitted) {
   return COLLECTOR_FIXED_KICKOFF;
 }
+var DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
+var DOCTOR_CASE_RUNS_PATH_PATTERN = /\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/;
+function parseDoctorIssueNumber(raw) {
+  const trimmed = raw.trim();
+  if (!DOCTOR_ISSUE_NUMBER_PATTERN.test(trimmed)) {
+    throw new CliUsageError(
+      `doctor --issue must be a positive integer, got ${raw}`
+    );
+  }
+  return Number(trimmed);
+}
+function parseDoctorArgv(args) {
+  const attachmentPaths = [];
+  let project;
+  let issueRaw;
+  let runs;
+  const positional = [];
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    const token = tokens.shift();
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--issue") {
+      const value = tokens.shift();
+      if (value === void 0 || value.trim() === "") {
+        throw new CliUsageError("doctor --issue requires a positive integer");
+      }
+      issueRaw = value;
+      continue;
+    }
+    if (token.startsWith("--issue=")) {
+      issueRaw = token.slice("--issue=".length);
+      if (issueRaw.trim() === "") {
+        throw new CliUsageError("doctor --issue requires a positive integer");
+      }
+      continue;
+    }
+    if (token === "--runs") {
+      const value = tokens.shift();
+      if (value === void 0 || value.trim() === "") {
+        throw new CliUsageError("doctor --runs requires a path");
+      }
+      runs = value;
+      continue;
+    }
+    if (token.startsWith("--runs=")) {
+      const value = token.slice("--runs=".length);
+      if (value.trim() === "") {
+        throw new CliUsageError("doctor --runs requires a path");
+      }
+      runs = value;
+      continue;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length))
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown doctor option: ${token}`);
+    }
+    positional.push(token);
+  }
+  if (issueRaw === void 0) {
+    throw new CliUsageError("doctor requires --issue <positive-integer>");
+  }
+  const issueNumber = parseDoctorIssueNumber(issueRaw);
+  if (runs !== void 0 && runs.trim() === "") {
+    throw new CliUsageError("doctor --runs requires a path");
+  }
+  return {
+    issueNumber,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project },
+    ...runs === void 0 ? {} : { runs }
+  };
+}
+async function resolveDoctorCaseRunsPath(options) {
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const defaultRuns = join4(
+    activationBookDirectory(ledgerHome, options.bookKey),
+    "issues",
+    String(options.issueNumber),
+    "runs"
+  );
+  if (options.runs === void 0) {
+    return defaultRuns;
+  }
+  const raw = options.runs.trim();
+  if (raw === "") {
+    throw new CliUsageError("doctor --runs requires a path");
+  }
+  if (isAbsolute3(raw)) {
+    throw new CliUsageError(
+      "doctor --runs must be a project-relative path"
+    );
+  }
+  const resolved = resolve4(options.projectRoot, raw);
+  if (resolved !== options.projectRoot && !pathContainedIn(options.projectRoot, resolved)) {
+    throw new CliUsageError(
+      "doctor --runs escapes the project root"
+    );
+  }
+  let real;
+  try {
+    real = await realpath2(resolved);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(
+      `doctor --runs is not a readable retained runs root: ${detail}`,
+      { cause: error }
+    );
+  }
+  const normalized = real.split(sep3).join("/");
+  const match = normalized.match(DOCTOR_CASE_RUNS_PATH_PATTERN);
+  if (!match) {
+    throw new CliUsageError(
+      "doctor --runs must be an .ak-roles/books/<book>/issues/<n>/runs directory"
+    );
+  }
+  if (Number(match[1]) !== options.issueNumber) {
+    throw new CliUsageError(
+      `doctor --runs issue ${match[1]} does not match --issue ${options.issueNumber}`
+    );
+  }
+  return real;
+}
+async function admitDoctorInvocation(options) {
+  if (options.project !== void 0) {
+    requireOptionPath("--project", options.project);
+  }
+  if (!Number.isInteger(options.issueNumber) || options.issueNumber < 1 || !DOCTOR_ISSUE_NUMBER_PATTERN.test(String(options.issueNumber))) {
+    throw new CliUsageError(
+      `doctor --issue must be a positive integer, got ${options.issueNumber}`
+    );
+  }
+  const projectRoot = resolve4(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  let caseRunsPath;
+  try {
+    caseRunsPath = await resolveDoctorCaseRunsPath({
+      home: options.home,
+      projectRoot,
+      bookKey,
+      issueNumber: options.issueNumber,
+      ...options.runs === void 0 ? {} : { runs: options.runs }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(detail, { cause: error });
+  }
+  if (options.runs === void 0) {
+    ensureRealDirectoryTree(ledgerHome, caseRunsPath);
+  }
+  let caseIdentity2;
+  try {
+    const patient = await loadDoctorCase(caseRunsPath);
+    if (patient.identity.issueNumber !== options.issueNumber) {
+      throw new CliUsageError(
+        `doctor case issue ${patient.identity.issueNumber} does not match --issue ${options.issueNumber}`
+      );
+    }
+    caseIdentity2 = patient.identity;
+    caseRunsPath = await realpath2(caseRunsPath);
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(
+      `doctor case could not be constructed from retained evidence: ${detail}`,
+      { cause: error }
+    );
+  }
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join4(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@doctor`
+  );
+  const sessionDirectory = join4(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join4(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments = [];
+  const attachmentPaths = options.attachmentPaths ?? [];
+  for (let i = 0; i < attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        attachmentPaths[i],
+        attachmentsDirectory,
+        i
+      )
+    );
+  }
+  const instruction = options.instruction ?? "";
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "doctor",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    issueNumber: options.issueNumber,
+    caseRunsPath,
+    caseIdentity: caseIdentity2,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind
+    }))
+  };
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  await writeFile2(
+    admittedRequestPath,
+    `${JSON.stringify(admitted, null, 2)}
+`,
+    "utf8"
+  );
+  return {
+    role: "doctor",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    issueNumber: options.issueNumber,
+    caseRunsPath,
+    caseIdentity: caseIdentity2
+  };
+}
+function buildDoctorTransportPrompt(admitted) {
+  const lines = [];
+  if (admitted.instructionEmpty) {
+    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
+  } else {
+    lines.push(admitted.instruction);
+  }
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
@@ -9974,7 +11558,7 @@ import { join as join9 } from "node:path";
 
 // src/package-resources/method-skill.ts
 import { createHash as createHash3 } from "node:crypto";
-import { readFile as readFile4, realpath } from "node:fs/promises";
+import { readFile as readFile5, realpath as realpath3 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
   constructor(skillName, path, cause) {
@@ -9991,7 +11575,8 @@ var GIT_COMMIT_RE = /^[0-9a-f]{40}$/;
 var GIT_BLOB_RE = /^[0-9a-f]{40}$/;
 var SHA256_RE = /^[0-9a-f]{64}$/;
 var REQUIRED_COMPANIONS = {
-  tdd: ["tests.md", "mocking.md", "agents/openai.yaml"]
+  tdd: ["tests.md", "mocking.md", "agents/openai.yaml"],
+  "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"]
 };
 var SEALED_UNCHANGED_METHOD_PINS = Object.freeze({
   tdd: Object.freeze({
@@ -10043,11 +11628,11 @@ function resolvePackagedMethodSkillRoot(packageRoot2, name) {
 function resolvePackagedMethodSkillPath(packageRoot2, name) {
   return join5(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
 }
-function isRecord3(value) {
+function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parseProvenance(raw, expectedName) {
-  if (!isRecord3(raw)) {
+  if (!isRecord4(raw)) {
     throw new Error(`Packaged method provenance must be an object for ${expectedName}`);
   }
   if (raw.name !== expectedName) {
@@ -10061,7 +11646,7 @@ function parseProvenance(raw, expectedName) {
   if (typeof raw.packageAdaptation !== "string" || raw.packageAdaptation.trim() === "") {
     throw new Error(`Packaged method provenance packageAdaptation must be nonblank`);
   }
-  if (!isRecord3(raw.upstream)) {
+  if (!isRecord4(raw.upstream)) {
     throw new Error(`Packaged method provenance upstream must be an object`);
   }
   const upstream = raw.upstream;
@@ -10088,12 +11673,12 @@ function parseProvenance(raw, expectedName) {
       `Packaged method provenance upstream must include nonblank tag or version`
     );
   }
-  if (!isRecord3(raw.files)) {
+  if (!isRecord4(raw.files)) {
     throw new Error(`Packaged method provenance files must be an object`);
   }
   const files = {};
   for (const [rel, entry] of Object.entries(raw.files)) {
-    if (!isRecord3(entry)) {
+    if (!isRecord4(entry)) {
       throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
     }
     if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
@@ -10135,7 +11720,12 @@ function parseProvenance(raw, expectedName) {
 }
 function assertSealedUnchangedUpstreamPin(provenance) {
   if (provenance.packageAdaptation !== UNCHANGED_PINNED_SNAPSHOT) return;
-  const sealed = SEALED_UNCHANGED_METHOD_PINS[provenance.name];
+  if (provenance.name !== "tdd") {
+    throw new Error(
+      `Packaged method ${provenance.name} claims unchanged-pinned-snapshot without a sealed pin`
+    );
+  }
+  const sealed = SEALED_UNCHANGED_METHOD_PINS.tdd;
   if (provenance.upstream.commit !== sealed.commit) {
     throw new Error(
       `Packaged method ${provenance.name} upstream.commit does not match sealed unchanged pin`
@@ -10174,7 +11764,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const provenancePath = join5(rootDirectory, "provenance.json");
   let provenanceRaw;
   try {
-    provenanceRaw = await readFile4(provenancePath, "utf8");
+    provenanceRaw = await readFile5(provenancePath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
   }
@@ -10192,7 +11782,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     const absolute = join5(rootDirectory, rel);
     let bytes;
     try {
-      bytes = await readFile4(absolute);
+      bytes = await readFile5(absolute);
     } catch (error) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
@@ -10207,8 +11797,8 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   let skillPath;
   let raw;
   try {
-    skillPath = await realpath(skillPathConfigured);
-    raw = await readFile4(skillPath, "utf8");
+    skillPath = await realpath3(skillPathConfigured);
+    raw = await readFile5(skillPath, "utf8");
   } catch (error) {
     throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
   }
@@ -10236,9 +11826,32 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     companionRelativePaths: Object.freeze([...companionRelativePaths])
   });
 }
+function observePackagedMethodSkillInvocation(text, expected) {
+  if (!text.startsWith('<skill name="')) return void 0;
+  const nameStart = '<skill name="'.length;
+  const nameEnd = text.indexOf('"', nameStart);
+  if (nameEnd <= nameStart) return void 0;
+  const name = text.slice(nameStart, nameEnd);
+  if (name !== expected.name) return void 0;
+  const locationMarker = '" location="';
+  if (!text.startsWith(locationMarker, nameEnd)) return void 0;
+  const locationStart = nameEnd + locationMarker.length;
+  const locationEnd = text.indexOf('"', locationStart);
+  if (locationEnd <= locationStart) return void 0;
+  const location = text.slice(locationStart, locationEnd);
+  const openTail = ">\n";
+  if (!text.startsWith(openTail, locationEnd + 1)) return void 0;
+  const closeTag = "\n</skill>";
+  const closeAt = text.indexOf(closeTag, locationEnd + 1 + openTail.length);
+  if (closeAt === -1) return void 0;
+  const afterClose = text.slice(closeAt + closeTag.length);
+  if (afterClose.length > 0 && !afterClose.startsWith("\n")) return void 0;
+  if (!expected.allowedLocations.includes(location)) return void 0;
+  return Object.freeze({ name: expected.name, location });
+}
 
 // src/public-cli/run-lifecycle.ts
-import { lstat as lstat2, open, readdir, readFile as readFile5, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { lstat as lstat2, open, readdir as readdir2, readFile as readFile6, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
 var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
@@ -10264,16 +11877,16 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile5(typedProviderHttpPath(runDirectory), "utf8")
+      await readFile6(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record2 = raw;
-    if (record2.httpStatus !== 429) return void 0;
-    if (typeof record2.provider !== "string") return void 0;
-    if (!isV1ResumableProvider(record2.provider)) return void 0;
-    return { httpStatus: 429, provider: record2.provider };
+    const record5 = raw;
+    if (record5.httpStatus !== 429) return void 0;
+    if (typeof record5.provider !== "string") return void 0;
+    if (!isV1ResumableProvider(record5.provider)) return void 0;
+    return { httpStatus: 429, provider: record5.provider };
   } catch {
     return void 0;
   }
@@ -10285,8 +11898,8 @@ function isV1ResumableFailure(input) {
 function renderResumeCommand(runId) {
   return `ak-role resume ${runId}`;
 }
-async function writeRoleRunState(runDirectory, record2) {
-  const payload = { ...record2, runDirectory };
+async function writeRoleRunState(runDirectory, record5) {
+  const payload = { ...record5, runDirectory };
   await writeFile3(
     join6(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
@@ -10297,47 +11910,47 @@ async function writeRoleRunState(runDirectory, record2) {
 async function readRoleRunState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile5(join6(runDirectory, RUN_STATE_FILE), "utf8")
+      await readFile6(join6(runDirectory, RUN_STATE_FILE), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record2 = raw;
-    if (typeof record2.runId !== "string" || record2.runId.trim() === "") {
+    const record5 = raw;
+    if (typeof record5.runId !== "string" || record5.runId.trim() === "") {
       return void 0;
     }
-    if (record2.role !== "judge" && record2.role !== "coder" && record2.role !== "collector") {
+    if (record5.role !== "judge" && record5.role !== "coder" && record5.role !== "fixer" && record5.role !== "collector" && record5.role !== "doctor") {
       return void 0;
     }
-    if (record2.state !== "admitted" && record2.state !== "running" && record2.state !== "resumable" && record2.state !== "terminal") {
+    if (record5.state !== "admitted" && record5.state !== "running" && record5.state !== "resumable" && record5.state !== "terminal") {
       return void 0;
     }
-    if (typeof record2.bookKey !== "string") return void 0;
-    if (typeof record2.projectRoot !== "string") return void 0;
-    if (typeof record2.sessionDirectory !== "string") return void 0;
-    if (typeof record2.admittedRequestPath !== "string") return void 0;
-    const runDir = typeof record2.runDirectory === "string" && record2.runDirectory.trim() !== "" ? record2.runDirectory : runDirectory;
-    const sessionFile = typeof record2.sessionFile === "string" && record2.sessionFile.trim() !== "" ? record2.sessionFile : roleRunSessionFile(record2.sessionDirectory);
+    if (typeof record5.bookKey !== "string") return void 0;
+    if (typeof record5.projectRoot !== "string") return void 0;
+    if (typeof record5.sessionDirectory !== "string") return void 0;
+    if (typeof record5.admittedRequestPath !== "string") return void 0;
+    const runDir = typeof record5.runDirectory === "string" && record5.runDirectory.trim() !== "" ? record5.runDirectory : runDirectory;
+    const sessionFile = typeof record5.sessionFile === "string" && record5.sessionFile.trim() !== "" ? record5.sessionFile : roleRunSessionFile(record5.sessionDirectory);
     let resumable;
-    if (record2.resumable !== void 0 && record2.resumable !== null) {
-      if (typeof record2.resumable === "object" && !Array.isArray(record2.resumable)) {
-        const r = record2.resumable;
+    if (record5.resumable !== void 0 && record5.resumable !== null) {
+      if (typeof record5.resumable === "object" && !Array.isArray(record5.resumable)) {
+        const r = record5.resumable;
         if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
           resumable = { httpStatus: 429, provider: r.provider };
         }
       }
     }
-    const phase = record2.phase === "plan" || record2.phase === "apply" ? record2.phase : void 0;
+    const phase = record5.phase === "plan" || record5.phase === "apply" ? record5.phase : void 0;
     return {
-      runId: record2.runId,
-      role: record2.role,
-      state: record2.state,
-      bookKey: record2.bookKey,
-      projectRoot: record2.projectRoot,
-      sessionDirectory: record2.sessionDirectory,
+      runId: record5.runId,
+      role: record5.role,
+      state: record5.state,
+      bookKey: record5.bookKey,
+      projectRoot: record5.projectRoot,
+      sessionDirectory: record5.sessionDirectory,
       sessionFile,
       runDirectory: runDir,
-      admittedRequestPath: record2.admittedRequestPath,
+      admittedRequestPath: record5.admittedRequestPath,
       ...phase === void 0 ? {} : { phase },
       ...resumable === void 0 ? {} : { resumable }
     };
@@ -10355,7 +11968,7 @@ async function markRunAdmitted(admitted) {
     sessionDirectory: admitted.sessionDirectory,
     sessionFile: admitted.sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
-    ...admitted.role === "coder" ? { phase: admitted.phase } : {}
+    ...admitted.role === "coder" || admitted.role === "fixer" ? { phase: admitted.phase } : {}
   });
 }
 async function markRunRunning(runDirectory) {
@@ -10454,7 +12067,7 @@ async function findRunDirectoryById(home, runId) {
   const booksRoot = join6(ledgerHome, "books");
   let bookKeys;
   try {
-    bookKeys = await readdir(booksRoot);
+    bookKeys = await readdir2(booksRoot);
   } catch {
     return void 0;
   }
@@ -10462,7 +12075,7 @@ async function findRunDirectoryById(home, runId) {
     const runsDir = join6(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
-      entries = await readdir(runsDir);
+      entries = await readdir2(runsDir);
     } catch {
       continue;
     }
@@ -10499,26 +12112,38 @@ async function loadResumableRunRecord(home, runId) {
   let attachments = [];
   let phase;
   let taskPath;
+  let packetPath;
+  let prerequisitesPath;
+  let prerequisites;
   try {
     const raw = JSON.parse(
-      await readFile5(run.admittedRequestPath, "utf8")
+      await readFile6(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      const record2 = raw;
-      if (typeof record2.instruction === "string") {
-        instruction = record2.instruction;
+      const record5 = raw;
+      if (typeof record5.instruction === "string") {
+        instruction = record5.instruction;
       }
-      if (typeof record2.instructionEmpty === "boolean") {
-        instructionEmpty = record2.instructionEmpty;
+      if (typeof record5.instructionEmpty === "boolean") {
+        instructionEmpty = record5.instructionEmpty;
       }
-      if (Array.isArray(record2.attachments)) {
-        attachments = record2.attachments;
+      if (Array.isArray(record5.attachments)) {
+        attachments = record5.attachments;
       }
-      if (record2.phase === "plan" || record2.phase === "apply") {
-        phase = record2.phase;
+      if (record5.phase === "plan" || record5.phase === "apply") {
+        phase = record5.phase;
       }
-      if (typeof record2.taskPath === "string" && record2.taskPath.trim() !== "") {
-        taskPath = record2.taskPath;
+      if (typeof record5.taskPath === "string" && record5.taskPath.trim() !== "") {
+        taskPath = record5.taskPath;
+      }
+      if (typeof record5.packetPath === "string" && record5.packetPath.trim() !== "") {
+        packetPath = record5.packetPath;
+      }
+      if (typeof record5.prerequisitesPath === "string" && record5.prerequisitesPath.trim() !== "") {
+        prerequisitesPath = record5.prerequisitesPath;
+      }
+      if (Array.isArray(record5.prerequisites)) {
+        prerequisites = record5.prerequisites;
       }
     }
   } catch {
@@ -10534,7 +12159,10 @@ async function loadResumableRunRecord(home, runId) {
       instructionEmpty,
       attachments,
       ...phase === void 0 ? {} : { phase },
-      ...taskPath === void 0 ? {} : { taskPath }
+      ...taskPath === void 0 ? {} : { taskPath },
+      ...packetPath === void 0 ? {} : { packetPath },
+      ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
+      ...prerequisites === void 0 ? {} : { prerequisites }
     }
   };
 }
@@ -10609,6 +12237,54 @@ async function loadResumableCoderRun(home, runId) {
     observation: loaded.observation
   };
 }
+async function loadResumableFixerRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "fixer") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not fixer`
+    );
+  }
+  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
+  if (phase !== "plan" && phase !== "apply") {
+    throw new CliUsageError(
+      `role run admitted fixer phase is missing: ${runId}`
+    );
+  }
+  const packetPath = loaded.admittedFields.packetPath;
+  if (packetPath === void 0) {
+    throw new CliUsageError(
+      `role run admitted fixer packet path is missing: ${runId}`
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted fixer instruction is blank: ${runId}`
+    );
+  }
+  const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
+  const admitted = {
+    role: "fixer",
+    phase,
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    packetPath,
+    ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
+    prerequisites
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    observation: loaded.observation
+  };
+}
 async function peekRoleRunRole(home, runId) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) return void 0;
@@ -10618,27 +12294,8 @@ async function peekRoleRunRole(home, runId) {
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { readFile as readFile6, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname4, join as join7 } from "node:path";
-
-// src/audit-escalation.ts
-var AUDIT_ESCALATION_KIND = "audit_escalation";
-function isAuditEscalationResult(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const result2 = value;
-  const gate = result2.decisionGate;
-  if (result2.kind !== AUDIT_ESCALATION_KIND || !Array.isArray(result2.conflicts) || result2.conflicts.length === 0 || !result2.conflicts.every(
-    (conflict) => typeof conflict === "string" && conflict.trim().length > 0
-  ) || typeof gate !== "object" || gate === null || Array.isArray(gate)) {
-    return false;
-  }
-  const gateRecord = gate;
-  return typeof gateRecord.question === "string" && gateRecord.question.trim().length > 0 && Array.isArray(gateRecord.options) && gateRecord.options.length > 0 && gateRecord.options.every(
-    (option) => typeof option === "string" && option.trim().length > 0
-  );
-}
+import { readFile as readFile7, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname5, join as join7 } from "node:path";
 
 // src/collector-evidence.ts
 var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
@@ -10859,10 +12516,10 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile6(sessionFile, "utf8");
+    await readFile7(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
-    if (isMissingPathError(error)) return { state: "missing" };
+    if (isMissingPathError2(error)) return { state: "missing" };
     return {
       state: "unreadable",
       diagnostic: error instanceof Error ? error.message || error.name : String(error)
@@ -10959,7 +12616,7 @@ function classifyPostAdmissionFailure(input) {
     details: { code: input.code }
   };
 }
-function isMissingPathError(error) {
+function isMissingPathError2(error) {
   return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 function sessionReadFailure(error, fallbackMessage) {
@@ -10988,7 +12645,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile6(sessionFile, "utf8");
+  const text = await readFile7(sessionFile, "utf8");
   const entries = [];
   for (const line of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -11023,7 +12680,7 @@ async function readSessionProviderStop(sessionFile) {
     return void 0;
   }
 }
-function isRecord4(value) {
+function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function judgeDecisiveFacts(verdict) {
@@ -11051,6 +12708,39 @@ function coderDecisiveFacts(output) {
   facts.reportPresent = output.report.trim().length > 0;
   return facts;
 }
+function fixerDecisiveFacts(output) {
+  const facts = {
+    fixerStatus: output.status
+  };
+  if (output.status === "unfinished") {
+    facts.remainingScope = output.remainingScope;
+  }
+  if (output.status === "refused" && "blocker" in output) {
+    facts.remainingScope = output.remainingScope;
+    facts.blockerCause = output.blocker.cause;
+    if (output.blocker.cause === "prerequisite_unmet") {
+      facts.prerequisiteId = output.blocker.prerequisiteId;
+    }
+  }
+  if ("classResults" in output && Array.isArray(output.classResults)) {
+    facts.classResultCount = output.classResults.length;
+    facts.classDispositions = output.classResults.map((entry) => `${entry.name}:${entry.disposition}`).join(",");
+    const refusedBlockers = output.classResults.flatMap(
+      (entry) => entry.disposition === "refused" ? [entry.blocker] : []
+    );
+    if (refusedBlockers.length > 0) {
+      facts.blockerCauses = refusedBlockers.map((blocker2) => blocker2.cause).join(",");
+      const prerequisiteIds = refusedBlockers.flatMap(
+        (blocker2) => blocker2.cause === "prerequisite_unmet" ? [blocker2.prerequisiteId] : []
+      );
+      if (prerequisiteIds.length > 0) {
+        facts.prerequisiteIds = prerequisiteIds.join(",");
+      }
+    }
+  }
+  facts.reportPresent = output.report.trim().length > 0;
+  return facts;
+}
 function collectorDecisiveFacts(receipt) {
   return {
     repository: receipt.repository,
@@ -11058,6 +12748,21 @@ function collectorDecisiveFacts(receipt) {
     targetHead: receipt.targetHead,
     manifestDigest: receipt.manifestDigest,
     legStatuses: receipt.legs.map((leg) => `${leg.legId}:${leg.status}`).join(",")
+  };
+}
+function doctorDecisiveFacts(output) {
+  if (output.status === "refused") {
+    return {
+      doctorStatus: output.status,
+      reason: output.reason,
+      missingEvidenceCount: output.missingEvidence.length
+    };
+  }
+  return {
+    doctorStatus: output.status,
+    issueNumber: output.case.issueNumber,
+    runsPath: output.case.runsPath,
+    findingsCount: output.findings.length
   };
 }
 function collectorReceiptBindingFailure(diagnostic) {
@@ -11179,11 +12884,11 @@ function extractNavigatorFact(entries) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord4(details)) continue;
+      if (!isRecord5(details)) continue;
       const disposition = details.disposition;
       if (disposition === "recommendation") {
         const next = details.next;
-        if (!isRecord4(next) || typeof next.role !== "string") {
+        if (!isRecord5(next) || typeof next.role !== "string") {
           return {
             disposition: "unavailable",
             source: "unknown",
@@ -11191,7 +12896,7 @@ function extractNavigatorFact(entries) {
           };
         }
         const reason = typeof details.reason === "string" ? details.reason : "";
-        const route = Array.isArray(details.route) ? details.route.filter(isRecord4).map((target) => ({
+        const route = Array.isArray(details.route) ? details.route.filter(isRecord5).map((target) => ({
           role: String(target.role),
           phase: navigatorPhaseValue(target.phase)
         })) : void 0;
@@ -11340,7 +13045,7 @@ async function readLawfulSettlementEntries(admitted) {
   try {
     return await readBoundSessionEntries(admitted.sessionFile);
   } catch (error) {
-    if (isMissingPathError(error)) return void 0;
+    if (isMissingPathError2(error)) return void 0;
     throw error instanceof Error && error.knownCause === "session" ? error : sessionReadFailure(error, "session unreadable");
   }
 }
@@ -11393,6 +13098,152 @@ async function settleLawfulCoderTerminalResult(admitted, options = {}) {
     {
       coderOutput: extracted.output,
       ...options.methodProvenance === void 0 ? {} : { methodProvenance: options.methodProvenance }
+    }
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId
+  };
+}
+function sessionMessageText(message) {
+  if (message === void 0) return "";
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  const parts = [];
+  for (const part of message.content) {
+    if (typeof part === "object" && part !== null && !Array.isArray(part) && part.type === "text" && typeof part.text === "string") {
+      parts.push(part.text);
+    }
+  }
+  return parts.join("\n");
+}
+function extractFixerMethodInvocations(entries, options) {
+  const observed = [];
+  for (const entry of entries) {
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "user") continue;
+    const text = sessionMessageText(message);
+    if (text.length === 0) continue;
+    const hit = observePackagedMethodSkillInvocation(text, {
+      name: "diagnosing-bugs",
+      allowedLocations: options.allowedLocations
+    });
+    if (hit !== void 0) observed.push(hit);
+  }
+  return Object.freeze(observed);
+}
+async function publishFixerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join7(artifactsDir, "report.json");
+  const evidencePath = join7(artifactsDir, "evidence.json");
+  await writeFile4(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "fixer",
+        runId: admitted.runId,
+        phase: admitted.phase,
+        outcome: roleOutcome,
+        ...options.fixerOutput === void 0 ? {} : { receipt: options.fixerOutput }
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  await writeFile4(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "fixer",
+        phase: admitted.phase,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        packetPath: admitted.packetPath,
+        ...admitted.prerequisitesPath === void 0 ? {} : { prerequisitesPath: admitted.prerequisitesPath },
+        prerequisites: admitted.prerequisites,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength
+        })),
+        methodProvenance: options.methodProvenance,
+        // Optional diagnosis: availability is package-bound; invocation only when observed.
+        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+        methodInvocations: options.methodInvocations ?? []
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath }
+  ];
+}
+function extractFixerRoleOutcome(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    const details = message.details;
+    if (isAuditEscalationResult(details)) {
+      return {
+        outcome: {
+          kind: "audit_escalation",
+          role: "fixer",
+          status: "audit_escalation",
+          decisiveFacts: { ...details }
+        }
+      };
+    }
+    try {
+      const output = validateFixerOutput(details);
+      const outcome = {
+        kind: "accepted",
+        role: "fixer",
+        status: output.status,
+        decisiveFacts: fixerDecisiveFacts(output)
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return void 0;
+}
+async function settleLawfulFixerTerminalResult(admitted, options) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const extracted = extractFixerRoleOutcome(entries);
+  if (extracted === void 0) return void 0;
+  const navigator = extractNavigatorFact(entries);
+  const methodInvocations = extractFixerMethodInvocations(entries, {
+    allowedLocations: [
+      options.methodSkillPath,
+      options.methodSkillConfiguredPath
+    ]
+  });
+  const artifacts = await publishFixerArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    {
+      ...extracted.output === void 0 ? {} : { fixerOutput: extracted.output },
+      methodProvenance: options.methodProvenance,
+      methodInvocations
     }
   );
   return {
@@ -11508,6 +13359,121 @@ async function settleLawfulCollectorTerminalResult(admitted) {
 async function trySettleCollectorTerminalResult(admitted) {
   return settleLawfulCollectorTerminalResult(admitted);
 }
+async function publishDoctorArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join7(artifactsDir, "report.json");
+  const evidencePath = join7(artifactsDir, "evidence.json");
+  await writeFile4(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "doctor",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...options.doctorOutput === void 0 ? {} : { receipt: options.doctorOutput }
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  await writeFile4(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "doctor",
+        issueNumber: admitted.issueNumber,
+        caseRunsPath: admitted.caseRunsPath,
+        caseIdentity: admitted.caseIdentity,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength
+        }))
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath }
+  ];
+}
+function extractDoctorRoleOutcome(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    const details = message.details;
+    if (isAuditEscalationResult(details)) {
+      return {
+        outcome: {
+          kind: "audit_escalation",
+          role: "doctor",
+          status: "audit_escalation",
+          decisiveFacts: { ...details }
+        }
+      };
+    }
+    try {
+      const output = validateRecordedDoctorOutput(details);
+      const outcome = {
+        kind: "accepted",
+        role: "doctor",
+        status: output.status,
+        decisiveFacts: doctorDecisiveFacts(output)
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return void 0;
+}
+async function settleLawfulDoctorTerminalResult(admitted) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const extracted = extractDoctorRoleOutcome(entries);
+  if (extracted === void 0) return void 0;
+  if (extracted.output !== void 0 && extracted.output.status === "completed") {
+    if (extracted.output.case.issueNumber !== admitted.caseIdentity.issueNumber || extracted.output.case.runsPath !== admitted.caseIdentity.runsPath) {
+      const error = new Error(
+        "Doctor receipt case identity does not match admitted case identity"
+      );
+      error.name = "DoctorReceiptBindingError";
+      error.knownCause = "output";
+      throw error;
+    }
+  }
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishDoctorArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    extracted.output === void 0 ? {} : { doctorOutput: extracted.output }
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId
+  };
+}
+async function trySettleDoctorTerminalResult(admitted) {
+  return settleLawfulDoctorTerminalResult(admitted);
+}
 async function trySettleCoderTerminalResult(admitted, options = {}) {
   return settleLawfulCoderTerminalResult(admitted, options);
 }
@@ -11516,6 +13482,19 @@ async function hasLawfulCoderTerminalResult(admitted) {
     const entries = await readLawfulSettlementEntries(admitted);
     if (entries === void 0) return false;
     const extracted = extractCoderRoleOutcome(entries);
+    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+  } catch {
+    return false;
+  }
+}
+async function trySettleFixerTerminalResult(admitted, options) {
+  return settleLawfulFixerTerminalResult(admitted, options);
+}
+async function hasLawfulFixerTerminalResult(admitted) {
+  try {
+    const entries = await readLawfulSettlementEntries(admitted);
+    if (entries === void 0) return false;
+    const extracted = extractFixerRoleOutcome(entries);
     return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
   } catch {
     return false;
@@ -11540,7 +13519,7 @@ function publicationAttemptFromError(path, error) {
 }
 function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   const dirs = [];
-  for (const dir of [baseDir, runDirectory, dirname4(runDirectory)]) {
+  for (const dir of [baseDir, runDirectory, dirname5(runDirectory)]) {
     if (!dirs.includes(dir)) dirs.push(dir);
   }
   return dirs;
@@ -12600,6 +14579,560 @@ async function runPublicCollector(argv, env, io, parseCollectorArgv2) {
   });
 }
 
+// src/public-cli/doctor-run.ts
+import { writeFile as writeFile8 } from "node:fs/promises";
+import { join as join11 } from "node:path";
+function buildModelArgs4(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildDoctorActivationExtraArgs(admitted, options = {}) {
+  const prompt = buildDoctorTransportPrompt(admitted);
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "doctor",
+    "--ak-doctor-case",
+    admitted.caseRunsPath,
+    "--mode",
+    "json",
+    ...buildModelArgs4(options.model),
+    prompt
+  ];
+}
+async function presentControlledFailure4(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...session === void 0 ? {} : { session }
+  });
+  await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  const terminal = await settleFailureTerminalResult(
+    admitted,
+    failure,
+    { disposition: "no-advice" }
+  );
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedDoctor(input) {
+  const { admitted, env, io, extraArgs, lease } = input;
+  try {
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure4(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile8(
+        join11(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleDoctorTerminalResult(admitted);
+    } catch (error) {
+      return await presentControlledFailure4(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionFile
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure4(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : {
+          knownCause: knownFailure.cause,
+          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+        }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function runPublicDoctor(argv, env, io, parseDoctorArgv2) {
+  let admitted;
+  try {
+    const parsed = parseDoctorArgv2(argv);
+    admitted = await admitDoctorInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      issueNumber: parsed.issueNumber,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...parsed.runs === void 0 ? {} : { runs: parsed.runs },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const extraArgs = buildDoctorActivationExtraArgs(admitted, {
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedDoctor({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease
+  });
+}
+
+// src/public-cli/fixer-run.ts
+import { writeFile as writeFile9 } from "node:fs/promises";
+import { join as join12 } from "node:path";
+function buildModelArgs5(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildFixerActivationExtraArgs(admitted, options) {
+  const prompt = buildFixerTransportPrompt(admitted);
+  const skillPath = resolvePackagedMethodSkillPath(
+    options.packageRoot,
+    "diagnosing-bugs"
+  );
+  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
+  return [
+    "--no-skills",
+    "--skill",
+    skillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "fixer",
+    "--ak-fixer-phase",
+    admitted.phase,
+    "--ak-fix-packet",
+    admitted.packetPath,
+    ...prerequisiteArgs,
+    "--mode",
+    "json",
+    ...buildModelArgs5(options.model),
+    prompt
+  ];
+}
+function buildFixerResumeActivationExtraArgs(admitted, options) {
+  const skillPath = resolvePackagedMethodSkillPath(
+    options.packageRoot,
+    "diagnosing-bugs"
+  );
+  const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
+  return [
+    "--no-skills",
+    "--skill",
+    skillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "fixer",
+    "--ak-fixer-phase",
+    admitted.phase,
+    "--ak-fix-packet",
+    admitted.packetPath,
+    ...prerequisiteArgs,
+    "--mode",
+    "json",
+    ...buildModelArgs5(options.model),
+    RESUME_TRANSPORT_ENVELOPE
+  ];
+}
+async function presentControlledFailure5(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...session === void 0 ? {} : { session }
+  });
+  const hasLawfulTerminalResult = await hasLawfulFixerTerminalResult(admitted);
+  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+    admitted.sessionFile
+  );
+  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
+    hasLawfulTerminalResult,
+    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
+  });
+  if (resumable && typedHttp429 !== void 0) {
+    await markRunResumable(admitted.runDirectory, typedHttp429);
+  } else {
+    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  }
+  const terminal = await settleFailureTerminalResult(
+    admitted,
+    failure,
+    { disposition: "no-advice" },
+    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
+  );
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedFixer(input) {
+  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  try {
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure5(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile9(
+        join12(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleFixerTerminalResult(admitted, {
+        methodProvenance: methodMaterial.provenance,
+        methodSkillPath: methodMaterial.skillPath,
+        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+          env.packageRoot,
+          "diagnosing-bugs"
+        )
+      });
+    } catch (error) {
+      return await presentControlledFailure5(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionFile
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure5(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : {
+          knownCause: knownFailure.cause,
+          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+        }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function loadFixerMethodMaterial(packageRoot2) {
+  return await loadPackagedMethodSkillMaterial(packageRoot2, "diagnosing-bugs");
+}
+async function runPublicFixer(argv, env, io, parseFixerArgv2) {
+  let admitted;
+  try {
+    const parsed = parseFixerArgv2(argv);
+    admitted = await admitFixerInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      phase: parsed.phase,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.prerequisitesPath === void 0 ? {} : { prerequisitesPath: parsed.prerequisitesPath },
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  let methodMaterial;
+  try {
+    methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    await lease.release();
+    return await presentControlledFailure5(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+        knownCause: "activation"
+      },
+      io
+    );
+  }
+  const extraArgs = buildFixerActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedFixer({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    methodMaterial
+  });
+}
+async function runPublicFixerResume(argv, env, io) {
+  const runId = argv[0];
+  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
+    presentStructuralRejection(
+      new CliUsageError("usage: ak-role resume <runId>"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  if (argv.length > 1) {
+    presentStructuralRejection(
+      new CliUsageError("resume takes exactly one run id"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  let loaded;
+  try {
+    loaded = await loadResumableFixerRun(env.home, runId);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+  let methodMaterial;
+  try {
+    methodMaterial = await loadFixerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    await lease.release();
+    return await presentControlledFailure5(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+        knownCause: "activation"
+      },
+      io
+    );
+  }
+  const extraArgs = buildFixerResumeActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedFixer({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    methodMaterial
+  });
+}
+
 // src/public-cli/cli.ts
 var THINKING_LEVELS2 = /* @__PURE__ */ new Set([
   "off",
@@ -12624,7 +15157,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join11(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join13(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -12853,7 +15386,12 @@ async function runAkRole(argv, env) {
           "collector role runs are one-shot and cannot be resumed"
         );
       }
-      const resumeSeatRole = resumeRole === "coder" ? "coder" : "judge";
+      if (resumeRole === "doctor") {
+        throw new CliUsageError(
+          "doctor role runs are one-shot and cannot be resumed"
+        );
+      }
+      const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : "judge";
       const seat = resolveEffectiveSeat(
         config,
         resumeSeatRole,
@@ -12874,6 +15412,28 @@ async function runAkRole(argv, env) {
             ...seat.selection === void 0 ? {} : { model: seat.selection },
             ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
             ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
+          },
+          io
+        );
+        return {
+          exitCode: result3.exitCode,
+          ...result3.terminal === void 0 ? {} : { terminal: result3.terminal }
+        };
+      }
+      if (resumeRole === "fixer") {
+        const result3 = await runPublicFixerResume(
+          parsed.args,
+          {
+            home,
+            agentDir,
+            packageRoot: env.packageRoot,
+            cwd,
+            credentials,
+            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+            ...seat.selection === void 0 ? {} : { model: seat.selection },
+            ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
+            ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
           },
           io
         );
@@ -12974,6 +15534,40 @@ async function runAkRole(argv, env) {
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
     }
+    if (parsed.command === "fixer") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "fixer",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicFixer(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+          ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
+          ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs },
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+        },
+        io,
+        parseFixerArgv
+      );
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
+    }
     if (parsed.command === "collector") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
@@ -13002,6 +15596,40 @@ async function runAkRole(argv, env) {
         },
         io,
         parseCollectorArgv
+      );
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
+    }
+    if (parsed.command === "doctor") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "doctor",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicDoctor(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+          ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...env.doctorExtraPiArgs === void 0 ? {} : { extraPiArgs: env.doctorExtraPiArgs },
+          ...env.doctorTimeoutMs === void 0 ? {} : { timeoutMs: env.doctorTimeoutMs },
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+        },
+        io,
+        parseDoctorArgv
       );
       return {
         exitCode: result2.exitCode,
@@ -13053,7 +15681,7 @@ async function runAkRole(argv, env) {
 }
 
 // src/public-cli/main.ts
-var here = dirname5(fileURLToPath(import.meta.url));
-var packageRoot = join12(here, "..", "..");
+var here = dirname6(fileURLToPath(import.meta.url));
+var packageRoot = join14(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

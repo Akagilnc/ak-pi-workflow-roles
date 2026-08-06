@@ -26,21 +26,29 @@ import {
 } from "../package-contracts/collector-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
+  FIXER_OUTPUT_TOOL_NAME,
   validateAcceptedCoderDetails,
+  validateFixerOutput,
   type CoderOutput,
+  type FixerOutput,
 } from "../package-contracts/worker-output.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
   validateRecordedDoctorOutput,
   type DoctorOutput,
 } from "../doctor-contracts.ts";
-import type { PackagedMethodSkillProvenance } from "../package-resources/method-skill.ts";
+import {
+  observePackagedMethodSkillInvocation,
+  type ObservedPackagedMethodSkillInvocation,
+  type PackagedMethodSkillProvenance,
+} from "../package-resources/method-skill.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
   type AdmittedCollectorInvocation,
   type AdmittedDoctorInvocation,
+  type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -547,6 +555,43 @@ function coderDecisiveFacts(output: CoderOutput): Record<string, unknown> {
     facts.remainingScope = output.remainingScope;
   }
   // Report is the durable Artifact body — keep only a short presence marker inline.
+  facts.reportPresent = output.report.trim().length > 0;
+  return facts;
+}
+
+function fixerDecisiveFacts(output: FixerOutput): Record<string, unknown> {
+  const facts: Record<string, unknown> = {
+    fixerStatus: output.status,
+  };
+  if (output.status === "unfinished") {
+    facts.remainingScope = output.remainingScope;
+  }
+  // Plan-level refused keeps assignment blocker facts on the Terminal face.
+  if (output.status === "refused" && "blocker" in output) {
+    facts.remainingScope = output.remainingScope;
+    facts.blockerCause = output.blocker.cause;
+    if (output.blocker.cause === "prerequisite_unmet") {
+      facts.prerequisiteId = output.blocker.prerequisiteId;
+    }
+  }
+  if ("classResults" in output && Array.isArray(output.classResults)) {
+    facts.classResultCount = output.classResults.length;
+    facts.classDispositions = output.classResults
+      .map((entry) => `${entry.name}:${entry.disposition}`)
+      .join(",");
+    const refusedBlockers = output.classResults.flatMap((entry) =>
+      entry.disposition === "refused" ? [entry.blocker] : [],
+    );
+    if (refusedBlockers.length > 0) {
+      facts.blockerCauses = refusedBlockers.map((blocker) => blocker.cause).join(",");
+      const prerequisiteIds = refusedBlockers.flatMap((blocker) =>
+        blocker.cause === "prerequisite_unmet" ? [blocker.prerequisiteId] : [],
+      );
+      if (prerequisiteIds.length > 0) {
+        facts.prerequisiteIds = prerequisiteIds.join(",");
+      }
+    }
+  }
   facts.reportPresent = output.report.trim().length > 0;
   return facts;
 }
@@ -1122,6 +1167,230 @@ export async function settleCoderTerminalResult(
   return settled;
 }
 
+function sessionMessageText(message: SessionMessage | undefined): string {
+  if (message === undefined) return "";
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  const parts: string[] = [];
+  for (const part of message.content) {
+    if (
+      typeof part === "object" &&
+      part !== null &&
+      !Array.isArray(part) &&
+      (part as { type?: unknown }).type === "text" &&
+      typeof (part as { text?: unknown }).text === "string"
+    ) {
+      parts.push((part as { text: string }).text);
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Observe optional Fixer diagnosing-bugs Skill expansions from the session.
+ * Availability is always package-bound; invocation is recorded only when observed.
+ */
+export function extractFixerMethodInvocations(
+  entries: readonly SessionEntry[],
+  options: {
+    readonly allowedLocations: readonly string[];
+  },
+): readonly ObservedPackagedMethodSkillInvocation[] {
+  const observed: ObservedPackagedMethodSkillInvocation[] = [];
+  for (const entry of entries) {
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "user") continue;
+    const text = sessionMessageText(message);
+    if (text.length === 0) continue;
+    const hit = observePackagedMethodSkillInvocation(text, {
+      name: "diagnosing-bugs",
+      allowedLocations: options.allowedLocations,
+    });
+    if (hit !== undefined) observed.push(hit);
+  }
+  return Object.freeze(observed);
+}
+
+/**
+ * Publish lawful Fixer success Artifacts on the shared #106 success interface.
+ * Evidence records package diagnosis provenance and optional observed invocation.
+ */
+export async function publishFixerArtifacts(
+  admitted: AdmittedFixerInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  sessionDirectory: string,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
+    readonly fixerOutput?: FixerOutput;
+  },
+): Promise<TerminalArtifactRef[]> {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join(artifactsDir, "report.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "fixer",
+        runId: admitted.runId,
+        phase: admitted.phase,
+        outcome: roleOutcome,
+        ...(options.fixerOutput === undefined
+          ? {}
+          : { receipt: options.fixerOutput }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "fixer",
+        phase: admitted.phase,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        packetPath: admitted.packetPath,
+        ...(admitted.prerequisitesPath === undefined
+          ? {}
+          : { prerequisitesPath: admitted.prerequisitesPath }),
+        prerequisites: admitted.prerequisites,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+        methodProvenance: options.methodProvenance,
+        // Optional diagnosis: availability is package-bound; invocation only when observed.
+        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+        methodInvocations: options.methodInvocations ?? [],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
+/** Lawful Fixer accepted / audit_escalation outcome extracted from session. */
+export type LawfulFixerRoleOutcome =
+  | {
+      kind: "accepted";
+      role: "fixer";
+      status: string;
+      decisiveFacts: Readonly<Record<string, unknown>>;
+    }
+  | {
+      kind: "audit_escalation";
+      role: "fixer";
+      status: "audit_escalation";
+      decisiveFacts: Readonly<Record<string, unknown>>;
+    };
+
+export function extractFixerRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulFixerRoleOutcome; output?: FixerOutput } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    const details = message.details;
+    // #107 owns generic audit presentation; hand off typed escalate without re-owning.
+    if (isAuditEscalationResult(details)) {
+      return {
+        outcome: {
+          kind: "audit_escalation",
+          role: "fixer",
+          status: "audit_escalation",
+          decisiveFacts: { ...details },
+        },
+      };
+    }
+    try {
+      const output = validateFixerOutput(details);
+      const outcome: LawfulFixerRoleOutcome = {
+        kind: "accepted",
+        role: "fixer",
+        status: output.status,
+        decisiveFacts: fixerDecisiveFacts(output),
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function settleLawfulFixerTerminalResult(
+  admitted: AdmittedFixerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractFixerRoleOutcome(entries);
+  if (extracted === undefined) return undefined;
+  const navigator = extractNavigatorFact(entries);
+  const methodInvocations = extractFixerMethodInvocations(entries, {
+    allowedLocations: [
+      options.methodSkillPath,
+      options.methodSkillConfiguredPath,
+    ],
+  });
+  const artifacts = await publishFixerArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    {
+      ...(extracted.output === undefined ? {} : { fixerOutput: extracted.output }),
+      methodProvenance: options.methodProvenance,
+      methodInvocations,
+    },
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
+}
+
+/** Settle a lawful Fixer Terminal from the admitted session (shared #106 success interface). */
+export async function settleFixerTerminalResult(
+  admitted: AdmittedFixerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult> {
+  const settled = await settleLawfulFixerTerminalResult(admitted, options);
+  if (settled === undefined) {
+    throw new Error(
+      "Fixer Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
 export async function publishCollectorArtifacts(
   admitted: AdmittedCollectorInvocation,
   roleOutcome: TerminalRoleOutcome,
@@ -1455,6 +1724,31 @@ export async function hasLawfulCoderTerminalResult(
     const entries = await readLawfulSettlementEntries(admitted);
     if (entries === undefined) return false;
     const extracted = extractCoderRoleOutcome(entries);
+    return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
+  } catch {
+    return false;
+  }
+}
+
+/** Try to settle a lawful Fixer Terminal; undefined only for genuine absence. */
+export async function trySettleFixerTerminalResult(
+  admitted: AdmittedFixerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult | undefined> {
+  return settleLawfulFixerTerminalResult(admitted, options);
+}
+
+export async function hasLawfulFixerTerminalResult(
+  admitted: AdmittedFixerInvocation,
+): Promise<boolean> {
+  try {
+    const entries = await readLawfulSettlementEntries(admitted);
+    if (entries === undefined) return false;
+    const extracted = extractFixerRoleOutcome(entries);
     return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
   } catch {
     return false;

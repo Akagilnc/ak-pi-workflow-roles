@@ -512,6 +512,145 @@ process.exit(1);
   });
 });
 
+test("installed ak-role fixer admits plan/apply and binds package diagnosing-bugs without ambient home skills", async () => {
+  await withHermeticHome({ prefix: "ak-public-cli-fixer-" }, async ({ home }) => {
+    const piAgentDir = resolve(home, ".pi", "agent");
+    await mkdir(piAgentDir, { recursive: true });
+    const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
+
+    for (const rel of [
+      "resources/methods/diagnosing-bugs/SKILL.md",
+      "resources/methods/diagnosing-bugs/agents/openai.yaml",
+      "resources/methods/diagnosing-bugs/scripts/hitl-loop.template.sh",
+      "resources/methods/diagnosing-bugs/provenance.json",
+    ]) {
+      await access(resolve(installed.installedRoot, rel));
+    }
+    await assert.rejects(
+      () => access(resolve(home, ".agents", "skills")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+
+    const project = resolve(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const blank = await runAkRoleBin(
+      installed.akRoleBin,
+      ["fixer", "plan", "--project", project, "   "],
+      { home, agentDir: piAgentDir },
+    );
+    assert.equal(blank.timedOut, false, blank.stderr);
+    assert.equal(blank.code, 2, blank.stderr);
+    assert.equal(blank.stderr.includes("not available in this install slice"), false);
+
+    const badPrereq = resolve(home, "bad-prereq.json");
+    await writeFile(badPrereq, JSON.stringify([{ id: "bad/id", requirement: "x" }]), "utf8");
+    const malformed = await runAkRoleBin(
+      installed.akRoleBin,
+      [
+        "fixer",
+        "--project",
+        project,
+        "--prerequisites",
+        badPrereq,
+        "Repair the class.",
+      ],
+      { home, agentDir: piAgentDir },
+    );
+    assert.equal(malformed.code, 2, malformed.stderr);
+    assert.equal(malformed.stderr.includes("not available in this install slice"), false);
+
+    const shimDir = resolve(home, "pi-shim-fixer");
+    await mkdir(shimDir, { recursive: true });
+    const argvLog = resolve(home, "ak-role-fixer-pi-argv.json");
+    const shimPath = resolve(shimDir, "pi");
+    await writeFile(
+      shimPath,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+process.exit(1);
+`,
+      "utf8",
+    );
+    await chmod(shimPath, 0o755);
+
+    const apply = await runAkRoleBin(
+      installed.akRoleBin,
+      [
+        "fixer",
+        "--project",
+        project,
+        "Settle the approved repair with optional diagnosis available.",
+      ],
+      {
+        home,
+        agentDir: piAgentDir,
+        env: {
+          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+          PI_OFFLINE: "1",
+        },
+      },
+    );
+    assert.equal(apply.timedOut, false, apply.stderr);
+    assert.equal(apply.stderr.includes("not available in this install slice"), false);
+    const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+    assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "fixer");
+    assert.equal(recorded[recorded.indexOf("--ak-fixer-phase") + 1], "apply");
+    assert.equal(recorded.includes("--skill"), true);
+    const skillPath = recorded[recorded.indexOf("--skill") + 1]!;
+    assert.equal(
+      skillPath.includes("resources/methods/diagnosing-bugs/SKILL.md"),
+      true,
+    );
+    assert.equal(
+      skillPath.includes(installed.installedRoot) ||
+        skillPath.includes("@akagilnc/pi-workflow-roles"),
+      true,
+    );
+    assert.equal(skillPath.includes(".agents/skills"), false);
+    // Diagnosis available but not forced into the first prompt.
+    assert.equal(recorded[recorded.length - 1]?.includes("/skill:diagnosing-bugs"), false);
+
+    const planArgvLog = resolve(home, "ak-role-fixer-plan-pi-argv.json");
+    await writeFile(
+      shimPath,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(planArgvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+process.exit(1);
+`,
+      "utf8",
+    );
+    await chmod(shimPath, 0o755);
+    const plan = await runAkRoleBin(
+      installed.akRoleBin,
+      [
+        "fixer",
+        "plan",
+        "--project",
+        project,
+        "Propose the first repair plan.",
+      ],
+      {
+        home,
+        agentDir: piAgentDir,
+        env: {
+          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+          PI_OFFLINE: "1",
+        },
+      },
+    );
+    assert.equal(plan.timedOut, false, plan.stderr);
+    assert.equal(plan.stderr.includes("not available in this install slice"), false);
+    const planArgs = JSON.parse(await readFile(planArgvLog, "utf8")) as string[];
+    assert.equal(planArgs[planArgs.indexOf("--ak-role") + 1], "fixer");
+    assert.equal(planArgs[planArgs.indexOf("--ak-fixer-phase") + 1], "plan");
+    assert.equal(planArgs.includes("--skill"), true);
+  });
+});
+
 // Keep a reference so tree-shaking/lint does not drop harness symbols used by peers.
 void packageRoot;
 void piCli;

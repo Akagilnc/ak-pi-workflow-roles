@@ -158,6 +158,41 @@ test("provenance without immutable upstream commit is rejected", async () => {
   });
 });
 
+test("packaged diagnosing-bugs loads adapted boundary method without external skill-chain handoff", async () => {
+  await withEmptyHome(async () => {
+    const material = await loadPackagedMethodSkillMaterial(
+      packageRoot,
+      "diagnosing-bugs",
+    );
+    assert.equal(material.name, "diagnosing-bugs");
+    assert.equal(material.body.includes("Diagnosing Bugs"), true);
+    assert.equal(
+      material.provenance.packageAdaptation,
+      "fixer-boundary-no-external-skill-chain",
+    );
+    assert.equal(
+      material.provenance.upstream.path,
+      "skills/engineering/diagnosing-bugs",
+    );
+    assert.equal(
+      material.provenance.upstream.commit,
+      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    );
+    assert.equal(material.provenance.upstream.tag, "v1.2.2");
+    assert.equal(material.companionRelativePaths.includes("agents/openai.yaml"), true);
+    assert.equal(
+      material.companionRelativePaths.includes("scripts/hitl-loop.template.sh"),
+      true,
+    );
+    // Adaptation forbids automatic role-external Skill chain / architecture Grill launch.
+    assert.equal(material.body.includes("hand off to the `/improve-codebase-architecture`"), false);
+    assert.equal(material.body.includes("Do **not** launch"), true);
+    assert.equal(material.body.includes("architecture Grill"), true);
+    assert.equal(material.skillPath.includes(packageRoot), true);
+    assert.equal(material.skillPath.includes(".agents/skills"), false);
+  });
+});
+
 test("packaged tdd binding captures expansion against package skill path only", async () => {
   await withEmptyHome(async () => {
     const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "tdd");

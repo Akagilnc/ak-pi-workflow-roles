@@ -29,11 +29,13 @@ import {
   parseCoderArgv,
   parseCollectorArgv,
   parseDoctorArgv,
+  parseFixerArgv,
   parseJudgeArgv,
 } from "./invocation.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
+import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
@@ -84,6 +86,10 @@ export type CliEnv = {
   doctorExtraPiArgs?: readonly string[];
   /** Override Doctor role-run timeout (tests). */
   doctorTimeoutMs?: number;
+  /** Extra Pi args for Fixer runs (tests: faux provider). */
+  fixerExtraPiArgs?: readonly string[];
+  /** Override Fixer role-run timeout (tests). */
+  fixerTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -410,7 +416,12 @@ export async function runAkRole(
           "doctor role runs are one-shot and cannot be resumed",
         );
       }
-      const resumeSeatRole = resumeRole === "coder" ? "coder" : "judge";
+      const resumeSeatRole =
+        resumeRole === "coder"
+          ? "coder"
+          : resumeRole === "fixer"
+            ? "fixer"
+            : "judge";
       // Temporary model/thinking override for this resume only — never persists.
       const seat = resolveEffectiveSeat(
         config,
@@ -438,6 +449,34 @@ export async function runAkRole(
             ...(env.coderTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.coderTimeoutMs }),
+          },
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
+      if (resumeRole === "fixer") {
+        const result = await runPublicFixerResume(
+          parsed.args,
+          {
+            home,
+            agentDir,
+            packageRoot: env.packageRoot,
+            cwd,
+            credentials,
+            ...(env.correlationId === undefined
+              ? {}
+              : { correlationId: env.correlationId }),
+            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+            ...(seat.selection === undefined ? {} : { model: seat.selection }),
+            ...(env.fixerExtraPiArgs === undefined
+              ? {}
+              : { extraPiArgs: env.fixerExtraPiArgs }),
+            ...(env.fixerTimeoutMs === undefined
+              ? {}
+              : { timeoutMs: env.fixerTimeoutMs }),
           },
           io,
         );
@@ -557,6 +596,49 @@ export async function runAkRole(
         },
         io,
         parseCoderArgv,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Fixer public run path with optional package-owned diagnosing-bugs (#110).
+    if (parsed.command === "fixer") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "fixer",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicFixer(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(env.fixerExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.fixerExtraPiArgs }),
+          ...(env.fixerTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.fixerTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        parseFixerArgv,
       );
       return {
         exitCode: result.exitCode,
