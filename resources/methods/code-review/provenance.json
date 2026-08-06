@@ -1,0 +1,26 @@
+{
+  "name": "code-review",
+  "kind": "role-method-skill",
+  "upstream": {
+    "repository": "https://github.com/mattpocock/skills",
+    "path": "skills/engineering/code-review",
+    "commit": "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    "tag": "v1.2.2",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Matt Pocock",
+    "attribution": "mattpocock/skills"
+  },
+  "packageAdaptation": "reviewer-no-setup-fixed-target-two-axis",
+  "files": {
+    "SKILL.md": {
+      "sha256": "2575a2a2ddc91a779d98d43a3a342a112f612513d291a756539e0a0f4a8aac95",
+      "byteLength": 7346,
+      "gitBlob": "7136b24b9959ad43edce8d8c3a26442cc3bb58c2"
+    },
+    "agents/openai.yaml": {
+      "sha256": "8229ca854e11dc8e6aef2131ee03f31fb1561cf905fab9ccc325180cf3331352",
+      "byteLength": 100,
+      "gitBlob": "9076774ba327f49068db9273feceda03bfe940fa"
+    }
+  }
+}

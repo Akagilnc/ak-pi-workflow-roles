@@ -55,7 +55,7 @@ When a Role run is interrupted by an observed typed Codex/xAI HTTP 429 and has n
 ak-role --model xai/grok-4.5:high resume <runId>
 ```
 
-At the current mainline slice, Judge, Coder, Fixer, Collector, and Doctor are the completed public run paths. `roles` lists the full callable registry, but the remaining role adapters are still landing under #111/#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
+At the current mainline slice, Judge, Coder, Fixer, Collector, Doctor, and Reviewer are the completed public run paths. `roles` lists the full callable registry, but the remaining role adapters are still landing under #114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
 
 ### Call Coder
 
@@ -76,6 +76,23 @@ ak-role coder apply \
 ```
 
 Apply binds the package-owned Matt TDD method from the installed package (including `tests.md` and `mocking.md`) without ambient home Skill discovery or network fetch. Lawful Terminal results and Artifact refs use the same success interface as Judge.
+
+### Call Reviewer
+
+Reviewer accepts the common Invocation request plus an optional `--base` revision hint for the fixed review target. Capabilities are adapter-derived from exact task bytes; callers never submit capability packets:
+
+```bash
+ak-role reviewer \
+  --base main \
+  --attach ./originating-issue.md \
+  "Review the branch on Standards and Spec."
+
+ak-role reviewer \
+  --project /path/to/project \
+  "Review the latest commits; pin the base through proposal/preflight."
+```
+
+The package-owned adapted code-review method is forced from the installed package without ambient home Skill discovery, Matt setup files, or project-governance mutation. Lawful Terminal results and Artifact refs use the same success interface as Judge.
 
 ### Call Collector
 
@@ -238,9 +255,20 @@ The completed report must preserve TDD evidence plus the same-pattern, introduce
 
 ## Reviewer
 
-Reviewer performs a fixed-target, two-axis code review. Its public adapter will bind the package-owned adapted review method and derive task-bound capabilities; callers will not supply home-Skill paths or capability packets.
+Reviewer performs a fixed-target, two-axis code review. Call Reviewer only through `ak-role reviewer` (ADR 0052). The public adapter binds the package-owned adapted review method and derives task-bound capabilities from exact task bytes; callers do not supply home-Skill paths or capability packets.
 
-> **Public invocation status:** the `ak-role reviewer` adapter is still landing under #111. The old raw-Pi Skill, task, and capability flags are internal transport, not package usage.
+```bash
+ak-role reviewer \
+  --base main \
+  --attach ./originating-issue.md \
+  "Review the branch on Standards and Spec."
+
+ak-role reviewer \
+  --project /path/to/project \
+  "Review the latest commits since the optional base."
+```
+
+Common Invocation flags: `--attach` / `--project`. Role-specific optional `--base <revision>` is a semantic base hint for the fixed review target; pinning remains Reviewer proposal/preflight authority after activation. Apply binds package-owned Matt `code-review` (`resources/methods/code-review/`, adaptation `reviewer-no-setup-fixed-target-two-axis`) without ambient home Skill discovery, Matt setup files, or project-governance mutation. Lawful Terminal results and Artifact refs use the same success interface as Judge; evidence records package method provenance and typed expansion observation.
 
 The authoritative capability contract and validation live in the exported TypeScript API in [`src/reviewer-dispatch.ts`](src/reviewer-dispatch.ts). A static capability names tools and prerequisite operations; it never supplies a Git range command:
 
