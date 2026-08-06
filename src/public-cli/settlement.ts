@@ -133,8 +133,19 @@ export function formatCliDiagnostic(message: string): string {
   return `ak-role: ${message}\n`;
 }
 
+/**
+ * One concise stderr line for humans. Durable Error Artifact / Terminal keep the
+ * full original diagnostic — presentation collapses newlines and flood frames.
+ */
 export function formatFailureStderrDiagnostic(failure: ControlledFailure): string {
-  return formatCliDiagnostic(boundConciseDiagnostic(failure.diagnostic));
+  const selected = conciseChildDiagnostic(failure.diagnostic, "failure");
+  // conciseChildDiagnostic already returns one split line; defend fallback paths.
+  const oneLine =
+    selected
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "failure";
+  return formatCliDiagnostic(boundConciseDiagnostic(oneLine));
 }
 
 /** Pre-admission structural rejection: stderr only, no run, no Terminal. */
@@ -225,6 +236,11 @@ export function classifyPostAdmissionFailure(input: {
     readonly name?: string;
     readonly code?: string | number;
   };
+  /**
+   * Optional diagnostic already owned by a typed production field (session
+   * errorMessage, runner knownFailure.diagnostic). Preferred over stderr selection.
+   */
+  knownDiagnostic?: string;
 }): ControlledFailure {
   if (input.thrown !== undefined) {
     const error = input.thrown;
@@ -268,9 +284,13 @@ export function classifyPostAdmissionFailure(input: {
           : input.knownCause === "output"
             ? "Judge Role run completed without a lawful typed terminal result"
             : `judge role run failed (${input.knownCause})`;
+    const diagnostic =
+      input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
+        ? input.knownDiagnostic
+        : conciseChildDiagnostic(input.stderr, fallback);
     return {
       cause: input.knownCause,
-      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+      diagnostic,
       details: { code: input.code },
       ...(input.knownIdentity === undefined
         ? {}
@@ -316,6 +336,12 @@ type SessionMessage = {
   details?: unknown;
   content?: unknown;
   customType?: string;
+  /** Native provider-stop fields (pi-ai AssistantMessage). */
+  stopReason?: string;
+  errorMessage?: string | null;
+  provider?: string;
+  model?: string;
+  api?: string;
 };
 
 type SessionEntry = {
@@ -338,6 +364,60 @@ async function readLatestSessionEntries(
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as SessionEntry);
+}
+
+/**
+ * Last native assistant provider-stop in a session (stopReason === "error").
+ * Typed production source for provider cause — not child stderr prose.
+ */
+export function extractSessionProviderStop(
+  entries: readonly SessionEntry[],
+): {
+  stopReason: "error";
+  errorMessage?: string;
+  provider?: string;
+  model?: string;
+} | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "assistant") continue;
+    if (message.stopReason !== "error") continue;
+    return {
+      stopReason: "error",
+      ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
+        ? { errorMessage: message.errorMessage }
+        : {}),
+      ...(typeof message.provider === "string" && message.provider.trim() !== ""
+        ? { provider: message.provider }
+        : {}),
+      ...(typeof message.model === "string" && message.model.trim() !== ""
+        ? { model: message.model }
+        : {}),
+    };
+  }
+  return undefined;
+}
+
+/** Read latest session entries and extract a typed provider-stop, if any. */
+export async function readSessionProviderStop(
+  sessionDirectory: string,
+): Promise<
+  | {
+      stopReason: "error";
+      errorMessage?: string;
+      provider?: string;
+      model?: string;
+    }
+  | undefined
+> {
+  try {
+    const entries = await readLatestSessionEntries(sessionDirectory);
+    return extractSessionProviderStop(entries);
+  } catch {
+    return undefined;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1169,6 +1169,7 @@ test("role-runtime passes admitted-request subject/authority into Navigator atte
           return {
             prepare() {},
             setWorkContext() {},
+            warmHelp() {},
             isPreparing: () => false,
             settle: async () => {},
             dispose() {},

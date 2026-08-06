@@ -8340,6 +8340,23 @@ function buildExplicitInternalActivationArgs(packageRoot2, extraArgs = []) {
     ...extraArgs
   ];
 }
+function knownFailureFromProviderStop(input) {
+  if (input.stopReason !== "error") return void 0;
+  const diagnostic = typeof input.errorMessage === "string" && input.errorMessage.trim() !== "" ? input.errorMessage.trim() : "provider failure";
+  const identity = {
+    name: "ProviderStopError"
+  };
+  if (typeof input.provider === "string" && input.provider.trim() !== "") {
+    identity.code = input.provider;
+  } else if (typeof input.model === "string" && input.model.trim() !== "") {
+    identity.code = input.model;
+  }
+  return {
+    cause: "provider",
+    identity,
+    diagnostic
+  };
+}
 var defaultExplicitInternalPiRunner = async (args, options) => {
   const command = options.env.PI_BINARY ?? "pi";
   return await new Promise((resolveResult, reject) => {
@@ -8983,7 +9000,9 @@ function formatCliDiagnostic(message) {
 `;
 }
 function formatFailureStderrDiagnostic(failure) {
-  return formatCliDiagnostic(boundConciseDiagnostic(failure.diagnostic));
+  const selected = conciseChildDiagnostic(failure.diagnostic, "failure");
+  const oneLine = selected.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0) ?? "failure";
+  return formatCliDiagnostic(boundConciseDiagnostic(oneLine));
 }
 function presentStructuralRejection(error, io) {
   io.stderr(formatCliDiagnostic(error.message));
@@ -9052,9 +9071,10 @@ function classifyPostAdmissionFailure(input) {
   }
   if (input.knownCause !== void 0) {
     const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "Judge Role run completed without a lawful typed terminal result" : `judge role run failed (${input.knownCause})`;
+    const diagnostic = input.knownDiagnostic !== void 0 && input.knownDiagnostic.trim() !== "" ? input.knownDiagnostic : conciseChildDiagnostic(input.stderr, fallback);
     return {
       cause: input.knownCause,
-      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+      diagnostic,
       details: { code: input.code },
       ...input.knownIdentity === void 0 ? {} : { identity: input.knownIdentity }
     };
@@ -9092,6 +9112,30 @@ async function readLatestSessionEntries(sessionDirectory) {
   if (files.length === 0) return [];
   const text = await readFile3(join5(sessionDirectory, files.at(-1)), "utf8");
   return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+function extractSessionProviderStop(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "assistant") continue;
+    if (message.stopReason !== "error") continue;
+    return {
+      stopReason: "error",
+      ...typeof message.errorMessage === "string" && message.errorMessage.trim() !== "" ? { errorMessage: message.errorMessage } : {},
+      ...typeof message.provider === "string" && message.provider.trim() !== "" ? { provider: message.provider } : {},
+      ...typeof message.model === "string" && message.model.trim() !== "" ? { model: message.model } : {}
+    };
+  }
+  return void 0;
+}
+async function readSessionProviderStop(sessionDirectory) {
+  try {
+    const entries = await readLatestSessionEntries(sessionDirectory);
+    return extractSessionProviderStop(entries);
+  } catch {
+    return void 0;
+  }
 }
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -9397,6 +9441,7 @@ async function presentControlledFailure(admitted, failureInput, io) {
     ...failureInput.thrown === void 0 ? {} : { thrown: failureInput.thrown },
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
   const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
@@ -9464,11 +9509,24 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
       io
     );
   }
-  await writeFile4(
-    join6(admitted.runDirectory, "stderr.log"),
-    result2.stderr,
-    "utf8"
-  );
+  try {
+    await writeFile4(
+      join6(admitted.runDirectory, "stderr.log"),
+      result2.stderr,
+      "utf8"
+    );
+  } catch (error) {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: result2.code,
+        stderr: result2.stderr,
+        thrown: error
+      },
+      io
+    );
+  }
   let lawful;
   try {
     lawful = await trySettleJudgeTerminalResult(admitted);
@@ -9492,8 +9550,10 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
       terminal: lawful
     };
   }
+  const sessionProviderStop = result2.timedOut || result2.code !== 0 ? await readSessionProviderStop(admitted.sessionDirectory) : void 0;
+  const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
   const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-  const knownFailure = result2.knownFailure ?? credentialFailure;
+  const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
   return await presentControlledFailure(
     admitted,
     {
@@ -9502,7 +9562,8 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
       stderr: result2.stderr,
       ...knownFailure === void 0 ? {} : {
         knownCause: knownFailure.cause,
-        ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity }
+        ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
+        ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
       }
     },
     io
