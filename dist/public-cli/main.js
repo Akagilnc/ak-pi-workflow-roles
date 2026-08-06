@@ -8786,6 +8786,9 @@ function renderPublicAkRoleCommand(target) {
 }
 
 // src/public-cli/terminal.ts
+function encodeTerminalField(value) {
+  return JSON.stringify(value);
+}
 function recommendationNavigatorFact(input) {
   void input.modelCommand;
   const command = renderPublicAkRoleCommand(input.next);
@@ -8808,28 +8811,30 @@ function formatTerminalResult(result2) {
   const lines = [];
   lines.push("role	outcome	status");
   lines.push(
-    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${result2.roleOutcome.status}`
+    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${encodeTerminalField(result2.roleOutcome.status)}`
   );
   const facts = result2.roleOutcome.decisiveFacts;
   for (const [key, value] of Object.entries(facts)) {
     if (value === void 0) continue;
     const rendered = typeof value === "string" ? value : JSON.stringify(value);
-    lines.push(`fact	${key}	${rendered}`);
+    lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
   }
   lines.push(`navigator	${result2.navigator.disposition}`);
   if (result2.navigator.disposition === "recommendation") {
     lines.push(
       `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
     );
-    lines.push(`reason	${result2.navigator.reason}`);
-    lines.push(`command	${result2.navigator.command}`);
+    lines.push(`reason	${encodeTerminalField(result2.navigator.reason)}`);
+    lines.push(`command	${encodeTerminalField(result2.navigator.command)}`);
   } else if (result2.navigator.disposition === "unavailable") {
-    lines.push(`unavailable	${result2.navigator.source}	${result2.navigator.reason}`);
+    lines.push(
+      `unavailable	${result2.navigator.source}	${encodeTerminalField(result2.navigator.reason)}`
+    );
   }
   for (const artifact of result2.artifacts) {
-    lines.push(`artifact	${artifact.kind}	${artifact.path}`);
+    lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
   }
-  lines.push(`run	${result2.runId}`);
+  lines.push(`run	${encodeTerminalField(result2.runId)}`);
   return `${lines.join("\n")}
 `;
 }
