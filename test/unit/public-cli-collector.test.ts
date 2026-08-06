@@ -35,10 +35,68 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import { markRunAdmitted } from "../../src/public-cli/run-lifecycle.ts";
 import {
+  assertCollectorReceiptMatchesAdmitted,
   extractCollectorRoleOutcome,
   settleCollectorTerminalResult,
+  trySettleCollectorTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+
+function sampleCollectorReceipt(overrides: {
+  repository?: string;
+  prNumber?: number;
+  manifestDigest?: string;
+  legIds?: readonly string[];
+} = {}): Record<string, unknown> {
+  const legIds = overrides.legIds ?? ["codex"];
+  const repository = overrides.repository ?? "acme/widgets";
+  const prNumber = overrides.prNumber ?? 12;
+  const headOid = "d".repeat(40);
+  return {
+    host: "github.com",
+    repository,
+    prNumber,
+    manifestDigest: overrides.manifestDigest ?? "c".repeat(64),
+    activationTime: "2026-01-01T00:00:00.000Z",
+    deadlineTime: "2026-01-01T00:15:00.000Z",
+    finalObservationTime: "2026-01-01T00:01:00.000Z",
+    finalSnapshotId: "snap-1",
+    targetHead: headOid,
+    reports: legIds.map((legId) => ({
+      kind: "terminal-fact",
+      legId,
+      terminalStatus: "missing",
+      report: "absent",
+      windowRelation: "current",
+      evidenceRefs: ["snap-1"],
+    })),
+    legs: legIds.map((legId) => ({
+      legId,
+      status: "missing",
+      rationale: "no review on head",
+      evidenceRefs: ["snap-1"],
+    })),
+    requestAttempts: [],
+    snapshots: [
+      {
+        snapshotId: "snap-1",
+        observedAt: "2026-01-01T00:01:00.000Z",
+        completedAt: "2026-01-01T00:01:00.000Z",
+        completedMono: 1,
+        host: "github.com",
+        repository,
+        prNumber,
+        prState: "OPEN",
+        headOid,
+        complete: true,
+        evidenceIds: [],
+        pageDiagnostics: [],
+        normalizedByteLength: 2,
+      },
+    ],
+    evidenceRecords: [],
+  };
+}
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-public-cli-collector-"));
@@ -501,62 +559,14 @@ test("runAkRole collector rejects malformed grammar before admission and does no
   });
 });
 
-test("runAkRole collector settles lawful receipt on shared Terminal interface with #78 correlation env", async () => {
+test("runAkRole collector settles lawful receipt bound to admitted identity with #78 correlation env", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project, "https://github.com/acme/widgets.git");
 
-    const receipt = {
-      host: "github.com",
-      repository: "acme/widgets",
-      prNumber: 12,
-      manifestDigest: "c".repeat(64),
-      activationTime: "2026-01-01T00:00:00.000Z",
-      deadlineTime: "2026-01-01T00:15:00.000Z",
-      finalObservationTime: "2026-01-01T00:01:00.000Z",
-      finalSnapshotId: "snap-1",
-      targetHead: "d".repeat(40),
-      reports: [
-        {
-          kind: "terminal-fact",
-          legId: "codex",
-          terminalStatus: "missing",
-          report: "absent",
-          windowRelation: "current",
-          evidenceRefs: ["snap-1"],
-        },
-      ],
-      legs: [
-        {
-          legId: "codex",
-          status: "missing",
-          rationale: "no review on head",
-          evidenceRefs: ["snap-1"],
-        },
-      ],
-      requestAttempts: [],
-      snapshots: [
-        {
-          snapshotId: "snap-1",
-          observedAt: "2026-01-01T00:01:00.000Z",
-          completedAt: "2026-01-01T00:01:00.000Z",
-          completedMono: 1,
-          host: "github.com",
-          repository: "acme/widgets",
-          prNumber: 12,
-          prState: "OPEN",
-          headOid: "d".repeat(40),
-          complete: true,
-          evidenceIds: [],
-          pageDiagnostics: [],
-          normalizedByteLength: 2,
-        },
-      ],
-      evidenceRecords: [],
-    };
-
     let sawCorrelation: string | undefined;
+    let boundManifestDigest: string | undefined;
     const { io, stdout } = captureIo();
     const result = await runAkRole(
       [
@@ -578,6 +588,15 @@ test("runAkRole collector settles lawful receipt on shared Terminal interface wi
         createRunId: () => "run-collector-settle",
         piRunner: async (args, options) => {
           sawCorrelation = options.env.AK_CORRELATION_ID;
+          const legsPath = args[args.indexOf("--ak-collector-legs") + 1]!;
+          const manifest = await loadCollectorManifest(legsPath);
+          boundManifestDigest = manifest.digest;
+          const receipt = sampleCollectorReceipt({
+            repository: "acme/widgets",
+            prNumber: 12,
+            manifestDigest: manifest.digest,
+            legIds: ["codex"],
+          });
           const sessionIdx = args.indexOf("--session");
           const sessionFile = args[sessionIdx + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
@@ -607,6 +626,7 @@ test("runAkRole collector settles lawful receipt on shared Terminal interface wi
 
     assert.equal(result.exitCode, 0);
     assert.equal(sawCorrelation, "corr-collector-112");
+    assert.ok(boundManifestDigest);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.role, "collector");
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
@@ -614,64 +634,45 @@ test("runAkRole collector settles lawful receipt on shared Terminal interface wi
       result.terminal!.roleOutcome.decisiveFacts.legStatuses,
       "codex:missing",
     );
+    assert.equal(
+      result.terminal!.roleOutcome.decisiveFacts.manifestDigest,
+      boundManifestDigest,
+    );
     const text = stdout.join("");
     assert.match(text, /collector/);
-    // #78 zero-content: activation index is not a content store — receipt lives in run artifacts only.
+    // Receipt body lives in run artifacts only (index is zero-content under ADR 0049).
     const reportPath = result.terminal!.artifacts.find((a) => a.kind === "report")
       ?.path;
     assert.ok(reportPath);
     const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
       role: string;
-      receipt: { prNumber: number };
+      receipt: { prNumber: number; manifestDigest: string };
     };
     assert.equal(report.role, "collector");
     assert.equal(report.receipt.prNumber, 12);
+    assert.equal(report.receipt.manifestDigest, boundManifestDigest);
 
-    // Direct settlement helper matches try path.
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      "run-collector-settle@collector",
+    );
     const settled = await settleCollectorTerminalResult({
       role: "collector",
       runId: "run-collector-settle",
-      bookKey: resolveBookKeyFromGit(project),
+      bookKey,
       projectRoot: project,
       instruction: "",
       instructionEmpty: true,
       attachments: [],
-      runDirectory: join(
-        home,
-        ".ak-roles",
-        "books",
-        resolveBookKeyFromGit(project),
-        "runs",
-        "run-collector-settle@collector",
-      ),
-      sessionDirectory: join(
-        home,
-        ".ak-roles",
-        "books",
-        resolveBookKeyFromGit(project),
-        "runs",
-        "run-collector-settle@collector",
-        "session",
-      ),
-      sessionFile: join(
-        home,
-        ".ak-roles",
-        "books",
-        resolveBookKeyFromGit(project),
-        "runs",
-        "run-collector-settle@collector",
-        "session",
-        "session.jsonl",
-      ),
-      admittedRequestPath: join(
-        home,
-        ".ak-roles",
-        "books",
-        resolveBookKeyFromGit(project),
-        "runs",
-        "run-collector-settle@collector",
-        "admitted-request.json",
-      ),
+      runDirectory,
+      sessionDirectory: join(runDirectory, "session"),
+      sessionFile: join(runDirectory, "session", "session.jsonl"),
+      admittedRequestPath: join(runDirectory, "admitted-request.json"),
       prNumber: 12,
       repository: {
         display: "acme/widgets",
@@ -679,18 +680,143 @@ test("runAkRole collector settles lawful receipt on shared Terminal interface wi
         owner: "acme",
         repo: "widgets",
       },
-      legsPath: join(
-        home,
-        ".ak-roles",
-        "books",
-        resolveBookKeyFromGit(project),
-        "runs",
-        "run-collector-settle@collector",
-        "legs.json",
-      ),
-      manifestDigest: "c".repeat(64),
+      legsPath: join(runDirectory, "legs.json"),
+      manifestDigest: boundManifestDigest!,
     });
     assert.equal(settled.roleOutcome.kind, "accepted");
+  });
+});
+
+test("Collector lawful settlement rejects repository/PR/manifest/leg identity mismatches", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project, "https://github.com/acme/widgets.git");
+
+    const admitted = await admitCollectorInvocation({
+      home,
+      cwd: project,
+      prNumber: 12,
+      legs: [
+        { id: "codex", expectedAuthors: ["CodexBot"] },
+        { id: "cursor", expectedAuthors: ["cursor-bot"] },
+      ],
+      createRunId: () => "run-collector-bind",
+    });
+
+    const writeReceiptSession = async (receipt: Record<string, unknown>) => {
+      await mkdir(admitted.sessionDirectory, { recursive: true });
+      await writeFile(
+        admitted.sessionFile,
+        `${JSON.stringify({
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: COLLECTOR_OUTPUT_TOOL,
+            isError: false,
+            details: receipt,
+          },
+        })}\n`,
+        "utf8",
+      );
+    };
+
+    const base = sampleCollectorReceipt({
+      repository: admitted.repository.canonical,
+      prNumber: admitted.prNumber,
+      manifestDigest: admitted.manifestDigest,
+      legIds: ["codex", "cursor"],
+    });
+
+    await writeReceiptSession(base);
+    const ok = await trySettleCollectorTerminalResult(admitted);
+    assert.ok(ok);
+    assert.equal(ok!.roleOutcome.kind, "accepted");
+
+    const mismatches: Array<{
+      label: string;
+      receipt: Record<string, unknown>;
+      expect: RegExp;
+    }> = [
+      {
+        label: "repository",
+        receipt: sampleCollectorReceipt({
+          repository: "other/repo",
+          prNumber: admitted.prNumber,
+          manifestDigest: admitted.manifestDigest,
+          legIds: ["codex", "cursor"],
+        }),
+        expect: /repository/,
+      },
+      {
+        label: "prNumber",
+        receipt: sampleCollectorReceipt({
+          repository: admitted.repository.canonical,
+          prNumber: admitted.prNumber + 1,
+          manifestDigest: admitted.manifestDigest,
+          legIds: ["codex", "cursor"],
+        }),
+        expect: /prNumber/,
+      },
+      {
+        label: "manifestDigest",
+        receipt: sampleCollectorReceipt({
+          repository: admitted.repository.canonical,
+          prNumber: admitted.prNumber,
+          manifestDigest: "a".repeat(64),
+          legIds: ["codex", "cursor"],
+        }),
+        expect: /manifestDigest/,
+      },
+      {
+        label: "leg set",
+        receipt: sampleCollectorReceipt({
+          repository: admitted.repository.canonical,
+          prNumber: admitted.prNumber,
+          manifestDigest: admitted.manifestDigest,
+          legIds: ["codex"],
+        }),
+        expect: /leg set/,
+      },
+    ];
+
+    for (const case_ of mismatches) {
+      await writeReceiptSession(case_.receipt);
+      await assert.rejects(
+        () => settleCollectorTerminalResult(admitted),
+        (error: unknown) => {
+          assert.ok(error instanceof Error, case_.label);
+          assert.equal(
+            (error as { knownCause?: unknown }).knownCause,
+            "output",
+            case_.label,
+          );
+          assert.match(error.message, case_.expect, case_.label);
+          return true;
+        },
+      );
+      const extracted = extractCollectorRoleOutcome([
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: COLLECTOR_OUTPUT_TOOL,
+            isError: false,
+            details: case_.receipt,
+          },
+        },
+      ] as never);
+      assert.ok(extracted, case_.label);
+      assert.throws(
+        () =>
+          assertCollectorReceiptMatchesAdmitted(
+            extracted!.receipt,
+            admitted,
+            ["codex", "cursor"],
+          ),
+        case_.expect,
+      );
+    }
   });
 });
 

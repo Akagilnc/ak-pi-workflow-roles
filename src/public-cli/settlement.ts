@@ -8,6 +8,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
+import { loadCollectorManifest } from "../collector-config.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
@@ -553,6 +554,65 @@ function collectorDecisiveFacts(
   };
 }
 
+/**
+ * ADR 0037: a shape-valid Collector receipt may still name the wrong live target.
+ * Public success binds receipt identity to this admitted repository/PR/manifest/legs
+ * at the existing settlement seam — not a second receipt factory or validator.
+ */
+function collectorReceiptBindingFailure(
+  diagnostic: string,
+): Error & { knownCause: ControlledFailureCause } {
+  const error = new Error(diagnostic) as Error & {
+    knownCause: ControlledFailureCause;
+  };
+  error.name = "CollectorReceiptBindingError";
+  error.knownCause = "output";
+  return error;
+}
+
+function sortedUniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
+ * Compare a validated receipt with the admitted Collector invocation identity.
+ * Throws a typed output failure when any identity field mismatches.
+ */
+export function assertCollectorReceiptMatchesAdmitted(
+  receipt: CollectorReceipt,
+  admitted: AdmittedCollectorInvocation,
+  admittedLegIds: readonly string[],
+): void {
+  if (receipt.repository !== admitted.repository.canonical) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`,
+    );
+  }
+  if (receipt.prNumber !== admitted.prNumber) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt prNumber ${receipt.prNumber} does not match admitted prNumber ${admitted.prNumber}`,
+    );
+  }
+  if (receipt.manifestDigest !== admitted.manifestDigest) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt manifestDigest does not match admitted manifestDigest`,
+    );
+  }
+  const receiptLegIds = sortedUniqueStrings(
+    receipt.legs.map((leg) => leg.legId),
+  );
+  const expectedLegIds = sortedUniqueStrings(admittedLegIds);
+  if (
+    receipt.legs.length !== admittedLegIds.length ||
+    receiptLegIds.length !== expectedLegIds.length ||
+    receiptLegIds.some((id, index) => id !== expectedLegIds[index])
+  ) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`,
+    );
+  }
+}
+
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
 export type LawfulJudgeRoleOutcome = Extract<
   TerminalRoleOutcome,
@@ -1065,6 +1125,13 @@ async function settleLawfulCollectorTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractCollectorRoleOutcome(entries);
   if (extracted === undefined) return undefined;
+  // Bind accepted receipt to this admitted target before any success publication (ADR 0037).
+  const admittedManifest = await loadCollectorManifest(admitted.legsPath);
+  assertCollectorReceiptMatchesAdmitted(
+    extracted.receipt,
+    admitted,
+    admittedManifest.legs.map((leg) => leg.id),
+  );
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,

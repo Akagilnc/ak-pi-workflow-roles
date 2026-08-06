@@ -10962,6 +10962,41 @@ function collectorDecisiveFacts(receipt) {
     legStatuses: receipt.legs.map((leg) => `${leg.legId}:${leg.status}`).join(",")
   };
 }
+function collectorReceiptBindingFailure(diagnostic) {
+  const error = new Error(diagnostic);
+  error.name = "CollectorReceiptBindingError";
+  error.knownCause = "output";
+  return error;
+}
+function sortedUniqueStrings(values) {
+  return [...new Set(values)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+}
+function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds) {
+  if (receipt.repository !== admitted.repository.canonical) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`
+    );
+  }
+  if (receipt.prNumber !== admitted.prNumber) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt prNumber ${receipt.prNumber} does not match admitted prNumber ${admitted.prNumber}`
+    );
+  }
+  if (receipt.manifestDigest !== admitted.manifestDigest) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt manifestDigest does not match admitted manifestDigest`
+    );
+  }
+  const receiptLegIds = sortedUniqueStrings(
+    receipt.legs.map((leg) => leg.legId)
+  );
+  const expectedLegIds = sortedUniqueStrings(admittedLegIds);
+  if (receipt.legs.length !== admittedLegIds.length || receiptLegIds.length !== expectedLegIds.length || receiptLegIds.some((id, index) => id !== expectedLegIds[index])) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`
+    );
+  }
+}
 function extractJudgeRoleOutcome(entries) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
@@ -11303,6 +11338,12 @@ async function settleLawfulCollectorTerminalResult(admitted) {
   if (entries === void 0) return void 0;
   const extracted = extractCollectorRoleOutcome(entries);
   if (extracted === void 0) return void 0;
+  const admittedManifest = await loadCollectorManifest(admitted.legsPath);
+  assertCollectorReceiptMatchesAdmitted(
+    extracted.receipt,
+    admitted,
+    admittedManifest.legs.map((leg) => leg.id)
+  );
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,
