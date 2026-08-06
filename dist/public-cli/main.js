@@ -9044,7 +9044,7 @@ function isTypedActivationError(error) {
   return cause === "provider" || cause === "activation" || cause === "session" || cause === "output" || cause === "timeout" || cause === "unrecognized";
 }
 function classifyPostAdmissionFailure(input) {
-  if (input.thrown !== void 0) {
+  if (Object.hasOwn(input, "thrown")) {
     const error = input.thrown;
     if (isTypedActivationError(error)) {
       const identity = thrownIdentity(error);
@@ -9574,12 +9574,13 @@ function buildJudgeActivationExtraArgs(admitted, options = {}) {
   ];
 }
 async function presentControlledFailure(admitted, failureInput, io) {
-  const session = failureInput.thrown === void 0 && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionDirectory) : void 0;
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionDirectory) : void 0;
   const failure = classifyPostAdmissionFailure({
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
-    ...failureInput.thrown === void 0 ? {} : { thrown: failureInput.thrown },
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
     ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
     ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },

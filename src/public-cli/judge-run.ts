@@ -147,8 +147,10 @@ async function presentControlledFailure(
   admitted: AdmittedJudgeInvocation;
   terminal: TerminalResult;
 }> {
+  // Own-key presence, not value: `throw undefined` must not look like "no throw".
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
   const session =
-    failureInput.thrown === undefined &&
+    !hasThrown &&
     !failureInput.timedOut &&
     failureInput.knownCause === undefined
       ? await inspectJudgeSession(admitted.sessionDirectory)
@@ -157,7 +159,7 @@ async function presentControlledFailure(
     timedOut: failureInput.timedOut,
     code: failureInput.code,
     stderr: failureInput.stderr,
-    ...(failureInput.thrown === undefined ? {} : { thrown: failureInput.thrown }),
+    ...(hasThrown ? { thrown: failureInput.thrown } : {}),
     ...(failureInput.knownCause === undefined
       ? {}
       : { knownCause: failureInput.knownCause }),

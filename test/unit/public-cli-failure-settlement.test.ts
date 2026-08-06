@@ -421,6 +421,23 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(timedOutWithProvider.identity?.name, "ProviderStopError");
   assert.equal(timedOutWithProvider.identity?.code, "openai-codex");
   assert.equal(timedOutWithProvider.details?.timedOut, true);
+
+  // AC5: `throw undefined` is a present exception — not missing thrown / activation / output.
+  const thrownUndefined = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: null,
+    stderr: "",
+    thrown: undefined,
+  });
+  assert.equal(thrownUndefined.cause, "unrecognized");
+  assert.equal(thrownUndefined.diagnostic, "undefined");
+  // Absence of the thrown key still means no exception was observed.
+  const noThrownKey = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: null,
+    stderr: "",
+  });
+  assert.equal(noThrownKey.cause, "activation");
 });
 
 test("failure settlement durably records Error Artifact before presentation returns", async () => {
@@ -796,6 +813,44 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
     });
     // stderr: non-flood shape only — durable identity lives on Terminal/Error Artifact (AC6).
     assert.equal(stderr[0]!.includes("ak_judge_output"), false);
+  });
+});
+
+test("post-admission throw undefined stays unrecognized (not activation/null-exit)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "runner throws undefined"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-throw-undefined-001",
+        io,
+        piRunner: async () => {
+          throw undefined;
+        },
+      },
+    );
+
+    const { terminal } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "unrecognized",
+      diagnosticEquals: "undefined",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      // Presence of thrown undefined must not wash into activation or null-exit output.
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.notEqual(terminal.roleOutcome.cause, "activation");
+      assert.notEqual(terminal.roleOutcome.cause, "output");
+    }
   });
 });
 

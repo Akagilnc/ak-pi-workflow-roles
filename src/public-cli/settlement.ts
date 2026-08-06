@@ -229,6 +229,11 @@ export function classifyPostAdmissionFailure(input: {
   timedOut: boolean;
   code: number | null;
   stderr: string;
+  /**
+   * Caught post-admission exception. Presence (own key) is distinct from value:
+   * JavaScript permits `throw undefined`, which must stay unrecognized rather than
+   * being washed into activation/null-exit paths that treat missing thrown as absence.
+   */
   thrown?: unknown;
   session?: SessionReadiness;
   /** Upstream-typed cause when the failure origin is already known. */
@@ -244,7 +249,8 @@ export function classifyPostAdmissionFailure(input: {
    */
   knownDiagnostic?: string;
 }): ControlledFailure {
-  if (input.thrown !== undefined) {
+  // Own-key presence, not value: `throw undefined` is a real caught exception.
+  if (Object.hasOwn(input, "thrown")) {
     const error = input.thrown;
     if (isTypedActivationError(error)) {
       const identity = thrownIdentity(error);
