@@ -34,7 +34,17 @@ test("installed npm tarball runs the complete established-Spec Reviewer lifecycl
     await withColdInstalledPackage(home, async ({ fixture, pack, installedRoot }) => {
       assert.ok(pack.files.some((file) => file.path === "src/reviewer-dispatch.ts"));
       assert.ok(pack.files.some((file) => file.path === "src/reviewer-pinned-git.ts"));
-      assert.equal(pack.files.some((file) => /(^|\/)SKILL\.md$/.test(file.path)), false);
+      // Package-owned method Skills under resources/methods/ are shipped (#109);
+      // ambient top-level SKILL.md trees remain excluded.
+      assert.ok(pack.files.some((file) => file.path === "resources/methods/tdd/SKILL.md"));
+      assert.equal(
+        pack.files.some(
+          (file) =>
+            /(^|\/)SKILL\.md$/.test(file.path) &&
+            !file.path.startsWith("resources/methods/"),
+        ),
+        false,
+      );
 
       const agentDir = resolve(fixture, ".pi-agent");
       await git(fixture, "init");

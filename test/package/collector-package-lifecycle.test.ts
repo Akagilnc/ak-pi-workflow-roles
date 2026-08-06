@@ -32,7 +32,18 @@ test("npm pack includes collector modules and soul and excludes skills/orchestra
   assert.ok(paths.includes("souls/collector.md"));
   assert.ok(paths.includes("src/collector-role.ts"));
   assert.ok(paths.includes("src/collector-tool-schemas.ts"));
-  assert.equal(paths.some((path) => /(^|\/)SKILL\.md$/.test(path)), false);
+  // Package-owned method Skills live under resources/methods/ (#109). Ambient
+  // top-level skills/ trees and legacy orchestrator collect soul stay out.
+  assert.ok(paths.includes("resources/methods/tdd/SKILL.md"));
+  assert.equal(
+    paths.some(
+      (path) =>
+        /(^|\/)SKILL\.md$/.test(path) &&
+        !path.startsWith("resources/methods/"),
+    ),
+    false,
+  );
+  assert.equal(paths.some((path) => path === "skills" || path.startsWith("skills/")), false);
   assert.equal(paths.includes("souls/collect.md"), false);
 });
 

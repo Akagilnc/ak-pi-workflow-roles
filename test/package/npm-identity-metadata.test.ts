@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -123,6 +123,66 @@ test("packed artifact keeps Matt MIT as a separate complete third-party notice",
       extracted.thirdPartyNoticeText.includes(UPSTREAM_MATT_MIT.trim()),
       "third-party notice must embed the complete upstream Matt Pocock MIT text",
     );
+  });
+});
+
+test("packed artifact ships package-owned tdd method with companions and provenance", async () => {
+  await withExtractedPack(async (extracted) => {
+    const required = [
+      "resources/methods/tdd/SKILL.md",
+      "resources/methods/tdd/tests.md",
+      "resources/methods/tdd/mocking.md",
+      "resources/methods/tdd/agents/openai.yaml",
+      "resources/methods/tdd/provenance.json",
+    ];
+    for (const path of required) {
+      assert.ok(
+        extracted.paths.includes(path),
+        `npm pack must include ${path}`,
+      );
+      await access(resolve(extracted.root, "package", path));
+    }
+    const provenance = JSON.parse(
+      await readFile(
+        resolve(extracted.root, "package/resources/methods/tdd/provenance.json"),
+        "utf8",
+      ),
+    ) as {
+      name: string;
+      upstream: {
+        repository: string;
+        path: string;
+        commit: string;
+        tag: string;
+        attribution: string;
+        license: string;
+      };
+      files: Record<
+        string,
+        { sha256: string; byteLength: number; gitBlob: string }
+      >;
+    };
+    assert.equal(provenance.name, "tdd");
+    assert.equal(
+      provenance.upstream.repository,
+      "https://github.com/mattpocock/skills",
+    );
+    assert.equal(provenance.upstream.path, "skills/engineering/tdd");
+    assert.equal(
+      provenance.upstream.commit,
+      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    );
+    assert.equal(provenance.upstream.tag, "v1.2.2");
+    assert.equal(provenance.upstream.attribution, "mattpocock/skills");
+    assert.equal(provenance.upstream.license, "MIT");
+    assert.equal(typeof provenance.files["SKILL.md"]?.sha256, "string");
+    assert.equal(provenance.files["SKILL.md"]!.sha256.length, 64);
+    assert.equal(typeof provenance.files["SKILL.md"]?.gitBlob, "string");
+    assert.equal(provenance.files["SKILL.md"]!.gitBlob.length, 40);
+    assert.equal(typeof provenance.files["tests.md"]?.sha256, "string");
+    assert.equal(typeof provenance.files["tests.md"]?.gitBlob, "string");
+    assert.equal(typeof provenance.files["mocking.md"]?.sha256, "string");
+    assert.equal(typeof provenance.files["mocking.md"]?.gitBlob, "string");
   });
 });
 

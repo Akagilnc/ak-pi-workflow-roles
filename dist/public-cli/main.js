@@ -7,12 +7,12 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname5, join as join9 } from "node:path";
+import { dirname as dirname5, join as join11 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join8 } from "node:path";
+import { join as join10 } from "node:path";
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -1756,8 +1756,8 @@ function CreateObject(types, value) {
 }
 function FromUnionKey(types, value) {
   const flattened = Flatten(types);
-  const record = TryBuildRecord(flattened, value);
-  return IsSchema(record) ? record : CreateObject(flattened, value);
+  const record2 = TryBuildRecord(flattened, value);
+  return IsSchema(record2) ? record2 : CreateObject(flattened, value);
 }
 
 // node_modules/typebox/build/type/engine/record/from_key.mjs
@@ -7938,6 +7938,22 @@ var fixerOutputSchema = typebox_exports.Union([
 
 // src/package-contracts/worker-output.ts
 var CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
+var record = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var exact = (value, keys) => Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+function validateAcceptedCoderDetails(output) {
+  if (!record(output)) throw new Error("Coder output must be an object");
+  const status = output.status;
+  if (status === "unfinished") {
+    if (!exact(output, ["status", "report", "remainingScope"]) || typeof output.report !== "string" || output.report.trim().length === 0 || typeof output.remainingScope !== "string" || output.remainingScope.trim().length === 0) {
+      throw new Error("Coder unfinished output requires a non-blank report and remainingScope");
+    }
+    return { status, report: output.report, remainingScope: output.remainingScope };
+  }
+  if (!exact(output, ["status", "report"]) || status !== "planned" && status !== "completed" && status !== "refused" || typeof output.report !== "string" || output.report.trim().length === 0) {
+    throw new Error("Coder output requires planned|completed|refused and a non-blank report");
+  }
+  return { status, report: output.report };
+}
 
 // src/doctor-contracts.ts
 var DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -8185,16 +8201,16 @@ function parsePublicCliConfig(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("public CLI config must be an object");
   }
-  const record = value;
-  if (record.seats === void 0) {
+  const record2 = value;
+  if (record2.seats === void 0) {
     return { seats: {} };
   }
-  if (record.seats === null || typeof record.seats !== "object" || Array.isArray(record.seats)) {
+  if (record2.seats === null || typeof record2.seats !== "object" || Array.isArray(record2.seats)) {
     throw new Error("public CLI config.seats must be an object");
   }
   const seats = {};
   for (const [key, raw] of Object.entries(
-    record.seats
+    record2.seats
   )) {
     if (!PUBLIC_CONFIGURABLE_SEATS.includes(key)) {
       throw new Error(`unknown configurable seat in config: ${key}`);
@@ -8297,10 +8313,10 @@ function credentialProvidersFromAuthData(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
     return { "openai-codex": false, xai: false };
   }
-  const record = data;
+  const record2 = data;
   return {
-    "openai-codex": Object.prototype.hasOwnProperty.call(record, "openai-codex"),
-    xai: Object.prototype.hasOwnProperty.call(record, "xai")
+    "openai-codex": Object.prototype.hasOwnProperty.call(record2, "openai-codex"),
+    xai: Object.prototype.hasOwnProperty.call(record2, "xai")
   };
 }
 async function loadCredentialProviders(agentDir) {
@@ -8749,6 +8765,51 @@ function parseJudgeArgv(args) {
     ...project === void 0 ? {} : { project }
   };
 }
+function parseCoderArgv(args) {
+  const attachmentPaths = [];
+  let project;
+  const positional = [];
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    const token = tokens.shift();
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length))
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown coder option: ${token}`);
+    }
+    positional.push(token);
+  }
+  let phase = "apply";
+  if (positional[0] === "plan" || positional[0] === "apply") {
+    phase = positional.shift();
+  }
+  return {
+    phase,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project }
+  };
+}
 async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
   const absolute = isAbsolute3(sourcePath) ? sourcePath : resolve3(sourcePath);
   let st;
@@ -8860,14 +8921,365 @@ async function ensureRunArtifactsDir(runDirectory) {
   await mkdir2(dir, { recursive: true });
   return dir;
 }
+async function admitCoderInvocation(options) {
+  if (options.project !== void 0) {
+    requireOptionPath("--project", options.project);
+  }
+  const instruction = options.instruction;
+  if (instruction.trim() === "") {
+    throw new CliUsageError(
+      "coder requires a nonblank task instruction"
+    );
+  }
+  if (options.phase !== "plan" && options.phase !== "apply") {
+    throw new CliUsageError("coder phase must be plan or apply");
+  }
+  const projectRoot = resolve3(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join4(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@coder`
+  );
+  const sessionDirectory = join4(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join4(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i],
+        attachmentsDirectory,
+        i
+      )
+    );
+  }
+  const taskPath = join4(runDirectory, "task.md");
+  await writeFile2(taskPath, instruction, "utf8");
+  const admitted = {
+    role: "coder",
+    phase: options.phase,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    taskPath,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind
+    }))
+  };
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
+`, "utf8");
+  return {
+    role: "coder",
+    phase: options.phase,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    taskPath
+  };
+}
+function buildCoderTransportPrompt(admitted) {
+  const lines = [admitted.instruction];
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
 
-// src/public-cli/judge-run.ts
-import { writeFile as writeFile5 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+// src/public-cli/coder-run.ts
+import { writeFile as writeFile6 } from "node:fs/promises";
+import { join as join9 } from "node:path";
+
+// src/package-resources/method-skill.ts
+import { createHash as createHash2 } from "node:crypto";
+import { readFile as readFile3, realpath } from "node:fs/promises";
+import { join as join5 } from "node:path";
+var PackagedMethodSkillUnavailableError = class extends Error {
+  constructor(skillName, path, cause) {
+    super(`Canonical ${skillName} Skill is unavailable at ${path}`, { cause });
+    this.skillName = skillName;
+    this.name = "CanonicalSkillUnavailableError";
+  }
+  skillName;
+  code = "canonical-skill-unavailable";
+};
+var METHOD_SKILL_RELATIVE_ROOT = "resources/methods";
+var UNCHANGED_PINNED_SNAPSHOT = "unchanged-pinned-snapshot";
+var GIT_COMMIT_RE = /^[0-9a-f]{40}$/;
+var GIT_BLOB_RE = /^[0-9a-f]{40}$/;
+var SHA256_RE = /^[0-9a-f]{64}$/;
+var REQUIRED_COMPANIONS = {
+  tdd: ["tests.md", "mocking.md", "agents/openai.yaml"]
+};
+var SEALED_UNCHANGED_METHOD_PINS = Object.freeze({
+  tdd: Object.freeze({
+    commit: "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    tag: "v1.2.2",
+    path: "skills/engineering/tdd",
+    files: Object.freeze({
+      "SKILL.md": Object.freeze({
+        sha256: "5e6b9c16b547113e90afbb946489d1c1384be5c2128f0159bd0bee57251ecf08",
+        byteLength: 3568,
+        gitBlob: "ead7781d79eb11cdafa1ac2db978cadef0eba240"
+      }),
+      "tests.md": Object.freeze({
+        sha256: "859f9e592c188fda4fc7277dd180e4ce9c7a2e13f6efe1f6f29eccc9d28c106a",
+        byteLength: 2214,
+        gitBlob: "7ab86479f925a1f9e8ba680af33cb3b12e015381"
+      }),
+      "mocking.md": Object.freeze({
+        sha256: "3ceb807fdf4a47d6a93d4d9a891e5ba6d362a6247bd08adc451feebfc17361ef",
+        byteLength: 1481,
+        gitBlob: "71cbfee674d93244ce81d1830b930ca9a69200bd"
+      }),
+      "agents/openai.yaml": Object.freeze({
+        sha256: "ea6f01cf1b8c06a4b0f5b649d74b1b8ce8685e72af1b38d70d877693e092af0b",
+        byteLength: 87,
+        gitBlob: "651b838a7663e027b1b8884491e867f26bb9a021"
+      })
+    })
+  })
+});
+function gitBlobOid(bytes) {
+  const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
+  const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
+  return createHash2("sha1").update(header).update(body).digest("hex");
+}
+function stripSkillFrontmatter(content) {
+  if (!content.startsWith("---")) return content;
+  const end = content.indexOf("\n---", 3);
+  if (end === -1) return content;
+  const after = content.slice(end + "\n---".length);
+  return after.replace(/^\r?\n/, "");
+}
+function packagedMethodSkillRelativeDirectory(name) {
+  return `${METHOD_SKILL_RELATIVE_ROOT}/${name}`;
+}
+function resolvePackagedMethodSkillRoot(packageRoot2, name) {
+  return join5(packageRoot2, packagedMethodSkillRelativeDirectory(name));
+}
+function resolvePackagedMethodSkillPath(packageRoot2, name) {
+  return join5(resolvePackagedMethodSkillRoot(packageRoot2, name), "SKILL.md");
+}
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function parseProvenance(raw, expectedName) {
+  if (!isRecord2(raw)) {
+    throw new Error(`Packaged method provenance must be an object for ${expectedName}`);
+  }
+  if (raw.name !== expectedName) {
+    throw new Error(
+      `Packaged method provenance name mismatch: expected ${expectedName}, got ${String(raw.name)}`
+    );
+  }
+  if (raw.kind !== "role-method-skill") {
+    throw new Error(`Packaged method provenance kind must be role-method-skill`);
+  }
+  if (typeof raw.packageAdaptation !== "string" || raw.packageAdaptation.trim() === "") {
+    throw new Error(`Packaged method provenance packageAdaptation must be nonblank`);
+  }
+  if (!isRecord2(raw.upstream)) {
+    throw new Error(`Packaged method provenance upstream must be an object`);
+  }
+  const upstream = raw.upstream;
+  for (const key of [
+    "repository",
+    "path",
+    "license",
+    "copyright",
+    "attribution"
+  ]) {
+    if (typeof upstream[key] !== "string" || upstream[key].trim() === "") {
+      throw new Error(`Packaged method provenance upstream.${key} must be nonblank`);
+    }
+  }
+  if (typeof upstream.commit !== "string" || !GIT_COMMIT_RE.test(upstream.commit)) {
+    throw new Error(
+      `Packaged method provenance upstream.commit must be a 40-char lowercase git object id`
+    );
+  }
+  const tag = typeof upstream.tag === "string" && upstream.tag.trim() !== "" ? upstream.tag.trim() : void 0;
+  const version = typeof upstream.version === "string" && upstream.version.trim() !== "" ? upstream.version.trim() : void 0;
+  if (tag === void 0 && version === void 0) {
+    throw new Error(
+      `Packaged method provenance upstream must include nonblank tag or version`
+    );
+  }
+  if (!isRecord2(raw.files)) {
+    throw new Error(`Packaged method provenance files must be an object`);
+  }
+  const files = {};
+  for (const [rel, entry] of Object.entries(raw.files)) {
+    if (!isRecord2(entry)) {
+      throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
+    }
+    if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
+      throw new Error(`Packaged method provenance file sha256 invalid: ${rel}`);
+    }
+    if (typeof entry.byteLength !== "number" || !Number.isInteger(entry.byteLength) || entry.byteLength < 0) {
+      throw new Error(`Packaged method provenance file byteLength invalid: ${rel}`);
+    }
+    if (typeof entry.gitBlob !== "string" || !GIT_BLOB_RE.test(entry.gitBlob)) {
+      throw new Error(
+        `Packaged method provenance file gitBlob must be a 40-char lowercase git object id: ${rel}`
+      );
+    }
+    files[rel] = {
+      sha256: entry.sha256,
+      byteLength: entry.byteLength,
+      gitBlob: entry.gitBlob
+    };
+  }
+  if (files["SKILL.md"] === void 0) {
+    throw new Error(`Packaged method provenance must include SKILL.md`);
+  }
+  return Object.freeze({
+    name: expectedName,
+    kind: "role-method-skill",
+    packageAdaptation: raw.packageAdaptation,
+    upstream: Object.freeze({
+      repository: upstream.repository,
+      path: upstream.path,
+      commit: upstream.commit,
+      ...tag === void 0 ? {} : { tag },
+      ...version === void 0 ? {} : { version },
+      license: upstream.license,
+      copyright: upstream.copyright,
+      attribution: upstream.attribution
+    }),
+    files: Object.freeze(files)
+  });
+}
+function assertSealedUnchangedUpstreamPin(provenance) {
+  if (provenance.packageAdaptation !== UNCHANGED_PINNED_SNAPSHOT) return;
+  const sealed = SEALED_UNCHANGED_METHOD_PINS[provenance.name];
+  if (provenance.upstream.commit !== sealed.commit) {
+    throw new Error(
+      `Packaged method ${provenance.name} upstream.commit does not match sealed unchanged pin`
+    );
+  }
+  if (provenance.upstream.tag !== sealed.tag) {
+    throw new Error(
+      `Packaged method ${provenance.name} upstream.tag does not match sealed unchanged pin`
+    );
+  }
+  if (provenance.upstream.path !== sealed.path) {
+    throw new Error(
+      `Packaged method ${provenance.name} upstream.path does not match sealed unchanged pin`
+    );
+  }
+  const sealedRels = Object.keys(sealed.files).sort();
+  const actualRels = Object.keys(provenance.files).sort();
+  if (sealedRels.length !== actualRels.length || sealedRels.some((rel, index) => rel !== actualRels[index])) {
+    throw new Error(
+      `Packaged method ${provenance.name} file set does not match sealed unchanged pin`
+    );
+  }
+  for (const rel of sealedRels) {
+    const expected = sealed.files[rel];
+    const actual = provenance.files[rel];
+    if (actual.sha256 !== expected.sha256 || actual.byteLength !== expected.byteLength || actual.gitBlob !== expected.gitBlob) {
+      throw new Error(
+        `Packaged method ${provenance.name}/${rel} identity does not match sealed unchanged pin`
+      );
+    }
+  }
+}
+async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
+  const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
+  const skillPathConfigured = join5(rootDirectory, "SKILL.md");
+  const provenancePath = join5(rootDirectory, "provenance.json");
+  let provenanceRaw;
+  try {
+    provenanceRaw = await readFile3(provenancePath, "utf8");
+  } catch (error) {
+    throw new PackagedMethodSkillUnavailableError(name, provenancePath, error);
+  }
+  let provenanceJson;
+  try {
+    provenanceJson = JSON.parse(provenanceRaw);
+  } catch (error) {
+    throw new Error(`Packaged method provenance is not valid JSON at ${provenancePath}`, {
+      cause: error
+    });
+  }
+  const provenance = parseProvenance(provenanceJson, name);
+  assertSealedUnchangedUpstreamPin(provenance);
+  for (const [rel, expected] of Object.entries(provenance.files)) {
+    const absolute = join5(rootDirectory, rel);
+    let bytes;
+    try {
+      bytes = await readFile3(absolute);
+    } catch (error) {
+      throw new PackagedMethodSkillUnavailableError(name, absolute, error);
+    }
+    const actualSha = sha256Hex(bytes);
+    const actualBlob = gitBlobOid(bytes);
+    if (actualSha !== expected.sha256 || bytes.byteLength !== expected.byteLength || actualBlob !== expected.gitBlob) {
+      throw new Error(
+        `Packaged method file digest mismatch for ${name}/${rel}: expected sha256=${expected.sha256} byteLength=${expected.byteLength} gitBlob=${expected.gitBlob}, got sha256=${actualSha} byteLength=${bytes.byteLength} gitBlob=${actualBlob}`
+      );
+    }
+  }
+  let skillPath;
+  let raw;
+  try {
+    skillPath = await realpath(skillPathConfigured);
+    raw = await readFile3(skillPath, "utf8");
+  } catch (error) {
+    throw new PackagedMethodSkillUnavailableError(name, skillPathConfigured, error);
+  }
+  const body = stripSkillFrontmatter(raw).trim();
+  if (body.length === 0) {
+    throw new Error(`Canonical ${name} Skill is empty at ${skillPath}`);
+  }
+  const companionRelativePaths = REQUIRED_COMPANIONS[name].filter(
+    (rel) => provenance.files[rel] !== void 0
+  );
+  for (const rel of REQUIRED_COMPANIONS[name]) {
+    if (provenance.files[rel] === void 0) {
+      throw new Error(
+        `Packaged method ${name} missing required companion in provenance: ${rel}`
+      );
+    }
+  }
+  return Object.freeze({
+    name,
+    rootDirectory,
+    skillPath,
+    raw,
+    body,
+    provenance,
+    companionRelativePaths: Object.freeze([...companionRelativePaths])
+  });
+}
 
 // src/public-cli/run-lifecycle.ts
-import { lstat as lstat2, open, readdir, readFile as readFile3, unlink, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join5 } from "node:path";
+import { lstat as lstat2, open, readdir, readFile as readFile4, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join6 } from "node:path";
 var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
 var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
 var RUN_STATE_FILE = "run-state.json";
@@ -8877,7 +9289,7 @@ function isV1ResumableProvider(provider) {
   return V1_RESUMABLE_PROVIDERS.includes(provider);
 }
 function typedProviderHttpPath(runDirectory) {
-  return join5(runDirectory, TYPED_HTTP_FILE);
+  return join6(runDirectory, TYPED_HTTP_FILE);
 }
 async function clearTypedProviderHttpObservation(runDirectory) {
   try {
@@ -8892,16 +9304,16 @@ async function clearTypedProviderHttpObservation(runDirectory) {
 async function readTypedHttp429Observation(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile3(typedProviderHttpPath(runDirectory), "utf8")
+      await readFile4(typedProviderHttpPath(runDirectory), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record = raw;
-    if (record.httpStatus !== 429) return void 0;
-    if (typeof record.provider !== "string") return void 0;
-    if (!isV1ResumableProvider(record.provider)) return void 0;
-    return { httpStatus: 429, provider: record.provider };
+    const record2 = raw;
+    if (record2.httpStatus !== 429) return void 0;
+    if (typeof record2.provider !== "string") return void 0;
+    if (!isV1ResumableProvider(record2.provider)) return void 0;
+    return { httpStatus: 429, provider: record2.provider };
   } catch {
     return void 0;
   }
@@ -8913,10 +9325,10 @@ function isV1ResumableFailure(input) {
 function renderResumeCommand(runId) {
   return `ak-role resume ${runId}`;
 }
-async function writeRoleRunState(runDirectory, record) {
-  const payload = { ...record, runDirectory };
+async function writeRoleRunState(runDirectory, record2) {
+  const payload = { ...record2, runDirectory };
   await writeFile3(
-    join5(runDirectory, RUN_STATE_FILE),
+    join6(runDirectory, RUN_STATE_FILE),
     `${JSON.stringify(payload, null, 2)}
 `,
     "utf8"
@@ -8925,44 +9337,46 @@ async function writeRoleRunState(runDirectory, record) {
 async function readRoleRunState(runDirectory) {
   try {
     const raw = JSON.parse(
-      await readFile3(join5(runDirectory, RUN_STATE_FILE), "utf8")
+      await readFile4(join6(runDirectory, RUN_STATE_FILE), "utf8")
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return void 0;
     }
-    const record = raw;
-    if (typeof record.runId !== "string" || record.runId.trim() === "") {
+    const record2 = raw;
+    if (typeof record2.runId !== "string" || record2.runId.trim() === "") {
       return void 0;
     }
-    if (record.role !== "judge") return void 0;
-    if (record.state !== "admitted" && record.state !== "running" && record.state !== "resumable" && record.state !== "terminal") {
+    if (record2.role !== "judge" && record2.role !== "coder") return void 0;
+    if (record2.state !== "admitted" && record2.state !== "running" && record2.state !== "resumable" && record2.state !== "terminal") {
       return void 0;
     }
-    if (typeof record.bookKey !== "string") return void 0;
-    if (typeof record.projectRoot !== "string") return void 0;
-    if (typeof record.sessionDirectory !== "string") return void 0;
-    if (typeof record.admittedRequestPath !== "string") return void 0;
-    const runDir = typeof record.runDirectory === "string" && record.runDirectory.trim() !== "" ? record.runDirectory : runDirectory;
-    const sessionFile = typeof record.sessionFile === "string" && record.sessionFile.trim() !== "" ? record.sessionFile : roleRunSessionFile(record.sessionDirectory);
+    if (typeof record2.bookKey !== "string") return void 0;
+    if (typeof record2.projectRoot !== "string") return void 0;
+    if (typeof record2.sessionDirectory !== "string") return void 0;
+    if (typeof record2.admittedRequestPath !== "string") return void 0;
+    const runDir = typeof record2.runDirectory === "string" && record2.runDirectory.trim() !== "" ? record2.runDirectory : runDirectory;
+    const sessionFile = typeof record2.sessionFile === "string" && record2.sessionFile.trim() !== "" ? record2.sessionFile : roleRunSessionFile(record2.sessionDirectory);
     let resumable;
-    if (record.resumable !== void 0 && record.resumable !== null) {
-      if (typeof record.resumable === "object" && !Array.isArray(record.resumable)) {
-        const r = record.resumable;
+    if (record2.resumable !== void 0 && record2.resumable !== null) {
+      if (typeof record2.resumable === "object" && !Array.isArray(record2.resumable)) {
+        const r = record2.resumable;
         if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
           resumable = { httpStatus: 429, provider: r.provider };
         }
       }
     }
+    const phase = record2.phase === "plan" || record2.phase === "apply" ? record2.phase : void 0;
     return {
-      runId: record.runId,
-      role: "judge",
-      state: record.state,
-      bookKey: record.bookKey,
-      projectRoot: record.projectRoot,
-      sessionDirectory: record.sessionDirectory,
+      runId: record2.runId,
+      role: record2.role,
+      state: record2.state,
+      bookKey: record2.bookKey,
+      projectRoot: record2.projectRoot,
+      sessionDirectory: record2.sessionDirectory,
       sessionFile,
       runDirectory: runDir,
-      admittedRequestPath: record.admittedRequestPath,
+      admittedRequestPath: record2.admittedRequestPath,
+      ...phase === void 0 ? {} : { phase },
       ...resumable === void 0 ? {} : { resumable }
     };
   } catch {
@@ -8972,13 +9386,14 @@ async function readRoleRunState(runDirectory) {
 async function markRunAdmitted(admitted) {
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
-    role: "judge",
+    role: admitted.role,
     state: "admitted",
     bookKey: admitted.bookKey,
     projectRoot: admitted.projectRoot,
     sessionDirectory: admitted.sessionDirectory,
     sessionFile: admitted.sessionFile,
-    admittedRequestPath: admitted.admittedRequestPath
+    admittedRequestPath: admitted.admittedRequestPath,
+    ...admitted.role === "coder" ? { phase: admitted.phase } : {}
   });
 }
 async function markRunRunning(runDirectory) {
@@ -8994,7 +9409,8 @@ async function markRunRunning(runDirectory) {
     projectRoot: current.projectRoot,
     sessionDirectory: current.sessionDirectory,
     sessionFile: current.sessionFile,
-    admittedRequestPath: current.admittedRequestPath
+    admittedRequestPath: current.admittedRequestPath,
+    ...current.phase === void 0 ? {} : { phase: current.phase }
   });
 }
 async function markRunResumable(runDirectory, observation) {
@@ -9021,7 +9437,8 @@ async function markRunTerminal(runDirectory) {
     projectRoot: current.projectRoot,
     sessionDirectory: current.sessionDirectory,
     sessionFile: current.sessionFile,
-    admittedRequestPath: current.admittedRequestPath
+    admittedRequestPath: current.admittedRequestPath,
+    ...current.phase === void 0 ? {} : { phase: current.phase }
   });
 }
 async function isSessionPrincipalAvailable(sessionFile) {
@@ -9041,7 +9458,7 @@ var RunWriterLeaseHeldError = class extends Error {
   }
 };
 async function acquireRunWriterLease(runDirectory) {
-  const lockPath = join5(runDirectory, WRITER_LOCK_FILE);
+  const lockPath = join6(runDirectory, WRITER_LOCK_FILE);
   try {
     const handle = await open(lockPath, "wx");
     try {
@@ -9072,7 +9489,7 @@ async function acquireRunWriterLease(runDirectory) {
 async function findRunDirectoryById(home, runId) {
   if (runId.trim() === "") return void 0;
   const ledgerHome = resolveActivationLedgerHome(() => home);
-  const booksRoot = join5(ledgerHome, "books");
+  const booksRoot = join6(ledgerHome, "books");
   let bookKeys;
   try {
     bookKeys = await readdir(booksRoot);
@@ -9080,7 +9497,7 @@ async function findRunDirectoryById(home, runId) {
     return void 0;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join5(activationBookDirectory(ledgerHome, bookKey), "runs");
+    const runsDir = join6(activationBookDirectory(ledgerHome, bookKey), "runs");
     let entries;
     try {
       entries = await readdir(runsDir);
@@ -9089,13 +9506,13 @@ async function findRunDirectoryById(home, runId) {
     }
     for (const entry of entries) {
       if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join5(runsDir, entry);
+        return join6(runsDir, entry);
       }
     }
   }
   return void 0;
 }
-async function loadResumableJudgeRun(home, runId) {
+async function loadResumableRunRecord(home, runId) {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === void 0) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
@@ -9118,20 +9535,28 @@ async function loadResumableJudgeRun(home, runId) {
   let instruction = "";
   let instructionEmpty = true;
   let attachments = [];
+  let phase;
+  let taskPath;
   try {
     const raw = JSON.parse(
-      await readFile3(run.admittedRequestPath, "utf8")
+      await readFile4(run.admittedRequestPath, "utf8")
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      const record = raw;
-      if (typeof record.instruction === "string") {
-        instruction = record.instruction;
+      const record2 = raw;
+      if (typeof record2.instruction === "string") {
+        instruction = record2.instruction;
       }
-      if (typeof record.instructionEmpty === "boolean") {
-        instructionEmpty = record.instructionEmpty;
+      if (typeof record2.instructionEmpty === "boolean") {
+        instructionEmpty = record2.instructionEmpty;
       }
-      if (Array.isArray(record.attachments)) {
-        attachments = record.attachments;
+      if (Array.isArray(record2.attachments)) {
+        attachments = record2.attachments;
+      }
+      if (record2.phase === "plan" || record2.phase === "apply") {
+        phase = record2.phase;
+      }
+      if (typeof record2.taskPath === "string" && record2.taskPath.trim() !== "") {
+        taskPath = record2.taskPath;
       }
     }
   } catch {
@@ -9139,30 +9564,100 @@ async function loadResumableJudgeRun(home, runId) {
       `role run admitted request is unreadable: ${runId}`
     );
   }
+  return {
+    run,
+    observation: run.resumable,
+    admittedFields: {
+      instruction,
+      instructionEmpty,
+      attachments,
+      ...phase === void 0 ? {} : { phase },
+      ...taskPath === void 0 ? {} : { taskPath }
+    }
+  };
+}
+async function loadResumableJudgeRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "judge") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not judge`
+    );
+  }
   const admitted = {
     role: "judge",
-    runId: run.runId,
-    bookKey: run.bookKey,
-    projectRoot: run.projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory: run.runDirectory,
-    sessionDirectory: run.sessionDirectory,
-    sessionFile: run.sessionFile,
-    admittedRequestPath: run.admittedRequestPath
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath
   };
   return {
     admitted,
-    run,
-    observation: run.resumable
+    run: loaded.run,
+    observation: loaded.observation
   };
+}
+async function loadResumableCoderRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "coder") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not coder`
+    );
+  }
+  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
+  if (phase !== "plan" && phase !== "apply") {
+    throw new CliUsageError(
+      `role run admitted coder phase is missing: ${runId}`
+    );
+  }
+  const taskPath = loaded.admittedFields.taskPath;
+  if (taskPath === void 0) {
+    throw new CliUsageError(
+      `role run admitted coder task path is missing: ${runId}`
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted coder task is blank: ${runId}`
+    );
+  }
+  const admitted = {
+    role: "coder",
+    phase,
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    taskPath
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    observation: loaded.observation
+  };
+}
+async function peekRoleRunRole(home, runId) {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  if (runDirectory === void 0) return void 0;
+  const run = await readRoleRunState(runDirectory);
+  return run?.role;
 }
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname4, join as join6 } from "node:path";
+import { readFile as readFile5, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname4, join as join7 } from "node:path";
 
 // src/audit-escalation.ts
 var AUDIT_ESCALATION_KIND = "audit_escalation";
@@ -9328,7 +9823,7 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionFile) {
   try {
-    await readFile4(sessionFile, "utf8");
+    await readFile5(sessionFile, "utf8");
     return { state: "present" };
   } catch (error) {
     if (isMissingPathError(error)) return { state: "missing" };
@@ -9457,7 +9952,7 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readBoundSessionEntries(sessionFile) {
-  const text = await readFile4(sessionFile, "utf8");
+  const text = await readFile5(sessionFile, "utf8");
   const entries = [];
   for (const line of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -9492,7 +9987,7 @@ async function readSessionProviderStop(sessionFile) {
     return void 0;
   }
 }
-function isRecord2(value) {
+function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function judgeDecisiveFacts(verdict) {
@@ -9508,6 +10003,16 @@ function judgeDecisiveFacts(verdict) {
     facts.decisionQuestion = verdict.decisionGate.question;
   }
   if (verdict.note !== void 0) facts.note = verdict.note;
+  return facts;
+}
+function coderDecisiveFacts(output) {
+  const facts = {
+    coderStatus: output.status
+  };
+  if (output.status === "unfinished") {
+    facts.remainingScope = output.remainingScope;
+  }
+  facts.reportPresent = output.report.trim().length > 0;
   return facts;
 }
 function extractJudgeRoleOutcome(entries) {
@@ -9550,11 +10055,11 @@ function extractNavigatorFact(entries) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord2(details)) continue;
+      if (!isRecord3(details)) continue;
       const disposition = details.disposition;
       if (disposition === "recommendation") {
         const next = details.next;
-        if (!isRecord2(next) || typeof next.role !== "string") {
+        if (!isRecord3(next) || typeof next.role !== "string") {
           return {
             disposition: "unavailable",
             source: "unknown",
@@ -9562,7 +10067,7 @@ function extractNavigatorFact(entries) {
           };
         }
         const reason = typeof details.reason === "string" ? details.reason : "";
-        const route = Array.isArray(details.route) ? details.route.filter(isRecord2).map((target) => ({
+        const route = Array.isArray(details.route) ? details.route.filter(isRecord3).map((target) => ({
           role: String(target.role),
           phase: navigatorPhaseValue(target.phase)
         })) : void 0;
@@ -9592,8 +10097,8 @@ function extractNavigatorFact(entries) {
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join6(artifactsDir, "report.json");
-  const evidencePath = join6(artifactsDir, "evidence.json");
+  const reportPath = join7(artifactsDir, "report.json");
+  const evidencePath = join7(artifactsDir, "evidence.json");
   await writeFile4(
     reportPath,
     `${JSON.stringify(
@@ -9633,6 +10138,79 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
     { kind: "report", path: reportPath },
     { kind: "evidence", path: evidencePath }
   ];
+}
+async function publishCoderArtifacts(admitted, roleOutcome, sessionDirectory, options = {}) {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join7(artifactsDir, "report.json");
+  const evidencePath = join7(artifactsDir, "evidence.json");
+  await writeFile4(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "coder",
+        runId: admitted.runId,
+        phase: admitted.phase,
+        outcome: roleOutcome,
+        ...options.coderOutput === void 0 ? {} : { receipt: options.coderOutput }
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  await writeFile4(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "coder",
+        phase: admitted.phase,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        taskPath: admitted.taskPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength
+        })),
+        ...options.methodProvenance === void 0 ? {} : { methodProvenance: options.methodProvenance }
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath }
+  ];
+}
+function extractCoderRoleOutcome(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    try {
+      const output = validateAcceptedCoderDetails(message.details);
+      const outcome = {
+        kind: "accepted",
+        role: "coder",
+        status: output.status,
+        decisiveFacts: coderDecisiveFacts(output)
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return void 0;
 }
 async function readLawfulSettlementEntries(admitted) {
   try {
@@ -9678,6 +10256,41 @@ async function settleLawfulJudgeTerminalResult(admitted) {
 async function trySettleJudgeTerminalResult(admitted) {
   return settleLawfulJudgeTerminalResult(admitted);
 }
+async function settleLawfulCoderTerminalResult(admitted, options = {}) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const extracted = extractCoderRoleOutcome(entries);
+  if (extracted === void 0) return void 0;
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishCoderArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    {
+      coderOutput: extracted.output,
+      ...options.methodProvenance === void 0 ? {} : { methodProvenance: options.methodProvenance }
+    }
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId
+  };
+}
+async function trySettleCoderTerminalResult(admitted, options = {}) {
+  return settleLawfulCoderTerminalResult(admitted, options);
+}
+async function hasLawfulCoderTerminalResult(admitted) {
+  try {
+    const entries = await readLawfulSettlementEntries(admitted);
+    if (entries === void 0) return false;
+    const extracted = extractCoderRoleOutcome(entries);
+    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+  } catch {
+    return false;
+  }
+}
 function publicationAttemptFromError(path, error) {
   if (error instanceof Error) {
     const identity = {
@@ -9703,7 +10316,7 @@ function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join6(runDirectory, "artifacts");
+  const artifactsDir = join7(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -9719,7 +10332,7 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join6(dir, `${stem}.${randomUUID()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join7(dir, `${stem}.${randomUUID()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
@@ -9754,30 +10367,30 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
-  const underArtifacts = baseDir === join6(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join7(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join6(baseDir, "error.json"),
-    join6(baseDir, "error.settlement.json"),
-    join6(admitted.runDirectory, "error.settlement.json")
+    join7(baseDir, "error.json"),
+    join7(baseDir, "error.settlement.json"),
+    join7(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join6(baseDir, "error.settlement.json"),
-    join6(baseDir, "error.json")
+    join7(baseDir, "error.settlement.json"),
+    join7(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join6(baseDir, "evidence.json"),
-    join6(baseDir, "evidence.settlement.json"),
-    join6(admitted.runDirectory, "evidence.settlement.json")
+    join7(baseDir, "evidence.json"),
+    join7(baseDir, "evidence.settlement.json"),
+    join7(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join6(baseDir, "evidence.settlement.json"),
-    join6(baseDir, "evidence.json")
+    join7(baseDir, "evidence.settlement.json"),
+    join7(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
-    role: "judge",
+    role: admitted.role,
     runId: admitted.runId,
     cause: failure.cause,
     diagnostic: failure.diagnostic,
@@ -9839,7 +10452,7 @@ function redactNavigatorFactForPublicTerminal(navigator, runId) {
   }
   return navigator;
 }
-async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
+async function settleFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts = {
     cause: failure.cause,
@@ -9859,7 +10472,7 @@ async function settleJudgeFailureTerminalResult(admitted, failure, navigator = {
     );
     const roleOutcome2 = {
       kind: "failure",
-      role: "judge",
+      role: admitted.role,
       cause: failure.cause,
       diagnostic: publicDiagnostic,
       decisiveFacts: publicFacts
@@ -9873,7 +10486,7 @@ async function settleJudgeFailureTerminalResult(admitted, failure, navigator = {
   }
   const roleOutcome = {
     kind: "failure",
-    role: "judge",
+    role: admitted.role,
     cause: failure.cause,
     diagnostic: failure.diagnostic,
     decisiveFacts
@@ -9884,6 +10497,9 @@ async function settleJudgeFailureTerminalResult(admitted, failure, navigator = {
     artifacts,
     runId: admitted.runId
   };
+}
+async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
+  return settleFailureTerminalResult(admitted, failure, navigator, options);
 }
 function presentFailureTerminal(terminal, io) {
   if (terminal.roleOutcome.kind !== "failure") {
@@ -9899,6 +10515,8 @@ function presentFailureTerminal(terminal, io) {
 }
 
 // src/public-cli/judge-run.ts
+import { writeFile as writeFile5 } from "node:fs/promises";
+import { join as join8 } from "node:path";
 function knownFailureForMissingProviderCredential(model, credentials) {
   if (model === void 0 || credentials === void 0) return void 0;
   if (!missingPublicProviderCredential(model.provider, credentials)) {
@@ -10045,7 +10663,7 @@ async function dispatchAdmittedJudge(input) {
     }
     try {
       await writeFile5(
-        join7(admitted.runDirectory, "stderr.log"),
+        join8(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -10191,6 +10809,354 @@ async function runPublicResume(argv, env, io) {
   });
 }
 
+// src/public-cli/coder-run.ts
+function buildModelArgs2(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildCoderActivationExtraArgs(admitted, options) {
+  const prompt = buildCoderTransportPrompt(admitted);
+  const skillArgs = admitted.phase === "apply" ? [
+    "--skill",
+    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
+  ] : [];
+  return [
+    "--no-skills",
+    ...skillArgs,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "coder",
+    "--ak-coder-phase",
+    admitted.phase,
+    "--ak-coder-task",
+    admitted.taskPath,
+    "--mode",
+    "json",
+    ...buildModelArgs2(options.model),
+    prompt
+  ];
+}
+function buildCoderResumeActivationExtraArgs(admitted, options) {
+  const skillArgs = admitted.phase === "apply" ? [
+    "--skill",
+    resolvePackagedMethodSkillPath(options.packageRoot, "tdd")
+  ] : [];
+  return [
+    "--no-skills",
+    ...skillArgs,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "coder",
+    "--ak-coder-phase",
+    admitted.phase,
+    "--ak-coder-task",
+    admitted.taskPath,
+    "--mode",
+    "json",
+    ...buildModelArgs2(options.model),
+    RESUME_TRANSPORT_ENVELOPE
+  ];
+}
+async function presentControlledFailure2(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...session === void 0 ? {} : { session }
+  });
+  const hasLawfulTerminalResult = await hasLawfulCoderTerminalResult(admitted);
+  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+    admitted.sessionFile
+  );
+  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
+    hasLawfulTerminalResult,
+    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
+  });
+  if (resumable && typedHttp429 !== void 0) {
+    await markRunResumable(admitted.runDirectory, typedHttp429);
+  } else {
+    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  }
+  const terminal = await settleFailureTerminalResult(
+    admitted,
+    failure,
+    { disposition: "no-advice" },
+    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
+  );
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedCoder(input) {
+  const { admitted, env, io, extraArgs, lease, methodProvenance } = input;
+  try {
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure2(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile6(
+        join9(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleCoderTerminalResult(admitted, {
+        ...methodProvenance === void 0 ? {} : { methodProvenance }
+      });
+    } catch (error) {
+      return await presentControlledFailure2(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionFile
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure2(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : {
+          knownCause: knownFailure.cause,
+          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+        }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function runPublicCoder(argv, env, io, parseCoderArgv2) {
+  let admitted;
+  try {
+    const parsed = parseCoderArgv2(argv);
+    admitted = await admitCoderInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      phase: parsed.phase,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  let methodProvenance;
+  if (admitted.phase === "apply") {
+    try {
+      const material = await loadPackagedMethodSkillMaterial(
+        env.packageRoot,
+        "tdd"
+      );
+      methodProvenance = material.provenance;
+    } catch (error) {
+      await lease.release();
+      return await presentControlledFailure2(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+          knownCause: "activation"
+        },
+        io
+      );
+    }
+  }
+  const extraArgs = buildCoderActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedCoder({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    ...methodProvenance === void 0 ? {} : { methodProvenance }
+  });
+}
+async function runPublicCoderResume(argv, env, io) {
+  const runId = argv[0];
+  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
+    presentStructuralRejection(
+      new CliUsageError("usage: ak-role resume <runId>"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  if (argv.length > 1) {
+    presentStructuralRejection(
+      new CliUsageError("resume takes exactly one run id"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  let loaded;
+  try {
+    loaded = await loadResumableCoderRun(env.home, runId);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+  let methodProvenance;
+  if (admitted.phase === "apply") {
+    try {
+      const material = await loadPackagedMethodSkillMaterial(
+        env.packageRoot,
+        "tdd"
+      );
+      methodProvenance = material.provenance;
+    } catch (error) {
+      await lease.release();
+      return await presentControlledFailure2(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+          knownCause: "activation"
+        },
+        io
+      );
+    }
+  }
+  const extraArgs = buildCoderResumeActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedCoder({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    ...methodProvenance === void 0 ? {} : { methodProvenance }
+  });
+}
+
 // src/public-cli/cli.ts
 var THINKING_LEVELS2 = /* @__PURE__ */ new Set([
   "off",
@@ -10215,7 +11181,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join8(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join10(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -10437,12 +11403,37 @@ async function runAkRole(argv, env) {
       const cwd = env.cwd ?? process.cwd();
       const config = await loadPublicCliConfig(home);
       const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const resumeRunId = parsed.args[0];
+      const resumeRole = resumeRunId === void 0 || resumeRunId.trim() === "" ? void 0 : await peekRoleRunRole(home, resumeRunId);
+      const resumeSeatRole = resumeRole === "coder" ? "coder" : "judge";
       const seat = resolveEffectiveSeat(
         config,
-        "judge",
+        resumeSeatRole,
         credentials,
         invocationFromParsed(parsed)
       );
+      if (resumeRole === "coder") {
+        const result3 = await runPublicCoderResume(
+          parsed.args,
+          {
+            home,
+            agentDir,
+            packageRoot: env.packageRoot,
+            cwd,
+            credentials,
+            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+            ...seat.selection === void 0 ? {} : { model: seat.selection },
+            ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
+            ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs }
+          },
+          io
+        );
+        return {
+          exitCode: result3.exitCode,
+          ...result3.terminal === void 0 ? {} : { terminal: result3.terminal }
+        };
+      }
       const result2 = await runPublicResume(
         parsed.args,
         {
@@ -10501,6 +11492,40 @@ async function runAkRole(argv, env) {
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
     }
+    if (parsed.command === "coder") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "coder",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicCoder(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+          ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...env.coderExtraPiArgs === void 0 ? {} : { extraPiArgs: env.coderExtraPiArgs },
+          ...env.coderTimeoutMs === void 0 ? {} : { timeoutMs: env.coderTimeoutMs },
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+        },
+        io,
+        parseCoderArgv
+      );
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
+    }
     const roleNames = listHelpCapabilities().filter((cap) => cap.kind === "role").map((cap) => cap.name);
     if (roleNames.includes(parsed.command)) {
       const agentDir = resolveAgentDir(env, home);
@@ -10547,6 +11572,6 @@ async function runAkRole(argv, env) {
 
 // src/public-cli/main.ts
 var here = dirname5(fileURLToPath(import.meta.url));
-var packageRoot = join9(here, "..", "..");
+var packageRoot = join11(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

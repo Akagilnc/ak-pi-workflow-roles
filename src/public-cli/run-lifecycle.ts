@@ -14,7 +14,10 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   roleRunSessionFile,
+  type AdmittedCoderInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedRoleInvocation,
+  type CoderPhase,
   type FrozenAttachment,
 } from "./invocation.ts";
 
@@ -31,7 +34,7 @@ export type TypedHttp429Observation = {
 
 export type RoleRunRecord = {
   readonly runId: string;
-  readonly role: "judge";
+  readonly role: "judge" | "coder";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -40,6 +43,8 @@ export type RoleRunRecord = {
   readonly sessionFile: string;
   readonly runDirectory: string;
   readonly admittedRequestPath: string;
+  /** Coder only — preserved for resume continuation. */
+  readonly phase?: CoderPhase;
   /** Present only while state === "resumable". */
   readonly resumable?: TypedHttp429Observation;
 };
@@ -180,7 +185,7 @@ export async function readRoleRunState(
     if (typeof record.runId !== "string" || record.runId.trim() === "") {
       return undefined;
     }
-    if (record.role !== "judge") return undefined;
+    if (record.role !== "judge" && record.role !== "coder") return undefined;
     if (
       record.state !== "admitted" &&
       record.state !== "running" &&
@@ -219,9 +224,13 @@ export async function readRoleRunState(
         }
       }
     }
+    const phase =
+      record.phase === "plan" || record.phase === "apply"
+        ? record.phase
+        : undefined;
     return {
       runId: record.runId,
-      role: "judge",
+      role: record.role,
       state: record.state,
       bookKey: record.bookKey,
       projectRoot: record.projectRoot,
@@ -229,6 +238,7 @@ export async function readRoleRunState(
       sessionFile,
       runDirectory: runDir,
       admittedRequestPath: record.admittedRequestPath,
+      ...(phase === undefined ? {} : { phase }),
       ...(resumable === undefined ? {} : { resumable }),
     };
   } catch {
@@ -237,17 +247,18 @@ export async function readRoleRunState(
 }
 
 export async function markRunAdmitted(
-  admitted: AdmittedJudgeInvocation,
+  admitted: AdmittedRoleInvocation,
 ): Promise<void> {
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
-    role: "judge",
+    role: admitted.role,
     state: "admitted",
     bookKey: admitted.bookKey,
     projectRoot: admitted.projectRoot,
     sessionDirectory: admitted.sessionDirectory,
     sessionFile: admitted.sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
+    ...(admitted.role === "coder" ? { phase: admitted.phase } : {}),
   });
 }
 
@@ -266,6 +277,7 @@ export async function markRunRunning(runDirectory: string): Promise<void> {
     sessionDirectory: current.sessionDirectory,
     sessionFile: current.sessionFile,
     admittedRequestPath: current.admittedRequestPath,
+    ...(current.phase === undefined ? {} : { phase: current.phase }),
   });
 }
 
@@ -298,6 +310,7 @@ export async function markRunTerminal(runDirectory: string): Promise<void> {
     sessionDirectory: current.sessionDirectory,
     sessionFile: current.sessionFile,
     admittedRequestPath: current.admittedRequestPath,
+    ...(current.phase === undefined ? {} : { phase: current.phase }),
   });
 }
 
@@ -403,20 +416,22 @@ export async function findRunDirectoryById(
   return undefined;
 }
 
-export type LoadedResumableJudgeRun = {
-  readonly admitted: AdmittedJudgeInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation: TypedHttp429Observation;
+type LoadedAdmittedRequestFields = {
+  readonly instruction: string;
+  readonly instructionEmpty: boolean;
+  readonly attachments: FrozenAttachment[];
+  readonly phase?: CoderPhase;
+  readonly taskPath?: string;
 };
 
-/**
- * Load a resumable Judge run for resume. Rejects unknown, terminal, and
- * non-resumable IDs without replaying dispatch.
- */
-export async function loadResumableJudgeRun(
+async function loadResumableRunRecord(
   home: string,
   runId: string,
-): Promise<LoadedResumableJudgeRun> {
+): Promise<{
+  readonly run: RoleRunRecord;
+  readonly observation: TypedHttp429Observation;
+  readonly admittedFields: LoadedAdmittedRequestFields;
+}> {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
@@ -441,6 +456,8 @@ export async function loadResumableJudgeRun(
   let instruction = "";
   let instructionEmpty = true;
   let attachments: FrozenAttachment[] = [];
+  let phase: CoderPhase | undefined;
+  let taskPath: string | undefined;
   try {
     const raw: unknown = JSON.parse(
       await readFile(run.admittedRequestPath, "utf8"),
@@ -456,28 +473,140 @@ export async function loadResumableJudgeRun(
       if (Array.isArray(record.attachments)) {
         attachments = record.attachments as FrozenAttachment[];
       }
+      if (record.phase === "plan" || record.phase === "apply") {
+        phase = record.phase;
+      }
+      if (typeof record.taskPath === "string" && record.taskPath.trim() !== "") {
+        taskPath = record.taskPath;
+      }
     }
   } catch {
     throw new CliUsageError(
       `role run admitted request is unreadable: ${runId}`,
     );
   }
+  return {
+    run,
+    observation: run.resumable,
+    admittedFields: {
+      instruction,
+      instructionEmpty,
+      attachments,
+      ...(phase === undefined ? {} : { phase }),
+      ...(taskPath === undefined ? {} : { taskPath }),
+    },
+  };
+}
+
+export type LoadedResumableJudgeRun = {
+  readonly admitted: AdmittedJudgeInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation: TypedHttp429Observation;
+};
+
+export type LoadedResumableCoderRun = {
+  readonly admitted: AdmittedCoderInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation: TypedHttp429Observation;
+};
+
+/**
+ * Load a resumable Judge run for resume. Rejects unknown, terminal,
+ * non-resumable, and non-Judge IDs without replaying dispatch.
+ */
+export async function loadResumableJudgeRun(
+  home: string,
+  runId: string,
+): Promise<LoadedResumableJudgeRun> {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "judge") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not judge`,
+    );
+  }
   const admitted: AdmittedJudgeInvocation = {
     role: "judge",
-    runId: run.runId,
-    bookKey: run.bookKey,
-    projectRoot: run.projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory: run.runDirectory,
-    sessionDirectory: run.sessionDirectory,
-    sessionFile: run.sessionFile,
-    admittedRequestPath: run.admittedRequestPath,
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: loaded.admittedFields.instructionEmpty,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
   };
   return {
     admitted,
-    run,
-    observation: run.resumable,
+    run: loaded.run,
+    observation: loaded.observation,
   };
+}
+
+/**
+ * Load a resumable Coder run for resume. Phase and task path are restored from
+ * the admitted request so continuation stays role-correct (#109).
+ */
+export async function loadResumableCoderRun(
+  home: string,
+  runId: string,
+): Promise<LoadedResumableCoderRun> {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "coder") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not coder`,
+    );
+  }
+  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
+  if (phase !== "plan" && phase !== "apply") {
+    throw new CliUsageError(
+      `role run admitted coder phase is missing: ${runId}`,
+    );
+  }
+  const taskPath = loaded.admittedFields.taskPath;
+  if (taskPath === undefined) {
+    throw new CliUsageError(
+      `role run admitted coder task path is missing: ${runId}`,
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted coder task is blank: ${runId}`,
+    );
+  }
+  const admitted: AdmittedCoderInvocation = {
+    role: "coder",
+    phase,
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    taskPath,
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    observation: loaded.observation,
+  };
+}
+
+/**
+ * Peek the durable role of a run id without enforcing resumable state.
+ * Used by public resume dispatch to pick the role-correct seat and path.
+ */
+export async function peekRoleRunRole(
+  home: string,
+  runId: string,
+): Promise<"judge" | "coder" | undefined> {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  if (runDirectory === undefined) return undefined;
+  const run = await readRoleRunState(runDirectory);
+  return run?.role;
 }
