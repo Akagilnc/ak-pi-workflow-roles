@@ -450,6 +450,275 @@ test("lawful terminal result wins over typed 429 observation", async () => {
   });
 });
 
+test("prior attempt 429 does not make a later non-429 failure resumable", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-attempt-scope-001";
+    const bookKey = resolveBookKeyFromGit(project);
+
+    // Attempt 1: typed 429 → resumable.
+    {
+      const { io } = captureIo();
+      const first = await runAkRole(
+        ["judge", "--project", project, "first attempt quota"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "openai-codex",
+            });
+            return {
+              code: 1,
+              stdout: "",
+              stderr: "provider_error\n",
+              timedOut: false,
+              args: [...args],
+              knownFailure: {
+                cause: "provider",
+                identity: { name: "ProviderError", code: 429 },
+                diagnostic: "HTTP 429",
+              },
+            };
+          },
+        },
+      );
+      assert.equal(first.exitCode, 1);
+      assert.ok(first.terminal?.resume);
+    }
+
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    assert.equal((await readRoleRunState(runDirectory))?.state, "resumable");
+    assert.ok(await readTypedHttp429Observation(runDirectory));
+
+    // Attempt 2 (resume): non-429 failure. Prior observation must not qualify resume.
+    const { io, stdout } = captureIo();
+    let resumeDispatches = 0;
+    const second = await runAkRole(["resume", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io,
+      piRunner: async (args) => {
+        resumeDispatches += 1;
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sessionDir, { recursive: true });
+        // Deliberately do not write a fresh 429 observation.
+        return {
+          code: 1,
+          stdout: "",
+          stderr: "upstream timeout\n",
+          timedOut: true,
+          args: [...args],
+        };
+      },
+    });
+
+    assert.equal(resumeDispatches, 1);
+    assert.equal(second.exitCode, 1);
+    assert.ok(second.terminal);
+    assert.equal(second.terminal!.resume, undefined);
+    assert.equal(second.terminal!.runId, runId);
+    assert.equal(second.terminal!.roleOutcome.kind, "failure");
+    if (second.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(second.terminal!.roleOutcome.cause, "timeout");
+    }
+    assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
+    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    // Presented output must not advertise a resume command after the non-429 attempt.
+    assert.equal(stdout.join("").includes("ak-role resume"), false);
+  });
+});
+
+test("lawful result with publication failure is not resumable even with attempt 429", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-lawful-publish-fail-001";
+    const { io, stdout } = captureIo();
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "lawful then publish fails under 429"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          // Block report.json publication after a lawful converged verdict.
+          await mkdir(join(runDir, "artifacts", "report.json"), {
+            recursive: true,
+          });
+          await mkdir(sessionDir, { recursive: true });
+          await observeTyped429ViaProductionHandler({
+            runDirectory: runDir,
+            provider: "xai",
+          });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolName: JUDGE_OUTPUT_TOOL_NAME,
+                isError: false,
+                details: {
+                  judgeStatus: "converged",
+                  note: "lawful despite later publication failure",
+                },
+              },
+            })}\n`,
+            "utf8",
+          );
+          return {
+            code: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.resume, undefined);
+    assert.equal(result.terminal!.runId, runId);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      // Publication errno retained; must not wash into a resumable provider 429 path.
+      assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+    }
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    assert.equal(stdout.join("").includes("ak-role resume"), false);
+  });
+});
+
+test("resumable Terminal redacts exact run id from diagnostic free text; durable artifact keeps it", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-diagnostic-disclosure-001";
+    const { io, stdout, stderr } = captureIo();
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "provider names the run"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await observeTyped429ViaProductionHandler({
+            runDirectory: join(sessionDir, ".."),
+            provider: "openai-codex",
+          });
+          return {
+            code: 1,
+            stdout: "",
+            stderr: `provider refused run ${runId} with HTTP 429\n`,
+            timedOut: false,
+            args: [...args],
+            knownFailure: {
+              cause: "provider",
+              identity: { name: "ProviderError", code: 429 },
+              diagnostic: `upstream quota for run ${runId}: HTTP 429`,
+            },
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assertRunIdOnlyInResumeCommand(result.terminal!, runId);
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(
+        result.terminal!.roleOutcome.diagnostic.includes(runId),
+        false,
+        "typed Terminal diagnostic must not re-disclose exact run ID",
+      );
+      assert.equal(
+        result.terminal!.roleOutcome.diagnostic.includes("[run-id]"),
+        true,
+      );
+      assert.equal(
+        String(result.terminal!.roleOutcome.decisiveFacts.diagnostic).includes(
+          runId,
+        ),
+        false,
+      );
+    }
+
+    const presented = `${stdout.join("")}${stderr.join("")}`;
+    const resumeCommand = result.terminal!.resume!.command;
+    assert.equal(presented.includes(resumeCommand), true);
+    const presentedOutsideCommand = presented.split(resumeCommand).join("");
+    assert.equal(
+      presentedOutsideCommand.includes(runId),
+      false,
+      "presented Terminal/stderr must not disclose run ID outside resume.command",
+    );
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    const errorPath = join(runDirectory, "artifacts", "error.json");
+    const errorBody = JSON.parse(await readFile(errorPath, "utf8")) as {
+      runId?: string;
+      diagnostic?: string;
+    };
+    // Private durable artifact retains original evidence, including exact run ID.
+    assert.equal(errorBody.runId, runId);
+    assert.equal(typeof errorBody.diagnostic, "string");
+    assert.equal(errorBody.diagnostic!.includes(runId), true);
+  });
+});
+
 test("resume restores admitted identity and exact Pi session without resubmitting instruction", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");

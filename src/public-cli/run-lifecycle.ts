@@ -51,6 +51,32 @@ export function isV1ResumableProvider(
   return (V1_RESUMABLE_PROVIDERS as readonly string[]).includes(provider);
 }
 
+function typedProviderHttpPath(runDirectory: string): string {
+  return join(runDirectory, TYPED_HTTP_FILE);
+}
+
+/**
+ * Clear any prior attempt's typed provider HTTP observation.
+ * Each initial/resume dispatch must start without inherited 429 evidence so
+ * only the current attempt can qualify v1 resume.
+ */
+export async function clearTypedProviderHttpObservation(
+  runDirectory: string,
+): Promise<void> {
+  try {
+    await unlink(typedProviderHttpPath(runDirectory));
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT"
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
+
 /**
  * Record a typed provider HTTP status observation for the admitted run.
  * Only HTTP 429 from Codex/xAI is retained; other statuses and providers are ignored.
@@ -67,7 +93,7 @@ export async function recordTypedProviderHttpStatus(
     provider: observation.provider,
   };
   await writeFile(
-    join(runDirectory, TYPED_HTTP_FILE),
+    typedProviderHttpPath(runDirectory),
     `${JSON.stringify(body)}\n`,
     "utf8",
   );
@@ -83,7 +109,7 @@ export async function readTypedHttp429Observation(
 ): Promise<TypedHttp429Observation | undefined> {
   try {
     const raw: unknown = JSON.parse(
-      await readFile(join(runDirectory, TYPED_HTTP_FILE), "utf8"),
+      await readFile(typedProviderHttpPath(runDirectory), "utf8"),
     );
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return undefined;

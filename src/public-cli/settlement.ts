@@ -23,6 +23,7 @@ import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   recommendationNavigatorFact,
+  redactExactRunId,
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalNavigatorFact,
@@ -670,20 +671,14 @@ export async function publishJudgeArtifacts(
 }
 
 /**
- * Single lawful-settlement implementation (session → outcome/Navigator/artifacts).
- *
- * - Returns undefined only for genuine absence (missing session path, or no
- *   lawful verdict in an otherwise readable session).
- * - Malformed JSONL / other session-read failures throw with knownCause=session
- *   and original identity (SyntaxError name retained).
- * - Artifact publication failures propagate with their original typed identity.
+ * Read session entries for lawful settlement. Missing path → undefined (absence).
+ * Malformed JSONL / other read failures throw with knownCause=session.
  */
-async function settleLawfulJudgeTerminalResult(
+async function readLawfulSettlementEntries(
   admitted: AdmittedJudgeInvocation,
-): Promise<TerminalResult | undefined> {
-  let entries: SessionEntry[];
+): Promise<SessionEntry[] | undefined> {
   try {
-    entries = await readLatestSessionEntries(admitted.sessionDirectory);
+    return await readLatestSessionEntries(admitted.sessionDirectory);
   } catch (error) {
     // Missing path is absence of a lawful outcome; callers classify via session inspect.
     if (isMissingPathError(error)) return undefined;
@@ -693,6 +688,53 @@ async function settleLawfulJudgeTerminalResult(
       ? error
       : sessionReadFailure(error, "session unreadable");
   }
+}
+
+/**
+ * Lawful Judge outcome presence only — no artifact publication.
+ * Returns undefined for genuine absence (missing path / no lawful verdict).
+ * Session-read failures propagate with typed identity.
+ */
+export async function readLawfulJudgeRoleOutcome(
+  admitted: AdmittedJudgeInvocation,
+): Promise<LawfulJudgeRoleOutcome | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  return extractJudgeRoleOutcome(entries);
+}
+
+/**
+ * Independent confirmation that a lawful Judge terminal result is present in session.
+ * Used for resume qualification — must not depend on artifact publication success.
+ * Unreadable sessions are not a confirmed lawful result (returns false).
+ */
+export async function hasLawfulJudgeTerminalResult(
+  admitted: AdmittedJudgeInvocation,
+): Promise<boolean> {
+  try {
+    const outcome = await readLawfulJudgeRoleOutcome(admitted);
+    return outcome !== undefined && isLawfulTypedTerminalOutcome(outcome);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Single lawful-settlement implementation (session → outcome/Navigator/artifacts).
+ *
+ * - Returns undefined only for genuine absence (missing session path, or no
+ *   lawful verdict in an otherwise readable session).
+ * - Malformed JSONL / other session-read failures throw with knownCause=session
+ *   and original identity (SyntaxError name retained).
+ * - Artifact publication failures propagate with their original typed identity.
+ * - Lawful outcome presence is decided before publication so a later write error
+ *   cannot erase the fact that a lawful result already exists.
+ */
+async function settleLawfulJudgeTerminalResult(
+  admitted: AdmittedJudgeInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
   const roleOutcome = extractJudgeRoleOutcome(entries);
   if (roleOutcome === undefined) {
     return undefined;
@@ -946,12 +988,49 @@ export async function publishFailureArtifacts(
  * Durably record a controlled failure (Error Artifact first), then return the
  * Terminal aggregate. Presentation must happen only after this resolves.
  */
+/** Redact exact run ID from string-valued decisive facts at the public Terminal boundary. */
+function redactDecisiveFactsForPublicTerminal(
+  facts: Readonly<Record<string, unknown>>,
+  runId: string,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(facts)) {
+    out[key] = typeof value === "string" ? redactExactRunId(value, runId) : value;
+  }
+  return out;
+}
+
+/** Redact exact run ID from navigator free-text fields (reason only; commands are registry-owned). */
+function redactNavigatorFactForPublicTerminal(
+  navigator: TerminalNavigatorFact,
+  runId: string,
+): TerminalNavigatorFact {
+  if (navigator.disposition === "recommendation") {
+    return {
+      ...navigator,
+      reason: redactExactRunId(navigator.reason, runId),
+    };
+  }
+  if (navigator.disposition === "unavailable") {
+    return {
+      ...navigator,
+      reason: redactExactRunId(navigator.reason, runId),
+    };
+  }
+  return navigator;
+}
+
+/**
+ * Durably record a controlled failure (Error Artifact first), then return the
+ * Terminal aggregate. Presentation must happen only after this resolves.
+ */
 export async function settleJudgeFailureTerminalResult(
   admitted: AdmittedJudgeInvocation,
   failure: ControlledFailure,
   navigator: TerminalNavigatorFact = { disposition: "no-advice" },
   options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
+  // Private durable artifacts retain the original diagnostic identity (including run ID).
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts: Record<string, unknown> = {
     cause: failure.cause,
@@ -963,6 +1042,30 @@ export async function settleJudgeFailureTerminalResult(
   if (failure.identity?.code !== undefined) {
     decisiveFacts.errorCode = failure.identity.code;
   }
+  // Resumable failures: durable artifacts still land under the run directory, but
+  // the public Terminal must not re-disclose the run ID via top-level runId,
+  // path components, or untrusted free text — only resume.command may carry it
+  // (AC2 / #108).
+  if (options.resume !== undefined) {
+    const publicDiagnostic = redactExactRunId(failure.diagnostic, admitted.runId);
+    const publicFacts = redactDecisiveFactsForPublicTerminal(
+      { ...decisiveFacts, diagnostic: publicDiagnostic },
+      admitted.runId,
+    );
+    const roleOutcome: TerminalRoleOutcome = {
+      kind: "failure",
+      role: "judge",
+      cause: failure.cause,
+      diagnostic: publicDiagnostic,
+      decisiveFacts: publicFacts,
+    };
+    return {
+      roleOutcome,
+      navigator: redactNavigatorFactForPublicTerminal(navigator, admitted.runId),
+      artifacts: [],
+      resume: options.resume,
+    };
+  }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",
     role: "judge",
@@ -970,17 +1073,6 @@ export async function settleJudgeFailureTerminalResult(
     diagnostic: failure.diagnostic,
     decisiveFacts,
   };
-  // Resumable failures: durable artifacts still land under the run directory, but
-  // the public Terminal must not re-disclose the run ID via top-level runId or
-  // path components — only resume.command may carry it (AC2 / #108).
-  if (options.resume !== undefined) {
-    return {
-      roleOutcome,
-      navigator,
-      artifacts: [],
-      resume: options.resume,
-    };
-  }
   return {
     roleOutcome,
     navigator,
