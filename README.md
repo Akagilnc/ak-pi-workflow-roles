@@ -4,11 +4,52 @@ Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fix
 
 ## Public CLI (`ak-role`) — under construction
 
-**There is no supported external package invocation yet.** [#11](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/11) is still open, and `@akagilnc/pi-workflow-roles` has not been published to npm. Consequently, a Pi npm install and the public role commands are not currently usable by package consumers.
+`ak-role` is the only supported way to call the package (ADR 0052). Install it through Pi so the executable and runtime always come from the same package copy, then add Pi’s private npm bin directory to `PATH` once:
 
-ADR 0052 fixes the eventual public boundary: after #11 lands, `ak-role` will be the only supported way to call the package, and Pi installation will keep the executable and runtime on one package copy. The repository currently contains partial construction slices—including the first Judge path—but those are development evidence, not a released quick start.
+```bash
+pi install npm:@akagilnc/pi-workflow-roles
+export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
+```
 
-Runnable installation and role examples will be added only after #115 proves the complete cold-installed role matrix and the owner approves the final quick start. Until then, do not substitute raw Pi activation, session-file scraping, home-directory Skills, or legacy packet flags as public usage.
+Inspect the installed capabilities and choose persistent defaults:
+
+```bash
+ak-role roles
+ak-role help
+ak-role help judge
+ak-role config set judge openai-codex/gpt-5.6-sol:high
+```
+
+### Call Judge
+
+Pass an optional instruction directly after the role. Use repeatable `--attach` options for local regular files and `--project` when the target is not the current project:
+
+```bash
+ak-role judge \
+  --attach ./review-findings.md \
+  --attach ./governing-adr.md \
+  "Adjudicate every finding against the supplied authority."
+
+ak-role judge \
+  --project /path/to/project \
+  --attach /path/to/plan.md \
+  "Decide whether this plan is ready for construction."
+```
+
+The complete Terminal result is written to stdout. Read it there or redirect that same result normally; do not discard stdout or scrape Pi session files. Exit status reports whether the CLI lifecycle completed honestly, not business success: every lawful typed terminal result—including `audit_escalation`—exits zero; structural or infrastructure failure without a lawful typed terminal result exits nonzero. On controlled post-admission failure the same Terminal carries the durable Error Artifact ref and original cause identity rather than a fabricated role Receipt:
+
+```bash
+ak-role judge --attach ./plan.md "Review this plan." > judge-result.txt
+```
+
+Judge deliberately has no public burden flag: it infers Authority, Plan, Apply, or Review from the request. Global one-run overrides may appear before or after the role command:
+
+```bash
+ak-role --model openai-codex/gpt-5.6-sol --thinking high \
+  judge --attach ./decision.md "Adjudicate this decision."
+```
+
+At the current mainline slice, Judge is the completed public run path. `roles` lists the full callable registry, but the other role adapters are still landing under #109–#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
 
 ## 班子（唐宋官署命名）
 
@@ -43,134 +84,23 @@ Runnable installation and role examples will be added only after #115 proves the
 
 `拾遗补阙` 成对留档，待将来出现第二个进言席再启用。
 
-## Current source-tree development invocations
+## Internal development seam
 
-The source tree retains an explicitly loadable raw-Pi seam for package development and low-level diagnosis. It is intentionally absent from public installation help and is **not** an external package interface. The following commands are for contributors working from this repository before #11 lands.
-
-Set the extension and create the retained machine-ledger run first:
-
-```bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-ROLE_EXTENSION="$REPO_ROOT/extensions/role-runtime.ts"
-RUN="$HOME/.ak-roles/books/<main-repository-directory>/issues/<invocation-issue>/runs/<invocation>@<source-tree>"
-mkdir -p "$RUN/session"
-printf '%s\n' \
-  '{"role":"<role>","issue":<invocation-issue>,"invocation":"<invocation>","sourceTree":"<source-tree>","model":"<provider/model>","thinking":"<level>"}' \
-  >"$RUN/invocation.json"
-```
-
-Replace every angle-bracket placeholder, including the role recorded in `invocation.json`. The book key is the main repository directory name, not a linked-worktree name. Keep `session/`, `stderr.log`, and `invocation.json` together in that run. Close stdin to avoid a non-TTY invocation waiting for EOF, and discard the unbounded stdout event-stream copy; the session is authoritative evidence.
-
-### Judge
-
-```bash
-pi --no-extensions -e "$ROLE_EXTENSION" \
-  --ak-role judge \
-  --session-dir "$RUN/session" --mode json \
-  -p "Adjudicate the materials at <path>; infer the applicable burden." \
-  >/dev/null 2>"$RUN/stderr.log" </dev/null
-```
-
-### Fixer
-
-```bash
-pi --no-extensions -e "$ROLE_EXTENSION" \
-  --ak-role fixer \
-  --ak-fixer-phase apply \
-  --ak-fix-packet <fix-packet.md> \
-  --session-dir "$RUN/session" --mode json \
-  -p "Apply the admitted repair packet." \
-  >/dev/null 2>"$RUN/stderr.log" </dev/null
-```
-
-Add `--ak-fixer-prerequisites <prerequisites.json>` when the packet declares typed prerequisites. Use phase `plan` for inspection and planning without edits.
-
-### Coder
-
-```bash
-pi --no-extensions -e "$ROLE_EXTENSION" \
-  --no-skills --skill "$HOME/.agents/skills/tdd/SKILL.md" \
-  --ak-role coder \
-  --ak-coder-phase apply \
-  --ak-coder-task <approved-plan.md> \
-  --session-dir "$RUN/session" --mode json \
-  -p "Apply the admitted implementation plan." \
-  >/dev/null 2>"$RUN/stderr.log" </dev/null
-```
-
-Use phase `plan` to prepare a plan without edits. Until #109 lands, this internal path requires the canonical home TDD Skill shown above.
+The source tree retains an explicitly loadable raw-Pi seam for package development and low-level diagnosis. It is intentionally absent from public installation help and is not a supported invocation recipe. External callers use `ak-role`; they do not pass internal activation flags, manage Pi session directories, consume event streams, or extract receipts from JSONL.
 
 ### Reviewer
 
-```bash
-pi --no-extensions -e "$ROLE_EXTENSION" \
-  --no-skills --skill "$HOME/.agents/skills/code-review/SKILL.md" \
-  --ak-role reviewer \
-  --ak-review-task <review-task.md> \
-  --ak-review-capabilities <review-capabilities.json> \
-  --session-dir "$RUN/session" --mode json \
-  -p "Review the admitted fixed target." \
-  >/dev/null 2>"$RUN/stderr.log" </dev/null
-```
+Every public role run prepares Navigator advice concurrently. Callers still invoke only `ak-role <role> ...`; Navigator never invokes or enforces another role.
 
-The capability file must be bound to the exact task bytes as described in [Reviewer](#reviewer). Until #111 lands, this internal path requires the canonical home code-review Skill shown above.
+The same stdout Terminal result contains the role outcome and Navigator's typed recommendation, no-advice, or unavailable outcome. A recommendation includes one next step, a short reason, and a command rendered from registered role/phase/subject facts—not executable model prose. Do not open a sibling session or parse Pi events to obtain it.
 
-### Collector
+After the role settles, Navigator receives at most three seconds to finish; healthy preparation returns immediately. Timeout or preparation failure remains honestly unavailable, never invalidates the role result, and triggers no retry or fallback model.
+
+Navigator's startup default is `openai-codex/gpt-5.6-luna:medium` when matching credentials are available. Configure it like any other seat:
 
 ```bash
-pi --no-extensions -e "$ROLE_EXTENSION" \
-  --no-skills --no-prompt-templates --no-context-files \
-  --ak-role collector \
-  --ak-collector-repo <owner/repo> \
-  --ak-collector-pr <positive-pr-number> \
-  --ak-collector-legs <manifest.json> \
-  --session-dir "$RUN/session" --mode json \
-  -p "Start collection." \
-  >/dev/null 2>"$RUN/stderr.log" </dev/null
+ak-role config set navigator openai-codex/gpt-5.6-luna:medium
 ```
-
-Collector requires persistent session evidence; do not add `--no-session`.
-
-### Doctor
-
-Keep the Doctor invocation and the case it diagnoses in the same main-repository book but under different Issue roots. The active Doctor run must not be inside `CASE_RUNS`, or it would count its own incomplete evidence.
-
-```bash
-CASE_RUNS="$HOME/.ak-roles/books/<main-repository-directory>/issues/<case-issue>/runs"
-if [[ "$RUN" == "$CASE_RUNS" || "$RUN" == "$CASE_RUNS/"* ]]; then
-  printf '%s\n' "Doctor RUN must be outside CASE_RUNS" >&2
-else
-  pi --no-extensions -e "$ROLE_EXTENSION" \
-    --ak-role doctor \
-    --ak-doctor-case "$CASE_RUNS" \
-    --session-dir "$RUN/session" --mode json \
-    -p "Produce this case's process-cost diagnosis." \
-    >/dev/null 2>"$RUN/stderr.log" </dev/null
-fi
-```
-
-### Merger
-
-Run this from a worktree with an already active conflicting merge and a matching immutable input document:
-
-```bash
-pi --no-extensions -e "$ROLE_EXTENSION" \
-  --ak-role merger \
-  --ak-merger-input <merger-input-v1.json> \
-  --session-dir "$RUN/session" --mode json \
-  -p "Resolve the admitted merge or escalate the required decision." \
-  >/dev/null 2>"$RUN/stderr.log" </dev/null
-```
-
-These commands expose internal flags and Pi-native output only because the public CLI is unfinished. Once #11 lands, external documentation will replace them with `ak-role` commands and a direct Terminal result.
-
-## Planned Navigator attendance
-
-The completed public CLI will prepare Navigator advice concurrently with every role run. Callers will invoke only their chosen role; Navigator will never invoke or enforce another role.
-
-The same stdout Terminal result will contain the role outcome and Navigator's typed recommendation, no-advice, or unavailable outcome. Recommendations are rendered from registered role/phase/subject facts, not executable model prose, so callers will not need a sibling session or Pi event parsing.
-
-After the role settles, Navigator receives at most ten seconds to finish; healthy preparation returns immediately. Timeout or preparation failure remains honestly unavailable, never invalidates the role result, and triggers no retry or fallback model. Its credential-dependent startup preference begins with `openai-codex/gpt-5.6-luna:medium`.
 
 ## Judge
 
@@ -276,7 +206,7 @@ Reviewer terminates in two layers. The model submits only a **thin intent** thro
 {"status":"refused","diagnostic":"non-empty reason"}
 ```
 
-The authoritative receipt is the **runtime-assembled V2 receipt returned in that tool call's result** (`details`), validated by `validateRuntimeReviewerReceipt` in [`src/package-contracts/reviewer-output.ts`](src/package-contracts/reviewer-output.ts): it carries `reports.standards` / `reports.spec` as byte-identified Markdown (`{text, utf8Length, sha256}`) plus outcomes and content identities. **Findings live in those reports — read the tool-result details (persisted in the session record), not the thin intent.** A caller that reads only the intent sees `{"status":"completed"}` and no findings; that is the intent by design, not the receipt.
+The authoritative receipt is the **runtime-assembled V2 receipt returned in that tool call's result** (`details`), validated by `validateRuntimeReviewerReceipt` in [`src/package-contracts/reviewer-output.ts`](src/package-contracts/reviewer-output.ts): it carries `reports.standards` / `reports.spec` as byte-identified Markdown (`{text, utf8Length, sha256}`) plus outcomes and content identities. **Findings live in those reports — read the runtime-assembled receipt details (and, once the public adapter lands, the Terminal/artifact surface), not the thin intent.** A caller that reads only the intent sees `{"status":"completed"}` and no findings; that is the intent by design, not the receipt.
 
 `completed` means the requested review was completed; it says nothing about approval, routing, mergeability, or the next role — consult the reports for findings. `refused` is an evidenced inability to establish the review target, authority, or factual premise. Infrastructure failures instead abort the action and exit nonzero. Both statuses undergo a separate active-model, no-operational-tool method-compliance audit; `revise` permits corrected resubmission.
 

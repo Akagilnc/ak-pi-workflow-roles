@@ -5,7 +5,7 @@ import {
   statSync
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 class ActivationLedgerError extends Error {
   code = "AK_ACTIVATION_LEDGER";
   constructor(message, options) {
@@ -34,6 +34,28 @@ function activationWaitingLedgerPath(ledgerHome, bookKey) {
 function pathContainedIn(root, candidate) {
   const rel = relative(root, candidate);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function physicalPathIdentity(path) {
+  const absolute = resolve(path);
+  const missing = [];
+  let cursor = absolute;
+  while (true) {
+    try {
+      const real = realpathSync(cursor);
+      return missing.length === 0 ? real : join(real, ...missing);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        return absolute;
+      }
+      const parent = dirname(cursor);
+      if (parent === cursor) return absolute;
+      missing.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+function physicallyContainedIn(root, candidate) {
+  return pathContainedIn(physicalPathIdentity(root), physicalPathIdentity(candidate));
 }
 function errnoCode(error) {
   return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
@@ -209,5 +231,7 @@ export {
   errnoCode,
   errorText,
   pathContainedIn,
+  physicalPathIdentity,
+  physicallyContainedIn,
   resolveActivationLedgerHome
 };

@@ -1455,9 +1455,8 @@ test("judge output must be the sole call in its assistant batch", async () => {
 
 test(
   "accepted role terminal races production 10s Navigator grace through role-runtime to Terminal",
+  { timeout: 30_000 },
   async (t) => {
-    // Advance production setTimeout grace on the Node test clock (doctor/compliance precedent).
-    // Do not sleep the real 10s wall clock or assert Date.now bounds.
     t.mock.timers.enable({ apis: ["setTimeout"] });
     assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 

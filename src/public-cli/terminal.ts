@@ -33,6 +33,15 @@ export type TerminalArtifactRef = {
   path: string;
 };
 
+/** Controlled post-admission failure classes (ADR 0052 / #107). */
+export type ControlledFailureCause =
+  | "activation"
+  | "provider"
+  | "session"
+  | "output"
+  | "timeout"
+  | "unrecognized";
+
 export type TerminalRoleOutcome =
   | {
       kind: "accepted";
@@ -46,7 +55,29 @@ export type TerminalRoleOutcome =
       role: "judge";
       status: "audit_escalation";
       decisiveFacts: Readonly<Record<string, unknown>>;
+    }
+  | {
+      kind: "failure";
+      role: "judge";
+      /** Typed cause class — never a fabricated role Receipt status. */
+      cause: ControlledFailureCause;
+      /** Original diagnostic identity retained for the caller. */
+      diagnostic: string;
+      decisiveFacts: Readonly<Record<string, unknown>>;
     };
+
+/** Lawful typed terminal results exit zero (including audit_escalation). */
+export function isLawfulTypedTerminalOutcome(
+  outcome: TerminalRoleOutcome,
+): boolean {
+  return outcome.kind === "accepted" || outcome.kind === "audit_escalation";
+}
+
+export function exitCodeForTerminalOutcome(
+  outcome: TerminalRoleOutcome,
+): number {
+  return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
 
 export type TerminalNavigatorFact =
   | {
@@ -110,9 +141,18 @@ export function recommendationNavigatorFact(input: {
 export function formatTerminalResult(result: TerminalResult): string {
   const lines: string[] = [];
   lines.push("role\toutcome\tstatus");
+  const outcomeStatus =
+    result.roleOutcome.kind === "failure"
+      ? result.roleOutcome.cause
+      : result.roleOutcome.status;
   lines.push(
-    `${result.roleOutcome.role}\t${result.roleOutcome.kind}\t${encodeTerminalField(result.roleOutcome.status)}`,
+    `${result.roleOutcome.role}\t${result.roleOutcome.kind}\t${encodeTerminalField(outcomeStatus)}`,
   );
+  if (result.roleOutcome.kind === "failure") {
+    lines.push(
+      `diagnostic\t${encodeTerminalField(result.roleOutcome.diagnostic)}`,
+    );
+  }
   const facts = result.roleOutcome.decisiveFacts;
   for (const [key, value] of Object.entries(facts)) {
     if (value === undefined) continue;
