@@ -1,0 +1,13 @@
+{
+  "issue": 140,
+  "role": "judge",
+  "burden": "ticket",
+  "purpose": "court over fixer-soul verdict-precondition scheme",
+  "base": "e59d430a81b5bbb265f548b81452ad269d64844f",
+  "model": "openai-codex/gpt-5.6-sol",
+  "thinking": "medium",
+  "extension": "extensions/role-runtime.ts",
+  "task": "/Users/akagilnc/.ak-roles/books/ak-pi-workflow-roles/issues/140/runs/ticket-court-001@ak-pi-workflow-roles/task.md",
+  "sessionDir": "/Users/akagilnc/.ak-roles/books/ak-pi-workflow-roles/issues/140/runs/ticket-court-001@ak-pi-workflow-roles/session",
+  "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles"
+}

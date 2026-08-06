@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "archive": {
+    "repositoryRoot": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue45",
+    "root": ".ak/dockets",
+    "docketId": "issues/45/authority/final-authority-001"
+  },
+  "session": {
+    "directory": ".ak/work/issues/45/runs/final-authority-judge/session",
+    "id": "019fbc82-a885-7212-897e-efa88b0fc860"
+  },
+  "execution": {
+    "cwd": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue45",
+    "environment": {
+      "inherit": true,
+      "overrides": {},
+      "unset": []
+    },
+    "stdin": "inherit"
+  },
+  "declarations": {
+    "gitReferences": [],
+    "externalInputs": [
+      {
+        "id": "owner-authority-request",
+        "sourcePath": "/Users/akagilnc/WorkSpace/ak-pi-workflow-roles-issue45/.ak/work/issues/45/final-authority-judge.md",
+        "sha256": "c0354b79be92696e7ecd74f58ce79af2b6c2efec7dab103fb24d626a9348f184",
+        "kind": "task"
+      }
+    ],
+    "exhibits": []
+  },
+  "provenance": {
+    "package": "@ak/pi-workflow-roles",
+    "model": "openai-codex/gpt-5.6-sol:medium",
+    "target": "9247ab883f07adf5eabb75abf60777b626a58d17"
+  }
+}

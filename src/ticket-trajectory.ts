@@ -24,6 +24,12 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  formatDurationZh,
+  formatLocalDateTime,
+  formatTokensCompact,
+  formatUsdPrecise,
+} from "./human-format.ts";
+import {
   AcceptedDetailsContractError,
   acceptedFacts,
   isTerminatingToolName,
@@ -603,8 +609,8 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
             run.hasResult
               ? `<span class="result">result: ${escapeHtml(resultDisplay)}</span>`
               : `<span class="result">result: (none — attempts only)</span>`,
-            `<span class="cost">$${escapeHtml(formatUsd(run.costUsd))} · ${run.totalTokens} tok</span>`,
-            `<span class="wall">wall ${wall}ms</span>`,
+            `<span class="cost">$${escapeHtml(formatUsdPrecise(run.costUsd))} · ${escapeHtml(formatTokensCompact(run.totalTokens))} tok</span>`,
+            `<span class="wall">墙钟 ${escapeHtml(formatDurationZh(wall))}</span>`,
             `</p>`,
             `<p class="ledger"><a data-ledger-link="${attr(run.ledgerCoord)}" href="${attr(run.evidenceHref)}">${escapeHtml(run.ledgerCoord)}</a></p>`,
             `</article>`,
@@ -614,7 +620,7 @@ export function renderTicketTrajectoryStationHtml(runs: readonly TicketTrajector
 
       return [
         `<section class="station" data-station-block="${attr(station)}" data-round-count="${rounds.length}" data-station-cost-usd="${attr(formatUsd(stationCost))}" data-station-total-tokens="${attr(String(stationTokens))}" data-station-wall-ms="${attr(String(stationWall))}">`,
-        `<h2 class="station-title">${escapeHtml(stationLabel)} · ${rounds.length} 轮 · $${escapeHtml(formatUsd(stationCost))} · ${stationTokens} tok · wall ${stationWall}ms</h2>`,
+        `<h2 class="station-title">${escapeHtml(stationLabel)} · ${rounds.length} 轮 · $${escapeHtml(formatUsdPrecise(stationCost))} · ${escapeHtml(formatTokensCompact(stationTokens))} tok · 墙钟 ${escapeHtml(formatDurationZh(stationWall))}</h2>`,
         roundHtml,
         `</section>`,
       ].join("\n");
@@ -680,7 +686,7 @@ function renderHtml(input: {
 <body>
 <header class="page">
   <h1>Ticket #${escapeHtml(String(input.issueNumber))} · 驿传轨迹</h1>
-  <p class="generated">generated-at <time datetime="${attr(input.generatedAt)}">${escapeHtml(input.generatedAt)}</time>${refreshNote}</p>
+  <p class="generated">生成于 <time datetime="${attr(input.generatedAt)}">${escapeHtml(formatLocalDateTime(input.generatedAt))}</time>${refreshNote}</p>
 </header>
 <main data-run-count="${sortedRuns.length}">
 ${stationBlocks || "<p data-empty=\"true\">no runs</p>"}
