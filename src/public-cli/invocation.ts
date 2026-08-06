@@ -37,6 +37,10 @@ import {
   type FixerPrerequisite,
 } from "../package-contracts/fixer-packet.ts";
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
+import {
+  REVIEWER_CHILD_TOOLS,
+  REVIEWER_PREREQUISITES,
+} from "../reviewer-admission.ts";
 import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -130,12 +134,25 @@ export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
   readonly caseIdentity: DoctorCaseIdentity;
 };
 
+export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "reviewer";
+  /** Durable task file path consumed by internal --ak-review-task. */
+  readonly taskPath: string;
+  /** Adapter-derived capability grant path for --ak-review-capabilities. */
+  readonly capabilitiesPath: string;
+  /** Exact task bytes digest bound into the derived capability document. */
+  readonly taskSha256: string;
+  /** Optional caller-supplied base revision hint for proposal base.revision. */
+  readonly baseRevision?: string;
+};
+
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
-  | AdmittedDoctorInvocation;
+  | AdmittedDoctorInvocation
+  | AdmittedReviewerInvocation;
 
 export type ParseJudgeArgvResult = {
   instruction: string;
@@ -177,13 +194,25 @@ export type ParseDoctorArgvResult = {
   project?: string;
 };
 
+export type ParseReviewerArgvResult = {
+  instruction: string;
+  attachmentPaths: string[];
+  /** Optional semantic base revision for the fixed review target. */
+  baseRevision?: string;
+  project?: string;
+};
+
 /** Reject missing/blank path values so empty overrides cannot silently degrade. */
 function requireOptionPath(
-  flag: "--project" | "--attach" | "--prerequisites",
+  flag: "--project" | "--attach" | "--prerequisites" | "--base",
   value: string | undefined,
 ): string {
   if (value === undefined || value.trim() === "") {
-    throw new CliUsageError(`${flag} requires a path`);
+    throw new CliUsageError(
+      flag === "--base"
+        ? `${flag} requires a nonempty revision`
+        : `${flag} requires a path`,
+    );
   }
   return value;
 }
@@ -1540,6 +1569,252 @@ export function buildDoctorTransportPrompt(
     lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
   } else {
     lines.push(admitted.instruction);
+  }
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Parse Reviewer-specific argv after the `reviewer` token.
+ * Common Invocation flags: --attach / --project. Role-specific: optional --base.
+ * Users never submit capability packets on the public surface.
+ */
+export function parseReviewerArgv(
+  args: readonly string[],
+): ParseReviewerArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  let baseRevision: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+
+  while (tokens.length > 0) {
+    const token = tokens.shift()!;
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length)),
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token === "--base") {
+      baseRevision = requireOptionPath("--base", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--base=")) {
+      baseRevision = requireOptionPath("--base", token.slice("--base=".length));
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown reviewer option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(baseRevision === undefined ? {} : { baseRevision }),
+    ...(project === undefined ? {} : { project }),
+  };
+}
+
+/**
+ * Derive the closed Reviewer capability grant from exact task bytes.
+ * Ceiling is the package host tool/prerequisite set; callers never submit packets.
+ */
+export function deriveReviewerCapabilitiesFromTask(
+  taskBytes: Uint8Array,
+): {
+  readonly taskSha256: string;
+  readonly text: string;
+  readonly bytes: Uint8Array;
+} {
+  const taskSha256 = sha256Hex(taskBytes);
+  const text = `${JSON.stringify({
+    version: 1,
+    taskSha256,
+    tools: [...REVIEWER_CHILD_TOOLS],
+    prerequisiteOperations: [...REVIEWER_PREREQUISITES],
+  })}\n`;
+  return {
+    taskSha256,
+    text,
+    bytes: new TextEncoder().encode(text),
+  };
+}
+
+/** Compose durable task markdown from the public instruction + optional base. */
+export function composeReviewerTaskText(
+  instruction: string,
+  baseRevision?: string,
+): string {
+  const lines: string[] = [instruction];
+  if (baseRevision !== undefined) {
+    lines.push("");
+    lines.push(
+      `Base revision for the fixed review target: ${baseRevision}`,
+    );
+    lines.push(
+      "Use this exact revision as proposal base.revision unless preflight proves it unusable.",
+    );
+  }
+  return lines.join("\n");
+}
+
+export type AdmitReviewerInvocationOptions = {
+  home: string;
+  cwd: string;
+  instruction: string;
+  attachmentPaths: readonly string[];
+  baseRevision?: string;
+  project?: string;
+  createRunId?: () => string;
+};
+
+/**
+ * Admit a Reviewer Role run on the common Invocation request plus optional base.
+ * Adapter derives task-bound capabilities; users do not submit capability packets.
+ * Pinning remains Reviewer proposal/preflight authority after activation.
+ */
+export async function admitReviewerInvocation(
+  options: AdmitReviewerInvocationOptions,
+): Promise<AdmittedReviewerInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const instruction = options.instruction;
+  if (instruction.trim() === "") {
+    throw new CliUsageError("reviewer requires a nonblank task instruction");
+  }
+  if (
+    options.baseRevision !== undefined &&
+    options.baseRevision.trim() === ""
+  ) {
+    throw new CliUsageError("--base requires a nonempty revision");
+  }
+
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@reviewer`,
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const attachments: FrozenAttachment[] = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i]!,
+        attachmentsDirectory,
+        i,
+      ),
+    );
+  }
+
+  const taskText = composeReviewerTaskText(
+    instruction,
+    options.baseRevision,
+  );
+  const taskPath = join(runDirectory, "task.md");
+  await writeFile(taskPath, taskText, "utf8");
+  const taskBytes = new TextEncoder().encode(taskText);
+  const derived = deriveReviewerCapabilitiesFromTask(taskBytes);
+  const capabilitiesPath = join(runDirectory, "capabilities.json");
+  await writeFile(capabilitiesPath, derived.text, "utf8");
+
+  const admitted = {
+    role: "reviewer" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    taskPath,
+    capabilitiesPath,
+    taskSha256: derived.taskSha256,
+    ...(options.baseRevision === undefined
+      ? {}
+      : { baseRevision: options.baseRevision }),
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(
+    admittedRequestPath,
+    `${JSON.stringify(admitted, null, 2)}\n`,
+    "utf8",
+  );
+
+  return {
+    role: "reviewer",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    taskPath,
+    capabilitiesPath,
+    taskSha256: derived.taskSha256,
+    ...(options.baseRevision === undefined
+      ? {}
+      : { baseRevision: options.baseRevision }),
+  };
+}
+
+/**
+ * Build the Pi prompt transport for an admitted Reviewer request.
+ * Task + capabilities already live on disk for internal flags; prompt carries
+ * the instruction, optional base hint, and frozen Attachment paths.
+ */
+export function buildReviewerTransportPrompt(
+  admitted: AdmittedReviewerInvocation,
+): string {
+  const lines: string[] = [admitted.instruction];
+  if (admitted.baseRevision !== undefined) {
+    lines.push("");
+    lines.push(
+      `Admitted base revision: ${admitted.baseRevision}`,
+    );
   }
   if (admitted.attachments.length > 0) {
     lines.push("");

@@ -186,6 +186,78 @@ test("packed artifact ships package-owned tdd method with companions and provena
   });
 });
 
+test("packed artifact ships package-owned code-review method with adapted no-setup two-axis boundary", async () => {
+  await withExtractedPack(async (extracted) => {
+    const required = [
+      "resources/methods/code-review/SKILL.md",
+      "resources/methods/code-review/agents/openai.yaml",
+      "resources/methods/code-review/provenance.json",
+    ];
+    for (const path of required) {
+      assert.ok(
+        extracted.paths.includes(path),
+        `npm pack must include ${path}`,
+      );
+      await access(resolve(extracted.root, "package", path));
+    }
+    const provenance = JSON.parse(
+      await readFile(
+        resolve(
+          extracted.root,
+          "package/resources/methods/code-review/provenance.json",
+        ),
+        "utf8",
+      ),
+    ) as {
+      name: string;
+      packageAdaptation: string;
+      upstream: {
+        repository: string;
+        path: string;
+        commit: string;
+        tag: string;
+        attribution: string;
+        license: string;
+      };
+      files: Record<
+        string,
+        { sha256: string; byteLength: number; gitBlob: string }
+      >;
+    };
+    assert.equal(provenance.name, "code-review");
+    assert.equal(
+      provenance.packageAdaptation,
+      "reviewer-no-setup-fixed-target-two-axis",
+    );
+    assert.equal(
+      provenance.upstream.repository,
+      "https://github.com/mattpocock/skills",
+    );
+    assert.equal(
+      provenance.upstream.path,
+      "skills/engineering/code-review",
+    );
+    assert.equal(
+      provenance.upstream.commit,
+      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    );
+    assert.equal(provenance.upstream.tag, "v1.2.2");
+    assert.equal(provenance.upstream.attribution, "mattpocock/skills");
+    assert.equal(provenance.upstream.license, "MIT");
+    assert.equal(typeof provenance.files["SKILL.md"]?.sha256, "string");
+    assert.equal(provenance.files["SKILL.md"]!.sha256.length, 64);
+    assert.equal(typeof provenance.files["agents/openai.yaml"]?.gitBlob, "string");
+    const skill = await readFile(
+      resolve(extracted.root, "package/resources/methods/code-review/SKILL.md"),
+      "utf8",
+    );
+    assert.equal(skill.includes("Do **not** run `/setup-matt-pocock-skills`"), true);
+    assert.equal(skill.includes("must **not** modify project governance"), true);
+    assert.equal(skill.includes("scratch probes"), true);
+    assert.equal(skill.includes("never turn the review into product repairs"), true);
+  });
+});
+
 test("packed artifact ships package-owned diagnosing-bugs method with adapted boundary", async () => {
   await withExtractedPack(async (extracted) => {
     const required = [

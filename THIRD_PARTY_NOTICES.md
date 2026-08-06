@@ -21,7 +21,12 @@ commit/tag identity, per-file digests and git blob OIDs, and attribution under
   package adaptation `fixer-boundary-no-external-skill-chain` so the Fixer
   method cannot automatically launch architecture Grill or other role-external
   Skill chains (#110)
-- `code-review` — later method-bearing role ticket
+- `code-review` — shipped under `resources/methods/code-review/` from
+  upstream `skills/engineering/code-review` at the same commit/tag, with
+  package adaptation `reviewer-no-setup-fixed-target-two-axis` so Reviewer
+  remains usable without Matt setup files, does not modify project governance
+  as setup, preserves Standards/Spec axes, and never turns scratch probes into
+  product repairs (#111)
 - `resolving-merge-conflicts` — later method-bearing role ticket
 
 The complete upstream MIT license text follows.

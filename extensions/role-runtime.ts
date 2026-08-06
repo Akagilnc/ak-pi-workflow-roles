@@ -276,9 +276,13 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     createMergerGitState: (repositoryRoot) =>
       createProductionMergerGitState(repositoryRoot),
     async loadCanonicalSkillBinding(name) {
-      // Coder TDD is package-owned (#109). Other methods keep legacy loaders until their tickets.
+      // Coder TDD (#109) and Reviewer code-review (#111) are package-owned.
+      // Optional Fixer diagnosing-bugs is available via --skill without this binding.
       if (name === "tdd") {
         return loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
+      }
+      if (name === "code-review") {
+        return loadPackagedCanonicalSkillBinding(packageRoot, "code-review");
       }
       return loadHomeCanonicalSkillBinding(name);
     },

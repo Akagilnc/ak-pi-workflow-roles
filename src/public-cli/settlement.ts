@@ -38,6 +38,11 @@ import {
   type DoctorOutput,
 } from "../doctor-contracts.ts";
 import {
+  REVIEWER_OUTPUT_TOOL_NAME,
+  validateRuntimeReviewerReceipt,
+  type RuntimeReviewerReceiptV2,
+} from "../package-contracts/reviewer-output.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -50,6 +55,7 @@ import {
   type AdmittedDoctorInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 import {
@@ -624,6 +630,28 @@ function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
     runsPath: output.case.runsPath,
     findingsCount: output.findings.length,
   };
+}
+
+function reviewerDecisiveFacts(
+  output: RuntimeReviewerReceiptV2,
+): Record<string, unknown> {
+  const axes = (["standards", "spec"] as const).filter(
+    (axis) => output.outcomes[axis] !== undefined,
+  );
+  const reportAxes = (["standards", "spec"] as const).filter(
+    (axis) => output.reports[axis] !== undefined,
+  );
+  const facts: Record<string, unknown> = {
+    reviewerStatus: output.status,
+    axes: axes.join(","),
+    reportAxes: reportAxes.join(","),
+    acceptedBatchPresent: output.acceptedBatch !== undefined,
+  };
+  if (output.status === "refused") {
+    facts.diagnosticPresent =
+      typeof output.diagnostic === "string" && output.diagnostic.trim().length > 0;
+  }
+  return facts;
 }
 
 /**
@@ -1749,6 +1777,217 @@ export async function hasLawfulFixerTerminalResult(
     const entries = await readLawfulSettlementEntries(admitted);
     if (entries === undefined) return false;
     const extracted = extractFixerRoleOutcome(entries);
+    return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Observe forced Reviewer code-review Skill expansions from the session.
+ * Expansion evidence is package-path only; ambient home locations never count.
+ */
+export function extractReviewerMethodInvocations(
+  entries: readonly SessionEntry[],
+  options: {
+    readonly allowedLocations: readonly string[];
+  },
+): readonly ObservedPackagedMethodSkillInvocation[] {
+  const observed: ObservedPackagedMethodSkillInvocation[] = [];
+  for (const entry of entries) {
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "user") continue;
+    const text = sessionMessageText(message);
+    if (text.length === 0) continue;
+    const hit = observePackagedMethodSkillInvocation(text, {
+      name: "code-review",
+      allowedLocations: options.allowedLocations,
+    });
+    if (hit !== undefined) observed.push(hit);
+  }
+  return Object.freeze(observed);
+}
+
+/**
+ * Publish lawful Reviewer success Artifacts on the shared #106 success interface.
+ * Evidence records package code-review provenance, adapter-derived capabilities,
+ * and typed expansion observation without ambient home Skill paths.
+ */
+export async function publishReviewerArtifacts(
+  admitted: AdmittedReviewerInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  sessionDirectory: string,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
+    readonly reviewerReceipt?: RuntimeReviewerReceiptV2;
+  },
+): Promise<TerminalArtifactRef[]> {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join(artifactsDir, "report.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "reviewer",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...(options.reviewerReceipt === undefined
+          ? {}
+          : { receipt: options.reviewerReceipt }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "reviewer",
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        taskPath: admitted.taskPath,
+        capabilitiesPath: admitted.capabilitiesPath,
+        taskSha256: admitted.taskSha256,
+        ...(admitted.baseRevision === undefined
+          ? {}
+          : { baseRevision: admitted.baseRevision }),
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+        methodProvenance: options.methodProvenance,
+        // Forced package method: availability is package-bound; expansion only when observed.
+        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+        methodInvocations: options.methodInvocations ?? [],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
+/** Lawful Reviewer accepted outcome extracted from session (shared success interface). */
+export type LawfulReviewerRoleOutcome = {
+  kind: "accepted";
+  role: "reviewer";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+export function extractReviewerRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulReviewerRoleOutcome; receipt: RuntimeReviewerReceiptV2 } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    try {
+      const receipt = validateRuntimeReviewerReceipt(message.details);
+      const outcome: LawfulReviewerRoleOutcome = {
+        kind: "accepted",
+        role: "reviewer",
+        status: receipt.status,
+        decisiveFacts: reviewerDecisiveFacts(receipt),
+      };
+      return { receipt, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function settleLawfulReviewerTerminalResult(
+  admitted: AdmittedReviewerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractReviewerRoleOutcome(entries);
+  if (extracted === undefined) return undefined;
+  const navigator = extractNavigatorFact(entries);
+  const methodInvocations = extractReviewerMethodInvocations(entries, {
+    allowedLocations: [
+      options.methodSkillPath,
+      options.methodSkillConfiguredPath,
+    ],
+  });
+  const artifacts = await publishReviewerArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    {
+      reviewerReceipt: extracted.receipt,
+      methodProvenance: options.methodProvenance,
+      methodInvocations,
+    },
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
+}
+
+/** Settle a lawful Reviewer Terminal from the admitted session (shared #106 success interface). */
+export async function settleReviewerTerminalResult(
+  admitted: AdmittedReviewerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult> {
+  const settled = await settleLawfulReviewerTerminalResult(admitted, options);
+  if (settled === undefined) {
+    throw new Error(
+      "Reviewer Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Reviewer Terminal; undefined only for genuine absence. */
+export async function trySettleReviewerTerminalResult(
+  admitted: AdmittedReviewerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult | undefined> {
+  return settleLawfulReviewerTerminalResult(admitted, options);
+}
+
+export async function hasLawfulReviewerTerminalResult(
+  admitted: AdmittedReviewerInvocation,
+): Promise<boolean> {
+  try {
+    const entries = await readLawfulSettlementEntries(admitted);
+    if (entries === undefined) return false;
+    const extracted = extractReviewerRoleOutcome(entries);
     return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
   } catch {
     return false;
