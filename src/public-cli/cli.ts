@@ -25,9 +25,15 @@ import {
   runExplicitInternalActivation,
   type ExplicitInternalPiRunner,
 } from "./explicit-internal.ts";
-import { parseCoderArgv, parseCollectorArgv, parseJudgeArgv } from "./invocation.ts";
+import {
+  parseCoderArgv,
+  parseCollectorArgv,
+  parseDoctorArgv,
+  parseJudgeArgv,
+} from "./invocation.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
+import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
@@ -74,6 +80,10 @@ export type CliEnv = {
   collectorExtraPiArgs?: readonly string[];
   /** Override Collector role-run timeout (tests). */
   collectorTimeoutMs?: number;
+  /** Extra Pi args for Doctor runs (tests: faux provider). */
+  doctorExtraPiArgs?: readonly string[];
+  /** Override Doctor role-run timeout (tests). */
+  doctorTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -395,6 +405,11 @@ export async function runAkRole(
           "collector role runs are one-shot and cannot be resumed",
         );
       }
+      if (resumeRole === "doctor") {
+        throw new CliUsageError(
+          "doctor role runs are one-shot and cannot be resumed",
+        );
+      }
       const resumeSeatRole = resumeRole === "coder" ? "coder" : "judge";
       // Temporary model/thinking override for this resume only — never persists.
       const seat = resolveEffectiveSeat(
@@ -585,6 +600,49 @@ export async function runAkRole(
         },
         io,
         parseCollectorArgv,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Doctor public run path from Issue identity + optional confined runs root (#113).
+    if (parsed.command === "doctor") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "doctor",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicDoctor(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(env.doctorExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.doctorExtraPiArgs }),
+          ...(env.doctorTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.doctorTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        parseDoctorArgv,
       );
       return {
         exitCode: result.exitCode,

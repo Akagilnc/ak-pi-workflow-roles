@@ -7,16 +7,22 @@ import {
   lstat,
   mkdir,
   readFile,
+  realpath,
   writeFile,
 } from "node:fs/promises";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve, sep } from "node:path";
 
 import {
   activationBookDirectory,
   ensureRealDirectoryTree,
+  pathContainedIn,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import {
+  loadDoctorCase,
+} from "../doctor-evidence.ts";
+import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import {
   COLLECTOR_FIXED_KICKOFF,
   COLLECTOR_LEG_ID_PATTERN,
@@ -96,10 +102,21 @@ export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly manifestDigest: string;
 };
 
+export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "doctor";
+  /** Positive Issue number that owns the retained single-case evidence. */
+  readonly issueNumber: number;
+  /** Absolute retained runs root passed to internal --ak-doctor-case. */
+  readonly caseRunsPath: string;
+  /** Structurally exact case identity from loadDoctorCase (no second packet). */
+  readonly caseIdentity: DoctorCaseIdentity;
+};
+
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCoderInvocation
-  | AdmittedCollectorInvocation;
+  | AdmittedCollectorInvocation
+  | AdmittedDoctorInvocation;
 
 export type ParseJudgeArgvResult = {
   instruction: string;
@@ -121,6 +138,15 @@ export type ParseCollectorArgvResult = {
   attachmentPaths: string[];
   project?: string;
   repo?: string;
+};
+
+export type ParseDoctorArgvResult = {
+  issueNumber: number;
+  /** Optional project-relative retained runs root override. */
+  runs?: string;
+  instruction: string;
+  attachmentPaths: string[];
+  project?: string;
 };
 
 /** Reject missing/blank path values so empty overrides cannot silently degrade. */
@@ -917,4 +943,356 @@ export function buildCollectorTransportPrompt(
   _admitted: AdmittedCollectorInvocation,
 ): string {
   return COLLECTOR_FIXED_KICKOFF;
+}
+
+/** Positive Issue number grammar shared with Doctor case path identity. */
+const DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
+
+/** Match retained Doctor case runs roots (ADR 0017 / loadDoctorCase). */
+const DOCTOR_CASE_RUNS_PATH_PATTERN =
+  /\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/;
+
+/**
+ * Parse a positive Issue number for public Doctor admission.
+ * Leading zeros and non-integers are structural rejects.
+ */
+export function parseDoctorIssueNumber(raw: string): number {
+  const trimmed = raw.trim();
+  if (!DOCTOR_ISSUE_NUMBER_PATTERN.test(trimmed)) {
+    throw new CliUsageError(
+      `doctor --issue must be a positive integer, got ${raw}`,
+    );
+  }
+  return Number(trimmed);
+}
+
+/**
+ * Parse Doctor-specific argv after the `doctor` token.
+ * Requires --issue; optional confined --runs override; common --attach/--project.
+ */
+export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  let issueRaw: string | undefined;
+  let runs: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+
+  while (tokens.length > 0) {
+    const token = tokens.shift()!;
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--issue") {
+      const value = tokens.shift();
+      if (value === undefined || value.trim() === "") {
+        throw new CliUsageError("doctor --issue requires a positive integer");
+      }
+      issueRaw = value;
+      continue;
+    }
+    if (token.startsWith("--issue=")) {
+      issueRaw = token.slice("--issue=".length);
+      if (issueRaw.trim() === "") {
+        throw new CliUsageError("doctor --issue requires a positive integer");
+      }
+      continue;
+    }
+    if (token === "--runs") {
+      const value = tokens.shift();
+      if (value === undefined || value.trim() === "") {
+        throw new CliUsageError("doctor --runs requires a path");
+      }
+      runs = value;
+      continue;
+    }
+    if (token.startsWith("--runs=")) {
+      const value = token.slice("--runs=".length);
+      if (value.trim() === "") {
+        throw new CliUsageError("doctor --runs requires a path");
+      }
+      runs = value;
+      continue;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length)),
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown doctor option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  if (issueRaw === undefined) {
+    throw new CliUsageError("doctor requires --issue <positive-integer>");
+  }
+  const issueNumber = parseDoctorIssueNumber(issueRaw);
+
+  if (runs !== undefined && runs.trim() === "") {
+    throw new CliUsageError("doctor --runs requires a path");
+  }
+
+  return {
+    issueNumber,
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+    ...(runs === undefined ? {} : { runs }),
+  };
+}
+
+export type AdmitDoctorInvocationOptions = {
+  home: string;
+  cwd: string;
+  issueNumber: number;
+  /** Optional project-relative retained runs root override. */
+  runs?: string;
+  instruction?: string;
+  attachmentPaths?: readonly string[];
+  project?: string;
+  createRunId?: () => string;
+};
+
+/**
+ * Resolve the retained Doctor case runs root from Issue identity.
+ * Default is the #78 book locator; optional --runs must stay project-confined
+ * and match Doctor case grammar for the same issue number.
+ */
+export async function resolveDoctorCaseRunsPath(options: {
+  home: string;
+  projectRoot: string;
+  bookKey: string;
+  issueNumber: number;
+  runs?: string;
+}): Promise<string> {
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const defaultRuns = join(
+    activationBookDirectory(ledgerHome, options.bookKey),
+    "issues",
+    String(options.issueNumber),
+    "runs",
+  );
+
+  if (options.runs === undefined) {
+    return defaultRuns;
+  }
+
+  const raw = options.runs.trim();
+  if (raw === "") {
+    throw new CliUsageError("doctor --runs requires a path");
+  }
+  // Project-relative only — absolute overrides would bypass confinement.
+  if (isAbsolute(raw)) {
+    throw new CliUsageError(
+      "doctor --runs must be a project-relative path",
+    );
+  }
+  const resolved = resolve(options.projectRoot, raw);
+  if (
+    resolved !== options.projectRoot &&
+    !pathContainedIn(options.projectRoot, resolved)
+  ) {
+    throw new CliUsageError(
+      "doctor --runs escapes the project root",
+    );
+  }
+
+  let real: string;
+  try {
+    real = await realpath(resolved);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(
+      `doctor --runs is not a readable retained runs root: ${detail}`,
+      { cause: error },
+    );
+  }
+
+  const normalized = real.split(sep).join("/");
+  const match = normalized.match(DOCTOR_CASE_RUNS_PATH_PATTERN);
+  if (!match) {
+    throw new CliUsageError(
+      "doctor --runs must be an .ak-roles/books/<book>/issues/<n>/runs directory",
+    );
+  }
+  if (Number(match[1]) !== options.issueNumber) {
+    throw new CliUsageError(
+      `doctor --runs issue ${match[1]} does not match --issue ${options.issueNumber}`,
+    );
+  }
+  return real;
+}
+
+/**
+ * Admit a Doctor Role run: resolve Issue → retained runs root via #78 (or a
+ * confined override), construct the structurally exact case identity through
+ * loadDoctorCase, and place the Doctor session under the book runs lane.
+ * Does not copy session content into a second store.
+ */
+export async function admitDoctorInvocation(
+  options: AdmitDoctorInvocationOptions,
+): Promise<AdmittedDoctorInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  if (
+    !Number.isInteger(options.issueNumber) ||
+    options.issueNumber < 1 ||
+    !DOCTOR_ISSUE_NUMBER_PATTERN.test(String(options.issueNumber))
+  ) {
+    throw new CliUsageError(
+      `doctor --issue must be a positive integer, got ${options.issueNumber}`,
+    );
+  }
+
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+
+  let caseRunsPath: string;
+  try {
+    caseRunsPath = await resolveDoctorCaseRunsPath({
+      home: options.home,
+      projectRoot,
+      bookKey,
+      issueNumber: options.issueNumber,
+      ...(options.runs === undefined ? {} : { runs: options.runs }),
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(detail, { cause: error });
+  }
+
+  // Default #78 locator may not exist yet — ensure the empty runs root so
+  // loadDoctorCase can form an empty case and Doctor's refusal owns insufficiency.
+  if (options.runs === undefined) {
+    ensureRealDirectoryTree(ledgerHome, caseRunsPath);
+  }
+
+  let caseIdentity: DoctorCaseIdentity;
+  try {
+    const patient = await loadDoctorCase(caseRunsPath);
+    if (patient.identity.issueNumber !== options.issueNumber) {
+      throw new CliUsageError(
+        `doctor case issue ${patient.identity.issueNumber} does not match --issue ${options.issueNumber}`,
+      );
+    }
+    caseIdentity = patient.identity;
+    caseRunsPath = await realpath(caseRunsPath);
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(
+      `doctor case could not be constructed from retained evidence: ${detail}`,
+      { cause: error },
+    );
+  }
+
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@doctor`,
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const attachments: FrozenAttachment[] = [];
+  const attachmentPaths = options.attachmentPaths ?? [];
+  for (let i = 0; i < attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        attachmentPaths[i]!,
+        attachmentsDirectory,
+        i,
+      ),
+    );
+  }
+
+  const instruction = options.instruction ?? "";
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "doctor" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    issueNumber: options.issueNumber,
+    caseRunsPath,
+    caseIdentity,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(
+    admittedRequestPath,
+    `${JSON.stringify(admitted, null, 2)}\n`,
+    "utf8",
+  );
+
+  return {
+    role: "doctor",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    issueNumber: options.issueNumber,
+    caseRunsPath,
+    caseIdentity,
+  };
+}
+
+/**
+ * Build the Pi prompt transport for an admitted Doctor request.
+ * Empty public requests receive the canonical nonblank transport envelope only.
+ */
+export function buildDoctorTransportPrompt(
+  admitted: AdmittedDoctorInvocation,
+): string {
+  const lines: string[] = [];
+  if (admitted.instructionEmpty) {
+    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
+  } else {
+    lines.push(admitted.instruction);
+  }
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
 }
