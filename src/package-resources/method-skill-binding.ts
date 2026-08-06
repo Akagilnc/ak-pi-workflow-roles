@@ -19,14 +19,21 @@ import {
   type PackagedMethodSkillName,
 } from "./method-skill.ts";
 
+type PackagedCanonicalSkillName = Extract<
+  PackagedMethodSkillName,
+  CanonicalSkillName
+>;
+
 /**
  * Build a CanonicalSkillBinding from package-owned material.
  * captureExpansion accepts the package skill path (configured or realpath).
  */
-export async function loadPackagedCanonicalSkillBinding(
+export async function loadPackagedCanonicalSkillBinding<
+  Name extends PackagedCanonicalSkillName,
+>(
   packageRoot: string,
-  name: Extract<PackagedMethodSkillName, CanonicalSkillName>,
-): Promise<CanonicalSkillBinding<Extract<CanonicalSkillName, PackagedMethodSkillName>>> {
+  name: Name,
+): Promise<CanonicalSkillBinding<Name>> {
   // Forced expansion bindings are only defined for canonical completion-gated skills.
   // Optional Fixer diagnosing-bugs stays available via --skill without this binding.
   const material = await loadPackagedMethodSkillMaterial(packageRoot, name);
@@ -39,13 +46,16 @@ export async function loadPackagedCanonicalSkillBinding(
     snapshotIdentity: reviewerPromptIdentity(material.raw),
   });
 
-  const binding: CanonicalSkillBinding<"tdd"> = {
-    name: "tdd",
+  const binding: CanonicalSkillBinding<Name> = {
+    name,
     snapshot,
     invocation(originalRequest) {
-      return `/skill:tdd ${originalRequest}`;
+      return `/skill:${name} ${originalRequest}`;
     },
-    captureExpansion(prompt, originalRequest): CanonicalSkillEvidence<"tdd"> | undefined {
+    captureExpansion(
+      prompt,
+      originalRequest,
+    ): CanonicalSkillEvidence<Name> | undefined {
       const parsed = parseSkillBlock(prompt);
       const matchedPath =
         parsed?.location === configuredPath
@@ -59,7 +69,7 @@ export async function loadPackagedCanonicalSkillBinding(
           : `References are relative to ${dirname(matchedPath)}.\n\n${snapshot.body}`;
       const userMessage = parsed?.userMessage ?? "";
       if (
-        parsed?.name !== "tdd" ||
+        parsed?.name !== name ||
         matchedPath === undefined ||
         parsed.content !== expectedContent ||
         userMessage !== originalRequest
@@ -67,7 +77,7 @@ export async function loadPackagedCanonicalSkillBinding(
         return undefined;
       }
       return Object.freeze({
-        name: "tdd" as const,
+        name,
         location: parsed.location,
         content: parsed.content,
         userMessage,

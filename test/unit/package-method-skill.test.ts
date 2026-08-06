@@ -227,3 +227,84 @@ test("packaged tdd binding captures expansion against package skill path only", 
     assert.equal(binding.captureExpansion(homeFake, request), undefined);
   });
 });
+
+test("packaged code-review loads adapted two-axis method without Matt setup", async () => {
+  await withEmptyHome(async () => {
+    const material = await loadPackagedMethodSkillMaterial(
+      packageRoot,
+      "code-review",
+    );
+    assert.equal(material.name, "code-review");
+    assert.equal(material.body.includes("Standards"), true);
+    assert.equal(material.body.includes("Spec"), true);
+    assert.equal(
+      material.provenance.packageAdaptation,
+      "reviewer-no-setup-fixed-target-two-axis",
+    );
+    assert.equal(
+      material.provenance.upstream.path,
+      "skills/engineering/code-review",
+    );
+    assert.equal(
+      material.provenance.upstream.commit,
+      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    );
+    assert.equal(material.provenance.upstream.tag, "v1.2.2");
+    assert.equal(
+      material.companionRelativePaths.includes("agents/openai.yaml"),
+      true,
+    );
+    // Adaptation forbids Matt setup / governance mutation and product repairs.
+    assert.equal(material.body.includes("/setup-matt-pocock-skills"), true);
+    assert.equal(
+      material.body.includes("Do **not** run `/setup-matt-pocock-skills`"),
+      true,
+    );
+    assert.equal(material.body.includes("must **not** modify project governance"), true);
+    assert.equal(material.body.includes("scratch probes"), true);
+    assert.equal(
+      material.body.includes("never turn the review into product repairs"),
+      true,
+    );
+    assert.equal(material.skillPath.includes(packageRoot), true);
+    assert.equal(material.skillPath.includes(".agents/skills"), false);
+  });
+});
+
+test("packaged code-review binding captures expansion against package skill path only", async () => {
+  await withEmptyHome(async () => {
+    const binding = await loadPackagedCanonicalSkillBinding(
+      packageRoot,
+      "code-review",
+    );
+    assert.equal(binding.name, "code-review");
+    const request = "Review the branch since main.";
+    assert.equal(binding.invocation(request), `/skill:code-review ${request}`);
+
+    const location = binding.snapshot.path;
+    const expectedContent = `References are relative to ${binding.snapshot.baseDir}.\n\n${binding.snapshot.body}`;
+    const prompt = `<skill name="code-review" location="${location}">\n${expectedContent}\n</skill>\n\n${request}`;
+    assert.deepEqual(binding.captureExpansion(prompt, request), {
+      name: "code-review",
+      location,
+      content: expectedContent,
+      userMessage: request,
+    });
+
+    const configuredPath = resolvePackagedMethodSkillPath(
+      packageRoot,
+      "code-review",
+    );
+    const configuredExpected = `References are relative to ${dirname(configuredPath)}.\n\n${binding.snapshot.body}`;
+    const configuredPrompt = `<skill name="code-review" location="${configuredPath}">\n${configuredExpected}\n</skill>\n\n${request}`;
+    assert.deepEqual(binding.captureExpansion(configuredPrompt, request), {
+      name: "code-review",
+      location: configuredPath,
+      content: configuredExpected,
+      userMessage: request,
+    });
+
+    const homeFake = `<skill name="code-review" location="/tmp/fake-home/.agents/skills/code-review/SKILL.md">\n${expectedContent}\n</skill>\n\n${request}`;
+    assert.equal(binding.captureExpansion(homeFake, request), undefined);
+  });
+});
