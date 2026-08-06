@@ -52,10 +52,10 @@ Set the extension and create the retained machine-ledger run first:
 ```bash
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 ROLE_EXTENSION="$REPO_ROOT/extensions/role-runtime.ts"
-RUN="$HOME/.ak-roles/books/<main-repository-directory>/issues/<issue>/runs/<invocation>@<source-tree>"
+RUN="$HOME/.ak-roles/books/<main-repository-directory>/issues/<invocation-issue>/runs/<invocation>@<source-tree>"
 mkdir -p "$RUN/session"
 printf '%s\n' \
-  '{"role":"<role>","issue":<issue>,"invocation":"<invocation>","sourceTree":"<source-tree>","model":"<provider/model>","thinking":"<level>"}' \
+  '{"role":"<role>","issue":<invocation-issue>,"invocation":"<invocation>","sourceTree":"<source-tree>","model":"<provider/model>","thinking":"<level>"}' \
   >"$RUN/invocation.json"
 ```
 
@@ -133,10 +133,15 @@ Collector requires persistent session evidence; do not add `--no-session`.
 
 ### Doctor
 
+Keep the Doctor invocation and the case it diagnoses in the same main-repository book but under different Issue roots. The active Doctor run must not be inside `CASE_RUNS`, or it would count its own incomplete evidence.
+
 ```bash
+CASE_RUNS="$HOME/.ak-roles/books/<main-repository-directory>/issues/<case-issue>/runs"
+test "$RUN" != "$CASE_RUNS" && [[ "$RUN" != "$CASE_RUNS/"* ]]
+
 pi --no-extensions -e "$ROLE_EXTENSION" \
   --ak-role doctor \
-  --ak-doctor-case "$HOME/.ak-roles/books/<book>/issues/<issue>/runs" \
+  --ak-doctor-case "$CASE_RUNS" \
   --session-dir "$RUN/session" --mode json \
   -p "Produce this case's process-cost diagnosis." \
   >/dev/null 2>"$RUN/stderr.log" </dev/null
