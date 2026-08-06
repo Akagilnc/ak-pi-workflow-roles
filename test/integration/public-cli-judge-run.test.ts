@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { parseTerminalResultRegions } from "../../src/public-cli/terminal.ts";
+import { settleJudgeTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
   piCli,
@@ -108,16 +108,10 @@ test(
       );
 
       assert.equal(result.exitCode, 0, stderr.join("") || "judge e2e failed");
-      const regions = parseTerminalResultRegions(stdout.join(""));
-      assert.equal(regions.role, "judge");
-      assert.equal(regions.outcomeKind, "accepted");
-      assert.equal(regions.status, "converged");
-      assert.equal(regions.navigatorDisposition, "recommendation");
-      assert.equal(regions.nextRole, "reviewer");
-      assert.equal(regions.command, "ak-role reviewer");
-      assert.equal(regions.command?.includes("pi --ak-role"), false);
-      assert.equal(regions.runId, "run-e2e-judge-001");
-      assert.ok((regions.artifacts ?? []).length >= 2);
+      // AC4 publication: one non-empty stdout write. Typed facts come from settlement owners,
+      // not presentation labels (ADR 0052).
+      assert.equal(stdout.length, 1);
+      assert.ok(stdout[0]!.length > 0);
 
       const bookKey = resolveBookKeyFromGit(project);
       const runDir = join(
@@ -128,6 +122,35 @@ test(
         "runs",
         "run-e2e-judge-001@judge",
       );
+      const terminal = await settleJudgeTerminalResult({
+        role: "judge",
+        runId: "run-e2e-judge-001",
+        runDirectory: runDir,
+        sessionDirectory: join(runDir, "session"),
+        projectRoot: project,
+        bookKey,
+        instruction: "Canonical nonblank prose Judge request for navigation.",
+        instructionEmpty: false,
+        attachments: [],
+        admittedRequestPath: join(runDir, "admitted-request.json"),
+      });
+      assert.equal(terminal.roleOutcome.role, "judge");
+      assert.equal(terminal.roleOutcome.kind, "accepted");
+      assert.equal(terminal.roleOutcome.status, "converged");
+      assert.equal(terminal.navigator.disposition, "recommendation");
+      if (terminal.navigator.disposition === "recommendation") {
+        assert.equal(terminal.navigator.next.role, "reviewer");
+        assert.equal(terminal.navigator.command, "ak-role reviewer");
+        assert.equal(terminal.navigator.command.includes("pi --ak-role"), false);
+      }
+      assert.equal(terminal.runId, "run-e2e-judge-001");
+      assert.ok(terminal.artifacts.length >= 2);
+      assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
+      assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+      for (const artifact of terminal.artifacts) {
+        await readFile(artifact.path);
+      }
+
       const admitted = JSON.parse(
         await readFile(join(runDir, "admitted-request.json"), "utf8"),
       ) as { instruction: string; attachments: Array<{ frozenPath: string }> };

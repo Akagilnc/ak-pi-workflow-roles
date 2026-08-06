@@ -103,9 +103,9 @@ export function recommendationNavigatorFact(input: {
 }
 
 /**
- * Present one Terminal result. Layout/wording are free to evolve; tests must
- * consume typed facts via parseTerminalResultRegions / the structured value,
- * not match table prose.
+ * Present one Terminal result for humans. Labels, row order, wording, and layout
+ * are unfrozen (ADR 0052). Machine consumers and tests must read typed
+ * TerminalResult / settlement owners — never bite this presentation.
  */
 export function formatTerminalResult(result: TerminalResult): string {
   const lines: string[] = [];
@@ -137,109 +137,4 @@ export function formatTerminalResult(result: TerminalResult): string {
   }
   lines.push(`run\t${encodeTerminalField(result.runId)}`);
   return `${lines.join("\n")}\n`;
-}
-
-/**
- * Typed region extraction from a formatted Terminal result.
- * Contract for tests and machine callers: tab-separated semantic rows, not layout.
- */
-export function parseTerminalResultRegions(text: string): {
-  role?: string;
-  outcomeKind?: string;
-  status?: string;
-  facts: Record<string, string>;
-  navigatorDisposition?: string;
-  nextRole?: string;
-  nextPhase?: string;
-  reason?: string;
-  command?: string;
-  unavailableSource?: string;
-  unavailableReason?: string;
-  artifacts: Array<{ kind: string; path: string }>;
-  runId?: string;
-} {
-  const facts: Record<string, string> = {};
-  const artifacts: Array<{ kind: string; path: string }> = [];
-  let role: string | undefined;
-  let outcomeKind: string | undefined;
-  let status: string | undefined;
-  let navigatorDisposition: string | undefined;
-  let nextRole: string | undefined;
-  let nextPhase: string | undefined;
-  let reason: string | undefined;
-  let command: string | undefined;
-  let unavailableSource: string | undefined;
-  let unavailableReason: string | undefined;
-  let runId: string | undefined;
-
-  for (const line of text.split("\n")) {
-    if (line === "" || line.startsWith("role\t")) continue;
-    const cols = line.split("\t");
-    const head = cols[0];
-    if (head === "fact" && cols[1] !== undefined && cols[2] !== undefined) {
-      // Encoded key/value are each one cell; join is belt-and-suspenders if a producer drifts.
-      facts[decodeTerminalField(cols[1])] = decodeTerminalField(cols.slice(2).join("\t"));
-      continue;
-    }
-    if (head === "navigator" && cols[1] !== undefined) {
-      navigatorDisposition = cols[1];
-      continue;
-    }
-    if (head === "next") {
-      nextRole = cols[1];
-      nextPhase = cols[2];
-      continue;
-    }
-    if (head === "reason") {
-      reason = decodeTerminalField(cols.slice(1).join("\t"));
-      continue;
-    }
-    if (head === "command") {
-      command = decodeTerminalField(cols.slice(1).join("\t"));
-      continue;
-    }
-    if (head === "unavailable") {
-      unavailableSource = cols[1];
-      unavailableReason = decodeTerminalField(cols.slice(2).join("\t"));
-      continue;
-    }
-    if (head === "artifact" && cols[1] !== undefined && cols[2] !== undefined) {
-      artifacts.push({
-        kind: cols[1],
-        path: decodeTerminalField(cols.slice(2).join("\t")),
-      });
-      continue;
-    }
-    if (head === "run") {
-      runId = decodeTerminalField(cols.slice(1).join("\t"));
-      continue;
-    }
-    // role outcome data row: role \t kind \t status
-    if (
-      cols.length >= 3 &&
-      head !== undefined &&
-      !["fact", "navigator", "next", "reason", "command", "unavailable", "artifact", "run"].includes(
-        head,
-      )
-    ) {
-      role = cols[0];
-      outcomeKind = cols[1];
-      status = decodeTerminalField(cols[2]!);
-    }
-  }
-  return {
-    ...(role === undefined ? {} : { role }),
-    ...(outcomeKind === undefined ? {} : { outcomeKind }),
-    ...(status === undefined ? {} : { status }),
-    facts,
-    ...(navigatorDisposition === undefined ? {} : { navigatorDisposition }),
-    ...(nextRole === undefined ? {} : { nextRole }),
-    ...(nextPhase === undefined ? {} : { nextPhase }),
-    ...(reason === undefined ? {} : { reason }),
-    ...(command === undefined ? {} : { command }),
-    ...(unavailableSource === undefined ? {} : { unavailableSource }),
-    ...(unavailableReason === undefined ? {} : { unavailableReason }),
-    artifacts,
-    ...(runId === undefined ? {} : { runId }),
-  };
 }
