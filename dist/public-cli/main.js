@@ -7,7 +7,7 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname4, join as join8 } from "node:path";
+import { dirname as dirname5, join as join8 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
@@ -8861,7 +8861,7 @@ import { join as join6 } from "node:path";
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
 import { readdir, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join5 } from "node:path";
+import { dirname as dirname4, join as join5 } from "node:path";
 
 // src/audit-escalation.ts
 var AUDIT_ESCALATION_KIND = "audit_escalation";
@@ -9367,6 +9367,13 @@ function publicationAttemptFromError(path, error) {
   }
   return { path, diagnostic: String(error) };
 }
+function uniqueFailureFallbackDirs(runDirectory, baseDir) {
+  const dirs = [];
+  for (const dir of [baseDir, runDirectory, dirname4(runDirectory)]) {
+    if (!dirs.includes(dir)) dirs.push(dir);
+  }
+  return dirs;
+}
 async function resolveFailureArtifactsBase(runDirectory) {
   const artifactsDir = join5(runDirectory, "artifacts");
   try {
@@ -9420,7 +9427,10 @@ async function publishFailureArtifacts(admitted, failure) {
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
   const underArtifacts = baseDir === join5(admitted.runDirectory, "artifacts");
-  const uniqueFallbackDirs = underArtifacts ? [baseDir, admitted.runDirectory] : [baseDir];
+  const uniqueFallbackDirs = uniqueFailureFallbackDirs(
+    admitted.runDirectory,
+    baseDir
+  );
   const errorCandidates = underArtifacts ? [
     join5(baseDir, "error.json"),
     join5(baseDir, "error.settlement.json"),
@@ -9643,17 +9653,7 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
       result2.stderr,
       "utf8"
     );
-  } catch (error) {
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: result2.code,
-        stderr: result2.stderr,
-        thrown: error
-      },
-      io
-    );
+  } catch {
   }
   let lawful;
   try {
@@ -10023,7 +10023,7 @@ async function runAkRole(argv, env) {
 }
 
 // src/public-cli/main.ts
-var here = dirname4(fileURLToPath(import.meta.url));
+var here = dirname5(fileURLToPath(import.meta.url));
 var packageRoot = join8(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

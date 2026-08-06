@@ -256,24 +256,17 @@ export async function runPublicJudge(
     );
   }
 
-  // Post-admission durable IO stays on the controlled-failure path (including stderr.log).
+  // stderr.log is a best-effort ledger mirror. Failure must not displace an
+  // already-observed child cause or strand settlement in the outer raw catch —
+  // Terminal + Error Artifact remain the durable face (publication records IO trouble).
   try {
     await writeFile(
       join(admitted.runDirectory, "stderr.log"),
       result.stderr,
       "utf8",
     );
-  } catch (error) {
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: result.code,
-        stderr: result.stderr,
-        thrown: error,
-      },
-      io,
-    );
+  } catch {
+    // continue to lawful / controlled-failure settlement below
   }
 
   // Prefer a lawful typed terminal result from the session even when the child

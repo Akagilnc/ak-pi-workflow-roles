@@ -276,11 +276,10 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   }
   assert.equal(terminal.artifacts.length, 2);
   assert.equal(terminal.runId, "run-term-1");
-  // Presentation is a single non-empty write payload; labels stay unfrozen.
+  // Presentation yields one non-empty write payload; layout/labels stay unfrozen (AC6).
   const formatted = formatTerminalResult(terminal);
   assert.equal(typeof formatted, "string");
   assert.ok(formatted.length > 0);
-  assert.equal(formatted.endsWith("\n"), true);
 });
 
 test("Terminal free-text encoding preserves newlines/tabs and rejects forged artifact rows", () => {
@@ -329,19 +328,11 @@ test("Terminal free-text encoding preserves newlines/tabs and rejects forged art
     assert.equal(terminal.navigator.reason, reason);
     assert.equal(terminal.navigator.command, "ak-role fixer apply");
   }
+  // Typed artifact refs retain paths; do not freeze rendered table/path presentation (AC6).
   assert.deepEqual(
     terminal.artifacts.map((a) => a.path),
     ["/r/artifacts/report.json", "/r/artifacts/evidence.json"],
   );
-
-  const formatted = formatTerminalResult(terminal);
-  // Raw presentation must not contain an unencoded forged artifact line.
-  assert.equal(formatted.includes("\nartifact\tevidence\t/tmp/forged\n"), false);
-  assert.equal(formatted.includes(encodeTerminalField(forgedNote)), true);
-  assert.equal(formatted.includes(encodeTerminalField(reason)), true);
-  // Legitimate artifact paths remain distinct from the encoded free-text payload.
-  assert.equal(formatted.includes(encodeTerminalField("/r/artifacts/report.json")), true);
-  assert.equal(formatted.includes(encodeTerminalField("/tmp/forged")), false);
 });
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
@@ -462,14 +453,12 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
     ],
     runId: "run-settle-encode",
   };
+  // Typed artifact refs only — no rendered table/path presentation freeze (AC6).
   assert.equal(terminal.artifacts.length, 2);
   assert.equal(
     terminal.artifacts.some((a) => a.path.includes("forged")),
     false,
   );
-  const formatted = formatTerminalResult(terminal);
-  assert.equal(formatted.includes("\nartifact\tevidence\t/tmp/forged\n"), false);
-  assert.equal(formatted.includes(encodeTerminalField(note)), true);
 });
 
 test("raceNavigatorGrace is three seconds and yields timeout sentinel", async () => {

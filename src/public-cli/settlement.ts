@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import {
@@ -758,6 +758,22 @@ function publicationAttemptFromError(
 }
 
 /**
+ * Directories eligible for open-ended unique failure-artifact placement.
+ * Always includes the ledger runs/ parent of the run directory so an
+ * unwritable run tree cannot strand the original controlled failure.
+ */
+function uniqueFailureFallbackDirs(
+  runDirectory: string,
+  baseDir: string,
+): string[] {
+  const dirs: string[] = [];
+  for (const dir of [baseDir, runDirectory, dirname(runDirectory)]) {
+    if (!dirs.includes(dir)) dirs.push(dir);
+  }
+  return dirs;
+}
+
+/**
  * Resolve a writable artifacts base directory. If `artifacts/` cannot be created
  * (e.g. a file occupies that name), fall back to the run directory itself.
  */
@@ -839,11 +855,13 @@ export async function publishFailureArtifacts(
     baseAttempt === undefined ? [] : [baseAttempt];
 
   // Prefer conventional names; unique fallback dirs keep colliding fixed paths
-  // from stranding the original failure outside settlement.
+  // from stranding the original failure outside settlement. Include the ledger
+  // runs/ parent so a locked run directory (EACCES) cannot exhaust durability.
   const underArtifacts = baseDir === join(admitted.runDirectory, "artifacts");
-  const uniqueFallbackDirs = underArtifacts
-    ? [baseDir, admitted.runDirectory]
-    : [baseDir];
+  const uniqueFallbackDirs = uniqueFailureFallbackDirs(
+    admitted.runDirectory,
+    baseDir,
+  );
   const errorCandidates = underArtifacts
     ? [
         join(baseDir, "error.json"),

@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -1549,7 +1550,84 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
   });
 });
 
-test("post-admission stderr.log EISDIR settles via controlled path with Terminal and Error Artifact", async () => {
+test("unwritable run directory retains activation cause with durable Error Artifact and Terminal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    let runDir: string | undefined;
+    try {
+      const result = await runAkRole(
+        ["judge", "--project", project, "activation boom then unwritable run"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-unwritable-run-dir-001",
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            runDir = join(sessionDir, "..");
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            // Lock the entire run tree after the child failure is observed.
+            // Settlement must escape to the ledger runs/ parent, keep boom primary,
+            // and still emit one Terminal — not outer-catch EACCES alone.
+            await chmod(runDir, 0o555);
+            return {
+              code: 1,
+              stdout: "",
+              stderr: "Error: boom\n",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+
+      const { terminal, errorRef } = await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: "activation",
+        diagnosticEquals: "boom",
+      });
+      assert.equal(terminal.roleOutcome.kind, "failure");
+      if (terminal.roleOutcome.kind === "failure") {
+        assert.equal(terminal.roleOutcome.cause, "activation");
+        assert.equal(terminal.roleOutcome.diagnostic, "boom");
+        assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EACCES");
+      }
+      const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+        cause: string;
+        diagnostic: string;
+        publicationIssues?: Array<{ identity?: { code?: string | number } }>;
+      };
+      assert.equal(errorBody.cause, "activation");
+      assert.equal(errorBody.diagnostic, "boom");
+      assert.ok(Array.isArray(errorBody.publicationIssues));
+      assert.ok(
+        errorBody.publicationIssues!.some(
+          (issue) => issue.identity?.code === "EACCES",
+        ),
+        "publication trouble must remain secondary on the durable Error Artifact",
+      );
+      assert.equal(stdout.length, 1);
+      assert.equal(result.terminal !== undefined, true);
+    } finally {
+      if (runDir !== undefined) {
+        try {
+          await chmod(runDir, 0o755);
+        } catch {
+          // cleanup best-effort
+        }
+      }
+    }
+  });
+});
+
+test("post-admission stderr.log EISDIR keeps child primary and still settles Terminal + Error Artifact", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1567,13 +1645,14 @@ test("post-admission stderr.log EISDIR settles via controlled path with Terminal
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           const runDir = join(sessionDir, "..");
           // stderr.log as a directory makes the post-admission writeFile raise EISDIR.
+          // Mirror IO is best-effort — must not wash the already-observed child cause.
           await mkdir(join(runDir, "stderr.log"), { recursive: true });
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
             stdout: "",
-            stderr: "child failed after admission\n",
+            stderr: "Error: child failed after admission\n",
             timedOut: false,
             args: [...args],
           };
@@ -1584,20 +1663,22 @@ test("post-admission stderr.log EISDIR settles via controlled path with Terminal
       result,
       stdout,
       stderr,
-      expectedCause: "unrecognized",
-      identityCode: "EISDIR",
+      expectedCause: "activation",
+      diagnosticEquals: "child failed after admission",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "unrecognized");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      assert.equal(terminal.roleOutcome.cause, "activation");
+      assert.equal(terminal.roleOutcome.diagnostic, "child failed after admission");
+      // Auxiliary stderr.log errno must not become the primary identity.
+      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
-      identity?: { code?: string | number };
+      diagnostic: string;
     };
-    assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.identity?.code, "EISDIR");
+    assert.equal(errorBody.cause, "activation");
+    assert.equal(errorBody.diagnostic, "child failed after admission");
     // Must not bypass to outer raw catch (no Terminal / no Error Artifact).
     assert.equal(stdout.length, 1);
     assert.equal(result.terminal !== undefined, true);
