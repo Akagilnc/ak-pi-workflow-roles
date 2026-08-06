@@ -289,8 +289,13 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       ),
     ) as {
       methodProvenance: {
-        upstream: { repository: string; attribution: string };
-        files: Record<string, { sha256: string }>;
+        upstream: {
+          repository: string;
+          attribution: string;
+          commit: string;
+          tag?: string;
+        };
+        files: Record<string, { sha256: string; gitBlob: string }>;
       };
     };
     assert.equal(
@@ -299,8 +304,16 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     );
     assert.equal(evidence.methodProvenance.upstream.attribution, "mattpocock/skills");
     assert.equal(
+      evidence.methodProvenance.upstream.commit,
+      material.provenance.upstream.commit,
+    );
+    assert.equal(
       evidence.methodProvenance.files["SKILL.md"]?.sha256,
       material.provenance.files["SKILL.md"]!.sha256,
+    );
+    assert.equal(
+      evidence.methodProvenance.files["SKILL.md"]?.gitBlob,
+      material.provenance.files["SKILL.md"]!.gitBlob,
     );
     // Evidence must not point at ambient home Skill discovery.
     const evidenceText = JSON.stringify(evidence);

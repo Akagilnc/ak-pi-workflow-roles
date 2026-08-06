@@ -209,7 +209,7 @@ Coder terminates through `ak_coder_output` with the same thin worker envelope:
 
 During `apply`, the runtime transforms the first input through Pi's native `/skill:tdd` bound to the package-owned canonical Matt TDD Skill (`resources/methods/tdd/`, with companion testing and mocking material and exact upstream provenance). A `completed` receipt is rejected unless the immediately following prompt proves Pi's exact native expansion of the complete canonical TDD Skill and original request; an evidence-bearing `refused` receipt does not require that proof or a commit.
 
-The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the caller. These are report/audit requirements, not a second bundled Skill. `commitSha` remains advisory evidence rather than a hard package gate. An unfinished receipt carries only its nonblank typed `remainingScope`; it does not carry commit identity or waive acceptance.
+The completed report must preserve TDD evidence plus the same-pattern, introduced-regression, and behavior-fact self-check results for the caller. These are report/audit requirements, not a second bundled Skill. Coder output has no `commitSha` field — the typed contract rejects it (ADR 0024). An unfinished receipt carries only its nonblank typed `remainingScope`; it does not carry commit identity or waive acceptance.
 
 ## Reviewer
 

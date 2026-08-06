@@ -9,10 +9,13 @@ license authority. Do not treat them as dual-licensing the package.
 Upstream provenance: [mattpocock/skills](https://github.com/mattpocock/skills).
 
 This package ships or will ship pinned snapshots of the following skills from
-that upstream repository. Each shipped method records exact file digests and
-upstream attribution under `resources/methods/<name>/provenance.json`.
+that upstream repository. Each shipped method records immutable upstream
+commit/tag identity, per-file digests and git blob OIDs, and attribution under
+`resources/methods/<name>/provenance.json`.
 
-- `tdd` — shipped unchanged under `resources/methods/tdd/` (#109)
+- `tdd` — shipped unchanged under `resources/methods/tdd/` from upstream
+  `skills/engineering/tdd` at commit `8a475c438d90a2f1d7d3710c12658b60dc701a13`
+  (tag `v1.2.2`) (#109)
 - `code-review` — later method-bearing role ticket
 - `diagnosing-bugs` — later method-bearing role ticket
 - `resolving-merge-conflicts` — later method-bearing role ticket

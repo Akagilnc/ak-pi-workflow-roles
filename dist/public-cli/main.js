@@ -9013,6 +9013,7 @@ import { writeFile as writeFile6 } from "node:fs/promises";
 import { join as join9 } from "node:path";
 
 // src/package-resources/method-skill.ts
+import { createHash as createHash2 } from "node:crypto";
 import { readFile as readFile3, realpath } from "node:fs/promises";
 import { join as join5 } from "node:path";
 var PackagedMethodSkillUnavailableError = class extends Error {
@@ -9025,9 +9026,47 @@ var PackagedMethodSkillUnavailableError = class extends Error {
   code = "canonical-skill-unavailable";
 };
 var METHOD_SKILL_RELATIVE_ROOT = "resources/methods";
+var UNCHANGED_PINNED_SNAPSHOT = "unchanged-pinned-snapshot";
+var GIT_COMMIT_RE = /^[0-9a-f]{40}$/;
+var GIT_BLOB_RE = /^[0-9a-f]{40}$/;
+var SHA256_RE = /^[0-9a-f]{64}$/;
 var REQUIRED_COMPANIONS = {
   tdd: ["tests.md", "mocking.md", "agents/openai.yaml"]
 };
+var SEALED_UNCHANGED_METHOD_PINS = Object.freeze({
+  tdd: Object.freeze({
+    commit: "8a475c438d90a2f1d7d3710c12658b60dc701a13",
+    tag: "v1.2.2",
+    path: "skills/engineering/tdd",
+    files: Object.freeze({
+      "SKILL.md": Object.freeze({
+        sha256: "5e6b9c16b547113e90afbb946489d1c1384be5c2128f0159bd0bee57251ecf08",
+        byteLength: 3568,
+        gitBlob: "ead7781d79eb11cdafa1ac2db978cadef0eba240"
+      }),
+      "tests.md": Object.freeze({
+        sha256: "859f9e592c188fda4fc7277dd180e4ce9c7a2e13f6efe1f6f29eccc9d28c106a",
+        byteLength: 2214,
+        gitBlob: "7ab86479f925a1f9e8ba680af33cb3b12e015381"
+      }),
+      "mocking.md": Object.freeze({
+        sha256: "3ceb807fdf4a47d6a93d4d9a891e5ba6d362a6247bd08adc451feebfc17361ef",
+        byteLength: 1481,
+        gitBlob: "71cbfee674d93244ce81d1830b930ca9a69200bd"
+      }),
+      "agents/openai.yaml": Object.freeze({
+        sha256: "ea6f01cf1b8c06a4b0f5b649d74b1b8ce8685e72af1b38d70d877693e092af0b",
+        byteLength: 87,
+        gitBlob: "651b838a7663e027b1b8884491e867f26bb9a021"
+      })
+    })
+  })
+});
+function gitBlobOid(bytes) {
+  const body = typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
+  const header = Buffer.from(`blob ${body.byteLength}\0`, "utf8");
+  return createHash2("sha1").update(header).update(body).digest("hex");
+}
 function stripSkillFrontmatter(content) {
   if (!content.startsWith("---")) return content;
   const end = content.indexOf("\n---", 3);
@@ -9077,6 +9116,18 @@ function parseProvenance(raw, expectedName) {
       throw new Error(`Packaged method provenance upstream.${key} must be nonblank`);
     }
   }
+  if (typeof upstream.commit !== "string" || !GIT_COMMIT_RE.test(upstream.commit)) {
+    throw new Error(
+      `Packaged method provenance upstream.commit must be a 40-char lowercase git object id`
+    );
+  }
+  const tag = typeof upstream.tag === "string" && upstream.tag.trim() !== "" ? upstream.tag.trim() : void 0;
+  const version = typeof upstream.version === "string" && upstream.version.trim() !== "" ? upstream.version.trim() : void 0;
+  if (tag === void 0 && version === void 0) {
+    throw new Error(
+      `Packaged method provenance upstream must include nonblank tag or version`
+    );
+  }
   if (!isRecord2(raw.files)) {
     throw new Error(`Packaged method provenance files must be an object`);
   }
@@ -9085,13 +9136,22 @@ function parseProvenance(raw, expectedName) {
     if (!isRecord2(entry)) {
       throw new Error(`Packaged method provenance file entry must be an object: ${rel}`);
     }
-    if (typeof entry.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(entry.sha256)) {
+    if (typeof entry.sha256 !== "string" || !SHA256_RE.test(entry.sha256)) {
       throw new Error(`Packaged method provenance file sha256 invalid: ${rel}`);
     }
     if (typeof entry.byteLength !== "number" || !Number.isInteger(entry.byteLength) || entry.byteLength < 0) {
       throw new Error(`Packaged method provenance file byteLength invalid: ${rel}`);
     }
-    files[rel] = { sha256: entry.sha256, byteLength: entry.byteLength };
+    if (typeof entry.gitBlob !== "string" || !GIT_BLOB_RE.test(entry.gitBlob)) {
+      throw new Error(
+        `Packaged method provenance file gitBlob must be a 40-char lowercase git object id: ${rel}`
+      );
+    }
+    files[rel] = {
+      sha256: entry.sha256,
+      byteLength: entry.byteLength,
+      gitBlob: entry.gitBlob
+    };
   }
   if (files["SKILL.md"] === void 0) {
     throw new Error(`Packaged method provenance must include SKILL.md`);
@@ -9103,12 +9163,50 @@ function parseProvenance(raw, expectedName) {
     upstream: Object.freeze({
       repository: upstream.repository,
       path: upstream.path,
+      commit: upstream.commit,
+      ...tag === void 0 ? {} : { tag },
+      ...version === void 0 ? {} : { version },
       license: upstream.license,
       copyright: upstream.copyright,
       attribution: upstream.attribution
     }),
     files: Object.freeze(files)
   });
+}
+function assertSealedUnchangedUpstreamPin(provenance) {
+  if (provenance.packageAdaptation !== UNCHANGED_PINNED_SNAPSHOT) return;
+  const sealed = SEALED_UNCHANGED_METHOD_PINS[provenance.name];
+  if (provenance.upstream.commit !== sealed.commit) {
+    throw new Error(
+      `Packaged method ${provenance.name} upstream.commit does not match sealed unchanged pin`
+    );
+  }
+  if (provenance.upstream.tag !== sealed.tag) {
+    throw new Error(
+      `Packaged method ${provenance.name} upstream.tag does not match sealed unchanged pin`
+    );
+  }
+  if (provenance.upstream.path !== sealed.path) {
+    throw new Error(
+      `Packaged method ${provenance.name} upstream.path does not match sealed unchanged pin`
+    );
+  }
+  const sealedRels = Object.keys(sealed.files).sort();
+  const actualRels = Object.keys(provenance.files).sort();
+  if (sealedRels.length !== actualRels.length || sealedRels.some((rel, index) => rel !== actualRels[index])) {
+    throw new Error(
+      `Packaged method ${provenance.name} file set does not match sealed unchanged pin`
+    );
+  }
+  for (const rel of sealedRels) {
+    const expected = sealed.files[rel];
+    const actual = provenance.files[rel];
+    if (actual.sha256 !== expected.sha256 || actual.byteLength !== expected.byteLength || actual.gitBlob !== expected.gitBlob) {
+      throw new Error(
+        `Packaged method ${provenance.name}/${rel} identity does not match sealed unchanged pin`
+      );
+    }
+  }
 }
 async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
   const rootDirectory = resolvePackagedMethodSkillRoot(packageRoot2, name);
@@ -9129,6 +9227,7 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
     });
   }
   const provenance = parseProvenance(provenanceJson, name);
+  assertSealedUnchangedUpstreamPin(provenance);
   for (const [rel, expected] of Object.entries(provenance.files)) {
     const absolute = join5(rootDirectory, rel);
     let bytes;
@@ -9138,9 +9237,10 @@ async function loadPackagedMethodSkillMaterial(packageRoot2, name) {
       throw new PackagedMethodSkillUnavailableError(name, absolute, error);
     }
     const actualSha = sha256Hex(bytes);
-    if (actualSha !== expected.sha256 || bytes.byteLength !== expected.byteLength) {
+    const actualBlob = gitBlobOid(bytes);
+    if (actualSha !== expected.sha256 || bytes.byteLength !== expected.byteLength || actualBlob !== expected.gitBlob) {
       throw new Error(
-        `Packaged method file digest mismatch for ${name}/${rel}: expected ${expected.sha256}/${expected.byteLength}, got ${actualSha}/${bytes.byteLength}`
+        `Packaged method file digest mismatch for ${name}/${rel}: expected sha256=${expected.sha256} byteLength=${expected.byteLength} gitBlob=${expected.gitBlob}, got sha256=${actualSha} byteLength=${bytes.byteLength} gitBlob=${actualBlob}`
       );
     }
   }
