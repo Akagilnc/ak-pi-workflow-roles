@@ -79,25 +79,13 @@ function seedGitProject(root: string): void {
 }
 
 test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
-  assert.throws(
-    () => parseJudgeArgv(["--burden", "heavy"]),
-    (error: unknown) =>
-      error instanceof CliUsageError &&
-      /does not accept a public burden selector/.test(error.message),
-  );
-  assert.throws(
-    () => parseJudgeArgv(["--ak-judge-burden=light"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
-  assert.throws(
-    () => parseJudgeArgv(["--judge-burden", "x"]),
-    (error: unknown) => error instanceof CliUsageError,
-  );
-  assert.throws(
-    () => parseJudgeArgv(["--unknown-flag"]),
-    (error: unknown) =>
-      error instanceof CliUsageError && /unknown judge option/.test(error.message),
-  );
+  // Typed structural reject only (AC6) — never freeze human diagnostic phrasing.
+  const isUsage = (error: unknown): boolean =>
+    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
+  assert.throws(() => parseJudgeArgv(["--burden", "heavy"]), isUsage);
+  assert.throws(() => parseJudgeArgv(["--ak-judge-burden=light"]), isUsage);
+  assert.throws(() => parseJudgeArgv(["--judge-burden", "x"]), isUsage);
+  assert.throws(() => parseJudgeArgv(["--unknown-flag"]), isUsage);
   const parsed = parseJudgeArgv([
     "--attach",
     "a.md",
@@ -112,26 +100,13 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
 });
 
 test("parseJudgeArgv rejects blank --project/--attach path values", () => {
-  assert.throws(
-    () => parseJudgeArgv(["--project=", "task"]),
-    (error: unknown) =>
-      error instanceof CliUsageError && error.message === "--project requires a path",
-  );
-  assert.throws(
-    () => parseJudgeArgv(["--project", "", "task"]),
-    (error: unknown) =>
-      error instanceof CliUsageError && error.message === "--project requires a path",
-  );
-  assert.throws(
-    () => parseJudgeArgv(["--project", "   ", "task"]),
-    (error: unknown) =>
-      error instanceof CliUsageError && error.message === "--project requires a path",
-  );
-  assert.throws(
-    () => parseJudgeArgv(["--attach=", "task"]),
-    (error: unknown) =>
-      error instanceof CliUsageError && error.message === "--attach requires a path",
-  );
+  // Typed structural reject only (AC6) — path-flag prose is unfrozen presentation.
+  const isUsage = (error: unknown): boolean =>
+    error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
+  assert.throws(() => parseJudgeArgv(["--project=", "task"]), isUsage);
+  assert.throws(() => parseJudgeArgv(["--project", "", "task"]), isUsage);
+  assert.throws(() => parseJudgeArgv(["--project", "   ", "task"]), isUsage);
+  assert.throws(() => parseJudgeArgv(["--attach=", "task"]), isUsage);
 });
 
 test("admitJudgeInvocation rejects blank project override before resolve", async () => {
@@ -145,8 +120,9 @@ test("admitJudgeInvocation rejects blank project override before resolve", async
           attachmentPaths: [],
           project: "",
         }),
+      // Typed structural reject only (AC6) — do not freeze diagnostic phrasing.
       (error: unknown) =>
-        error instanceof CliUsageError && error.message === "--project requires a path",
+        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
   });
 });
@@ -542,7 +518,9 @@ test("runAkRole judge rejects burden selector before admission", async () => {
     });
     assert.equal(result.exitCode, 2);
     assert.equal(ran, false);
-    assert.match(stderr.join(""), /burden selector/);
+    // Emission happened; phrasing is unfrozen presentation (AC6).
+    assert.equal(stderr.length >= 1, true);
+    assert.equal(result.terminal, undefined);
   });
 });
 
