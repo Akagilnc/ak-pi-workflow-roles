@@ -246,6 +246,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     loadCollectorSoul: () => readFile(collectorSoulPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
+    collectorPackageExtensionPath: extensionPath,
     loadDoctorSoul: () => readFile(doctorSoulPath, "utf8"),
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
@@ -274,7 +275,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     createMergerGitState: (repositoryRoot) =>
       createProductionMergerGitState(repositoryRoot),
-    collectorPackageExtensionPath: extensionPath,
     async loadCanonicalSkillBinding(name) {
       // Coder TDD is package-owned (#109). Other methods keep legacy loaders until their tickets.
       if (name === "tdd") {

@@ -384,6 +384,134 @@ process.exit(1);
   });
 });
 
+test("installed ak-role collector admits PR/legs and pins isolation without preflight", async () => {
+  await withHermeticHome({ prefix: "ak-public-cli-collector-" }, async ({ home }) => {
+    const piAgentDir = resolve(home, ".pi", "agent");
+    await mkdir(piAgentDir, { recursive: true });
+    const installed = await installPackedArtifactIntoPiNpm(piAgentDir, home);
+
+    const project = resolve(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync(
+      "git",
+      ["remote", "add", "origin", "https://github.com/Acme/Widgets.git"],
+      { cwd: project },
+    );
+
+    // Malformed grammar rejects on the installed bin (not "unavailable slice").
+    const badPr = await runAkRoleBin(
+      installed.akRoleBin,
+      ["collector", "--pr", "0", "--leg", "codex:bot", "--project", project],
+      { home, agentDir: piAgentDir },
+    );
+    assert.equal(badPr.timedOut, false, badPr.stderr);
+    assert.equal(badPr.code, 2, badPr.stderr);
+    assert.equal(badPr.stderr.includes("not available in this install slice"), false);
+
+    const badLeg = await runAkRoleBin(
+      installed.akRoleBin,
+      ["collector", "--pr", "1", "--leg", "NOPE:bot", "--project", project],
+      { home, agentDir: piAgentDir },
+    );
+    assert.equal(badLeg.code, 2, badLeg.stderr);
+    assert.equal(badLeg.stderr.includes("not available in this install slice"), false);
+
+    // Record Pi argv owned by ak-role collector (isolation + structural flags).
+    const shimDir = resolve(home, "pi-shim-collector");
+    await mkdir(shimDir, { recursive: true });
+    const argvLog = resolve(home, "ak-role-collector-pi-argv.json");
+    const shimPath = resolve(shimDir, "pi");
+    await writeFile(
+      shimPath,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+process.exit(1);
+`,
+      "utf8",
+    );
+    await chmod(shimPath, 0o755);
+
+    const run = await runAkRoleBin(
+      installed.akRoleBin,
+      [
+        "collector",
+        "--project",
+        project,
+        "--pr",
+        "999999",
+        "--leg",
+        "codex:definitely-not-a-real-bot",
+        "--leg",
+        "cursor:cursor-bot",
+      ],
+      {
+        home,
+        agentDir: piAgentDir,
+        env: {
+          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+          PI_OFFLINE: "1",
+        },
+      },
+    );
+    assert.equal(run.timedOut, false, run.stderr);
+    assert.equal(run.stderr.includes("not available in this install slice"), false);
+    const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
+    assert.equal(recorded[recorded.indexOf("--ak-role") + 1], "collector");
+    assert.equal(recorded[recorded.indexOf("--ak-collector-pr") + 1], "999999");
+    assert.equal(
+      recorded[recorded.indexOf("--ak-collector-repo") + 1],
+      "Acme/Widgets",
+    );
+    assert.equal(recorded.includes("--ak-collector-legs"), true);
+    assert.equal(recorded.includes("--no-skills"), true);
+    assert.equal(recorded.includes("--skill"), false);
+    assert.equal(recorded.includes("--no-session"), false);
+
+    // Explicit repo override reaches activation flags.
+    const overrideLog = resolve(home, "ak-role-collector-repo-override-pi-argv.json");
+    await writeFile(
+      shimPath,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(overrideLog)}, JSON.stringify(process.argv.slice(2)), "utf8");
+process.exit(1);
+`,
+      "utf8",
+    );
+    await chmod(shimPath, 0o755);
+    const overridden = await runAkRoleBin(
+      installed.akRoleBin,
+      [
+        "collector",
+        "--project",
+        project,
+        "--repo",
+        "OtherOrg/OtherRepo",
+        "--pr",
+        "7",
+        "--leg",
+        "codex:CodexBot",
+      ],
+      {
+        home,
+        agentDir: piAgentDir,
+        env: {
+          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+          PI_OFFLINE: "1",
+        },
+      },
+    );
+    assert.equal(overridden.timedOut, false, overridden.stderr);
+    const overrideArgs = JSON.parse(await readFile(overrideLog, "utf8")) as string[];
+    assert.equal(
+      overrideArgs[overrideArgs.indexOf("--ak-collector-repo") + 1],
+      "OtherOrg/OtherRepo",
+    );
+  });
+});
+
 // Keep a reference so tree-shaking/lint does not drop harness symbols used by peers.
 void packageRoot;
 void piCli;

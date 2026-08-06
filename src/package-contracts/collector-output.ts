@@ -81,6 +81,27 @@ export type CollectorEvidenceRecord = {
   contentDigest: string;
   firstObservedAt: string;
   raw: unknown;
+  /** Optional denormalized fields from the full self-contained runtime embed. */
+  stableGitHubId?: string;
+  authorLogin?: string;
+  state?: string;
+  body?: string;
+  commitOid?: string | null;
+  htmlUrl?: string;
+  path?: string;
+  line?: number | null;
+  originalLine?: number | null;
+  side?: string | null;
+  position?: number | null;
+  pullRequestReviewId?: number | null;
+  submittedAt?: string | null;
+  authoritativeTime?: string | null;
+  windowRelation?: string;
+  pagination?: {
+    surface: string;
+    complete: boolean;
+    pages: CollectorPageDiagnostics[];
+  };
 };
 
 export type CollectorReceipt = {
@@ -403,6 +424,26 @@ function validateSnapshot(value: unknown, index: number): CollectorSnapshot {
   };
 }
 
+/** Runtime full-embed optional keys retained on the self-contained public receipt. */
+const COLLECTOR_EVIDENCE_OPTIONAL_KEYS = [
+  "stableGitHubId",
+  "authorLogin",
+  "state",
+  "body",
+  "commitOid",
+  "htmlUrl",
+  "path",
+  "line",
+  "originalLine",
+  "side",
+  "position",
+  "pullRequestReviewId",
+  "submittedAt",
+  "authoritativeTime",
+  "windowRelation",
+  "pagination",
+] as const;
+
 function validateEvidence(
   value: unknown,
   index: number,
@@ -411,11 +452,11 @@ function validateEvidence(
   assertClosedKeys(
     value,
     ["evidenceId", "kind", "versionId", "contentDigest", "firstObservedAt", "raw"],
-    [],
+    COLLECTOR_EVIDENCE_OPTIONAL_KEYS,
     `evidenceRecords[${index}]`,
   );
   // raw may be any JSON value, including null; reject only missing key (above).
-  return {
+  const out: CollectorEvidenceRecord = {
     evidenceId: requireNonEmptyString(
       value.evidenceId,
       `evidenceRecords[${index}].evidenceId`,
@@ -435,6 +476,13 @@ function validateEvidence(
     ),
     raw: value.raw,
   };
+  // Pass through present optional embed fields without re-deriving them.
+  for (const key of COLLECTOR_EVIDENCE_OPTIONAL_KEYS) {
+    if (Object.hasOwn(value, key)) {
+      (out as Record<string, unknown>)[key] = value[key];
+    }
+  }
+  return out;
 }
 
 /**

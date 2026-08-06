@@ -34,7 +34,7 @@ export type TypedHttp429Observation = {
 
 export type RoleRunRecord = {
   readonly runId: string;
-  readonly role: "judge" | "coder";
+  readonly role: "judge" | "coder" | "collector";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -185,7 +185,13 @@ export async function readRoleRunState(
     if (typeof record.runId !== "string" || record.runId.trim() === "") {
       return undefined;
     }
-    if (record.role !== "judge" && record.role !== "coder") return undefined;
+    if (
+      record.role !== "judge" &&
+      record.role !== "coder" &&
+      record.role !== "collector"
+    ) {
+      return undefined;
+    }
     if (
       record.state !== "admitted" &&
       record.state !== "running" &&
@@ -604,7 +610,7 @@ export async function loadResumableCoderRun(
 export async function peekRoleRunRole(
   home: string,
   runId: string,
-): Promise<"judge" | "coder" | undefined> {
+): Promise<"judge" | "coder" | "collector" | undefined> {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunState(runDirectory);
