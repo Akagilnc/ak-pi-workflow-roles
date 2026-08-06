@@ -33,6 +33,7 @@ import {
   extractJudgeRoleOutcome,
   formatFailureStderrDiagnostic,
   isChildDiagnosticFloodLine,
+  isChildDiagnosticHelpFooterLine,
   isLawfulTypedTerminalOutcome,
   settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -342,6 +343,37 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(jsonl.cause, "activation");
   assert.equal(jsonl.diagnostic, "provider rejected the request");
   assert.equal(isChildDiagnosticFloodLine(JSON.stringify({ event: "tool_execution_end" })), true);
+
+  // Pi auth-guidance multi-line stderr: docs path footers must not wash the primary diagnostic.
+  const authGuidanceStderr = [
+    "No API key found for the selected model.",
+    "",
+    "Use /login to log into a provider via OAuth or API key. See:",
+    "  /tmp/pi-docs/providers.md",
+    "  /tmp/pi-docs/models.md",
+  ].join("\n");
+  assert.equal(isChildDiagnosticHelpFooterLine("/tmp/pi-docs/models.md"), true);
+  assert.equal(
+    isChildDiagnosticHelpFooterLine(
+      "Use /login to log into a provider via OAuth or API key. See:",
+    ),
+    true,
+  );
+  const authGuidance = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: 1,
+    stderr: authGuidanceStderr,
+    knownCause: "provider",
+    knownIdentity: {
+      name: "MissingProviderCredential",
+      code: "xai",
+    },
+  });
+  assert.equal(authGuidance.cause, "provider");
+  assert.equal(authGuidance.diagnostic, "No API key found for the selected model.");
+  assert.equal(authGuidance.identity?.name, "MissingProviderCredential");
+  assert.equal(authGuidance.identity?.code, "xai");
+  assert.equal(authGuidance.diagnostic.includes("models.md"), false);
 });
 
 test("failure settlement durably records Error Artifact before presentation returns", async () => {
@@ -1038,6 +1070,96 @@ test("production ExplicitInternalActivationError throw keeps provider cause and 
       identityName: "ProviderUnavailableError",
       identityCode: "PROVIDER_UNAVAILABLE",
     });
+  });
+});
+
+test("credential-boundary knownFailure keeps provider cause when runner omits it", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    // Real production shape: default runner has no knownFailure field; public CLI
+    // owns credential presence and must not wash missing public-provider auth into activation.
+    const result = await runAkRole(
+      ["--model", "xai/grok-4:off", "judge", "--project", project, "empty auth"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": false, xai: false },
+        createRunId: () => "run-credential-boundary-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          return {
+            code: 1,
+            stdout: "",
+            stderr: [
+              "No API key found for the selected model.",
+              "",
+              "Use /login to log into a provider via OAuth or API key. See:",
+              "  /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md",
+              "  /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/docs/models.md",
+            ].join("\n"),
+            timedOut: false,
+            args: [...args],
+            // deliberately omit knownFailure — credential channel must supply cause
+          };
+        },
+      },
+    );
+    await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticEquals: "No API key found for the selected model.",
+      identityName: "MissingProviderCredential",
+      identityCode: "xai",
+    });
+    assert.equal(stderr[0]!.includes("models.md"), false);
+    assert.equal(stderr[0]!.includes("No API key found for the selected model."), true);
+  });
+});
+
+test("default runner empty-auth retains provider cause, identity, and primary diagnostic", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    // No piRunner: production defaultExplicitInternalPiRunner subprocess.
+    // Empty auth.json + selected xai is the live counterexample from Judge apply.
+    const result = await runAkRole(
+      ["--model", "xai/grok-4:off", "judge", "--project", project, "probe empty auth"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": false, xai: false },
+        createRunId: () => "run-default-empty-auth-001",
+        judgeTimeoutMs: 60_000,
+        io,
+      },
+    );
+    await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticIncludes: "No API key",
+      identityName: "MissingProviderCredential",
+      identityCode: "xai",
+    });
+    assert.equal(stderr[0]!.includes("models.md"), false);
+    assert.equal(
+      result.terminal!.roleOutcome.kind === "failure" &&
+        result.terminal!.roleOutcome.diagnostic.includes("models.md"),
+      false,
+    );
   });
 });
 

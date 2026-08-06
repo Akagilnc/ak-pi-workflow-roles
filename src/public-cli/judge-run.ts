@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import {
   runExplicitInternalActivation,
+  type ExplicitInternalKnownFailure,
   type ExplicitInternalPiRunner,
   type ExplicitInternalPiResult,
 } from "./explicit-internal.ts";
@@ -16,7 +17,11 @@ import {
   buildJudgeTransportPrompt,
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
-import type { SeatModelConfig } from "./config.ts";
+import {
+  missingPublicProviderCredential,
+  type CredentialProviders,
+  type SeatModelConfig,
+} from "./config.ts";
 import {
   classifyPostAdmissionFailure,
   exitCodeForTerminalOutcome,
@@ -43,12 +48,40 @@ export type JudgeRunEnv = {
   piRunner?: ExplicitInternalPiRunner;
   /** Effective judge seat model (persistent/startup/invocation). */
   model?: SeatModelConfig;
+  /**
+   * Credential presence for public providers (auth.json shape).
+   * Used as the production-owned typed channel when a selected public provider
+   * has no configured credential — never inferred from child stderr prose.
+   */
+  credentials?: CredentialProviders;
   createRunId?: () => string;
   /** Extra Pi args inserted before the prompt (tests: faux provider extension). */
   extraPiArgs?: readonly string[];
   /** Override default role-run timeout. */
   timeoutMs?: number;
 };
+
+/**
+ * Production-owned provider failure when the selected public seat provider has
+ * no configured credential. Cause/identity come from CredentialProviders, not
+ * stderr wording. Runner-supplied knownFailure still wins over this annotation.
+ */
+export function knownFailureForMissingProviderCredential(
+  model: SeatModelConfig | undefined,
+  credentials: CredentialProviders | undefined,
+): ExplicitInternalKnownFailure | undefined {
+  if (model === undefined || credentials === undefined) return undefined;
+  if (!missingPublicProviderCredential(model.provider, credentials)) {
+    return undefined;
+  }
+  return {
+    cause: "provider",
+    identity: {
+      name: "MissingProviderCredential",
+      code: model.provider,
+    },
+  };
+}
 
 function buildModelArgs(model: SeatModelConfig | undefined): string[] {
   if (model === undefined) return [];
@@ -235,9 +268,14 @@ export async function runPublicJudge(
     };
   }
 
-  // Production-owned typed cause channel on the resolved runner result — never
-  // inferred from stderr wording.
-  const knownFailure = result.knownFailure;
+  // Production-owned typed cause channel — runner result first, else credential
+  // absence for the selected public provider on a failed child. Never inferred
+  // from stderr wording. Zero-exit missing-terminal stays session/output.
+  const credentialFailure =
+    result.timedOut || result.code !== 0
+      ? knownFailureForMissingProviderCredential(env.model, env.credentials)
+      : undefined;
+  const knownFailure = result.knownFailure ?? credentialFailure;
   return await presentControlledFailure(
     admitted,
     {

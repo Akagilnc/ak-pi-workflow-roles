@@ -456,8 +456,8 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
   assert.equal(formatted.includes(encodeTerminalField(note)), true);
 });
 
-test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () => {
-  assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
+test("raceNavigatorGrace is three seconds and yields timeout sentinel", async () => {
+  assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 3_000);
   let slept = 0;
   const result = await raceNavigatorGrace(
     new Promise<string>(() => {

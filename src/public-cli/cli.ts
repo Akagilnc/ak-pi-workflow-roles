@@ -390,6 +390,7 @@ export async function runAkRole(
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
+          credentials,
           ...(env.correlationId === undefined
             ? {}
             : { correlationId: env.correlationId }),
