@@ -710,7 +710,8 @@ export function createRoleRuntimeExtension(
     });
 
     // Public Role run: record typed provider HTTP status for v1 resume (#108).
-    // Only HTTP 429 from Codex/xAI is retained — never prose classification.
+    // Latest typed response is authoritative; only a current Codex/xAI 429 is
+    // retained — never prose classification or an earlier within-attempt 429.
     pi.on("after_provider_response", async (event, ctx) => {
       const runDir = process.env.AK_ROLE_RUN_DIR;
       if (typeof runDir !== "string" || runDir.trim() === "") return;
