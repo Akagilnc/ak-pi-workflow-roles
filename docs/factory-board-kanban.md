@@ -18,8 +18,8 @@
 1. **retained closed**（留存窗内 merged，v1 = closedAt 代理）→ 已完成列；过期不上板；点名钻取关票常驻
 2. **open 零卷** → 待发列（阻塞徽章叠加）
 3. **当前站 = 最新 run**（#136「当前态只由最新 run 决定」）；latest = unknown → **未知集**（不做列、不因历史改列，右上徽章+展开）
-4. **latest = known**：coder → 将作监列；fixer / reviewer → 刑部列；collector → 门下省列；其余站 → 非常驻列（有票才现身，自动成列）
-5. **仅当 latest = judge**：查全史是否存在已识别非 judge 站 run——无 → 大理寺（审票）列；有 → 刑部列（判卷）。unknown 历史不算开工证据
+4. **latest = judge** → 查全史是否存在已识别非 judge 站 run：无 → 大理寺（审票）列；有 → 刑部列（判卷）。unknown 历史不算开工证据
+5. **latest = 其他 known 站**：coder → 将作监列；fixer / reviewer → 刑部列；collector → 门下省列；其余站 → 非常驻列（有票才现身，自动成列）。judge 永不生成非常驻 judge 列
 
 - 未知徽章计数与展开列表消费同一个经项目/族筛选后的机械集合
 - 已交卷待派**不做列**：卡停最后受理站，蓝点标识
