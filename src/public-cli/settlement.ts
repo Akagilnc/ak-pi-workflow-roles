@@ -221,8 +221,9 @@ function isTypedActivationError(
  * Classify a controlled post-admission failure without washing unrecognized identities.
  * Cause classes are closed; diagnostic text retains the original identity when known.
  *
- * Order: thrown → timeout → knownCause → activation (nonzero) → session → output.
- * Cause is never inferred from stderr wording.
+ * Order: thrown → knownCause → timeout → activation (nonzero) → session → output.
+ * knownCause precedes timeout so a co-present typed provider/session identity is not
+ * washed when the child also timed out. Cause is never inferred from stderr wording.
  */
 export function classifyPostAdmissionFailure(input: {
   timedOut: boolean;
@@ -269,13 +270,6 @@ export function classifyPostAdmissionFailure(input: {
       diagnostic: String(error),
     };
   }
-  if (input.timedOut) {
-    return {
-      cause: "timeout",
-      diagnostic: "judge role run timed out",
-      details: { timedOut: true, code: input.code },
-    };
-  }
   if (input.knownCause !== undefined) {
     const fallback =
       input.knownCause === "provider"
@@ -292,10 +286,20 @@ export function classifyPostAdmissionFailure(input: {
     return {
       cause: input.knownCause,
       diagnostic,
-      details: { code: input.code },
+      details: {
+        code: input.code,
+        ...(input.timedOut ? { timedOut: true as const } : {}),
+      },
       ...(input.knownIdentity === undefined
         ? {}
         : { identity: input.knownIdentity }),
+    };
+  }
+  if (input.timedOut) {
+    return {
+      cause: "timeout",
+      diagnostic: "judge role run timed out",
+      details: { timedOut: true, code: input.code },
     };
   }
   if (input.code !== 0) {
@@ -428,7 +432,9 @@ async function readLatestSessionEntries(
 }
 
 /**
- * Last native assistant provider-stop in a session (stopReason === "error").
+ * Latest native assistant provider-stop in a session (stopReason === "error").
+ * Only the final assistant turn decides terminality — an older error followed by a
+ * later non-error stop is not a provider failure (would wash a no-lawful-output path).
  * Typed production source for provider cause — not child stderr prose.
  */
 export function extractSessionProviderStop(
@@ -444,7 +450,8 @@ export function extractSessionProviderStop(
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "assistant") continue;
-    if (message.stopReason !== "error") continue;
+    // Latest assistant only (reviewer-child-executor lastAssistant pattern).
+    if (message.stopReason !== "error") return undefined;
     return {
       stopReason: "error",
       ...(typeof message.errorMessage === "string" && message.errorMessage.trim() !== ""
