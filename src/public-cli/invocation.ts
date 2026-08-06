@@ -42,12 +42,12 @@ export function roleRunSessionFile(sessionDirectory: string): string {
   return join(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
 }
 
-export type AdmittedJudgeInvocation = {
-  readonly role: "judge";
+/** Shared admitted Role run identity (#106 common Invocation + #109 Coder). */
+export type AdmittedRoleInvocationBase = {
   readonly runId: string;
   readonly bookKey: string;
   readonly projectRoot: string;
-  /** Optional opaque instruction bytes as submitted (may be empty). */
+  /** Opaque instruction bytes as submitted. */
   readonly instruction: string;
   /** True when the caller supplied no nonblank instruction. */
   readonly instructionEmpty: boolean;
@@ -59,7 +59,32 @@ export type AdmittedJudgeInvocation = {
   readonly admittedRequestPath: string;
 };
 
+export type AdmittedJudgeInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "judge";
+};
+
+export type CoderPhase = "plan" | "apply";
+
+export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "coder";
+  /** Explicit plan or default apply — preserved through admission and continuation. */
+  readonly phase: CoderPhase;
+  /** Durable task file path consumed by internal --ak-coder-task. */
+  readonly taskPath: string;
+};
+
+export type AdmittedRoleInvocation =
+  | AdmittedJudgeInvocation
+  | AdmittedCoderInvocation;
+
 export type ParseJudgeArgvResult = {
+  instruction: string;
+  attachmentPaths: string[];
+  project?: string;
+};
+
+export type ParseCoderArgvResult = {
+  phase: CoderPhase;
   instruction: string;
   attachmentPaths: string[];
   project?: string;
@@ -127,6 +152,60 @@ export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
   }
 
   return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+  };
+}
+
+/**
+ * Parse Coder-specific argv after the `coder` token.
+ * Phase defaults to apply; explicit `plan` or `apply` as the first positional is preserved.
+ * Common Invocation flags: --attach / --project.
+ */
+export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+
+  while (tokens.length > 0) {
+    const token = tokens.shift()!;
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length)),
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown coder option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  let phase: CoderPhase = "apply";
+  if (positional[0] === "plan" || positional[0] === "apply") {
+    phase = positional.shift() as CoderPhase;
+  }
+
+  return {
+    phase,
     instruction: positional.join(" "),
     attachmentPaths,
     ...(project === undefined ? {} : { project }),
@@ -304,4 +383,120 @@ export async function ensureRunArtifactsDir(runDirectory: string): Promise<strin
   const dir = join(runDirectory, "artifacts");
   await mkdir(dir, { recursive: true });
   return dir;
+}
+
+export type AdmitCoderInvocationOptions = {
+  home: string;
+  cwd: string;
+  phase: CoderPhase;
+  instruction: string;
+  attachmentPaths: readonly string[];
+  project?: string;
+  createRunId?: () => string;
+};
+
+/**
+ * Admit a Coder Role run on the common Invocation request.
+ * Nonblank task remains authoritative: blank instruction is a structural reject.
+ * Phase (default apply / explicit plan) is frozen into the admitted request.
+ */
+export async function admitCoderInvocation(
+  options: AdmitCoderInvocationOptions,
+): Promise<AdmittedCoderInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const instruction = options.instruction;
+  if (instruction.trim() === "") {
+    throw new CliUsageError(
+      "coder requires a nonblank task instruction",
+    );
+  }
+  if (options.phase !== "plan" && options.phase !== "apply") {
+    throw new CliUsageError("coder phase must be plan or apply");
+  }
+
+  const projectRoot = resolve(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@coder`,
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const attachments: FrozenAttachment[] = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i]!,
+        attachmentsDirectory,
+        i,
+      ),
+    );
+  }
+
+  const taskPath = join(runDirectory, "task.md");
+  await writeFile(taskPath, instruction, "utf8");
+
+  const admitted = {
+    role: "coder" as const,
+    phase: options.phase,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    taskPath,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+
+  return {
+    role: "coder",
+    phase: options.phase,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    taskPath,
+  };
+}
+
+/**
+ * Build the Pi prompt transport for an admitted Coder request.
+ * Task bytes already live at taskPath for --ak-coder-task; the prompt carries
+ * the same instruction plus frozen Attachment paths.
+ */
+export function buildCoderTransportPrompt(
+  admitted: AdmittedCoderInvocation,
+): string {
+  const lines: string[] = [admitted.instruction];
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
 }

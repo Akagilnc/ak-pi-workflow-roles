@@ -13,10 +13,18 @@ import {
   validateAcceptedJudgeDetails,
   type JudgeVerdict,
 } from "../package-contracts/judge-output.ts";
+import {
+  CODER_OUTPUT_TOOL_NAME,
+  validateAcceptedCoderDetails,
+  type CoderOutput,
+} from "../package-contracts/worker-output.ts";
+import type { PackagedMethodSkillProvenance } from "../package-resources/method-skill.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   ensureRunArtifactsDir,
+  type AdmittedCoderInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedRoleInvocation,
 } from "./invocation.ts";
 import {
   exitCodeForTerminalOutcome,
@@ -513,6 +521,18 @@ function judgeDecisiveFacts(verdict: JudgeVerdict): Record<string, unknown> {
   return facts;
 }
 
+function coderDecisiveFacts(output: CoderOutput): Record<string, unknown> {
+  const facts: Record<string, unknown> = {
+    coderStatus: output.status,
+  };
+  if (output.status === "unfinished") {
+    facts.remainingScope = output.remainingScope;
+  }
+  // Report is the durable Artifact body — keep only a short presence marker inline.
+  facts.reportPresent = output.report.trim().length > 0;
+  return facts;
+}
+
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
 export type LawfulJudgeRoleOutcome = Extract<
   TerminalRoleOutcome,
@@ -669,11 +689,110 @@ export async function publishJudgeArtifacts(
 }
 
 /**
+ * Publish lawful Coder success Artifacts on the shared #106 success interface.
+ * Evidence records package method provenance without ambient home Skill paths.
+ */
+export async function publishCoderArtifacts(
+  admitted: AdmittedCoderInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  sessionDirectory: string,
+  options: {
+    readonly methodProvenance?: PackagedMethodSkillProvenance;
+    readonly coderOutput?: CoderOutput;
+  } = {},
+): Promise<TerminalArtifactRef[]> {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join(artifactsDir, "report.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "coder",
+        runId: admitted.runId,
+        phase: admitted.phase,
+        outcome: roleOutcome,
+        ...(options.coderOutput === undefined
+          ? {}
+          : { receipt: options.coderOutput }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "coder",
+        phase: admitted.phase,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        taskPath: admitted.taskPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+        ...(options.methodProvenance === undefined
+          ? {}
+          : { methodProvenance: options.methodProvenance }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
+/** Lawful Coder accepted outcome extracted from session (shared success interface). */
+export type LawfulCoderRoleOutcome = {
+  kind: "accepted";
+  role: "coder";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+export function extractCoderRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulCoderRoleOutcome; output: CoderOutput } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    try {
+      const output = validateAcceptedCoderDetails(message.details);
+      const outcome: LawfulCoderRoleOutcome = {
+        kind: "accepted",
+        role: "coder",
+        status: output.status,
+        decisiveFacts: coderDecisiveFacts(output),
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Read session entries for lawful settlement. Missing path → undefined (absence).
  * Malformed JSONL / other read failures throw with knownCause=session.
  */
 async function readLawfulSettlementEntries(
-  admitted: AdmittedJudgeInvocation,
+  admitted: AdmittedRoleInvocation,
 ): Promise<SessionEntry[] | undefined> {
   try {
     return await readBoundSessionEntries(admitted.sessionFile);
@@ -778,6 +897,75 @@ export async function trySettleJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulJudgeTerminalResult(admitted);
+}
+
+async function settleLawfulCoderTerminalResult(
+  admitted: AdmittedCoderInvocation,
+  options: {
+    readonly methodProvenance?: PackagedMethodSkillProvenance;
+  } = {},
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractCoderRoleOutcome(entries);
+  if (extracted === undefined) return undefined;
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishCoderArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    {
+      coderOutput: extracted.output,
+      ...(options.methodProvenance === undefined
+        ? {}
+        : { methodProvenance: options.methodProvenance }),
+    },
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
+}
+
+/** Settle a lawful Coder Terminal from the admitted session (shared #106 success interface). */
+export async function settleCoderTerminalResult(
+  admitted: AdmittedCoderInvocation,
+  options: {
+    readonly methodProvenance?: PackagedMethodSkillProvenance;
+  } = {},
+): Promise<TerminalResult> {
+  const settled = await settleLawfulCoderTerminalResult(admitted, options);
+  if (settled === undefined) {
+    throw new Error(
+      "Coder Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */
+export async function trySettleCoderTerminalResult(
+  admitted: AdmittedCoderInvocation,
+  options: {
+    readonly methodProvenance?: PackagedMethodSkillProvenance;
+  } = {},
+): Promise<TerminalResult | undefined> {
+  return settleLawfulCoderTerminalResult(admitted, options);
+}
+
+export async function hasLawfulCoderTerminalResult(
+  admitted: AdmittedCoderInvocation,
+): Promise<boolean> {
+  try {
+    const entries = await readLawfulSettlementEntries(admitted);
+    if (entries === undefined) return false;
+    const extracted = extractCoderRoleOutcome(entries);
+    return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
+  } catch {
+    return false;
+  }
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */
@@ -899,7 +1087,7 @@ async function writeFailureJsonRetainingCause(
 }
 
 export async function publishFailureArtifacts(
-  admitted: AdmittedJudgeInvocation,
+  admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
 ): Promise<TerminalArtifactRef[]> {
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
@@ -939,7 +1127,7 @@ export async function publishFailureArtifacts(
 
   const errorPayloadBase: Record<string, unknown> = {
     kind: "error",
-    role: "judge",
+    role: admitted.role,
     runId: admitted.runId,
     cause: failure.cause,
     diagnostic: failure.diagnostic,
@@ -1023,8 +1211,12 @@ function redactNavigatorFactForPublicTerminal(
  * Durably record a controlled failure (Error Artifact first), then return the
  * Terminal aggregate. Presentation must happen only after this resolves.
  */
-export async function settleJudgeFailureTerminalResult(
-  admitted: AdmittedJudgeInvocation,
+/**
+ * Shared controlled-failure Terminal settlement (#107 ownership).
+ * Role identity comes from the admitted run; no new failure classes are introduced here.
+ */
+export async function settleFailureTerminalResult(
+  admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
   navigator: TerminalNavigatorFact = { disposition: "no-advice" },
   options: { readonly resume?: TerminalResume } = {},
@@ -1053,7 +1245,7 @@ export async function settleJudgeFailureTerminalResult(
     );
     const roleOutcome: TerminalRoleOutcome = {
       kind: "failure",
-      role: "judge",
+      role: admitted.role,
       cause: failure.cause,
       diagnostic: publicDiagnostic,
       decisiveFacts: publicFacts,
@@ -1067,7 +1259,7 @@ export async function settleJudgeFailureTerminalResult(
   }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",
-    role: "judge",
+    role: admitted.role,
     cause: failure.cause,
     diagnostic: failure.diagnostic,
     decisiveFacts,
@@ -1078,6 +1270,16 @@ export async function settleJudgeFailureTerminalResult(
     artifacts,
     runId: admitted.runId,
   };
+}
+
+/** Judge-named alias retained for #107 call sites. */
+export async function settleJudgeFailureTerminalResult(
+  admitted: AdmittedJudgeInvocation,
+  failure: ControlledFailure,
+  navigator: TerminalNavigatorFact = { disposition: "no-advice" },
+  options: { readonly resume?: TerminalResume } = {},
+): Promise<TerminalResult> {
+  return settleFailureTerminalResult(admitted, failure, navigator, options);
 }
 
 /**

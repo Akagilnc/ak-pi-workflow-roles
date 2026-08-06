@@ -12,8 +12,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -33,67 +31,8 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-
-/**
- * Drive the production after_provider_response handler (role-runtime) so typed
- * 429 evidence is written through the real observation seam — never by calling
- * recordTypedProviderHttpStatus from a fake runner as a substitute.
- */
-async function observeTyped429ViaProductionHandler(input: {
-  runDirectory: string;
-  provider: "openai-codex" | "xai";
-  httpStatus?: number;
-}): Promise<void> {
-  const handlers = new Map<
-    string,
-    (event: unknown, ctx: unknown) => unknown
-  >();
-  const pi = {
-    registerFlag() {},
-    getFlag() {
-      return undefined;
-    },
-    on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
-      handlers.set(name, handler);
-    },
-    registerTool() {},
-    getAllTools() {
-      return [];
-    },
-    setActiveTools() {},
-  };
-  createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "",
-    transcriptFromContext: () => "",
-    auditSoulCompliance: async () => ({ status: "pass" }),
-  })(pi as unknown as ExtensionAPI);
-
-  const handler = handlers.get("after_provider_response");
-  if (handler === undefined) {
-    throw new Error("production after_provider_response handler was not registered");
-  }
-
-  const previous = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = input.runDirectory;
-  try {
-    await handler(
-      {
-        type: "after_provider_response",
-        status: input.httpStatus ?? 429,
-        headers: {},
-      },
-      { model: { provider: input.provider } },
-    );
-  } finally {
-    if (previous === undefined) {
-      delete process.env.AK_ROLE_RUN_DIR;
-    } else {
-      process.env.AK_ROLE_RUN_DIR = previous;
-    }
-  }
-}
+import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 /** Typed-region proof: run ID appears only inside resume.command. */
 function assertRunIdOnlyInResumeCommand(
