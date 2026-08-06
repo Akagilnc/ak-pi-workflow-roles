@@ -36,10 +36,14 @@ import {
 import { markRunAdmitted } from "../../src/public-cli/run-lifecycle.ts";
 import {
   assertCollectorReceiptMatchesAdmitted,
+  extractCollectorInfrastructureFailure,
   extractCollectorRoleOutcome,
   settleCollectorTerminalResult,
   trySettleCollectorTerminalResult,
 } from "../../src/public-cli/settlement.ts";
+import {
+  COLLECTOR_OBSERVE_TOOL,
+} from "../../src/collector-ledger.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 function sampleCollectorReceipt(overrides: {
@@ -817,7 +821,118 @@ test("Collector lawful settlement rejects repository/PR/manifest/leg identity mi
         case_.expect,
       );
     }
+
+    // Red→green: post-admission legs mutation A→B with receipt digest=A legs=B must fail.
+    // Control path above already settled success against unmutated legs.
+    await writeFile(
+      admitted.legsPath,
+      `${JSON.stringify({
+        legs: [{ id: "gemini", expectedAuthors: ["GeminiBot"] }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    const mutatedAttack = sampleCollectorReceipt({
+      repository: admitted.repository.canonical,
+      prNumber: admitted.prNumber,
+      manifestDigest: admitted.manifestDigest,
+      legIds: ["gemini"],
+    });
+    await writeReceiptSession(mutatedAttack);
+    await assert.rejects(
+      () => settleCollectorTerminalResult(admitted),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal((error as { knownCause?: unknown }).knownCause, "output");
+        assert.match(error.message, /digest does not match admitted manifestDigest/);
+        return true;
+      },
+    );
   });
+});
+
+test("Collector settlement publishes no success artifact when legs mutate after admission", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project, "https://github.com/acme/widgets.git");
+
+    const admitted = await admitCollectorInvocation({
+      home,
+      cwd: project,
+      prNumber: 12,
+      legs: [
+        { id: "codex", expectedAuthors: ["CodexBot"] },
+        { id: "cursor", expectedAuthors: ["cursor-bot"] },
+      ],
+      createRunId: () => "run-collector-mutate-clean",
+    });
+
+    await writeFile(
+      admitted.legsPath,
+      `${JSON.stringify({
+        legs: [{ id: "gemini", expectedAuthors: ["GeminiBot"] }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await mkdir(admitted.sessionDirectory, { recursive: true });
+    await writeFile(
+      admitted.sessionFile,
+      `${JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolName: COLLECTOR_OUTPUT_TOOL,
+          isError: false,
+          details: sampleCollectorReceipt({
+            repository: admitted.repository.canonical,
+            prNumber: admitted.prNumber,
+            manifestDigest: admitted.manifestDigest,
+            legIds: ["gemini"],
+          }),
+        },
+      })}\n`,
+      "utf8",
+    );
+
+    await assert.rejects(() => settleCollectorTerminalResult(admitted));
+    await assert.rejects(
+      () =>
+        readFile(join(admitted.runDirectory, "artifacts", "report.json"), "utf8"),
+    );
+  });
+});
+
+test("extractCollectorInfrastructureFailure retains observe HTTP 404 over later noise", () => {
+  const failure = extractCollectorInfrastructureFailure([
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: COLLECTOR_OBSERVE_TOOL,
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "Collector observe failed: GitHub /repos/acme/widgets/pulls/999999 failed with HTTP 404",
+          },
+        ],
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "No more faux responses queued",
+        provider: "ak-collector-offline",
+      },
+    },
+  ] as never);
+  assert.ok(failure);
+  assert.equal(failure!.cause, "activation");
+  assert.match(failure!.diagnostic, /HTTP 404/);
+  assert.match(failure!.diagnostic, /pulls\/999999/);
 });
 
 test("runAkRole resume rejects collector runs as one-shot", async () => {

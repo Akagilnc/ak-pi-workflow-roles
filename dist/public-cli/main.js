@@ -289,15 +289,33 @@ function validateSnapshot(value, index) {
     normalizedByteLength: value.normalizedByteLength
   };
 }
+var COLLECTOR_EVIDENCE_OPTIONAL_KEYS = [
+  "stableGitHubId",
+  "authorLogin",
+  "state",
+  "body",
+  "commitOid",
+  "htmlUrl",
+  "path",
+  "line",
+  "originalLine",
+  "side",
+  "position",
+  "pullRequestReviewId",
+  "submittedAt",
+  "authoritativeTime",
+  "windowRelation",
+  "pagination"
+];
 function validateEvidence(value, index) {
   if (!isRecord(value)) fail(`evidenceRecords[${index}] is invalid`);
   assertClosedKeys(
     value,
     ["evidenceId", "kind", "versionId", "contentDigest", "firstObservedAt", "raw"],
-    [],
+    COLLECTOR_EVIDENCE_OPTIONAL_KEYS,
     `evidenceRecords[${index}]`
   );
-  return {
+  const out = {
     evidenceId: requireNonEmptyString(
       value.evidenceId,
       `evidenceRecords[${index}].evidenceId`
@@ -317,6 +335,12 @@ function validateEvidence(value, index) {
     ),
     raw: value.raw
   };
+  for (const key of COLLECTOR_EVIDENCE_OPTIONAL_KEYS) {
+    if (Object.hasOwn(value, key)) {
+      out[key] = value[key];
+    }
+  }
+  return out;
 }
 function validateAcceptedCollectorReceipt(value) {
   if (!isRecord(value)) fail("Collector receipt must be an object");
@@ -10616,6 +10640,80 @@ function isAuditEscalationResult(value) {
   );
 }
 
+// src/collector-evidence.ts
+var COLLECTOR_ELIGIBILITY_MS = 15 * 60 * 1e3;
+
+// src/collector-tool-schemas.ts
+var nonBlankString = typebox_exports.String({ minLength: 1, pattern: "\\S" });
+var nonEmptyString = typebox_exports.String({ minLength: 1 });
+var collectorObserveArgsSchema = typebox_exports.Object(
+  {},
+  { additionalProperties: false }
+);
+var collectorRequestArgsSchema = typebox_exports.Object(
+  {
+    legId: nonEmptyString,
+    snapshotId: nonEmptyString
+  },
+  { additionalProperties: false }
+);
+var collectorWaitArgsSchema = typebox_exports.Object(
+  {
+    durationMs: typebox_exports.Integer({
+      minimum: 1,
+      maximum: COLLECTOR_ELIGIBILITY_MS
+    })
+  },
+  { additionalProperties: false }
+);
+var collectorValidLegSchema = typebox_exports.Object(
+  {
+    legId: nonEmptyString,
+    status: typebox_exports.Literal("valid"),
+    rationale: nonBlankString,
+    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1 })
+  },
+  { additionalProperties: false }
+);
+var collectorUnavailableLegSchema = typebox_exports.Object(
+  {
+    legId: nonEmptyString,
+    status: typebox_exports.Literal("unavailable"),
+    rationale: nonBlankString,
+    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1 }),
+    unavailableScope: typebox_exports.Union([
+      typebox_exports.Literal("target"),
+      typebox_exports.Literal("global")
+    ])
+  },
+  { additionalProperties: false }
+);
+var collectorMissingLegSchema = typebox_exports.Object(
+  {
+    legId: nonEmptyString,
+    status: typebox_exports.Literal("missing"),
+    rationale: nonBlankString,
+    evidenceRefs: typebox_exports.Array(nonEmptyString, { minItems: 1 })
+  },
+  { additionalProperties: false }
+);
+var collectorOutputLegSchema = typebox_exports.Union([
+  collectorValidLegSchema,
+  collectorUnavailableLegSchema,
+  collectorMissingLegSchema
+]);
+var collectorOutputArgsSchema = typebox_exports.Object(
+  {
+    legs: typebox_exports.Array(collectorOutputLegSchema, { minItems: 1 })
+  },
+  { additionalProperties: false }
+);
+
+// src/collector-ledger.ts
+var COLLECTOR_OBSERVE_TOOL = "ak_collector_observe";
+var COLLECTOR_REQUEST_TOOL = "ak_collector_request";
+var COLLECTOR_WAIT_TOOL = "ak_collector_wait";
+
 // src/public-cli/command-renderer.ts
 function renderPublicAkRoleCommand(target) {
   if (!isPublicCallableRole(target.role)) return void 0;
@@ -10970,6 +11068,50 @@ function collectorReceiptBindingFailure(diagnostic) {
 }
 function sortedUniqueStrings(values) {
   return [...new Set(values)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+}
+function toolResultText(message) {
+  const content = message.content;
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => {
+    if (typeof part === "object" && part !== null && !Array.isArray(part) && typeof part.text === "string") {
+      return part.text;
+    }
+    return "";
+  }).join("").trim();
+}
+var COLLECTOR_INFRASTRUCTURE_TOOLS = /* @__PURE__ */ new Set([
+  COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_WAIT_TOOL
+]);
+function extractCollectorInfrastructureFailure(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.isError !== true) continue;
+    if (typeof message.toolName !== "string" || !COLLECTOR_INFRASTRUCTURE_TOOLS.has(message.toolName)) {
+      continue;
+    }
+    const diagnostic = toolResultText(message);
+    if (diagnostic.length === 0) continue;
+    return {
+      cause: "activation",
+      diagnostic,
+      identity: { name: "CollectorInfrastructureError" }
+    };
+  }
+  return void 0;
+}
+async function readCollectorInfrastructureFailure(sessionFile) {
+  try {
+    const entries = await readBoundSessionEntries(sessionFile);
+    return extractCollectorInfrastructureFailure(entries);
+  } catch {
+    return void 0;
+  }
 }
 function assertCollectorReceiptMatchesAdmitted(receipt, admitted, admittedLegIds) {
   if (receipt.repository !== admitted.repository.canonical) {
@@ -11339,6 +11481,11 @@ async function settleLawfulCollectorTerminalResult(admitted) {
   const extracted = extractCollectorRoleOutcome(entries);
   if (extracted === void 0) return void 0;
   const admittedManifest = await loadCollectorManifest(admitted.legsPath);
+  if (admittedManifest.digest !== admitted.manifestDigest) {
+    throw collectorReceiptBindingFailure(
+      `Collector legs at settlement digest does not match admitted manifestDigest`
+    );
+  }
   assertCollectorReceiptMatchesAdmitted(
     extracted.receipt,
     admitted,
@@ -12376,12 +12523,19 @@ async function dispatchAdmittedCollector(input) {
         terminal: lawful
       };
     }
+    const infrastructureFailure = await readCollectorInfrastructureFailure(
+      admitted.sessionFile
+    );
     const sessionProviderStop = await readSessionProviderStop(
       admitted.sessionFile
     );
     const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    const knownFailure = result2.knownFailure ?? (infrastructureFailure === void 0 ? void 0 : {
+      cause: infrastructureFailure.cause,
+      diagnostic: infrastructureFailure.diagnostic,
+      ...infrastructureFailure.identity === void 0 ? {} : { identity: infrastructureFailure.identity }
+    }) ?? sessionProviderFailure ?? credentialFailure;
     return await presentControlledFailure3(
       admitted,
       {
