@@ -8,7 +8,10 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
-import { pathContainedIn, resolveActivationLedgerHome } from "./activation-ledger-topology.ts";
+import {
+  physicallyContainedIn,
+  resolveActivationLedgerHome,
+} from "./activation-ledger-topology.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
@@ -316,8 +319,9 @@ function workIdentityFromCwd(cwd: string): string | undefined {
 
 /** Machine-ledger session paths are not work identity (ADR 0048 session-in-home). */
 function isMachineLedgerSessionPath(sessionPath: string): boolean {
-  // Path-semantic containment under the resolved package ledger home — never directory spelling.
-  return pathContainedIn(resolve(resolveActivationLedgerHome()), resolve(sessionPath));
+  // Physical containment under the package ledger home — never directory spelling,
+  // and stable across macOS /var ↔ /private/var realpath asymmetry.
+  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
 }
 
 function subjectPath(sessionDir: string, cwd = process.cwd()): string {

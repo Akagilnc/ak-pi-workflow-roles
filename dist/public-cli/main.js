@@ -7,7 +7,7 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname3, join as join8 } from "node:path";
+import { dirname as dirname4, join as join8 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
@@ -8406,7 +8406,7 @@ import {
   readFile as readFile2,
   writeFile as writeFile2
 } from "node:fs/promises";
-import { basename as basename2, isAbsolute as isAbsolute3, join as join4, resolve as resolve3 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute3, join as join4, resolve as resolve3 } from "node:path";
 
 // src/activation-ledger-topology.ts
 import {
@@ -8416,7 +8416,7 @@ import {
   statSync
 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { isAbsolute, join as join3, relative, resolve, sep } from "node:path";
+import { basename, dirname as dirname2, isAbsolute, join as join3, relative, resolve, sep } from "node:path";
 var ActivationLedgerError = class extends Error {
   code = "AK_ACTIVATION_LEDGER";
   constructor(message, options) {
@@ -8591,7 +8591,7 @@ function ensureRealDirectoryTree(root, targetDir) {
 
 // src/activation-ledger-git.ts
 import { execFileSync } from "node:child_process";
-import { basename, dirname as dirname2, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
 var GIT_DISCOVERY_ENV_KEYS = [
   "GIT_DIR",
   "GIT_COMMON_DIR",
@@ -8647,8 +8647,8 @@ function resolveBookKeyFromGit(cwd) {
     throw new Error("git rev-parse --git-common-dir returned an empty path");
   }
   const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
-  const hostDirectory = basename(absoluteCommon) === ".git" ? dirname2(absoluteCommon) : absoluteCommon;
-  const bookKey = basename(hostDirectory);
+  const hostDirectory = basename2(absoluteCommon) === ".git" ? dirname3(absoluteCommon) : absoluteCommon;
+  const bookKey = basename2(hostDirectory);
   if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
     throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
   }
@@ -8736,7 +8736,7 @@ async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
     );
   }
   const bytes = await readFile2(absolute);
-  const name = `${String(index).padStart(2, "0")}-${basename2(absolute)}`;
+  const name = `${String(index).padStart(2, "0")}-${basename3(absolute)}`;
   const frozenPath = join4(destinationDir, name);
   await writeFile2(frozenPath, bytes);
   return {
@@ -8933,15 +8933,33 @@ function formatTerminalResult(result2) {
 }
 
 // src/public-cli/settlement.ts
+var CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
+function isChildDiagnosticFloodLine(line) {
+  if (/^at\s+/.test(line)) return true;
+  if (line.startsWith("event:")) return true;
+  if (/\btokens?=/.test(line)) return true;
+  if (/\btool_calls?=/.test(line)) return true;
+  if (line.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(line);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && typeof parsed.event === "string") {
+        return true;
+      }
+    } catch {
+    }
+  }
+  return false;
+}
+function boundConciseDiagnostic(diagnostic, maxChars = CONCISE_DIAGNOSTIC_MAX_CHARS) {
+  if (diagnostic.length <= maxChars) return diagnostic;
+  if (maxChars <= 1) return "\u2026";
+  return `${diagnostic.slice(0, maxChars - 1)}\u2026`;
+}
 function conciseChildDiagnostic(stderr, fallback) {
   const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
-    if (/^at\s+/.test(line)) continue;
-    if (/^\s*at\s+/.test(line)) continue;
-    if (line.startsWith("event:")) continue;
-    if (/\btokens?=/.test(line)) continue;
-    if (/\btool_calls?=/.test(line)) continue;
+    if (isChildDiagnosticFloodLine(line)) continue;
     return line.replace(/^Error:\s*/i, "").trim() || fallback;
   }
   return fallback;
@@ -8951,7 +8969,7 @@ function formatCliDiagnostic(message) {
 `;
 }
 function formatFailureStderrDiagnostic(failure) {
-  return formatCliDiagnostic(failure.diagnostic);
+  return formatCliDiagnostic(boundConciseDiagnostic(failure.diagnostic));
 }
 function presentStructuralRejection(error, io) {
   io.stderr(formatCliDiagnostic(error.message));
@@ -8979,15 +8997,29 @@ function thrownIdentity(error) {
   }
   return identity;
 }
+function isTypedActivationError(error) {
+  if (!(error instanceof Error)) return false;
+  const cause = error.knownCause;
+  return cause === "provider" || cause === "activation" || cause === "session" || cause === "output" || cause === "timeout" || cause === "unrecognized";
+}
 function classifyPostAdmissionFailure(input) {
   if (input.thrown !== void 0) {
     const error = input.thrown;
+    if (isTypedActivationError(error)) {
+      const identity = thrownIdentity(error);
+      if (error.failureCode !== void 0 && identity.code === void 0) {
+        identity.code = error.failureCode;
+      }
+      return {
+        cause: error.knownCause,
+        diagnostic: error.message || error.name || "unrecognized exception",
+        identity
+      };
+    }
     if (error instanceof Error) {
       const identity = thrownIdentity(error);
-      const tagged = error.failureCause;
-      const cause = tagged === "provider" || tagged === "activation" || tagged === "session" || tagged === "output" || tagged === "timeout" ? tagged : "unrecognized";
       return {
-        cause,
+        cause: "unrecognized",
         diagnostic: error.message || error.name || "unrecognized exception",
         identity
       };
@@ -9009,7 +9041,8 @@ function classifyPostAdmissionFailure(input) {
     return {
       cause: input.knownCause,
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
-      details: { code: input.code }
+      details: { code: input.code },
+      ...input.knownIdentity === void 0 ? {} : { identity: input.knownIdentity }
     };
   }
   if (input.code !== 0) {
@@ -9333,16 +9366,22 @@ function buildJudgeActivationExtraArgs(admitted, options = {}) {
   ];
 }
 async function presentControlledFailure(admitted, failureInput, io) {
-  const session = failureInput.thrown === void 0 && !failureInput.timedOut ? await inspectJudgeSession(admitted.sessionDirectory) : void 0;
+  const session = failureInput.thrown === void 0 && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionDirectory) : void 0;
   const failure = classifyPostAdmissionFailure({
-    ...failureInput,
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...failureInput.thrown === void 0 ? {} : { thrown: failureInput.thrown },
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
     ...session === void 0 ? {} : { session }
   });
   const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
-    admitted
+    admitted,
+    terminal
   };
 }
 async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
@@ -9412,15 +9451,21 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     io.stdout(formatTerminalResult(lawful));
     return {
       exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-      admitted
+      admitted,
+      terminal: lawful
     };
   }
+  const knownFailure = result2.knownFailure;
   return await presentControlledFailure(
     admitted,
     {
       timedOut: result2.timedOut,
       code: result2.code,
-      stderr: result2.stderr
+      stderr: result2.stderr,
+      ...knownFailure === void 0 ? {} : {
+        knownCause: knownFailure.cause,
+        ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity }
+      }
     },
     io
   );
@@ -9698,7 +9743,10 @@ async function runAkRole(argv, env) {
         io,
         parseJudgeArgv
       );
-      return { exitCode: result2.exitCode };
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
     }
     const roleNames = listHelpCapabilities().filter((cap) => cap.kind === "role").map((cap) => cap.name);
     if (roleNames.includes(parsed.command)) {
@@ -9745,7 +9793,7 @@ async function runAkRole(argv, env) {
 }
 
 // src/public-cli/main.ts
-var here = dirname3(fileURLToPath(import.meta.url));
+var here = dirname4(fileURLToPath(import.meta.url));
 var packageRoot = join8(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

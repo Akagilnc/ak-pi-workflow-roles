@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   runExplicitInternalActivation,
   type ExplicitInternalPiRunner,
+  type ExplicitInternalPiResult,
 } from "./explicit-internal.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -28,6 +29,10 @@ import {
   trySettleJudgeTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
+import type {
+  ControlledFailureCause,
+  TerminalResult,
+} from "./terminal.ts";
 
 export type JudgeRunEnv = {
   home: string;
@@ -94,15 +99,35 @@ async function presentControlledFailure(
     code: number | null;
     stderr: string;
     thrown?: unknown;
+    knownCause?: ControlledFailureCause;
+    knownIdentity?: {
+      readonly name?: string;
+      readonly code?: string | number;
+    };
   },
   io: CliIo,
-): Promise<{ exitCode: number; admitted: AdmittedJudgeInvocation }> {
+): Promise<{
+  exitCode: number;
+  admitted: AdmittedJudgeInvocation;
+  terminal: TerminalResult;
+}> {
   const session =
-    failureInput.thrown === undefined && !failureInput.timedOut
+    failureInput.thrown === undefined &&
+    !failureInput.timedOut &&
+    failureInput.knownCause === undefined
       ? await inspectJudgeSession(admitted.sessionDirectory)
       : undefined;
   const failure = classifyPostAdmissionFailure({
-    ...failureInput,
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...(failureInput.thrown === undefined ? {} : { thrown: failureInput.thrown }),
+    ...(failureInput.knownCause === undefined
+      ? {}
+      : { knownCause: failureInput.knownCause }),
+    ...(failureInput.knownIdentity === undefined
+      ? {}
+      : { knownIdentity: failureInput.knownIdentity }),
     ...(session === undefined ? {} : { session }),
   });
   const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
@@ -110,6 +135,7 @@ async function presentControlledFailure(
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
     admitted,
+    terminal,
   };
 }
 
@@ -122,7 +148,11 @@ export async function runPublicJudge(
     attachmentPaths: string[];
     project?: string;
   },
-): Promise<{ exitCode: number; admitted?: AdmittedJudgeInvocation }> {
+): Promise<{
+  exitCode: number;
+  admitted?: AdmittedJudgeInvocation;
+  terminal?: TerminalResult;
+}> {
   // Structural parse/admit rejects before model dispatch via shared settlement presenter.
   let admitted: AdmittedJudgeInvocation;
   try {
@@ -159,7 +189,7 @@ export async function runPublicJudge(
     childEnv.AK_CORRELATION_ID = env.correlationId;
   }
 
-  let result: Awaited<ReturnType<typeof runExplicitInternalActivation>>;
+  let result: ExplicitInternalPiResult;
   try {
     result = await runExplicitInternalActivation({
       packageRoot: env.packageRoot,
@@ -174,7 +204,7 @@ export async function runPublicJudge(
       ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
     });
   } catch (error) {
-    // Post-admission unrecognized exception — retain actual diagnostic identity.
+    // Post-admission exception — retain production-typed or actual diagnostic identity.
     return await presentControlledFailure(
       admitted,
       {
@@ -201,15 +231,27 @@ export async function runPublicJudge(
     return {
       exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
       admitted,
+      terminal: lawful,
     };
   }
 
+  // Production-owned typed cause channel on the resolved runner result — never
+  // inferred from stderr wording.
+  const knownFailure = result.knownFailure;
   return await presentControlledFailure(
     admitted,
     {
       timedOut: result.timedOut,
       code: result.code,
       stderr: result.stderr,
+      ...(knownFailure === undefined
+        ? {}
+        : {
+            knownCause: knownFailure.cause,
+            ...(knownFailure.identity === undefined
+              ? {}
+              : { knownIdentity: knownFailure.identity }),
+          }),
     },
     io,
   );
