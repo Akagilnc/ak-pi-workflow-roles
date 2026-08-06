@@ -756,6 +756,17 @@ export function createRoleRuntimeExtension(
             pendingNavigatorPresentation = { event: navigatorEvent, report };
           },
         });
+        // Warm live help during activation so prepare is not help-bound under load.
+        // Concrete work context also starts full preparation so session create
+        // overlaps the role run. Placeholder subjects wait for before_agent_start
+        // (user prompt may replace the subject key) but still inherit warm help.
+        navigatorAttendance.warmHelp?.();
+        if (
+          navigatorWorkContext.contextError === undefined &&
+          navigatorWorkContext.subjectProvenance !== "placeholder"
+        ) {
+          navigatorAttendance.prepare();
+        }
       }
       const runtime: ActivationRuntime = {
         event,
