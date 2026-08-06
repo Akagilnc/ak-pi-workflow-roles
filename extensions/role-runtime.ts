@@ -32,7 +32,8 @@ import {
   type NavigatorSubjectProvenance,
   type NavigatorTargetRole,
 } from "../src/navigator-attendance.ts";
-import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
+import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
+import { loadPackagedCanonicalSkillBinding } from "../src/package-resources/method-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
 import {
   createProductionMergerGitState,
@@ -46,6 +47,7 @@ import {
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
 
 const extensionPath = fileURLToPath(import.meta.url);
+const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const judgeSoulPath = fileURLToPath(new URL("../souls/judge.md", import.meta.url));
 const fixerSoulPath = fileURLToPath(new URL("../souls/fixer.md", import.meta.url));
 const coderSoulPath = fileURLToPath(new URL("../souls/coder.md", import.meta.url));
@@ -273,7 +275,13 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     createMergerGitState: (repositoryRoot) =>
       createProductionMergerGitState(repositoryRoot),
     collectorPackageExtensionPath: extensionPath,
-    loadCanonicalSkillBinding,
+    async loadCanonicalSkillBinding(name) {
+      // Coder TDD is package-owned (#109). Other methods keep legacy loaders until their tickets.
+      if (name === "tdd") {
+        return loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
+      }
+      return loadHomeCanonicalSkillBinding(name);
+    },
     runReviewerDispatch: (dispatch, options) => reviewerAgent.run(dispatch, options),
     shutdownReviewerAgent: () => reviewerAgent.shutdown(),
     transcriptFromContext,

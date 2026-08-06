@@ -8,14 +8,14 @@ license authority. Do not treat them as dual-licensing the package.
 
 Upstream provenance: [mattpocock/skills](https://github.com/mattpocock/skills).
 
-This package will eventually ship adapted snapshots of the following skills from
-that upstream repository (skill method bodies are owned by later tickets; this
-notice records attribution posture only):
+This package ships or will ship pinned snapshots of the following skills from
+that upstream repository. Each shipped method records exact file digests and
+upstream attribution under `resources/methods/<name>/provenance.json`.
 
-- `tdd`
-- `code-review`
-- `diagnosing-bugs`
-- `resolving-merge-conflicts`
+- `tdd` — shipped unchanged under `resources/methods/tdd/` (#109)
+- `code-review` — later method-bearing role ticket
+- `diagnosing-bugs` — later method-bearing role ticket
+- `resolving-merge-conflicts` — later method-bearing role ticket
 
 The complete upstream MIT license text follows.
 

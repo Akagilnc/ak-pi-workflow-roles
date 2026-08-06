@@ -639,13 +639,13 @@ test("fatal Fixer audit infrastructure failure aborts print and JSON without a r
   }
 });
 
-test("unavailable canonical tdd is infrastructure failure in print and JSON", async () => {
-  // Unavailability matrix (missing/unreadable/empty) is owned by
-  // canonical-skill-binding.test.ts. Keep ONE fixture × print+json as the
-  // process-level "infrastructure, not a receipt" negative (法条③).
+test("coder apply without skill expansion rejects completed as non-receipt", async () => {
+  // #109: TDD is package-owned (empty home is fine). Process-level negative keeps
+  // the typed Skill-expansion gate: completed without native expansion must not
+  // become an accepted receipt (法条③ / AC3).
   for (const mode of ["print", "json"] as const) {
     const result = await runCoderSkillFailureCli(mode, "missing");
-    assertAuditAbortWithoutReceipt(result, `missing/${mode}`);
+    assert.equal(result.timedOut, false, `${mode} did not time out`);
     if (mode === "json") {
       const events = result.stdout
         .split("\n")
@@ -663,9 +663,31 @@ test("unavailable canonical tdd is infrastructure failure in print and JSON", as
         `${mode} has no accepted Coder output`,
       );
       assert.equal(
-        outputResults.some((event) => event.message.details?.status !== undefined),
+        outputResults.some((event) => event.message.isError === true),
+        true,
+        `${mode} records the rejected completed submission`,
+      );
+      assert.equal(
+        outputResults.some(
+          (event) =>
+            event.message.isError === false &&
+            event.message.details?.status !== undefined,
+        ),
         false,
-        `${mode} does not encode infrastructure as a receipt status`,
+        `${mode} does not encode gate failure as a receipt status`,
+      );
+    } else {
+      // print mode: stderr observation face records only errored coder tool ends.
+      const ends = [
+        ...result.stderr.matchAll(
+          /"toolName":"ak_coder_output","timestamp":"[^"]+","isError":(true|false)/g,
+        ),
+      ];
+      assert.ok(ends.length > 0, "print mode emits coder tool_execution_end");
+      assert.equal(
+        ends.every((match) => match[1] === "true"),
+        true,
+        "print mode has no accepted coder tool_execution_end",
       );
     }
   }

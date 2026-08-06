@@ -1849,14 +1849,12 @@ test("packaged coder apply proves canonical native tdd expansion including colli
     await withActivationHome(
       { prefix: "ak-coder-integration-" },
       async ({ home, agentDir }) => {
-        const { path: tddSkillTargetPath, raw: tddSkillRaw } =
-          await writeTestSkill(
-            resolve(home, "owned-target"),
-            "tdd",
-          );
-        const tddSkillPath = resolve(home, ".agents/skills/tdd/SKILL.md");
-        await mkdir(dirname(tddSkillPath), { recursive: true });
-        await symlink(tddSkillTargetPath, tddSkillPath);
+        // Package-owned TDD (#109): empty home, skill path from installed package tree.
+        const tddSkillPath = resolve(
+          packageRoot,
+          "resources/methods/tdd/SKILL.md",
+        );
+        const tddSkillRaw = await readFile(tddSkillPath, "utf8");
         const taskPath = resolve(home, "approved-task.md");
         const task = "# Approved task\n\nImplement the first vertical slice.";
         await writeFile(taskPath, task);

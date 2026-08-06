@@ -25,8 +25,10 @@ import {
   runExplicitInternalActivation,
   type ExplicitInternalPiRunner,
 } from "./explicit-internal.ts";
-import { parseJudgeArgv } from "./invocation.ts";
+import { parseCoderArgv, parseJudgeArgv } from "./invocation.ts";
+import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
+import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   isPublicCliSupportCommand,
@@ -63,6 +65,10 @@ export type CliEnv = {
   judgeExtraPiArgs?: readonly string[];
   /** Override Judge role-run timeout (tests). */
   judgeTimeoutMs?: number;
+  /** Extra Pi args for Coder runs (tests: faux provider). */
+  coderExtraPiArgs?: readonly string[];
+  /** Override Coder role-run timeout (tests). */
+  coderTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -366,20 +372,55 @@ export async function runAkRole(
       return { exitCode: await runConfigCommand(parsed.args, home, io) };
     }
 
-    // Resume reopens an exact Role run after a typed HTTP 429 (#108).
+    // Resume reopens an exact Role run after a typed HTTP 429 (#108/#109).
+    // Seat and dispatch follow the durable admitted role (role-correct continuation).
     if (parsed.command === "resume") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
       const config = await loadPublicCliConfig(home);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
+      const resumeRunId = parsed.args[0];
+      const resumeRole =
+        resumeRunId === undefined || resumeRunId.trim() === ""
+          ? undefined
+          : await peekRoleRunRole(home, resumeRunId);
+      const resumeSeatRole = resumeRole === "coder" ? "coder" : "judge";
       // Temporary model/thinking override for this resume only — never persists.
       const seat = resolveEffectiveSeat(
         config,
-        "judge",
+        resumeSeatRole,
         credentials,
         invocationFromParsed(parsed),
       );
+      if (resumeRole === "coder") {
+        const result = await runPublicCoderResume(
+          parsed.args,
+          {
+            home,
+            agentDir,
+            packageRoot: env.packageRoot,
+            cwd,
+            credentials,
+            ...(env.correlationId === undefined
+              ? {}
+              : { correlationId: env.correlationId }),
+            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+            ...(seat.selection === undefined ? {} : { model: seat.selection }),
+            ...(env.coderExtraPiArgs === undefined
+              ? {}
+              : { extraPiArgs: env.coderExtraPiArgs }),
+            ...(env.coderTimeoutMs === undefined
+              ? {}
+              : { timeoutMs: env.coderTimeoutMs }),
+          },
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
       const result = await runPublicResume(
         parsed.args,
         {
@@ -448,6 +489,49 @@ export async function runAkRole(
         },
         io,
         parseJudgeArgv,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Coder public run path with package-owned TDD method (#109).
+    if (parsed.command === "coder") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "coder",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicCoder(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(env.coderExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.coderExtraPiArgs }),
+          ...(env.coderTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.coderTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        parseCoderArgv,
       );
       return {
         exitCode: result.exitCode,

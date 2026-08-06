@@ -42,23 +42,26 @@ export type ControlledFailureCause =
   | "timeout"
   | "unrecognized";
 
+/** Public callable roles that currently produce Terminal outcomes. */
+export type TerminalRoleName = "judge" | "coder";
+
 export type TerminalRoleOutcome =
   | {
       kind: "accepted";
-      role: "judge";
+      role: TerminalRoleName;
       status: string;
       /** Few decisive facts drawn from the typed receipt. */
       decisiveFacts: Readonly<Record<string, unknown>>;
     }
   | {
       kind: "audit_escalation";
-      role: "judge";
+      role: TerminalRoleName;
       status: "audit_escalation";
       decisiveFacts: Readonly<Record<string, unknown>>;
     }
   | {
       kind: "failure";
-      role: "judge";
+      role: TerminalRoleName;
       /** Typed cause class — never a fabricated role Receipt status. */
       cause: ControlledFailureCause;
       /** Original diagnostic identity retained for the caller. */
