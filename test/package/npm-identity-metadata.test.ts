@@ -149,20 +149,40 @@ test("packed artifact ships package-owned tdd method with companions and provena
       ),
     ) as {
       name: string;
-      upstream: { repository: string; attribution: string; license: string };
-      files: Record<string, { sha256: string; byteLength: number }>;
+      upstream: {
+        repository: string;
+        path: string;
+        commit: string;
+        tag: string;
+        attribution: string;
+        license: string;
+      };
+      files: Record<
+        string,
+        { sha256: string; byteLength: number; gitBlob: string }
+      >;
     };
     assert.equal(provenance.name, "tdd");
     assert.equal(
       provenance.upstream.repository,
       "https://github.com/mattpocock/skills",
     );
+    assert.equal(provenance.upstream.path, "skills/engineering/tdd");
+    assert.equal(
+      provenance.upstream.commit,
+      "8a475c438d90a2f1d7d3710c12658b60dc701a13",
+    );
+    assert.equal(provenance.upstream.tag, "v1.2.2");
     assert.equal(provenance.upstream.attribution, "mattpocock/skills");
     assert.equal(provenance.upstream.license, "MIT");
     assert.equal(typeof provenance.files["SKILL.md"]?.sha256, "string");
     assert.equal(provenance.files["SKILL.md"]!.sha256.length, 64);
+    assert.equal(typeof provenance.files["SKILL.md"]?.gitBlob, "string");
+    assert.equal(provenance.files["SKILL.md"]!.gitBlob.length, 40);
     assert.equal(typeof provenance.files["tests.md"]?.sha256, "string");
+    assert.equal(typeof provenance.files["tests.md"]?.gitBlob, "string");
     assert.equal(typeof provenance.files["mocking.md"]?.sha256, "string");
+    assert.equal(typeof provenance.files["mocking.md"]?.gitBlob, "string");
   });
 });
 

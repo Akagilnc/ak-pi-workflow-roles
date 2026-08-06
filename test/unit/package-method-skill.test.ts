@@ -2,19 +2,30 @@
  * #109 package-owned method Skill seam — empty home, no network, exact provenance.
  */
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { loadPackagedCanonicalSkillBinding } from "../../src/package-resources/method-skill-binding.ts";
 import {
+  gitBlobOid,
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
+  SEALED_UNCHANGED_METHOD_PINS,
 } from "../../src/package-resources/method-skill.ts";
+import { sha256Hex } from "../../src/sha256.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 const originalHome = process.env.HOME;
+const sealedTdd = SEALED_UNCHANGED_METHOD_PINS.tdd;
 
 async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
   const home = await mkdtemp(join(tmpdir(), "ak-empty-home-method-"));
@@ -33,7 +44,7 @@ async function withEmptyHome<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-test("packaged tdd method loads from package root in empty home with companions and provenance", async () => {
+test("packaged tdd method loads from package root in empty home with sealed upstream identity", async () => {
   await withEmptyHome(async () => {
     const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
     assert.equal(material.name, "tdd");
@@ -48,6 +59,9 @@ test("packaged tdd method loads from package root in empty home with companions 
       material.provenance.upstream.repository,
       "https://github.com/mattpocock/skills",
     );
+    assert.equal(material.provenance.upstream.path, sealedTdd.path);
+    assert.equal(material.provenance.upstream.commit, sealedTdd.commit);
+    assert.equal(material.provenance.upstream.tag, sealedTdd.tag);
     assert.equal(material.provenance.upstream.license, "MIT");
     assert.equal(
       material.provenance.upstream.copyright,
@@ -55,8 +69,18 @@ test("packaged tdd method loads from package root in empty home with companions 
     );
     assert.equal(material.provenance.upstream.attribution, "mattpocock/skills");
     assert.equal(material.provenance.packageAdaptation, "unchanged-pinned-snapshot");
-    assert.equal(typeof material.provenance.files["SKILL.md"]?.sha256, "string");
-    assert.equal(material.provenance.files["SKILL.md"]!.sha256.length, 64);
+
+    for (const rel of Object.keys(sealedTdd.files)) {
+      const expected = sealedTdd.files[rel]!;
+      const actual = material.provenance.files[rel];
+      assert.ok(actual, `missing file pin ${rel}`);
+      assert.equal(actual.sha256, expected.sha256);
+      assert.equal(actual.byteLength, expected.byteLength);
+      assert.equal(actual.gitBlob, expected.gitBlob);
+      const bytes = await readFile(join(material.rootDirectory, rel));
+      assert.equal(sha256Hex(bytes), expected.sha256);
+      assert.equal(gitBlobOid(bytes), expected.gitBlob);
+    }
 
     // Companion bodies are the pinned package bytes (readable without network).
     const tests = await readFile(join(material.rootDirectory, "tests.md"), "utf8");
@@ -67,6 +91,70 @@ test("packaged tdd method loads from package root in empty home with companions 
     // Skill path is under the package tree, not HOME.
     assert.equal(material.skillPath.includes(packageRoot), true);
     assert.equal(material.skillPath.includes(".agents/skills"), false);
+  });
+});
+
+test("mutating package bytes with adjacent manifest rewrite fails sealed unchanged-upstream pin", async () => {
+  await withEmptyHome(async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "ak-method-mutate-"));
+    try {
+      const packageRootTemp = join(tempRoot, "pkg");
+      const methodDir = join(packageRootTemp, "resources/methods/tdd");
+      await cp(join(packageRoot, "resources/methods/tdd"), methodDir, {
+        recursive: true,
+      });
+
+      const skillPath = join(methodDir, "SKILL.md");
+      const mutated = `${await readFile(skillPath, "utf8")}\n# mutated locally\n`;
+      await writeFile(skillPath, mutated, "utf8");
+      const mutatedBytes = Buffer.from(mutated, "utf8");
+      const provenancePath = join(methodDir, "provenance.json");
+      const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as {
+        packageAdaptation: string;
+        upstream: Record<string, string>;
+        files: Record<string, { sha256: string; byteLength: number; gitBlob: string }>;
+      };
+      // Keep the same upstream.commit/tag claim while rewriting adjacent file identities
+      // so local self-consistency alone would pass without the sealed pin.
+      provenance.files["SKILL.md"] = {
+        sha256: sha256Hex(mutatedBytes),
+        byteLength: mutatedBytes.byteLength,
+        gitBlob: gitBlobOid(mutatedBytes),
+      };
+      await writeFile(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`, "utf8");
+
+      await assert.rejects(
+        () => loadPackagedMethodSkillMaterial(packageRootTemp, "tdd"),
+        /sealed unchanged pin/i,
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("provenance without immutable upstream commit is rejected", async () => {
+  await withEmptyHome(async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "ak-method-no-commit-"));
+    try {
+      const packageRootTemp = join(tempRoot, "pkg");
+      const methodDir = join(packageRootTemp, "resources/methods/tdd");
+      await cp(join(packageRoot, "resources/methods/tdd"), methodDir, {
+        recursive: true,
+      });
+      const provenancePath = join(methodDir, "provenance.json");
+      const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as {
+        upstream: Record<string, unknown>;
+      };
+      delete provenance.upstream.commit;
+      await writeFile(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`, "utf8");
+      await assert.rejects(
+        () => loadPackagedMethodSkillMaterial(packageRootTemp, "tdd"),
+        /upstream\.commit/,
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });
 
