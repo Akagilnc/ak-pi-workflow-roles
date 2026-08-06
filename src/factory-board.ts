@@ -7,8 +7,10 @@
  * - now: injected clock for unaccepted bands, leg age, wall-now rule
  *
  * Reuses S1 tracer (`loadTicketTrajectoryRuns` + station HTML) for each ticket.
- * Owns swimlanes, family aggregation, blocked badges, closed drill, and S3
- * latest-run four-state / wallclock / cost aggregation (no parallel receipt parser).
+ * Owns per-book lanes, #162 yamen-column placement (ADR 0053 totality table),
+ * family aggregation + 已完成列 clusters, unknown badge, page filters, blocked
+ * badges, closed drill, and S3 latest-run state / wallclock / cost aggregation
+ * (no parallel receipt parser).
  *
  * Page lifecycle: startFactoryBoardPage owns refresh regeneration to an explicit
  * output path outside every ledger and declares the bound; one-shot write does
@@ -18,6 +20,12 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+import {
+  formatDurationZh,
+  formatLocalDateTime,
+  formatTokensCompact,
+  formatUsdPrecise,
+} from "./human-format.ts";
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
   loadTicketTrajectoryRuns,
@@ -56,14 +64,33 @@ export type FactoryBoardPageHandle = {
   stop: () => Promise<void>;
 };
 
-/** Latest-run four-state (blocked is a badge, never a state). */
+/** Latest-run state bands (blocked is a badge, never a state; escalate is an awaiting overlay). */
 export type TicketCurrentState =
   | "closed"
   | "pending"
   | "unaccepted-flying"
   | "unaccepted-watch"
   | "unaccepted-suspect"
-  | "accepted-awaiting";
+  | "accepted-awaiting"
+  | "escalate-awaiting";
+
+/**
+ * Yamen-column placement (#162 totality table, priority top-down):
+ *   retained closed → done; open zero-run → pending; latest unknown → unknown set;
+ *   latest judge → court (no identified non-judge run in full history) or marshal;
+ *   latest coder → coder; fixer/reviewer → marshal; collector → collector;
+ *   any other known station → non-resident `other:<station>` column.
+ * "unknown" never forms a column (badge + expand instead).
+ */
+export type BoardPlacement =
+  | "pending"
+  | "court"
+  | "coder"
+  | "marshal"
+  | "collector"
+  | "done"
+  | "unknown"
+  | `other:${string}`;
 
 export type FactoryBoardBook = {
   bookKey: string;
@@ -143,7 +170,61 @@ export function decideTicketCurrentState(input: {
   if (input.runs.length === 0) return "pending";
   const latest = sortRunsByStart(input.runs).at(-1)!;
   if (!latest.hasResult) return unacceptedBand(latest.mtimeMs, input.now.getTime());
+  // Escalate is an awaiting overlay: same placement and sort band, distinct state.
+  if (latest.resultStatus === "escalate") return "escalate-awaiting";
   return "accepted-awaiting";
+}
+
+/** Yamen-column placement of one prepared ticket (mechanical, see BoardPlacement). */
+function placeTicket(prepared: PreparedTicket): BoardPlacement {
+  if (prepared.ticket.state === "closed") return "done";
+  if (prepared.runs.length === 0) return "pending";
+  const sorted = sortRunsByStart(prepared.runs);
+  const latest = sorted.at(-1)!;
+  if (latest.station === "unknown") return "unknown";
+  if (latest.station === "judge") {
+    // Unknown history never counts as construction evidence.
+    const started = sorted.some((run) => run.station !== "unknown" && run.station !== "judge");
+    return started ? "marshal" : "court";
+  }
+  if (latest.station === "coder") return "coder";
+  if (latest.station === "fixer" || latest.station === "reviewer") return "marshal";
+  // ADR 0053: marshal-driven runs land in 刑部 once the seat ships (station maps now).
+  if (latest.station === "marshal") return "marshal";
+  if (latest.station === "collector") return "collector";
+  return `other:${latest.station}`;
+}
+
+/** Column-internal sort band: 在飞 → 观察 → 疑挂 → 已交卷(escalate 同档) → 待发 → 已完成. */
+function stateSortBand(state: TicketCurrentState): number {
+  switch (state) {
+    case "unaccepted-flying":
+      return 0;
+    case "unaccepted-watch":
+      return 1;
+    case "unaccepted-suspect":
+      return 2;
+    case "accepted-awaiting":
+    case "escalate-awaiting":
+      return 3;
+    case "pending":
+      return 4;
+    case "closed":
+      return 5;
+  }
+}
+
+/** Last-activity sort key (desc): content activity first, then mtime; closed uses closedAt. */
+function ticketSortActivityMs(prepared: PreparedTicket): number {
+  if (prepared.ticket.state === "closed") {
+    const parsed = prepared.ticket.closedAt ? Date.parse(prepared.ticket.closedAt) : NaN;
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  const latest = sortRunsByStart(prepared.runs).at(-1);
+  if (!latest) return 0;
+  const activity = latest.lastActivityAt ?? latest.endedAt;
+  const parsed = activity ? Date.parse(activity) : NaN;
+  return Number.isFinite(parsed) ? parsed : latest.mtimeMs;
 }
 
 function enrichRunsForBoard(
@@ -203,17 +284,19 @@ function aggregateTicketMetrics(
 function currentStateLabel(state: TicketCurrentState): string {
   switch (state) {
     case "closed":
-      return "closed";
+      return "已完成";
     case "pending":
       return "待发";
     case "unaccepted-flying":
-      return "未受理·在飞";
+      return "在飞";
     case "unaccepted-watch":
-      return "未受理·观察";
+      return "观察";
     case "unaccepted-suspect":
-      return "未受理·疑挂";
+      return "疑挂";
     case "accepted-awaiting":
       return "已交卷待派";
+    case "escalate-awaiting":
+      return "escalate 待裁";
   }
 }
 
@@ -302,10 +385,32 @@ function renderErrorHtml(error: FactoryBoardError, generatedAt: string): string 
 `;
 }
 
+/** Yamen display label per station (color = yamen, dot = state). */
+const YAMEN_LABELS: Readonly<Record<string, string>> = {
+  judge: "大理寺",
+  coder: "将作监",
+  fixer: "修内司",
+  reviewer: "御史台",
+  collector: "门下省",
+  doctor: "太医署",
+  merger: "校书郎",
+  marshal: "刑部",
+};
+
+function latestKnownStation(runs: readonly TicketTrajectoryRun[]): string | undefined {
+  const latest = sortRunsByStart(runs).at(-1);
+  if (!latest || latest.station === "unknown") return undefined;
+  return latest.station;
+}
+
 function renderTicketArticle(input: {
   bookKey: string;
   prepared: PreparedTicket;
   nested: boolean;
+  /** Column placement — carried by standalone cards and cluster members. */
+  placement?: BoardPlacement;
+  /** Family root issue when the ticket belongs to an in-snapshot family (族徽章). */
+  familyRoot?: number;
 }): string {
   const {
     ticket,
@@ -342,6 +447,19 @@ function renderTicketArticle(input: {
     ticket.parentIssueNumber !== null
       ? ` data-parent-issue="${attr(String(ticket.parentIssueNumber))}"`
       : "";
+  const placementAttr =
+    input.placement !== undefined ? ` data-placement="${attr(input.placement)}"` : "";
+
+  const latestStation = latestKnownStation(runs);
+  const yamenTag =
+    latestStation !== undefined
+      ? `<span class="yamen-tag yamen-${attr(latestStation)}" data-yamen="${attr(latestStation)}">${escapeHtml(YAMEN_LABELS[latestStation] ?? latestStation)}</span>`
+      : "";
+  const familyBadge =
+    input.familyRoot !== undefined
+      ? `<span class="family-badge" data-family-badge="${attr(String(input.familyRoot))}" data-book="${attr(input.bookKey)}">族 #${escapeHtml(String(input.familyRoot))}</span>`
+      : "";
+  const breadcrumb = runs.length > 0 ? renderBreadcrumbHtml(runs) : "";
 
   const ticketNo = String(ticket.issueNumber);
   const unaccepted =
@@ -354,11 +472,11 @@ function renderTicketArticle(input: {
   const activityBits =
     unaccepted && legAgeMs !== undefined
       ? [
-          `<span class="leg-age" data-leg-age-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-leg-age-ms="${attr(String(legAgeMs))}">腿龄 ${legAgeMs}ms</span>`,
+          `<span class="leg-age" data-leg-age-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-leg-age-ms="${attr(String(legAgeMs))}">腿龄 ${escapeHtml(formatDurationZh(legAgeMs))}</span>`,
           lastActivityAt
-            ? `<span class="last-activity" data-last-activity-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-last-activity-at="${attr(lastActivityAt)}"${lastActivityMtimeMs !== undefined ? ` data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}"` : ""}>末次活动 ${escapeHtml(lastActivityAt)}</span>`
+            ? `<span class="last-activity" data-last-activity-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-last-activity-at="${attr(lastActivityAt)}"${lastActivityMtimeMs !== undefined ? ` data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}"` : ""}>末次活动 ${escapeHtml(formatLocalDateTime(lastActivityAt))}</span>`
             : lastActivityMtimeMs !== undefined
-              ? `<span class="last-activity" data-last-activity-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}">末次活动 mtime</span>`
+              ? `<span class="last-activity" data-last-activity-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}">末次活动 ${escapeHtml(formatLocalDateTime(new Date(lastActivityMtimeMs).toISOString()))}</span>`
               : "",
         ].join("")
       : "";
@@ -371,7 +489,9 @@ function renderTicketArticle(input: {
     ` data-milestone="${attr(milestone)}"`,
     ` data-ticket-state="${attr(state)}"`,
     ` data-current-state="${attr(currentState)}"`,
+    ` data-state-strip="${attr(currentState)}"`,
     ` data-pending="${pending ? "true" : "false"}"`,
+    input.nested ? ` data-nested="true"` : "",
     ` data-blocked-by="${attr(blockedAttr)}"`,
     ` data-run-count="${attr(String(runs.length))}"`,
     ` data-cost-usd="${attr(formatUsd(costUsd))}"`,
@@ -384,21 +504,25 @@ function renderTicketArticle(input: {
       ? ` data-last-activity-mtime-ms="${attr(String(lastActivityMtimeMs))}"`
       : "",
     parentAttr,
+    placementAttr,
     `>`,
     `<header class="ticket-head">`,
     `<h3 class="ticket-title">#${escapeHtml(ticketNo)} · ${escapeHtml(ticket.title)}</h3>`,
+    breadcrumb,
     `<p class="ticket-meta">`,
-    `<span class="state" data-state-label="${attr(currentState)}">${escapeHtml(currentStateLabel(currentState))}</span>`,
+    `<span class="state" data-state-label="${attr(currentState)}"><span class="state-dot" aria-hidden="true" data-state-dot="true">●</span> ${escapeHtml(currentStateLabel(currentState))}</span>`,
+    yamenTag,
+    familyBadge,
     milestone ? `<span class="milestone">milestone: ${escapeHtml(milestone)}</span>` : `<span class="milestone">milestone: —</span>`,
-    `<span class="cost" data-cost-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-cost-usd="${attr(formatUsd(costUsd))}" data-total-tokens="${attr(String(totalTokens))}">$${escapeHtml(formatUsd(costUsd))} · ${totalTokens} tok</span>`,
-    `<span class="wall" data-wall-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-wall-ms="${attr(String(wallMs))}">施工墙钟 ${wallMs}ms</span>`,
-    `<span class="landing" data-landing-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-landing-cycle-ms="${attr(String(landingCycleMs))}">落地周期 ${landingCycleMs}ms</span>`,
+    `<span class="cost" data-cost-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-cost-usd="${attr(formatUsd(costUsd))}" data-total-tokens="${attr(String(totalTokens))}">$${escapeHtml(formatUsdPrecise(costUsd))} · ${escapeHtml(formatTokensCompact(totalTokens))} tok</span>`,
+    `<span class="wall" data-wall-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-wall-ms="${attr(String(wallMs))}">施工墙钟 ${escapeHtml(formatDurationZh(wallMs))}</span>`,
+    `<span class="landing" data-landing-label="${attr(ticketNo)}" data-book="${attr(input.bookKey)}" data-landing-cycle-ms="${attr(String(landingCycleMs))}">落地周期 ${escapeHtml(formatDurationZh(landingCycleMs))}</span>`,
     activityBits,
     badges,
     `</p>`,
     `</header>`,
     runs.length > 0
-      ? `<details class="ticket-body" data-drill="${attr(String(ticket.issueNumber))}"${state === "closed" ? " open" : ""}><summary>轨迹 · ${runs.length} run(s) · $${escapeHtml(formatUsd(costUsd))}</summary>${trajectory}</details>`
+      ? `<details class="ticket-body" data-drill="${attr(String(ticket.issueNumber))}"${state === "closed" ? " open" : ""}><summary>轨迹 · ${runs.length} run(s) · $${escapeHtml(formatUsdPrecise(costUsd))}</summary>${trajectory}</details>`
       : trajectory,
     `</article>`,
   ].join("");
@@ -409,6 +533,12 @@ function renderFamily(input: {
   parent: PreparedTicket;
   /** Whole in-snapshot descendant set (not only direct children). */
   descendants: PreparedTicket[];
+  placement: BoardPlacement;
+  /**
+   * closed root → children nest inside the family section (父卡置顶、子卡缩进);
+   * open root → children place independently; the section carries an index only.
+   */
+  nestChildren: boolean;
 }): string {
   const childCount = input.descendants.length;
   const pendingCount = input.descendants.filter((c) => c.pending).length;
@@ -419,16 +549,29 @@ function renderFamily(input: {
     input.parent.costUsd + input.descendants.reduce((sum, d) => sum + d.costUsd, 0);
   const totalTokens =
     input.parent.totalTokens + input.descendants.reduce((sum, d) => sum + d.totalTokens, 0);
-  const childHtml = input.descendants
-    .map((child) =>
-      renderTicketArticle({ bookKey: input.bookKey, prepared: child, nested: true }),
-    )
-    .join("\n");
   const parentBlock = renderTicketArticle({
     bookKey: input.bookKey,
     prepared: input.parent,
     nested: false,
   });
+  const childrenBlock = input.nestChildren
+    ? input.descendants
+        .map((child) =>
+          renderTicketArticle({
+            bookKey: input.bookKey,
+            prepared: child,
+            nested: true,
+            placement: "done",
+            familyRoot: input.parent.ticket.issueNumber,
+          }),
+        )
+        .join("\n")
+    : input.descendants
+        .map(
+          (child) =>
+            `<li class="family-child-index" data-child-index="${attr(String(child.ticket.issueNumber))}" data-book="${attr(input.bookKey)}">#${escapeHtml(String(child.ticket.issueNumber))} · ${escapeHtml(child.ticket.title)}</li>`,
+        )
+        .join("\n");
 
   return [
     `<section class="family"`,
@@ -440,6 +583,7 @@ function renderFamily(input: {
     ` data-closed-count="${attr(String(closedCount))}"`,
     ` data-cost-usd="${attr(formatUsd(costUsd))}"`,
     ` data-total-tokens="${attr(String(totalTokens))}"`,
+    ` data-placement="${attr(input.placement)}"`,
     `>`,
     `<header class="family-head">`,
     `<h2 class="family-title">族 #${escapeHtml(String(input.parent.ticket.issueNumber))} · ${escapeHtml(input.parent.ticket.title)}</h2>`,
@@ -447,15 +591,46 @@ function renderFamily(input: {
     `<span>子轨迹 ${childCount}</span>`,
     `<span>待发 ${pendingCount}</span>`,
     `<span>收官 ${closedCount}</span>`,
-    `<span class="cost" data-family-cost-label="true">$${escapeHtml(formatUsd(costUsd))} · ${totalTokens} tok</span>`,
+    `<span class="cost" data-family-cost-label="true">$${escapeHtml(formatUsdPrecise(costUsd))} · ${escapeHtml(formatTokensCompact(totalTokens))} tok</span>`,
     `</p>`,
     `</header>`,
     `<div class="family-parent">${parentBlock}</div>`,
     `<details class="family-children" data-family-expand="${attr(String(input.parent.ticket.issueNumber))}" open>`,
     `<summary>展开子轨迹（${childCount}）</summary>`,
-    childHtml,
+    input.nestChildren ? childrenBlock : `<ul class="family-child-index-list">${childrenBlock}</ul>`,
     `</details>`,
     `</section>`,
+  ].join("");
+}
+
+/** 已完成列 family cluster for closed members of an open-root family (族簇嵌套). */
+function renderFamilyCluster(input: {
+  bookKey: string;
+  rootIssueNumber: number;
+  members: PreparedTicket[];
+}): string {
+  const costUsd = input.members.reduce((sum, m) => sum + m.costUsd, 0);
+  const memberHtml = input.members
+    .map((member) =>
+      renderTicketArticle({
+        bookKey: input.bookKey,
+        prepared: member,
+        nested: true,
+        placement: "done",
+        familyRoot: input.rootIssueNumber,
+      }),
+    )
+    .join("\n");
+  return [
+    `<div class="family-cluster"`,
+    ` data-family-cluster="${attr(String(input.rootIssueNumber))}"`,
+    ` data-book="${attr(input.bookKey)}"`,
+    ` data-placement="done"`,
+    ` data-cost-usd="${attr(formatUsd(costUsd))}"`,
+    `>`,
+    `<p class="family-cluster-title">族 #${escapeHtml(String(input.rootIssueNumber))} · 已交卷簇（${input.members.length}）</p>`,
+    memberHtml,
+    `</div>`,
   ].join("");
 }
 
@@ -558,12 +733,135 @@ async function prepareTicket(
   };
 }
 
+type LaneEntry = {
+  placement: BoardPlacement;
+  band: number;
+  activityMs: number;
+  /** Entry identity for sort tiebreak (family root / cluster root / ticket number). */
+  issueNumber: number;
+  html: string;
+};
+
+function entryCompare(a: LaneEntry, b: LaneEntry): number {
+  if (a.band !== b.band) return a.band - b.band;
+  if (a.activityMs !== b.activityMs) return b.activityMs - a.activityMs;
+  return a.issueNumber - b.issueNumber;
+}
+
+/**
+ * Six resident columns always render (empty ones carry data-column-count=0).
+ * Non-resident `other:*` columns slot before 已完成 when occupied.
+ */
+const RESIDENT_COLUMN_ORDER: readonly string[] = [
+  "pending",
+  "court",
+  "coder",
+  "marshal",
+  "collector",
+  "done",
+];
+
+const COLUMN_LABELS: Readonly<Record<string, string>> = {
+  pending: "待发",
+  court: "大理寺 · 审票",
+  coder: "将作监",
+  marshal: "刑部",
+  collector: "门下省",
+  done: "已完成",
+};
+
+/** Terminal result statuses that mark a breadcrumb station step as 被拒 (strikethrough). */
+const REJECTED_RESULT_STATUSES: ReadonlySet<string> = new Set(["continue", "refused", "rejected"]);
+
+type BreadcrumbStep = {
+  station: string;
+  count: number;
+  isReturn: boolean;
+  isRejected: boolean;
+};
+
+/**
+ * Compact ledger-order breadcrumb: consecutive same-station collapse (×N),
+ * ↩ when a station reappears after another, 被拒 when any run in the step was rejected.
+ */
+function buildBreadcrumbSteps(runs: readonly TicketTrajectoryRun[]): BreadcrumbStep[] {
+  const sorted = sortRunsByStart(runs);
+  if (sorted.length === 0) return [];
+  type Group = { station: string; runs: TicketTrajectoryRun[] };
+  const groups: Group[] = [];
+  for (const run of sorted) {
+    const last = groups.at(-1);
+    if (last && last.station === run.station) {
+      last.runs.push(run);
+    } else {
+      groups.push({ station: run.station, runs: [run] });
+    }
+  }
+  const seen = new Set<string>();
+  const steps: BreadcrumbStep[] = [];
+  for (const group of groups) {
+    const isReturn = seen.has(group.station);
+    seen.add(group.station);
+    const isRejected = group.runs.some(
+      (run) => run.hasResult && REJECTED_RESULT_STATUSES.has(run.resultStatus),
+    );
+    steps.push({
+      station: group.station,
+      count: group.runs.length,
+      isReturn,
+      isRejected,
+    });
+  }
+  return steps;
+}
+
+function renderBreadcrumbHtml(runs: readonly TicketTrajectoryRun[]): string {
+  const steps = buildBreadcrumbSteps(runs);
+  if (steps.length === 0) return "";
+  const parts = steps.map((step, index) => {
+    const label =
+      step.station === "unknown" ? "未知站" : (YAMEN_LABELS[step.station] ?? step.station);
+    return [
+      `<span class="breadcrumb-step${step.isRejected ? " breadcrumb-rejected" : ""}"`,
+      ` data-breadcrumb-step="${attr(String(index))}"`,
+      ` data-station="${attr(step.station)}"`,
+      ` data-step-count="${attr(String(step.count))}"`,
+      ` data-return="${step.isReturn ? "true" : "false"}"`,
+      ` data-rejected="${step.isRejected ? "true" : "false"}"`,
+      `>`,
+      step.isReturn ? `<span data-return-marker="true" aria-hidden="true">↩</span>` : "",
+      `<span data-step-label="true">${escapeHtml(label)}</span>`,
+      step.count > 1
+        ? `<span data-step-count-label="true">×${escapeHtml(String(step.count))}</span>`
+        : "",
+      `</span>`,
+    ].join("");
+  });
+  return [
+    `<nav class="breadcrumb" data-breadcrumb="true">`,
+    parts.join(`<span class="breadcrumb-sep" aria-hidden="true">→</span>`),
+    `</nav>`,
+  ].join("");
+}
+
+function columnLabel(key: string): string {
+  if (key.startsWith("other:")) return `${key.slice("other:".length)}（非常驻）`;
+  return COLUMN_LABELS[key] ?? key;
+}
+
+type RenderedLane = {
+  html: string;
+  /** Unknown-station tickets in this lane (drives the page-level badge). */
+  unknownTickets: Array<{ issueNumber: number; title: string }>;
+};
+
 async function renderLaneHtml(
   bookKey: string,
   ledgerDir: string,
   tickets: readonly SnapshotTicket[],
   now: Date,
-): Promise<string> {
+  options?: { hidden?: boolean },
+): Promise<RenderedLane> {
   const prepared = new Map<number, PreparedTicket>();
   for (const ticket of tickets) {
     prepared.set(ticket.issueNumber, await prepareTicket(ledgerDir, ticket, now));
@@ -583,35 +881,156 @@ async function renderLaneHtml(
     .filter((parentNum) => !nestedInSnapshot.has(parentNum))
     .sort((a, b) => a - b);
 
-  const renderedInFamily = new Set<number>();
-  const familyHtml = familyRoots
-    .map((rootNum) => {
-      const parent = prepared.get(rootNum)!;
-      const descendants = collectDescendants(rootNum, childrenByParent);
-      renderedInFamily.add(rootNum);
-      for (const d of descendants) renderedInFamily.add(d.ticket.issueNumber);
-      return renderFamily({ bookKey, parent, descendants });
+  const entries: LaneEntry[] = [];
+  const familyMembers = new Set<number>();
+  /** Closed members of open-root families → 已完成列 clusters keyed by family root. */
+  const clusterMembersByRoot = new Map<number, PreparedTicket[]>();
+
+  for (const rootNum of familyRoots) {
+    const parent = prepared.get(rootNum)!;
+    const descendants = collectDescendants(rootNum, childrenByParent);
+    familyMembers.add(rootNum);
+    for (const d of descendants) familyMembers.add(d.ticket.issueNumber);
+
+    if (parent.ticket.state === "closed") {
+      // Closed root: the whole family travels into 已完成 (父卡置顶、子卡缩进嵌套).
+      entries.push({
+        placement: "done",
+        band: stateSortBand("closed"),
+        activityMs: ticketSortActivityMs(parent),
+        issueNumber: rootNum,
+        html: renderFamily({ bookKey, parent, descendants, placement: "done", nestChildren: true }),
+      });
+      continue;
+    }
+
+    // Open root: family section placed by the root's own placement; members place
+    // independently (open) or extract to the 已完成 cluster (closed).
+    const rootPlacement = placeTicket(parent);
+    entries.push({
+      placement: rootPlacement,
+      band: stateSortBand(parent.currentState),
+      activityMs: ticketSortActivityMs(parent),
+      issueNumber: rootNum,
+      html: renderFamily({ bookKey, parent, descendants, placement: rootPlacement, nestChildren: false }),
+    });
+    for (const member of descendants) {
+      if (member.ticket.state === "closed") {
+        const list = clusterMembersByRoot.get(rootNum) ?? [];
+        list.push(member);
+        clusterMembersByRoot.set(rootNum, list);
+        continue;
+      }
+      const placement = placeTicket(member);
+      entries.push({
+        placement,
+        band: stateSortBand(member.currentState),
+        activityMs: ticketSortActivityMs(member),
+        issueNumber: member.ticket.issueNumber,
+        html: renderTicketArticle({
+          bookKey,
+          prepared: member,
+          nested: false,
+          placement,
+          familyRoot: rootNum,
+        }),
+      });
+    }
+  }
+
+  // Standalone tickets (no in-snapshot family): each places by its own facts.
+  for (const item of prepared.values()) {
+    if (familyMembers.has(item.ticket.issueNumber)) continue;
+    const placement = placeTicket(item);
+    entries.push({
+      placement,
+      band: stateSortBand(item.currentState),
+      activityMs: ticketSortActivityMs(item),
+      issueNumber: item.ticket.issueNumber,
+      html: renderTicketArticle({ bookKey, prepared: item, nested: false, placement }),
+    });
+  }
+
+  // 已完成列 clusters for closed members of open-root families.
+  for (const [rootNum, members] of [...clusterMembersByRoot.entries()].sort((a, b) => a[0] - b[0])) {
+    const sortedMembers = [...members].sort((a, b) => a.ticket.issueNumber - b.ticket.issueNumber);
+    entries.push({
+      placement: "done",
+      band: stateSortBand("closed"),
+      activityMs: Math.max(...sortedMembers.map((m) => ticketSortActivityMs(m))),
+      issueNumber: rootNum,
+      html: renderFamilyCluster({ bookKey, rootIssueNumber: rootNum, members: sortedMembers }),
+    });
+  }
+
+  // Group entries into columns; unknown never forms a column.
+  const byPlacement = new Map<string, LaneEntry[]>();
+  const unknownEntries: LaneEntry[] = [];
+  const unknownTickets: Array<{ issueNumber: number; title: string }> = [];
+  for (const entry of entries) {
+    if (entry.placement === "unknown") {
+      unknownEntries.push(entry);
+      unknownTickets.push({
+        issueNumber: entry.issueNumber,
+        title: prepared.get(entry.issueNumber)?.ticket.title ?? "",
+      });
+      continue;
+    }
+    const list = byPlacement.get(entry.placement) ?? [];
+    list.push(entry);
+    byPlacement.set(entry.placement, list);
+  }
+  unknownEntries.sort(entryCompare);
+  unknownTickets.sort((a, b) => a.issueNumber - b.issueNumber);
+
+  // Six resident columns always present (empty → count 0); non-resident only when occupied.
+  const otherColumns = [...byPlacement.keys()]
+    .filter((key) => key.startsWith("other:"))
+    .sort((a, b) => a.localeCompare(b));
+  const columnOrder = [
+    ...RESIDENT_COLUMN_ORDER.slice(0, -1), // pending…collector
+    ...otherColumns,
+    "done",
+  ];
+
+  const columnHtml = columnOrder
+    .map((key) => {
+      const group = (byPlacement.get(key) ?? []).slice().sort(entryCompare);
+      return [
+        `<div class="column column-${attr(key.startsWith("other:") ? "other" : key)}"`,
+        ` data-column="${attr(key)}"`,
+        ` data-book="${attr(bookKey)}"`,
+        ` data-column-count="${attr(String(group.length))}"`,
+        `>`,
+        `<h3 class="column-title">${escapeHtml(columnLabel(key))} <span class="column-count" data-column-count-label="true">${group.length}</span></h3>`,
+        group.map((entry) => entry.html).join("\n"),
+        `</div>`,
+      ].join("");
     })
     .join("\n");
 
-  // Every ticket renders exactly once: family members are excluded from top-level.
-  const topLevel = [...prepared.values()]
-    .filter((item) => !renderedInFamily.has(item.ticket.issueNumber))
-    .sort((a, b) => a.ticket.issueNumber - b.ticket.issueNumber);
+  const unknownSetHtml =
+    unknownEntries.length > 0
+      ? [
+          `<details class="unknown-set" data-unknown-set="true" data-book="${attr(bookKey)}">`,
+          `<summary>未知票 ×${unknownEntries.length}（本册，点击展开）</summary>`,
+          unknownEntries.map((entry) => entry.html).join("\n"),
+          `</details>`,
+        ].join("")
+      : "";
 
-  const topHtml = topLevel
-    .map((item) => renderTicketArticle({ bookKey, prepared: item, nested: false }))
-    .join("\n");
-
-  return [
-    `<section class="lane" data-lane="${attr(bookKey)}" data-book="${attr(bookKey)}">`,
-    `<h2 class="lane-title">册 ${escapeHtml(bookKey)}</h2>`,
-    `<div class="lane-tickets" data-lane-tickets="${attr(bookKey)}">`,
-    familyHtml,
-    topHtml,
-    `</div>`,
-    `</section>`,
-  ].join("\n");
+  return {
+    html: [
+      `<section class="lane" data-lane="${attr(bookKey)}" data-book="${attr(bookKey)}"${options?.hidden ? ' style="display:none"' : ""}>`,
+      `<h2 class="lane-title">册 ${escapeHtml(bookKey)}</h2>`,
+      `<div class="lane-columns" data-lane-tickets="${attr(bookKey)}">`,
+      columnHtml,
+      unknownSetHtml,
+      `</div>`,
+      `</section>`,
+    ].join("\n"),
+    unknownTickets,
+  };
 }
 
 function boardStyles(): string {
@@ -629,6 +1048,34 @@ function boardStyles(): string {
     margin: 1rem 0;
   }
   .lane-title { margin: 0 0 0.75rem; font-size: 1.2rem; }
+  .lane-columns { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-start; }
+  .column {
+    flex: 1 1 14rem;
+    min-width: 13rem;
+    border: 1px solid color-mix(in srgb, CanvasText 14%, Canvas);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.6rem;
+  }
+  .column-title { margin: 0 0 0.4rem; font-size: 0.95rem; }
+  .column-count { opacity: 0.75; font-weight: 400; }
+  .unknown-set { flex-basis: 100%; }
+  .family-cluster { margin: 0.4rem 0; }
+  .family-cluster-title { margin: 0.2rem 0; font-size: 0.85rem; opacity: 0.85; }
+  .family-child-index-list { margin: 0.25rem 0; padding-left: 1.2rem; font-size: 0.88rem; }
+  .state-dot { font-size: 0.8em; }
+  .yamen-tag, .family-badge {
+    display: inline-block;
+    padding: 0.02rem 0.4rem;
+    border-radius: 0.3rem;
+    font-size: 0.8rem;
+    background: color-mix(in srgb, CanvasText 10%, Canvas);
+  }
+  .yamen-coder { background: color-mix(in srgb, teal 30%, Canvas); }
+  .yamen-fixer { background: color-mix(in srgb, blueviolet 28%, Canvas); }
+  .yamen-reviewer { background: color-mix(in srgb, deepskyblue 30%, Canvas); }
+  .yamen-judge { background: color-mix(in srgb, palevioletred 30%, Canvas); }
+  .unknown-badge { margin-left: auto; }
+  .unknown-item { display: list-item; }
   .family {
     border: 1px dashed color-mix(in srgb, CanvasText 28%, Canvas);
     border-radius: 0.5rem;
@@ -641,15 +1088,43 @@ function boardStyles(): string {
     border-top: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
     padding: 0.55rem 0;
   }
+  /* Five-state top strip: same hue family as the state dot (card stays put, strip changes). */
+  .ticket[data-state-strip="unaccepted-flying"] {
+    border-top: 3px solid color-mix(in srgb, seagreen 80%, CanvasText);
+  }
+  .ticket[data-state-strip="unaccepted-watch"] {
+    border-top: 3px solid color-mix(in srgb, goldenrod 85%, CanvasText);
+  }
+  .ticket[data-state-strip="unaccepted-suspect"] {
+    border-top: 3px solid color-mix(in srgb, tomato 85%, CanvasText);
+  }
+  .ticket[data-state-strip="accepted-awaiting"] {
+    border-top: 3px solid color-mix(in srgb, dodgerblue 75%, CanvasText);
+  }
+  .ticket[data-state-strip="escalate-awaiting"] {
+    border-top: 3px solid color-mix(in srgb, darkorange 90%, CanvasText);
+  }
   .ticket-child { margin-left: 0.75rem; padding-left: 0.5rem; border-left: 2px solid color-mix(in srgb, CanvasText 18%, Canvas); }
   .ticket-title { margin: 0; font-size: 1rem; }
+  .breadcrumb {
+    margin: 0.2rem 0 0.35rem;
+    font-size: 0.82rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.35rem;
+    align-items: center;
+    opacity: 0.92;
+  }
+  .breadcrumb-sep { opacity: 0.55; }
+  .breadcrumb-step[data-rejected="true"] { text-decoration: line-through; opacity: 0.75; }
   .ticket-meta { margin: 0.25rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem 0.85rem; font-size: 0.88rem; }
   .state { font-weight: 600; }
   .ticket.current-unaccepted-flying .state { color: color-mix(in srgb, seagreen 80%, CanvasText); }
-  .ticket.current-unaccepted-watch .state { color: color-mix(in srgb, darkorange 85%, CanvasText); }
+  .ticket.current-unaccepted-watch .state { color: color-mix(in srgb, goldenrod 85%, CanvasText); }
   .ticket.current-unaccepted-suspect .state { color: color-mix(in srgb, tomato 85%, CanvasText); }
   .ticket.current-pending .state { opacity: 0.85; }
   .ticket.current-accepted-awaiting .state { color: color-mix(in srgb, dodgerblue 75%, CanvasText); }
+  .ticket.current-escalate-awaiting .state { color: color-mix(in srgb, darkorange 90%, CanvasText); }
   .ticket.current-closed .state { opacity: 0.75; }
   .blocked-badge {
     display: inline-block;
@@ -675,24 +1150,26 @@ function boardStyles(): string {
 `;
 }
 
-function boardSortScript(): string {
-  // Presentation-only reorder; machine facts stay on data-* attrs.
+function boardPageScript(): string {
+  // Presentation-only reorder + filter; machine facts stay on data-* attrs.
   // Singular render-seam comparator lives only in this embedded page script.
   // Family lane entries carry aggregate data-cost-usd (parent + descendants) so nested
   // per-ticket burns (e.g. #130 under #78) participate without flattening the S2 nest.
   return `<script>
 (function () {
-  var sel = document.querySelector('[data-sort-control]');
-  if (!sel) return;
+  var doc = document;
+  function kids(el) { return Array.prototype.slice.call(el.children); }
   function costOf(el) {
     var v = el.getAttribute('data-cost-usd');
     var n = v == null ? 0 : Number(v);
     return Number.isFinite(n) ? n : 0;
   }
   function ticketNo(el) {
-    // Tickets use data-ticket; family sections use data-parent (root issue).
+    // Tickets use data-ticket; family sections use data-parent (root issue);
+    // completed clusters use data-family-cluster (root issue).
     var v = el.getAttribute('data-ticket');
     if (v == null || v === '') v = el.getAttribute('data-parent');
+    if (v == null || v === '') v = el.getAttribute('data-family-cluster');
     var n = v == null ? 0 : Number(v);
     return Number.isFinite(n) ? n : 0;
   }
@@ -709,27 +1186,162 @@ function boardSortScript(): string {
   function sortKey(node) {
     if (node.nodeType !== 1) return null;
     var el = node;
-    // Lane children only: family sections (aggregate burn) or standalone tickets.
+    // Column children only: family sections (aggregate burn), standalone tickets, clusters.
     if (el.hasAttribute && el.hasAttribute('data-family')) {
       return el.hasAttribute('data-cost-usd') ? el : null;
     }
     if (el.hasAttribute && el.hasAttribute('data-ticket')) return el;
+    if (el.hasAttribute && el.hasAttribute('data-family-cluster')) return el;
     return null;
   }
-  sel.addEventListener('change', function () {
-    var mode = sel.value;
-    document.querySelectorAll('[data-lane-tickets]').forEach(function (lane) {
-      var nodes = Array.prototype.filter.call(lane.children, function (n) {
-        return n.nodeType === 1 && sortKey(n);
+  function sortEntries(container, mode) {
+    var nodes = kids(container).filter(function (n) { return sortKey(n); });
+    nodes.sort(function (a, b) { return compareEntries(a, b, mode); });
+    nodes.forEach(function (n) { container.appendChild(n); });
+  }
+  var sel = doc.querySelector('[data-sort-control]');
+  if (sel) {
+    sel.addEventListener('change', function () {
+      var mode = sel.value;
+      doc.querySelectorAll('[data-lane-tickets]').forEach(function (lane) {
+        var groups = kids(lane).filter(function (el) {
+          return el.nodeType === 1 && (el.hasAttribute('data-column') || el.hasAttribute('data-unknown-set'));
+        });
+        if (groups.length > 0) {
+          groups.forEach(function (g) { sortEntries(g, mode); });
+        } else {
+          sortEntries(lane, mode);
+        }
       });
-      nodes.sort(function (a, b) {
-        var ka = sortKey(a);
-        var kb = sortKey(b);
-        return compareEntries(ka, kb, mode);
-      });
-      nodes.forEach(function (n) { lane.appendChild(n); });
     });
-  });
+  }
+
+  var projectSel = doc.querySelector('[data-project-filter]');
+  var familySel = doc.querySelector('[data-family-filter]');
+  var badge = doc.querySelector('[data-unknown-badge]');
+
+  function parentEdgesByBook() {
+    var map = {};
+    doc.querySelectorAll('[data-ticket]').forEach(function (a) {
+      var book = a.getAttribute('data-book') || '';
+      var t = a.getAttribute('data-ticket');
+      if (!t) return;
+      if (!map[book]) map[book] = {};
+      map[book][t] = a.getAttribute('data-parent-issue') || '';
+    });
+    return map;
+  }
+  function ancestorChain(edges, ticket) {
+    var out = [];
+    var seen = {};
+    var cur = ticket;
+    while (cur) {
+      if (seen[cur]) break;
+      seen[cur] = true;
+      out.push(cur);
+      cur = edges[cur] || '';
+    }
+    return out;
+  }
+  function entryChain(el, edges) {
+    if (el.hasAttribute('data-family')) return [el.getAttribute('data-parent')];
+    if (el.hasAttribute('data-family-cluster')) return [el.getAttribute('data-family-cluster')];
+    if (el.hasAttribute('data-ticket')) {
+      return ancestorChain(edges[el.getAttribute('data-book') || ''] || {}, el.getAttribute('data-ticket'));
+    }
+    return [];
+  }
+  function rebuildFamilyOptions() {
+    if (!familySel || !projectSel) return;
+    var book = projectSel.value;
+    var openChildParents = {};
+    var childCounts = {};
+    var titles = {};
+    doc.querySelectorAll('[data-ticket]').forEach(function (a) {
+      if ((a.getAttribute('data-book') || '') !== book) return;
+      titles[a.getAttribute('data-ticket')] = a.getAttribute('data-title') || '';
+      if (a.getAttribute('data-ticket-state') !== 'open') return;
+      var p = a.getAttribute('data-parent-issue');
+      if (p) {
+        openChildParents[p] = true;
+        childCounts[p] = (childCounts[p] || 0) + 1;
+      }
+    });
+    while (familySel.firstChild) familySel.removeChild(familySel.firstChild);
+    function addOpt(value, label, familyOption, childCount) {
+      var opt = doc.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      if (familyOption != null) {
+        opt.setAttribute('data-family-option', String(familyOption));
+        opt.setAttribute('data-child-count', String(childCount == null ? 0 : childCount));
+      }
+      familySel.appendChild(opt);
+    }
+    addOpt('all', '全部');
+    Object.keys(openChildParents)
+      .sort(function (a, b) { return Number(a) - Number(b); })
+      .forEach(function (p) {
+        var n = childCounts[p] || 0;
+        addOpt(
+          p,
+          '族 #' + p + (titles[p] ? ' · ' + titles[p] : '') + ' · 子 ' + n,
+          p,
+          n
+        );
+      });
+    familySel.value = 'all';
+  }
+  function applyFilters() {
+    var book = projectSel ? projectSel.value : '';
+    doc.querySelectorAll('[data-lane]').forEach(function (lane) {
+      lane.style.display = !book || lane.getAttribute('data-lane') === book ? '' : 'none';
+    });
+    var fam = familySel ? familySel.value : 'all';
+    var edges = parentEdgesByBook();
+    doc.querySelectorAll('[data-placement]').forEach(function (el) {
+      var show = true;
+      if (fam !== 'all') {
+        show = entryChain(el, edges).indexOf(fam) >= 0;
+      }
+      el.style.display = show ? '' : 'none';
+    });
+    doc.querySelectorAll('[data-column]').forEach(function (col) {
+      var n = 0;
+      kids(col).forEach(function (el) {
+        if (el.nodeType === 1 && el.hasAttribute('data-placement') && el.style.display !== 'none') n += 1;
+      });
+      col.setAttribute('data-column-count', String(n));
+      var label = col.querySelector('[data-column-count-label]');
+      if (label) label.textContent = String(n);
+    });
+    if (badge) {
+      var u = 0;
+      doc.querySelectorAll('[data-unknown-item]').forEach(function (item) {
+        var ok = !book || (item.getAttribute('data-book') || '') === book;
+        if (ok && fam !== 'all') {
+          ok = ancestorChain(edges[item.getAttribute('data-book') || ''] || {}, item.getAttribute('data-unknown-item')).indexOf(fam) >= 0;
+        }
+        item.style.display = ok ? '' : 'none';
+        if (ok) u += 1;
+      });
+      badge.setAttribute('data-unknown-count', String(u));
+      var summary = badge.querySelector('[data-unknown-badge-summary]');
+      if (summary) summary.textContent = '未知票 ×' + u;
+    }
+  }
+  if (projectSel) {
+    projectSel.addEventListener('change', function () {
+      rebuildFamilyOptions();
+      applyFilters();
+    });
+  }
+  if (familySel) {
+    familySel.addEventListener('change', function () {
+      applyFilters();
+    });
+  }
+  if (projectSel) applyFilters();
 })();
 </script>`;
 }
@@ -787,7 +1399,12 @@ export async function renderFactoryBoardHtml(
   }
 
   const bookByKey = new Map(books.map((b) => [b.bookKey, b]));
+  // Project dropdown default: the home book when present, else the first snapshot book.
+  const defaultBookKey =
+    (view.snapshot.books.find((b) => b.repo === "ak-pi-workflow-roles") ?? view.snapshot.books[0])
+      ?.bookKey;
   const laneHtmlParts: string[] = [];
+  const unknownByBook = new Map<string, Array<{ issueNumber: number; title: string }>>();
   for (const bookSnap of view.snapshot.books) {
     const book = bookByKey.get(bookSnap.bookKey);
     if (!book) {
@@ -800,12 +1417,72 @@ export async function renderFactoryBoardHtml(
         generatedAt,
       );
     }
-    laneHtmlParts.push(
-      await renderLaneHtml(book.bookKey, resolve(book.ledgerDir), bookSnap.tickets, now),
+    const lane = await renderLaneHtml(
+      book.bookKey,
+      resolve(book.ledgerDir),
+      bookSnap.tickets,
+      now,
+      { hidden: defaultBookKey !== undefined && bookSnap.bookKey !== defaultBookKey },
     );
+    laneHtmlParts.push(lane.html);
+    unknownByBook.set(bookSnap.bookKey, lane.unknownTickets);
   }
 
-  // Preserve caller book order for empty-snapshot books still listed in books? Only snapshot books form lanes.
+  // Family dropdown (default book): parents with at least one open direct child + mechanical child count.
+  const defaultBookSnap = view.snapshot.books.find((b) => b.bookKey === defaultBookKey);
+  const familyOptions: Array<{ issueNumber: number; title: string; childCount: number }> = [];
+  if (defaultBookSnap) {
+    const byNumber = new Map(defaultBookSnap.tickets.map((t) => [t.issueNumber, t]));
+    const openChildCountByParent = new Map<number, number>();
+    for (const t of defaultBookSnap.tickets) {
+      if (t.state !== "open" || t.parentIssueNumber === null) continue;
+      if (!byNumber.has(t.parentIssueNumber)) continue;
+      openChildCountByParent.set(
+        t.parentIssueNumber,
+        (openChildCountByParent.get(t.parentIssueNumber) ?? 0) + 1,
+      );
+    }
+    for (const n of [...openChildCountByParent.keys()].sort((a, b) => a - b)) {
+      familyOptions.push({
+        issueNumber: n,
+        title: byNumber.get(n)?.title ?? "",
+        childCount: openChildCountByParent.get(n) ?? 0,
+      });
+    }
+  }
+
+  const projectOptions = view.snapshot.books
+    .map(
+      (b) =>
+        `<option value="${attr(b.bookKey)}"${b.bookKey === defaultBookKey ? " selected" : ""}>${escapeHtml(b.bookKey)}</option>`,
+    )
+    .join("");
+  const familyOptionsHtml = [
+    `<option value="all" selected>全部</option>`,
+    ...familyOptions.map(
+      (f) =>
+        `<option value="${attr(String(f.issueNumber))}" data-family-option="${attr(String(f.issueNumber))}" data-child-count="${attr(String(f.childCount))}">族 #${escapeHtml(String(f.issueNumber))} · ${escapeHtml(f.title)} · 子 ${escapeHtml(String(f.childCount))}</option>`,
+    ),
+  ].join("");
+
+  const allUnknown = view.snapshot.books.flatMap((b) =>
+    (unknownByBook.get(b.bookKey) ?? []).map((u) => ({ bookKey: b.bookKey, ...u })),
+  );
+  const defaultUnknownCount = defaultBookKey === undefined ? 0 : (unknownByBook.get(defaultBookKey) ?? []).length;
+  const unknownBadgeHtml =
+    allUnknown.length > 0
+      ? [
+          `<details class="unknown-badge" data-unknown-badge="true" data-unknown-count="${attr(String(defaultUnknownCount))}">`,
+          `<summary data-unknown-badge-summary="true">未知票 ×${defaultUnknownCount}</summary>`,
+          `<ul>`,
+          ...allUnknown.map(
+            (u) =>
+              `<li><span class="unknown-item" data-unknown-item="${attr(String(u.issueNumber))}" data-book="${attr(u.bookKey)}">#${escapeHtml(String(u.issueNumber))} · ${escapeHtml(u.title)}（${escapeHtml(u.bookKey)}）</span></li>`,
+          ),
+          `</ul>`,
+          `</details>`,
+        ].join("")
+      : "";
 
   const lifecycleAttrs = refreshActive
     ? ` data-lifecycle="refresh" data-refresh-boundary-seconds="${attr(String(refreshBoundarySeconds))}"`
@@ -829,15 +1506,28 @@ export async function renderFactoryBoardHtml(
 </head>
 <body>
 <header class="page">
-  <h1>工厂进度板 · 驿传轨迹</h1>
-  <p class="generated">generated-at <time datetime="${attr(generatedAt)}">${escapeHtml(generatedAt)}</time>${refreshNote}</p>
+  <h1>工厂进度板</h1>
+  <p class="generated">生成于 <time datetime="${attr(generatedAt)}">${escapeHtml(formatLocalDateTime(generatedAt))}</time>${refreshNote}</p>
   <p class="thresholds" data-thresholds="true">
     <span>未受理阈值：</span>
-    <span data-threshold-flying-ms="${attr(String(UNACCEPTED_FLYING_MS))}">&lt;${UNACCEPTED_FLYING_MS}ms 在飞</span>
-    <span data-threshold-watch-ms="${attr(String(UNACCEPTED_WATCH_MS))}">${UNACCEPTED_FLYING_MS}–${UNACCEPTED_WATCH_MS}ms 观察</span>
-    <span data-threshold-suspect="true">&gt;${UNACCEPTED_WATCH_MS}ms 疑挂</span>
+    <span data-threshold-flying-ms="${attr(String(UNACCEPTED_FLYING_MS))}">&lt;${escapeHtml(formatDurationZh(UNACCEPTED_FLYING_MS))} 在飞</span>
+    <span data-threshold-watch-ms="${attr(String(UNACCEPTED_WATCH_MS))}">${escapeHtml(formatDurationZh(UNACCEPTED_FLYING_MS))}–${escapeHtml(formatDurationZh(UNACCEPTED_WATCH_MS))} 观察</span>
+    <span data-threshold-suspect="true">&gt;${escapeHtml(formatDurationZh(UNACCEPTED_WATCH_MS))} 疑挂</span>
+  </p>
+  <p class="legend" data-legend="true">
+    <span>图例：圆点=状态 · 方色=衙门 · 列=票据当前所在衙门机械归位</span>
   </p>
   <p class="controls">
+    <label>项目
+      <select data-project-filter="true">
+        ${projectOptions}
+      </select>
+    </label>
+    <label>族
+      <select data-family-filter="true">
+        ${familyOptionsHtml}
+      </select>
+    </label>
     <label>排序
       <select data-sort-control="true">
         <option value="ticket-asc" selected>票号</option>
@@ -845,12 +1535,13 @@ export async function renderFactoryBoardHtml(
         <option value="cost-asc">烧钱↑</option>
       </select>
     </label>
+    ${unknownBadgeHtml}
   </p>
 </header>
 <main data-lane-count="${laneHtmlParts.length}">
 ${laneHtmlParts.join("\n") || "<p data-empty-board=\"true\">no books in snapshot</p>"}
 </main>
-${boardSortScript()}
+${boardPageScript()}
 </body>
 </html>
 `;
@@ -964,7 +1655,13 @@ const defaultBoardScheduler: FactoryBoardScheduler = {
  */
 export function startFactoryBoardPage(input: {
   books: readonly FactoryBoardBook[];
-  view: FactoryBoardView;
+  /** Fixed snapshot view (one-shot-style watch). Omit when loadView is supplied. */
+  view?: FactoryBoardView;
+  /**
+   * Snapshot loader invoked for every write, including the first (#162: watch does
+   * not pin the startup snapshot — retention candidates refresh each tick).
+   */
+  loadView?: () => Promise<FactoryBoardView>;
   outputPath: string;
   refreshBoundarySeconds?: number;
   clock?: FactoryBoardClock;
@@ -973,6 +1670,9 @@ export function startFactoryBoardPage(input: {
   const refreshBoundarySeconds = input.refreshBoundarySeconds ?? DEFAULT_REFRESH_BOUNDARY_SECONDS;
   if (!(refreshBoundarySeconds > 0) || !Number.isFinite(refreshBoundarySeconds)) {
     throw new Error("refreshBoundarySeconds must be a positive finite number");
+  }
+  if (input.view === undefined && input.loadView === undefined) {
+    throw new Error("view or loadView is required");
   }
   const clock = input.clock ?? (() => new Date());
   const scheduler = input.scheduler ?? defaultBoardScheduler;
@@ -1013,9 +1713,10 @@ export function startFactoryBoardPage(input: {
       throw new Error("factory board page lifecycle already stopped");
     }
     if (lastRejection !== undefined) throw lastRejection;
+    const view = input.loadView !== undefined ? await input.loadView() : input.view!;
     return writeFactoryBoardPage({
       books: input.books,
-      view: input.view,
+      view,
       now: clock(),
       outputPath: input.outputPath,
       refreshBoundarySeconds,

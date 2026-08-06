@@ -58,9 +58,19 @@ export type TicketSnapshotTransport = {
     owner: string;
     repo: string;
     closedIssueNumbers: readonly number[];
+    /**
+     * Retention clock (#162): when supplied, closed issues are drained completely
+     * and the merge+24h candidate set is computed mechanically — family-shared
+     * parent clock (root closedAt is the family's only exit clock), open-root
+     * children 陪跑, named drills always resident. When absent, no closed drain runs.
+     */
+    retentionNow?: Date;
     signal?: AbortSignal;
   }): Promise<readonly SnapshotTicket[]>;
 };
+
+/** Retention window: merged tickets leave the default board closedAt+24h later. */
+export const RETENTION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export class TicketSnapshotBindingError extends Error {
   readonly kind = "binding" as const;
@@ -258,6 +268,25 @@ function buildClosedIssuesQuery(numbers: readonly number[]): string {
 }`;
 }
 
+function buildClosedIssuesDrainQuery(): string {
+  return `query($owner: String!, $repo: String!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    issues(states: CLOSED, first: 100, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number
+        title
+        state
+        closedAt
+        milestone { title }
+        parent { number }
+        ${blockedBySelection()}
+      }
+    }
+  }
+}`;
+}
+
 function buildBlockedByPageQuery(): string {
   return `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -381,6 +410,10 @@ export function createGhTicketSnapshotTransport(
     async listBookTickets(input) {
       const owner = requireNonEmpty(input.owner, "owner");
       const repo = requireNonEmpty(input.repo, "repo");
+      const retentionNow = input.retentionNow;
+      if (retentionNow !== undefined && !Number.isFinite(retentionNow.getTime())) {
+        throw new Error("retentionNow must be a finite Date");
+      }
       const tickets = new Map<number, SnapshotTicket>();
 
       let after: string | null = null;
@@ -422,6 +455,84 @@ export function createGhTicketSnapshotTransport(
           throw new Error("GitHub GraphQL endCursor missing");
         }
         after = pageInfo.endCursor;
+      }
+
+      if (retentionNow !== undefined) {
+        // Closed drain: complete pagination only (never a truncated first page),
+        // then the mechanical merge+24h candidate set with the family shared clock.
+        const closedPool = new Map<number, SnapshotTicket>();
+        let closedAfter: string | null = null;
+        for (;;) {
+          const data = await ghGraphql(
+            runner,
+            buildClosedIssuesDrainQuery(),
+            { owner, repo, after: closedAfter },
+            input.signal,
+          );
+          if (!isRecord(data) || !isRecord(data.repository)) {
+            throw new Error("GitHub GraphQL repository missing");
+          }
+          const issues = data.repository.issues;
+          if (!isRecord(issues) || !Array.isArray(issues.nodes)) {
+            throw new Error("GitHub GraphQL closed issues connection missing");
+          }
+          for (const [index, node] of issues.nodes.entries()) {
+            if (node === null) continue;
+            const ticket = await materializeTicket(
+              runner,
+              owner,
+              repo,
+              node,
+              `closedDrain[${index}]`,
+              input.signal,
+            );
+            closedPool.set(ticket.issueNumber, ticket);
+          }
+          const pageInfo = issues.pageInfo;
+          if (!isRecord(pageInfo) || typeof pageInfo.hasNextPage !== "boolean") {
+            throw new Error("GitHub GraphQL closed issues pageInfo missing — cannot establish completeness");
+          }
+          if (!pageInfo.hasNextPage) break;
+          if (typeof pageInfo.endCursor !== "string" || !pageInfo.endCursor) {
+            throw new Error("GitHub GraphQL closed issues endCursor missing");
+          }
+          closedAfter = pageInfo.endCursor;
+        }
+
+        // Family roots from native parent edges across open ∪ closed (cycle-safe).
+        const allByNumber = new Map<number, SnapshotTicket>([...tickets, ...closedPool]);
+        const rootOf = (ticket: SnapshotTicket): SnapshotTicket => {
+          const seen = new Set<number>();
+          let current = ticket;
+          for (;;) {
+            if (seen.has(current.issueNumber)) return current;
+            seen.add(current.issueNumber);
+            const parentNumber = current.parentIssueNumber;
+            if (parentNumber === null) return current;
+            const parent = allByNumber.get(parentNumber);
+            if (!parent) return current; // edge outside the book — self is the best clock
+            current = parent;
+          }
+        };
+
+        const nowMs = retentionNow.getTime();
+        for (const candidate of closedPool.values()) {
+          if (tickets.has(candidate.issueNumber)) continue;
+          const root = rootOf(candidate);
+          if (root.state === "open") {
+            // 陪跑: merged children stay while the family root is open.
+            tickets.set(candidate.issueNumber, candidate);
+            continue;
+          }
+          const rootClosedAt = root.closedAt;
+          if (rootClosedAt === null) {
+            throw new Error(`closed family root #${root.issueNumber} missing closedAt`);
+          }
+          if (Date.parse(rootClosedAt) + RETENTION_WINDOW_MS > nowMs) {
+            tickets.set(candidate.issueNumber, candidate);
+          }
+          // else: the family has exited (root closedAt+24h passed) — not supplied.
+        }
       }
 
       const closedNumbers = [
@@ -493,6 +604,8 @@ function assertBinding(binding: BookRepoBinding): { owner: string; repo: string 
 export async function fetchBoardSnapshot(input: {
   bindings: readonly BookRepoBinding[];
   closedIssueNumbersByBook?: Readonly<Record<string, readonly number[]>>;
+  /** Retention clock for the merge+24h candidate supply (#162); injected per fetch. */
+  retentionNow?: Date;
   transport: TicketSnapshotTransport;
   signal?: AbortSignal;
 }): Promise<BoardSnapshot> {
@@ -523,6 +636,7 @@ export async function fetchBoardSnapshot(input: {
         owner,
         repo,
         closedIssueNumbers,
+        ...(input.retentionNow !== undefined ? { retentionNow: input.retentionNow } : {}),
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
       });
       books.push({
