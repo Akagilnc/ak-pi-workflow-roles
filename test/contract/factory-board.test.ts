@@ -3403,6 +3403,34 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
       ],
       { mtime: new Date(nowMs - 300_000) },
     );
+    // #15 latest judge + only historical unknown → 大理寺(审票) (unknown 史不算开工证据)
+    await writeRunSession(
+      ledgerDir, 15, "mystery-hist@x",
+      [sessionHeader("2026-08-05T08:10:00.000Z"), assistantUsage("2026-08-05T08:15:00.000Z", 0.01, 10)],
+      { mtime: new Date(nowMs - 13_800_000) },
+    );
+    await writeRunSession(
+      ledgerDir, 15, "judge-after-unknown@x",
+      [sessionHeader("2026-08-05T10:20:00.000Z"), ...acceptedJudgeFinal("2026-08-05T10:25:00.000Z", { judgeStatus: "converged" }, 0.05, 50)],
+      { mtime: new Date(nowMs - 5_700_000) },
+    );
+    // #16 latest unknown + historical known coder → 未知集 (latest unknown 不因历史改列)
+    await writeRunSession(
+      ledgerDir, 16, "coder-hist@x",
+      [sessionHeader("2026-08-05T08:20:00.000Z"), ...acceptedCoderFinal("2026-08-05T08:25:00.000Z", 0.01, 10)],
+      { mtime: new Date(nowMs - 12_900_000) },
+    );
+    await writeRunSession(
+      ledgerDir, 16, "mystery-latest@x",
+      [sessionHeader("2026-08-05T11:20:00.000Z"), assistantUsage("2026-08-05T11:21:00.000Z", 0.02, 20)],
+      { mtime: new Date(nowMs - 2_400_000) },
+    );
+    // #17 retained closed + latest unknown → 已完成 (closed 优先于 unknown)
+    await writeRunSession(
+      ledgerDir, 17, "mystery-closed@x",
+      [sessionHeader("2026-08-05T07:00:00.000Z"), assistantUsage("2026-08-05T07:05:00.000Z", 0.01, 10)],
+      { mtime: new Date(nowMs - 18_000_000) },
+    );
 
     const before = await treeFingerprint(ledgerDir);
     const html = await renderFactoryBoardHtml(
@@ -3430,6 +3458,14 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
                 ticket({ issueNumber: 12, title: "marshal-escalate", state: "open" }),
                 ticket({ issueNumber: 13, title: "coder-fly-older", state: "open" }),
                 ticket({ issueNumber: 14, title: "marshal-drive", state: "open" }),
+                ticket({ issueNumber: 15, title: "judge-after-unknown", state: "open" }),
+                ticket({ issueNumber: 16, title: "unknown-after-coder", state: "open" }),
+                ticket({
+                  issueNumber: 17,
+                  title: "closed-unknown",
+                  state: "closed",
+                  closedAt: "2026-08-05T08:00:00.000Z",
+                }),
               ],
             },
           ],
@@ -3444,7 +3480,7 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
     assert.equal(placementOf(html, "roles", 1), "done");
     assert.equal(placementOf(html, "roles", 2), "pending");
     assert.equal(placementOf(html, "roles", 3), "court", "judge without identified non-judge history → 大理寺(审票)");
-    assert.equal(placementOf(html, "roles", 4), "marshal", "judge with coder history → 刑部(判卷)");
+    assert.equal(placementOf(html, "roles", 4), "marshal", "latest judge + historical coder → 刑部(判卷)");
     assert.equal(placementOf(html, "roles", 5), "coder");
     assert.equal(placementOf(html, "roles", 6), "marshal", "fixer latest → 刑部");
     assert.equal(placementOf(html, "roles", 7), "marshal", "reviewer latest → 刑部");
@@ -3454,6 +3490,10 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
     assert.equal(placementOf(html, "roles", 9), "unknown", "unknown latest station never forms a column");
     assert.equal(placementOf(html, "roles", 11), "court", "escalate overlay does not change placement (judge-only)");
     assert.equal(placementOf(html, "roles", 12), "marshal", "escalate overlay does not change placement (with coder history)");
+    // 归列交叉 Red（#162 Testing Decisions）
+    assert.equal(placementOf(html, "roles", 15), "court", "latest judge + only historical unknown → 大理寺(审票)");
+    assert.equal(placementOf(html, "roles", 16), "unknown", "latest unknown + historical known → 未知集");
+    assert.equal(placementOf(html, "roles", 17), "done", "retained closed + latest unknown → 已完成 (closed 优先)");
 
     // Escalate overlay: state value distinct, placement unchanged.
     const t11 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "11");
@@ -3492,18 +3532,25 @@ test("kanban placement totality: every ticket lands in its yamen column or the u
     // Unknown set: badge count + item, and the card is reachable from the unknown container.
     const badge = elementsWith(html, "data-unknown-badge")[0];
     assert.ok(badge, "unknown badge present");
-    assert.equal(badge["data-unknown-count"], "1");
+    assert.equal(badge["data-unknown-count"], "2");
     assert.ok(
       elementsWith(html, "data-unknown-item").some(
         (el) => el["data-unknown-item"] === "9" && el["data-book"] === "roles",
       ),
       "unknown badge expands to the same mechanical set",
     );
+    assert.ok(
+      elementsWith(html, "data-unknown-item").some(
+        (el) => el["data-unknown-item"] === "16" && el["data-book"] === "roles",
+      ),
+      "latest-unknown-with-known-history stays in the unknown set",
+    );
     const unknownSet = elementsWith(html, "data-unknown-set")[0];
     assert.ok(unknownSet, "unknown container present in the lane");
-    // The unknown card is not inside any column container.
+    // Unknown cards are not inside any column container.
     for (const col of laneColumnOrder(html, "roles")) {
       assert.ok(!columnEntryOrder(html, "roles", col).includes("9"), `#9 must not sit in column ${col}`);
+      assert.ok(!columnEntryOrder(html, "roles", col).includes("16"), `#16 must not sit in column ${col}`);
     }
   } finally {
     await rm(workspace, { recursive: true, force: true });
@@ -3680,82 +3727,6 @@ function retentionRunner(scenario: RetentionScenario, counters?: { closedDrainCa
   };
 }
 
-test("retention supply: window, family shared parent clock, named-drill residency", async () => {
-  const counters = { closedDrainCalls: 0 };
-  const runner = retentionRunner(
-    {
-      openNodes: [
-        {
-          number: 10,
-          title: "open-root",
-          state: "OPEN",
-          closedAt: null,
-          milestone: null,
-          parent: null,
-          blockedBy: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
-        },
-      ],
-      closedPages: [
-        {
-          nodes: [
-            // A: child closed 48h ago under open root → 陪跑 retained
-            closedNode(11, "2026-08-04T12:00:00.000Z", 10),
-            // B: root closed 25h ago; child closed 1h ago → family exits by root clock
-            closedNode(20, "2026-08-05T11:00:00.000Z", null),
-            closedNode(21, "2026-08-06T11:00:00.000Z", 20),
-            // C: root closed 1h ago; child closed 25h ago → whole family retained
-            closedNode(30, "2026-08-06T11:00:00.000Z", null),
-          ],
-          hasNextPage: true,
-          endCursor: "cursor-closed-1",
-        },
-        {
-          nodes: [
-            closedNode(31, "2026-08-05T11:00:00.000Z", 30),
-            // boundary: exactly closedAt+24h == now → expired
-            closedNode(40, "2026-08-05T12:00:00.000Z", null),
-            // boundary +1ms → retained
-            closedNode(41, "2026-08-05T12:00:00.001Z", null),
-            // drill candidate: clock-expired but named → fetched separately below
-            closedNode(50, "2026-08-03T12:00:00.000Z", null),
-          ],
-          hasNextPage: false,
-          endCursor: null,
-        },
-      ],
-      drillNodes: { 50: closedNode(50, "2026-08-03T12:00:00.000Z", null) },
-    },
-    counters,
-  );
-
-  const tickets = await createGhTicketSnapshotTransport(runner).listBookTickets({
-    owner: "acme",
-    repo: "roles",
-    closedIssueNumbers: [50],
-    retentionNow: new Date(RETENTION_NOW),
-  });
-
-  assert.equal(counters.closedDrainCalls, 2, "closed drain paginates to completion");
-  const present = new Set(tickets.map((t) => t.issueNumber));
-  assert.deepEqual(
-    [...present].sort((a, b) => a - b),
-    [10, 11, 30, 31, 41, 50],
-    "open + retained + drill only",
-  );
-  assert.ok(!present.has(20) && !present.has(21), "family exits together by the root closedAt clock");
-  assert.ok(!present.has(40), "exactly closedAt+24h is expired");
-  assert.ok(present.has(41), "closedAt+24h > now stays");
-  assert.ok(present.has(11), "closed child 陪跑 while the family root is open");
-  assert.ok(present.has(31), "old child rides the family clock while the root stays in window");
-  assert.ok(present.has(50), "named closed drill is resident regardless of the window");
-
-  const t31 = tickets.find((t) => t.issueNumber === 31);
-  assert.equal(t31?.parentIssueNumber, 30, "family edge facts survive outside the OPEN query");
-  const t11 = tickets.find((t) => t.issueNumber === 11);
-  assert.equal(t11?.parentIssueNumber, 10);
-  assert.equal(t11?.closedAt, "2026-08-04T12:00:00.000Z");
-});
-
 test("retention drain refuses silent truncation and validates the injected clock", async () => {
   const truncated: GhApiRunner = async (args) => {
     const queryArg = args.find((a, i) => args[i - 1] === "-f" && a.startsWith("query="));
@@ -3830,60 +3801,86 @@ test("fetchBoardSnapshot passes retentionNow through only when supplied", async 
   assert.equal((calls[1]?.["retentionNow"] as Date | undefined)?.toISOString(), RETENTION_NOW);
 });
 
-test("watch lifecycle re-loads the snapshot per tick (retention candidates stay fresh)", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "factory-board-watch-view-"));
+/**
+ * #162 retention Red through the production path only:
+ * createGhTicketSnapshotTransport → fetchBoardSnapshot → startFactoryBoardPage.loadView
+ * (tick by tick) → HTML. Never hand-return a snapshot that already contains closed tickets.
+ */
+test("retention tracer: transport→fetch→watch loadView→HTML (window, family clock, drill)", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-retention-tracer-"));
   try {
     const ledgerDir = join(workspace, "ledger");
-    await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
-    await mkdir(join(ledgerDir, "issues", "2"), { recursive: true });
-
+    // Zero-run issue dirs so the render seam can join every retained ticket.
+    for (const n of [10, 11, 20, 21, 30, 31, 40, 41, 50]) {
+      await mkdir(join(ledgerDir, "issues", String(n)), { recursive: true });
+    }
     const before = await treeFingerprint(ledgerDir);
     const outputPath = join(workspace, "out", "board.html");
-    let nowMs = Date.parse("2026-08-05T16:00:00.000Z");
+    let nowMs = Date.parse(RETENTION_NOW);
     const { scheduler, ticks } = manualBoardScheduler();
     const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
 
-    const viewOpenOnly: FactoryBoardView = {
-      ok: true,
-      snapshot: {
-        books: [
+    const counters = { closedDrainCalls: 0 };
+    const runner = retentionRunner(
+      {
+        openNodes: [
           {
-            bookKey: "roles",
-            owner: "acme",
-            repo: "roles",
-            tickets: [ticket({ issueNumber: 1, title: "open one", state: "open" })],
+            number: 10,
+            title: "open-root",
+            state: "OPEN",
+            closedAt: null,
+            milestone: null,
+            parent: null,
+            blockedBy: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
           },
         ],
-      },
-    };
-    const viewWithRetained: FactoryBoardView = {
-      ok: true,
-      snapshot: {
-        books: [
+        closedPages: [
           {
-            bookKey: "roles",
-            owner: "acme",
-            repo: "roles",
-            tickets: [
-              ticket({ issueNumber: 1, title: "open one", state: "open" }),
-              ticket({
-                issueNumber: 2,
-                title: "just merged",
-                state: "closed",
-                closedAt: "2026-08-05T15:30:00.000Z",
-              }),
+            nodes: [
+              // A: child closed 48h ago under open root → 陪跑 retained
+              closedNode(11, "2026-08-04T12:00:00.000Z", 10),
+              // B: root closed 25h ago; child closed 1h ago → family exits by root clock
+              closedNode(20, "2026-08-05T11:00:00.000Z", null),
+              closedNode(21, "2026-08-06T11:00:00.000Z", 20),
+              // C: root closed 1h ago; child closed 25h ago → whole family retained
+              closedNode(30, "2026-08-06T11:00:00.000Z", null),
             ],
+            hasNextPage: true,
+            endCursor: "cursor-closed-1",
+          },
+          {
+            nodes: [
+              closedNode(31, "2026-08-05T11:00:00.000Z", 30),
+              // boundary: exactly closedAt+24h == now → expired
+              closedNode(40, "2026-08-05T12:00:00.000Z", null),
+              // boundary +1ms → retained at RETENTION_NOW; exits on the next tick
+              closedNode(41, "2026-08-05T12:00:00.001Z", null),
+              // drill candidate: clock-expired but named → fetched via closedIssueNumbers
+              closedNode(50, "2026-08-03T12:00:00.000Z", null),
+            ],
+            hasNextPage: false,
+            endCursor: null,
           },
         ],
+        drillNodes: { 50: closedNode(50, "2026-08-03T12:00:00.000Z", null) },
       },
-    };
+      counters,
+    );
+    const transport = createGhTicketSnapshotTransport(runner);
 
     let loadCalls = 0;
     const handle = startFactoryBoardPage({
       books,
       loadView: async () => {
         loadCalls += 1;
-        return loadCalls === 1 ? viewOpenOnly : viewWithRetained;
+        // Production CLI shape: adapter + retentionNow clock, never a hand-built closed snapshot.
+        const snapshot = await fetchBoardSnapshot({
+          bindings: [{ bookKey: "roles", owner: "acme", repo: "roles" }],
+          closedIssueNumbersByBook: { roles: [50] },
+          retentionNow: new Date(nowMs),
+          transport,
+        });
+        return { ok: true, snapshot };
       },
       outputPath,
       refreshBoundarySeconds: 1,
@@ -3895,29 +3892,80 @@ test("watch lifecycle re-loads the snapshot per tick (retention candidates stay 
     assert.equal(first.outputPath, await realpath(outputPath));
     let html = await readFile(outputPath, "utf8");
     assert.equal(loadCalls, 1, "loadView supplies the startup snapshot too (not fixed at start)");
-    assert.ok(elementsWith(html, "data-ticket").some((t) => t["data-ticket"] === "1"));
-    assert.ok(!elementsWith(html, "data-ticket").some((t) => t["data-ticket"] === "2"));
+    assert.ok(counters.closedDrainCalls >= 2, "closed drain paginates to completion on the production path");
 
-    nowMs = Date.parse("2026-08-05T16:00:10.000Z");
+    const present = () =>
+      new Set(
+        elementsWith(html, "data-ticket")
+          .filter((t) => t["data-book"] === "roles")
+          .map((t) => Number(t["data-ticket"])),
+      );
+    let onBoard = present();
+    assert.deepEqual(
+      [...onBoard].sort((a, b) => a - b),
+      [10, 11, 30, 31, 41, 50],
+      "HTML shows open + retained + drill only",
+    );
+    assert.ok(!onBoard.has(20) && !onBoard.has(21), "family exits together by the root closedAt clock");
+    assert.ok(!onBoard.has(40), "exactly closedAt+24h is expired");
+    assert.ok(onBoard.has(41), "just-inside 24h window is retained on the board");
+    assert.ok(onBoard.has(11), "closed child 陪跑 under open parent");
+    assert.equal(placementOf(html, "roles", 11), "done", "陪跑 closed child lands in 已完成 cluster");
+    assert.equal(
+      elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "11")?.["data-parent-issue"],
+      "10",
+      "family edge facts survive outside the OPEN query onto the page",
+    );
+    const family10 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "10");
+    assert.ok(family10, "open root family section is on the board");
+    assert.equal(family10["data-placement"], "pending", "open root places the family by its own facts");
+    assert.ok(onBoard.has(31), "old child rides the family clock while the root stays in window");
+    const family30 = elementsWith(html, "data-family").find((f) => f["data-parent"] === "30");
+    assert.ok(family30, "closed-root family travels whole into 已完成");
+    assert.equal(family30["data-placement"], "done");
+    assert.equal(placementOf(html, "roles", 31), "done");
+    assert.ok(onBoard.has(50), "named closed drill is resident regardless of the window");
+    assert.equal(placementOf(html, "roles", 50), "done");
+    assert.equal(placementOf(html, "roles", 41), "done", "just-closed retained ticket lands in 已完成");
+
+    // Next tick: advance past #41's closedAt+24h so the same transport path drops it.
+    nowMs = Date.parse("2026-08-06T12:00:00.002Z");
     ticks[0]!();
     for (let i = 0; i < 25; i += 1) {
       html = await readFile(outputPath, "utf8");
-      if (loadCalls >= 2 && html.includes('data-generated-at="2026-08-05T16:00:10.000Z"')) break;
+      if (loadCalls >= 2 && html.includes('data-generated-at="2026-08-06T12:00:00.002Z"')) break;
       await new Promise((r) => setTimeout(r, 20));
     }
-    assert.ok(loadCalls >= 2, "each tick re-loads the snapshot");
+    assert.ok(loadCalls >= 2, "each tick re-loads the snapshot through the adapter");
     assert.equal(
       elementsWith(html, "data-generated-at")[0]?.["data-generated-at"],
-      "2026-08-05T16:00:10.000Z",
+      "2026-08-06T12:00:00.002Z",
     );
-    const t2 = elementsWith(html, "data-ticket").find((t) => t["data-ticket"] === "2");
-    assert.ok(t2, "newly supplied retention candidate appears within the declared bound");
-    assert.equal(t2["data-placement"], "done", "retained closed ticket lands in 已完成");
-    assert.equal(await treeFingerprint(ledgerDir), before, "watch re-load stays read-only");
+    onBoard = present();
+    assert.ok(!onBoard.has(41), "24h exit is observed on the next watch tick");
+    assert.deepEqual(
+      [...onBoard].sort((a, b) => a - b),
+      [10, 11, 30, 31, 50],
+      "remaining retained + drill set after the window tick",
+    );
+    assert.ok(onBoard.has(11), "open-parent 陪跑 survives the tick");
+    assert.ok(onBoard.has(50), "named drill stays across ticks");
+    assert.equal(await treeFingerprint(ledgerDir), before, "retention watch path stays read-only");
 
     await handle.stop();
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
 
-    // loadView failure faults the lifecycle with the original cause (no silent continuation).
+test("watch lifecycle faults loadView failures and requires view or loadView", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "factory-board-watch-fault-"));
+  try {
+    const ledgerDir = join(workspace, "ledger");
+    await mkdir(join(ledgerDir, "issues", "1"), { recursive: true });
+    const books: FactoryBoardBook[] = [{ bookKey: "roles", ledgerDir }];
+    const nowMs = Date.parse("2026-08-05T16:00:00.000Z");
+
     const failing = startFactoryBoardPage({
       books,
       loadView: async () => {
@@ -3931,7 +3979,6 @@ test("watch lifecycle re-loads the snapshot per tick (retention candidates stay 
     await assert.rejects(failing.started, /snapshot source exploded/);
     await assert.rejects(() => failing.stop(), /snapshot source exploded/);
 
-    // Neither view nor loadView is a caller error, not an empty board.
     assert.throws(
       () =>
         startFactoryBoardPage({
