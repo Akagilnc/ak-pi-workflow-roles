@@ -342,15 +342,16 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(jsonl.diagnostic, "provider rejected the request");
   assert.equal(isChildDiagnosticFloodLine(JSON.stringify({ event: "tool_execution_end" })), true);
 
-  // Pi auth-guidance multi-line stderr: docs path footers must not wash the primary diagnostic.
+  // Pi auth-guidance multi-line stderr: help-footer lines must not wash the primary diagnostic.
+  const primaryAuthDiagnostic = "No API key found for the selected model.";
   const authGuidanceStderr = [
-    "No API key found for the selected model.",
+    primaryAuthDiagnostic,
     "",
     "Use /login to log into a provider via OAuth or API key. See:",
-    "  /tmp/pi-docs/providers.md",
-    "  /tmp/pi-docs/models.md",
+    "  /tmp/example-docs/alpha.md",
+    "  /tmp/example-docs/beta.md",
   ].join("\n");
-  assert.equal(isChildDiagnosticHelpFooterLine("/tmp/pi-docs/models.md"), true);
+  assert.equal(isChildDiagnosticHelpFooterLine("/tmp/example-docs/alpha.md"), true);
   assert.equal(
     isChildDiagnosticHelpFooterLine(
       "Use /login to log into a provider via OAuth or API key. See:",
@@ -368,10 +369,10 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
     },
   });
   assert.equal(authGuidance.cause, "provider");
-  assert.equal(authGuidance.diagnostic, "No API key found for the selected model.");
+  // Typed sentinel round-trip: primary diagnostic retained, not a footer line.
+  assert.equal(authGuidance.diagnostic, primaryAuthDiagnostic);
   assert.equal(authGuidance.identity?.name, "MissingProviderCredential");
   assert.equal(authGuidance.identity?.code, "xai");
-  assert.equal(authGuidance.diagnostic.includes("models.md"), false);
 });
 
 test("failure settlement durably records Error Artifact before presentation returns", async () => {
@@ -415,7 +416,8 @@ test("failure settlement durably records Error Artifact before presentation retu
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
     assert.equal(terminal.roleOutcome.cause, "activation");
-    assert.equal(terminal.roleOutcome.diagnostic.includes("provider rejected credentials"), true);
+    // Typed sentinel round-trip of the injected diagnostic (not presentation prose).
+    assert.equal(terminal.roleOutcome.diagnostic, "provider rejected credentials");
     assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
     assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
 
@@ -472,11 +474,16 @@ test("controlled failure emits one stdout Terminal and one concise stderr diagno
       stdout,
       stderr,
       expectedCause: "activation",
-      diagnosticIncludes: "provider boom",
+      diagnosticEquals: "provider boom",
     });
+    // stderr: emission shape + non-flood only (AC6) — not selected presentation prose.
     assert.equal(stderr[0]!.includes("at Object.fn"), false);
     assert.equal(stderr[0]!.includes("event:"), false);
     assert.equal(stderr[0]!.includes("tokens="), false);
+    assert.equal(
+      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
+      1,
+    );
     assert.equal(terminal.runId, "run-fail-emit-001");
   });
 });
@@ -1176,8 +1183,8 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
               "No API key found for the selected model.",
               "",
               "Use /login to log into a provider via OAuth or API key. See:",
-              "  /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md",
-              "  /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/docs/models.md",
+              "  /tmp/example-docs/alpha.md",
+              "  /tmp/example-docs/beta.md",
             ].join("\n"),
             timedOut: false,
             args: [...args],
@@ -1194,12 +1201,14 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
       identityName: "MissingProviderCredential",
       identityCode: "xai",
     });
-    // Typed credential-boundary identity — not generated provider help prose.
+    // Typed credential-boundary identity + emission bounds (AC6).
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       assert.equal(terminal.roleOutcome.cause, "provider");
       assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
       assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
+      assert.ok(terminal.roleOutcome.diagnostic.length > 0);
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
@@ -1211,9 +1220,11 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
     assert.equal(errorBody.identity?.code, "xai");
     assert.equal(typeof errorBody.diagnostic, "string");
     assert.ok(errorBody.diagnostic.length > 0);
-    // Help-footer lines must not become the concise presentation (AC3).
-    assert.equal(stderr[0]!.includes("models.md"), false);
-    assert.equal(stderr[0]!.includes("providers.md"), false);
+    assert.equal(
+      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
+      1,
+    );
+    assert.ok(stderr[0]!.length <= CONCISE_DIAGNOSTIC_MAX_CHARS + 32);
   });
 });
 
@@ -1245,7 +1256,7 @@ test("default runner empty-auth retains provider cause, identity, and primary di
       identityName: "MissingProviderCredential",
       identityCode: "xai",
     });
-    // Typed credential channel — not Pi help prose or docs footers.
+    // Typed credential channel + emission bounds (AC6) — not presentation prose.
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       assert.equal(terminal.roleOutcome.cause, "provider");
@@ -1253,7 +1264,6 @@ test("default runner empty-auth retains provider cause, identity, and primary di
       assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
       assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
       assert.ok(terminal.roleOutcome.diagnostic.length > 0);
-      assert.equal(terminal.roleOutcome.diagnostic.includes("models.md"), false);
     }
     const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
       cause: string;
@@ -1262,7 +1272,11 @@ test("default runner empty-auth retains provider cause, identity, and primary di
     assert.equal(errorBody.cause, "provider");
     assert.equal(errorBody.identity?.name, "MissingProviderCredential");
     assert.equal(errorBody.identity?.code, "xai");
-    assert.equal(stderr[0]!.includes("models.md"), false);
+    assert.equal(
+      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
+      1,
+    );
+    assert.ok(stderr[0]!.length <= CONCISE_DIAGNOSTIC_MAX_CHARS + 32);
   });
 });
 
@@ -1379,6 +1393,132 @@ test("Error Artifact primary collision retains original failure cause with Termi
     // One complete Terminal — must not escape to outer raw catch with zero stdout.
     assert.equal(stdout.length, 1);
     assert.equal(result.terminal !== undefined, true);
+  });
+});
+
+test("exhausted fixed Error Artifact names still settle original cause via unique fallback", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "exhaust fixed error artifact names"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-error-artifact-exhausted-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          // Occupy every fixed preferred Error Artifact candidate as a directory.
+          // Settlement must not escape to outer catch with only the last EISDIR.
+          await mkdir(join(runDir, "artifacts", "error.json"), { recursive: true });
+          await mkdir(join(runDir, "artifacts", "error.settlement.json"), {
+            recursive: true,
+          });
+          await mkdir(join(runDir, "error.settlement.json"), { recursive: true });
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          return {
+            code: 1,
+            stdout: "",
+            stderr: "Error: original activation boom\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "activation",
+      diagnosticEquals: "original activation boom",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "activation");
+      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      assert.equal(terminal.roleOutcome.diagnostic, "original activation boom");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+      publicationIssues?: Array<{ identity?: { code?: string | number } }>;
+    };
+    assert.equal(errorBody.cause, "activation");
+    assert.equal(errorBody.diagnostic, "original activation boom");
+    assert.ok(Array.isArray(errorBody.publicationIssues));
+    assert.ok(
+      errorBody.publicationIssues!.some((issue) => issue.identity?.code === "EISDIR"),
+    );
+    assert.equal(stdout.length, 1);
+    assert.equal(result.terminal !== undefined, true);
+  });
+});
+
+test("malformed session JSONL settles as typed session failure retaining SyntaxError identity", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "malformed session transcript"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-malformed-session-jsonl-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          // Invalid JSONL must not wash into cause=output generic absence.
+          await writeFile(join(sessionDir, "session.jsonl"), "{not-json\n", "utf8");
+          return {
+            code: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "session",
+      identityName: "SyntaxError",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "session");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "SyntaxError");
+      assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
+      assert.ok(terminal.roleOutcome.diagnostic.length > 0);
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      identity?: { name?: string };
+      diagnostic: string;
+    };
+    assert.equal(errorBody.cause, "session");
+    assert.equal(errorBody.identity?.name, "SyntaxError");
+    assert.equal(errorBody.diagnostic, terminal.roleOutcome.diagnostic);
+    assert.equal(stdout.length, 1);
+    assert.equal(
+      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
+      1,
+    );
   });
 });
 

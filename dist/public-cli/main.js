@@ -8852,6 +8852,7 @@ import { writeFile as writeFile4 } from "node:fs/promises";
 import { join as join6 } from "node:path";
 
 // src/public-cli/settlement.ts
+import { randomUUID } from "node:crypto";
 import { readdir, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join5 } from "node:path";
 
@@ -9107,11 +9108,47 @@ function classifyPostAdmissionFailure(input) {
     details: { code: input.code }
   };
 }
+function isMissingPathError(error) {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
+function sessionReadFailure(error, fallbackMessage) {
+  if (error instanceof SyntaxError) {
+    const failed2 = new SyntaxError(
+      error.message || fallbackMessage
+    );
+    failed2.knownCause = "session";
+    return failed2;
+  }
+  if (error instanceof Error) {
+    const failed2 = new Error(
+      error.message || error.name || fallbackMessage
+    );
+    failed2.name = error.name || "Error";
+    failed2.knownCause = "session";
+    const code = error.code;
+    if (typeof code === "string" || typeof code === "number") {
+      failed2.failureCode = code;
+      failed2.code = code;
+    }
+    return failed2;
+  }
+  const failed = new Error(String(error));
+  failed.knownCause = "session";
+  return failed;
+}
 async function readLatestSessionEntries(sessionDirectory) {
   const files = (await readdir(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
   if (files.length === 0) return [];
   const text = await readFile3(join5(sessionDirectory, files.at(-1)), "utf8");
-  return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const entries = [];
+  for (const line of text.trim().split("\n").filter(Boolean)) {
+    try {
+      entries.push(JSON.parse(line));
+    } catch (error) {
+      throw sessionReadFailure(error, "malformed session JSONL");
+    }
+  }
+  return entries;
 }
 function extractSessionProviderStop(entries) {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -9278,12 +9315,13 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
     { kind: "evidence", path: evidencePath }
   ];
 }
-async function trySettleJudgeTerminalResult(admitted) {
+async function settleLawfulJudgeTerminalResult(admitted) {
   let entries;
   try {
     entries = await readLatestSessionEntries(admitted.sessionDirectory);
-  } catch {
-    return void 0;
+  } catch (error) {
+    if (isMissingPathError(error)) return void 0;
+    throw error instanceof Error && error.knownCause === "session" ? error : sessionReadFailure(error, "session unreadable");
   }
   const roleOutcome = extractJudgeRoleOutcome(entries);
   if (roleOutcome === void 0) {
@@ -9301,6 +9339,9 @@ async function trySettleJudgeTerminalResult(admitted) {
     artifacts,
     runId: admitted.runId
   };
+}
+async function trySettleJudgeTerminalResult(admitted) {
+  return settleLawfulJudgeTerminalResult(admitted);
 }
 function publicationAttemptFromError(path, error) {
   if (error instanceof Error) {
@@ -9331,8 +9372,13 @@ async function resolveFailureArtifactsBase(runDirectory) {
     };
   }
 }
-async function writeFailureJsonRetainingCause(candidates, basePayload, priorIssues) {
+async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbackDirs, stem, basePayload, priorIssues) {
   const issues = [...priorIssues];
+  const candidates = [
+    ...preferredCandidates,
+    // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
+    ...uniqueFallbackDirs.map((dir) => join5(dir, `${stem}.${randomUUID()}.json`))
+  ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
     const payload = issues.length === 0 ? basePayload : { ...basePayload, publicationIssues: issues };
@@ -9367,6 +9413,7 @@ async function publishFailureArtifacts(admitted, failure) {
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
   const underArtifacts = baseDir === join5(admitted.runDirectory, "artifacts");
+  const uniqueFallbackDirs = underArtifacts ? [baseDir, admitted.runDirectory] : [baseDir];
   const errorCandidates = underArtifacts ? [
     join5(baseDir, "error.json"),
     join5(baseDir, "error.settlement.json"),
@@ -9394,6 +9441,8 @@ async function publishFailureArtifacts(admitted, failure) {
   };
   const errorWrite = await writeFailureJsonRetainingCause(
     errorCandidates,
+    uniqueFallbackDirs,
+    "error",
     errorPayloadBase,
     priorIssues
   );
@@ -9411,6 +9460,8 @@ async function publishFailureArtifacts(admitted, failure) {
   };
   const evidenceWrite = await writeFailureJsonRetainingCause(
     evidenceCandidates,
+    uniqueFallbackDirs,
+    "evidence",
     evidencePayload,
     // Evidence records the same publication collisions observed placing the error body.
     errorWrite.issues
