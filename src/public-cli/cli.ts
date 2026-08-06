@@ -34,6 +34,10 @@ import {
   listHelpCapabilities,
   type PublicThinkingLevel,
 } from "./registry.ts";
+import {
+  formatCliDiagnostic,
+  presentStructuralRejection,
+} from "./settlement.ts";
 
 export {
   buildExplicitInternalActivationArgs,
@@ -434,11 +438,20 @@ export async function runAkRole(
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof CliUsageError) {
-      io.stderr(`ak-role: ${error.message}\n`);
+      // Non-judge structural paths share the same rejection presenter as Judge.
+      presentStructuralRejection(error, io);
       return { exitCode: 2 };
     }
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr(`ak-role: ${message}\n`);
+    // Unrecognized outer failure: retain actual name/message identity (no wash).
+    if (error instanceof Error) {
+      const label =
+        error.name !== "" && error.name !== "Error"
+          ? `${error.name}: ${error.message}`
+          : error.message;
+      io.stderr(formatCliDiagnostic(label || error.name || "unrecognized exception"));
+      return { exitCode: 1 };
+    }
+    io.stderr(formatCliDiagnostic(String(error)));
     return { exitCode: 1 };
   }
 }

@@ -378,7 +378,7 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
   const fixSummary = "summary with\ttab and\nnewline";
   const decisionQuestion = "Choose:\nA\tB";
   const reason = "because\nthis\tpath";
-  const entries = [
+  const continueEntries = [
     {
       type: "message",
       message: {
@@ -389,7 +389,6 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
           judgeStatus: "continue",
           note,
           fix: { summary: fixSummary },
-          decisionGate: { question: decisionQuestion },
           classes: [{ name: "A", owner: "o", boundary: "b", disposition: "open" }],
         },
       },
@@ -407,20 +406,39 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
       },
     },
   ];
-  const roleOutcome = extractJudgeRoleOutcome(entries);
-  assert.ok(roleOutcome);
-  assert.equal(roleOutcome.status, "continue");
-  assert.equal(roleOutcome.decisiveFacts.note, note);
-  assert.equal(roleOutcome.decisiveFacts.fixSummary, fixSummary);
-  assert.equal(roleOutcome.decisiveFacts.decisionQuestion, decisionQuestion);
-  const navigator = extractNavigatorFact(entries);
+  const continueOutcome = extractJudgeRoleOutcome(continueEntries);
+  assert.ok(continueOutcome);
+  assert.equal(continueOutcome.status, "continue");
+  assert.equal(continueOutcome.decisiveFacts.note, note);
+  assert.equal(continueOutcome.decisiveFacts.fixSummary, fixSummary);
+
+  const escalateEntries = [
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: false,
+        details: {
+          judgeStatus: "escalate",
+          decisionGate: { question: decisionQuestion, options: ["A", "B"] },
+        },
+      },
+    },
+  ];
+  const escalateOutcome = extractJudgeRoleOutcome(escalateEntries);
+  assert.ok(escalateOutcome);
+  assert.equal(escalateOutcome.status, "escalate");
+  assert.equal(escalateOutcome.decisiveFacts.decisionQuestion, decisionQuestion);
+
+  const navigator = extractNavigatorFact(continueEntries);
   assert.equal(navigator.disposition, "recommendation");
   if (navigator.disposition === "recommendation") {
     assert.equal(navigator.reason, reason);
     assert.equal(navigator.command, "ak-role reviewer");
   }
   const terminal: TerminalResult = {
-    roleOutcome,
+    roleOutcome: continueOutcome,
     navigator,
     artifacts: [
       { kind: "report", path: "/run/artifacts/report.json" },

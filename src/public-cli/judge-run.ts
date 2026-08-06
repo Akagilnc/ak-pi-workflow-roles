@@ -1,5 +1,6 @@
 /**
  * Public Judge Role run: admit → explicit Internal activate → settle Terminal result.
+ * #107: controlled post-admission failures and human decisions settle honestly.
  */
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import {
   runExplicitInternalActivation,
   type ExplicitInternalPiRunner,
 } from "./explicit-internal.ts";
+import { CliUsageError } from "./cli-errors.ts";
 import {
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
@@ -15,8 +17,15 @@ import {
 } from "./invocation.ts";
 import type { SeatModelConfig } from "./config.ts";
 import {
+  classifyPostAdmissionFailure,
+  exitCodeForTerminalOutcome,
   formatTerminalResult,
-  settleJudgeTerminalResult,
+  inspectJudgeSession,
+  isLawfulTypedTerminalOutcome,
+  presentFailureTerminal,
+  presentStructuralRejection,
+  settleJudgeFailureTerminalResult,
+  trySettleJudgeTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 
@@ -78,6 +87,32 @@ export function buildJudgeActivationExtraArgs(
   ];
 }
 
+async function presentControlledFailure(
+  admitted: AdmittedJudgeInvocation,
+  failureInput: {
+    timedOut: boolean;
+    code: number | null;
+    stderr: string;
+    thrown?: unknown;
+  },
+  io: CliIo,
+): Promise<{ exitCode: number; admitted: AdmittedJudgeInvocation }> {
+  const session =
+    failureInput.thrown === undefined && !failureInput.timedOut
+      ? await inspectJudgeSession(admitted.sessionDirectory)
+      : undefined;
+  const failure = classifyPostAdmissionFailure({
+    ...failureInput,
+    ...(session === undefined ? {} : { session }),
+  });
+  const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+  };
+}
+
 export async function runPublicJudge(
   argv: readonly string[],
   env: JudgeRunEnv,
@@ -88,15 +123,25 @@ export async function runPublicJudge(
     project?: string;
   },
 ): Promise<{ exitCode: number; admitted?: AdmittedJudgeInvocation }> {
-  const parsed = parseJudgeArgv(argv);
-  const admitted = await admitJudgeInvocation({
-    home: env.home,
-    cwd: env.cwd,
-    instruction: parsed.instruction,
-    attachmentPaths: parsed.attachmentPaths,
-    ...(parsed.project === undefined ? {} : { project: parsed.project }),
-    ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-  });
+  // Structural parse/admit rejects before model dispatch via shared settlement presenter.
+  let admitted: AdmittedJudgeInvocation;
+  try {
+    const parsed = parseJudgeArgv(argv);
+    admitted = await admitJudgeInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...(parsed.project === undefined ? {} : { project: parsed.project }),
+      ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
 
   const extraArgs = buildJudgeActivationExtraArgs(admitted, {
     ...(env.model === undefined ? {} : { model: env.model }),
@@ -114,16 +159,33 @@ export async function runPublicJudge(
     childEnv.AK_CORRELATION_ID = env.correlationId;
   }
 
-  const result = await runExplicitInternalActivation({
-    packageRoot: env.packageRoot,
-    extraArgs,
-    cwd: admitted.projectRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    env: childEnv,
-    ...(env.timeoutMs === undefined ? { timeoutMs: 600_000 } : { timeoutMs: env.timeoutMs }),
-    ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
-  });
+  let result: Awaited<ReturnType<typeof runExplicitInternalActivation>>;
+  try {
+    result = await runExplicitInternalActivation({
+      packageRoot: env.packageRoot,
+      extraArgs,
+      cwd: admitted.projectRoot,
+      home: env.home,
+      agentDir: env.agentDir,
+      env: childEnv,
+      ...(env.timeoutMs === undefined
+        ? { timeoutMs: 600_000 }
+        : { timeoutMs: env.timeoutMs }),
+      ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
+    });
+  } catch (error) {
+    // Post-admission unrecognized exception — retain actual diagnostic identity.
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+      },
+      io,
+    );
+  }
 
   await writeFile(
     join(admitted.runDirectory, "stderr.log"),
@@ -131,26 +193,25 @@ export async function runPublicJudge(
     "utf8",
   );
 
-  if (result.timedOut) {
-    io.stderr("ak-role: judge role run timed out\n");
-    return { exitCode: 1, admitted };
-  }
-  if (result.code !== 0) {
-    const last =
-      result.stderr.trim() === ""
-        ? ""
-        : `: ${result.stderr.trim().split("\n").at(-1)}`;
-    io.stderr(`ak-role: judge role run failed${last}\n`);
-    return { exitCode: 1, admitted };
+  // Prefer a lawful typed terminal result from the session even when the child
+  // exit is nonzero — infrastructure noise must not wash a completed outcome.
+  const lawful = await trySettleJudgeTerminalResult(admitted);
+  if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    io.stdout(formatTerminalResult(lawful));
+    return {
+      exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+      admitted,
+    };
   }
 
-  try {
-    const terminal = await settleJudgeTerminalResult(admitted);
-    io.stdout(formatTerminalResult(terminal));
-    return { exitCode: 0, admitted };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr(`ak-role: ${message}\n`);
-    return { exitCode: 1, admitted };
-  }
+  return await presentControlledFailure(
+    admitted,
+    {
+      timedOut: result.timedOut,
+      code: result.code,
+      stderr: result.stderr,
+    },
+    io,
+  );
 }
+
