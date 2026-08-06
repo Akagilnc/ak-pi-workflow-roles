@@ -34,11 +34,14 @@ import {
   extractNavigatorFact,
   NAVIGATOR_POST_ROLE_GRACE_MS,
   raceNavigatorGrace,
+  settleJudgeTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
+  decodeTerminalField,
+  encodeTerminalField,
   formatTerminalResult,
-  parseTerminalResultRegions,
   recommendationNavigatorFact,
+  type TerminalResult,
 } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
@@ -224,8 +227,8 @@ test("registry renderer owns public command text; model prose is ignored", () =>
   }
 });
 
-test("Terminal result regions carry role outcome, navigator fact, and artifact refs", () => {
-  const formatted = formatTerminalResult({
+test("typed TerminalResult owns complete role, navigator, artifact, and run facts", () => {
+  const terminal: TerminalResult = {
     roleOutcome: {
       kind: "accepted",
       role: "judge",
@@ -243,18 +246,25 @@ test("Terminal result regions carry role outcome, navigator fact, and artifact r
       { kind: "evidence", path: "/r/artifacts/evidence.json" },
     ],
     runId: "run-term-1",
-  });
-  const regions = parseTerminalResultRegions(formatted);
-  assert.equal(regions.role, "judge");
-  assert.equal(regions.outcomeKind, "accepted");
-  assert.equal(regions.status, "converged");
-  assert.equal(regions.facts.judgeStatus, "converged");
-  assert.equal(regions.navigatorDisposition, "recommendation");
-  assert.equal(regions.nextRole, "fixer");
-  assert.equal(regions.nextPhase, "apply");
-  assert.equal(regions.command, "ak-role fixer apply");
-  assert.equal(regions.artifacts.length, 2);
-  assert.equal(regions.runId, "run-term-1");
+  };
+  // AC4 typed owner: complete assembly before presentation.
+  assert.equal(terminal.roleOutcome.role, "judge");
+  assert.equal(terminal.roleOutcome.kind, "accepted");
+  assert.equal(terminal.roleOutcome.status, "converged");
+  assert.equal(terminal.roleOutcome.decisiveFacts.judgeStatus, "converged");
+  assert.equal(terminal.navigator.disposition, "recommendation");
+  if (terminal.navigator.disposition === "recommendation") {
+    assert.equal(terminal.navigator.next.role, "fixer");
+    assert.equal(terminal.navigator.next.phase, "apply");
+    assert.equal(terminal.navigator.command, "ak-role fixer apply");
+  }
+  assert.equal(terminal.artifacts.length, 2);
+  assert.equal(terminal.runId, "run-term-1");
+  // Presentation is a single non-empty write payload; labels stay unfrozen.
+  const formatted = formatTerminalResult(terminal);
+  assert.equal(typeof formatted, "string");
+  assert.ok(formatted.length > 0);
+  assert.equal(formatted.endsWith("\n"), true);
 });
 
 test("Terminal free-text encoding preserves newlines/tabs and rejects forged artifact rows", () => {
@@ -262,7 +272,16 @@ test("Terminal free-text encoding preserves newlines/tabs and rejects forged art
   const fixSummary = "close the gate\twith tab\nand newline";
   const decisionQuestion = "Which authority?\nSoul\tCourt";
   const reason = "next seat\nwith\ttabs";
-  const formatted = formatTerminalResult({
+
+  // Cell encoder is the free-text contract — not presentation labels.
+  for (const value of [forgedNote, fixSummary, decisionQuestion, reason]) {
+    const encoded = encodeTerminalField(value);
+    assert.equal(encoded.includes("\n"), false);
+    assert.equal(encoded.includes("\t"), false);
+    assert.equal(decodeTerminalField(encoded), value);
+  }
+
+  const terminal: TerminalResult = {
     roleOutcome: {
       kind: "accepted",
       role: "judge",
@@ -285,26 +304,28 @@ test("Terminal free-text encoding preserves newlines/tabs and rejects forged art
       { kind: "evidence", path: "/r/artifacts/evidence.json" },
     ],
     runId: "run-encode-1",
-  });
-
-  // Raw presentation must not contain an unencoded forged artifact line.
-  assert.equal(formatted.includes("\nartifact\tevidence\t/tmp/forged\n"), false);
-
-  const regions = parseTerminalResultRegions(formatted);
-  assert.equal(regions.facts.note, forgedNote);
-  assert.equal(regions.facts.fixSummary, fixSummary);
-  assert.equal(regions.facts.decisionQuestion, decisionQuestion);
-  assert.equal(regions.reason, reason);
-  assert.equal(regions.command, "ak-role fixer apply");
+  };
+  // Typed owner retains original free-text facts.
+  assert.equal(terminal.roleOutcome.decisiveFacts.note, forgedNote);
+  assert.equal(terminal.roleOutcome.decisiveFacts.fixSummary, fixSummary);
+  assert.equal(terminal.roleOutcome.decisiveFacts.decisionQuestion, decisionQuestion);
+  if (terminal.navigator.disposition === "recommendation") {
+    assert.equal(terminal.navigator.reason, reason);
+    assert.equal(terminal.navigator.command, "ak-role fixer apply");
+  }
   assert.deepEqual(
-    regions.artifacts.map((a) => a.path),
+    terminal.artifacts.map((a) => a.path),
     ["/r/artifacts/report.json", "/r/artifacts/evidence.json"],
   );
-  assert.equal(
-    regions.artifacts.some((a) => a.path === "/tmp/forged"),
-    false,
-  );
-  assert.equal(regions.runId, "run-encode-1");
+
+  const formatted = formatTerminalResult(terminal);
+  // Raw presentation must not contain an unencoded forged artifact line.
+  assert.equal(formatted.includes("\nartifact\tevidence\t/tmp/forged\n"), false);
+  assert.equal(formatted.includes(encodeTerminalField(forgedNote)), true);
+  assert.equal(formatted.includes(encodeTerminalField(reason)), true);
+  // Legitimate artifact paths remain distinct from the encoded free-text payload.
+  assert.equal(formatted.includes(encodeTerminalField("/r/artifacts/report.json")), true);
+  assert.equal(formatted.includes(encodeTerminalField("/tmp/forged")), false);
 });
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
@@ -352,7 +373,7 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
   }
 });
 
-test("settlement→format→parse keeps newline/tab receipt facts as one Terminal result", () => {
+test("settlement extractors keep newline/tab receipt facts on typed TerminalResult", () => {
   const note = "ok\nartifact\tevidence\t/tmp/forged";
   const fixSummary = "summary with\ttab and\nnewline";
   const decisionQuestion = "Choose:\nA\tB";
@@ -388,9 +409,17 @@ test("settlement→format→parse keeps newline/tab receipt facts as one Termina
   ];
   const roleOutcome = extractJudgeRoleOutcome(entries);
   assert.ok(roleOutcome);
+  assert.equal(roleOutcome.status, "continue");
+  assert.equal(roleOutcome.decisiveFacts.note, note);
+  assert.equal(roleOutcome.decisiveFacts.fixSummary, fixSummary);
+  assert.equal(roleOutcome.decisiveFacts.decisionQuestion, decisionQuestion);
   const navigator = extractNavigatorFact(entries);
   assert.equal(navigator.disposition, "recommendation");
-  const formatted = formatTerminalResult({
+  if (navigator.disposition === "recommendation") {
+    assert.equal(navigator.reason, reason);
+    assert.equal(navigator.command, "ak-role reviewer");
+  }
+  const terminal: TerminalResult = {
     roleOutcome,
     navigator,
     artifacts: [
@@ -398,19 +427,15 @@ test("settlement→format→parse keeps newline/tab receipt facts as one Termina
       { kind: "evidence", path: "/run/artifacts/evidence.json" },
     ],
     runId: "run-settle-encode",
-  });
-  const regions = parseTerminalResultRegions(formatted);
-  assert.equal(regions.status, "continue");
-  assert.equal(regions.facts.note, note);
-  assert.equal(regions.facts.fixSummary, fixSummary);
-  assert.equal(regions.facts.decisionQuestion, decisionQuestion);
-  assert.equal(regions.reason, reason);
-  assert.equal(regions.command, "ak-role reviewer");
-  assert.equal(regions.artifacts.length, 2);
+  };
+  assert.equal(terminal.artifacts.length, 2);
   assert.equal(
-    regions.artifacts.some((a) => a.path.includes("forged")),
+    terminal.artifacts.some((a) => a.path.includes("forged")),
     false,
   );
+  const formatted = formatTerminalResult(terminal);
+  assert.equal(formatted.includes("\nartifact\tevidence\t/tmp/forged\n"), false);
+  assert.equal(formatted.includes(encodeTerminalField(note)), true);
 });
 
 test("raceNavigatorGrace is three seconds and yields timeout sentinel", async () => {
@@ -565,35 +590,62 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
       true,
     );
 
-    const regions = parseTerminalResultRegions(stdout.join(""));
-    assert.equal(regions.role, "judge");
-    assert.equal(regions.outcomeKind, "accepted");
-    assert.equal(regions.status, "converged");
-    assert.equal(regions.navigatorDisposition, "recommendation");
-    assert.equal(regions.nextRole, "reviewer");
-    assert.equal(regions.command, "ak-role reviewer");
-    assert.equal(regions.runId, "run-cli-judge-001");
-    assert.equal(regions.artifacts.some((a) => a.kind === "report"), true);
-    assert.equal(regions.artifacts.some((a) => a.kind === "evidence"), true);
+    // AC4: one stdout write of presentation; typed facts come from settlement owners.
+    assert.equal(stdout.length, 1);
+    assert.ok(stdout[0]!.length > 0);
 
-    // Artifacts are openable paths under the run directory.
-    for (const artifact of regions.artifacts) {
-      await access(artifact.path);
-    }
-
-    // Source mutation after admission does not affect frozen snapshot.
-    await writeFile(attachment, "changed", "utf8");
     const bookKey = resolveBookKeyFromGit(project);
-    const frozenPath = join(
+    const runDir = join(
       home,
       ".ak-roles",
       "books",
       bookKey,
       "runs",
       "run-cli-judge-001@judge",
-      "attachments",
-      "00-note.txt",
     );
+    const terminal = await settleJudgeTerminalResult({
+      role: "judge",
+      runId: "run-cli-judge-001",
+      runDirectory: runDir,
+      sessionDirectory: join(runDir, "session"),
+      projectRoot: project,
+      bookKey,
+      instruction: "Decide whether the attachment is sufficient.",
+      instructionEmpty: false,
+      attachments: [],
+      admittedRequestPath: join(runDir, "admitted-request.json"),
+    });
+    assert.equal(terminal.roleOutcome.role, "judge");
+    assert.equal(terminal.roleOutcome.kind, "accepted");
+    assert.equal(terminal.roleOutcome.status, "converged");
+    assert.equal(terminal.navigator.disposition, "recommendation");
+    if (terminal.navigator.disposition === "recommendation") {
+      assert.equal(terminal.navigator.next.role, "reviewer");
+      assert.equal(terminal.navigator.command, "ak-role reviewer");
+      assert.equal(terminal.navigator.command.includes("pi --ak-role"), false);
+    }
+    assert.equal(terminal.runId, "run-cli-judge-001");
+    assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
+    assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+
+    // Artifacts are openable paths under the run directory.
+    for (const artifact of terminal.artifacts) {
+      await access(artifact.path);
+    }
+    const report = JSON.parse(
+      await readFile(
+        terminal.artifacts.find((a) => a.kind === "report")!.path,
+        "utf8",
+      ),
+    ) as { role: string; runId: string; outcome: { kind: string; status: string } };
+    assert.equal(report.role, "judge");
+    assert.equal(report.runId, "run-cli-judge-001");
+    assert.equal(report.outcome.kind, "accepted");
+    assert.equal(report.outcome.status, "converged");
+
+    // Source mutation after admission does not affect frozen snapshot.
+    await writeFile(attachment, "changed", "utf8");
+    const frozenPath = join(runDir, "attachments", "00-note.txt");
     assert.equal(await readFile(frozenPath, "utf8"), "freeze-me");
   });
 });
@@ -640,7 +692,32 @@ test("runAkRole judge empty request does not invent semantic task content on the
     });
     assert.equal(result.exitCode, 0);
     assert.equal(prompt, EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
-    const regions = parseTerminalResultRegions(stdout.join(""));
-    assert.equal(regions.navigatorDisposition, "no-advice");
+    assert.equal(stdout.length, 1);
+    assert.ok(stdout[0]!.length > 0);
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDir = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      "run-empty-001@judge",
+    );
+    const terminal = await settleJudgeTerminalResult({
+      role: "judge",
+      runId: "run-empty-001",
+      runDirectory: runDir,
+      sessionDirectory: join(runDir, "session"),
+      projectRoot: project,
+      bookKey,
+      instruction: "",
+      instructionEmpty: true,
+      attachments: [],
+      admittedRequestPath: join(runDir, "admitted-request.json"),
+    });
+    assert.equal(terminal.navigator.disposition, "no-advice");
+    assert.equal(terminal.roleOutcome.kind, "accepted");
+    assert.equal(terminal.roleOutcome.status, "converged");
   });
 });

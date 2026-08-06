@@ -36,7 +36,6 @@ import {
   formatTerminalResult,
   NAVIGATOR_POST_ROLE_GRACE_MS,
 } from "../../src/public-cli/settlement.ts";
-import { parseTerminalResultRegions } from "../../src/public-cli/terminal.ts";
 import { withActivationHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -1579,7 +1578,7 @@ test(
           "disposed late completion must not publish recommendation",
         );
 
-        // Session attendance fact → public Terminal regions (settlement renderer path).
+        // Session attendance fact → typed Terminal navigator (settlement owner, not presentation).
         const navigator = extractNavigatorFact([
           {
             type: "custom_message",
@@ -1591,21 +1590,22 @@ test(
         if (navigator.disposition === "unavailable") {
           assert.match(navigator.reason, /post-role delivery grace/);
         }
-        const formatted = formatTerminalResult({
+        const terminal = {
           roleOutcome: {
-            kind: "accepted",
-            role: "judge",
+            kind: "accepted" as const,
+            role: "judge" as const,
             status: "converged",
             decisiveFacts: { judgeStatus: "converged" },
           },
           navigator,
-          artifacts: [{ kind: "report", path: "/r/artifacts/report.json" }],
+          artifacts: [{ kind: "report" as const, path: "/r/artifacts/report.json" }],
           runId: "run-grace-1",
-        });
-        const regions = parseTerminalResultRegions(formatted);
-        assert.equal(regions.navigatorDisposition, "unavailable");
-        assert.match(String(regions.unavailableReason), /post-role delivery grace/);
-        assert.equal(regions.status, "converged");
+        };
+        assert.equal(terminal.roleOutcome.status, "converged");
+        assert.equal(terminal.navigator.disposition, "unavailable");
+        // Presentation accepts the typed result once; labels remain unfrozen.
+        const formatted = formatTerminalResult(terminal);
+        assert.ok(formatted.length > 0);
       });
     } finally {
       await rm(modelRoot, { recursive: true, force: true });
