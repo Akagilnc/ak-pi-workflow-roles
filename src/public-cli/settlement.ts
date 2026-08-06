@@ -29,12 +29,18 @@ import {
   validateAcceptedCoderDetails,
   type CoderOutput,
 } from "../package-contracts/worker-output.ts";
+import {
+  DOCTOR_OUTPUT_TOOL_NAME,
+  validateRecordedDoctorOutput,
+  type DoctorOutput,
+} from "../doctor-contracts.ts";
 import type { PackagedMethodSkillProvenance } from "../package-resources/method-skill.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
   type AdmittedCollectorInvocation,
+  type AdmittedDoctorInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -556,6 +562,22 @@ function collectorDecisiveFacts(
     legStatuses: receipt.legs
       .map((leg) => `${leg.legId}:${leg.status}`)
       .join(","),
+  };
+}
+
+function doctorDecisiveFacts(output: DoctorOutput): Record<string, unknown> {
+  if (output.status === "refused") {
+    return {
+      doctorStatus: output.status,
+      reason: output.reason,
+      missingEvidenceCount: output.missingEvidence.length,
+    };
+  }
+  return {
+    doctorStatus: output.status,
+    issueNumber: output.case.issueNumber,
+    runsPath: output.case.runsPath,
+    findingsCount: output.findings.length,
   };
 }
 
@@ -1246,6 +1268,174 @@ export async function trySettleCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulCollectorTerminalResult(admitted);
+}
+
+export async function publishDoctorArtifacts(
+  admitted: AdmittedDoctorInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  sessionDirectory: string,
+  options: {
+    readonly doctorOutput?: DoctorOutput;
+  } = {},
+): Promise<TerminalArtifactRef[]> {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join(artifactsDir, "report.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "doctor",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...(options.doctorOutput === undefined
+          ? {}
+          : { receipt: options.doctorOutput }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "doctor",
+        issueNumber: admitted.issueNumber,
+        caseRunsPath: admitted.caseRunsPath,
+        caseIdentity: admitted.caseIdentity,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
+/** Lawful Doctor accepted/refused/audit_escalation outcome extracted from session. */
+export type LawfulDoctorRoleOutcome =
+  | {
+      kind: "accepted";
+      role: "doctor";
+      status: string;
+      decisiveFacts: Readonly<Record<string, unknown>>;
+    }
+  | {
+      kind: "audit_escalation";
+      role: "doctor";
+      status: "audit_escalation";
+      decisiveFacts: Readonly<Record<string, unknown>>;
+    };
+
+export function extractDoctorRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulDoctorRoleOutcome; output?: DoctorOutput } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    const details = message.details;
+    if (isAuditEscalationResult(details)) {
+      return {
+        outcome: {
+          kind: "audit_escalation",
+          role: "doctor",
+          status: "audit_escalation",
+          decisiveFacts: { ...details },
+        },
+      };
+    }
+    try {
+      const output = validateRecordedDoctorOutput(details);
+      const outcome: LawfulDoctorRoleOutcome = {
+        kind: "accepted",
+        role: "doctor",
+        status: output.status,
+        decisiveFacts: doctorDecisiveFacts(output),
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function settleLawfulDoctorTerminalResult(
+  admitted: AdmittedDoctorInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractDoctorRoleOutcome(entries);
+  if (extracted === undefined) return undefined;
+  // Bind completed receipt case identity to the admitted Issue evidence case.
+  if (
+    extracted.output !== undefined &&
+    extracted.output.status === "completed"
+  ) {
+    if (
+      extracted.output.case.issueNumber !== admitted.caseIdentity.issueNumber ||
+      extracted.output.case.runsPath !== admitted.caseIdentity.runsPath
+    ) {
+      const error = new Error(
+        "Doctor receipt case identity does not match admitted case identity",
+      ) as Error & { knownCause: ControlledFailureCause };
+      error.name = "DoctorReceiptBindingError";
+      error.knownCause = "output";
+      throw error;
+    }
+  }
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishDoctorArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    extracted.output === undefined ? {} : { doctorOutput: extracted.output },
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
+}
+
+/** Settle a lawful Doctor Terminal from the admitted session. */
+export async function settleDoctorTerminalResult(
+  admitted: AdmittedDoctorInvocation,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulDoctorTerminalResult(admitted);
+  if (settled === undefined) {
+    throw new Error(
+      "Doctor Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Doctor Terminal; undefined only for genuine absence. */
+export async function trySettleDoctorTerminalResult(
+  admitted: AdmittedDoctorInvocation,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulDoctorTerminalResult(admitted);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

@@ -43,7 +43,7 @@ export type ControlledFailureCause =
   | "unrecognized";
 
 /** Public callable roles that currently produce Terminal outcomes. */
-export type TerminalRoleName = "judge" | "coder" | "collector";
+export type TerminalRoleName = "judge" | "coder" | "collector" | "doctor";
 
 export type TerminalRoleOutcome =
   | {
