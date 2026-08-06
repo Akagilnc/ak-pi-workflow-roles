@@ -40,6 +40,7 @@ import {
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
   presentStructuralRejection,
+  readCollectorInfrastructureFailure,
   readSessionProviderStop,
   settleFailureTerminalResult,
   trySettleCollectorTerminalResult,
@@ -262,6 +263,11 @@ async function dispatchAdmittedCollector(input: {
       };
     }
 
+    // Prefer Collector infrastructure tool failure already on the session principal
+    // (e.g. observe HTTP 404) over a later secondary provider-stop after abort.
+    const infrastructureFailure = await readCollectorInfrastructureFailure(
+      admitted.sessionFile,
+    );
     const sessionProviderStop = await readSessionProviderStop(
       admitted.sessionFile,
     );
@@ -274,7 +280,18 @@ async function dispatchAdmittedCollector(input: {
         ? knownFailureForMissingProviderCredential(env.model, env.credentials)
         : undefined;
     const knownFailure =
-      result.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+      result.knownFailure ??
+      (infrastructureFailure === undefined
+        ? undefined
+        : {
+            cause: infrastructureFailure.cause,
+            diagnostic: infrastructureFailure.diagnostic,
+            ...(infrastructureFailure.identity === undefined
+              ? {}
+              : { identity: infrastructureFailure.identity }),
+          }) ??
+      sessionProviderFailure ??
+      credentialFailure;
     return await presentControlledFailure(
       admitted,
       {

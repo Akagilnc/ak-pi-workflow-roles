@@ -10,6 +10,11 @@ import { dirname, join } from "node:path";
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { loadCollectorManifest } from "../collector-config.ts";
 import {
+  COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_WAIT_TOOL,
+} from "../collector-ledger.ts";
+import {
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
   type JudgeVerdict,
@@ -574,6 +579,76 @@ function sortedUniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
+function toolResultText(message: SessionMessage): string {
+  const content = message.content;
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (
+        typeof part === "object" &&
+        part !== null &&
+        !Array.isArray(part) &&
+        typeof (part as { text?: unknown }).text === "string"
+      ) {
+        return (part as { text: string }).text;
+      }
+      return "";
+    })
+    .join("")
+    .trim();
+}
+
+/** Collector operational tools that fail closed via host infrastructure abort. */
+const COLLECTOR_INFRASTRUCTURE_TOOLS = new Set<string>([
+  COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_WAIT_TOOL,
+]);
+
+/**
+ * Prefer a real Collector infrastructure tool failure already on the session
+ * principal over a later secondary provider-stop (failure-honesty).
+ * Observe/request/wait host failures keep their diagnostic identity (e.g. HTTP 404).
+ */
+export function extractCollectorInfrastructureFailure(
+  entries: readonly SessionEntry[],
+): ControlledFailure | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.isError !== true) continue;
+    if (
+      typeof message.toolName !== "string" ||
+      !COLLECTOR_INFRASTRUCTURE_TOOLS.has(message.toolName)
+    ) {
+      continue;
+    }
+    const diagnostic = toolResultText(message);
+    if (diagnostic.length === 0) continue;
+    return {
+      cause: "activation",
+      diagnostic,
+      identity: { name: "CollectorInfrastructureError" },
+    };
+  }
+  return undefined;
+}
+
+/** Read the bound session principal for a Collector infrastructure tool failure. */
+export async function readCollectorInfrastructureFailure(
+  sessionFile: string,
+): Promise<ControlledFailure | undefined> {
+  try {
+    const entries = await readBoundSessionEntries(sessionFile);
+    return extractCollectorInfrastructureFailure(entries);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Compare a validated receipt with the admitted Collector invocation identity.
  * Throws a typed output failure when any identity field mismatches.
@@ -1125,8 +1200,14 @@ async function settleLawfulCollectorTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractCollectorRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  // Bind accepted receipt to this admitted target before any success publication (ADR 0037).
+  // Re-load legs.json and bind its digest to admission before using its IDs (ADR 0037/0022).
+  // A post-admission mutation that keeps receipt digest=A while legs become B must fail closed.
   const admittedManifest = await loadCollectorManifest(admitted.legsPath);
+  if (admittedManifest.digest !== admitted.manifestDigest) {
+    throw collectorReceiptBindingFailure(
+      `Collector legs at settlement digest does not match admitted manifestDigest`,
+    );
+  }
   assertCollectorReceiptMatchesAdmitted(
     extracted.receipt,
     admitted,
