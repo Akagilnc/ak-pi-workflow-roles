@@ -34,8 +34,15 @@ import {
 } from "../src/navigator-attendance.ts";
 import { loadCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
-import { createProductionMergerGitState, createRoleRuntimeExtension } from "../src/role-runtime.ts";
-import { packagedRoleInputFlag } from "../src/packaged-role-registry.ts";
+import {
+  createProductionMergerGitState,
+  createRoleRuntimeExtension,
+  ROLE_FLAG,
+} from "../src/role-runtime.ts";
+import {
+  packagedRoleInputFlag,
+  packagedRoleMetadata,
+} from "../src/packaged-role-registry.ts";
 import { createPiJudgeAuditor } from "../src/judge-auditor.ts";
 
 const extensionPath = fileURLToPath(import.meta.url);
@@ -58,6 +65,11 @@ function navigatorInputReference(pi: ExtensionAPI, role: string): string | undef
 // This bound is process-startup budget only — not settlement-to-visible presentation latency.
 export const NAVIGATOR_LIVE_HELP_TIMEOUT_MS = 30_000;
 
+/**
+ * Subprocess live help (disk-reread via fresh pi -e). Kept for cold-install proofs.
+ * Production Navigator prepare must not call this on the post-role grace path — under
+ * concurrent CI load each role's pi --help alone can exceed the accepted 3s grace.
+ */
 export async function loadNavigatorRoleHelp(
   pi: Pick<ExtensionAPI, "exec">,
   extensionPath: string,
@@ -70,6 +82,28 @@ export async function loadNavigatorRoleHelp(
   }
   if (result.code !== 0) throw new Error(`live help unavailable for ${role}: process exited with code ${result.code}`, { cause: result });
   return result.stdout || result.stderr;
+}
+
+/**
+ * In-process role help for Navigator prepare. Same loaded package/module the role
+ * is already running — no child pi. Public command surface is ak-role (ADR 0052).
+ */
+export function formatInProcessNavigatorRoleHelp(role: NavigatorTargetRole): string {
+  const metadata = packagedRoleMetadata(role);
+  const lines = [
+    `Usage: ak-role ${role}`,
+    ROLE_FLAG.definition.description,
+  ];
+  if (metadata?.inputFlag !== undefined) {
+    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
+  }
+  if (metadata?.phaseFlag !== undefined) {
+    lines.push(
+      `  --${metadata.phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
+    );
+  }
+  lines.push(`Public next-command form: ak-role ${role}`);
+  return lines.join("\n");
 }
 
 /**
@@ -226,7 +260,9 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         subject: options.subject,
         authority: options.authority,
         loadSoul: () => readFile(navigatorSoulPath, "utf8"),
-        loadRoleHelp: (role) => loadNavigatorRoleHelp(pi, extensionPath, options.context.cwd, role),
+        // In-process help: subprocess pi --help is reserved for cold-install proofs.
+        // N child pi processes cannot fit the accepted 3s post-role grace under CI load.
+        loadRoleHelp: async (role) => formatInProcessNavigatorRoleHelp(role),
         createSession: navigatorSessionFactory,
         contextError: options.contextError,
         onEvent: options.onEvent,

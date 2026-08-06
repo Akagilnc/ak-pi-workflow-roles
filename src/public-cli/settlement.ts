@@ -540,16 +540,38 @@ export async function settleJudgeTerminalResult(
 
 /**
  * Try to settle a lawful typed terminal result from the admitted session.
- * Returns undefined when no lawful outcome exists (caller takes failure path).
+ * Returns undefined only for genuinely absent/invalid outcomes (no lawful
+ * verdict, missing/unreadable session). Publication and other post-outcome
+ * exceptions propagate with their original typed identity — callers must not
+ * wash them into generic output absence.
  */
 export async function trySettleJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
 ): Promise<TerminalResult | undefined> {
+  let entries: SessionEntry[];
   try {
-    return await settleJudgeTerminalResult(admitted);
+    entries = await readLatestSessionEntries(admitted.sessionDirectory);
   } catch {
+    // Missing/unreadable session is absence of a lawful outcome.
     return undefined;
   }
+  const roleOutcome = extractJudgeRoleOutcome(entries);
+  if (roleOutcome === undefined) {
+    return undefined;
+  }
+  const navigator = extractNavigatorFact(entries);
+  // Lawful outcome exists — artifact publication keeps original errno/name.
+  const artifacts = await publishJudgeArtifacts(
+    admitted,
+    roleOutcome,
+    admitted.sessionDirectory,
+  );
+  return {
+    roleOutcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
 }
 
 export async function publishFailureArtifacts(
