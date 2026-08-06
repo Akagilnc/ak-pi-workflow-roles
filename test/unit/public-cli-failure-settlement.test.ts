@@ -23,15 +23,24 @@ import { AUDIT_ESCALATION_KIND } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
+  ExplicitInternalActivationError,
+} from "../../src/public-cli/explicit-internal.ts";
+import {
+  boundConciseDiagnostic,
   classifyPostAdmissionFailure,
+  CONCISE_DIAGNOSTIC_MAX_CHARS,
   exitCodeForTerminalOutcome,
   extractJudgeRoleOutcome,
   formatFailureStderrDiagnostic,
+  isChildDiagnosticFloodLine,
   isLawfulTypedTerminalOutcome,
   settleJudgeFailureTerminalResult,
-  settleJudgeTerminalResult,
 } from "../../src/public-cli/settlement.ts";
-import type { ControlledFailureCause } from "../../src/public-cli/terminal.ts";
+import type {
+  ControlledFailureCause,
+  TerminalArtifactRef,
+  TerminalResult,
+} from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -78,6 +87,103 @@ function floodStderr(): string {
   ].join("\n");
 }
 
+/** Realistic observation face: Error then JSONL tool_execution_end (repo observation shape). */
+function realisticJsonlFloodStderr(): string {
+  return [
+    "Error: provider rejected the request",
+    JSON.stringify({
+      event: "tool_execution_end",
+      role: "judge",
+      toolCallId: "t1",
+      toolName: "bash",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      isError: false,
+    }),
+  ].join("\n");
+}
+
+function oversizedDiagnosticStderr(): string {
+  return `Error: ${"x".repeat(CONCISE_DIAGNOSTIC_MAX_CHARS + 200)}\n`;
+}
+
+/** Assert public-seam failure Terminal typed regions + emission counts. */
+async function assertPublicFailureSettlement(input: {
+  result: { exitCode: number; terminal?: TerminalResult };
+  stdout: string[];
+  stderr: string[];
+  expectedCause: ControlledFailureCause;
+  diagnosticIncludes?: string;
+  diagnosticEquals?: string;
+  identityName?: string;
+  identityCode?: string | number;
+}): Promise<{ terminal: TerminalResult; errorRef: TerminalArtifactRef }> {
+  assert.equal(input.result.exitCode, 1);
+  assert.equal(input.stdout.length, 1, "exactly one stdout Terminal emission");
+  assert.equal(input.stderr.length, 1, "exactly one stderr diagnostic emission");
+  assert.ok((input.stdout[0] ?? "").length > 0);
+  assert.equal(
+    input.stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
+    1,
+    "stderr diagnostic must be one concise line",
+  );
+
+  const terminal = input.result.terminal;
+  assert.ok(terminal, "public seam must return settled Terminal");
+  assert.equal(terminal.roleOutcome.kind, "failure");
+  if (terminal.roleOutcome.kind !== "failure") {
+    throw new Error("expected failure role outcome");
+  }
+  assert.equal(terminal.roleOutcome.cause, input.expectedCause);
+  assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
+  assert.ok(terminal.roleOutcome.diagnostic.length > 0);
+  if (input.diagnosticEquals !== undefined) {
+    assert.equal(terminal.roleOutcome.diagnostic, input.diagnosticEquals);
+  }
+  if (input.diagnosticIncludes !== undefined) {
+    assert.equal(
+      terminal.roleOutcome.diagnostic.includes(input.diagnosticIncludes),
+      true,
+    );
+  }
+  assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), false);
+  assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 1);
+  assert.ok(terminal.navigator);
+  assert.equal(typeof terminal.runId, "string");
+  assert.ok(terminal.runId.length > 0);
+  assert.ok(Array.isArray(terminal.artifacts));
+  assert.ok(terminal.artifacts.length >= 1);
+
+  // Durability via typed artifact refs — never private layout/filenames.
+  const errorRef = terminal.artifacts.find((a) => a.kind === "error");
+  assert.ok(errorRef, "failure Terminal must carry error artifact ref");
+  const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+    kind: string;
+    cause: string;
+    diagnostic: string;
+    identity?: { name?: string; code?: string | number };
+  };
+  assert.equal(errorBody.kind, "error");
+  assert.equal(errorBody.cause, input.expectedCause);
+  assert.equal(errorBody.diagnostic, terminal.roleOutcome.diagnostic);
+  if (input.identityName !== undefined) {
+    assert.equal(errorBody.identity?.name, input.identityName);
+  }
+  if (input.identityCode !== undefined) {
+    assert.equal(errorBody.identity?.code, input.identityCode);
+  }
+  assert.equal("judgeStatus" in errorBody, false);
+
+  const evidenceRef = terminal.artifacts.find((a) => a.kind === "evidence");
+  assert.ok(evidenceRef, "failure Terminal must carry evidence artifact ref");
+  await access(evidenceRef!.path);
+
+  // Presentation is bounded even when durable diagnostic is longer.
+  const presented = input.stderr[0]!;
+  assert.ok(presented.length <= CONCISE_DIAGNOSTIC_MAX_CHARS + 32);
+
+  return { terminal, errorRef: errorRef! };
+}
+
 test("malformed CLI structure rejects before admission with no model dispatch", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -108,6 +214,7 @@ test("malformed CLI structure rejects before admission with no model dispatch", 
     assert.equal(ran, false);
     assert.equal(stdout.length, 0);
     assert.equal(stderr.length >= 1, true);
+    assert.equal(result.terminal, undefined);
     // No Role run ledger directory created for structural reject.
     await assert.rejects(
       () => access(join(home, ".ak-roles")),
@@ -164,6 +271,10 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     assert.equal(result.exitCode, 0);
     assert.equal(dispatchedPrompt, domainProse);
     assert.equal(stdout.length, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal!.runId, "run-domain-001");
+    assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
   });
 });
 
@@ -205,6 +316,32 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   assert.equal(unrecognized.cause, "unrecognized");
   assert.equal(unrecognized.diagnostic, "socket hang up");
   assert.equal(unrecognized.identity?.name, "ProviderTransportError");
+
+  // Production-owned typed thrown channel.
+  const typed = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: null,
+    stderr: "",
+    thrown: new ExplicitInternalActivationError("model upstream 503", {
+      knownCause: "provider",
+      name: "ProviderUnavailableError",
+      code: "PROVIDER_UNAVAILABLE",
+    }),
+  });
+  assert.equal(typed.cause, "provider");
+  assert.equal(typed.diagnostic, "model upstream 503");
+  assert.equal(typed.identity?.name, "ProviderUnavailableError");
+  assert.equal(typed.identity?.code, "PROVIDER_UNAVAILABLE");
+
+  // JSONL observation flood must not displace the real diagnostic.
+  const jsonl = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: 1,
+    stderr: realisticJsonlFloodStderr(),
+  });
+  assert.equal(jsonl.cause, "activation");
+  assert.equal(jsonl.diagnostic, "provider rejected the request");
+  assert.equal(isChildDiagnosticFloodLine(JSON.stringify({ event: "tool_execution_end" })), true);
 });
 
 test("failure settlement durably records Error Artifact before presentation returns", async () => {
@@ -300,34 +437,118 @@ test("controlled failure emits one stdout Terminal and one concise stderr diagno
       },
     );
 
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(typeof stdout[0], "string");
-    assert.ok((stdout[0] ?? "").length > 0);
-    assert.equal(stderr.length, 1);
-    const diagnostic = stderr[0]!;
-    assert.equal(diagnostic.includes("at Object.fn"), false);
-    assert.equal(diagnostic.includes("event:"), false);
-    assert.equal(diagnostic.includes("tokens="), false);
-    // Concise: single diagnostic write, not a multi-frame stack dump.
-    assert.equal(diagnostic.split("\n").filter((line) => line.trim() !== "").length, 1);
+    const { terminal } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "activation",
+      diagnosticIncludes: "provider boom",
+    });
+    assert.equal(stderr[0]!.includes("at Object.fn"), false);
+    assert.equal(stderr[0]!.includes("event:"), false);
+    assert.equal(stderr[0]!.includes("tokens="), false);
+    assert.equal(terminal.runId, "run-fail-emit-001");
+  });
+});
 
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      "run-fail-emit-001@judge",
-    );
-    const errorPath = join(runDir, "artifacts", "error.json");
-    const errorBody = JSON.parse(await readFile(errorPath, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-    };
-    assert.equal(errorBody.cause, "activation");
-    assert.equal(errorBody.diagnostic.length > 0, true);
+test("JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    // Counterexample 1: Error then real-shaped JSONL tool_execution_end.
+    {
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--project", project, "jsonl flood"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-jsonl-flood-001",
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            return {
+              code: 1,
+              stdout: "",
+              stderr: realisticJsonlFloodStderr(),
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      const { terminal } = await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: "activation",
+        diagnosticEquals: "provider rejected the request",
+      });
+      // Durable cause keeps the real diagnostic; presentation must not select the JSON event.
+      assert.equal(terminal.roleOutcome.kind, "failure");
+      if (terminal.roleOutcome.kind === "failure") {
+        assert.equal(terminal.roleOutcome.diagnostic.includes("tool_execution_end"), false);
+      }
+      assert.equal(stderr[0]!.includes("tool_execution_end"), false);
+      assert.equal(stderr[0]!.includes("provider rejected the request"), true);
+    }
+
+    // Counterexample 2: single oversized diagnostic line — durable full, presentation bound.
+    {
+      const full = "x".repeat(CONCISE_DIAGNOSTIC_MAX_CHARS + 200);
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--project", project, "oversized diagnostic"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-oversize-diag-001",
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            return {
+              code: 1,
+              stdout: "",
+              stderr: oversizedDiagnosticStderr(),
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+      const { terminal, errorRef } = await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: "activation",
+        diagnosticEquals: full,
+      });
+      const body = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+        diagnostic: string;
+      };
+      // Durable evidence keeps the full diagnostic identity.
+      assert.equal(body.diagnostic, full);
+      assert.equal(terminal.roleOutcome.kind, "failure");
+      if (terminal.roleOutcome.kind === "failure") {
+        assert.equal(terminal.roleOutcome.diagnostic, full);
+      }
+      // Presentation is bounded.
+      const presented = formatFailureStderrDiagnostic({
+        cause: "activation",
+        diagnostic: full,
+      });
+      assert.equal(presented.includes(boundConciseDiagnostic(full)), true);
+      assert.ok(stderr[0]!.length < full.length + 32);
+      assert.equal(stderr[0]!.includes("…") || stderr[0]!.length <= CONCISE_DIAGNOSTIC_MAX_CHARS + 20, true);
+    }
   });
 });
 
@@ -385,40 +606,23 @@ test("audit_escalation is a lawful typed terminal result exiting zero without be
     assert.equal(result.exitCode, 0);
     assert.equal(stdout.length, 1);
     assert.equal(stderr.length, 0);
-
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      "run-escalation-001@judge",
-    );
-    const terminal = await settleJudgeTerminalResult({
-      role: "judge",
-      runId: "run-escalation-001",
-      runDirectory: runDir,
-      sessionDirectory: join(runDir, "session"),
-      projectRoot: project,
-      bookKey,
-      instruction: "needs human decision",
-      instructionEmpty: false,
-      attachments: [],
-      admittedRequestPath: join(runDir, "admitted-request.json"),
-    });
-    assert.equal(terminal.roleOutcome.kind, "audit_escalation");
-    if (terminal.roleOutcome.kind !== "audit_escalation") {
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "audit_escalation");
+    if (result.terminal!.roleOutcome.kind !== "audit_escalation") {
       throw new Error("expected audit_escalation");
     }
-    assert.equal(terminal.roleOutcome.status, "audit_escalation");
-    assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), true);
-    assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 0);
-    // Not relabeled as an accepted role Receipt.
+    assert.equal(result.terminal!.roleOutcome.status, "audit_escalation");
+    assert.equal(isLawfulTypedTerminalOutcome(result.terminal!.roleOutcome), true);
+    assert.equal(exitCodeForTerminalOutcome(result.terminal!.roleOutcome), 0);
     assert.equal(
-      terminal.roleOutcome.decisiveFacts.kind,
+      result.terminal!.roleOutcome.decisiveFacts.kind,
       AUDIT_ESCALATION_KIND,
     );
+    assert.equal(result.terminal!.runId, "run-escalation-001");
+    assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"));
+    const reportRef = result.terminal!.artifacts.find((a) => a.kind === "report");
+    assert.ok(reportRef);
+    await access(reportRef!.path);
   });
 });
 
@@ -470,31 +674,12 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     );
     assert.equal(result.exitCode, 0);
     assert.equal(stdout.length, 1);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDir = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      "run-escalate-001@judge",
-    );
-    const terminal = await settleJudgeTerminalResult({
-      role: "judge",
-      runId: "run-escalate-001",
-      runDirectory: runDir,
-      sessionDirectory: join(runDir, "session"),
-      projectRoot: project,
-      bookKey,
-      instruction: "needs owner decision",
-      instructionEmpty: false,
-      attachments: [],
-      admittedRequestPath: join(runDir, "admitted-request.json"),
-    });
-    assert.equal(terminal.roleOutcome.kind, "accepted");
-    if (terminal.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.equal(terminal.roleOutcome.status, "escalate");
-    assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 0);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+    if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
+    assert.equal(result.terminal!.roleOutcome.status, "escalate");
+    assert.equal(exitCodeForTerminalOutcome(result.terminal!.roleOutcome), 0);
+    assert.equal(result.terminal!.runId, "run-escalate-001");
   });
 });
 
@@ -521,32 +706,16 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
       },
     );
 
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
+    await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "unrecognized",
+      diagnosticEquals: "ECONNRESET from upstream",
+      identityName: "RawSocketError",
+    });
     assert.equal(stderr[0]!.includes("ECONNRESET from upstream"), true);
-    // Must not wash into a generic fabricated receipt identity.
     assert.equal(stderr[0]!.includes("ak_judge_output"), false);
-
-    const bookKey = resolveBookKeyFromGit(project);
-    const errorPath = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "runs",
-      "run-unrec-001@judge",
-      "artifacts",
-      "error.json",
-    );
-    const errorBody = JSON.parse(await readFile(errorPath, "utf8")) as {
-      cause: string;
-      diagnostic: string;
-      identity?: { name?: string };
-    };
-    assert.equal(errorBody.cause, "unrecognized");
-    assert.equal(errorBody.diagnostic, "ECONNRESET from upstream");
-    assert.equal(errorBody.identity?.name, "RawSocketError");
   });
 });
 
@@ -578,31 +747,20 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
         },
       },
     );
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
-    assert.equal(formatFailureStderrDiagnostic({
-      cause: "timeout",
-      diagnostic: "judge role run timed out",
-    }).includes("\n"), true);
-
-    const bookKey = resolveBookKeyFromGit(project);
-    const errorBody = JSON.parse(
-      await readFile(
-        join(
-          home,
-          ".ak-roles",
-          "books",
-          bookKey,
-          "runs",
-          "run-timeout-001@judge",
-          "artifacts",
-          "error.json",
-        ),
-        "utf8",
-      ),
-    ) as { cause: string };
-    assert.equal(errorBody.cause, "timeout");
+    await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "timeout",
+      diagnosticEquals: "judge role run timed out",
+    });
+    assert.equal(
+      formatFailureStderrDiagnostic({
+        cause: "timeout",
+        diagnostic: "judge role run timed out",
+      }).includes("\n"),
+      true,
+    );
   });
 });
 
@@ -728,26 +886,12 @@ test("zero-exit missing session classifies as session cause via public entry", a
         },
       },
     );
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
-    const bookKey = resolveBookKeyFromGit(project);
-    const errorBody = JSON.parse(
-      await readFile(
-        join(
-          home,
-          ".ak-roles",
-          "books",
-          bookKey,
-          "runs",
-          "run-session-missing-001@judge",
-          "artifacts",
-          "error.json",
-        ),
-        "utf8",
-      ),
-    ) as { cause: string };
-    assert.equal(errorBody.cause, "session");
+    await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "session",
+    });
   });
 });
 
@@ -791,80 +935,109 @@ test("zero-exit invalid judge details classifies as output cause via public entr
         },
       },
     );
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
-    const bookKey = resolveBookKeyFromGit(project);
-    const errorBody = JSON.parse(
-      await readFile(
-        join(
-          home,
-          ".ak-roles",
-          "books",
-          bookKey,
-          "runs",
-          "run-output-bogus-001@judge",
-          "artifacts",
-          "error.json",
-        ),
-        "utf8",
-      ),
-    ) as { cause: string };
-    assert.equal(errorBody.cause, "output");
+    await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "output",
+    });
   });
 });
 
-test("provider-tagged thrown failure keeps provider cause and identity", async () => {
+test("production knownFailure channel reaches settlement as provider with typed identity", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
+    // Resolved runner result — production-owned channel on ExplicitInternalPiResult,
+    // not an ad-hoc thrown Error property and not stderr-prose inference.
     const result = await runAkRole(
       ["judge", "--project", project, "provider down"],
       {
         packageRoot,
         home,
         cwd: project,
-        createRunId: () => "run-provider-001",
+        createRunId: () => "run-provider-channel-001",
         io,
-        piRunner: async () => {
-          const err = new Error("model upstream 503");
-          err.name = "ProviderUnavailableError";
-          (err as { failureCause?: string }).failureCause = "provider";
-          (err as { code?: string }).code = "PROVIDER_UNAVAILABLE";
-          throw err;
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          return {
+            code: 1,
+            stdout: "",
+            // Deliberately misleading prose — cause must come from knownFailure only.
+            stderr: "activation wrapper exited nonzero\n",
+            timedOut: false,
+            args: [...args],
+            knownFailure: {
+              cause: "provider",
+              identity: {
+                name: "ProviderUnavailableError",
+                code: "PROVIDER_UNAVAILABLE",
+              },
+            },
+          };
         },
       },
     );
-    assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
-    assert.equal(stderr[0]!.includes("model upstream 503"), true);
-    const bookKey = resolveBookKeyFromGit(project);
-    const errorBody = JSON.parse(
-      await readFile(
-        join(
-          home,
-          ".ak-roles",
-          "books",
-          bookKey,
-          "runs",
-          "run-provider-001@judge",
-          "artifacts",
-          "error.json",
-        ),
-        "utf8",
-      ),
-    ) as {
-      cause: string;
-      diagnostic: string;
-      identity?: { name?: string; code?: string };
-    };
-    assert.equal(errorBody.cause, "provider");
-    assert.equal(errorBody.diagnostic, "model upstream 503");
-    assert.equal(errorBody.identity?.name, "ProviderUnavailableError");
-    assert.equal(errorBody.identity?.code, "PROVIDER_UNAVAILABLE");
+    await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      // Diagnostic may come from stderr selection or fallback; identity is typed.
+      identityName: "ProviderUnavailableError",
+      identityCode: "PROVIDER_UNAVAILABLE",
+    });
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    if (result.terminal!.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal!.roleOutcome.cause, "provider");
+      assert.equal(
+        result.terminal!.roleOutcome.decisiveFacts.errorName,
+        "ProviderUnavailableError",
+      );
+      assert.equal(
+        result.terminal!.roleOutcome.decisiveFacts.errorCode,
+        "PROVIDER_UNAVAILABLE",
+      );
+    }
+  });
+});
+
+test("production ExplicitInternalActivationError throw keeps provider cause and identity", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "provider throw"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-provider-throw-001",
+        io,
+        piRunner: async () => {
+          throw new ExplicitInternalActivationError("model upstream 503", {
+            knownCause: "provider",
+            name: "ProviderUnavailableError",
+            code: "PROVIDER_UNAVAILABLE",
+          });
+        },
+      },
+    );
+    await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticEquals: "model upstream 503",
+      identityName: "ProviderUnavailableError",
+      identityCode: "PROVIDER_UNAVAILABLE",
+    });
   });
 });
 
@@ -911,45 +1084,10 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     assert.equal(result.exitCode, 0);
     assert.equal(stdout.length, 1);
     assert.equal(stderr.length, 0);
-
-    const bookKey = resolveBookKeyFromGit(project);
-    const terminal = await settleJudgeTerminalResult({
-      role: "judge",
-      runId: "run-prefer-lawful-001",
-      runDirectory: join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "runs",
-        "run-prefer-lawful-001@judge",
-      ),
-      sessionDirectory: join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "runs",
-        "run-prefer-lawful-001@judge",
-        "session",
-      ),
-      projectRoot: project,
-      bookKey,
-      instruction: "already settled",
-      instructionEmpty: false,
-      attachments: [],
-      admittedRequestPath: join(
-        home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "runs",
-        "run-prefer-lawful-001@judge",
-        "admitted-request.json",
-      ),
-    });
-    assert.equal(terminal.roleOutcome.kind, "accepted");
-    if (terminal.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.equal(terminal.roleOutcome.status, "converged");
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
+    if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
+    assert.equal(result.terminal!.roleOutcome.status, "converged");
+    assert.equal(result.terminal!.runId, "run-prefer-lawful-001");
   });
 });

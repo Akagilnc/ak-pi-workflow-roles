@@ -1454,10 +1454,10 @@ test("judge output must be the sole call in its assistant batch", async () => {
 });
 
 test(
-  "accepted role terminal races production 3s Navigator grace through role-runtime to Terminal",
-  { timeout: 15_000 },
+  "accepted role terminal races production 10s Navigator grace through role-runtime to Terminal",
+  { timeout: 30_000 },
   async () => {
-    assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 3_000);
+    assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
     const modelRoot = await mkdtemp(join(tmpdir(), "ak-judge-grace-model-"));
     const modelSettingPath = join(modelRoot, "navigator-model.json");

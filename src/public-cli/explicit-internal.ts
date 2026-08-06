@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
+import type { ControlledFailureCause } from "./terminal.ts";
 
 export function resolveInternalRoleEntrypoint(packageRoot: string): string {
   return join(packageRoot, INTERNAL_ROLE_ENTRYPOINT_RELATIVE);
@@ -28,6 +29,15 @@ export function buildExplicitInternalActivationArgs(
   ];
 }
 
+/** Production-owned typed failure carried on a resolved runner result. */
+export type ExplicitInternalKnownFailure = {
+  readonly cause: ControlledFailureCause;
+  readonly identity?: {
+    readonly name?: string;
+    readonly code?: string | number;
+  };
+};
+
 export type ExplicitInternalPiResult = {
   code: number | null;
   stdout: string;
@@ -35,7 +45,42 @@ export type ExplicitInternalPiResult = {
   timedOut: boolean;
   /** Full argv passed to the Pi process (includes explicit -e load). */
   args: string[];
+  /**
+   * Production-owned typed failure channel. Set only when the runner already
+   * knows the cause without stderr-prose inference. Settlement trusts this over
+   * the nonzero→activation default.
+   */
+  knownFailure?: ExplicitInternalKnownFailure;
 };
+
+/**
+ * Thrown activation failure with a production-owned typed cause.
+ * Prefer this over ad-hoc Error property tags so settlement retains typed identity.
+ */
+export class ExplicitInternalActivationError extends Error {
+  readonly knownCause: ControlledFailureCause;
+  readonly failureCode?: string | number;
+
+  constructor(
+    message: string,
+    options: {
+      knownCause: ControlledFailureCause;
+      code?: string | number;
+      name?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(
+      message,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = options.name ?? "ExplicitInternalActivationError";
+    this.knownCause = options.knownCause;
+    if (options.code !== undefined) {
+      this.failureCode = options.code;
+    }
+  }
+}
 
 export type ExplicitInternalPiRunner = (
   args: readonly string[],

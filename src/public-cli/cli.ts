@@ -38,6 +38,7 @@ import {
   formatCliDiagnostic,
   presentStructuralRejection,
 } from "./settlement.ts";
+import type { TerminalResult } from "./terminal.ts";
 
 export {
   buildExplicitInternalActivationArgs,
@@ -67,6 +68,8 @@ export type CliEnv = {
 
 export type CliResult = {
   exitCode: number;
+  /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
+  terminal?: TerminalResult;
 };
 
 const THINKING_LEVELS = new Set([
@@ -403,7 +406,10 @@ export async function runAkRole(
         io,
         parseJudgeArgv,
       );
-      return { exitCode: result.exitCode };
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
     }
 
     // Remaining callable roles land in later #11 children.

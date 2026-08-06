@@ -48,9 +48,51 @@ export type ControlledFailure = {
   readonly details?: Readonly<Record<string, unknown>>;
 };
 
+/** Presentation bound for one stderr diagnostic line (durable artifact keeps full text). */
+export const CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
+
+/**
+ * True when a stderr line is observation/event/token/stack flood rather than a diagnostic.
+ * Recognizes both `event:` prefixes and real JSONL records with an `event` key
+ * (tool_execution_* observation face).
+ */
+export function isChildDiagnosticFloodLine(line: string): boolean {
+  if (/^at\s+/.test(line)) return true;
+  if (line.startsWith("event:")) return true;
+  if (/\btokens?=/.test(line)) return true;
+  if (/\btool_calls?=/.test(line)) return true;
+  if (line.startsWith("{")) {
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        !Array.isArray(parsed) &&
+        typeof (parsed as { event?: unknown }).event === "string"
+      ) {
+        return true;
+      }
+    } catch {
+      // Not JSON — may still be a real diagnostic.
+    }
+  }
+  return false;
+}
+
+/** Bound one diagnostic for human stderr presentation; durable evidence stays full. */
+export function boundConciseDiagnostic(
+  diagnostic: string,
+  maxChars: number = CONCISE_DIAGNOSTIC_MAX_CHARS,
+): string {
+  if (diagnostic.length <= maxChars) return diagnostic;
+  if (maxChars <= 1) return "…";
+  return `${diagnostic.slice(0, maxChars - 1)}…`;
+}
+
 /**
  * Pick one concise diagnostic line from child stderr without stacks/events/tokens.
- * Prefers the last nonblank line that does not look like a frame or event flood.
+ * Prefers the last nonblank line that is not a frame or observation flood.
+ * Returns the full selected diagnostic (bound only at presentation).
  */
 export function conciseChildDiagnostic(
   stderr: string,
@@ -62,11 +104,7 @@ export function conciseChildDiagnostic(
     .filter((line) => line.length > 0);
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i]!;
-    if (/^at\s+/.test(line)) continue;
-    if (/^\s*at\s+/.test(line)) continue;
-    if (line.startsWith("event:")) continue;
-    if (/\btokens?=/.test(line)) continue;
-    if (/\btool_calls?=/.test(line)) continue;
+    if (isChildDiagnosticFloodLine(line)) continue;
     // Strip a leading "Error:" label but keep the message identity.
     return line.replace(/^Error:\s*/i, "").trim() || fallback;
   }
@@ -78,7 +116,7 @@ export function formatCliDiagnostic(message: string): string {
 }
 
 export function formatFailureStderrDiagnostic(failure: ControlledFailure): string {
-  return formatCliDiagnostic(failure.diagnostic);
+  return formatCliDiagnostic(boundConciseDiagnostic(failure.diagnostic));
 }
 
 /** Pre-admission structural rejection: stderr only, no run, no Terminal. */
@@ -130,11 +168,31 @@ function thrownIdentity(error: Error): {
   return identity;
 }
 
+/** Production-owned typed thrown failure (explicit-internal channel). */
+function isTypedActivationError(
+  error: unknown,
+): error is Error & {
+  knownCause: ControlledFailureCause;
+  failureCode?: string | number;
+} {
+  if (!(error instanceof Error)) return false;
+  const cause = (error as { knownCause?: unknown }).knownCause;
+  return (
+    cause === "provider" ||
+    cause === "activation" ||
+    cause === "session" ||
+    cause === "output" ||
+    cause === "timeout" ||
+    cause === "unrecognized"
+  );
+}
+
 /**
  * Classify a controlled post-admission failure without washing unrecognized identities.
  * Cause classes are closed; diagnostic text retains the original identity when known.
  *
  * Order: thrown → timeout → knownCause → activation (nonzero) → session → output.
+ * Cause is never inferred from stderr wording.
  */
 export function classifyPostAdmissionFailure(input: {
   timedOut: boolean;
@@ -144,22 +202,29 @@ export function classifyPostAdmissionFailure(input: {
   session?: SessionReadiness;
   /** Upstream-typed cause when the failure origin is already known. */
   knownCause?: ControlledFailureCause;
+  /** Optional identity paired with knownCause (production channel). */
+  knownIdentity?: {
+    readonly name?: string;
+    readonly code?: string | number;
+  };
 }): ControlledFailure {
   if (input.thrown !== undefined) {
     const error = input.thrown;
+    if (isTypedActivationError(error)) {
+      const identity = thrownIdentity(error);
+      if (error.failureCode !== undefined && identity.code === undefined) {
+        identity.code = error.failureCode;
+      }
+      return {
+        cause: error.knownCause,
+        diagnostic: error.message || error.name || "unrecognized exception",
+        identity,
+      };
+    }
     if (error instanceof Error) {
       const identity = thrownIdentity(error);
-      const tagged = (error as { failureCause?: unknown }).failureCause;
-      const cause: ControlledFailureCause =
-        tagged === "provider" ||
-        tagged === "activation" ||
-        tagged === "session" ||
-        tagged === "output" ||
-        tagged === "timeout"
-          ? tagged
-          : "unrecognized";
       return {
-        cause,
+        cause: "unrecognized",
         diagnostic: error.message || error.name || "unrecognized exception",
         identity,
       };
@@ -189,6 +254,9 @@ export function classifyPostAdmissionFailure(input: {
       cause: input.knownCause,
       diagnostic: conciseChildDiagnostic(input.stderr, fallback),
       details: { code: input.code },
+      ...(input.knownIdentity === undefined
+        ? {}
+        : { identity: input.knownIdentity }),
     };
   }
   if (input.code !== 0) {
@@ -220,8 +288,13 @@ export function classifyPostAdmissionFailure(input: {
   };
 }
 
-/** Post-role Navigator delivery grace (Issue #11 / #101 / #106). */
-export const NAVIGATOR_POST_ROLE_GRACE_MS = 3_000;
+/**
+ * Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159).
+ * Temporary 10s ceiling — healthy work still completes immediately via race;
+ * only the timeout bound moves. #160 owns precise CI scheduling and later
+ * evidence-based reconsideration of 3s vs 10s.
+ */
+export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
 
 type SessionMessage = {
   role?: string;

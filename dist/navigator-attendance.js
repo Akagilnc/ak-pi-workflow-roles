@@ -6,7 +6,10 @@ import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } fro
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { pathContainedIn, resolveActivationLedgerHome } from "./activation-ledger-topology.js";
+import {
+  physicallyContainedIn,
+  resolveActivationLedgerHome
+} from "./activation-ledger-topology.js";
 import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata } from "./packaged-role-registry.js";
 const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance";
 const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare";
@@ -164,7 +167,7 @@ function workIdentityFromCwd(cwd) {
   return void 0;
 }
 function isMachineLedgerSessionPath(sessionPath) {
-  return pathContainedIn(resolve(resolveActivationLedgerHome()), resolve(sessionPath));
+  return physicallyContainedIn(resolveActivationLedgerHome(), sessionPath);
 }
 function subjectPath(sessionDir, cwd = process.cwd()) {
   if (sessionDir === "") {
