@@ -7,12 +7,12 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname2, join as join4 } from "node:path";
+import { dirname as dirname3, join as join8 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
-import { homedir as homedir2 } from "node:os";
-import { join as join3 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { join as join7 } from "node:path";
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -8016,6 +8016,9 @@ function listHelpCapabilities() {
   });
   return [...support, ...roles];
 }
+function isPublicCallableRole(value) {
+  return PUBLIC_CALLABLE_ROLES.includes(value);
+}
 function isPublicConfigurableSeat(value) {
   return PUBLIC_CONFIGURABLE_SEATS.includes(value);
 }
@@ -8226,6 +8229,18 @@ async function loadCredentialProviders(agentDir) {
   }
 }
 
+// src/public-cli/cli-errors.ts
+var CliUsageError = class extends Error {
+  code = "AK_ROLE_USAGE";
+  constructor(message, options) {
+    super(
+      message,
+      options?.cause === void 0 ? void 0 : { cause: options.cause }
+    );
+    this.name = "CliUsageError";
+  }
+};
+
 // src/public-cli/explicit-internal.ts
 import { spawn } from "node:child_process";
 import { join as join2 } from "node:path";
@@ -8303,6 +8318,789 @@ var EXPLICIT_INTERNAL_LOAD_PROBE_ARGS = [
   "--help"
 ];
 
+// src/public-cli/invocation.ts
+import {
+  lstat,
+  mkdir as mkdir2,
+  readFile as readFile2,
+  writeFile as writeFile2
+} from "node:fs/promises";
+import { basename as basename2, isAbsolute as isAbsolute3, join as join4, resolve as resolve3 } from "node:path";
+
+// src/activation-ledger-topology.ts
+import {
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  statSync
+} from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { isAbsolute, join as join3, relative, resolve, sep } from "node:path";
+var ActivationLedgerError = class extends Error {
+  code = "AK_ACTIVATION_LEDGER";
+  constructor(message, options) {
+    super(
+      message,
+      options?.cause === void 0 ? void 0 : { cause: options.cause }
+    );
+    this.name = "ActivationLedgerError";
+  }
+};
+function resolveActivationLedgerHome(home = homedir2) {
+  const processHome = home();
+  if (typeof processHome !== "string" || processHome.length === 0 || !isAbsolute(processHome)) {
+    throw new ActivationLedgerError(
+      `activation ledger process home must be absolute, got ${JSON.stringify(processHome)}`
+    );
+  }
+  return resolve(processHome, ".ak-roles");
+}
+function activationBookDirectory(ledgerHome, bookKey) {
+  return join3(ledgerHome, "books", bookKey);
+}
+function pathContainedIn(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function errnoCode(error) {
+  return error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
+}
+function errorText(error) {
+  if (!(error instanceof Error)) return String(error);
+  return error.message;
+}
+function assertPhysicalLedgerRoot(absoluteRoot) {
+  let st;
+  try {
+    st = lstatSync(absoluteRoot);
+  } catch (error) {
+    if (errnoCode(error) !== "ENOENT") {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st === void 0) {
+    try {
+      mkdirSync(absoluteRoot, { recursive: true });
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to create home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    try {
+      st = lstatSync(absoluteRoot);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger failed to stat home (${absoluteRoot}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+  }
+  if (st.isSymbolicLink()) {
+    throw new ActivationLedgerError(
+      `activation ledger home is a symbolic link: ${absoluteRoot}`
+    );
+  }
+  if (!st.isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${absoluteRoot}`);
+  }
+}
+function ensureRealDirectoryTree(root, targetDir) {
+  if (!isAbsolute(root)) {
+    throw new ActivationLedgerError(`activation ledger home must be absolute: ${root}`);
+  }
+  const absoluteRoot = resolve(root);
+  const absoluteTarget = resolve(targetDir);
+  if (absoluteTarget !== absoluteRoot && !pathContainedIn(absoluteRoot, absoluteTarget)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  assertPhysicalLedgerRoot(absoluteRoot);
+  let realRoot;
+  try {
+    realRoot = realpathSync(absoluteRoot);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger home is not resolvable (${absoluteRoot}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+  if (!statSync(realRoot).isDirectory()) {
+    throw new ActivationLedgerError(`activation ledger home is not a directory: ${realRoot}`);
+  }
+  const rel = absoluteTarget === absoluteRoot ? "" : relative(absoluteRoot, absoluteTarget);
+  if (rel === "") return realRoot;
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
+    throw new ActivationLedgerError(
+      `activation ledger path escapes ledger home (${absoluteRoot}): ${absoluteTarget}`
+    );
+  }
+  let lexicalCursor = absoluteRoot;
+  for (const part of rel.split(sep)) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      throw new ActivationLedgerError(`activation ledger path contains '..': ${absoluteTarget}`);
+    }
+    lexicalCursor = join3(lexicalCursor, part);
+    let st;
+    try {
+      st = lstatSync(lexicalCursor);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(error)}`,
+          { cause: error }
+        );
+      }
+      try {
+        mkdirSync(lexicalCursor);
+      } catch (mkdirError) {
+        if (errnoCode(mkdirError) !== "EEXIST") {
+          throw new ActivationLedgerError(
+            `activation ledger failed to create directory (${lexicalCursor}): ${errorText(mkdirError)}`,
+            { cause: mkdirError }
+          );
+        }
+      }
+      try {
+        st = lstatSync(lexicalCursor);
+      } catch (statError) {
+        throw new ActivationLedgerError(
+          `activation ledger failed to stat path component (${lexicalCursor}): ${errorText(statError)}`,
+          { cause: statError }
+        );
+      }
+    }
+    if (st.isSymbolicLink()) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is a symbolic link: ${lexicalCursor}`
+      );
+    }
+    if (!st.isDirectory()) {
+      throw new ActivationLedgerError(`activation ledger path component is not a directory: ${lexicalCursor}`);
+    }
+    let realCursor;
+    try {
+      realCursor = realpathSync(lexicalCursor);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `activation ledger path component is not resolvable (${lexicalCursor}): ${errorText(error)}`,
+        { cause: error }
+      );
+    }
+    if (realCursor !== realRoot && !pathContainedIn(realRoot, realCursor)) {
+      throw new ActivationLedgerError(
+        `activation ledger path component escapes ledger home (${lexicalCursor} -> ${realCursor})`
+      );
+    }
+  }
+  try {
+    return realpathSync(absoluteTarget);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `activation ledger directory is not resolvable (${absoluteTarget}): ${errorText(error)}`,
+      { cause: error }
+    );
+  }
+}
+
+// src/activation-ledger-git.ts
+import { execFileSync } from "node:child_process";
+import { basename, dirname as dirname2, isAbsolute as isAbsolute2, resolve as resolve2 } from "node:path";
+var GIT_DISCOVERY_ENV_KEYS = [
+  "GIT_DIR",
+  "GIT_COMMON_DIR",
+  "GIT_WORK_TREE",
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM"
+];
+function envWithoutGitDiscovery(base = process.env) {
+  const env = { ...base };
+  for (const key of GIT_DISCOVERY_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+var ActivationGitRepositoryRequiredError = class extends Error {
+  code = "AK_ACTIVATION_GIT_REPOSITORY_REQUIRED";
+  constructor(detail, options) {
+    super(
+      `Workflow role activation requires a git repository cwd (git rev-parse --git-common-dir failed): ${detail || "unknown git error"}`,
+      options?.cause === void 0 ? void 0 : { cause: options.cause }
+    );
+    this.name = "ActivationGitRepositoryRequiredError";
+  }
+};
+function isGitSpawnInfrastructureError(error) {
+  if (error === null || typeof error !== "object" || !("code" in error)) return false;
+  const code = error.code;
+  return code === "ENOENT" || code === "EACCES" || code === "EPERM";
+}
+function gitChildExitedNonzero(error) {
+  if (error === null || typeof error !== "object" || !("status" in error)) return false;
+  const status = error.status;
+  return typeof status === "number" && status !== 0;
+}
+function resolveBookKeyFromGit(cwd) {
+  let commonDir;
+  try {
+    commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: envWithoutGitDiscovery()
+    }).trim();
+  } catch (error) {
+    if (isGitSpawnInfrastructureError(error) || !gitChildExitedNonzero(error)) {
+      throw error;
+    }
+    const err = error;
+    const detail = typeof err.stderr === "string" ? err.stderr.trim() : Buffer.isBuffer(err.stderr) ? err.stderr.toString("utf8").trim() : typeof err.message === "string" ? err.message : "";
+    throw new ActivationGitRepositoryRequiredError(detail || "unknown git error", { cause: error });
+  }
+  if (commonDir.length === 0) {
+    throw new Error("git rev-parse --git-common-dir returned an empty path");
+  }
+  const absoluteCommon = isAbsolute2(commonDir) ? commonDir : resolve2(cwd, commonDir);
+  const hostDirectory = basename(absoluteCommon) === ".git" ? dirname2(absoluteCommon) : absoluteCommon;
+  const bookKey = basename(hostDirectory);
+  if (bookKey.length === 0 || bookKey === "." || bookKey === "/") {
+    throw new Error(`Unable to derive activation book key from git common dir: ${absoluteCommon}`);
+  }
+  return bookKey;
+}
+
+// src/uuidv7.ts
+import { randomBytes } from "node:crypto";
+function uuidv7(now = Date.now()) {
+  const b = randomBytes(16);
+  let n = BigInt(now);
+  for (let i = 5; i >= 0; i--) {
+    b[i] = Number(n & 255n);
+    n >>= 8n;
+  }
+  b[6] = b[6] & 15 | 112;
+  b[8] = b[8] & 63 | 128;
+  const h = b.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+// src/public-cli/invocation.ts
+var EMPTY_INVOCATION_TRANSPORT_ENVELOPE = "[ak-role:structurally-empty-request]";
+function parseJudgeArgv(args) {
+  const attachmentPaths = [];
+  let project;
+  const positional = [];
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    const token = tokens.shift();
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      const value = tokens.shift();
+      if (value === void 0) throw new CliUsageError("--attach requires a path");
+      attachmentPaths.push(value);
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(token.slice("--attach=".length));
+      continue;
+    }
+    if (token === "--project") {
+      const value = tokens.shift();
+      if (value === void 0) throw new CliUsageError("--project requires a path");
+      project = value;
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = token.slice("--project=".length);
+      continue;
+    }
+    if (token === "--burden" || token.startsWith("--burden=") || token === "--ak-judge-burden" || token.startsWith("--ak-judge-burden=") || token === "--judge-burden" || token.startsWith("--judge-burden=")) {
+      throw new CliUsageError(
+        "judge does not accept a public burden selector; Judge infers its own burden"
+      );
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown judge option: ${token}`);
+    }
+    positional.push(token);
+  }
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project }
+  };
+}
+async function freezeRegularFileAttachment(sourcePath, destinationDir, index) {
+  const absolute = isAbsolute3(sourcePath) ? sourcePath : resolve3(sourcePath);
+  let st;
+  try {
+    st = await lstat(absolute);
+  } catch (error) {
+    throw new CliUsageError(
+      `attachment is not a readable regular file: ${sourcePath}`,
+      { cause: error }
+    );
+  }
+  if (!st.isFile() || st.isSymbolicLink()) {
+    throw new CliUsageError(
+      `attachment must be a regular file (not a directory or symlink): ${sourcePath}`
+    );
+  }
+  const bytes = await readFile2(absolute);
+  const name = `${String(index).padStart(2, "0")}-${basename2(absolute)}`;
+  const frozenPath = join4(destinationDir, name);
+  await writeFile2(frozenPath, bytes);
+  return {
+    provenancePath: absolute,
+    frozenPath,
+    byteLength: bytes.byteLength,
+    sha256: sha256Hex(bytes),
+    mediaKind: "regular-file"
+  };
+}
+async function admitJudgeInvocation(options) {
+  const projectRoot = resolve3(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join4(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@judge`
+  );
+  const sessionDirectory = join4(runDirectory, "session");
+  const attachmentsDirectory = join4(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i],
+        attachmentsDirectory,
+        i
+      )
+    );
+  }
+  const instruction = options.instruction;
+  const instructionEmpty = instruction.trim() === "";
+  const admitted = {
+    role: "judge",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind
+    }))
+  };
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  await writeFile2(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}
+`, "utf8");
+  return {
+    role: "judge",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    admittedRequestPath
+  };
+}
+function buildJudgeTransportPrompt(admitted) {
+  const lines = [];
+  if (admitted.instructionEmpty) {
+    lines.push(EMPTY_INVOCATION_TRANSPORT_ENVELOPE);
+  } else {
+    lines.push(admitted.instruction);
+  }
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
+async function ensureRunArtifactsDir(runDirectory) {
+  const dir = join4(runDirectory, "artifacts");
+  await mkdir2(dir, { recursive: true });
+  return dir;
+}
+
+// src/public-cli/judge-run.ts
+import { writeFile as writeFile4 } from "node:fs/promises";
+import { join as join6 } from "node:path";
+
+// src/public-cli/settlement.ts
+import { readdir, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join5 } from "node:path";
+
+// src/audit-escalation.ts
+var AUDIT_ESCALATION_KIND = "audit_escalation";
+function isAuditEscalationResult(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const result2 = value;
+  const gate = result2.decisionGate;
+  if (result2.kind !== AUDIT_ESCALATION_KIND || !Array.isArray(result2.conflicts) || result2.conflicts.length === 0 || !result2.conflicts.every(
+    (conflict) => typeof conflict === "string" && conflict.trim().length > 0
+  ) || typeof gate !== "object" || gate === null || Array.isArray(gate)) {
+    return false;
+  }
+  const gateRecord = gate;
+  return typeof gateRecord.question === "string" && gateRecord.question.trim().length > 0 && Array.isArray(gateRecord.options) && gateRecord.options.length > 0 && gateRecord.options.every(
+    (option) => typeof option === "string" && option.trim().length > 0
+  );
+}
+
+// src/public-cli/command-renderer.ts
+function renderPublicAkRoleCommand(target) {
+  if (!isPublicCallableRole(target.role)) return void 0;
+  const role = target.role;
+  if (target.phase === null || target.phase === void 0) {
+    return `ak-role ${role}`;
+  }
+  if (role === "coder" || role === "fixer") {
+    return `ak-role ${role} ${target.phase}`;
+  }
+  return `ak-role ${role}`;
+}
+
+// src/public-cli/terminal.ts
+function encodeTerminalField(value) {
+  return JSON.stringify(value);
+}
+function recommendationNavigatorFact(input) {
+  void input.modelCommand;
+  const command = renderPublicAkRoleCommand(input.next);
+  if (command === void 0) {
+    return {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: `recommended role is not a public callable seat: ${input.next.role}`
+    };
+  }
+  return {
+    disposition: "recommendation",
+    next: input.next,
+    reason: input.reason,
+    command,
+    ...input.route === void 0 ? {} : { route: input.route }
+  };
+}
+function formatTerminalResult(result2) {
+  const lines = [];
+  lines.push("role	outcome	status");
+  lines.push(
+    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${encodeTerminalField(result2.roleOutcome.status)}`
+  );
+  const facts = result2.roleOutcome.decisiveFacts;
+  for (const [key, value] of Object.entries(facts)) {
+    if (value === void 0) continue;
+    const rendered = typeof value === "string" ? value : JSON.stringify(value);
+    lines.push(`fact	${encodeTerminalField(key)}	${encodeTerminalField(rendered)}`);
+  }
+  lines.push(`navigator	${result2.navigator.disposition}`);
+  if (result2.navigator.disposition === "recommendation") {
+    lines.push(
+      `next	${result2.navigator.next.role}	${result2.navigator.next.phase ?? "none"}`
+    );
+    lines.push(`reason	${encodeTerminalField(result2.navigator.reason)}`);
+    lines.push(`command	${encodeTerminalField(result2.navigator.command)}`);
+  } else if (result2.navigator.disposition === "unavailable") {
+    lines.push(
+      `unavailable	${result2.navigator.source}	${encodeTerminalField(result2.navigator.reason)}`
+    );
+  }
+  for (const artifact of result2.artifacts) {
+    lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
+  }
+  lines.push(`run	${encodeTerminalField(result2.runId)}`);
+  return `${lines.join("\n")}
+`;
+}
+
+// src/public-cli/settlement.ts
+async function readLatestSessionEntries(sessionDirectory) {
+  const files = (await readdir(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
+  if (files.length === 0) return [];
+  const text = await readFile3(join5(sessionDirectory, files.at(-1)), "utf8");
+  return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function judgeDecisiveFacts(details) {
+  const facts = {};
+  if (typeof details.judgeStatus === "string") facts.judgeStatus = details.judgeStatus;
+  if (isRecord(details.fix) && typeof details.fix.summary === "string") {
+    facts.fixSummary = details.fix.summary;
+  }
+  if (Array.isArray(details.classes)) {
+    facts.classCount = details.classes.length;
+    const names = details.classes.map((entry) => isRecord(entry) && typeof entry.name === "string" ? entry.name : void 0).filter((name) => name !== void 0);
+    if (names.length > 0) facts.classNames = names.join(",");
+  }
+  if (isRecord(details.decisionGate)) {
+    if (typeof details.decisionGate.question === "string") {
+      facts.decisionQuestion = details.decisionGate.question;
+    }
+  }
+  if (typeof details.note === "string") facts.note = details.note;
+  return facts;
+}
+function extractJudgeRoleOutcome(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    const details = message.details;
+    if (isAuditEscalationResult(details)) {
+      return {
+        kind: "audit_escalation",
+        role: "judge",
+        status: "audit_escalation",
+        decisiveFacts: isRecord(details) ? { ...details } : {}
+      };
+    }
+    if (!isRecord(details)) continue;
+    const status = typeof details.judgeStatus === "string" ? details.judgeStatus : "accepted";
+    return {
+      kind: "accepted",
+      role: "judge",
+      status,
+      decisiveFacts: judgeDecisiveFacts(details)
+    };
+  }
+  return void 0;
+}
+function navigatorPhaseValue(value) {
+  if (value === "plan" || value === "apply") return value;
+  return null;
+}
+function extractNavigatorFact(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
+      const details = entry.message?.details ?? entry.details;
+      if (!isRecord(details)) continue;
+      const disposition = details.disposition;
+      if (disposition === "recommendation") {
+        const next = details.next;
+        if (!isRecord(next) || typeof next.role !== "string") {
+          return {
+            disposition: "unavailable",
+            source: "unknown",
+            reason: "navigator recommendation missing typed next role"
+          };
+        }
+        const reason = typeof details.reason === "string" ? details.reason : "";
+        const route = Array.isArray(details.route) ? details.route.filter(isRecord).map((target) => ({
+          role: String(target.role),
+          phase: navigatorPhaseValue(target.phase)
+        })) : void 0;
+        return recommendationNavigatorFact({
+          next: {
+            role: next.role,
+            phase: navigatorPhaseValue(next.phase)
+          },
+          reason,
+          ...route === void 0 ? {} : { route },
+          ...typeof details.command === "string" ? { modelCommand: details.command } : {}
+        });
+      }
+      if (disposition === "unavailable") {
+        return {
+          disposition: "unavailable",
+          source: typeof details.unavailableSource === "string" ? details.unavailableSource : "unknown",
+          reason: typeof details.unavailableReason === "string" ? details.unavailableReason : "Navigator unavailable"
+        };
+      }
+      if (disposition === "silence" || disposition === "arrival") {
+        return { disposition: "no-advice" };
+      }
+    }
+  }
+  return { disposition: "no-advice" };
+}
+async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join5(artifactsDir, "report.json");
+  const evidencePath = join5(artifactsDir, "evidence.json");
+  await writeFile3(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "judge",
+        runId: admitted.runId,
+        outcome: roleOutcome
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  await writeFile3(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        sessionDirectory,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength
+        }))
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath }
+  ];
+}
+async function settleJudgeTerminalResult(admitted) {
+  const entries = await readLatestSessionEntries(admitted.sessionDirectory);
+  const roleOutcome = extractJudgeRoleOutcome(entries);
+  if (roleOutcome === void 0) {
+    throw new Error(
+      "Judge Role run completed without a lawful typed terminal result"
+    );
+  }
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishJudgeArtifacts(
+    admitted,
+    roleOutcome,
+    admitted.sessionDirectory
+  );
+  return {
+    roleOutcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId
+  };
+}
+
+// src/public-cli/judge-run.ts
+function buildModelArgs(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildJudgeActivationExtraArgs(admitted, options = {}) {
+  const prompt = buildJudgeTransportPrompt(admitted);
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "judge",
+    "--mode",
+    "json",
+    ...buildModelArgs(options.model),
+    prompt
+  ];
+}
+async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
+  const parsed = parseJudgeArgv2(argv);
+  const admitted = await admitJudgeInvocation({
+    home: env.home,
+    cwd: env.cwd,
+    instruction: parsed.instruction,
+    attachmentPaths: parsed.attachmentPaths,
+    ...parsed.project === void 0 ? {} : { project: parsed.project },
+    ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+  });
+  const extraArgs = buildJudgeActivationExtraArgs(admitted, {
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  const childEnv = {
+    ...process.env,
+    HOME: env.home,
+    PI_CODING_AGENT_DIR: env.agentDir,
+    // Public-run marker so Navigator work context prefers admitted instruction.
+    AK_ROLE_RUN_DIR: admitted.runDirectory
+  };
+  if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+    childEnv.AK_CORRELATION_ID = env.correlationId;
+  }
+  const result2 = await runExplicitInternalActivation({
+    packageRoot: env.packageRoot,
+    extraArgs,
+    cwd: admitted.projectRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    env: childEnv,
+    ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+    ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+  });
+  await writeFile4(
+    join6(admitted.runDirectory, "stderr.log"),
+    result2.stderr,
+    "utf8"
+  );
+  if (result2.timedOut) {
+    io.stderr("ak-role: judge role run timed out\n");
+    return { exitCode: 1, admitted };
+  }
+  if (result2.code !== 0) {
+    const last = result2.stderr.trim() === "" ? "" : `: ${result2.stderr.trim().split("\n").at(-1)}`;
+    io.stderr(`ak-role: judge role run failed${last}
+`);
+    return { exitCode: 1, admitted };
+  }
+  try {
+    const terminal = await settleJudgeTerminalResult(admitted);
+    io.stdout(formatTerminalResult(terminal));
+    return { exitCode: 0, admitted };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    io.stderr(`ak-role: ${message}
+`);
+    return { exitCode: 1, admitted };
+  }
+}
+
 // src/public-cli/cli.ts
 var THINKING_LEVELS2 = /* @__PURE__ */ new Set([
   "off",
@@ -8324,10 +9122,10 @@ function defaultIo() {
   };
 }
 function resolveHome(env) {
-  return env.home ?? process.env.HOME ?? homedir2();
+  return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join3(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join7(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -8335,13 +9133,6 @@ function parseThinking(value) {
   }
   return value;
 }
-var CliUsageError = class extends Error {
-  code = "AK_ROLE_USAGE";
-  constructor(message) {
-    super(message);
-    this.name = "CliUsageError";
-  }
-};
 function parseArgv(argv) {
   const args = [...argv];
   let model;
@@ -8554,6 +9345,36 @@ async function runAkRole(argv, env) {
     if (isPublicCliSupportCommand(parsed.command)) {
       throw new CliUsageError(`unhandled support command: ${parsed.command}`);
     }
+    if (parsed.command === "judge") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "judge",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicJudge(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+          ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
+          ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs },
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+        },
+        io,
+        parseJudgeArgv
+      );
+      return { exitCode: result2.exitCode };
+    }
     const roleNames = listHelpCapabilities().filter((cap) => cap.kind === "role").map((cap) => cap.name);
     if (roleNames.includes(parsed.command)) {
       const agentDir = resolveAgentDir(env, home);
@@ -8597,7 +9418,7 @@ async function runAkRole(argv, env) {
 }
 
 // src/public-cli/main.ts
-var here = dirname2(fileURLToPath(import.meta.url));
-var packageRoot = join4(here, "..", "..");
+var here = dirname3(fileURLToPath(import.meta.url));
+var packageRoot = join8(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

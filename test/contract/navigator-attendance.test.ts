@@ -976,3 +976,195 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
+  const root = await mkdtemp(join(tmpdir(), "navigator-admitted-request-"));
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runDir = join(root, "run-public-judge");
+    await mkdir(runDir, { recursive: true });
+    const sessionDir = join(runDir, "session");
+    await mkdir(sessionDir, { recursive: true });
+    const prose = "Canonical nonblank prose Judge request for navigation.";
+    await writeFile(
+      join(runDir, "admitted-request.json"),
+      JSON.stringify({
+        role: "judge",
+        runId: "run-public-1",
+        instruction: prose,
+        instructionEmpty: false,
+        attachments: [],
+      }),
+      "utf8",
+    );
+
+    process.env.AK_ROLE_RUN_DIR = runDir;
+    const judgePi = { getFlag: () => undefined };
+    const judgeCtx = {
+      cwd: root,
+      sessionManager: { getSessionDir: () => sessionDir },
+    } as never;
+
+    const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" });
+    assert.equal(loaded.subject, prose);
+    assert.equal(loaded.authority, prose);
+    assert.equal(loaded.subjectProvenance, "role_input");
+    assert.ok(loaded.subjectKey.length > 0);
+
+    // Missing admitted request → typed context unavailable (not model/session/transport).
+    process.env.AK_ROLE_RUN_DIR = join(root, "missing-run");
+    await assert.rejects(
+      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" }),
+      (error: unknown) =>
+        error instanceof NavigatorUnavailableError &&
+        error.unavailableSource === "context" &&
+        error.unavailableCause === "context",
+    );
+
+    // Malformed admitted request JSON → same context classification.
+    const badRun = join(root, "bad-run");
+    await mkdir(badRun, { recursive: true });
+    await writeFile(join(badRun, "admitted-request.json"), "{not-json", "utf8");
+    process.env.AK_ROLE_RUN_DIR = badRun;
+    await assert.rejects(
+      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" }),
+      (error: unknown) =>
+        error instanceof NavigatorUnavailableError && error.unavailableSource === "context",
+    );
+
+    // Structurally invalid admitted request (wrong role) → context unavailable.
+    const wrongRoleRun = join(root, "wrong-role-run");
+    await mkdir(wrongRoleRun, { recursive: true });
+    await writeFile(
+      join(wrongRoleRun, "admitted-request.json"),
+      JSON.stringify({
+        role: "fixer",
+        instruction: prose,
+        instructionEmpty: false,
+        attachments: [],
+      }),
+      "utf8",
+    );
+    process.env.AK_ROLE_RUN_DIR = wrongRoleRun;
+    await assert.rejects(
+      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" }),
+      (error: unknown) =>
+        error instanceof NavigatorUnavailableError && error.unavailableSource === "context",
+    );
+
+    // Empty public request keeps placeholder work context (no invented task prose).
+    const emptyRun = join(root, "empty-run");
+    await mkdir(emptyRun, { recursive: true });
+    await writeFile(
+      join(emptyRun, "admitted-request.json"),
+      JSON.stringify({
+        role: "judge",
+        instruction: "",
+        instructionEmpty: true,
+        attachments: [],
+      }),
+      "utf8",
+    );
+    process.env.AK_ROLE_RUN_DIR = emptyRun;
+    const empty = await loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" });
+    assert.equal(empty.subjectProvenance, "placeholder");
+    assert.equal(empty.authority, "");
+    assert.equal(empty.subject.includes(prose), false);
+  } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("role-runtime passes admitted-request subject/authority into Navigator attendance", async () => {
+  const { basename } = await import("node:path");
+  const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { createRoleRuntimeExtension } = await import("../../src/role-runtime.ts");
+  const { withActivationHome } = await import("../helpers/pi-test-harness.ts");
+
+  const root = await mkdtemp(join(tmpdir(), "navigator-admitted-attendance-"));
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  try {
+    const runDir = join(root, "run-dir");
+    await mkdir(runDir, { recursive: true });
+    const prose = "Admitted instruction prose observed by Navigator attendance.";
+    await writeFile(
+      join(runDir, "admitted-request.json"),
+      JSON.stringify({
+        role: "judge",
+        instruction: prose,
+        instructionEmpty: false,
+        attachments: [],
+      }),
+      "utf8",
+    );
+    process.env.AK_ROLE_RUN_DIR = runDir;
+
+    await withActivationHome({ prefix: "ak-nav-admitted-" }, async ({ home }) => {
+      let observed: { subject?: string; authority?: string; subjectKey?: string } | undefined;
+      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+      const pi = {
+        registerFlag() {},
+        getFlag(name: string) {
+          return name === "ak-role" ? "judge" : undefined;
+        },
+        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+          handlers.set(name, handler);
+        },
+        registerTool() {},
+        getAllTools() {
+          return [];
+        },
+        setActiveTools() {},
+      };
+
+      createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "JUDGE LAW",
+        transcriptFromContext: () => "",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi as never, options),
+        createNavigatorAttendance: (options) => {
+          observed = {
+            subject: options.subject,
+            authority: options.authority,
+            subjectKey: options.subjectKey,
+          };
+          return {
+            prepare() {},
+            setWorkContext() {},
+            isPreparing: () => false,
+            settle: async () => {},
+            dispose() {},
+          };
+        },
+      })(pi as never);
+
+      const sessionDir = join(
+        home,
+        ".ak-roles",
+        "books",
+        basename(home),
+        "runs",
+        "judge-admitted",
+        "session",
+      );
+      await mkdir(sessionDir, { recursive: true });
+      const sessionManager = SessionManager.create(home, sessionDir);
+      await handlers.get("session_start")?.({}, {
+        cwd: home,
+        sessionManager,
+        abort() {},
+      });
+
+      assert.ok(observed, "Navigator attendance must be constructed");
+      assert.equal(observed.subject, prose);
+      assert.equal(observed.authority, prose);
+      assert.ok(String(observed.subjectKey).length > 0);
+    });
+  } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+    await rm(root, { recursive: true, force: true });
+  }
+});

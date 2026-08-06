@@ -724,6 +724,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     dispose(): void {
       disposed = true;
       // Leave sessionReady so an in-flight createSession observes disposed and drains exactly once.
+      // Late settleOnce completion observes disposed and skips onEvent.
       session?.dispose();
       session = undefined;
       activeInvocationId = undefined;
@@ -802,7 +803,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.unavailableCause === undefined ? {} : { unavailableCause: report.unavailableCause }),
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
-      if (report.disposition !== "silence" && !suppressEvent) await options.onEvent(event, report);
+      // Dispose during post-role grace must ignore late completion (ADR 0052 / #106).
+      if (!disposed && report.disposition !== "silence" && !suppressEvent) {
+        await options.onEvent(event, report);
+      }
       preparation = undefined;
       sessionReady = undefined;
       candidates = undefined;

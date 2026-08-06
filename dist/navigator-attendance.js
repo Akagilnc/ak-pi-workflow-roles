@@ -603,7 +603,9 @@ ${helpContext}
       ...report.unavailableCause === void 0 ? {} : { unavailableCause: report.unavailableCause },
       ...report.arrivalMessage === void 0 ? {} : { arrivalMessage: report.arrivalMessage }
     };
-    if (report.disposition !== "silence" && !suppressEvent) await options.onEvent(event, report);
+    if (!disposed && report.disposition !== "silence" && !suppressEvent) {
+      await options.onEvent(event, report);
+    }
     preparation = void 0;
     sessionReady = void 0;
     candidates = void 0;
