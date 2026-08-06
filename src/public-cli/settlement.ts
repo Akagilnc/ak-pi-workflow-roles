@@ -3,6 +3,7 @@
  * into one Terminal result (ADR 0052 / #106 / #107 / #101).
  * Controlled failures and audit human decisions settle here without washing causes.
  */
+import { randomUUID } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -351,6 +352,62 @@ type SessionEntry = {
   timestamp?: string;
 };
 
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    ((error as { code?: unknown }).code === "ENOENT" ||
+      (error as { code?: unknown }).code === "ENOTDIR")
+  );
+}
+
+/**
+ * Preserve session-read failure identity as a typed session cause.
+ * SyntaxError keeps its name so durable settlement does not wash malformed JSONL
+ * into generic output absence.
+ */
+function sessionReadFailure(
+  error: unknown,
+  fallbackMessage: string,
+): Error & {
+  knownCause: ControlledFailureCause;
+  failureCode?: string | number;
+} {
+  if (error instanceof SyntaxError) {
+    const failed = new SyntaxError(
+      error.message || fallbackMessage,
+    ) as SyntaxError & {
+      knownCause: ControlledFailureCause;
+      failureCode?: string | number;
+    };
+    failed.knownCause = "session";
+    return failed;
+  }
+  if (error instanceof Error) {
+    const failed = new Error(
+      error.message || error.name || fallbackMessage,
+    ) as Error & {
+      knownCause: ControlledFailureCause;
+      failureCode?: string | number;
+      code?: string | number;
+    };
+    failed.name = error.name || "Error";
+    failed.knownCause = "session";
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" || typeof code === "number") {
+      failed.failureCode = code;
+      failed.code = code;
+    }
+    return failed;
+  }
+  const failed = new Error(String(error)) as Error & {
+    knownCause: ControlledFailureCause;
+    failureCode?: string | number;
+  };
+  failed.knownCause = "session";
+  return failed;
+}
+
 async function readLatestSessionEntries(
   sessionDirectory: string,
 ): Promise<SessionEntry[]> {
@@ -359,11 +416,15 @@ async function readLatestSessionEntries(
     .sort();
   if (files.length === 0) return [];
   const text = await readFile(join(sessionDirectory, files.at(-1)!), "utf8");
-  return text
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as SessionEntry);
+  const entries: SessionEntry[] = [];
+  for (const line of text.trim().split("\n").filter(Boolean)) {
+    try {
+      entries.push(JSON.parse(line) as SessionEntry);
+    } catch (error) {
+      throw sessionReadFailure(error, "malformed session JSONL");
+    }
+  }
+  return entries;
 }
 
 /**
@@ -594,46 +655,29 @@ export async function publishJudgeArtifacts(
   ];
 }
 
-export async function settleJudgeTerminalResult(
-  admitted: AdmittedJudgeInvocation,
-): Promise<TerminalResult> {
-  const entries = await readLatestSessionEntries(admitted.sessionDirectory);
-  const roleOutcome = extractJudgeRoleOutcome(entries);
-  if (roleOutcome === undefined) {
-    throw new Error(
-      "Judge Role run completed without a lawful typed terminal result",
-    );
-  }
-  const navigator = extractNavigatorFact(entries);
-  const artifacts = await publishJudgeArtifacts(
-    admitted,
-    roleOutcome,
-    admitted.sessionDirectory,
-  );
-  return {
-    roleOutcome,
-    navigator,
-    artifacts,
-    runId: admitted.runId,
-  };
-}
-
 /**
- * Try to settle a lawful typed terminal result from the admitted session.
- * Returns undefined only for genuinely absent/invalid outcomes (no lawful
- * verdict, missing/unreadable session). Publication and other post-outcome
- * exceptions propagate with their original typed identity — callers must not
- * wash them into generic output absence.
+ * Single lawful-settlement implementation (session → outcome/Navigator/artifacts).
+ *
+ * - Returns undefined only for genuine absence (missing session path, or no
+ *   lawful verdict in an otherwise readable session).
+ * - Malformed JSONL / other session-read failures throw with knownCause=session
+ *   and original identity (SyntaxError name retained).
+ * - Artifact publication failures propagate with their original typed identity.
  */
-export async function trySettleJudgeTerminalResult(
+async function settleLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
 ): Promise<TerminalResult | undefined> {
   let entries: SessionEntry[];
   try {
     entries = await readLatestSessionEntries(admitted.sessionDirectory);
-  } catch {
-    // Missing/unreadable session is absence of a lawful outcome.
-    return undefined;
+  } catch (error) {
+    // Missing path is absence of a lawful outcome; callers classify via session inspect.
+    if (isMissingPathError(error)) return undefined;
+    // Malformed JSONL and other read failures keep typed session identity.
+    throw error instanceof Error &&
+      (error as { knownCause?: unknown }).knownCause === "session"
+      ? error
+      : sessionReadFailure(error, "session unreadable");
   }
   const roleOutcome = extractJudgeRoleOutcome(entries);
   if (roleOutcome === undefined) {
@@ -652,6 +696,34 @@ export async function trySettleJudgeTerminalResult(
     artifacts,
     runId: admitted.runId,
   };
+}
+
+/**
+ * Settle a lawful typed terminal result from the admitted session.
+ * Throws when no lawful outcome is present (tests/callers that require success).
+ * Session-read and publication failures retain their typed identity.
+ */
+export async function settleJudgeTerminalResult(
+  admitted: AdmittedJudgeInvocation,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulJudgeTerminalResult(admitted);
+  if (settled === undefined) {
+    throw new Error(
+      "Judge Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/**
+ * Try to settle a lawful typed terminal result from the admitted session.
+ * Returns undefined only for genuine absence (no lawful verdict / missing path).
+ * Session malformation and publication exceptions propagate with typed identity.
+ */
+export async function trySettleJudgeTerminalResult(
+  admitted: AdmittedJudgeInvocation,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulJudgeTerminalResult(admitted);
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */
@@ -705,15 +777,23 @@ async function resolveFailureArtifactsBase(
 }
 
 /**
- * Write JSON across candidates, enriching the payload with prior publication
- * collisions once a fallback path is required. Original failure fields stay intact.
+ * Write JSON across preferred paths, then unique open-ended fallbacks.
+ * Finite fixed names must not be able to exhaust durability and strand the
+ * original controlled failure outside settlement.
  */
 async function writeFailureJsonRetainingCause(
-  candidates: readonly string[],
+  preferredCandidates: readonly string[],
+  uniqueFallbackDirs: readonly string[],
+  stem: string,
   basePayload: Readonly<Record<string, unknown>>,
   priorIssues: readonly PublicationAttempt[],
 ): Promise<{ path: string; issues: PublicationAttempt[] }> {
   const issues: PublicationAttempt[] = [...priorIssues];
+  const candidates: string[] = [
+    ...preferredCandidates,
+    // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
+    ...uniqueFallbackDirs.map((dir) => join(dir, `${stem}.${randomUUID()}.json`)),
+  ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i]!;
     const payload =
@@ -758,9 +838,12 @@ export async function publishFailureArtifacts(
   const priorIssues: PublicationAttempt[] =
     baseAttempt === undefined ? [] : [baseAttempt];
 
-  // Prefer conventional names; alternate candidates keep a colliding primary
-  // path (error.json as a directory) from stranding the original failure.
+  // Prefer conventional names; unique fallback dirs keep colliding fixed paths
+  // from stranding the original failure outside settlement.
   const underArtifacts = baseDir === join(admitted.runDirectory, "artifacts");
+  const uniqueFallbackDirs = underArtifacts
+    ? [baseDir, admitted.runDirectory]
+    : [baseDir];
   const errorCandidates = underArtifacts
     ? [
         join(baseDir, "error.json"),
@@ -794,6 +877,8 @@ export async function publishFailureArtifacts(
 
   const errorWrite = await writeFailureJsonRetainingCause(
     errorCandidates,
+    uniqueFallbackDirs,
+    "error",
     errorPayloadBase,
     priorIssues,
   );
@@ -812,6 +897,8 @@ export async function publishFailureArtifacts(
   };
   const evidenceWrite = await writeFailureJsonRetainingCause(
     evidenceCandidates,
+    uniqueFallbackDirs,
+    "evidence",
     evidencePayload,
     // Evidence records the same publication collisions observed placing the error body.
     errorWrite.issues,
