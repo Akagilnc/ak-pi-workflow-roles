@@ -214,12 +214,31 @@ function validateSnapshot(value, index) {
         normalizedByteLength: value.normalizedByteLength,
     };
 }
+/** Runtime full-embed optional keys retained on the self-contained public receipt. */
+const COLLECTOR_EVIDENCE_OPTIONAL_KEYS = [
+    "stableGitHubId",
+    "authorLogin",
+    "state",
+    "body",
+    "commitOid",
+    "htmlUrl",
+    "path",
+    "line",
+    "originalLine",
+    "side",
+    "position",
+    "pullRequestReviewId",
+    "submittedAt",
+    "authoritativeTime",
+    "windowRelation",
+    "pagination",
+];
 function validateEvidence(value, index) {
     if (!isRecord(value))
         fail(`evidenceRecords[${index}] is invalid`);
-    assertClosedKeys(value, ["evidenceId", "kind", "versionId", "contentDigest", "firstObservedAt", "raw"], [], `evidenceRecords[${index}]`);
+    assertClosedKeys(value, ["evidenceId", "kind", "versionId", "contentDigest", "firstObservedAt", "raw"], COLLECTOR_EVIDENCE_OPTIONAL_KEYS, `evidenceRecords[${index}]`);
     // raw may be any JSON value, including null; reject only missing key (above).
-    return {
+    const out = {
         evidenceId: requireNonEmptyString(value.evidenceId, `evidenceRecords[${index}].evidenceId`),
         kind: requireNonEmptyString(value.kind, `evidenceRecords[${index}].kind`),
         versionId: requireNonEmptyString(value.versionId, `evidenceRecords[${index}].versionId`),
@@ -227,6 +246,13 @@ function validateEvidence(value, index) {
         firstObservedAt: requireNonEmptyString(value.firstObservedAt, `evidenceRecords[${index}].firstObservedAt`),
         raw: value.raw,
     };
+    // Pass through present optional embed fields without re-deriving them.
+    for (const key of COLLECTOR_EVIDENCE_OPTIONAL_KEYS) {
+        if (Object.hasOwn(value, key)) {
+            out[key] = value[key];
+        }
+    }
+    return out;
 }
 /**
  * Recursive production validator for accepted Collector terminal receipt details.

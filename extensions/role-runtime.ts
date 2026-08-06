@@ -14,6 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
 
+import type { CollectorClock } from "../src/collector-evidence.ts";
 import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
 import { createReviewerAgentRunner } from "../src/reviewer-agent.ts";
 import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
@@ -230,7 +231,24 @@ export async function loadNavigatorWorkContext(
   return { subjectKey, subject, authority, subjectProvenance };
 }
 
-export default function roleRuntime(pi: ExtensionAPI): void {
+/** Optional composition overrides for the production role-runtime envelope. */
+export type RoleRuntimeInstallOptions = {
+  readonly createCollectorClock?: () => CollectorClock;
+  /**
+   * When the envelope is loaded from a non-default extension path (test fixtures
+   * composing this installer), bind Collector tool isolation to that path.
+   */
+  readonly collectorPackageExtensionPath?: string;
+};
+
+/**
+ * Install the shared production role-runtime envelope on a Pi extension host.
+ * Callers may supply Collector clock composition without forking the envelope.
+ */
+export function installRoleRuntime(
+  pi: ExtensionAPI,
+  installOptions: RoleRuntimeInstallOptions = {},
+): void {
   const reviewerAgent = createReviewerAgentRunner();
   registerNavigatorModelCommand(pi);
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
@@ -246,6 +264,11 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     loadCollectorSoul: () => readFile(collectorSoulPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
+    ...(installOptions.createCollectorClock === undefined
+      ? {}
+      : { createCollectorClock: installOptions.createCollectorClock }),
+    collectorPackageExtensionPath:
+      installOptions.collectorPackageExtensionPath ?? extensionPath,
     loadDoctorSoul: () => readFile(doctorSoulPath, "utf8"),
     loadDoctorCase,
     auditDoctorCompliance: createPiDoctorAuditor(),
@@ -274,7 +297,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     createMergerGitState: (repositoryRoot) =>
       createProductionMergerGitState(repositoryRoot),
-    collectorPackageExtensionPath: extensionPath,
     async loadCanonicalSkillBinding(name) {
       // Coder TDD is package-owned (#109). Other methods keep legacy loaders until their tickets.
       if (name === "tdd") {
@@ -289,4 +311,8 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     auditFixerCompliance: createPiFixerAuditor(),
     auditReviewerCompliance: createPiReviewerAuditor(),
   })(pi);
+}
+
+export default function roleRuntime(pi: ExtensionAPI): void {
+  installRoleRuntime(pi);
 }
