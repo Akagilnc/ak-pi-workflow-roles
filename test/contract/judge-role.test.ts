@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
@@ -29,6 +31,12 @@ import {
   type JudgeVerdict,
   type SoulAuditInput,
 } from "../../src/role-runtime.ts";
+import {
+  extractNavigatorFact,
+  formatTerminalResult,
+  NAVIGATOR_POST_ROLE_GRACE_MS,
+} from "../../src/public-cli/settlement.ts";
+import { parseTerminalResultRegions } from "../../src/public-cli/terminal.ts";
 import { withActivationHome } from "../helpers/pi-test-harness.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -1445,3 +1453,162 @@ test("judge output must be the sole call in its assistant batch", async () => {
   }
   assert.equal(auditCalls, 0);
 });
+
+test(
+  "accepted role terminal races production 3s Navigator grace through role-runtime to Terminal",
+  { timeout: 15_000 },
+  async () => {
+    assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 3_000);
+
+    const modelRoot = await mkdtemp(join(tmpdir(), "ak-judge-grace-model-"));
+    const modelSettingPath = join(modelRoot, "navigator-model.json");
+    await writeFile(modelSettingPath, JSON.stringify({ model: "provider/model" }), "utf8");
+
+    try {
+      const harness = extensionHarness("judge");
+      const sentMessages: Array<{ customType?: string; details?: unknown }> = [];
+      (harness.pi as { sendMessage?: (message: unknown) => Promise<void> }).sendMessage = async (
+        message: unknown,
+      ) => {
+        sentMessages.push(message as { customType?: string; details?: unknown });
+      };
+
+      let releasePreparation!: () => void;
+      let preparationStarted!: () => void;
+      const preparationStartedPromise = new Promise<void>((resolve) => {
+        preparationStarted = resolve;
+      });
+      const preparationGate = new Promise<void>((resolve) => {
+        releasePreparation = resolve;
+      });
+      let disposeCalls = 0;
+      const events: unknown[] = [];
+      let attendance: ReturnType<typeof createNavigatorAttendance> | undefined;
+
+      const extension = createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "JUDGE LAW",
+        transcriptFromContext: () => "record",
+        auditSoulCompliance: async () => ({ status: "pass" }),
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: "/repo/.ak/work/issues/106",
+          subject: "issue 106",
+          authority: "owner authority",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: async (options) => {
+          attendance = createNavigatorAttendance({
+            ...options,
+            sessionDir: join(modelRoot, "navigator-session"),
+            modelSettingPath,
+            loadSoul: async () => "route law",
+            loadRoleHelp: async (role) => `Usage: pi --ak-role ${role} --help`,
+            createSession: async () => ({
+              async prompt() {
+                preparationStarted();
+                await preparationGate;
+              },
+              appendEntry() {},
+              entries: () => [],
+              dispose() {
+                disposeCalls += 1;
+              },
+            }),
+            onEvent: async (event, report) => {
+              events.push(event);
+              await options.onEvent(event, report);
+            },
+          });
+          return attendance;
+        },
+      });
+      extension(harness.pi as ExtensionAPI);
+
+      await withActivationHome({ prefix: "ak-judge-grace-" }, async ({ home }) => {
+        const ctx = activationCtx(home);
+        await harness.handlers.get("session_start")?.({}, ctx);
+        assert.ok(attendance, "Navigator attendance must be installed on session_start");
+        // Start in-flight preparation that will outlive the post-role grace.
+        // Call the production attendance directly (same object role-runtime holds).
+        attendance.prepare();
+        await preparationStartedPromise;
+
+        const started = Date.now();
+        await harness.handlers.get("tool_result")?.({
+          toolName: JUDGE_OUTPUT_TOOL_NAME,
+          toolCallId: "accepted-grace",
+          isError: false,
+          details: { judgeStatus: "converged", note: "ok" },
+        }, ctx);
+        const elapsed = Date.now() - started;
+
+        // Production constant is the bound — not an injected short helper delay.
+        assert.ok(
+          elapsed >= NAVIGATOR_POST_ROLE_GRACE_MS - 50,
+          `grace should wait ~${NAVIGATOR_POST_ROLE_GRACE_MS}ms, elapsed=${elapsed}`,
+        );
+        assert.ok(
+          elapsed < NAVIGATOR_POST_ROLE_GRACE_MS + 1_000,
+          `grace upper bound breached: elapsed=${elapsed}`,
+        );
+        assert.ok(disposeCalls >= 1, "late attendance must be disposed after grace timeout");
+
+        await harness.handlers.get("agent_settled")?.({}, ctx);
+        assert.equal(sentMessages.length, 1);
+        const details = sentMessages[0]?.details as {
+          disposition?: string;
+          unavailableReason?: string;
+          unavailableSource?: string;
+          invocationId?: string;
+        };
+        assert.equal(details.disposition, "unavailable");
+        assert.equal(details.invocationId, "post-role-grace-timeout");
+        assert.match(String(details.unavailableReason), /post-role delivery grace/);
+        assert.equal(details.unavailableSource, "unknown");
+
+        // Late preparation completion must not overwrite the grace unavailable fact.
+        releasePreparation();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(
+          events.some(
+            (event) =>
+              typeof event === "object" &&
+              event !== null &&
+              (event as { disposition?: string }).disposition === "recommendation",
+          ),
+          false,
+          "disposed late completion must not publish recommendation",
+        );
+
+        // Session attendance fact → public Terminal regions (settlement renderer path).
+        const navigator = extractNavigatorFact([
+          {
+            type: "custom_message",
+            customType: "ak-navigator-attendance",
+            message: { details },
+          },
+        ]);
+        assert.equal(navigator.disposition, "unavailable");
+        if (navigator.disposition === "unavailable") {
+          assert.match(navigator.reason, /post-role delivery grace/);
+        }
+        const formatted = formatTerminalResult({
+          roleOutcome: {
+            kind: "accepted",
+            role: "judge",
+            status: "converged",
+            decisiveFacts: { judgeStatus: "converged" },
+          },
+          navigator,
+          artifacts: [{ kind: "report", path: "/r/artifacts/report.json" }],
+          runId: "run-grace-1",
+        });
+        const regions = parseTerminalResultRegions(formatted);
+        assert.equal(regions.navigatorDisposition, "unavailable");
+        assert.match(String(regions.unavailableReason), /post-role delivery grace/);
+        assert.equal(regions.status, "converged");
+      });
+    } finally {
+      await rm(modelRoot, { recursive: true, force: true });
+    }
+  },
+);
