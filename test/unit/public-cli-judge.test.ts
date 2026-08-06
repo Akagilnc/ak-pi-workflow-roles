@@ -440,27 +440,54 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
 
 test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () => {
   assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
-  let slept = 0;
-  const result = await raceNavigatorGrace(
+
+  // Timeout path: production default grace + deferred sleep (no wall clock, no short override).
+  let capturedDelay: number | undefined;
+  let releaseTimer!: () => void;
+  const timerHeld = new Promise<void>((resolve) => {
+    releaseTimer = resolve;
+  });
+  let raceResolved = false;
+  const pendingRace = raceNavigatorGrace(
     new Promise<string>(() => {
       /* never settles */
     }),
-    50,
+    // Default production grace — not a shortened test-only override.
+    NAVIGATOR_POST_ROLE_GRACE_MS,
     async (ms) => {
-      slept = ms;
+      capturedDelay = ms;
+      await timerHeld;
     },
-  );
-  assert.equal(result.status, "timeout");
-  assert.equal(slept, 50);
+  ).then((result) => {
+    raceResolved = true;
+    return result;
+  });
 
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(capturedDelay, 10_000);
+  assert.equal(raceResolved, false);
+
+  releaseTimer();
+  assert.deepEqual(await pendingRace, { status: "timeout" });
+  assert.equal(raceResolved, true);
+
+  // Early completion while deferred timer stays unreleased: 10s is a maximum, not a fixed delay.
+  let holdEarlyTimer!: () => void;
+  const earlyTimerHeld = new Promise<void>((resolve) => {
+    holdEarlyTimer = resolve;
+  });
   const done = await raceNavigatorGrace(
     Promise.resolve("ok"),
-    1_000,
-    async () => {
-      await new Promise((r) => setTimeout(r, 50));
+    NAVIGATOR_POST_ROLE_GRACE_MS,
+    async (ms) => {
+      assert.equal(ms, 10_000);
+      await earlyTimerHeld;
     },
   );
   assert.deepEqual(done, { status: "done", value: "ok" });
+  holdEarlyTimer();
 });
 
 test("runAkRole judge rejects burden selector before admission", async () => {
