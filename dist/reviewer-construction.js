@@ -11,10 +11,44 @@ export const REVIEWER_CONSTRUCTION_RECIPE = Object.freeze({
 export const REVIEWER_AXIS_OUTPUT_ADAPTER = Object.freeze({
     adapterId: "reviewer-axis-output",
     version: 1,
-    implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report"),
+    implementationSha256: sha256Hex("reviewer-axis-output:v1:single-axis-verbatim-report+standards-three-priorities"),
 });
+/** Typed Standards conclusion keys owned by reviewer construction (presentation labels are not the contract). */
+export const REVIEWER_STANDARDS_CONCLUSION_KEYS = Object.freeze([
+    "constitutionality",
+    "minimum-necessary-test-cost",
+    "complexity",
+]);
+const REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
+    constitutionality: "constitutionality",
+    "minimum-necessary-test-cost": "minimum-necessary test cost",
+    complexity: "complexity",
+});
+export function reviewerAxisOutputContract(axis) {
+    const three = REVIEWER_STANDARDS_CONCLUSION_KEYS;
+    return axis === "standards"
+        ? Object.freeze({ axis, requiredConclusions: three, excludedConclusions: Object.freeze([]) })
+        : Object.freeze({ axis, requiredConclusions: Object.freeze([]), excludedConclusions: three });
+}
+function renderConclusionList(keys, finalJoiner) {
+    const labels = keys.map((key) => REVIEWER_STANDARDS_CONCLUSION_LABELS[key]);
+    if (labels.length === 0)
+        return "";
+    if (labels.length === 1)
+        return labels[0];
+    if (labels.length === 2)
+        return `${labels[0]} ${finalJoiner} ${labels[1]}`;
+    return `${labels.slice(0, -1).join(", ")}, ${finalJoiner} ${labels[labels.length - 1]}`;
+}
+function renderAxisPriorityClause(contract) {
+    if (contract.requiredConclusions.length > 0) {
+        return `Inside that single Standards report, explicitly conclude on ${renderConclusionList(contract.requiredConclusions, "and")}; a finding or clear no-finding on each counts as a conclusion.`;
+    }
+    return `Do not discuss ${renderConclusionList(contract.excludedConclusions, "or")}; those are Standards judgements.`;
+}
 /** Package-owned mechanics layered over the unchanged canonical Skill semantics. */
 export function reviewerAxisMethodAdapter(axis) {
+    const contract = reviewerAxisOutputContract(axis);
     const question = axis === "standards"
         ? "Answer only the canonical Standards question, including its complete smell baseline and burden."
         : "Answer only the canonical Spec question.";
@@ -25,6 +59,7 @@ export function reviewerAxisMethodAdapter(axis) {
         "For this already-isolated leg, this package adapter supersedes that Skill's dual-agent orchestration, dual-axis aggregation, and dual-section presentation mechanics.",
         question,
         `Emit exactly one substantive ${axis === "standards" ? "Standards" : "Spec"} report. Do not emit a ${other} assessment, ${other} finding count, ${other} conclusion, or second-axis section.`,
+        renderAxisPriorityClause(contract),
         "You may read and cite any supplied common material, including material relevant to the other axis; material access and citation do not change the assigned question.",
         "The returned report is the complete output envelope and its UTF-8 bytes are preserved verbatim; no heading parser, sanitizer, section splitter, rewrite, aggregation, or replacement leg follows.",
     ].join("\n");

@@ -137,11 +137,11 @@ test("explicit internal activation args point at the package entrypoint file", a
   assert.equal(args.includes("--ak-role"), true);
 });
 
-test("role command goes through ak-role-owned explicit Internal load before deferring run", async () => {
+test("non-Judge role command goes through ak-role-owned explicit Internal load before deferring run", async () => {
   await withTempHome(async (home) => {
     const { io, stderr } = captureIo();
     let captured: string[] | undefined;
-    const result = await runAkRole(["judge"], {
+    const result = await runAkRole(["reviewer"], {
       packageRoot,
       home,
       io,
