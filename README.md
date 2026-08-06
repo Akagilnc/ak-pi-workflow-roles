@@ -55,7 +55,7 @@ When a Role run is interrupted by an observed typed Codex/xAI HTTP 429 and has n
 ak-role --model xai/grok-4.5:high resume <runId>
 ```
 
-At the current mainline slice, Judge, Coder, Fixer, Collector, Doctor, and Reviewer are the completed public run paths. `roles` lists the full callable registry, but the remaining role adapters are still landing under #114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
+At the current mainline slice, Judge, Coder, Fixer, Collector, Doctor, Reviewer, and Merger are the completed public run paths. `roles` lists the full callable registry. Ordinary Pi startup does not expose the package’s internal activation flag.
 
 ### Call Coder
 
@@ -334,9 +334,16 @@ The completed testimony carries no cost numbers; the runtime seals its own deriv
 
 ## Merger
 
-Merger resolves exactly one caller-assigned merge that is already in conflict. It has no phase and does not select branches, start/abort/retry a merge, publish a result, or route another role. The public adapter will derive its mechanical envelope from the active merge; callers will not author or pass the internal merger-input JSON.
+Merger resolves exactly one caller-assigned merge that is already in conflict. It has no phase and does not select branches, start/abort/retry a merge, publish a result, or route another role. Call Merger only through `ak-role merger` (ADR 0052). The public adapter derives its mechanical envelope from the active ordinary two-parent merge and forces the package-owned merge-only method; callers do not author or pass the internal merger-input JSON, parents, conflict set, or resolution scope.
 
-> **Public invocation status:** the `ak-role merger` adapter is still landing under #114.
+```bash
+ak-role merger \
+  --project /path/to/conflicted-worktree \
+  --attach ./authority-or-intent-notes.md \
+  "Reconcile the active merge without inventing new authority."
+```
+
+Common Invocation flags: `--attach` / `--project`. There is no phase token. The adapter reads production Git facts in the project worktree (`HEAD`, the sole `MERGE_HEAD`, `AUTO_MERGE`, and the complete unmerged path set), builds the internal merger-input envelope, and binds package-owned Matt `resolving-merge-conflicts` (`resources/methods/resolving-merge-conflicts/`, adaptation `merger-merge-only-escalate-new-intent`) without ambient home Skill discovery. Every invocation expands that method before conflict work; primary-source intent investigation and authorized checks are retained. Compatible intent completes a clean ordinary two-parent merge commit within scope; incompatible or new authority returns the existing typed `escalate` leaf. The method does not broaden Merger into rebase/general conflict workflow and does not inherit upstream unconditional-resolution authority. No active merge or drift fails honestly through the activation path rather than CLI semantic guessing. Lawful Terminal results and Artifact refs use the same success interface as Judge; evidence records package method provenance, typed expansion observation, and the derived envelope.
 
 The authoritative exported TypeScript contract is `mergerInputSchema` plus `validateMergerInput`. It binds `attemptId`, exact target/source full object IDs, digest-bound UTF-8 task/authority/target-intent/source-intent bytes, the byte-sorted complete conflict set, permitted resolution scope, and named authorized check argv. Repository location is caller transport and is intentionally absent from portable identity.
 

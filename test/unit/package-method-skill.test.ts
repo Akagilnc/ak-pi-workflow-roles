@@ -308,3 +308,44 @@ test("packaged code-review binding captures expansion against package skill path
     assert.equal(binding.captureExpansion(homeFake, request), undefined);
   });
 });
+
+test("packaged resolving-merge-conflicts loads merge-only method that escalates new authority", async () => {
+  await withEmptyHome(async () => {
+    const material = await loadPackagedMethodSkillMaterial(
+      packageRoot,
+      "resolving-merge-conflicts",
+    );
+    assert.equal(material.name, "resolving-merge-conflicts");
+    assert.equal(
+      material.provenance.packageAdaptation,
+      "merger-merge-only-escalate-new-intent",
+    );
+    assert.equal(
+      material.provenance.upstream.path,
+      "skills/engineering/resolving-merge-conflicts",
+    );
+    assert.equal(
+      material.provenance.upstream.commit,
+      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    );
+    assert.equal(material.provenance.upstream.tag, "v1.2.2");
+    assert.equal(
+      material.companionRelativePaths.includes("agents/openai.yaml"),
+      true,
+    );
+    // Keep primary-source investigation and authorized checks.
+    assert.equal(material.body.includes("primary sources"), true);
+    assert.equal(material.body.includes("authorized checks"), true);
+    // Merge-only: no unconditional resolve authority; no rebase workflow.
+    assert.equal(material.body.includes("Always resolve"), false);
+    assert.equal(material.body.includes("merge-only"), true);
+    assert.equal(material.body.includes("escalate"), true);
+    assert.equal(material.body.includes("continue a rebase"), true);
+    assert.equal(
+      /If rebasing, continue the rebase/.test(material.body),
+      false,
+    );
+    assert.equal(material.skillPath.includes(packageRoot), true);
+    assert.equal(material.skillPath.includes(".agents/skills"), false);
+  });
+});

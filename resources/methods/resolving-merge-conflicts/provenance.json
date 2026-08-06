@@ -1,0 +1,26 @@
+{
+  "name": "resolving-merge-conflicts",
+  "kind": "role-method-skill",
+  "upstream": {
+    "repository": "https://github.com/mattpocock/skills",
+    "path": "skills/engineering/resolving-merge-conflicts",
+    "commit": "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    "tag": "v1.2.2",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Matt Pocock",
+    "attribution": "mattpocock/skills"
+  },
+  "packageAdaptation": "merger-merge-only-escalate-new-intent",
+  "files": {
+    "SKILL.md": {
+      "sha256": "41b1552529eb8aa754e6ee86a7af223b014255440fe19edf4ff0bae949f46562",
+      "byteLength": 1952,
+      "gitBlob": "7f357f390c4a4514864e53b2cfe3dedcf65d5a0d"
+    },
+    "agents/openai.yaml": {
+      "sha256": "f283f1ac11525de29d2615163fc3239b979f67c8e88560644364ca6e1a3b8100",
+      "byteLength": 146,
+      "gitBlob": "dc388c3df1d0a72ae2cfe7c78a23747f26e96822"
+    }
+  }
+}

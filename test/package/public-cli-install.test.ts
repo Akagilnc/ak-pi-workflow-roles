@@ -220,48 +220,40 @@ child.on("close", (code, signal) => {
     );
     await chmod(shimPath, 0o755);
 
-    // Enter through installed ak-role on a role that still defers full settlement:
-    // production must spawn Pi with explicit -e load of the same installed copy.
-    // (Judge is the first complete public run path — covered by #106 tests.)
-    const throughAkRole = await runAkRoleBin(installed.akRoleBin, ["reviewer"], {
-      home,
-      agentDir: piAgentDir,
-      env: {
-        PATH: `${shimDir}:${process.env.PATH ?? ""}`,
-        PI_OFFLINE: "1",
-      },
-    });
-    assert.equal(throughAkRole.timedOut, false, throughAkRole.stderr);
-    assert.equal(throughAkRole.code, 2, throughAkRole.stderr);
-    assert.match(throughAkRole.stderr, /not available in this install slice/);
+    // Enter through installed ak-role on completed Merger (#114): no deferred slice.
+    // Non-merge worktree → honest activation failure; Internal entrypoint still ships.
+    const project = resolve(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
 
-    const recorded = JSON.parse(await readFile(argvLog, "utf8")) as string[];
-    assert.equal(recorded.includes("--no-extensions"), true);
-    const eIndex = recorded.indexOf("-e");
-    assert.equal(eIndex >= 0, true, `expected -e in ${JSON.stringify(recorded)}`);
-    const loadedEntrypoint = recorded[eIndex + 1];
-    assert.equal(typeof loadedEntrypoint, "string");
-    assert.equal(await realpath(loadedEntrypoint!), await realpath(internal));
-
-    // Real Pi behind the shim registered Internal for that one invocation.
-    // Re-run the recorded argv directly only to observe registration (not the product path).
-    const loaded = await runPiSubprocess(recorded, {
-      cwd: home,
-      timeoutMs: 30_000,
-      env: {
-        ...process.env,
-        HOME: home,
-        PI_CODING_AGENT_DIR: piAgentDir,
-        PI_OFFLINE: "1",
+    const throughAkRole = await runAkRoleBin(
+      installed.akRoleBin,
+      ["merger", "--project", project, "Resolve the active merge."],
+      {
+        home,
+        agentDir: piAgentDir,
+        env: {
+          PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+          PI_OFFLINE: "1",
+        },
       },
-    });
-    assert.equal(loaded.timedOut, false, loaded.stderr);
-    assert.equal(loaded.code, 0, loaded.stderr);
-    assert.equal(
-      /--ak-role\b/.test(loaded.stdout) || /--ak-role\b/.test(loaded.stderr),
-      true,
-      `ak-role-owned explicit load must register --ak-role\nstdout:\n${loaded.stdout}\nstderr:\n${loaded.stderr}`,
     );
+    assert.equal(throughAkRole.timedOut, false, throughAkRole.stderr);
+    // No active merge → honest activation failure (nonzero), not deferred-slice prose.
+    assert.notEqual(throughAkRole.code, 0, throughAkRole.stderr);
+    assert.equal(
+      throughAkRole.stderr.includes("not available in this install slice"),
+      false,
+    );
+    assert.equal(
+      throughAkRole.stdout.includes("not available in this install slice"),
+      false,
+    );
+
+    // Installed package still owns the Internal entrypoint for explicit load.
+    await access(internal);
+    const entryText = await readFile(internal, "utf8");
+    assert.equal(entryText.includes("createRoleRuntimeExtension"), true);
   });
 });
 
