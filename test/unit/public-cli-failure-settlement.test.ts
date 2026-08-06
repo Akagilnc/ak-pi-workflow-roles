@@ -1755,3 +1755,99 @@ test("session provider-stop produces provider cause without injected knownFailur
     );
   });
 });
+
+test("zero-exit session provider-stop retains provider cause (not washed to output)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    // Counterexample class: Pi leaves typed stopReason=error but runner code=0.
+    // No-lawful path must still read session provider-stop — exit code must not
+    // gate the typed cause channel into generic output.
+    const result = await runAkRole(
+      [
+        "--model",
+        "xai/grok-4:off",
+        "judge",
+        "--project",
+        project,
+        "zero-exit session provider stop",
+      ],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-zero-exit-session-provider-stop-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            [
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "user",
+                  content: [{ type: "text", text: "go" }],
+                },
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "upstream websocket failed",
+                  provider: "xai",
+                  model: "grok-4",
+                  api: "openai-responses",
+                },
+              }),
+            ].join("\n") + "\n",
+            "utf8",
+          );
+          return {
+            code: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+            // deliberately omit knownFailure — production default runner path
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticEquals: "upstream websocket failed",
+      identityName: "ProviderStopError",
+      identityCode: "xai",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "ProviderStopError");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(terminal.roleOutcome.diagnostic, "upstream websocket failed");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      diagnostic: string;
+      identity?: { name?: string; code?: string | number };
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.diagnostic, "upstream websocket failed");
+    assert.equal(errorBody.identity?.name, "ProviderStopError");
+    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(stdout.length, 1);
+    assert.equal(
+      stderr[0]!.split("\n").filter((line) => line.trim() !== "").length,
+      1,
+    );
+  });
+});

@@ -305,11 +305,12 @@ export async function runPublicJudge(
 
   // Production-owned typed cause channel — never inferred from stderr wording.
   // Order: runner knownFailure → session provider-stop → credential absence.
+  // Session provider-stop is exit-code-independent: Pi may leave stopReason=error
+  // and still exit 0. Credential absence stays gated to failed/timed-out children.
   // Zero-exit missing-terminal stays session/output when no typed source applies.
-  const sessionProviderStop =
-    result.timedOut || result.code !== 0
-      ? await readSessionProviderStop(admitted.sessionDirectory)
-      : undefined;
+  const sessionProviderStop = await readSessionProviderStop(
+    admitted.sessionDirectory,
+  );
   const sessionProviderFailure =
     sessionProviderStop === undefined
       ? undefined
