@@ -9302,52 +9302,122 @@ async function trySettleJudgeTerminalResult(admitted) {
     runId: admitted.runId
   };
 }
-async function publishFailureArtifacts(admitted, failure) {
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const errorPath = join5(artifactsDir, "error.json");
-  const evidencePath = join5(artifactsDir, "evidence.json");
-  await writeFile3(
-    errorPath,
-    `${JSON.stringify(
-      {
-        kind: "error",
-        role: "judge",
-        runId: admitted.runId,
-        cause: failure.cause,
-        diagnostic: failure.diagnostic,
-        ...failure.identity === void 0 ? {} : { identity: failure.identity },
-        ...failure.details === void 0 ? {} : { details: failure.details }
-      },
-      null,
-      2
-    )}
+function publicationAttemptFromError(path, error) {
+  if (error instanceof Error) {
+    const identity = {
+      name: error.name
+    };
+    const code = error.code;
+    if (typeof code === "string" || typeof code === "number") {
+      identity.code = code;
+    }
+    return {
+      path,
+      diagnostic: error.message || error.name || "write failed",
+      identity
+    };
+  }
+  return { path, diagnostic: String(error) };
+}
+async function resolveFailureArtifactsBase(runDirectory) {
+  const artifactsDir = join5(runDirectory, "artifacts");
+  try {
+    await ensureRunArtifactsDir(runDirectory);
+    return { baseDir: artifactsDir };
+  } catch (error) {
+    return {
+      baseDir: runDirectory,
+      attempt: publicationAttemptFromError(artifactsDir, error)
+    };
+  }
+}
+async function writeFailureJsonRetainingCause(candidates, basePayload, priorIssues) {
+  const issues = [...priorIssues];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const path = candidates[i];
+    const payload = issues.length === 0 ? basePayload : { ...basePayload, publicationIssues: issues };
+    try {
+      await writeFile3(
+        path,
+        `${JSON.stringify(payload, null, 2)}
 `,
-    "utf8"
+        "utf8"
+      );
+      return { path, issues };
+    } catch (error2) {
+      issues.push(publicationAttemptFromError(path, error2));
+    }
+  }
+  const last = issues.at(-1);
+  const error = new Error(
+    last?.diagnostic ?? "unable to write durable failure artifact"
   );
-  await writeFile3(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        sessionDirectory: admitted.sessionDirectory,
-        admittedRequestPath: admitted.admittedRequestPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength
-        })),
-        failureCause: failure.cause
-      },
-      null,
-      2
-    )}
-`,
-    "utf8"
+  if (last?.identity?.name !== void 0 && last.identity.name !== "") {
+    error.name = last.identity.name;
+  }
+  if (last?.identity?.code !== void 0) {
+    error.code = last.identity.code;
+  }
+  error.publicationAttempts = issues;
+  throw error;
+}
+async function publishFailureArtifacts(admitted, failure) {
+  const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
+    admitted.runDirectory
+  );
+  const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
+  const underArtifacts = baseDir === join5(admitted.runDirectory, "artifacts");
+  const errorCandidates = underArtifacts ? [
+    join5(baseDir, "error.json"),
+    join5(baseDir, "error.settlement.json"),
+    join5(admitted.runDirectory, "error.settlement.json")
+  ] : [
+    join5(baseDir, "error.settlement.json"),
+    join5(baseDir, "error.json")
+  ];
+  const evidenceCandidates = underArtifacts ? [
+    join5(baseDir, "evidence.json"),
+    join5(baseDir, "evidence.settlement.json"),
+    join5(admitted.runDirectory, "evidence.settlement.json")
+  ] : [
+    join5(baseDir, "evidence.settlement.json"),
+    join5(baseDir, "evidence.json")
+  ];
+  const errorPayloadBase = {
+    kind: "error",
+    role: "judge",
+    runId: admitted.runId,
+    cause: failure.cause,
+    diagnostic: failure.diagnostic,
+    ...failure.identity === void 0 ? {} : { identity: failure.identity },
+    ...failure.details === void 0 ? {} : { details: failure.details }
+  };
+  const errorWrite = await writeFailureJsonRetainingCause(
+    errorCandidates,
+    errorPayloadBase,
+    priorIssues
+  );
+  const evidencePayload = {
+    runId: admitted.runId,
+    sessionDirectory: admitted.sessionDirectory,
+    admittedRequestPath: admitted.admittedRequestPath,
+    attachments: admitted.attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      sha256: a.sha256,
+      byteLength: a.byteLength
+    })),
+    failureCause: failure.cause
+  };
+  const evidenceWrite = await writeFailureJsonRetainingCause(
+    evidenceCandidates,
+    evidencePayload,
+    // Evidence records the same publication collisions observed placing the error body.
+    errorWrite.issues
   );
   return [
-    { kind: "error", path: errorPath },
-    { kind: "evidence", path: evidencePath }
+    { kind: "error", path: errorWrite.path },
+    { kind: "evidence", path: evidenceWrite.path }
   ];
 }
 async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }) {
