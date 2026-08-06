@@ -169,6 +169,48 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       true,
       "public bin must assemble retained collector manifests via loadCollectorManifest",
     );
+    // #110 / #113 public Fixer + Doctor adapters must ship in the installed bin.
+    assert.equal(
+      /command\s*===\s*["']fixer["']|case\s*["']fixer["']/.test(committedText),
+      true,
+      "public bin must ship fixer command dispatch",
+    );
+    assert.equal(
+      /resolvePackagedMethodSkillPath\([^)]*"diagnosing-bugs"/.test(committedText),
+      true,
+      "public bin must resolve the package-owned diagnosing-bugs skill path",
+    );
+    assert.equal(
+      /command\s*===\s*["']doctor["']|case\s*["']doctor["']/.test(committedText),
+      true,
+      "public bin must ship doctor command dispatch",
+    );
+    assert.equal(
+      committedText.includes("ak-doctor-case"),
+      true,
+      "public bin must pin doctor case flag on activation",
+    );
+    // #115: every public callable role is a completed dispatch path in the shipped bin.
+    const roleDispatch = (role: string): boolean =>
+      new RegExp(
+        "command\\s*===\\s*[\"']" + role + "[\"']|case\\s*[\"']" + role + "[\"']",
+      ).test(committedText);
+    for (const role of [
+      "judge",
+      "coder",
+      "fixer",
+      "reviewer",
+      "collector",
+      "doctor",
+      "merger",
+    ] as const) {
+      assert.equal(roleDispatch(role), true, `public bin must ship ${role} command dispatch`);
+    }
+    assert.equal(
+      committedText.includes("not available in this install slice"),
+      false,
+      "release bin must not ship deferred-slice role stubs",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

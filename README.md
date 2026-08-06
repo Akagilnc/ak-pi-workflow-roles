@@ -2,13 +2,21 @@
 
 Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
 
-## Public CLI (`ak-role`) — under construction
+## Public CLI (`ak-role`)
 
 `ak-role` is the only supported way to call the package (ADR 0052). Install it through Pi so the executable and runtime always come from the same package copy, then add Pi’s private npm bin directory to `PATH` once:
 
 ```bash
 pi install npm:@akagilnc/pi-workflow-roles
 export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
+```
+
+Update CLI and runtime together from that same Pi-managed copy (do not add a second global `npm install -g`):
+
+```bash
+pi update npm:@akagilnc/pi-workflow-roles
+# or refresh every installed Pi package:
+pi update --extensions
 ```
 
 Inspect the installed capabilities and choose persistent defaults:
@@ -18,6 +26,7 @@ ak-role roles
 ak-role help
 ak-role help judge
 ak-role config set judge openai-codex/gpt-5.6-sol:high
+ak-role config set navigator openai-codex/gpt-5.6-luna:medium
 ```
 
 ### Call Judge
@@ -55,7 +64,7 @@ When a Role run is interrupted by an observed typed Codex/xAI HTTP 429 and has n
 ak-role --model xai/grok-4.5:high resume <runId>
 ```
 
-At the current mainline slice, Judge, Coder, Fixer, Collector, Doctor, Reviewer, and Merger are the completed public run paths. `roles` lists the full callable registry. Ordinary Pi startup does not expose the package’s internal activation flag.
+Judge, Coder, Fixer, Collector, Doctor, Reviewer, and Merger are the completed public run paths. `roles` lists the full callable registry plus automatic Navigator. Ordinary Pi startup does not expose the package’s internal activation flag.
 
 ### Call Coder
 
@@ -112,6 +121,45 @@ ak-role collector \
 ```
 
 Well-formed but nonexistent PRs or authors are not rejected by CLI preflight; Collector reports them through its existing typed receipt. Collector is one-shot (no `ak-role resume`). Lawful Terminal results and Artifact refs use the same success interface as Judge and Coder.
+
+### Call Fixer
+
+```bash
+ak-role fixer \
+  --attach ./findings.md \
+  --prerequisites ./prereqs.json \
+  "Repair the caller-assigned findings."
+
+ak-role fixer plan \
+  --project /path/to/project \
+  "Propose the first repair plan."
+```
+
+Phase defaults to `apply`. Optional `--prerequisites` is a JSON array of `{id,requirement}` objects. Package-owned diagnosis is available from the install; do not bind a home Skill.
+
+### Call Doctor
+
+```bash
+ak-role doctor \
+  --issue 115 \
+  --project /path/to/project \
+  "Diagnose this retained case."
+```
+
+`--issue` is required. Optional `--runs` must stay project-relative and match the Issue’s retained runs grammar. Doctor is one-shot (no `ak-role resume`).
+
+### Call Merger
+
+```bash
+ak-role merger \
+  --project /path/to/conflicted-worktree \
+  --attach ./authority-notes.md \
+  "Reconcile the active merge without inventing new authority."
+```
+
+There is no phase token. The adapter derives the active merge envelope; callers do not author internal merger-input JSON. Package-owned merge-only method is forced from the install.
+
+Read every Terminal result from `ak-role` stdout (or a normal redirect of that same stream). Do not scrape Pi event streams, session JSONL, or status-only `grep`/`jq` recipes for role outcomes or Navigator advice.
 
 ## 班子（唐宋官署命名）
 
@@ -209,7 +257,7 @@ Public callers invoke Fixer only through `ak-role fixer`:
 ak-role fixer [plan|apply] [--project <path>] [--attach <file>]... [--prerequisites <json-array-file>] <instruction...>
 ```
 
-Phase defaults to `apply` when omitted. `--prerequisites` is optional; when supplied it must be a structurally valid JSON array of `{id,requirement}` objects (same grammar as `parseFixerPrerequisites`). Malformed prerequisite grammar is a structural reject (exit 2). Whether a declared prerequisite is unmet or insufficient remains a Fixer judgment inside the role receipt, not a CLI classification. Common attachments use `--attach` and are frozen at admission. The package-owned evidence-driven diagnosis method (`resources/methods/diagnosing-bugs/`, adapted from Matt `diagnosing-bugs` with MIT attribution) is available only to Fixer via package `--skill` and is recorded in Terminal evidence when invoked; it is not forced into every repair prompt and cannot automatically launch architecture Grill or other role-external Skill chains. Internal raw-Pi packet flags remain transport, not a supported calling convention.
+Phase defaults to `apply` when omitted. `--prerequisites` is optional; when supplied it must be a structurally valid JSON array of `{id,requirement}` objects (same grammar as `parseFixerPrerequisites`). Malformed prerequisite grammar is a structural reject (exit 2). Whether a declared prerequisite is unmet or insufficient remains a Fixer judgment inside the role receipt, not a CLI classification. Common attachments use `--attach` and are frozen at admission. The package-owned evidence-driven diagnosis method (`resources/methods/diagnosing-bugs/`, adapted from Matt `diagnosing-bugs` with MIT attribution) is available only to Fixer from the installed package and is recorded in Terminal evidence when invoked; it is not forced into every repair prompt and cannot automatically launch architecture Grill or other role-external Skill chains.
 
 Fixer terminates through `ak_fixer_output`. Its legal status-dependent shapes are:
 
@@ -240,7 +288,7 @@ Coder handles first implementation in two explicit phases:
 
 Either phase may return `refused` with authority and current-code evidence. During `apply`, Coder may also return `unfinished` with a nonblank typed `remainingScope` when this invocation has not settled the task; this is a resumable handoff, not a failure, and it does not waive any acceptance. A refusal does not require a commit and returns to the caller for disposition; Coder never emits `escalate`.
 
-Call Coder only through `ak-role coder` (ADR 0052). Do not bind a home-directory TDD Skill or use internal raw-Pi task flags as a substitute.
+Call Coder only through `ak-role coder` (ADR 0052). Do not bind a home-directory TDD Skill as a substitute for the package-owned method.
 
 Coder terminates through `ak_coder_output` with the same thin worker envelope:
 
@@ -299,9 +347,9 @@ v1 supports `github.com` only. There is no default leg/bot: callers must supply 
 
 **Collector forbids every Skill**, including command-only Skills (`disable-model-invocation: true` / prompt-excluded but command-present). Skills are not part of the supported Collector surface.
 
-The public adapter accepts a PR, repository identity, and explicit leg/expected-author declarations, then assembles Collector's retained manifest. Callers do not construct the internal manifest or raw-Pi isolation profile themselves.
+The public adapter accepts a PR, repository identity, and explicit leg/expected-author declarations, then assembles Collector's retained manifest. Callers do not construct the internal manifest themselves.
 
-> **Public invocation:** use `ak-role collector` (see **Call Collector** above). Collector keeps a persistent correlated session under the #78 ledger book; the former public-looking `--no-session` recipe was incorrect and has been removed.
+> **Public invocation:** use `ak-role collector` (see **Call Collector** above). Collector keeps a persistent correlated session under the #78 ledger book.
 
 Runtime behavior highlights:
 

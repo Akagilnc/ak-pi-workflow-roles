@@ -1,0 +1,1 @@
+{"recorder":{"status":"failed","code":"invalid-config","message":"invalid Recorder config","location":["declarations"],"diagnostic":null,"cleanup":null},"child":{"status":"not-spawned","exitCode":null,"signal":null,"diagnostic":null}}
