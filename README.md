@@ -2,54 +2,13 @@
 
 Packaged workflow roles for [Pi](https://pi.dev). Supported roles: `judge`, `fixer`, `coder`, `reviewer`, `collector`, `doctor`, and `merger`.
 
-## Public CLI (`ak-role`)
+## Public CLI (`ak-role`) — under construction
 
-`ak-role` is the only supported way to call the package (ADR 0052). Install it through Pi so the executable and runtime always come from the same package copy, then add Pi’s private npm bin directory to `PATH` once:
+**There is no supported external package invocation yet.** [#11](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/11) is still open, and `@akagilnc/pi-workflow-roles` has not been published to npm. Consequently, a Pi npm install and the public role commands are not currently usable by package consumers.
 
-```bash
-pi install npm:@akagilnc/pi-workflow-roles
-export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
-```
+ADR 0052 fixes the eventual public boundary: after #11 lands, `ak-role` will be the only supported way to call the package, and Pi installation will keep the executable and runtime on one package copy. The repository currently contains partial construction slices—including the first Judge path—but those are development evidence, not a released quick start.
 
-Inspect the installed capabilities and choose persistent defaults:
-
-```bash
-ak-role roles
-ak-role help
-ak-role help judge
-ak-role config set judge openai-codex/gpt-5.6-sol:high
-```
-
-### Call Judge
-
-Pass an optional instruction directly after the role. Use repeatable `--attach` options for local regular files and `--project` when the target is not the current project:
-
-```bash
-ak-role judge \
-  --attach ./review-findings.md \
-  --attach ./governing-adr.md \
-  "Adjudicate every finding against the supplied authority."
-
-ak-role judge \
-  --project /path/to/project \
-  --attach /path/to/plan.md \
-  "Decide whether this plan is ready for construction."
-```
-
-The complete Terminal result is written to stdout. Read it there or redirect that same result normally; do not discard stdout or scrape Pi session files:
-
-```bash
-ak-role judge --attach ./plan.md "Review this plan." > judge-result.txt
-```
-
-Judge deliberately has no public burden flag: it infers Authority, Plan, Apply, or Review from the request. Global one-run overrides may appear before or after the role command:
-
-```bash
-ak-role --model openai-codex/gpt-5.6-sol --thinking high \
-  judge --attach ./decision.md "Adjudicate this decision."
-```
-
-At the current mainline slice, Judge is the completed public run path. `roles` lists the full callable registry, but the other role adapters are still landing under #109–#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
+Runnable installation and role examples will be added only after #115 proves the complete cold-installed role matrix and the owner approves the final quick start. Until then, do not substitute raw Pi activation, session-file scraping, home-directory Skills, or legacy packet flags as public usage.
 
 ## 班子（唐宋官署命名）
 
@@ -86,21 +45,15 @@ At the current mainline slice, Judge is the completed public run path. `roles` l
 
 ## Internal development seam
 
-The source tree retains an explicitly loadable raw-Pi seam for package development and low-level diagnosis. It is intentionally absent from public installation help and is not a supported invocation recipe. External callers use `ak-role`; they do not pass internal activation flags, manage Pi session directories, consume event streams, or extract receipts from JSONL.
+The source tree retains an explicitly loadable raw-Pi seam for package development and low-level diagnosis. It is intentionally absent from public installation help and is not a supported invocation recipe. Once the public release lands, external callers will use `ak-role`; they will not pass internal activation flags, manage Pi session directories, consume event streams, or extract receipts from JSONL.
 
-## Navigator attendance
+## Planned Navigator attendance
 
-Every public role run prepares Navigator advice concurrently. Callers still invoke only `ak-role <role> ...`; Navigator never invokes or enforces another role.
+The completed public CLI will prepare Navigator advice concurrently with every role run. Callers will invoke only their chosen role; Navigator will never invoke or enforce another role.
 
-The same stdout Terminal result contains the role outcome and Navigator's typed recommendation, no-advice, or unavailable outcome. A recommendation includes one next step, a short reason, and a command rendered from registered role/phase/subject facts—not executable model prose. Do not open a sibling session or parse Pi events to obtain it.
+The same stdout Terminal result will contain the role outcome and Navigator's typed recommendation, no-advice, or unavailable outcome. Recommendations are rendered from registered role/phase/subject facts, not executable model prose, so callers will not need a sibling session or Pi event parsing.
 
-After the role settles, Navigator receives at most ten seconds to finish; healthy preparation returns immediately. Timeout or preparation failure remains honestly unavailable, never invalidates the role result, and triggers no retry or fallback model.
-
-Navigator's startup default is `openai-codex/gpt-5.6-luna:medium` when matching credentials are available. Configure it like any other seat:
-
-```bash
-ak-role config set navigator openai-codex/gpt-5.6-luna:medium
-```
+After the role settles, Navigator receives at most ten seconds to finish; healthy preparation returns immediately. Timeout or preparation failure remains honestly unavailable, never invalidates the role result, and triggers no retry or fallback model. Its credential-dependent startup preference begins with `openai-codex/gpt-5.6-luna:medium`.
 
 ## Judge
 
