@@ -8227,6 +8227,10 @@ function providerConfigured(credentials, provider) {
   if (provider === "xai") return credentials.xai === true;
   return false;
 }
+function missingPublicProviderCredential(provider, credentials) {
+  if (provider !== "openai-codex" && provider !== "xai") return false;
+  return !providerConfigured(credentials, provider);
+}
 function pickStartupCandidate(seat, credentials) {
   for (const candidate of publicStartupCandidates(seat)) {
     if (providerConfigured(credentials, candidate.provider)) {
@@ -8950,6 +8954,15 @@ function isChildDiagnosticFloodLine(line) {
   }
   return false;
 }
+function isChildDiagnosticHelpFooterLine(line) {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return false;
+  if (/^\S+\.(md|txt)$/i.test(trimmed)) return true;
+  if (/^Use \//i.test(trimmed)) return true;
+  if (/^Then use \//i.test(trimmed)) return true;
+  if (/^See:\s*$/i.test(trimmed)) return true;
+  return false;
+}
 function boundConciseDiagnostic(diagnostic, maxChars = CONCISE_DIAGNOSTIC_MAX_CHARS) {
   if (diagnostic.length <= maxChars) return diagnostic;
   if (maxChars <= 1) return "\u2026";
@@ -8960,6 +8973,7 @@ function conciseChildDiagnostic(stderr, fallback) {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
     if (isChildDiagnosticFloodLine(line)) continue;
+    if (isChildDiagnosticHelpFooterLine(line)) continue;
     return line.replace(/^Error:\s*/i, "").trim() || fallback;
   }
   return fallback;
@@ -9336,6 +9350,19 @@ function presentFailureTerminal(terminal, io) {
 }
 
 // src/public-cli/judge-run.ts
+function knownFailureForMissingProviderCredential(model, credentials) {
+  if (model === void 0 || credentials === void 0) return void 0;
+  if (!missingPublicProviderCredential(model.provider, credentials)) {
+    return void 0;
+  }
+  return {
+    cause: "provider",
+    identity: {
+      name: "MissingProviderCredential",
+      code: model.provider
+    }
+  };
+}
 function buildModelArgs(model) {
   if (model === void 0) return [];
   return [
@@ -9455,7 +9482,8 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
       terminal: lawful
     };
   }
-  const knownFailure = result2.knownFailure;
+  const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+  const knownFailure = result2.knownFailure ?? credentialFailure;
   return await presentControlledFailure(
     admitted,
     {
@@ -9733,6 +9761,7 @@ async function runAkRole(argv, env) {
           agentDir,
           packageRoot: env.packageRoot,
           cwd,
+          credentials,
           ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
           ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
           ...seat.selection === void 0 ? {} : { model: seat.selection },

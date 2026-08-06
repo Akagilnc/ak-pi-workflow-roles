@@ -79,6 +79,23 @@ export function isChildDiagnosticFloodLine(line: string): boolean {
   return false;
 }
 
+/**
+ * True when a stderr line is Pi auth/model help scaffolding rather than the failure identity.
+ * Real counterexample: multi-line "No API key…" guidance ends with docs/*.md path lines;
+ * those footers must not displace the primary diagnostic.
+ */
+export function isChildDiagnosticHelpFooterLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return false;
+  // Path-only doc references (indented or bare).
+  if (/^\S+\.(md|txt)$/i.test(trimmed)) return true;
+  // Auth guidance continuations from Pi formatNoApiKeyFoundMessage / getProviderLoginHelp.
+  if (/^Use \//i.test(trimmed)) return true;
+  if (/^Then use \//i.test(trimmed)) return true;
+  if (/^See:\s*$/i.test(trimmed)) return true;
+  return false;
+}
+
 /** Bound one diagnostic for human stderr presentation; durable evidence stays full. */
 export function boundConciseDiagnostic(
   diagnostic: string,
@@ -90,8 +107,8 @@ export function boundConciseDiagnostic(
 }
 
 /**
- * Pick one concise diagnostic line from child stderr without stacks/events/tokens.
- * Prefers the last nonblank line that is not a frame or observation flood.
+ * Pick one concise diagnostic line from child stderr without stacks/events/tokens/help footers.
+ * Prefers the last nonblank line that is not a frame, observation flood, or docs-path footer.
  * Returns the full selected diagnostic (bound only at presentation).
  */
 export function conciseChildDiagnostic(
@@ -105,6 +122,7 @@ export function conciseChildDiagnostic(
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i]!;
     if (isChildDiagnosticFloodLine(line)) continue;
+    if (isChildDiagnosticHelpFooterLine(line)) continue;
     // Strip a leading "Error:" label but keep the message identity.
     return line.replace(/^Error:\s*/i, "").trim() || fallback;
   }
@@ -288,13 +306,8 @@ export function classifyPostAdmissionFailure(input: {
   };
 }
 
-/**
- * Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159).
- * Temporary 10s ceiling — healthy work still completes immediately via race;
- * only the timeout bound moves. #160 owns precise CI scheduling and later
- * evidence-based reconsideration of 3s vs 10s.
- */
-export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
+/** Post-role Navigator delivery grace (Issue #11 / #101 / #106). */
+export const NAVIGATOR_POST_ROLE_GRACE_MS = 3_000;
 
 type SessionMessage = {
   role?: string;

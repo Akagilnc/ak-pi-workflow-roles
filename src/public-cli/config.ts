@@ -186,13 +186,26 @@ function parseSeatModelConfig(value: unknown, seat: string): SeatModelConfig {
   };
 }
 
-function providerConfigured(
+export function providerConfigured(
   credentials: CredentialProviders,
   provider: string,
 ): boolean {
   if (provider === "openai-codex") return credentials["openai-codex"] === true;
   if (provider === "xai") return credentials.xai === true;
   return false;
+}
+
+/**
+ * Typed provider-credential absence for the public seat providers ak-role owns.
+ * Presence is read from auth.json shape (CredentialProviders), never from stderr prose.
+ * Returns undefined for unknown/custom providers (not this package's credential map).
+ */
+export function missingPublicProviderCredential(
+  provider: string,
+  credentials: CredentialProviders,
+): provider is "openai-codex" | "xai" {
+  if (provider !== "openai-codex" && provider !== "xai") return false;
+  return !providerConfigured(credentials, provider);
 }
 
 function pickStartupCandidate(
