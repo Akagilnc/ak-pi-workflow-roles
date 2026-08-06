@@ -284,9 +284,13 @@ Failure channels (non-zero, no receipt) include malformed/unsupported config or 
 
 ## Doctor
 
-Doctor reads one retained Pi-native case and exposes only the bounded evidence reader plus its terminating output tool. The public adapter will construct that case from an Issue identity and an optional confined runs root; callers will not pass a legacy case packet or raw ledger path.
+Doctor reads one retained Pi-native case and exposes only the bounded evidence reader plus its terminating output tool. The public adapter constructs that case from an Issue identity and an optional confined runs root; callers do not pass a legacy case packet or raw ledger path.
 
-> **Public invocation status:** the `ak-role doctor` adapter is still landing under #113.
+```bash
+ak-role doctor --issue <n> [--runs <project-relative-runs-root>] [instruction] [--attach <file>]... [--project <path>]
+```
+
+Default retained evidence is the #78 book locator `~/.ak-roles/books/<book>/issues/<n>/runs`. Optional `--runs` must stay project-relative and match the same Doctor case grammar for that issue.
 
 Case identity is the issue number plus the repository-relative retained-runs path when a `.git` worktree root contains it; outside a repository the resolved absolute path is the explicit fallback. Do not delete or rewrite run directories before Doctor examines them. Each recursive `*.jsonl` is one model-session leg; each immediate run directory is one caller invocation, and `stderr.log` remains evidence for invocations that died before a session header. `ak_doctor_evidence` pages exact admitted session bytes in chunks of at most 4096 characters; filesystem, shell, network, write, and Agent tools remain inactive.
 
