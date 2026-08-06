@@ -342,4 +342,3 @@ export async function runPublicJudge(
     io,
   );
 }
-
