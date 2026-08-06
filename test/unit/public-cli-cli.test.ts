@@ -141,7 +141,8 @@ test("non-Judge role command goes through ak-role-owned explicit Internal load b
   await withTempHome(async (home) => {
     const { io, stderr } = captureIo();
     let captured: string[] | undefined;
-    const result = await runAkRole(["reviewer"], {
+    // Merger remains deferred in this slice (#114); completed roles no longer hit this path.
+    const result = await runAkRole(["merger"], {
       packageRoot,
       home,
       io,
@@ -172,8 +173,8 @@ test("non-Judge role command goes through ak-role-owned explicit Internal load b
 test("role command reports load failure when explicit Internal spawn fails", async () => {
   await withTempHome(async (home) => {
     const { io, stderr } = captureIo();
-    // Use a role that is still deferred in this slice (not judge/coder/collector/doctor).
-    const result = await runAkRole(["reviewer"], {
+    // Use a role that is still deferred in this slice (not judge/coder/fixer/collector/doctor/reviewer).
+    const result = await runAkRole(["merger"], {
       packageRoot,
       home,
       io,

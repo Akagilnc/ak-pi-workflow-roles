@@ -7,12 +7,12 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname6, join as join14 } from "node:path";
+import { dirname as dirname6, join as join15 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -10469,6 +10469,19 @@ async function loadCollectorManifest(path) {
   };
 }
 
+// src/reviewer-admission.ts
+var REVIEWER_CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "write", "edit"];
+var REVIEWER_PREREQUISITES = [
+  "preflight.git.pin-target",
+  "preflight.git.resolve-base",
+  "preflight.git.derive-range",
+  "preflight.git.list-ordered-commits",
+  "preflight.git.read-material",
+  "runner.git.materialize-mirror",
+  "runner.git.materialize-workspace",
+  "runner.git.verify-snapshot"
+];
+
 // src/uuidv7.ts
 import { randomBytes } from "node:crypto";
 function uuidv7(now = Date.now()) {
@@ -10492,7 +10505,9 @@ function roleRunSessionFile(sessionDirectory) {
 }
 function requireOptionPath(flag, value) {
   if (value === void 0 || value.trim() === "") {
-    throw new CliUsageError(`${flag} requires a path`);
+    throw new CliUsageError(
+      flag === "--base" ? `${flag} requires a nonempty revision` : `${flag} requires a path`
+    );
   }
   return value;
 }
@@ -11551,6 +11566,190 @@ function buildDoctorTransportPrompt(admitted) {
   }
   return lines.join("\n");
 }
+function parseReviewerArgv(args) {
+  const attachmentPaths = [];
+  let project;
+  let baseRevision;
+  const positional = [];
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    const token = tokens.shift();
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length))
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token === "--base") {
+      baseRevision = requireOptionPath("--base", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--base=")) {
+      baseRevision = requireOptionPath("--base", token.slice("--base=".length));
+      continue;
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown reviewer option: ${token}`);
+    }
+    positional.push(token);
+  }
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...baseRevision === void 0 ? {} : { baseRevision },
+    ...project === void 0 ? {} : { project }
+  };
+}
+function deriveReviewerCapabilitiesFromTask(taskBytes) {
+  const taskSha256 = sha256Hex(taskBytes);
+  const text = `${JSON.stringify({
+    version: 1,
+    taskSha256,
+    tools: [...REVIEWER_CHILD_TOOLS],
+    prerequisiteOperations: [...REVIEWER_PREREQUISITES]
+  })}
+`;
+  return {
+    taskSha256,
+    text,
+    bytes: new TextEncoder().encode(text)
+  };
+}
+function composeReviewerTaskText(instruction, baseRevision) {
+  const lines = [instruction];
+  if (baseRevision !== void 0) {
+    lines.push("");
+    lines.push(
+      `Base revision for the fixed review target: ${baseRevision}`
+    );
+    lines.push(
+      "Use this exact revision as proposal base.revision unless preflight proves it unusable."
+    );
+  }
+  return lines.join("\n");
+}
+async function admitReviewerInvocation(options) {
+  if (options.project !== void 0) {
+    requireOptionPath("--project", options.project);
+  }
+  const instruction = options.instruction;
+  if (instruction.trim() === "") {
+    throw new CliUsageError("reviewer requires a nonblank task instruction");
+  }
+  if (options.baseRevision !== void 0 && options.baseRevision.trim() === "") {
+    throw new CliUsageError("--base requires a nonempty revision");
+  }
+  const projectRoot = resolve4(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join4(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@reviewer`
+  );
+  const sessionDirectory = join4(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join4(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i],
+        attachmentsDirectory,
+        i
+      )
+    );
+  }
+  const taskText = composeReviewerTaskText(
+    instruction,
+    options.baseRevision
+  );
+  const taskPath = join4(runDirectory, "task.md");
+  await writeFile2(taskPath, taskText, "utf8");
+  const taskBytes = new TextEncoder().encode(taskText);
+  const derived = deriveReviewerCapabilitiesFromTask(taskBytes);
+  const capabilitiesPath = join4(runDirectory, "capabilities.json");
+  await writeFile2(capabilitiesPath, derived.text, "utf8");
+  const admitted = {
+    role: "reviewer",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    taskPath,
+    capabilitiesPath,
+    taskSha256: derived.taskSha256,
+    ...options.baseRevision === void 0 ? {} : { baseRevision: options.baseRevision },
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind
+    }))
+  };
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  await writeFile2(
+    admittedRequestPath,
+    `${JSON.stringify(admitted, null, 2)}
+`,
+    "utf8"
+  );
+  return {
+    role: "reviewer",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    taskPath,
+    capabilitiesPath,
+    taskSha256: derived.taskSha256,
+    ...options.baseRevision === void 0 ? {} : { baseRevision: options.baseRevision }
+  };
+}
+function buildReviewerTransportPrompt(admitted) {
+  const lines = [admitted.instruction];
+  if (admitted.baseRevision !== void 0) {
+    lines.push("");
+    lines.push(
+      `Admitted base revision: ${admitted.baseRevision}`
+    );
+  }
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
@@ -11576,7 +11775,8 @@ var GIT_BLOB_RE = /^[0-9a-f]{40}$/;
 var SHA256_RE = /^[0-9a-f]{64}$/;
 var REQUIRED_COMPANIONS = {
   tdd: ["tests.md", "mocking.md", "agents/openai.yaml"],
-  "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"]
+  "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"],
+  "code-review": ["agents/openai.yaml"]
 };
 var SEALED_UNCHANGED_METHOD_PINS = Object.freeze({
   tdd: Object.freeze({
@@ -11919,7 +12119,7 @@ async function readRoleRunState(runDirectory) {
     if (typeof record5.runId !== "string" || record5.runId.trim() === "") {
       return void 0;
     }
-    if (record5.role !== "judge" && record5.role !== "coder" && record5.role !== "fixer" && record5.role !== "collector" && record5.role !== "doctor") {
+    if (record5.role !== "judge" && record5.role !== "coder" && record5.role !== "fixer" && record5.role !== "collector" && record5.role !== "doctor" && record5.role !== "reviewer") {
       return void 0;
     }
     if (record5.state !== "admitted" && record5.state !== "running" && record5.state !== "resumable" && record5.state !== "terminal") {
@@ -12115,6 +12315,9 @@ async function loadResumableRunRecord(home, runId) {
   let packetPath;
   let prerequisitesPath;
   let prerequisites;
+  let capabilitiesPath;
+  let taskSha256;
+  let baseRevision;
   try {
     const raw = JSON.parse(
       await readFile6(run.admittedRequestPath, "utf8")
@@ -12145,6 +12348,15 @@ async function loadResumableRunRecord(home, runId) {
       if (Array.isArray(record5.prerequisites)) {
         prerequisites = record5.prerequisites;
       }
+      if (typeof record5.capabilitiesPath === "string" && record5.capabilitiesPath.trim() !== "") {
+        capabilitiesPath = record5.capabilitiesPath;
+      }
+      if (typeof record5.taskSha256 === "string" && record5.taskSha256.trim() !== "") {
+        taskSha256 = record5.taskSha256;
+      }
+      if (typeof record5.baseRevision === "string" && record5.baseRevision.trim() !== "") {
+        baseRevision = record5.baseRevision;
+      }
     }
   } catch {
     throw new CliUsageError(
@@ -12162,7 +12374,10 @@ async function loadResumableRunRecord(home, runId) {
       ...taskPath === void 0 ? {} : { taskPath },
       ...packetPath === void 0 ? {} : { packetPath },
       ...prerequisitesPath === void 0 ? {} : { prerequisitesPath },
-      ...prerequisites === void 0 ? {} : { prerequisites }
+      ...prerequisites === void 0 ? {} : { prerequisites },
+      ...capabilitiesPath === void 0 ? {} : { capabilitiesPath },
+      ...taskSha256 === void 0 ? {} : { taskSha256 },
+      ...baseRevision === void 0 ? {} : { baseRevision }
     }
   };
 }
@@ -12278,6 +12493,59 @@ async function loadResumableFixerRun(home, runId) {
     packetPath,
     ...loaded.admittedFields.prerequisitesPath === void 0 ? {} : { prerequisitesPath: loaded.admittedFields.prerequisitesPath },
     prerequisites
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    observation: loaded.observation
+  };
+}
+async function loadResumableReviewerRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "reviewer") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not reviewer`
+    );
+  }
+  const taskPath = loaded.admittedFields.taskPath;
+  if (taskPath === void 0) {
+    throw new CliUsageError(
+      `role run admitted reviewer task path is missing: ${runId}`
+    );
+  }
+  const capabilitiesPath = loaded.admittedFields.capabilitiesPath;
+  if (capabilitiesPath === void 0) {
+    throw new CliUsageError(
+      `role run admitted reviewer capabilities path is missing: ${runId}`
+    );
+  }
+  const taskSha256 = loaded.admittedFields.taskSha256;
+  if (taskSha256 === void 0) {
+    throw new CliUsageError(
+      `role run admitted reviewer task digest is missing: ${runId}`
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted reviewer task is blank: ${runId}`
+    );
+  }
+  const admitted = {
+    role: "reviewer",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    taskPath,
+    capabilitiesPath,
+    taskSha256,
+    ...loaded.admittedFields.baseRevision === void 0 ? {} : { baseRevision: loaded.admittedFields.baseRevision }
   };
   return {
     admitted,
@@ -12764,6 +13032,24 @@ function doctorDecisiveFacts(output) {
     runsPath: output.case.runsPath,
     findingsCount: output.findings.length
   };
+}
+function reviewerDecisiveFacts(output) {
+  const axes = ["standards", "spec"].filter(
+    (axis) => output.outcomes[axis] !== void 0
+  );
+  const reportAxes = ["standards", "spec"].filter(
+    (axis) => output.reports[axis] !== void 0
+  );
+  const facts = {
+    reviewerStatus: output.status,
+    axes: axes.join(","),
+    reportAxes: reportAxes.join(","),
+    acceptedBatchPresent: output.acceptedBatch !== void 0
+  };
+  if (output.status === "refused") {
+    facts.diagnosticPresent = typeof output.diagnostic === "string" && output.diagnostic.trim().length > 0;
+  }
+  return facts;
 }
 function collectorReceiptBindingFailure(diagnostic) {
   const error = new Error(diagnostic);
@@ -13495,6 +13781,141 @@ async function hasLawfulFixerTerminalResult(admitted) {
     const entries = await readLawfulSettlementEntries(admitted);
     if (entries === void 0) return false;
     const extracted = extractFixerRoleOutcome(entries);
+    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+  } catch {
+    return false;
+  }
+}
+function extractReviewerMethodInvocations(entries, options) {
+  const observed = [];
+  for (const entry of entries) {
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "user") continue;
+    const text = sessionMessageText(message);
+    if (text.length === 0) continue;
+    const hit = observePackagedMethodSkillInvocation(text, {
+      name: "code-review",
+      allowedLocations: options.allowedLocations
+    });
+    if (hit !== void 0) observed.push(hit);
+  }
+  return Object.freeze(observed);
+}
+async function publishReviewerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join7(artifactsDir, "report.json");
+  const evidencePath = join7(artifactsDir, "evidence.json");
+  await writeFile4(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "reviewer",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...options.reviewerReceipt === void 0 ? {} : { receipt: options.reviewerReceipt }
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  await writeFile4(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "reviewer",
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        taskPath: admitted.taskPath,
+        capabilitiesPath: admitted.capabilitiesPath,
+        taskSha256: admitted.taskSha256,
+        ...admitted.baseRevision === void 0 ? {} : { baseRevision: admitted.baseRevision },
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength
+        })),
+        methodProvenance: options.methodProvenance,
+        // Forced package method: availability is package-bound; expansion only when observed.
+        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+        methodInvocations: options.methodInvocations ?? []
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath }
+  ];
+}
+function extractReviewerRoleOutcome(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    try {
+      const receipt = validateRuntimeReviewerReceipt(message.details);
+      const outcome = {
+        kind: "accepted",
+        role: "reviewer",
+        status: receipt.status,
+        decisiveFacts: reviewerDecisiveFacts(receipt)
+      };
+      return { receipt, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return void 0;
+}
+async function settleLawfulReviewerTerminalResult(admitted, options) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const extracted = extractReviewerRoleOutcome(entries);
+  if (extracted === void 0) return void 0;
+  const navigator = extractNavigatorFact(entries);
+  const methodInvocations = extractReviewerMethodInvocations(entries, {
+    allowedLocations: [
+      options.methodSkillPath,
+      options.methodSkillConfiguredPath
+    ]
+  });
+  const artifacts = await publishReviewerArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    {
+      reviewerReceipt: extracted.receipt,
+      methodProvenance: options.methodProvenance,
+      methodInvocations
+    }
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId
+  };
+}
+async function trySettleReviewerTerminalResult(admitted, options) {
+  return settleLawfulReviewerTerminalResult(admitted, options);
+}
+async function hasLawfulReviewerTerminalResult(admitted) {
+  try {
+    const entries = await readLawfulSettlementEntries(admitted);
+    if (entries === void 0) return false;
+    const extracted = extractReviewerRoleOutcome(entries);
     return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
   } catch {
     return false;
@@ -15133,6 +15554,354 @@ async function runPublicFixerResume(argv, env, io) {
   });
 }
 
+// src/public-cli/reviewer-run.ts
+import { writeFile as writeFile10 } from "node:fs/promises";
+import { join as join13 } from "node:path";
+function buildModelArgs6(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildReviewerActivationExtraArgs(admitted, options) {
+  const prompt = buildReviewerTransportPrompt(admitted);
+  const skillPath = resolvePackagedMethodSkillPath(
+    options.packageRoot,
+    "code-review"
+  );
+  return [
+    "--no-skills",
+    "--skill",
+    skillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "reviewer",
+    "--ak-review-task",
+    admitted.taskPath,
+    "--ak-review-capabilities",
+    admitted.capabilitiesPath,
+    "--mode",
+    "json",
+    ...buildModelArgs6(options.model),
+    prompt
+  ];
+}
+function buildReviewerResumeActivationExtraArgs(admitted, options) {
+  const skillPath = resolvePackagedMethodSkillPath(
+    options.packageRoot,
+    "code-review"
+  );
+  return [
+    "--no-skills",
+    "--skill",
+    skillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "reviewer",
+    "--ak-review-task",
+    admitted.taskPath,
+    "--ak-review-capabilities",
+    admitted.capabilitiesPath,
+    "--mode",
+    "json",
+    ...buildModelArgs6(options.model),
+    RESUME_TRANSPORT_ENVELOPE
+  ];
+}
+async function presentControlledFailure6(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...session === void 0 ? {} : { session }
+  });
+  const hasLawfulTerminalResult = await hasLawfulReviewerTerminalResult(admitted);
+  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+    admitted.sessionFile
+  );
+  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
+    hasLawfulTerminalResult,
+    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
+  });
+  if (resumable && typedHttp429 !== void 0) {
+    await markRunResumable(admitted.runDirectory, typedHttp429);
+  } else {
+    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  }
+  const terminal = await settleFailureTerminalResult(
+    admitted,
+    failure,
+    { disposition: "no-advice" },
+    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
+  );
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedReviewer(input) {
+  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  try {
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure6(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile10(
+        join13(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleReviewerTerminalResult(admitted, {
+        methodProvenance: methodMaterial.provenance,
+        methodSkillPath: methodMaterial.skillPath,
+        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+          env.packageRoot,
+          "code-review"
+        )
+      });
+    } catch (error) {
+      return await presentControlledFailure6(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionFile
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure6(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : {
+          knownCause: knownFailure.cause,
+          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+        }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function loadReviewerMethodMaterial(packageRoot2) {
+  return await loadPackagedMethodSkillMaterial(packageRoot2, "code-review");
+}
+async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
+  let admitted;
+  try {
+    const parsed = parseReviewerArgv2(argv);
+    admitted = await admitReviewerInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.baseRevision === void 0 ? {} : { baseRevision: parsed.baseRevision },
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  let methodMaterial;
+  try {
+    methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    await lease.release();
+    return await presentControlledFailure6(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+        knownCause: "activation"
+      },
+      io
+    );
+  }
+  const extraArgs = buildReviewerActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedReviewer({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    methodMaterial
+  });
+}
+async function runPublicReviewerResume(argv, env, io) {
+  const runId = argv[0];
+  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
+    presentStructuralRejection(
+      new CliUsageError("usage: ak-role resume <runId>"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  if (argv.length > 1) {
+    presentStructuralRejection(
+      new CliUsageError("resume takes exactly one run id"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  let loaded;
+  try {
+    loaded = await loadResumableReviewerRun(env.home, runId);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+  let methodMaterial;
+  try {
+    methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    await lease.release();
+    return await presentControlledFailure6(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+        knownCause: "activation"
+      },
+      io
+    );
+  }
+  const extraArgs = buildReviewerResumeActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedReviewer({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    methodMaterial
+  });
+}
+
 // src/public-cli/cli.ts
 var THINKING_LEVELS2 = /* @__PURE__ */ new Set([
   "off",
@@ -15157,7 +15926,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join13(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join14(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -15391,7 +16160,7 @@ async function runAkRole(argv, env) {
           "doctor role runs are one-shot and cannot be resumed"
         );
       }
-      const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : "judge";
+      const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : resumeRole === "reviewer" ? "reviewer" : "judge";
       const seat = resolveEffectiveSeat(
         config,
         resumeSeatRole,
@@ -15434,6 +16203,28 @@ async function runAkRole(argv, env) {
             ...seat.selection === void 0 ? {} : { model: seat.selection },
             ...env.fixerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.fixerExtraPiArgs },
             ...env.fixerTimeoutMs === void 0 ? {} : { timeoutMs: env.fixerTimeoutMs }
+          },
+          io
+        );
+        return {
+          exitCode: result3.exitCode,
+          ...result3.terminal === void 0 ? {} : { terminal: result3.terminal }
+        };
+      }
+      if (resumeRole === "reviewer") {
+        const result3 = await runPublicReviewerResume(
+          parsed.args,
+          {
+            home,
+            agentDir,
+            packageRoot: env.packageRoot,
+            cwd,
+            credentials,
+            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+            ...seat.selection === void 0 ? {} : { model: seat.selection },
+            ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
+            ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
           },
           io
         );
@@ -15602,6 +16393,40 @@ async function runAkRole(argv, env) {
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
     }
+    if (parsed.command === "reviewer") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "reviewer",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicReviewer(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+          ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
+          ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs },
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+        },
+        io,
+        parseReviewerArgv
+      );
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
+    }
     if (parsed.command === "doctor") {
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
@@ -15682,6 +16507,6 @@ async function runAkRole(argv, env) {
 
 // src/public-cli/main.ts
 var here = dirname6(fileURLToPath(import.meta.url));
-var packageRoot = join14(here, "..", "..");
+var packageRoot = join15(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

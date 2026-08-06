@@ -31,12 +31,14 @@ import {
   parseDoctorArgv,
   parseFixerArgv,
   parseJudgeArgv,
+  parseReviewerArgv,
 } from "./invocation.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicCollector } from "./collector-run.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
+import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
 import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -90,6 +92,10 @@ export type CliEnv = {
   fixerExtraPiArgs?: readonly string[];
   /** Override Fixer role-run timeout (tests). */
   fixerTimeoutMs?: number;
+  /** Extra Pi args for Reviewer runs (tests: faux provider). */
+  reviewerExtraPiArgs?: readonly string[];
+  /** Override Reviewer role-run timeout (tests). */
+  reviewerTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -421,7 +427,9 @@ export async function runAkRole(
           ? "coder"
           : resumeRole === "fixer"
             ? "fixer"
-            : "judge";
+            : resumeRole === "reviewer"
+              ? "reviewer"
+              : "judge";
       // Temporary model/thinking override for this resume only — never persists.
       const seat = resolveEffectiveSeat(
         config,
@@ -477,6 +485,34 @@ export async function runAkRole(
             ...(env.fixerTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.fixerTimeoutMs }),
+          },
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
+      if (resumeRole === "reviewer") {
+        const result = await runPublicReviewerResume(
+          parsed.args,
+          {
+            home,
+            agentDir,
+            packageRoot: env.packageRoot,
+            cwd,
+            credentials,
+            ...(env.correlationId === undefined
+              ? {}
+              : { correlationId: env.correlationId }),
+            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+            ...(seat.selection === undefined ? {} : { model: seat.selection }),
+            ...(env.reviewerExtraPiArgs === undefined
+              ? {}
+              : { extraPiArgs: env.reviewerExtraPiArgs }),
+            ...(env.reviewerTimeoutMs === undefined
+              ? {}
+              : { timeoutMs: env.reviewerTimeoutMs }),
           },
           io,
         );
@@ -682,6 +718,49 @@ export async function runAkRole(
         },
         io,
         parseCollectorArgv,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Reviewer public run path with package-owned adapted code-review (#111).
+    if (parsed.command === "reviewer") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "reviewer",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicReviewer(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(env.reviewerExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.reviewerExtraPiArgs }),
+          ...(env.reviewerTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.reviewerTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        parseReviewerArgv,
       );
       return {
         exitCode: result.exitCode,

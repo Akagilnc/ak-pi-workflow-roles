@@ -19,6 +19,7 @@ import {
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
   type CoderPhase,
   type FrozenAttachment,
@@ -37,7 +38,7 @@ export type TypedHttp429Observation = {
 
 export type RoleRunRecord = {
   readonly runId: string;
-  readonly role: "judge" | "coder" | "fixer" | "collector" | "doctor";
+  readonly role: "judge" | "coder" | "fixer" | "collector" | "doctor" | "reviewer";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -193,7 +194,8 @@ export async function readRoleRunState(
       record.role !== "coder" &&
       record.role !== "fixer" &&
       record.role !== "collector" &&
-      record.role !== "doctor"
+      record.role !== "doctor" &&
+      record.role !== "reviewer"
     ) {
       return undefined;
     }
@@ -440,6 +442,9 @@ type LoadedAdmittedRequestFields = {
   readonly packetPath?: string;
   readonly prerequisitesPath?: string;
   readonly prerequisites?: readonly FixerPrerequisite[];
+  readonly capabilitiesPath?: string;
+  readonly taskSha256?: string;
+  readonly baseRevision?: string;
 };
 
 async function loadResumableRunRecord(
@@ -479,6 +484,9 @@ async function loadResumableRunRecord(
   let packetPath: string | undefined;
   let prerequisitesPath: string | undefined;
   let prerequisites: readonly FixerPrerequisite[] | undefined;
+  let capabilitiesPath: string | undefined;
+  let taskSha256: string | undefined;
+  let baseRevision: string | undefined;
   try {
     const raw: unknown = JSON.parse(
       await readFile(run.admittedRequestPath, "utf8"),
@@ -512,6 +520,24 @@ async function loadResumableRunRecord(
       if (Array.isArray(record.prerequisites)) {
         prerequisites = record.prerequisites as FixerPrerequisite[];
       }
+      if (
+        typeof record.capabilitiesPath === "string" &&
+        record.capabilitiesPath.trim() !== ""
+      ) {
+        capabilitiesPath = record.capabilitiesPath;
+      }
+      if (
+        typeof record.taskSha256 === "string" &&
+        record.taskSha256.trim() !== ""
+      ) {
+        taskSha256 = record.taskSha256;
+      }
+      if (
+        typeof record.baseRevision === "string" &&
+        record.baseRevision.trim() !== ""
+      ) {
+        baseRevision = record.baseRevision;
+      }
     }
   } catch {
     throw new CliUsageError(
@@ -530,6 +556,9 @@ async function loadResumableRunRecord(
       ...(packetPath === undefined ? {} : { packetPath }),
       ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
       ...(prerequisites === undefined ? {} : { prerequisites }),
+      ...(capabilitiesPath === undefined ? {} : { capabilitiesPath }),
+      ...(taskSha256 === undefined ? {} : { taskSha256 }),
+      ...(baseRevision === undefined ? {} : { baseRevision }),
     },
   };
 }
@@ -548,6 +577,12 @@ export type LoadedResumableCoderRun = {
 
 export type LoadedResumableFixerRun = {
   readonly admitted: AdmittedFixerInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation: TypedHttp429Observation;
+};
+
+export type LoadedResumableReviewerRun = {
+  readonly admitted: AdmittedReviewerInvocation;
   readonly run: RoleRunRecord;
   readonly observation: TypedHttp429Observation;
 };
@@ -701,10 +736,75 @@ export async function loadResumableFixerRun(
  * Peek the durable role of a run id without enforcing resumable state.
  * Used by public resume dispatch to pick the role-correct seat and path.
  */
+/**
+ * Load a resumable Reviewer run for resume. Task, adapter-derived capabilities,
+ * and optional base revision are restored from the admitted request (#111).
+ */
+export async function loadResumableReviewerRun(
+  home: string,
+  runId: string,
+): Promise<LoadedResumableReviewerRun> {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "reviewer") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not reviewer`,
+    );
+  }
+  const taskPath = loaded.admittedFields.taskPath;
+  if (taskPath === undefined) {
+    throw new CliUsageError(
+      `role run admitted reviewer task path is missing: ${runId}`,
+    );
+  }
+  const capabilitiesPath = loaded.admittedFields.capabilitiesPath;
+  if (capabilitiesPath === undefined) {
+    throw new CliUsageError(
+      `role run admitted reviewer capabilities path is missing: ${runId}`,
+    );
+  }
+  const taskSha256 = loaded.admittedFields.taskSha256;
+  if (taskSha256 === undefined) {
+    throw new CliUsageError(
+      `role run admitted reviewer task digest is missing: ${runId}`,
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted reviewer task is blank: ${runId}`,
+    );
+  }
+  const admitted: AdmittedReviewerInvocation = {
+    role: "reviewer",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    taskPath,
+    capabilitiesPath,
+    taskSha256,
+    ...(loaded.admittedFields.baseRevision === undefined
+      ? {}
+      : { baseRevision: loaded.admittedFields.baseRevision }),
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    observation: loaded.observation,
+  };
+}
+
 export async function peekRoleRunRole(
   home: string,
   runId: string,
-): Promise<"judge" | "coder" | "fixer" | "collector" | "doctor" | undefined> {
+): Promise<
+  "judge" | "coder" | "fixer" | "collector" | "doctor" | "reviewer" | undefined
+> {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunState(runDirectory);

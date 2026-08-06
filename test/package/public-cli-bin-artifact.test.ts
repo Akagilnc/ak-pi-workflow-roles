@@ -109,6 +109,27 @@ test("committed ak-role bin matches fresh public-cli bundle from source", async 
       true,
       "public bin must preserve coder phase on activation/resume",
     );
+    // #111 public Reviewer adapter + package code-review method must ship in the installed bin.
+    assert.equal(
+      /command\s*===\s*[\"']reviewer[\"']|case\s*[\"']reviewer[\"']/.test(committedText),
+      true,
+      "public bin must ship reviewer command dispatch",
+    );
+    assert.equal(
+      /resolvePackagedMethodSkillPath\([^)]*"code-review"/.test(committedText),
+      true,
+      "public bin must resolve the package-owned code-review skill path",
+    );
+    assert.equal(
+      committedText.includes("validateRuntimeReviewerReceipt"),
+      true,
+      "public bin must ship Reviewer receipt validation before lawful settlement",
+    );
+    assert.equal(
+      committedText.includes("ak-review-capabilities"),
+      true,
+      "public bin must pin adapter-derived reviewer capabilities on activation",
+    );
     // #112 public Collector adapter must ship in the installed bin.
     assert.equal(
       /command\s*===\s*[\"']collector[\"']|case\s*[\"']collector[\"']/.test(committedText),
