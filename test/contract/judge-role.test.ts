@@ -32,9 +32,14 @@ import {
   type SoulAuditInput,
 } from "../../src/role-runtime.ts";
 import {
+  readTypedHttp429Observation,
+  renderResumeCommand,
+} from "../../src/public-cli/run-lifecycle.ts";
+import {
   extractNavigatorFact,
   formatTerminalResult,
   NAVIGATOR_POST_ROLE_GRACE_MS,
+  settleJudgeFailureTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { withActivationHome } from "../helpers/pi-test-harness.ts";
 
@@ -228,6 +233,7 @@ test("stable factory registers the complete typed role flag set and stays inert 
     "tool_execution_start",
     "tool_execution_update",
     "tool_execution_end",
+    "after_provider_response",
   ]));
   await harness.handlers.get("session_start")?.({}, {});
   assert.equal(loads, 0);
@@ -235,6 +241,104 @@ test("stable factory registers the complete typed role flag set and stays inert 
   assert.deepEqual(harness.activeToolSets, []);
   // Observation handlers are registered but stay inert without --ak-role admission.
   assert.equal(harness.handlers.has("tool_call"), false, "tool_call");
+});
+
+test("after_provider_response production handler writes typed 429 into resumable failure Terminal", async () => {
+  // Shortest tracer: production handler → durable observation → public failure settlement → resume.
+  // Does not call recordTypedProviderHttpStatus as a stand-in for the observation seam.
+  await withActivationHome({ prefix: "ak-typed-429-obs-" }, async ({ home }) => {
+    const runId = "run-prod-obs-429";
+    const runDirectory = join(home, ".ak-roles", "books", basename(home), "runs", `${runId}@judge`);
+    const sessionDirectory = join(runDirectory, "session");
+    mkdirSync(sessionDirectory, { recursive: true });
+    const admittedRequestPath = join(runDirectory, "admitted-request.json");
+    await writeFile(admittedRequestPath, "{}\n", "utf8");
+
+    const harness = extensionHarness(undefined);
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "judge",
+      transcriptFromContext: () => "",
+      auditSoulCompliance: async () => ({ status: "pass" }),
+    })(harness.pi as ExtensionAPI);
+
+    const handler = harness.handlers.get("after_provider_response");
+    assert.ok(handler, "production after_provider_response handler must be registered");
+
+    // Without AK_ROLE_RUN_DIR the handler is inert.
+    await handler(
+      { type: "after_provider_response", status: 429, headers: {} },
+      { model: { provider: "openai-codex" } },
+    );
+    assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
+
+    const previous = process.env.AK_ROLE_RUN_DIR;
+    process.env.AK_ROLE_RUN_DIR = runDirectory;
+    try {
+      // Non-v1 provider ignored.
+      await handler(
+        { type: "after_provider_response", status: 429, headers: {} },
+        { model: { provider: "anthropic" } },
+      );
+      assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
+
+      // Production typed 429 observation.
+      await handler(
+        { type: "after_provider_response", status: 429, headers: {} },
+        { model: { provider: "openai-codex" } },
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.AK_ROLE_RUN_DIR;
+      } else {
+        process.env.AK_ROLE_RUN_DIR = previous;
+      }
+    }
+
+    assert.deepEqual(await readTypedHttp429Observation(runDirectory), {
+      httpStatus: 429,
+      provider: "openai-codex",
+    });
+
+    const terminal = await settleJudgeFailureTerminalResult(
+      {
+        role: "judge",
+        runId,
+        bookKey: basename(home),
+        projectRoot: home,
+        instruction: "observe",
+        instructionEmpty: false,
+        attachments: [],
+        runDirectory,
+        sessionDirectory,
+        admittedRequestPath,
+      },
+      { cause: "provider", diagnostic: "upstream declined this request" },
+      { disposition: "no-advice" },
+      { resume: { command: renderResumeCommand(runId) } },
+    );
+
+    assert.ok(terminal.resume);
+    assert.equal(terminal.resume.command, renderResumeCommand(runId));
+    assert.equal(terminal.runId, undefined);
+    assert.equal(terminal.artifacts.length, 0);
+    const outside = {
+      roleOutcome: terminal.roleOutcome,
+      navigator: terminal.navigator,
+      artifacts: terminal.artifacts,
+      runId: terminal.runId,
+    };
+    assert.equal(
+      JSON.stringify(outside).includes(runId),
+      false,
+      "run ID must not appear outside resume.command in typed Terminal regions",
+    );
+    const presented = formatTerminalResult(terminal);
+    assert.equal(presented.includes(terminal.resume.command), true);
+    assert.equal(
+      presented.split(terminal.resume.command).join("").includes(runId),
+      false,
+    );
+  });
 });
 
 test("unsupported role fails with the frozen diagnostic before any loader runs", async () => {

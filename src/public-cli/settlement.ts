@@ -970,12 +970,22 @@ export async function settleJudgeFailureTerminalResult(
     diagnostic: failure.diagnostic,
     decisiveFacts,
   };
+  // Resumable failures: durable artifacts still land under the run directory, but
+  // the public Terminal must not re-disclose the run ID via top-level runId or
+  // path components — only resume.command may carry it (AC2 / #108).
+  if (options.resume !== undefined) {
+    return {
+      roleOutcome,
+      navigator,
+      artifacts: [],
+      resume: options.resume,
+    };
+  }
   return {
     roleOutcome,
     navigator,
     artifacts,
     runId: admitted.runId,
-    ...(options.resume === undefined ? {} : { resume: options.resume }),
   };
 }
 

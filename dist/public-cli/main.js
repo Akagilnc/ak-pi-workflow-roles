@@ -7,12 +7,12 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname5, join as join8 } from "node:path";
+import { dirname as dirname5, join as join9 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -8041,7 +8041,8 @@ var PUBLIC_CONFIGURABLE_SEATS = [
 var PUBLIC_CLI_SUPPORT_COMMANDS = [
   "roles",
   "config",
-  "help"
+  "help",
+  "resume"
 ];
 var STARTUP_CANDIDATES = {
   judge: [
@@ -8855,13 +8856,274 @@ async function ensureRunArtifactsDir(runDirectory) {
 }
 
 // src/public-cli/judge-run.ts
-import { writeFile as writeFile4 } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { writeFile as writeFile5 } from "node:fs/promises";
+import { join as join7 } from "node:path";
+
+// src/public-cli/run-lifecycle.ts
+import { open, readdir, readFile as readFile3, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join5 } from "node:path";
+var V1_RESUMABLE_PROVIDERS = ["openai-codex", "xai"];
+var RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]";
+var RUN_STATE_FILE = "run-state.json";
+var TYPED_HTTP_FILE = "typed-provider-http.json";
+var WRITER_LOCK_FILE = "writer.lock";
+function isV1ResumableProvider(provider) {
+  return V1_RESUMABLE_PROVIDERS.includes(provider);
+}
+async function readTypedHttp429Observation(runDirectory) {
+  try {
+    const raw = JSON.parse(
+      await readFile3(join5(runDirectory, TYPED_HTTP_FILE), "utf8")
+    );
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return void 0;
+    }
+    const record = raw;
+    if (record.httpStatus !== 429) return void 0;
+    if (typeof record.provider !== "string") return void 0;
+    if (!isV1ResumableProvider(record.provider)) return void 0;
+    return { httpStatus: 429, provider: record.provider };
+  } catch {
+    return void 0;
+  }
+}
+function isV1ResumableFailure(input) {
+  if (input.hasLawfulTerminalResult) return false;
+  return input.typedHttp429 !== void 0;
+}
+function renderResumeCommand(runId) {
+  return `ak-role resume ${runId}`;
+}
+async function writeRoleRunState(runDirectory, record) {
+  const payload = { ...record, runDirectory };
+  await writeFile3(
+    join5(runDirectory, RUN_STATE_FILE),
+    `${JSON.stringify(payload, null, 2)}
+`,
+    "utf8"
+  );
+}
+async function readRoleRunState(runDirectory) {
+  try {
+    const raw = JSON.parse(
+      await readFile3(join5(runDirectory, RUN_STATE_FILE), "utf8")
+    );
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return void 0;
+    }
+    const record = raw;
+    if (typeof record.runId !== "string" || record.runId.trim() === "") {
+      return void 0;
+    }
+    if (record.role !== "judge") return void 0;
+    if (record.state !== "admitted" && record.state !== "running" && record.state !== "resumable" && record.state !== "terminal") {
+      return void 0;
+    }
+    if (typeof record.bookKey !== "string") return void 0;
+    if (typeof record.projectRoot !== "string") return void 0;
+    if (typeof record.sessionDirectory !== "string") return void 0;
+    if (typeof record.admittedRequestPath !== "string") return void 0;
+    const runDir = typeof record.runDirectory === "string" && record.runDirectory.trim() !== "" ? record.runDirectory : runDirectory;
+    let resumable;
+    if (record.resumable !== void 0 && record.resumable !== null) {
+      if (typeof record.resumable === "object" && !Array.isArray(record.resumable)) {
+        const r = record.resumable;
+        if (r.httpStatus === 429 && typeof r.provider === "string" && isV1ResumableProvider(r.provider)) {
+          resumable = { httpStatus: 429, provider: r.provider };
+        }
+      }
+    }
+    return {
+      runId: record.runId,
+      role: "judge",
+      state: record.state,
+      bookKey: record.bookKey,
+      projectRoot: record.projectRoot,
+      sessionDirectory: record.sessionDirectory,
+      runDirectory: runDir,
+      admittedRequestPath: record.admittedRequestPath,
+      ...resumable === void 0 ? {} : { resumable }
+    };
+  } catch {
+    return void 0;
+  }
+}
+async function markRunAdmitted(admitted) {
+  await writeRoleRunState(admitted.runDirectory, {
+    runId: admitted.runId,
+    role: "judge",
+    state: "admitted",
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    sessionDirectory: admitted.sessionDirectory,
+    admittedRequestPath: admitted.admittedRequestPath
+  });
+}
+async function markRunRunning(runDirectory) {
+  const current = await readRoleRunState(runDirectory);
+  if (current === void 0) {
+    throw new Error("cannot mark running: run state missing");
+  }
+  await writeRoleRunState(runDirectory, {
+    runId: current.runId,
+    role: current.role,
+    state: "running",
+    bookKey: current.bookKey,
+    projectRoot: current.projectRoot,
+    sessionDirectory: current.sessionDirectory,
+    admittedRequestPath: current.admittedRequestPath
+  });
+}
+async function markRunResumable(runDirectory, observation) {
+  const current = await readRoleRunState(runDirectory);
+  if (current === void 0) {
+    throw new Error("cannot mark resumable: run state missing");
+  }
+  await writeRoleRunState(runDirectory, {
+    ...current,
+    state: "resumable",
+    resumable: observation
+  });
+}
+async function markRunTerminal(runDirectory) {
+  const current = await readRoleRunState(runDirectory);
+  if (current === void 0) {
+    throw new Error("cannot mark terminal: run state missing");
+  }
+  await writeRoleRunState(runDirectory, {
+    runId: current.runId,
+    role: current.role,
+    state: "terminal",
+    bookKey: current.bookKey,
+    projectRoot: current.projectRoot,
+    sessionDirectory: current.sessionDirectory,
+    admittedRequestPath: current.admittedRequestPath
+  });
+}
+var RunWriterLeaseHeldError = class extends Error {
+  code = "AK_RUN_WRITER_LEASE_HELD";
+  constructor(message = "role run writer lease is already held") {
+    super(message);
+    this.name = "RunWriterLeaseHeldError";
+  }
+};
+async function acquireRunWriterLease(runDirectory) {
+  const lockPath = join5(runDirectory, WRITER_LOCK_FILE);
+  try {
+    const handle = await open(lockPath, "wx");
+    try {
+      await handle.writeFile(`${process.pid}
+`, "utf8");
+    } catch (error) {
+      await handle.close().catch(() => void 0);
+      await unlink(lockPath).catch(() => void 0);
+      throw error;
+    }
+    let released = false;
+    return {
+      lockPath,
+      async release() {
+        if (released) return;
+        released = true;
+        await handle.close().catch(() => void 0);
+        await unlink(lockPath).catch(() => void 0);
+      }
+    };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+      throw new RunWriterLeaseHeldError();
+    }
+    throw error;
+  }
+}
+async function findRunDirectoryById(home, runId) {
+  if (runId.trim() === "") return void 0;
+  const ledgerHome = resolveActivationLedgerHome(() => home);
+  const booksRoot = join5(ledgerHome, "books");
+  let bookKeys;
+  try {
+    bookKeys = await readdir(booksRoot);
+  } catch {
+    return void 0;
+  }
+  for (const bookKey of bookKeys) {
+    const runsDir = join5(activationBookDirectory(ledgerHome, bookKey), "runs");
+    let entries;
+    try {
+      entries = await readdir(runsDir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
+        return join5(runsDir, entry);
+      }
+    }
+  }
+  return void 0;
+}
+async function loadResumableJudgeRun(home, runId) {
+  const runDirectory = await findRunDirectoryById(home, runId);
+  if (runDirectory === void 0) {
+    throw new CliUsageError(`unknown role run id: ${runId}`);
+  }
+  const run = await readRoleRunState(runDirectory);
+  if (run === void 0) {
+    throw new CliUsageError(`unknown role run id: ${runId}`);
+  }
+  if (run.state === "terminal") {
+    throw new CliUsageError(`role run is already terminal: ${runId}`);
+  }
+  if (run.state !== "resumable" || run.resumable === void 0) {
+    throw new CliUsageError(`role run is not resumable: ${runId}`);
+  }
+  let instruction = "";
+  let instructionEmpty = true;
+  let attachments = [];
+  try {
+    const raw = JSON.parse(
+      await readFile3(run.admittedRequestPath, "utf8")
+    );
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+      const record = raw;
+      if (typeof record.instruction === "string") {
+        instruction = record.instruction;
+      }
+      if (typeof record.instructionEmpty === "boolean") {
+        instructionEmpty = record.instructionEmpty;
+      }
+      if (Array.isArray(record.attachments)) {
+        attachments = record.attachments;
+      }
+    }
+  } catch {
+    throw new CliUsageError(
+      `role run admitted request is unreadable: ${runId}`
+    );
+  }
+  const admitted = {
+    role: "judge",
+    runId: run.runId,
+    bookKey: run.bookKey,
+    projectRoot: run.projectRoot,
+    instruction,
+    instructionEmpty,
+    attachments,
+    runDirectory: run.runDirectory,
+    sessionDirectory: run.sessionDirectory,
+    admittedRequestPath: run.admittedRequestPath
+  };
+  return {
+    admitted,
+    run,
+    observation: run.resumable
+  };
+}
 
 // src/public-cli/settlement.ts
 import { randomUUID } from "node:crypto";
-import { readdir, readFile as readFile3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname4, join as join5 } from "node:path";
+import { readdir as readdir2, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname4, join as join6 } from "node:path";
 
 // src/audit-escalation.ts
 var AUDIT_ESCALATION_KIND = "audit_escalation";
@@ -8956,7 +9218,11 @@ function formatTerminalResult(result2) {
   for (const artifact of result2.artifacts) {
     lines.push(`artifact	${artifact.kind}	${encodeTerminalField(artifact.path)}`);
   }
-  lines.push(`run	${encodeTerminalField(result2.runId)}`);
+  if (result2.resume !== void 0) {
+    lines.push(`resume	${encodeTerminalField(result2.resume.command)}`);
+  } else if (result2.runId !== void 0) {
+    lines.push(`run	${encodeTerminalField(result2.runId)}`);
+  }
   return `${lines.join("\n")}
 `;
 }
@@ -9017,9 +9283,9 @@ function presentStructuralRejection(error, io) {
 }
 async function inspectJudgeSession(sessionDirectory) {
   try {
-    const files = (await readdir(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
+    const files = (await readdir2(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
     if (files.length === 0) return { state: "missing" };
-    await readFile3(join5(sessionDirectory, files.at(-1)), "utf8");
+    await readFile4(join6(sessionDirectory, files.at(-1)), "utf8");
     return { state: "present" };
   } catch (error) {
     return {
@@ -9147,9 +9413,9 @@ function sessionReadFailure(error, fallbackMessage) {
   return failed;
 }
 async function readLatestSessionEntries(sessionDirectory) {
-  const files = (await readdir(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
+  const files = (await readdir2(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
   if (files.length === 0) return [];
-  const text = await readFile3(join5(sessionDirectory, files.at(-1)), "utf8");
+  const text = await readFile4(join6(sessionDirectory, files.at(-1)), "utf8");
   const entries = [];
   for (const line of text.trim().split("\n").filter(Boolean)) {
     try {
@@ -9284,9 +9550,9 @@ function extractNavigatorFact(entries) {
 }
 async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join5(artifactsDir, "report.json");
-  const evidencePath = join5(artifactsDir, "evidence.json");
-  await writeFile3(
+  const reportPath = join6(artifactsDir, "report.json");
+  const evidencePath = join6(artifactsDir, "evidence.json");
+  await writeFile4(
     reportPath,
     `${JSON.stringify(
       {
@@ -9300,7 +9566,7 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
 `,
     "utf8"
   );
-  await writeFile3(
+  await writeFile4(
     evidencePath,
     `${JSON.stringify(
       {
@@ -9378,7 +9644,7 @@ function uniqueFailureFallbackDirs(runDirectory, baseDir) {
   return dirs;
 }
 async function resolveFailureArtifactsBase(runDirectory) {
-  const artifactsDir = join5(runDirectory, "artifacts");
+  const artifactsDir = join6(runDirectory, "artifacts");
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -9394,13 +9660,13 @@ async function writeFailureJsonRetainingCause(preferredCandidates, uniqueFallbac
   const candidates = [
     ...preferredCandidates,
     // One unique name per fallback dir — collisions on fixed names cannot exhaust this.
-    ...uniqueFallbackDirs.map((dir) => join5(dir, `${stem}.${randomUUID()}.json`))
+    ...uniqueFallbackDirs.map((dir) => join6(dir, `${stem}.${randomUUID()}.json`))
   ];
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
     const payload = issues.length === 0 ? basePayload : { ...basePayload, publicationIssues: issues };
     try {
-      await writeFile3(
+      await writeFile4(
         path,
         `${JSON.stringify(payload, null, 2)}
 `,
@@ -9429,26 +9695,26 @@ async function publishFailureArtifacts(admitted, failure) {
     admitted.runDirectory
   );
   const priorIssues = baseAttempt === void 0 ? [] : [baseAttempt];
-  const underArtifacts = baseDir === join5(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === join6(admitted.runDirectory, "artifacts");
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir
   );
   const errorCandidates = underArtifacts ? [
-    join5(baseDir, "error.json"),
-    join5(baseDir, "error.settlement.json"),
-    join5(admitted.runDirectory, "error.settlement.json")
+    join6(baseDir, "error.json"),
+    join6(baseDir, "error.settlement.json"),
+    join6(admitted.runDirectory, "error.settlement.json")
   ] : [
-    join5(baseDir, "error.settlement.json"),
-    join5(baseDir, "error.json")
+    join6(baseDir, "error.settlement.json"),
+    join6(baseDir, "error.json")
   ];
   const evidenceCandidates = underArtifacts ? [
-    join5(baseDir, "evidence.json"),
-    join5(baseDir, "evidence.settlement.json"),
-    join5(admitted.runDirectory, "evidence.settlement.json")
+    join6(baseDir, "evidence.json"),
+    join6(baseDir, "evidence.settlement.json"),
+    join6(admitted.runDirectory, "evidence.settlement.json")
   ] : [
-    join5(baseDir, "evidence.settlement.json"),
-    join5(baseDir, "evidence.json")
+    join6(baseDir, "evidence.settlement.json"),
+    join6(baseDir, "evidence.json")
   ];
   const errorPayloadBase = {
     kind: "error",
@@ -9491,7 +9757,7 @@ async function publishFailureArtifacts(admitted, failure) {
     { kind: "evidence", path: evidenceWrite.path }
   ];
 }
-async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }) {
+async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }, options = {}) {
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts = {
     cause: failure.cause,
@@ -9510,6 +9776,14 @@ async function settleJudgeFailureTerminalResult(admitted, failure, navigator = {
     diagnostic: failure.diagnostic,
     decisiveFacts
   };
+  if (options.resume !== void 0) {
+    return {
+      roleOutcome,
+      navigator,
+      artifacts: [],
+      resume: options.resume
+    };
+  }
   return {
     roleOutcome,
     navigator,
@@ -9573,6 +9847,24 @@ function buildJudgeActivationExtraArgs(admitted, options = {}) {
     prompt
   ];
 }
+function buildJudgeResumeActivationExtraArgs(admitted, options = {}) {
+  return [
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--continue",
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "judge",
+    "--mode",
+    "json",
+    ...buildModelArgs(options.model),
+    RESUME_TRANSPORT_ENVELOPE
+  ];
+}
 async function presentControlledFailure(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionDirectory) : void 0;
@@ -9586,13 +9878,123 @@ async function presentControlledFailure(admitted, failureInput, io) {
     ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
     ...session === void 0 ? {} : { session }
   });
-  const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
+  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const resumable = isV1ResumableFailure({
+    hasLawfulTerminalResult: false,
+    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
+  });
+  if (resumable && typedHttp429 !== void 0) {
+    await markRunResumable(admitted.runDirectory, typedHttp429);
+  } else {
+    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  }
+  const terminal = await settleJudgeFailureTerminalResult(
+    admitted,
+    failure,
+    { disposition: "no-advice" },
+    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
+  );
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
     admitted,
     terminal
   };
+}
+async function dispatchAdmittedJudge(input) {
+  const { admitted, env, io, extraArgs, lease } = input;
+  try {
+    await markRunRunning(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      // Public-run marker so Navigator work context prefers admitted instruction
+      // and role-runtime can record typed provider HTTP observations.
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile5(
+        join7(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleJudgeTerminalResult(admitted);
+    } catch (error) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionDirectory
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : {
+          knownCause: knownFailure.cause,
+          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+        }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
 }
 async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
   let admitted;
@@ -9613,95 +10015,77 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     }
     throw error;
   }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
   const extraArgs = buildJudgeActivationExtraArgs(admitted, {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
   });
-  const childEnv = {
-    ...process.env,
-    HOME: env.home,
-    PI_CODING_AGENT_DIR: env.agentDir,
-    // Public-run marker so Navigator work context prefers admitted instruction.
-    AK_ROLE_RUN_DIR: admitted.runDirectory
-  };
-  if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
-    childEnv.AK_CORRELATION_ID = env.correlationId;
-  }
-  let result2;
-  try {
-    result2 = await runExplicitInternalActivation({
-      packageRoot: env.packageRoot,
-      extraArgs,
-      cwd: admitted.projectRoot,
-      home: env.home,
-      agentDir: env.agentDir,
-      env: childEnv,
-      ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
-      ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-    });
-  } catch (error) {
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error
-      },
-      io
-    );
-  }
-  try {
-    await writeFile4(
-      join6(admitted.runDirectory, "stderr.log"),
-      result2.stderr,
-      "utf8"
-    );
-  } catch {
-  }
-  let lawful;
-  try {
-    lawful = await trySettleJudgeTerminalResult(admitted);
-  } catch (error) {
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: result2.code,
-        stderr: result2.stderr,
-        thrown: error
-      },
-      io
-    );
-  }
-  if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
-    io.stdout(formatTerminalResult(lawful));
-    return {
-      exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
-      admitted,
-      terminal: lawful
-    };
-  }
-  const sessionProviderStop = await readSessionProviderStop(
-    admitted.sessionDirectory
-  );
-  const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
-  const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
-  const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
-  return await presentControlledFailure(
+  return await dispatchAdmittedJudge({
     admitted,
-    {
-      timedOut: result2.timedOut,
-      code: result2.code,
-      stderr: result2.stderr,
-      ...knownFailure === void 0 ? {} : {
-        knownCause: knownFailure.cause,
-        ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
-        ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
-      }
-    },
-    io
-  );
+    env,
+    io,
+    extraArgs,
+    lease
+  });
+}
+async function runPublicResume(argv, env, io) {
+  const runId = argv[0];
+  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
+    presentStructuralRejection(
+      new CliUsageError("usage: ak-role resume <runId>"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  if (argv.length > 1) {
+    presentStructuralRejection(
+      new CliUsageError("resume takes exactly one run id"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  let loaded;
+  try {
+    loaded = await loadResumableJudgeRun(env.home, runId);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+  const extraArgs = buildJudgeResumeActivationExtraArgs(admitted, {
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedJudge({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease
+  });
 }
 
 // src/public-cli/cli.ts
@@ -9728,7 +10112,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join7(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join8(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -9945,6 +10329,38 @@ async function runAkRole(argv, env) {
     if (parsed.command === "config") {
       return { exitCode: await runConfigCommand(parsed.args, home, io) };
     }
+    if (parsed.command === "resume") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "judge",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicResume(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+          ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...env.judgeExtraPiArgs === void 0 ? {} : { extraPiArgs: env.judgeExtraPiArgs },
+          ...env.judgeTimeoutMs === void 0 ? {} : { timeoutMs: env.judgeTimeoutMs }
+        },
+        io
+      );
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
+    }
     if (isPublicCliSupportCommand(parsed.command)) {
       throw new CliUsageError(`unhandled support command: ${parsed.command}`);
     }
@@ -10028,6 +10444,6 @@ async function runAkRole(argv, env) {
 
 // src/public-cli/main.ts
 var here = dirname5(fileURLToPath(import.meta.url));
-var packageRoot = join8(here, "..", "..");
+var packageRoot = join9(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

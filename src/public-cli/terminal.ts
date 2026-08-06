@@ -103,14 +103,26 @@ export type TerminalResume = {
   readonly command: string;
 };
 
+/**
+ * One admitted Role run's typed Terminal aggregate.
+ * Resumable failures carry `resume` and must not re-disclose the run ID via
+ * top-level `runId` or public artifact path components — only `resume.command`.
+ */
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
-  runId: string;
-  /** Typed resume region — only for resumable failures. */
-  resume?: TerminalResume;
-};
+} & (
+  | {
+      /** Resumable failure: run ID appears only inside resume.command. */
+      resume: TerminalResume;
+      runId?: undefined;
+    }
+  | {
+      runId: string;
+      resume?: undefined;
+    }
+);
 
 /**
  * Build a recommendation navigator fact. Command is always registry-rendered;
@@ -186,7 +198,7 @@ export function formatTerminalResult(result: TerminalResult): string {
   if (result.resume !== undefined) {
     // Resumable failure: run ID is revealed only inside the complete resume command.
     lines.push(`resume\t${encodeTerminalField(result.resume.command)}`);
-  } else {
+  } else if (result.runId !== undefined) {
     lines.push(`run\t${encodeTerminalField(result.runId)}`);
   }
   return `${lines.join("\n")}\n`;
