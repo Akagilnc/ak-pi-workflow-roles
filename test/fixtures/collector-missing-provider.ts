@@ -1,6 +1,11 @@
 /**
  * Offline faux provider for the public OPEN-PR + nonexistent-author missing path.
- * observe → advance past eligibility cutoff → final observe → ak_collector_output missing.
+ * observe → advance past eligibility cutoff (external virtual system time) →
+ * final observe → ak_collector_output missing.
+ *
+ * Time control is external to production runtime: patches Date/hrtime so the
+ * unmodified production createSystemCollectorClock reaches cutoff. Does not
+ * replace extensions/role-runtime.ts or add a production test hook.
  */
 import {
   fauxAssistantMessage,
@@ -14,7 +19,7 @@ import {
   COLLECTOR_OBSERVE_TOOL,
   COLLECTOR_OUTPUT_TOOL,
 } from "../../src/collector-ledger.ts";
-import { collectorPublicTracerClock } from "./collector-controllable-clock.ts";
+import { collectorVirtualSystemTime } from "./collector-virtual-system-time.ts";
 
 const ELIGIBILITY_PLUS_MS = 16 * 60 * 1000;
 
@@ -66,8 +71,8 @@ function snapshotIdFromToolResult(message: {
 }
 
 export default function collectorMissingProvider(pi: ExtensionAPI): void {
-  // Reset shared clock for this process activation.
-  collectorPublicTracerClock.reset();
+  // Reset shared virtual system time for this process activation.
+  collectorVirtualSystemTime.reset();
 
   const faux = fauxProvider({
     api: "ak-collector-missing-offline",
@@ -80,7 +85,9 @@ export default function collectorMissingProvider(pi: ExtensionAPI): void {
       { stopReason: "toolUse" },
     ),
     () => {
-      collectorPublicTracerClock.advance(ELIGIBILITY_PLUS_MS);
+      // External time fixture: advance past eligibility so production clock/ledger
+      // accept missing without replacing the production runtime entrypoint.
+      collectorVirtualSystemTime.advance(ELIGIBILITY_PLUS_MS);
       return fauxAssistantMessage(
         fauxToolCall(COLLECTOR_OBSERVE_TOOL, {}, { id: "collector-miss-obs-2" }),
         { stopReason: "toolUse" },

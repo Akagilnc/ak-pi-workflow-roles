@@ -734,19 +734,19 @@ export function resolveGitHubRemoteRepository(
 
 function ownerRepoFromGitHubRemoteUrl(remoteUrl: string): string | undefined {
   const trimmed = remoteUrl.trim();
-  // git@github.com:owner/repo.git
+  // git@github.com:owner/repo.git — exact owner/repo identity only.
   const scp = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i.exec(trimmed);
   if (scp) {
     return `${scp[1]}/${stripGitSuffix(scp[2]!)}`;
   }
-  // ssh://git@github.com/owner/repo(.git)
+  // ssh://git@github.com/owner/repo(.git) — exact owner/repo identity only.
   const ssh = /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(
     trimmed,
   );
   if (ssh) {
     return `${ssh[1]}/${stripGitSuffix(ssh[2]!)}`;
   }
-  // https://github.com/owner/repo(.git) and git://github.com/...
+  // https://github.com/owner/repo(.git) and git://github.com/... — exact two-segment path.
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
@@ -754,8 +754,10 @@ function ownerRepoFromGitHubRemoteUrl(remoteUrl: string): string | undefined {
     return undefined;
   }
   if (!/^github\.com$/i.test(parsed.hostname)) return undefined;
+  // Non-identity URL material (query/hash/extra path) is not a repository remote.
+  if (parsed.search !== "" || parsed.hash !== "") return undefined;
   const parts = parsed.pathname.split("/").filter((p) => p.length > 0);
-  if (parts.length < 2) return undefined;
+  if (parts.length !== 2) return undefined;
   return `${parts[0]}/${stripGitSuffix(parts[1]!)}`;
 }
 
