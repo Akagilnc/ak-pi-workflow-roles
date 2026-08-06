@@ -49,6 +49,12 @@ ak-role --model openai-codex/gpt-5.6-sol --thinking high \
   judge --attach ./decision.md "Adjudicate this decision."
 ```
 
+When a Role run is interrupted by an observed typed Codex/xAI HTTP 429 and has no lawful terminal result, the failure Terminal includes a complete `ak-role resume <runId>` command (the run ID appears only there). Resume reopens the exact Pi session with the admitted instruction, frozen Attachments, and typed role values; choose a temporary model with the usual global flags without changing persistent configuration. The package never auto-switches providers or models after a quota interruption, and concurrent resume of one run is rejected before a second dispatch. Quota-like prose alone never makes a run resumable — only a typed HTTP 429 observation does. Unknown, terminal, and non-resumable run IDs reject without replay.
+
+```bash
+ak-role --model xai/grok-4.5:high resume <runId>
+```
+
 At the current mainline slice, Judge is the completed public run path. `roles` lists the full callable registry, but the other role adapters are still landing under #109–#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
 
 ## 班子（唐宋官署命名）
