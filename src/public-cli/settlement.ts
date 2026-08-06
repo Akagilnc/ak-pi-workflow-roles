@@ -43,6 +43,11 @@ import {
   type RuntimeReviewerReceiptV2,
 } from "../package-contracts/reviewer-output.ts";
 import {
+  MERGER_OUTPUT_TOOL_NAME,
+  validateMergerOutput,
+  type MergerOutput,
+} from "../merger-contracts.ts";
+import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
@@ -55,6 +60,7 @@ import {
   type AdmittedDoctorInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedMergerInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -1988,6 +1994,229 @@ export async function hasLawfulReviewerTerminalResult(
     const entries = await readLawfulSettlementEntries(admitted);
     if (entries === undefined) return false;
     const extracted = extractReviewerRoleOutcome(entries);
+    return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
+  } catch {
+    return false;
+  }
+}
+
+function mergerDecisiveFacts(output: MergerOutput): Record<string, unknown> {
+  if (output.status === "completed") {
+    return {
+      mergerStatus: output.status,
+      attemptId: output.attemptId,
+      mergeCommitId: output.mergeCommitId,
+    };
+  }
+  return {
+    mergerStatus: output.status,
+    attemptId: output.attemptId,
+    diagnosis: output.diagnosis,
+  };
+}
+
+/**
+ * Observe forced Merger resolving-merge-conflicts Skill expansions from the session.
+ * Expansion evidence is package-path only; ambient home locations never count.
+ */
+export function extractMergerMethodInvocations(
+  entries: readonly SessionEntry[],
+  options: {
+    readonly allowedLocations: readonly string[];
+  },
+): readonly ObservedPackagedMethodSkillInvocation[] {
+  const observed: ObservedPackagedMethodSkillInvocation[] = [];
+  for (const entry of entries) {
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "user") continue;
+    const text = sessionMessageText(message);
+    if (text.length === 0) continue;
+    const hit = observePackagedMethodSkillInvocation(text, {
+      name: "resolving-merge-conflicts",
+      allowedLocations: options.allowedLocations,
+    });
+    if (hit !== undefined) observed.push(hit);
+  }
+  return Object.freeze(observed);
+}
+
+/**
+ * Publish lawful Merger success Artifacts on the shared #106 success interface.
+ * Evidence records package method provenance, forced expansion observation, and
+ * adapter-derived mechanical envelope facts without ambient home Skill paths.
+ */
+export async function publishMergerArtifacts(
+  admitted: AdmittedMergerInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  sessionDirectory: string,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
+    readonly mergerOutput?: MergerOutput;
+  },
+): Promise<TerminalArtifactRef[]> {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join(artifactsDir, "report.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "merger",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...(options.mergerOutput === undefined
+          ? {}
+          : { receipt: options.mergerOutput }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "merger",
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        mergerInputPath: admitted.mergerInputPath,
+        derived: admitted.derived,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+        methodProvenance: options.methodProvenance,
+        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+        methodInvocations: options.methodInvocations ?? [],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
+/** Lawful Merger accepted outcome extracted from session (shared success interface). */
+export type LawfulMergerRoleOutcome = {
+  kind: "accepted";
+  role: "merger";
+  status: string;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+export function extractMergerRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulMergerRoleOutcome; output: MergerOutput } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    try {
+      const output = validateMergerOutput(message.details);
+      const outcome: LawfulMergerRoleOutcome = {
+        kind: "accepted",
+        role: "merger",
+        status: output.status,
+        decisiveFacts: mergerDecisiveFacts(output),
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function settleLawfulMergerTerminalResult(
+  admitted: AdmittedMergerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractMergerRoleOutcome(entries);
+  if (extracted === undefined) return undefined;
+  const methodInvocations = extractMergerMethodInvocations(entries, {
+    allowedLocations: [
+      options.methodSkillPath,
+      options.methodSkillConfiguredPath,
+    ],
+  });
+  // Every invocation must expand the merge-only method before conflict work.
+  if (methodInvocations.length === 0) return undefined;
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishMergerArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    {
+      mergerOutput: extracted.output,
+      methodProvenance: options.methodProvenance,
+      methodInvocations,
+    },
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
+}
+
+/** Settle a lawful Merger Terminal from the admitted session (shared #106 success interface). */
+export async function settleMergerTerminalResult(
+  admitted: AdmittedMergerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult> {
+  const settled = await settleLawfulMergerTerminalResult(admitted, options);
+  if (settled === undefined) {
+    throw new Error(
+      "Merger Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Merger Terminal; undefined only for genuine absence. */
+export async function trySettleMergerTerminalResult(
+  admitted: AdmittedMergerInvocation,
+  options: {
+    readonly methodProvenance: PackagedMethodSkillProvenance;
+    readonly methodSkillPath: string;
+    readonly methodSkillConfiguredPath: string;
+  },
+): Promise<TerminalResult | undefined> {
+  return settleLawfulMergerTerminalResult(admitted, options);
+}
+
+export async function hasLawfulMergerTerminalResult(
+  admitted: AdmittedMergerInvocation,
+): Promise<boolean> {
+  try {
+    const entries = await readLawfulSettlementEntries(admitted);
+    if (entries === undefined) return false;
+    const extracted = extractMergerRoleOutcome(entries);
     return extracted !== undefined && isLawfulTypedTerminalOutcome(extracted.outcome);
   } catch {
     return false;

@@ -41,9 +41,21 @@ export function createProductionMergerGitState(repositoryRoot = process.cwd()): 
   return {
     async activeMerge() {
       const targetObjectId = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
-      const mergeHeads = exactUtf8(await git(repositoryRoot, ["rev-parse", "--verify", "MERGE_HEAD"]), "Git MERGE_HEAD").trim().split(/\r?\n/).filter(Boolean);
+      let mergeHeadRaw: Uint8Array;
+      try {
+        mergeHeadRaw = await git(repositoryRoot, ["rev-parse", "--verify", "MERGE_HEAD"]);
+      } catch {
+        throw new Error("Assigned repository does not have one ordinary in-progress merge");
+      }
+      const mergeHeads = exactUtf8(mergeHeadRaw, "Git MERGE_HEAD").trim().split(/\r?\n/).filter(Boolean);
       if (mergeHeads.length !== 1 || !isFullGitObjectId(targetObjectId) || !isFullGitObjectId(mergeHeads[0]) || targetObjectId.length !== mergeHeads[0]!.length) throw new Error("Assigned repository does not have one ordinary in-progress merge");
-      const automaticMergeTreeId = line(await git(repositoryRoot, ["rev-parse", "--verify", "AUTO_MERGE^{tree}"]), "Git automatic merge tree");
+      let automaticMergeTreeRaw: Uint8Array;
+      try {
+        automaticMergeTreeRaw = await git(repositoryRoot, ["rev-parse", "--verify", "AUTO_MERGE^{tree}"]);
+      } catch {
+        throw new Error("Git automatic merge tree identity is unavailable or invalid");
+      }
+      const automaticMergeTreeId = line(automaticMergeTreeRaw, "Git automatic merge tree");
       if (!isFullGitObjectId(automaticMergeTreeId) || automaticMergeTreeId.length !== targetObjectId.length) throw new Error("Git automatic merge tree identity is unavailable or invalid");
       return { targetObjectId, sourceObjectId: mergeHeads[0]!, unmergedPaths: await unmerged(repositoryRoot), automaticMergeTreeId };
     },

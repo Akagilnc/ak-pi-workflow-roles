@@ -19,9 +19,11 @@ import {
   type AdmittedCoderInvocation,
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
+  type AdmittedMergerInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
   type CoderPhase,
+  type DerivedMergerEnvelope,
   type FrozenAttachment,
 } from "./invocation.ts";
 
@@ -38,7 +40,14 @@ export type TypedHttp429Observation = {
 
 export type RoleRunRecord = {
   readonly runId: string;
-  readonly role: "judge" | "coder" | "fixer" | "collector" | "doctor" | "reviewer";
+  readonly role:
+    | "judge"
+    | "coder"
+    | "fixer"
+    | "collector"
+    | "doctor"
+    | "reviewer"
+    | "merger";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -195,7 +204,8 @@ export async function readRoleRunState(
       record.role !== "fixer" &&
       record.role !== "collector" &&
       record.role !== "doctor" &&
-      record.role !== "reviewer"
+      record.role !== "reviewer" &&
+      record.role !== "merger"
     ) {
       return undefined;
     }
@@ -445,6 +455,8 @@ type LoadedAdmittedRequestFields = {
   readonly capabilitiesPath?: string;
   readonly taskSha256?: string;
   readonly baseRevision?: string;
+  readonly mergerInputPath?: string;
+  readonly derived?: DerivedMergerEnvelope;
 };
 
 async function loadResumableRunRecord(
@@ -487,6 +499,8 @@ async function loadResumableRunRecord(
   let capabilitiesPath: string | undefined;
   let taskSha256: string | undefined;
   let baseRevision: string | undefined;
+  let mergerInputPath: string | undefined;
+  let derived: DerivedMergerEnvelope | undefined;
   try {
     const raw: unknown = JSON.parse(
       await readFile(run.admittedRequestPath, "utf8"),
@@ -538,6 +552,36 @@ async function loadResumableRunRecord(
       ) {
         baseRevision = record.baseRevision;
       }
+      if (
+        typeof record.mergerInputPath === "string" &&
+        record.mergerInputPath.trim() !== ""
+      ) {
+        mergerInputPath = record.mergerInputPath;
+      }
+      if (
+        record.derived !== null &&
+        typeof record.derived === "object" &&
+        !Array.isArray(record.derived)
+      ) {
+        const d = record.derived as Record<string, unknown>;
+        if (
+          typeof d.targetObjectId === "string" &&
+          typeof d.sourceObjectId === "string" &&
+          typeof d.automaticMergeTreeId === "string" &&
+          Array.isArray(d.expectedConflictPaths) &&
+          Array.isArray(d.resolutionScope) &&
+          d.expectedConflictPaths.every((p) => typeof p === "string") &&
+          d.resolutionScope.every((p) => typeof p === "string")
+        ) {
+          derived = {
+            targetObjectId: d.targetObjectId,
+            sourceObjectId: d.sourceObjectId,
+            automaticMergeTreeId: d.automaticMergeTreeId,
+            expectedConflictPaths: d.expectedConflictPaths as string[],
+            resolutionScope: d.resolutionScope as string[],
+          };
+        }
+      }
     }
   } catch {
     throw new CliUsageError(
@@ -559,6 +603,8 @@ async function loadResumableRunRecord(
       ...(capabilitiesPath === undefined ? {} : { capabilitiesPath }),
       ...(taskSha256 === undefined ? {} : { taskSha256 }),
       ...(baseRevision === undefined ? {} : { baseRevision }),
+      ...(mergerInputPath === undefined ? {} : { mergerInputPath }),
+      ...(derived === undefined ? {} : { derived }),
     },
   };
 }
@@ -799,11 +845,77 @@ export async function loadResumableReviewerRun(
   };
 }
 
+export type LoadedResumableMergerRun = {
+  readonly admitted: AdmittedMergerInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation: TypedHttp429Observation;
+};
+
+/**
+ * Load a resumable Merger run for resume. Derived envelope + internal input path
+ * are restored from the admitted request (#114).
+ */
+export async function loadResumableMergerRun(
+  home: string,
+  runId: string,
+): Promise<LoadedResumableMergerRun> {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "merger") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not merger`,
+    );
+  }
+  const mergerInputPath = loaded.admittedFields.mergerInputPath;
+  if (mergerInputPath === undefined) {
+    throw new CliUsageError(
+      `role run admitted merger input path is missing: ${runId}`,
+    );
+  }
+  const derived = loaded.admittedFields.derived;
+  if (derived === undefined) {
+    throw new CliUsageError(
+      `role run admitted merger envelope is missing: ${runId}`,
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted merger task is blank: ${runId}`,
+    );
+  }
+  const admitted: AdmittedMergerInvocation = {
+    role: "merger",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    mergerInputPath,
+    derived,
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    observation: loaded.observation,
+  };
+}
+
 export async function peekRoleRunRole(
   home: string,
   runId: string,
 ): Promise<
-  "judge" | "coder" | "fixer" | "collector" | "doctor" | "reviewer" | undefined
+  | "judge"
+  | "coder"
+  | "fixer"
+  | "collector"
+  | "doctor"
+  | "reviewer"
+  | "merger"
+  | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;

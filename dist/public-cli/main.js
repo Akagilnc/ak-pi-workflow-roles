@@ -7,12 +7,12 @@ var __export = (target, all) => {
 };
 
 // src/public-cli/main.ts
-import { dirname as dirname6, join as join15 } from "node:path";
+import { dirname as dirname6, join as join16 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/public-cli/cli.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 
 // src/public-cli/config.ts
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -2792,8 +2792,8 @@ function ScriptMapping(input) {
 function IsMatch(value) {
   return IsEqual(value.length, 2);
 }
-function Match2(input, ok, fail5) {
-  return IsMatch(input) ? ok(input[0], input[1]) : fail5();
+function Match2(input, ok, fail6) {
+  return IsMatch(input) ? ok(input[0], input[1]) : fail6();
 }
 
 // node_modules/typebox/build/type/script/token/internal/take.mjs
@@ -9343,6 +9343,54 @@ var MERGER_OUTPUT_TOOL_NAME = "ak_merger_output";
 var record3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 var exact2 = (v, keys) => Object.keys(v).length === keys.length && keys.every((k) => Object.hasOwn(v, k));
 var blank = (v) => typeof v !== "string" || v.trim().length === 0;
+var MergerInputContractError = class extends Error {
+  constructor(message = "Merger input violates its exact contract") {
+    super(message);
+    this.name = "MergerInputContractError";
+  }
+};
+function fail4(message = "Merger input violates its exact contract") {
+  throw new MergerInputContractError(message);
+}
+function canonicalPath(path) {
+  return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\0") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+function validatePathSet(value, label) {
+  if (!Array.isArray(value) || value.length === 0 || !value.every(canonicalPath)) fail4(`Merger ${label} must be a non-empty canonical path set`);
+  const paths = value;
+  const sorted = [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  if (new Set(paths).size !== paths.length || paths.some((path, i) => path !== sorted[i])) fail4(`Merger ${label} must be unique and canonical byte-sorted`);
+  return paths;
+}
+function validateMaterial(value, label) {
+  if (!record3(value) || !exact2(value, ["bytesBase64", "sha256"]) || typeof value.bytesBase64 !== "string" || typeof value.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(value.sha256)) fail4(`Merger ${label} material is malformed`);
+  const bytes = Buffer.from(value.bytesBase64, "base64");
+  if (bytes.toString("base64") !== value.bytesBase64) fail4(`Merger ${label} bytes are not canonical base64`);
+  exactUtf8(bytes, `Merger ${label} material`);
+  if (sha256Hex(bytes) !== value.sha256) fail4(`Merger ${label} material digest mismatch`);
+}
+function deepFreeze(value) {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+function validateMergerInput(value) {
+  if (!record3(value) || !exact2(value, ["version", "attemptId", "targetObjectId", "sourceObjectId", "materials", "expectedConflictPaths", "resolutionScope", "authorizedChecks"]) || value.version !== 1 || blank(value.attemptId) || !isFullGitObjectId(value.targetObjectId) || !isFullGitObjectId(value.sourceObjectId) || value.targetObjectId.length !== value.sourceObjectId.length) fail4("Merger input has invalid identity or object ID");
+  if (!record3(value.materials) || !exact2(value.materials, ["task", "authority", "targetIntent", "sourceIntent"])) fail4();
+  for (const key of ["task", "authority", "targetIntent", "sourceIntent"]) validateMaterial(value.materials[key], key);
+  const conflicts = validatePathSet(value.expectedConflictPaths, "expected conflict paths");
+  const scope = validatePathSet(value.resolutionScope, "resolution scope");
+  if (!conflicts.every((path) => scope.includes(path))) fail4("Merger resolution scope must contain the complete conflict set");
+  if (!Array.isArray(value.authorizedChecks)) fail4("Merger authorized checks are malformed");
+  const names = /* @__PURE__ */ new Set();
+  for (const check of value.authorizedChecks) {
+    if (!record3(check) || !exact2(check, ["name", "argv"]) || blank(check.name) || !Array.isArray(check.argv) || check.argv.length === 0 || check.argv.some(blank) || names.has(check.name)) fail4("Merger authorized check is malformed or duplicated");
+    names.add(check.name);
+  }
+  return deepFreeze(structuredClone(value));
+}
 function validateMergerOutput(value, expectedAttemptId) {
   if (!record3(value) || blank(value.attemptId) || blank(value.report) || expectedAttemptId !== void 0 && value.attemptId !== expectedAttemptId) throw new Error("Merger output attempt mismatch or blank report");
   if (value.status === "completed" && exact2(value, ["status", "attemptId", "report", "mergeCommitId"]) && isFullGitObjectId(value.mergeCommitId)) return structuredClone(value);
@@ -10143,8 +10191,8 @@ async function stableRunsIdentity(root) {
   let cursor = root;
   while (true) {
     try {
-      const git = await stat(resolve3(cursor, ".git"));
-      if (git.isDirectory() || git.isFile()) return relative2(cursor, root).split(sep2).join("/");
+      const git2 = await stat(resolve3(cursor, ".git"));
+      if (git2.isDirectory() || git2.isFile()) return relative2(cursor, root).split(sep2).join("/");
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
     }
@@ -10156,9 +10204,9 @@ async function stableRunsIdentity(root) {
 function deriveSession(content, id) {
   const rows = [];
   const degradationReasons = [];
-  for (const line of content.split("\n")) if (line.trim()) {
+  for (const line2 of content.split("\n")) if (line2.trim()) {
     try {
-      const row = JSON.parse(line);
+      const row = JSON.parse(line2);
       if (!record4(row)) {
         degradationReasons.push(`non-object session row in ${id}`);
         break;
@@ -10257,7 +10305,7 @@ var COLLECTOR_LEG_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 var COLLECTOR_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 var COLLECTOR_REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 var COLLECTOR_FIXED_KICKOFF = "Start collection for the validated runtime-owned target and leg manifest. Use only Collector tools. Classify from cited ledger evidence. Submit exactly one ak_collector_output when terminal.";
-function fail4(message, cause) {
+function fail5(message, cause) {
   throw new Error(message, cause === void 0 ? void 0 : { cause });
 }
 function isAsciiControlOrNonAscii(input) {
@@ -10269,37 +10317,37 @@ function isAsciiControlOrNonAscii(input) {
 }
 function parseCollectorRepository(raw) {
   if (typeof raw !== "string") {
-    fail4("Collector repository must be a string owner/repo");
+    fail5("Collector repository must be a string owner/repo");
   }
   const display = raw.trim();
   if (display !== raw) {
-    fail4("Collector repository must not include surrounding whitespace");
+    fail5("Collector repository must not include surrounding whitespace");
   }
   if (display.length === 0) {
-    fail4("Collector repository is required");
+    fail5("Collector repository is required");
   }
   if (isAsciiControlOrNonAscii(display)) {
-    fail4("Collector repository must be conservative ASCII without control bytes");
+    fail5("Collector repository must be conservative ASCII without control bytes");
   }
   if (display.includes("://") || display.includes("?") || display.includes("#") || display.includes("@") || display.includes("%") || display.includes("\\") || display.includes(" ")) {
-    fail4("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
+    fail5("Collector repository rejects URL syntax, credentials, query, fragment, and percent encoding");
   }
   const parts = display.split("/");
   if (parts.length !== 2) {
-    fail4("Collector repository must contain exactly one '/' separating owner and repo");
+    fail5("Collector repository must contain exactly one '/' separating owner and repo");
   }
   const [ownerDisplay, repoDisplay] = parts;
   if (ownerDisplay === void 0 || repoDisplay === void 0) {
-    fail4("Collector repository must contain exactly one '/' separating owner and repo");
+    fail5("Collector repository must contain exactly one '/' separating owner and repo");
   }
   if (ownerDisplay.length === 0 || repoDisplay.length === 0 || ownerDisplay === "." || ownerDisplay === ".." || repoDisplay === "." || repoDisplay === "..") {
-    fail4("Collector repository rejects empty, '.', or '..' segments");
+    fail5("Collector repository rejects empty, '.', or '..' segments");
   }
   if (!COLLECTOR_OWNER_PATTERN.test(ownerDisplay)) {
-    fail4("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
+    fail5("Collector repository owner must match the v1 conservative grammar (1-39 alphanumeric/hyphen)");
   }
   if (!COLLECTOR_REPO_PATTERN.test(repoDisplay)) {
-    fail4("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
+    fail5("Collector repository name must match the v1 conservative grammar (1-100 alphanumeric/._-)");
   }
   const owner = ownerDisplay.toLowerCase();
   const repo = repoDisplay.toLowerCase();
@@ -10312,24 +10360,24 @@ function parseCollectorRepository(raw) {
 }
 function parseCollectorPrNumber(raw) {
   if (typeof raw !== "string" && typeof raw !== "number") {
-    fail4("Collector pull request number is required");
+    fail5("Collector pull request number is required");
   }
   const text = String(raw).trim();
   if (text !== String(raw).trim() || text !== String(raw)) {
   }
   if (typeof raw === "string") {
     if (!/^[1-9][0-9]*$/.test(raw)) {
-      fail4("Collector pull request number must be a positive safe integer string");
+      fail5("Collector pull request number must be a positive safe integer string");
     }
   } else if (typeof raw === "number") {
     if (!Number.isSafeInteger(raw) || raw < 1) {
-      fail4("Collector pull request number must be a positive safe integer");
+      fail5("Collector pull request number must be a positive safe integer");
     }
     return raw;
   }
   const value = Number(text);
   if (!Number.isSafeInteger(value) || value < 1) {
-    fail4("Collector pull request number must be a positive safe integer");
+    fail5("Collector pull request number must be a positive safe integer");
   }
   return value;
 }
@@ -10341,11 +10389,11 @@ function hasRequiredKeys(value, required) {
 }
 function canonicalizeAuthor(raw, legId) {
   if (typeof raw !== "string") {
-    fail4(`Collector leg "${legId}" expectedAuthors entries must be strings`);
+    fail5(`Collector leg "${legId}" expectedAuthors entries must be strings`);
   }
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    fail4(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
+    fail5(`Collector leg "${legId}" expectedAuthors entries must be non-blank`);
   }
   if (trimmed !== raw.trim()) {
   }
@@ -10353,26 +10401,26 @@ function canonicalizeAuthor(raw, legId) {
 }
 function canonicalizeLeg(raw, index) {
   if (!isPlainObject(raw)) {
-    fail4(`Collector manifest legs[${index}] must be an object`);
+    fail5(`Collector manifest legs[${index}] must be an object`);
   }
   const hasRequest = Object.hasOwn(raw, "request");
   if (!hasRequiredKeys(raw, ["id", "expectedAuthors"])) {
-    fail4(`Collector manifest legs[${index}] is missing required keys`);
+    fail5(`Collector manifest legs[${index}] is missing required keys`);
   }
   const id = raw["id"];
   if (typeof id !== "string" || !COLLECTOR_LEG_ID_PATTERN.test(id)) {
-    fail4(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
+    fail5(`Collector leg id at legs[${index}] must match ^[a-z][a-z0-9._-]{0,63}$`);
   }
   const authorsRaw = raw["expectedAuthors"];
   if (!Array.isArray(authorsRaw) || authorsRaw.length < 1) {
-    fail4(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
+    fail5(`Collector leg "${id}" expectedAuthors must be a non-empty array`);
   }
   const expectedAuthors = [];
   const seenAuthors = /* @__PURE__ */ new Set();
   for (const entry of authorsRaw) {
     const author = canonicalizeAuthor(entry, id);
     if (seenAuthors.has(author)) {
-      fail4(`Collector leg "${id}" has duplicate expected author "${author}"`);
+      fail5(`Collector leg "${id}" has duplicate expected author "${author}"`);
     }
     seenAuthors.add(author);
     expectedAuthors.push(author);
@@ -10381,14 +10429,14 @@ function canonicalizeLeg(raw, index) {
   if (hasRequest) {
     const request = raw["request"];
     if (!isPlainObject(request) || !hasRequiredKeys(request, ["body"])) {
-      fail4(`Collector leg "${id}" request must be an object with body`);
+      fail5(`Collector leg "${id}" request must be an object with body`);
     }
     const body = request["body"];
     if (typeof body !== "string") {
-      fail4(`Collector leg "${id}" request body must be a string`);
+      fail5(`Collector leg "${id}" request body must be a string`);
     }
     if (body.trim().length === 0) {
-      fail4(`Collector leg "${id}" request body must be trim-non-empty`);
+      fail5(`Collector leg "${id}" request body must be trim-non-empty`);
     }
     requestBody = body;
   }
@@ -10414,13 +10462,13 @@ async function loadCollectorManifest(path) {
     bytes = await readFile3(path);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    fail4(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
+    fail5(`Collector leg manifest is unreadable at ${path}: ${detail}`, error);
   }
   let text;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    fail4("Collector leg manifest must be UTF-8 JSON");
+    fail5("Collector leg manifest must be UTF-8 JSON");
   }
   if (text.charCodeAt(0) === 65279) {
     text = text.slice(1);
@@ -10430,14 +10478,14 @@ async function loadCollectorManifest(path) {
     parsed = JSON.parse(text);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    fail4(`Collector leg manifest is not valid JSON: ${detail}`, error);
+    fail5(`Collector leg manifest is not valid JSON: ${detail}`, error);
   }
   if (!isPlainObject(parsed) || !hasRequiredKeys(parsed, ["legs"])) {
-    fail4("Collector manifest must be an object with legs");
+    fail5("Collector manifest must be an object with legs");
   }
   const legsRaw = parsed["legs"];
   if (!Array.isArray(legsRaw) || legsRaw.length < 1) {
-    fail4("Collector manifest legs must be a non-empty array");
+    fail5("Collector manifest legs must be a non-empty array");
   }
   const legs = [];
   const seenIds = /* @__PURE__ */ new Set();
@@ -10445,13 +10493,13 @@ async function loadCollectorManifest(path) {
   for (let index = 0; index < legsRaw.length; index += 1) {
     const leg = canonicalizeLeg(legsRaw[index], index);
     if (seenIds.has(leg.id)) {
-      fail4(`Collector manifest has duplicate leg id "${leg.id}"`);
+      fail5(`Collector manifest has duplicate leg id "${leg.id}"`);
     }
     seenIds.add(leg.id);
     for (const author of leg.expectedAuthors) {
       const owner = authorOwners.get(author);
       if (owner !== void 0) {
-        fail4(
+        fail5(
           `Collector expected author "${author}" overlaps across legs "${owner}" and "${leg.id}"`
         );
       }
@@ -10482,6 +10530,73 @@ var REVIEWER_PREREQUISITES = [
   "runner.git.verify-snapshot"
 ];
 
+// src/merger-git-state.ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execFileAsync = promisify(execFile);
+async function git(cwd, args) {
+  const { stdout } = await execFileAsync("git", args, { cwd, encoding: "buffer", maxBuffer: 16 * 1024 * 1024 });
+  return new Uint8Array(stdout);
+}
+function line(bytes, label) {
+  const value = exactUtf8(bytes, label).trim();
+  if (!value) throw new Error(`${label} is empty`);
+  return value;
+}
+function nulPaths(bytes, label) {
+  const raw = exactUtf8(bytes, label);
+  if (raw.length > 0 && !raw.endsWith("\0")) throw new Error(`${label} is not NUL terminated`);
+  return raw.split("\0").filter(Boolean).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+}
+async function unmerged(cwd) {
+  const raw = exactUtf8(await git(cwd, ["ls-files", "-u", "-z"]), "Git unmerged index");
+  const paths = /* @__PURE__ */ new Set();
+  for (const row of raw.split("\0")) {
+    if (!row) continue;
+    const tab = row.indexOf("	");
+    if (tab < 0 || tab === row.length - 1) throw new Error("Git returned a malformed unmerged index row");
+    paths.add(row.slice(tab + 1));
+  }
+  return [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+}
+function createProductionMergerGitState(repositoryRoot = process.cwd()) {
+  return {
+    async activeMerge() {
+      const targetObjectId = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
+      let mergeHeadRaw;
+      try {
+        mergeHeadRaw = await git(repositoryRoot, ["rev-parse", "--verify", "MERGE_HEAD"]);
+      } catch {
+        throw new Error("Assigned repository does not have one ordinary in-progress merge");
+      }
+      const mergeHeads = exactUtf8(mergeHeadRaw, "Git MERGE_HEAD").trim().split(/\r?\n/).filter(Boolean);
+      if (mergeHeads.length !== 1 || !isFullGitObjectId(targetObjectId) || !isFullGitObjectId(mergeHeads[0]) || targetObjectId.length !== mergeHeads[0].length) throw new Error("Assigned repository does not have one ordinary in-progress merge");
+      let automaticMergeTreeRaw;
+      try {
+        automaticMergeTreeRaw = await git(repositoryRoot, ["rev-parse", "--verify", "AUTO_MERGE^{tree}"]);
+      } catch {
+        throw new Error("Git automatic merge tree identity is unavailable or invalid");
+      }
+      const automaticMergeTreeId = line(automaticMergeTreeRaw, "Git automatic merge tree");
+      if (!isFullGitObjectId(automaticMergeTreeId) || automaticMergeTreeId.length !== targetObjectId.length) throw new Error("Git automatic merge tree identity is unavailable or invalid");
+      return { targetObjectId, sourceObjectId: mergeHeads[0], unmergedPaths: await unmerged(repositoryRoot), automaticMergeTreeId };
+    },
+    async completedMerge(mergeCommitId, automaticMergeTreeId) {
+      if (!isFullGitObjectId(mergeCommitId) || !isFullGitObjectId(automaticMergeTreeId) || mergeCommitId.length !== automaticMergeTreeId.length) throw new Error("Merger completion object ID is invalid");
+      const identity = exactUtf8(await git(repositoryRoot, ["show", "-s", "--format=%H%x00%P", mergeCommitId]), "Git merge commit").trimEnd().split("\0");
+      if (identity.length !== 2 || identity[0] !== mergeCommitId) throw new Error("Git merge completion identity drifted");
+      const parentObjectIds = identity[1].split(" ").filter(Boolean);
+      const currentHead = line(await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]), "Git HEAD");
+      const status = await git(repositoryRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+      const frozenTree = line(await git(repositoryRoot, ["rev-parse", "--verify", `${automaticMergeTreeId}^{tree}`]), "Git frozen automatic merge tree");
+      if (frozenTree !== automaticMergeTreeId) throw new Error("Git frozen automatic merge tree identity drifted");
+      const mergeTree = line(await git(repositoryRoot, ["rev-parse", "--verify", `${mergeCommitId}^{tree}`]), "Git completed merge tree");
+      const resolutionChangedPaths = nulPaths(await git(repositoryRoot, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--no-renames", automaticMergeTreeId, mergeTree]), "Git resolution path delta");
+      return { mergeCommitId: currentHead, parentObjectIds, unmergedPaths: await unmerged(repositoryRoot), worktreeClean: status.byteLength === 0 && currentHead === mergeCommitId, resolutionChangedPaths };
+    }
+  };
+}
+
 // src/uuidv7.ts
 import { randomBytes } from "node:crypto";
 function uuidv7(now = Date.now()) {
@@ -10503,6 +10618,15 @@ var ROLE_RUN_SESSION_FILE_NAME = "session.jsonl";
 function roleRunSessionFile(sessionDirectory) {
   return join4(sessionDirectory, ROLE_RUN_SESSION_FILE_NAME);
 }
+var MergerEnvelopeDerivationError = class extends Error {
+  code = "merger-envelope-derivation";
+  /** Typed cause for #107 classifyPostAdmissionFailure (isTypedActivationError). */
+  knownCause = "activation";
+  constructor(message, options) {
+    super(message, options);
+    this.name = "MergerEnvelopeDerivationError";
+  }
+};
 function requireOptionPath(flag, value) {
   if (value === void 0 || value.trim() === "") {
     throw new CliUsageError(
@@ -11750,6 +11874,207 @@ function buildReviewerTransportPrompt(admitted) {
   }
   return lines.join("\n");
 }
+function parseMergerArgv(args) {
+  const attachmentPaths = [];
+  let project;
+  const positional = [];
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    const token = tokens.shift();
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length))
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    if (token === "--ak-merger-input" || token.startsWith("--ak-merger-input=") || token === "--targetObjectId" || token.startsWith("--targetObjectId=") || token === "--sourceObjectId" || token.startsWith("--sourceObjectId=") || token === "--expectedConflictPaths" || token.startsWith("--expectedConflictPaths=") || token === "--resolutionScope" || token.startsWith("--resolutionScope=")) {
+      throw new CliUsageError(
+        "merger does not accept public packet fields; the adapter derives the active-merge envelope"
+      );
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown merger option: ${token}`);
+    }
+    positional.push(token);
+  }
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...project === void 0 ? {} : { project }
+  };
+}
+function mergerMaterialFromUtf8(text) {
+  const bytes = Buffer.from(text, "utf8");
+  return Object.freeze({
+    bytesBase64: bytes.toString("base64"),
+    sha256: sha256Hex(bytes)
+  });
+}
+async function deriveMergerEnvelopeFromActiveMerge(projectRoot, gitState = createProductionMergerGitState(projectRoot)) {
+  let state;
+  try {
+    state = await gitState.activeMerge();
+  } catch (error) {
+    const message = error instanceof Error && error.message.trim() !== "" ? error.message : "Assigned repository does not have one ordinary in-progress merge";
+    throw new MergerEnvelopeDerivationError(message, { cause: error });
+  }
+  if (state.unmergedPaths.length === 0) {
+    throw new MergerEnvelopeDerivationError(
+      "Assigned repository does not have one ordinary in-progress merge with a complete conflict set"
+    );
+  }
+  const expectedConflictPaths = Object.freeze([...state.unmergedPaths]);
+  const resolutionScope = Object.freeze([...state.unmergedPaths]);
+  return Object.freeze({
+    targetObjectId: state.targetObjectId,
+    sourceObjectId: state.sourceObjectId,
+    automaticMergeTreeId: state.automaticMergeTreeId,
+    expectedConflictPaths,
+    resolutionScope
+  });
+}
+async function admitMergerInvocation(options) {
+  if (options.project !== void 0) {
+    requireOptionPath("--project", options.project);
+  }
+  const instruction = options.instruction;
+  if (instruction.trim() === "") {
+    throw new CliUsageError("merger requires a nonblank task instruction");
+  }
+  const projectRoot = resolve4(options.project ?? options.cwd);
+  const derived = await deriveMergerEnvelopeFromActiveMerge(
+    projectRoot,
+    options.gitState ?? createProductionMergerGitState(projectRoot)
+  );
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join4(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@merger`
+  );
+  const sessionDirectory = join4(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join4(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i],
+        attachmentsDirectory,
+        i
+      )
+    );
+  }
+  const targetIntent = mergerMaterialFromUtf8(
+    `Investigate primary sources for target parent ${derived.targetObjectId}. Do not invent intent.`
+  );
+  const sourceIntent = mergerMaterialFromUtf8(
+    `Investigate primary sources for source parent ${derived.sourceObjectId}. Do not invent intent.`
+  );
+  const taskMaterial = mergerMaterialFromUtf8(instruction);
+  const authorityMaterial = mergerMaterialFromUtf8(instruction);
+  const mergerInput = validateMergerInput({
+    version: 1,
+    attemptId: runId,
+    targetObjectId: derived.targetObjectId,
+    sourceObjectId: derived.sourceObjectId,
+    materials: {
+      task: taskMaterial,
+      authority: authorityMaterial,
+      targetIntent,
+      sourceIntent
+    },
+    expectedConflictPaths: [...derived.expectedConflictPaths],
+    resolutionScope: [...derived.resolutionScope],
+    // Authorized checks remain available on the assignment; default none.
+    authorizedChecks: []
+  });
+  const mergerInputPath = join4(runDirectory, "merger-input.json");
+  await writeFile2(
+    mergerInputPath,
+    `${JSON.stringify(mergerInput, null, 2)}
+`,
+    "utf8"
+  );
+  const admitted = {
+    role: "merger",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    mergerInputPath,
+    derived: {
+      targetObjectId: derived.targetObjectId,
+      sourceObjectId: derived.sourceObjectId,
+      automaticMergeTreeId: derived.automaticMergeTreeId,
+      expectedConflictPaths: [...derived.expectedConflictPaths],
+      resolutionScope: [...derived.resolutionScope]
+    },
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind
+    }))
+  };
+  const admittedRequestPath = join4(runDirectory, "admitted-request.json");
+  await writeFile2(
+    admittedRequestPath,
+    `${JSON.stringify(admitted, null, 2)}
+`,
+    "utf8"
+  );
+  return {
+    role: "merger",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    mergerInputPath,
+    derived: admitted.derived
+  };
+}
+function buildMergerTransportPrompt(admitted) {
+  const lines = [
+    `/skill:resolving-merge-conflicts ${admitted.instruction}`
+  ];
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
 
 // src/public-cli/coder-run.ts
 import { writeFile as writeFile6 } from "node:fs/promises";
@@ -11776,7 +12101,8 @@ var SHA256_RE = /^[0-9a-f]{64}$/;
 var REQUIRED_COMPANIONS = {
   tdd: ["tests.md", "mocking.md", "agents/openai.yaml"],
   "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"],
-  "code-review": ["agents/openai.yaml"]
+  "code-review": ["agents/openai.yaml"],
+  "resolving-merge-conflicts": ["agents/openai.yaml"]
 };
 var SEALED_UNCHANGED_METHOD_PINS = Object.freeze({
   tdd: Object.freeze({
@@ -12119,7 +12445,7 @@ async function readRoleRunState(runDirectory) {
     if (typeof record5.runId !== "string" || record5.runId.trim() === "") {
       return void 0;
     }
-    if (record5.role !== "judge" && record5.role !== "coder" && record5.role !== "fixer" && record5.role !== "collector" && record5.role !== "doctor" && record5.role !== "reviewer") {
+    if (record5.role !== "judge" && record5.role !== "coder" && record5.role !== "fixer" && record5.role !== "collector" && record5.role !== "doctor" && record5.role !== "reviewer" && record5.role !== "merger") {
       return void 0;
     }
     if (record5.state !== "admitted" && record5.state !== "running" && record5.state !== "resumable" && record5.state !== "terminal") {
@@ -12318,6 +12644,8 @@ async function loadResumableRunRecord(home, runId) {
   let capabilitiesPath;
   let taskSha256;
   let baseRevision;
+  let mergerInputPath;
+  let derived;
   try {
     const raw = JSON.parse(
       await readFile6(run.admittedRequestPath, "utf8")
@@ -12357,6 +12685,21 @@ async function loadResumableRunRecord(home, runId) {
       if (typeof record5.baseRevision === "string" && record5.baseRevision.trim() !== "") {
         baseRevision = record5.baseRevision;
       }
+      if (typeof record5.mergerInputPath === "string" && record5.mergerInputPath.trim() !== "") {
+        mergerInputPath = record5.mergerInputPath;
+      }
+      if (record5.derived !== null && typeof record5.derived === "object" && !Array.isArray(record5.derived)) {
+        const d = record5.derived;
+        if (typeof d.targetObjectId === "string" && typeof d.sourceObjectId === "string" && typeof d.automaticMergeTreeId === "string" && Array.isArray(d.expectedConflictPaths) && Array.isArray(d.resolutionScope) && d.expectedConflictPaths.every((p) => typeof p === "string") && d.resolutionScope.every((p) => typeof p === "string")) {
+          derived = {
+            targetObjectId: d.targetObjectId,
+            sourceObjectId: d.sourceObjectId,
+            automaticMergeTreeId: d.automaticMergeTreeId,
+            expectedConflictPaths: d.expectedConflictPaths,
+            resolutionScope: d.resolutionScope
+          };
+        }
+      }
     }
   } catch {
     throw new CliUsageError(
@@ -12377,7 +12720,9 @@ async function loadResumableRunRecord(home, runId) {
       ...prerequisites === void 0 ? {} : { prerequisites },
       ...capabilitiesPath === void 0 ? {} : { capabilitiesPath },
       ...taskSha256 === void 0 ? {} : { taskSha256 },
-      ...baseRevision === void 0 ? {} : { baseRevision }
+      ...baseRevision === void 0 ? {} : { baseRevision },
+      ...mergerInputPath === void 0 ? {} : { mergerInputPath },
+      ...derived === void 0 ? {} : { derived }
     }
   };
 }
@@ -12546,6 +12891,51 @@ async function loadResumableReviewerRun(home, runId) {
     capabilitiesPath,
     taskSha256,
     ...loaded.admittedFields.baseRevision === void 0 ? {} : { baseRevision: loaded.admittedFields.baseRevision }
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    observation: loaded.observation
+  };
+}
+async function loadResumableMergerRun(home, runId) {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "merger") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not merger`
+    );
+  }
+  const mergerInputPath = loaded.admittedFields.mergerInputPath;
+  if (mergerInputPath === void 0) {
+    throw new CliUsageError(
+      `role run admitted merger input path is missing: ${runId}`
+    );
+  }
+  const derived = loaded.admittedFields.derived;
+  if (derived === void 0) {
+    throw new CliUsageError(
+      `role run admitted merger envelope is missing: ${runId}`
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted merger task is blank: ${runId}`
+    );
+  }
+  const admitted = {
+    role: "merger",
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    mergerInputPath,
+    derived
   };
   return {
     admitted,
@@ -12730,14 +13120,14 @@ function formatTerminalResult(result2) {
 
 // src/public-cli/settlement.ts
 var CONCISE_DIAGNOSTIC_MAX_CHARS = 480;
-function isChildDiagnosticFloodLine(line) {
-  if (/^at\s+/.test(line)) return true;
-  if (line.startsWith("event:")) return true;
-  if (/\btokens?=/.test(line)) return true;
-  if (/\btool_calls?=/.test(line)) return true;
-  if (line.startsWith("{")) {
+function isChildDiagnosticFloodLine(line2) {
+  if (/^at\s+/.test(line2)) return true;
+  if (line2.startsWith("event:")) return true;
+  if (/\btokens?=/.test(line2)) return true;
+  if (/\btool_calls?=/.test(line2)) return true;
+  if (line2.startsWith("{")) {
     try {
-      const parsed = JSON.parse(line);
+      const parsed = JSON.parse(line2);
       if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && typeof parsed.event === "string") {
         return true;
       }
@@ -12746,8 +13136,8 @@ function isChildDiagnosticFloodLine(line) {
   }
   return false;
 }
-function isChildDiagnosticHelpFooterLine(line) {
-  const trimmed = line.trim();
+function isChildDiagnosticHelpFooterLine(line2) {
+  const trimmed = line2.trim();
   if (trimmed.length === 0) return false;
   if (/^\S+\.(md|txt)$/i.test(trimmed)) return true;
   if (/^Use \//i.test(trimmed)) return true;
@@ -12761,12 +13151,12 @@ function boundConciseDiagnostic(diagnostic, maxChars = CONCISE_DIAGNOSTIC_MAX_CH
   return `${diagnostic.slice(0, maxChars - 1)}\u2026`;
 }
 function conciseChildDiagnostic(stderr, fallback) {
-  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  const lines = stderr.split(/\r?\n/).map((line2) => line2.trim()).filter((line2) => line2.length > 0);
   for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i];
-    if (isChildDiagnosticFloodLine(line)) continue;
-    if (isChildDiagnosticHelpFooterLine(line)) continue;
-    return line.replace(/^Error:\s*/i, "").trim() || fallback;
+    const line2 = lines[i];
+    if (isChildDiagnosticFloodLine(line2)) continue;
+    if (isChildDiagnosticHelpFooterLine(line2)) continue;
+    return line2.replace(/^Error:\s*/i, "").trim() || fallback;
   }
   return fallback;
 }
@@ -12776,7 +13166,7 @@ function formatCliDiagnostic(message) {
 }
 function formatFailureStderrDiagnostic(failure) {
   const selected = conciseChildDiagnostic(failure.diagnostic, "failure");
-  const oneLine = selected.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0) ?? "failure";
+  const oneLine = selected.split(/\r?\n/).map((line2) => line2.trim()).find((line2) => line2.length > 0) ?? "failure";
   return formatCliDiagnostic(boundConciseDiagnostic(oneLine));
 }
 function presentStructuralRejection(error, io) {
@@ -12915,9 +13305,9 @@ function sessionReadFailure(error, fallbackMessage) {
 async function readBoundSessionEntries(sessionFile) {
   const text = await readFile7(sessionFile, "utf8");
   const entries = [];
-  for (const line of text.trim().split("\n").filter(Boolean)) {
+  for (const line2 of text.trim().split("\n").filter(Boolean)) {
     try {
-      entries.push(JSON.parse(line));
+      entries.push(JSON.parse(line2));
     } catch (error) {
       throw sessionReadFailure(error, "malformed session JSONL");
     }
@@ -13916,6 +14306,153 @@ async function hasLawfulReviewerTerminalResult(admitted) {
     const entries = await readLawfulSettlementEntries(admitted);
     if (entries === void 0) return false;
     const extracted = extractReviewerRoleOutcome(entries);
+    return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
+  } catch {
+    return false;
+  }
+}
+function mergerDecisiveFacts(output) {
+  if (output.status === "completed") {
+    return {
+      mergerStatus: output.status,
+      attemptId: output.attemptId,
+      mergeCommitId: output.mergeCommitId
+    };
+  }
+  return {
+    mergerStatus: output.status,
+    attemptId: output.attemptId,
+    diagnosis: output.diagnosis
+  };
+}
+function extractMergerMethodInvocations(entries, options) {
+  const observed = [];
+  for (const entry of entries) {
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "user") continue;
+    const text = sessionMessageText(message);
+    if (text.length === 0) continue;
+    const hit = observePackagedMethodSkillInvocation(text, {
+      name: "resolving-merge-conflicts",
+      allowedLocations: options.allowedLocations
+    });
+    if (hit !== void 0) observed.push(hit);
+  }
+  return Object.freeze(observed);
+}
+async function publishMergerArtifacts(admitted, roleOutcome, sessionDirectory, options) {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join7(artifactsDir, "report.json");
+  const evidencePath = join7(artifactsDir, "evidence.json");
+  await writeFile4(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "merger",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...options.mergerOutput === void 0 ? {} : { receipt: options.mergerOutput }
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  await writeFile4(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "merger",
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        mergerInputPath: admitted.mergerInputPath,
+        derived: admitted.derived,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength
+        })),
+        methodProvenance: options.methodProvenance,
+        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+        methodInvocations: options.methodInvocations ?? []
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath }
+  ];
+}
+function extractMergerRoleOutcome(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
+    if (message.isError === true) continue;
+    try {
+      const output = validateMergerOutput(message.details);
+      const outcome = {
+        kind: "accepted",
+        role: "merger",
+        status: output.status,
+        decisiveFacts: mergerDecisiveFacts(output)
+      };
+      return { output, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return void 0;
+}
+async function settleLawfulMergerTerminalResult(admitted, options) {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === void 0) return void 0;
+  const extracted = extractMergerRoleOutcome(entries);
+  if (extracted === void 0) return void 0;
+  const methodInvocations = extractMergerMethodInvocations(entries, {
+    allowedLocations: [
+      options.methodSkillPath,
+      options.methodSkillConfiguredPath
+    ]
+  });
+  if (methodInvocations.length === 0) return void 0;
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishMergerArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    {
+      mergerOutput: extracted.output,
+      methodProvenance: options.methodProvenance,
+      methodInvocations
+    }
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId
+  };
+}
+async function trySettleMergerTerminalResult(admitted, options) {
+  return settleLawfulMergerTerminalResult(admitted, options);
+}
+async function hasLawfulMergerTerminalResult(admitted) {
+  try {
+    const entries = await readLawfulSettlementEntries(admitted);
+    if (entries === void 0) return false;
+    const extracted = extractMergerRoleOutcome(entries);
     return extracted !== void 0 && isLawfulTypedTerminalOutcome(extracted.outcome);
   } catch {
     return false;
@@ -15554,10 +16091,446 @@ async function runPublicFixerResume(argv, env, io) {
   });
 }
 
-// src/public-cli/reviewer-run.ts
-import { writeFile as writeFile10 } from "node:fs/promises";
-import { join as join13 } from "node:path";
+// src/public-cli/merger-run.ts
+import { mkdir as mkdir3, writeFile as writeFile10 } from "node:fs/promises";
+import { join as join13, resolve as resolve5 } from "node:path";
 function buildModelArgs6(model) {
+  if (model === void 0) return [];
+  return [
+    "--provider",
+    model.provider,
+    "--model",
+    model.model,
+    "--thinking",
+    model.thinking
+  ];
+}
+function buildMergerActivationExtraArgs(admitted, options) {
+  const prompt = buildMergerTransportPrompt(admitted);
+  const skillPath = resolvePackagedMethodSkillPath(
+    options.packageRoot,
+    "resolving-merge-conflicts"
+  );
+  return [
+    "--no-skills",
+    "--skill",
+    skillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "merger",
+    "--ak-merger-input",
+    admitted.mergerInputPath,
+    "--mode",
+    "json",
+    ...buildModelArgs6(options.model),
+    prompt
+  ];
+}
+function buildMergerResumeActivationExtraArgs(admitted, options) {
+  const skillPath = resolvePackagedMethodSkillPath(
+    options.packageRoot,
+    "resolving-merge-conflicts"
+  );
+  return [
+    "--no-skills",
+    "--skill",
+    skillPath,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-context-files",
+    "--session",
+    admitted.sessionFile,
+    "--session-dir",
+    admitted.sessionDirectory,
+    ...options.extraPiArgs ?? [],
+    "--ak-role",
+    "merger",
+    "--ak-merger-input",
+    admitted.mergerInputPath,
+    "--mode",
+    "json",
+    ...buildModelArgs6(options.model),
+    RESUME_TRANSPORT_ENVELOPE
+  ];
+}
+async function presentControlledFailure6(admitted, failureInput, io) {
+  const hasThrown = Object.hasOwn(failureInput, "thrown");
+  const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    timedOut: failureInput.timedOut,
+    code: failureInput.code,
+    stderr: failureInput.stderr,
+    ...hasThrown ? { thrown: failureInput.thrown } : {},
+    ...failureInput.knownCause === void 0 ? {} : { knownCause: failureInput.knownCause },
+    ...failureInput.knownIdentity === void 0 ? {} : { knownIdentity: failureInput.knownIdentity },
+    ...failureInput.knownDiagnostic === void 0 ? {} : { knownDiagnostic: failureInput.knownDiagnostic },
+    ...session === void 0 ? {} : { session }
+  });
+  const hasLawfulTerminalResult = await hasLawfulMergerTerminalResult(admitted);
+  const typedHttp429 = await readTypedHttp429Observation(admitted.runDirectory);
+  const sessionPrincipalAvailable = await isSessionPrincipalAvailable(
+    admitted.sessionFile
+  );
+  const resumable = sessionPrincipalAvailable && isV1ResumableFailure({
+    hasLawfulTerminalResult,
+    ...typedHttp429 === void 0 ? {} : { typedHttp429 }
+  });
+  if (resumable && typedHttp429 !== void 0) {
+    await markRunResumable(admitted.runDirectory, typedHttp429);
+  } else {
+    await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+  }
+  const terminal = await settleFailureTerminalResult(
+    admitted,
+    failure,
+    { disposition: "no-advice" },
+    resumable ? { resume: { command: renderResumeCommand(admitted.runId) } } : {}
+  );
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted,
+    terminal
+  };
+}
+async function dispatchAdmittedMerger(input) {
+  const { admitted, env, io, extraArgs, lease, methodMaterial } = input;
+  try {
+    await markRunRunning(admitted.runDirectory);
+    await clearTypedProviderHttpObservation(admitted.runDirectory);
+    const childEnv = {
+      ...process.env,
+      HOME: env.home,
+      PI_CODING_AGENT_DIR: env.agentDir,
+      AK_ROLE_RUN_DIR: admitted.runDirectory
+    };
+    if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
+      childEnv.AK_CORRELATION_ID = env.correlationId;
+    }
+    let result2;
+    try {
+      result2 = await runExplicitInternalActivation({
+        packageRoot: env.packageRoot,
+        extraArgs,
+        cwd: admitted.projectRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        env: childEnv,
+        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+      });
+    } catch (error) {
+      return await presentControlledFailure6(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error
+        },
+        io
+      );
+    }
+    try {
+      await writeFile10(
+        join13(admitted.runDirectory, "stderr.log"),
+        result2.stderr,
+        "utf8"
+      );
+    } catch {
+    }
+    let lawful;
+    try {
+      lawful = await trySettleMergerTerminalResult(admitted, {
+        methodProvenance: methodMaterial.provenance,
+        methodSkillPath: methodMaterial.skillPath,
+        methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
+          env.packageRoot,
+          "resolving-merge-conflicts"
+        )
+      });
+    } catch (error) {
+      return await presentControlledFailure6(
+        admitted,
+        {
+          timedOut: false,
+          code: result2.code,
+          stderr: result2.stderr,
+          thrown: error
+        },
+        io
+      );
+    }
+    if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+      await markRunTerminal(admitted.runDirectory).catch(() => void 0);
+      io.stdout(formatTerminalResult(lawful));
+      return {
+        exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+        admitted,
+        terminal: lawful
+      };
+    }
+    const sessionProviderStop = await readSessionProviderStop(
+      admitted.sessionFile
+    );
+    const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
+    const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
+    const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
+    return await presentControlledFailure6(
+      admitted,
+      {
+        timedOut: result2.timedOut,
+        code: result2.code,
+        stderr: result2.stderr,
+        ...knownFailure === void 0 ? {} : {
+          knownCause: knownFailure.cause,
+          ...knownFailure.identity === void 0 ? {} : { knownIdentity: knownFailure.identity },
+          ...knownFailure.diagnostic === void 0 ? {} : { knownDiagnostic: knownFailure.diagnostic }
+        }
+      },
+      io
+    );
+  } finally {
+    await lease.release();
+  }
+}
+async function loadMergerMethodMaterial(packageRoot2) {
+  return await loadPackagedMethodSkillMaterial(
+    packageRoot2,
+    "resolving-merge-conflicts"
+  );
+}
+async function admitMergerShellForActivationFailure(options) {
+  const projectRoot = resolve5(options.project ?? options.cwd);
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join13(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@merger`
+  );
+  const sessionDirectory = join13(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  await mkdir3(runDirectory, { recursive: true });
+  const emptyDerived = {
+    targetObjectId: "",
+    sourceObjectId: "",
+    automaticMergeTreeId: "",
+    expectedConflictPaths: [],
+    resolutionScope: []
+  };
+  const admittedRequestPath = join13(runDirectory, "admitted-request.json");
+  const mergerInputPath = join13(runDirectory, "merger-input.json");
+  await writeFile10(
+    admittedRequestPath,
+    `${JSON.stringify(
+      {
+        role: "merger",
+        runId,
+        bookKey,
+        projectRoot,
+        instruction: options.instruction,
+        instructionEmpty: false,
+        mergerInputPath,
+        derived: emptyDerived,
+        attachments: []
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return {
+    role: "merger",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction: options.instruction,
+    instructionEmpty: false,
+    attachments: [],
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    mergerInputPath,
+    derived: emptyDerived
+  };
+}
+async function runPublicMerger(argv, env, io, parseMergerArgv2) {
+  let parsed;
+  try {
+    parsed = parseMergerArgv2(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  let admitted;
+  try {
+    admitted = await admitMergerInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    if (error instanceof MergerEnvelopeDerivationError) {
+      const shell = await admitMergerShellForActivationFailure({
+        home: env.home,
+        cwd: env.cwd,
+        instruction: parsed.instruction,
+        ...parsed.project === void 0 ? {} : { project: parsed.project },
+        ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+      });
+      await markRunAdmitted(shell);
+      return await presentControlledFailure6(
+        shell,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+          knownCause: "activation",
+          knownDiagnostic: error.message
+        },
+        io
+      );
+    }
+    throw error;
+  }
+  await markRunAdmitted(admitted);
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  let methodMaterial;
+  try {
+    methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    await lease.release();
+    return await presentControlledFailure6(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+        knownCause: "activation"
+      },
+      io
+    );
+  }
+  const extraArgs = buildMergerActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedMerger({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    methodMaterial
+  });
+}
+async function runPublicMergerResume(argv, env, io) {
+  const runId = argv[0];
+  if (runId === void 0 || runId.trim() === "" || runId.startsWith("-")) {
+    presentStructuralRejection(
+      new CliUsageError("usage: ak-role resume <runId>"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  if (argv.length > 1) {
+    presentStructuralRejection(
+      new CliUsageError("resume takes exactly one run id"),
+      io
+    );
+    return { exitCode: 2 };
+  }
+  let loaded;
+  try {
+    loaded = await loadResumableMergerRun(env.home, runId);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+  const { admitted } = loaded;
+  let lease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1 };
+    }
+    throw error;
+  }
+  let methodMaterial;
+  try {
+    methodMaterial = await loadMergerMethodMaterial(env.packageRoot);
+  } catch (error) {
+    await lease.release();
+    return await presentControlledFailure6(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+        knownCause: "activation"
+      },
+      io
+    );
+  }
+  const extraArgs = buildMergerResumeActivationExtraArgs(admitted, {
+    packageRoot: env.packageRoot,
+    ...env.model === void 0 ? {} : { model: env.model },
+    ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
+  });
+  return await dispatchAdmittedMerger({
+    admitted,
+    env,
+    io,
+    extraArgs,
+    lease,
+    methodMaterial
+  });
+}
+
+// src/public-cli/reviewer-run.ts
+import { writeFile as writeFile11 } from "node:fs/promises";
+import { join as join14 } from "node:path";
+function buildModelArgs7(model) {
   if (model === void 0) return [];
   return [
     "--provider",
@@ -15594,7 +16567,7 @@ function buildReviewerActivationExtraArgs(admitted, options) {
     admitted.capabilitiesPath,
     "--mode",
     "json",
-    ...buildModelArgs6(options.model),
+    ...buildModelArgs7(options.model),
     prompt
   ];
 }
@@ -15623,11 +16596,11 @@ function buildReviewerResumeActivationExtraArgs(admitted, options) {
     admitted.capabilitiesPath,
     "--mode",
     "json",
-    ...buildModelArgs6(options.model),
+    ...buildModelArgs7(options.model),
     RESUME_TRANSPORT_ENVELOPE
   ];
 }
-async function presentControlledFailure6(admitted, failureInput, io) {
+async function presentControlledFailure7(admitted, failureInput, io) {
   const hasThrown = Object.hasOwn(failureInput, "thrown");
   const session = !hasThrown && !failureInput.timedOut && failureInput.knownCause === void 0 ? await inspectJudgeSession(admitted.sessionFile) : void 0;
   const failure = classifyPostAdmissionFailure({
@@ -15694,7 +16667,7 @@ async function dispatchAdmittedReviewer(input) {
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
-      return await presentControlledFailure6(
+      return await presentControlledFailure7(
         admitted,
         {
           timedOut: false,
@@ -15706,8 +16679,8 @@ async function dispatchAdmittedReviewer(input) {
       );
     }
     try {
-      await writeFile10(
-        join13(admitted.runDirectory, "stderr.log"),
+      await writeFile11(
+        join14(admitted.runDirectory, "stderr.log"),
         result2.stderr,
         "utf8"
       );
@@ -15724,7 +16697,7 @@ async function dispatchAdmittedReviewer(input) {
         )
       });
     } catch (error) {
-      return await presentControlledFailure6(
+      return await presentControlledFailure7(
         admitted,
         {
           timedOut: false,
@@ -15750,7 +16723,7 @@ async function dispatchAdmittedReviewer(input) {
     const sessionProviderFailure = sessionProviderStop === void 0 ? void 0 : knownFailureFromProviderStop(sessionProviderStop);
     const credentialFailure = result2.timedOut || result2.code !== 0 ? knownFailureForMissingProviderCredential(env.model, env.credentials) : void 0;
     const knownFailure = result2.knownFailure ?? sessionProviderFailure ?? credentialFailure;
-    return await presentControlledFailure6(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: result2.timedOut,
@@ -15807,7 +16780,7 @@ async function runPublicReviewer(argv, env, io, parseReviewerArgv2) {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure6(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: false,
@@ -15875,7 +16848,7 @@ async function runPublicReviewerResume(argv, env, io) {
     methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
   } catch (error) {
     await lease.release();
-    return await presentControlledFailure6(
+    return await presentControlledFailure7(
       admitted,
       {
         timedOut: false,
@@ -15926,7 +16899,7 @@ function resolveHome(env) {
   return env.home ?? process.env.HOME ?? homedir3();
 }
 function resolveAgentDir(env, home) {
-  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join14(home, ".pi", "agent");
+  return env.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join15(home, ".pi", "agent");
 }
 function parseThinking(value) {
   if (!THINKING_LEVELS2.has(value)) {
@@ -16160,7 +17133,7 @@ async function runAkRole(argv, env) {
           "doctor role runs are one-shot and cannot be resumed"
         );
       }
-      const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : resumeRole === "reviewer" ? "reviewer" : "judge";
+      const resumeSeatRole = resumeRole === "coder" ? "coder" : resumeRole === "fixer" ? "fixer" : resumeRole === "reviewer" ? "reviewer" : resumeRole === "merger" ? "merger" : "judge";
       const seat = resolveEffectiveSeat(
         config,
         resumeSeatRole,
@@ -16225,6 +17198,28 @@ async function runAkRole(argv, env) {
             ...seat.selection === void 0 ? {} : { model: seat.selection },
             ...env.reviewerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.reviewerExtraPiArgs },
             ...env.reviewerTimeoutMs === void 0 ? {} : { timeoutMs: env.reviewerTimeoutMs }
+          },
+          io
+        );
+        return {
+          exitCode: result3.exitCode,
+          ...result3.terminal === void 0 ? {} : { terminal: result3.terminal }
+        };
+      }
+      if (resumeRole === "merger") {
+        const result3 = await runPublicMergerResume(
+          parsed.args,
+          {
+            home,
+            agentDir,
+            packageRoot: env.packageRoot,
+            cwd,
+            credentials,
+            ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+            ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+            ...seat.selection === void 0 ? {} : { model: seat.selection },
+            ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
+            ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs }
           },
           io
         );
@@ -16461,6 +17456,40 @@ async function runAkRole(argv, env) {
         ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
       };
     }
+    if (parsed.command === "merger") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials = env.credentials ?? await loadCredentialProviders(agentDir);
+      const seat = resolveEffectiveSeat(
+        config,
+        "merger",
+        credentials,
+        invocationFromParsed(parsed)
+      );
+      const result2 = await runPublicMerger(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...env.correlationId === void 0 ? {} : { correlationId: env.correlationId },
+          ...env.piRunner === void 0 ? {} : { piRunner: env.piRunner },
+          ...seat.selection === void 0 ? {} : { model: seat.selection },
+          ...env.mergerExtraPiArgs === void 0 ? {} : { extraPiArgs: env.mergerExtraPiArgs },
+          ...env.mergerTimeoutMs === void 0 ? {} : { timeoutMs: env.mergerTimeoutMs },
+          ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+        },
+        io,
+        parseMergerArgv
+      );
+      return {
+        exitCode: result2.exitCode,
+        ...result2.terminal === void 0 ? {} : { terminal: result2.terminal }
+      };
+    }
     const roleNames = listHelpCapabilities().filter((cap) => cap.kind === "role").map((cap) => cap.name);
     if (roleNames.includes(parsed.command)) {
       const agentDir = resolveAgentDir(env, home);
@@ -16507,6 +17536,6 @@ async function runAkRole(argv, env) {
 
 // src/public-cli/main.ts
 var here = dirname6(fileURLToPath(import.meta.url));
-var packageRoot = join15(here, "..", "..");
+var packageRoot = join16(here, "..", "..");
 var result = await runAkRole(process.argv.slice(2), { packageRoot });
 process.exitCode = result.exitCode;

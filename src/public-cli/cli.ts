@@ -31,6 +31,7 @@ import {
   parseDoctorArgv,
   parseFixerArgv,
   parseJudgeArgv,
+  parseMergerArgv,
   parseReviewerArgv,
 } from "./invocation.ts";
 import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
@@ -38,6 +39,7 @@ import { runPublicCollector } from "./collector-run.ts";
 import { runPublicDoctor } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
 import { runPublicJudge, runPublicResume } from "./judge-run.ts";
+import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
 import { peekRoleRunRole } from "./run-lifecycle.ts";
 import {
@@ -96,6 +98,10 @@ export type CliEnv = {
   reviewerExtraPiArgs?: readonly string[];
   /** Override Reviewer role-run timeout (tests). */
   reviewerTimeoutMs?: number;
+  /** Extra Pi args for Merger runs (tests: faux provider). */
+  mergerExtraPiArgs?: readonly string[];
+  /** Override Merger role-run timeout (tests). */
+  mergerTimeoutMs?: number;
   createRunId?: () => string;
 };
 
@@ -429,7 +435,9 @@ export async function runAkRole(
             ? "fixer"
             : resumeRole === "reviewer"
               ? "reviewer"
-              : "judge";
+              : resumeRole === "merger"
+                ? "merger"
+                : "judge";
       // Temporary model/thinking override for this resume only — never persists.
       const seat = resolveEffectiveSeat(
         config,
@@ -513,6 +521,34 @@ export async function runAkRole(
             ...(env.reviewerTimeoutMs === undefined
               ? {}
               : { timeoutMs: env.reviewerTimeoutMs }),
+          },
+          io,
+        );
+        return {
+          exitCode: result.exitCode,
+          ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+        };
+      }
+      if (resumeRole === "merger") {
+        const result = await runPublicMergerResume(
+          parsed.args,
+          {
+            home,
+            agentDir,
+            packageRoot: env.packageRoot,
+            cwd,
+            credentials,
+            ...(env.correlationId === undefined
+              ? {}
+              : { correlationId: env.correlationId }),
+            ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+            ...(seat.selection === undefined ? {} : { model: seat.selection }),
+            ...(env.mergerExtraPiArgs === undefined
+              ? {}
+              : { extraPiArgs: env.mergerExtraPiArgs }),
+            ...(env.mergerTimeoutMs === undefined
+              ? {}
+              : { timeoutMs: env.mergerTimeoutMs }),
           },
           io,
         );
@@ -804,6 +840,49 @@ export async function runAkRole(
         },
         io,
         parseDoctorArgv,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
+    }
+
+    // Merger public run path: derive active-merge envelope + forced merge-only method (#114).
+    if (parsed.command === "merger") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "merger",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicMerger(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(env.mergerExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.mergerExtraPiArgs }),
+          ...(env.mergerTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.mergerTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        parseMergerArgv,
       );
       return {
         exitCode: result.exitCode,
