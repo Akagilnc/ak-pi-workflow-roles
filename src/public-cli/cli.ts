@@ -26,7 +26,7 @@ import {
   type ExplicitInternalPiRunner,
 } from "./explicit-internal.ts";
 import { parseJudgeArgv } from "./invocation.ts";
-import { runPublicJudge } from "./judge-run.ts";
+import { runPublicJudge, runPublicResume } from "./judge-run.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   isPublicCliSupportCommand,
@@ -364,6 +364,48 @@ export async function runAkRole(
 
     if (parsed.command === "config") {
       return { exitCode: await runConfigCommand(parsed.args, home, io) };
+    }
+
+    // Resume reopens an exact Role run after a typed HTTP 429 (#108).
+    if (parsed.command === "resume") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      // Temporary model/thinking override for this resume only — never persists.
+      const seat = resolveEffectiveSeat(
+        config,
+        "judge",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicResume(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          credentials,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(env.judgeExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.judgeExtraPiArgs }),
+          ...(env.judgeTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.judgeTimeoutMs }),
+        },
+        io,
+      );
+      return {
+        exitCode: result.exitCode,
+        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
+      };
     }
 
     if (isPublicCliSupportCommand(parsed.command)) {

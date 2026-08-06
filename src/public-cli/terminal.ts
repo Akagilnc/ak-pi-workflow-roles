@@ -97,11 +97,19 @@ export type TerminalNavigatorFact =
       reason: string;
     };
 
+/** Present only when a controlled failure is v1-resumable (typed HTTP 429). */
+export type TerminalResume = {
+  /** Complete public command; run ID is revealed only here. */
+  readonly command: string;
+};
+
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   runId: string;
+  /** Typed resume region — only for resumable failures. */
+  resume?: TerminalResume;
 };
 
 /**
@@ -175,6 +183,11 @@ export function formatTerminalResult(result: TerminalResult): string {
   for (const artifact of result.artifacts) {
     lines.push(`artifact\t${artifact.kind}\t${encodeTerminalField(artifact.path)}`);
   }
-  lines.push(`run\t${encodeTerminalField(result.runId)}`);
+  if (result.resume !== undefined) {
+    // Resumable failure: run ID is revealed only inside the complete resume command.
+    lines.push(`resume\t${encodeTerminalField(result.resume.command)}`);
+  } else {
+    lines.push(`run\t${encodeTerminalField(result.runId)}`);
+  }
   return `${lines.join("\n")}\n`;
 }

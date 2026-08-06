@@ -27,6 +27,7 @@ import {
   type TerminalArtifactRef,
   type TerminalNavigatorFact,
   type TerminalResult,
+  type TerminalResume,
   type TerminalRoleOutcome,
 } from "./terminal.ts";
 
@@ -949,6 +950,7 @@ export async function settleJudgeFailureTerminalResult(
   admitted: AdmittedJudgeInvocation,
   failure: ControlledFailure,
   navigator: TerminalNavigatorFact = { disposition: "no-advice" },
+  options: { readonly resume?: TerminalResume } = {},
 ): Promise<TerminalResult> {
   const artifacts = await publishFailureArtifacts(admitted, failure);
   const decisiveFacts: Record<string, unknown> = {
@@ -973,6 +975,7 @@ export async function settleJudgeFailureTerminalResult(
     navigator,
     artifacts,
     runId: admitted.runId,
+    ...(options.resume === undefined ? {} : { resume: options.resume }),
   };
 }
 
