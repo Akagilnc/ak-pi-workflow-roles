@@ -258,7 +258,22 @@ export async function runPublicJudge(
 
   // Prefer a lawful typed terminal result from the session even when the child
   // exit is nonzero — infrastructure noise must not wash a completed outcome.
-  const lawful = await trySettleJudgeTerminalResult(admitted);
+  // Absence → failure path below. Publication/IO exceptions retain typed identity.
+  let lawful: TerminalResult | undefined;
+  try {
+    lawful = await trySettleJudgeTerminalResult(admitted);
+  } catch (error) {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: result.code,
+        stderr: result.stderr,
+        thrown: error,
+      },
+      io,
+    );
+  }
   if (lawful !== undefined && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
     io.stdout(formatTerminalResult(lawful));
     return {

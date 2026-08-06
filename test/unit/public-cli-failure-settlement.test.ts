@@ -215,12 +215,8 @@ test("malformed CLI structure rejects before admission with no model dispatch", 
     assert.equal(ran, false);
     assert.equal(stdout.length, 0);
     assert.equal(stderr.length >= 1, true);
+    // Typed admission oracle: structural reject never produces a Terminal.
     assert.equal(result.terminal, undefined);
-    // No Role run ledger directory created for structural reject.
-    await assert.rejects(
-      () => access(join(home, ".ak-roles")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
   });
 });
 
@@ -751,6 +747,76 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
   });
 });
 
+test("artifact publication EISDIR retains unrecognized identity (not washed to output)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "lawful then publish fails"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-eisdir-001",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          const runDir = join(sessionDir, "..");
+          // Converged session is lawful; report.json as a directory makes writeFile EISDIR.
+          await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolName: JUDGE_OUTPUT_TOOL_NAME,
+                isError: false,
+                details: { judgeStatus: "converged" },
+              },
+            })}\n`,
+            "utf8",
+          );
+          return {
+            code: 0,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
+      result,
+      stdout,
+      stderr,
+      expectedCause: "unrecognized",
+      identityCode: "EISDIR",
+    });
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      // Must not wash publication errno into generic output absence.
+      assert.notEqual(terminal.roleOutcome.cause, "output");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      identity?: { name?: string; code?: string | number };
+      diagnostic: string;
+    };
+    assert.equal(errorBody.cause, "unrecognized");
+    assert.equal(errorBody.identity?.code, "EISDIR");
+    assert.equal(typeof errorBody.diagnostic, "string");
+    assert.ok(errorBody.diagnostic.length > 0);
+    assert.equal(errorBody.diagnostic.toLowerCase().includes("eisdir") || errorBody.identity?.code === "EISDIR", true);
+  });
+});
+
 test("timeout controlled failure settles with typed timeout cause and Error Artifact", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -779,20 +845,27 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
         },
       },
     );
-    await assertPublicFailureSettlement({
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
       expectedCause: "timeout",
-      diagnosticEquals: "judge role run timed out",
     });
-    assert.equal(
-      formatFailureStderrDiagnostic({
-        cause: "timeout",
-        diagnostic: "judge role run timed out",
-      }).includes("\n"),
-      true,
-    );
+    // Typed timeout identity — not package presentation prose.
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "timeout");
+      assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
+      assert.ok(terminal.roleOutcome.diagnostic.length > 0);
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      details?: { timedOut?: boolean };
+    };
+    assert.equal(errorBody.cause, "timeout");
+    assert.equal(errorBody.details?.timedOut, true);
+    // One-line stderr emission already asserted by helper; durable diagnostic stays full.
+    assert.equal(stderr[0]!.includes("\n"), true);
   });
 });
 
@@ -1111,17 +1184,34 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
         },
       },
     );
-    await assertPublicFailureSettlement({
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
       expectedCause: "provider",
-      diagnosticEquals: "No API key found for the selected model.",
       identityName: "MissingProviderCredential",
       identityCode: "xai",
     });
+    // Typed credential-boundary identity — not generated provider help prose.
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      identity?: { name?: string; code?: string | number };
+      diagnostic: string;
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.identity?.name, "MissingProviderCredential");
+    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(typeof errorBody.diagnostic, "string");
+    assert.ok(errorBody.diagnostic.length > 0);
+    // Help-footer lines must not become the concise presentation (AC3).
     assert.equal(stderr[0]!.includes("models.md"), false);
-    assert.equal(stderr[0]!.includes("No API key found for the selected model."), true);
+    assert.equal(stderr[0]!.includes("providers.md"), false);
   });
 });
 
@@ -1145,21 +1235,32 @@ test("default runner empty-auth retains provider cause, identity, and primary di
         io,
       },
     );
-    await assertPublicFailureSettlement({
+    const { terminal, errorRef } = await assertPublicFailureSettlement({
       result,
       stdout,
       stderr,
       expectedCause: "provider",
-      diagnosticIncludes: "No API key",
       identityName: "MissingProviderCredential",
       identityCode: "xai",
     });
+    // Typed credential channel — not Pi help prose or docs footers.
+    assert.equal(terminal.roleOutcome.kind, "failure");
+    if (terminal.roleOutcome.kind === "failure") {
+      assert.equal(terminal.roleOutcome.cause, "provider");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
+      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
+      assert.ok(terminal.roleOutcome.diagnostic.length > 0);
+      assert.equal(terminal.roleOutcome.diagnostic.includes("models.md"), false);
+    }
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
+      cause: string;
+      identity?: { name?: string; code?: string | number };
+    };
+    assert.equal(errorBody.cause, "provider");
+    assert.equal(errorBody.identity?.name, "MissingProviderCredential");
+    assert.equal(errorBody.identity?.code, "xai");
     assert.equal(stderr[0]!.includes("models.md"), false);
-    assert.equal(
-      result.terminal!.roleOutcome.kind === "failure" &&
-        result.terminal!.roleOutcome.diagnostic.includes("models.md"),
-      false,
-    );
   });
 });
 

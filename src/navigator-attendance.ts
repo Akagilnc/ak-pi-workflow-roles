@@ -542,6 +542,21 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let settlementFailure: unknown;
   let preparationFailure: unknown;
   let disposed = false;
+  /** One-shot live-help warm; consumed by the next prepare so later prepares reread live help. */
+  let warmedHelp: Promise<Array<{ role: NavigatorTargetRole; help: string }>> | undefined;
+
+  const loadLiveHelp = async (): Promise<Array<{ role: NavigatorTargetRole; help: string }>> => {
+    try {
+      return await Promise.all(
+        NAVIGATOR_TARGETS.map(async ({ role }) => ({
+          role,
+          help: await options.loadRoleHelp(role),
+        })),
+      );
+    } catch (error) {
+      throw navigatorUnavailableError("transport", error);
+    }
+  };
 
   const unavailable = (invocationId: string, reason: unknown): NavigatorReport => {
     const failure = reason instanceof NavigatorUnavailableError
@@ -558,26 +573,41 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     const invocationId = `${options.context.sessionManager.getSessionId()}:${++invocationNumber}`;
     activeInvocationId = invocationId;
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
+
+      // Load soul / model setting / live help in parallel. Live help is N pi --help
+      // subprocesses; serializing it behind session create made the post-role 3s
+      // grace cover help-boot under load (ENOENT / unavailable flake). Session
+      // create still follows context load so tool registration and prompt stay
+      // one readiness step for callers.
       let soul: string;
-      try {
-        soul = (await options.loadSoul()).trim();
-        if (!soul) throw new Error("Navigator soul is empty");
-      } catch (error) {
-        // Contract: README.md#Navigator-attendance — context-loading failures become typed unavailable reports while retaining the original cause.
-        throw navigatorUnavailableError("context", error);
-      }
       let modelSetting: string;
-      try {
-        modelSetting = await readNavigatorModelSetting(options.modelSettingPath);
-      } catch (error) {
-        throw navigatorUnavailableError("model", error);
-      }
       let help: Array<{ role: NavigatorTargetRole; help: string }>;
-      try {
-        help = await Promise.all(NAVIGATOR_TARGETS.map(async ({ role }) => ({ role, help: await options.loadRoleHelp(role) })));
-      } catch (error) {
-        throw navigatorUnavailableError("transport", error);
-      }
+      const soulPromise = (async () => {
+        try {
+          const text = (await options.loadSoul()).trim();
+          if (!text) throw new Error("Navigator soul is empty");
+          return text;
+        } catch (error) {
+          // Contract: README.md#Navigator-attendance — context-loading failures become typed unavailable reports while retaining the original cause.
+          throw navigatorUnavailableError("context", error);
+        }
+      })();
+      const modelPromise = (async () => {
+        try {
+          return await readNavigatorModelSetting(options.modelSettingPath);
+        } catch (error) {
+          throw navigatorUnavailableError("model", error);
+        }
+      })();
+      // Prefer one-shot warm from session_start; clear so the next prepare reloads live.
+      const helpPromise = warmedHelp ?? loadLiveHelp();
+      warmedHelp = undefined;
+      [soul, modelSetting, help] = await Promise.all([
+        soulPromise,
+        modelPromise,
+        helpPromise,
+      ]);
+
       let model: ReturnType<typeof parseNavigatorModelSetting>;
       try {
         model = parseNavigatorModelSetting(modelSetting);
@@ -709,6 +739,17 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       contextError = next.contextError;
       sessionDir = options.sessionDirectory?.(next.subjectKey) ?? options.sessionDir;
     },
+    /**
+     * Start live-help subprocesses during activation without beginning full
+     * preparation. Next prepare() consumes the warm result; a later prepare
+     * reloads so live help edits remain visible.
+     */
+    warmHelp(): void {
+      if (disposed || warmedHelp !== undefined || preparation !== undefined) return;
+      warmedHelp = loadLiveHelp();
+      // Prevent unhandled rejection if attendance is disposed before prepare.
+      void warmedHelp.catch(() => undefined);
+    },
     prepare(): void {
       if (disposed || preparation !== undefined) return;
       preparationFailure = undefined;
@@ -821,6 +862,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
 export type NavigatorAttendance = ReturnType<typeof createNavigatorAttendance>;
 
 export function createNativeNavigatorSessionFactory(defaultModelSettingPath = navigatorModelSettingPath()): NavigatorSessionFactory {
+  // Pre-warm once per factory (per process). Concurrent prepares share the same
+  // runtime construction rather than each paying ModelRuntime.create under load.
+  const sharedModelRuntime = ModelRuntime.create({ allowModelNetwork: false });
   return async ({ context, sessionDir, modelSettingPath, tool }) => {
     let configured: string;
     try {
@@ -1011,7 +1055,7 @@ export function createNativeNavigatorSessionFactory(defaultModelSettingPath = na
     };
     let modelRuntime: Awaited<ReturnType<typeof ModelRuntime.create>>;
     try {
-      modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
+      modelRuntime = await sharedModelRuntime;
       modelRuntime.registerNativeProvider(instrumentProvider(provider));
     } catch (error) {
       throw navigatorUnavailableError("session", error);

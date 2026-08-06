@@ -9234,13 +9234,16 @@ async function publishJudgeArtifacts(admitted, roleOutcome, sessionDirectory) {
     { kind: "evidence", path: evidencePath }
   ];
 }
-async function settleJudgeTerminalResult(admitted) {
-  const entries = await readLatestSessionEntries(admitted.sessionDirectory);
+async function trySettleJudgeTerminalResult(admitted) {
+  let entries;
+  try {
+    entries = await readLatestSessionEntries(admitted.sessionDirectory);
+  } catch {
+    return void 0;
+  }
   const roleOutcome = extractJudgeRoleOutcome(entries);
   if (roleOutcome === void 0) {
-    throw new Error(
-      "Judge Role run completed without a lawful typed terminal result"
-    );
+    return void 0;
   }
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishJudgeArtifacts(
@@ -9254,13 +9257,6 @@ async function settleJudgeTerminalResult(admitted) {
     artifacts,
     runId: admitted.runId
   };
-}
-async function trySettleJudgeTerminalResult(admitted) {
-  try {
-    return await settleJudgeTerminalResult(admitted);
-  } catch {
-    return void 0;
-  }
 }
 async function publishFailureArtifacts(admitted, failure) {
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
@@ -9473,7 +9469,21 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
     result2.stderr,
     "utf8"
   );
-  const lawful = await trySettleJudgeTerminalResult(admitted);
+  let lawful;
+  try {
+    lawful = await trySettleJudgeTerminalResult(admitted);
+  } catch (error) {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: result2.code,
+        stderr: result2.stderr,
+        thrown: error
+      },
+      io
+    );
+  }
   if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
     io.stdout(formatTerminalResult(lawful));
     return {
