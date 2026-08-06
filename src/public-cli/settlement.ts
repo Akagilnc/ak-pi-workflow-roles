@@ -8,11 +8,22 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
+import { loadCollectorManifest } from "../collector-config.ts";
+import {
+  COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_WAIT_TOOL,
+} from "../collector-ledger.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
   type JudgeVerdict,
 } from "../package-contracts/judge-output.ts";
+import {
+  COLLECTOR_OUTPUT_TOOL,
+  validateAcceptedCollectorReceipt,
+  type CollectorReceipt,
+} from "../package-contracts/collector-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   validateAcceptedCoderDetails,
@@ -23,6 +34,7 @@ import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
+  type AdmittedCollectorInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -533,6 +545,149 @@ function coderDecisiveFacts(output: CoderOutput): Record<string, unknown> {
   return facts;
 }
 
+function collectorDecisiveFacts(
+  receipt: CollectorReceipt,
+): Record<string, unknown> {
+  return {
+    repository: receipt.repository,
+    prNumber: receipt.prNumber,
+    targetHead: receipt.targetHead,
+    manifestDigest: receipt.manifestDigest,
+    legStatuses: receipt.legs
+      .map((leg) => `${leg.legId}:${leg.status}`)
+      .join(","),
+  };
+}
+
+/**
+ * ADR 0037: a shape-valid Collector receipt may still name the wrong live target.
+ * Public success binds receipt identity to this admitted repository/PR/manifest/legs
+ * at the existing settlement seam — not a second receipt factory or validator.
+ */
+function collectorReceiptBindingFailure(
+  diagnostic: string,
+): Error & { knownCause: ControlledFailureCause } {
+  const error = new Error(diagnostic) as Error & {
+    knownCause: ControlledFailureCause;
+  };
+  error.name = "CollectorReceiptBindingError";
+  error.knownCause = "output";
+  return error;
+}
+
+function sortedUniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+function toolResultText(message: SessionMessage): string {
+  const content = message.content;
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (
+        typeof part === "object" &&
+        part !== null &&
+        !Array.isArray(part) &&
+        typeof (part as { text?: unknown }).text === "string"
+      ) {
+        return (part as { text: string }).text;
+      }
+      return "";
+    })
+    .join("")
+    .trim();
+}
+
+/** Collector operational tools that fail closed via host infrastructure abort. */
+const COLLECTOR_INFRASTRUCTURE_TOOLS = new Set<string>([
+  COLLECTOR_OBSERVE_TOOL,
+  COLLECTOR_REQUEST_TOOL,
+  COLLECTOR_WAIT_TOOL,
+]);
+
+/**
+ * Prefer a real Collector infrastructure tool failure already on the session
+ * principal over a later secondary provider-stop (failure-honesty).
+ * Observe/request/wait host failures keep their diagnostic identity (e.g. HTTP 404).
+ */
+export function extractCollectorInfrastructureFailure(
+  entries: readonly SessionEntry[],
+): ControlledFailure | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.isError !== true) continue;
+    if (
+      typeof message.toolName !== "string" ||
+      !COLLECTOR_INFRASTRUCTURE_TOOLS.has(message.toolName)
+    ) {
+      continue;
+    }
+    const diagnostic = toolResultText(message);
+    if (diagnostic.length === 0) continue;
+    return {
+      cause: "activation",
+      diagnostic,
+      identity: { name: "CollectorInfrastructureError" },
+    };
+  }
+  return undefined;
+}
+
+/** Read the bound session principal for a Collector infrastructure tool failure. */
+export async function readCollectorInfrastructureFailure(
+  sessionFile: string,
+): Promise<ControlledFailure | undefined> {
+  try {
+    const entries = await readBoundSessionEntries(sessionFile);
+    return extractCollectorInfrastructureFailure(entries);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Compare a validated receipt with the admitted Collector invocation identity.
+ * Throws a typed output failure when any identity field mismatches.
+ */
+export function assertCollectorReceiptMatchesAdmitted(
+  receipt: CollectorReceipt,
+  admitted: AdmittedCollectorInvocation,
+  admittedLegIds: readonly string[],
+): void {
+  if (receipt.repository !== admitted.repository.canonical) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt repository "${receipt.repository}" does not match admitted repository "${admitted.repository.canonical}"`,
+    );
+  }
+  if (receipt.prNumber !== admitted.prNumber) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt prNumber ${receipt.prNumber} does not match admitted prNumber ${admitted.prNumber}`,
+    );
+  }
+  if (receipt.manifestDigest !== admitted.manifestDigest) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt manifestDigest does not match admitted manifestDigest`,
+    );
+  }
+  const receiptLegIds = sortedUniqueStrings(
+    receipt.legs.map((leg) => leg.legId),
+  );
+  const expectedLegIds = sortedUniqueStrings(admittedLegIds);
+  if (
+    receipt.legs.length !== admittedLegIds.length ||
+    receiptLegIds.length !== expectedLegIds.length ||
+    receiptLegIds.some((id, index) => id !== expectedLegIds[index])
+  ) {
+    throw collectorReceiptBindingFailure(
+      `Collector receipt leg set [${receiptLegIds.join(",")}] does not match admitted leg set [${expectedLegIds.join(",")}]`,
+    );
+  }
+}
+
 /** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
 export type LawfulJudgeRoleOutcome = Extract<
   TerminalRoleOutcome,
@@ -943,6 +1098,154 @@ export async function settleCoderTerminalResult(
     );
   }
   return settled;
+}
+
+export async function publishCollectorArtifacts(
+  admitted: AdmittedCollectorInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  sessionDirectory: string,
+  options: {
+    readonly collectorReceipt?: CollectorReceipt;
+  } = {},
+): Promise<TerminalArtifactRef[]> {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const reportPath = join(artifactsDir, "report.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: "collector",
+        runId: admitted.runId,
+        outcome: roleOutcome,
+        ...(options.collectorReceipt === undefined
+          ? {}
+          : { receipt: options.collectorReceipt }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        role: "collector",
+        prNumber: admitted.prNumber,
+        repository: admitted.repository.canonical,
+        legsPath: admitted.legsPath,
+        manifestDigest: admitted.manifestDigest,
+        sessionDirectory,
+        sessionFile: admitted.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
+/** Lawful Collector accepted outcome extracted from session. */
+export type LawfulCollectorRoleOutcome = {
+  kind: "accepted";
+  role: "collector";
+  /** Collector has no status leaf — synthesize a stable collected marker. */
+  status: "collected";
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+export function extractCollectorRoleOutcome(
+  entries: readonly SessionEntry[],
+): { outcome: LawfulCollectorRoleOutcome; receipt: CollectorReceipt } | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const message = entry.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
+    if (message.isError === true) continue;
+    try {
+      const receipt = validateAcceptedCollectorReceipt(message.details);
+      const outcome: LawfulCollectorRoleOutcome = {
+        kind: "accepted",
+        role: "collector",
+        status: "collected",
+        decisiveFacts: collectorDecisiveFacts(receipt),
+      };
+      return { receipt, outcome };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function settleLawfulCollectorTerminalResult(
+  admitted: AdmittedCollectorInvocation,
+): Promise<TerminalResult | undefined> {
+  const entries = await readLawfulSettlementEntries(admitted);
+  if (entries === undefined) return undefined;
+  const extracted = extractCollectorRoleOutcome(entries);
+  if (extracted === undefined) return undefined;
+  // Re-load legs.json and bind its digest to admission before using its IDs (ADR 0037/0022).
+  // A post-admission mutation that keeps receipt digest=A while legs become B must fail closed.
+  const admittedManifest = await loadCollectorManifest(admitted.legsPath);
+  if (admittedManifest.digest !== admitted.manifestDigest) {
+    throw collectorReceiptBindingFailure(
+      `Collector legs at settlement digest does not match admitted manifestDigest`,
+    );
+  }
+  assertCollectorReceiptMatchesAdmitted(
+    extracted.receipt,
+    admitted,
+    admittedManifest.legs.map((leg) => leg.id),
+  );
+  const navigator = extractNavigatorFact(entries);
+  const artifacts = await publishCollectorArtifacts(
+    admitted,
+    extracted.outcome,
+    admitted.sessionDirectory,
+    { collectorReceipt: extracted.receipt },
+  );
+  return {
+    roleOutcome: extracted.outcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
+}
+
+/** Settle a lawful Collector Terminal from the admitted session. */
+export async function settleCollectorTerminalResult(
+  admitted: AdmittedCollectorInvocation,
+): Promise<TerminalResult> {
+  const settled = await settleLawfulCollectorTerminalResult(admitted);
+  if (settled === undefined) {
+    throw new Error(
+      "Collector Role run completed without a lawful typed terminal result",
+    );
+  }
+  return settled;
+}
+
+/** Try to settle a lawful Collector Terminal; undefined only for genuine absence. */
+export async function trySettleCollectorTerminalResult(
+  admitted: AdmittedCollectorInvocation,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulCollectorTerminalResult(admitted);
 }
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */

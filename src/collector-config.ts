@@ -8,6 +8,13 @@ export const COLLECTOR_OWNER_PATTERN =
 export const COLLECTOR_REPO_PATTERN =
   /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 
+/**
+ * One-shot transport kickoff owned with Collector admission grammar.
+ * Public adapter and role runtime must send/accept this exact string.
+ */
+export const COLLECTOR_FIXED_KICKOFF =
+  "Start collection for the validated runtime-owned target and leg manifest. Use only Collector tools. Classify from cited ledger evidence. Submit exactly one ak_collector_output when terminal.";
+
 export type CollectorRepository = {
   display: string;
   canonical: string;
