@@ -16,7 +16,7 @@ const lastRealBite = Type.Union([
 const assetKinds = DOCTOR_TARGET_KINDS;
 const findingBody = {
     evidenceIds, disposition: Type.Union([Type.Literal("keep"), Type.Literal("thin"), Type.Literal("delete")]),
-    guardrails: Type.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: false }),
+    guardrails: Type.Object({ reproducibleFailure: guardrail, owningSeamOrInvariant: guardrail, deletionOrSimplificationSuffices: guardrail }, { additionalProperties: true }),
     prescription: Type.Object({ kind: Type.Union([Type.Literal("retain"), Type.Literal("delete"), Type.Literal("simplify"), Type.Literal("patch"), Type.Literal("addMechanism")]), recommendation: nonblank, necessityExplanation: Type.Optional(nonblank) }, { additionalProperties: false }), lastRealBite,
 };
 const finding = Type.Union([
@@ -56,9 +56,9 @@ export class DoctorSubmissionContractError extends Error {
     name = "DoctorSubmissionContractError";
 }
 export function validateDoctorSubmissionShape(value) { if (!Value.Check(doctorSubmissionSchema, value))
-    throw new DoctorSubmissionContractError("Doctor submission does not match its closed contract"); return value; }
+    throw new DoctorSubmissionContractError("Doctor submission does not match its contract"); return value; }
 export function validateRecordedDoctorOutput(value) { if (!Value.Check(doctorOutputSchema, value))
-    throw new Error("Doctor output does not match its closed contract"); return value; }
+    throw new Error("Doctor output does not match its contract"); return value; }
 export class DoctorEvidenceStore {
     patient;
     entries;

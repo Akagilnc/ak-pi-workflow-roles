@@ -1,6 +1,5 @@
 /**
- * Public ak-role CLI dispatcher (roles / config / layered help).
- * Role-run admission is owned by later #11 children; this slice stops at discovery.
+ * Public ak-role CLI dispatcher (roles / config / layered help / Judge run).
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +10,7 @@ import {
   loadCredentialProviders,
   loadPublicCliConfig,
   parseModelSpec,
+  resolveEffectiveSeat,
   savePublicCliConfig,
   setPersistentSeatConfig,
   type CredentialProviders,
@@ -18,11 +18,15 @@ import {
   type InvocationModelOverride,
   type PublicCliConfig,
 } from "./config.ts";
+import { CliUsageError } from "./cli-errors.ts";
+import type { CliIo } from "./cli-io.ts";
 import {
   EXPLICIT_INTERNAL_LOAD_PROBE_ARGS,
   runExplicitInternalActivation,
   type ExplicitInternalPiRunner,
 } from "./explicit-internal.ts";
+import { parseJudgeArgv } from "./invocation.ts";
+import { runPublicJudge } from "./judge-run.ts";
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
   isPublicCliSupportCommand,
@@ -35,11 +39,8 @@ export {
   buildExplicitInternalActivationArgs,
   resolveInternalRoleEntrypoint,
 } from "./explicit-internal.ts";
-
-export type CliIo = {
-  stdout: (text: string) => void;
-  stderr: (text: string) => void;
-};
+export { CliUsageError } from "./cli-errors.ts";
+export type { CliIo } from "./cli-io.ts";
 
 export type CliEnv = {
   home?: string;
@@ -51,6 +52,13 @@ export type CliEnv = {
   io?: CliIo;
   /** Injectable Pi runner (tests); production resolves `pi` on PATH. */
   piRunner?: ExplicitInternalPiRunner;
+  /** Optional caller correlation id (#78 host channel). */
+  correlationId?: string;
+  /** Extra Pi args for Judge runs (tests: faux provider). */
+  judgeExtraPiArgs?: readonly string[];
+  /** Override Judge role-run timeout (tests). */
+  judgeTimeoutMs?: number;
+  createRunId?: () => string;
 };
 
 export type CliResult = {
@@ -103,14 +111,6 @@ function parseThinking(value: string): PublicThinkingLevel {
     throw new CliUsageError(`unknown thinking level: ${value}`);
   }
   return value as PublicThinkingLevel;
-}
-
-export class CliUsageError extends Error {
-  readonly code = "AK_ROLE_USAGE";
-  constructor(message: string) {
-    super(message);
-    this.name = "CliUsageError";
-  }
 }
 
 function parseArgv(argv: readonly string[]): ParsedGlobal {
@@ -363,9 +363,46 @@ export async function runAkRole(
       throw new CliUsageError(`unhandled support command: ${parsed.command}`);
     }
 
-    // Callable role names are discoverable via help/roles; full run surface is #106+.
-    // This slice still crosses the ak-role-owned explicit Internal load boundary once
-    // so install/discovery coupling is proven without settling a role receipt.
+    // Judge is the first complete public Role run path (#106).
+    if (parsed.command === "judge") {
+      const agentDir = resolveAgentDir(env, home);
+      const cwd = env.cwd ?? process.cwd();
+      const config = await loadPublicCliConfig(home);
+      const credentials =
+        env.credentials ?? (await loadCredentialProviders(agentDir));
+      const seat = resolveEffectiveSeat(
+        config,
+        "judge",
+        credentials,
+        invocationFromParsed(parsed),
+      );
+      const result = await runPublicJudge(
+        parsed.args,
+        {
+          home,
+          agentDir,
+          packageRoot: env.packageRoot,
+          cwd,
+          ...(env.correlationId === undefined
+            ? {}
+            : { correlationId: env.correlationId }),
+          ...(env.piRunner === undefined ? {} : { piRunner: env.piRunner }),
+          ...(seat.selection === undefined ? {} : { model: seat.selection }),
+          ...(env.judgeExtraPiArgs === undefined
+            ? {}
+            : { extraPiArgs: env.judgeExtraPiArgs }),
+          ...(env.judgeTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: env.judgeTimeoutMs }),
+          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+        },
+        io,
+        parseJudgeArgv,
+      );
+      return { exitCode: result.exitCode };
+    }
+
+    // Remaining callable roles land in later #11 children.
     const roleNames = listHelpCapabilities()
       .filter((cap) => cap.kind === "role")
       .map((cap) => cap.name);

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
+import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
 
 import {
   buildSessionContext,
@@ -24,6 +25,7 @@ import {
   createNavigatorAttendance,
   navigatorUnavailableError,
   navigatorSessionDirectory,
+  navigatorSubjectKey,
   navigatorSubjectKeyForInput,
   registerNavigatorModelCommand,
   subjectPath,
@@ -116,7 +118,7 @@ export async function loadNavigatorWorkContext(
   const reference = navigatorInputReference(pi as ExtensionAPI, options.role);
   const input = reference === undefined || options.role === "doctor" ? undefined : await readFile(reference, "utf8");
   const subjectRoot = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
-  const subjectKey = reference === undefined
+  let subjectKey = reference === undefined
     ? subjectRoot
     : navigatorSubjectKeyForInput(subjectRoot, reference, options.context.cwd);
   let subject = input ?? `work subject: ${subjectKey}`;
@@ -125,6 +127,41 @@ export async function loadNavigatorWorkContext(
     const patient = await loadDoctorCase(reference);
     subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
     subjectProvenance = "role_input";
+  }
+  // Public ak-role run: admitted request is the typed Navigator work-context source.
+  // Classification failure here stays source=context (distinct from model/session/transport).
+  const publicRunDir = process.env.AK_ROLE_RUN_DIR;
+  if (
+    options.role === "judge" &&
+    typeof publicRunDir === "string" &&
+    publicRunDir.trim() !== ""
+  ) {
+    let admitted;
+    try {
+      admitted = await loadAdmittedJudgeRequest(publicRunDir);
+    } catch (error) {
+      throw navigatorUnavailableError("context", error);
+    }
+    if (admitted === undefined) {
+      throw navigatorUnavailableError(
+        "context",
+        new Error("public Judge admitted request was missing or malformed"),
+      );
+    }
+    if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
+      const prose = admitted.instruction;
+      subjectProvenance = "role_input";
+      subject = prose;
+      subjectKey = navigatorSubjectKey(subjectRoot, prose, subjectProvenance);
+      return { subjectKey, subject, authority: prose, subjectProvenance };
+    }
+    // Structurally empty public request: placeholder work context, no invented task.
+    return {
+      subjectKey: subjectRoot,
+      subject: `work subject: ${subjectRoot}`,
+      authority: "",
+      subjectProvenance: "placeholder",
+    };
   }
   // True short-circuit: non-whitespace role-input is authority verbatim.
   // Do not probe work-root authority files once input already supplies material.
