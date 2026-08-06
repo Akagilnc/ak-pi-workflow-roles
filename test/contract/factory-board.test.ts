@@ -4389,13 +4389,24 @@ async function freePort(): Promise<number> {
 }
 
 /**
- * Headless Chrome computed-style probe for ticket top strips.
- * Locates cards by data-ticket and reads border-top + data-state-strip.
+ * Headless Chrome computed-style probe for ticket top strips + state dots.
+ * Locates cards by data-ticket and their data-state-dot; reads border-top,
+ * data-state-strip, and the dot's computed color (same-hue oracle).
  */
 async function ticketStripComputedStyles(
   html: string,
   issueNumbers: readonly number[],
-): Promise<Map<number, { borderTopWidth: string; borderTopColor: string; stateStrip: string | null }>> {
+): Promise<
+  Map<
+    number,
+    {
+      borderTopWidth: string;
+      borderTopColor: string;
+      stateStrip: string | null;
+      dotColor: string;
+    }
+  >
+> {
   const chrome = findChromeExecutable();
   assert.ok(chrome, "Chrome/Chromium required for state-strip computed-style proof");
   const workspace = await mkdtemp(join(tmpdir(), "factory-board-strip-"));
@@ -4535,10 +4546,13 @@ async function ticketStripComputedStyles(
         const el = document.querySelector('[data-ticket="' + n + '"]');
         if (!el) { out[n] = null; continue; }
         const cs = getComputedStyle(el);
+        const dot = el.querySelector('[data-state-dot]');
+        const dotColor = dot ? getComputedStyle(dot).color : null;
         out[n] = {
           borderTopWidth: cs.borderTopWidth,
           borderTopColor: cs.borderTopColor,
           stateStrip: el.getAttribute('data-state-strip'),
+          dotColor,
         };
       }
       return out;
@@ -4546,13 +4560,34 @@ async function ticketStripComputedStyles(
     const evalResult = (await pageSend("Runtime.evaluate", {
       expression,
       returnByValue: true,
-    })) as { result?: { value?: Record<string, { borderTopWidth: string; borderTopColor: string; stateStrip: string | null } | null> } };
+    })) as {
+      result?: {
+        value?: Record<
+          string,
+          {
+            borderTopWidth: string;
+            borderTopColor: string;
+            stateStrip: string | null;
+            dotColor: string | null;
+          } | null
+        >;
+      };
+    };
     const value = evalResult.result?.value ?? {};
-    const map = new Map<number, { borderTopWidth: string; borderTopColor: string; stateStrip: string | null }>();
+    const map = new Map<
+      number,
+      {
+        borderTopWidth: string;
+        borderTopColor: string;
+        stateStrip: string | null;
+        dotColor: string;
+      }
+    >();
     for (const n of issueNumbers) {
       const row = value[String(n)];
       assert.ok(row, `ticket #${n} missing in computed-style probe`);
-      map.set(n, row);
+      assert.ok(row.dotColor, `ticket #${n} missing data-state-dot computed color`);
+      map.set(n, { ...row, dotColor: row.dotColor });
     }
     pageWs.close();
     return map;
@@ -4845,10 +4880,25 @@ test("kanban presentation: five-state strip via data-state-strip + browser compu
         /^(rgb(a)?\(|color\()/,
         `#${n} top border resolves to a color`,
       );
+      assert.match(
+        row.dotColor,
+        /^(rgb(a)?\(|color\()/,
+        `#${n} state dot resolves to a color`,
+      );
+      // Same-hue contract: top strip color equals the state-dot computed color.
+      assert.equal(
+        row.borderTopColor,
+        row.dotColor,
+        `#${n} (${expected[n]}) top border must equal data-state-dot color`,
+      );
       colors.add(row.borderTopColor);
     }
-    // Five states must not collapse to a single computed color.
-    assert.ok(colors.size >= 4, `expected distinct strip colors across five states, got ${colors.size}: ${[...colors].join("; ")}`);
+    // All five states must resolve to mutually distinct computed colors.
+    assert.equal(
+      colors.size,
+      5,
+      `expected 5 distinct strip colors across five states, got ${colors.size}: ${[...colors].join("; ")}`,
+    );
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
