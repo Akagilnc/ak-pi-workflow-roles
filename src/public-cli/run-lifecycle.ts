@@ -12,9 +12,12 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import type { FixerPhase } from "../package-contracts/fixer-output.ts";
+import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import {
   roleRunSessionFile,
   type AdmittedCoderInvocation,
+  type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedRoleInvocation,
   type CoderPhase,
@@ -34,7 +37,7 @@ export type TypedHttp429Observation = {
 
 export type RoleRunRecord = {
   readonly runId: string;
-  readonly role: "judge" | "coder" | "collector" | "doctor";
+  readonly role: "judge" | "coder" | "fixer" | "collector" | "doctor";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -43,8 +46,8 @@ export type RoleRunRecord = {
   readonly sessionFile: string;
   readonly runDirectory: string;
   readonly admittedRequestPath: string;
-  /** Coder only — preserved for resume continuation. */
-  readonly phase?: CoderPhase;
+  /** Coder/Fixer — preserved for resume continuation. */
+  readonly phase?: CoderPhase | FixerPhase;
   /** Present only while state === "resumable". */
   readonly resumable?: TypedHttp429Observation;
 };
@@ -188,6 +191,7 @@ export async function readRoleRunState(
     if (
       record.role !== "judge" &&
       record.role !== "coder" &&
+      record.role !== "fixer" &&
       record.role !== "collector" &&
       record.role !== "doctor"
     ) {
@@ -265,7 +269,11 @@ export async function markRunAdmitted(
     sessionDirectory: admitted.sessionDirectory,
     sessionFile: admitted.sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
-    ...(admitted.role === "coder" ? { phase: admitted.phase } : {}),
+    ...(
+      admitted.role === "coder" || admitted.role === "fixer"
+        ? { phase: admitted.phase }
+        : {}
+    ),
   });
 }
 
@@ -427,8 +435,11 @@ type LoadedAdmittedRequestFields = {
   readonly instruction: string;
   readonly instructionEmpty: boolean;
   readonly attachments: FrozenAttachment[];
-  readonly phase?: CoderPhase;
+  readonly phase?: CoderPhase | FixerPhase;
   readonly taskPath?: string;
+  readonly packetPath?: string;
+  readonly prerequisitesPath?: string;
+  readonly prerequisites?: readonly FixerPrerequisite[];
 };
 
 async function loadResumableRunRecord(
@@ -463,8 +474,11 @@ async function loadResumableRunRecord(
   let instruction = "";
   let instructionEmpty = true;
   let attachments: FrozenAttachment[] = [];
-  let phase: CoderPhase | undefined;
+  let phase: CoderPhase | FixerPhase | undefined;
   let taskPath: string | undefined;
+  let packetPath: string | undefined;
+  let prerequisitesPath: string | undefined;
+  let prerequisites: readonly FixerPrerequisite[] | undefined;
   try {
     const raw: unknown = JSON.parse(
       await readFile(run.admittedRequestPath, "utf8"),
@@ -486,6 +500,18 @@ async function loadResumableRunRecord(
       if (typeof record.taskPath === "string" && record.taskPath.trim() !== "") {
         taskPath = record.taskPath;
       }
+      if (typeof record.packetPath === "string" && record.packetPath.trim() !== "") {
+        packetPath = record.packetPath;
+      }
+      if (
+        typeof record.prerequisitesPath === "string" &&
+        record.prerequisitesPath.trim() !== ""
+      ) {
+        prerequisitesPath = record.prerequisitesPath;
+      }
+      if (Array.isArray(record.prerequisites)) {
+        prerequisites = record.prerequisites as FixerPrerequisite[];
+      }
     }
   } catch {
     throw new CliUsageError(
@@ -501,6 +527,9 @@ async function loadResumableRunRecord(
       attachments,
       ...(phase === undefined ? {} : { phase }),
       ...(taskPath === undefined ? {} : { taskPath }),
+      ...(packetPath === undefined ? {} : { packetPath }),
+      ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
+      ...(prerequisites === undefined ? {} : { prerequisites }),
     },
   };
 }
@@ -513,6 +542,12 @@ export type LoadedResumableJudgeRun = {
 
 export type LoadedResumableCoderRun = {
   readonly admitted: AdmittedCoderInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation: TypedHttp429Observation;
+};
+
+export type LoadedResumableFixerRun = {
+  readonly admitted: AdmittedFixerInvocation;
   readonly run: RoleRunRecord;
   readonly observation: TypedHttp429Observation;
 };
@@ -605,13 +640,71 @@ export async function loadResumableCoderRun(
 }
 
 /**
+ * Load a resumable Fixer run for resume. Phase, packet, and prerequisites are
+ * restored from the admitted request so continuation stays role-correct (#110).
+ */
+export async function loadResumableFixerRun(
+  home: string,
+  runId: string,
+): Promise<LoadedResumableFixerRun> {
+  const loaded = await loadResumableRunRecord(home, runId);
+  if (loaded.run.role !== "fixer") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not fixer`,
+    );
+  }
+  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
+  if (phase !== "plan" && phase !== "apply") {
+    throw new CliUsageError(
+      `role run admitted fixer phase is missing: ${runId}`,
+    );
+  }
+  const packetPath = loaded.admittedFields.packetPath;
+  if (packetPath === undefined) {
+    throw new CliUsageError(
+      `role run admitted fixer packet path is missing: ${runId}`,
+    );
+  }
+  if (loaded.admittedFields.instruction.trim() === "") {
+    throw new CliUsageError(
+      `role run admitted fixer instruction is blank: ${runId}`,
+    );
+  }
+  const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
+  const admitted: AdmittedFixerInvocation = {
+    role: "fixer",
+    phase,
+    runId: loaded.run.runId,
+    bookKey: loaded.run.bookKey,
+    projectRoot: loaded.run.projectRoot,
+    instruction: loaded.admittedFields.instruction,
+    instructionEmpty: false,
+    attachments: loaded.admittedFields.attachments,
+    runDirectory: loaded.run.runDirectory,
+    sessionDirectory: loaded.run.sessionDirectory,
+    sessionFile: loaded.run.sessionFile,
+    admittedRequestPath: loaded.run.admittedRequestPath,
+    packetPath,
+    ...(loaded.admittedFields.prerequisitesPath === undefined
+      ? {}
+      : { prerequisitesPath: loaded.admittedFields.prerequisitesPath }),
+    prerequisites,
+  };
+  return {
+    admitted,
+    run: loaded.run,
+    observation: loaded.observation,
+  };
+}
+
+/**
  * Peek the durable role of a run id without enforcing resumable state.
  * Used by public resume dispatch to pick the role-correct seat and path.
  */
 export async function peekRoleRunRole(
   home: string,
   runId: string,
-): Promise<"judge" | "coder" | "collector" | "doctor" | undefined> {
+): Promise<"judge" | "coder" | "fixer" | "collector" | "doctor" | undefined> {
   const runDirectory = await findRunDirectoryById(home, runId);
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunState(runDirectory);

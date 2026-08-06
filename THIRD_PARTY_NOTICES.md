@@ -16,8 +16,12 @@ commit/tag identity, per-file digests and git blob OIDs, and attribution under
 - `tdd` — shipped unchanged under `resources/methods/tdd/` from upstream
   `skills/engineering/tdd` at commit `8b36d4fb2635b3c21998dcd8144439c9e5ba7302`
   (tag `v1.2.2`) (#109)
+- `diagnosing-bugs` — shipped under `resources/methods/diagnosing-bugs/` from
+  upstream `skills/engineering/diagnosing-bugs` at the same commit/tag, with
+  package adaptation `fixer-boundary-no-external-skill-chain` so the Fixer
+  method cannot automatically launch architecture Grill or other role-external
+  Skill chains (#110)
 - `code-review` — later method-bearing role ticket
-- `diagnosing-bugs` — later method-bearing role ticket
 - `resolving-merge-conflicts` — later method-bearing role ticket
 
 The complete upstream MIT license text follows.

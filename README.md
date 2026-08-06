@@ -55,7 +55,7 @@ When a Role run is interrupted by an observed typed Codex/xAI HTTP 429 and has n
 ak-role --model xai/grok-4.5:high resume <runId>
 ```
 
-At the current mainline slice, Judge, Coder, and Collector are the completed public run paths. `roles` lists the full callable registry, but the remaining role adapters are still landing under #110–#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
+At the current mainline slice, Judge, Coder, Fixer, Collector, and Doctor are the completed public run paths. `roles` lists the full callable registry, but the remaining role adapters are still landing under #111/#114; `ak-role` reports them as unavailable rather than falling back to raw Pi. Ordinary Pi startup does not expose the package’s internal activation flag.
 
 ### Call Coder
 
@@ -186,7 +186,13 @@ Fixer has this phase vocabulary:
 
 There is no third phase. Apply `partially_completed` means a mixture of completed and lawfully refused findings, never unfinished work. `unfinished` is an apply-only, non-failure handover stating only that this call did not settle all assigned work; it carries a nonblank typed `remainingScope` and does not diagnose a cause, prescribe the caller's next step, or waive any acceptance.
 
-> **Public invocation status:** the `ak-role fixer` adapter is still landing under #110. The old raw-Pi packet flags are internal transport, not a supported calling convention, so this README does not present them as package usage.
+Public callers invoke Fixer only through `ak-role fixer`:
+
+```bash
+ak-role fixer [plan|apply] [--project <path>] [--attach <file>]... [--prerequisites <json-array-file>] <instruction...>
+```
+
+Phase defaults to `apply` when omitted. `--prerequisites` is optional; when supplied it must be a structurally valid JSON array of `{id,requirement}` objects (same grammar as `parseFixerPrerequisites`). Malformed prerequisite grammar is a structural reject (exit 2). Whether a declared prerequisite is unmet or insufficient remains a Fixer judgment inside the role receipt, not a CLI classification. Common attachments use `--attach` and are frozen at admission. The package-owned evidence-driven diagnosis method (`resources/methods/diagnosing-bugs/`, adapted from Matt `diagnosing-bugs` with MIT attribution) is available only to Fixer via package `--skill` and is recorded in Terminal evidence when invoked; it is not forced into every repair prompt and cannot automatically launch architecture Grill or other role-external Skill chains. Internal raw-Pi packet flags remain transport, not a supported calling convention.
 
 Fixer terminates through `ak_fixer_output`. Its legal status-dependent shapes are:
 
