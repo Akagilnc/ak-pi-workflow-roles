@@ -286,6 +286,23 @@ test("after_provider_response production handler writes typed 429 into resumable
         { type: "after_provider_response", status: 429, headers: {} },
         { model: { provider: "openai-codex" } },
       );
+      assert.deepEqual(await readTypedHttp429Observation(runDirectory), {
+        httpStatus: 429,
+        provider: "openai-codex",
+      });
+
+      // Later non-429 in the same attempt supersedes — latest is authoritative.
+      await handler(
+        { type: "after_provider_response", status: 500, headers: {} },
+        { model: { provider: "openai-codex" } },
+      );
+      assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
+
+      // Final qualifying 429 re-arms resume observation for this attempt.
+      await handler(
+        { type: "after_provider_response", status: 429, headers: {} },
+        { model: { provider: "openai-codex" } },
+      );
     } finally {
       if (previous === undefined) {
         delete process.env.AK_ROLE_RUN_DIR;

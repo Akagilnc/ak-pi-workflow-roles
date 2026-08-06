@@ -227,6 +227,30 @@ test("typed HTTP 429 observation is field-based; quota-like prose alone is never
       provider: "openai-codex",
     });
 
+    // Latest non-qualifying response is authoritative: earlier 429 must not stick.
+    await recordTypedProviderHttpStatus(runDir, {
+      httpStatus: 503,
+      provider: "openai-codex",
+    });
+    assert.equal(await readTypedHttp429Observation(runDir), undefined);
+
+    // A later qualifying 429 may re-arm within the same attempt.
+    await recordTypedProviderHttpStatus(runDir, {
+      httpStatus: 429,
+      provider: "xai",
+    });
+    assert.deepEqual(await readTypedHttp429Observation(runDir), {
+      httpStatus: 429,
+      provider: "xai",
+    });
+
+    // Non-v1 provider at 429 also supersedes a prior qualifying observation.
+    await recordTypedProviderHttpStatus(runDir, {
+      httpStatus: 429,
+      provider: "anthropic",
+    });
+    assert.equal(await readTypedHttp429Observation(runDir), undefined);
+
     assert.equal(
       isV1ResumableFailure({
         hasLawfulTerminalResult: false,
@@ -447,6 +471,79 @@ test("lawful terminal result wins over typed 429 observation", async () => {
       join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`),
     );
     assert.equal(durable?.state, "terminal");
+  });
+});
+
+test("within-attempt earlier 429 does not qualify resume after a later non-429 response", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout } = captureIo();
+    const runId = "run-within-attempt-stale-429-001";
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "stale within-attempt 429"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          const runDir = join(sessionDir, "..");
+          // First provider response is a qualifying 429.
+          await observeTyped429ViaProductionHandler({
+            runDirectory: runDir,
+            provider: "openai-codex",
+            httpStatus: 429,
+          });
+          // Later response in the same attempt is non-429 — must supersede.
+          await observeTyped429ViaProductionHandler({
+            runDirectory: runDir,
+            provider: "openai-codex",
+            httpStatus: 500,
+          });
+          await writeSessionProviderStop(sessionDir, {
+            provider: "openai-codex",
+            errorMessage: "upstream internal error",
+          });
+          return {
+            code: 1,
+            stdout: "",
+            stderr: "provider_error\n",
+            timedOut: false,
+            args: [...args],
+            knownFailure: {
+              cause: "provider",
+              identity: { name: "ProviderError", code: 500 },
+              diagnostic: "upstream internal error",
+            },
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.resume, undefined);
+    assert.equal(result.terminal!.runId, runId);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "runs",
+      `${runId}@judge`,
+    );
+    assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
+    assert.equal((await readRoleRunState(runDirectory))?.state, "terminal");
+    assert.equal(stdout.join("").includes("ak-role resume"), false);
   });
 });
 

@@ -85,24 +85,31 @@ export async function clearTypedProviderHttpObservation(
 
 /**
  * Record a typed provider HTTP status observation for the admitted run.
- * Only HTTP 429 from Codex/xAI is retained; other statuses and providers are ignored.
- * Never inspects diagnostic prose.
+ * The latest observation is authoritative: only a current HTTP 429 from
+ * Codex/xAI is retained for v1 resume; any other status or provider clears
+ * prior within-attempt 429 evidence. Never inspects diagnostic prose.
  */
 export async function recordTypedProviderHttpStatus(
   runDirectory: string,
   observation: { readonly httpStatus: number; readonly provider: string },
 ): Promise<void> {
-  if (observation.httpStatus !== 429) return;
-  if (!isV1ResumableProvider(observation.provider)) return;
-  const body: TypedHttp429Observation = {
-    httpStatus: 429,
-    provider: observation.provider,
-  };
-  await writeFile(
-    typedProviderHttpPath(runDirectory),
-    `${JSON.stringify(body)}\n`,
-    "utf8",
-  );
+  if (
+    observation.httpStatus === 429 &&
+    isV1ResumableProvider(observation.provider)
+  ) {
+    const body: TypedHttp429Observation = {
+      httpStatus: 429,
+      provider: observation.provider,
+    };
+    await writeFile(
+      typedProviderHttpPath(runDirectory),
+      `${JSON.stringify(body)}\n`,
+      "utf8",
+    );
+    return;
+  }
+  // Non-qualifying latest response supersedes any earlier 429 in this attempt.
+  await clearTypedProviderHttpObservation(runDirectory);
 }
 
 /**
