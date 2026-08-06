@@ -111,6 +111,46 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   assert.equal(parsed.project, "/tmp/p");
 });
 
+test("parseJudgeArgv rejects blank --project/--attach path values", () => {
+  assert.throws(
+    () => parseJudgeArgv(["--project=", "task"]),
+    (error: unknown) =>
+      error instanceof CliUsageError && error.message === "--project requires a path",
+  );
+  assert.throws(
+    () => parseJudgeArgv(["--project", "", "task"]),
+    (error: unknown) =>
+      error instanceof CliUsageError && error.message === "--project requires a path",
+  );
+  assert.throws(
+    () => parseJudgeArgv(["--project", "   ", "task"]),
+    (error: unknown) =>
+      error instanceof CliUsageError && error.message === "--project requires a path",
+  );
+  assert.throws(
+    () => parseJudgeArgv(["--attach=", "task"]),
+    (error: unknown) =>
+      error instanceof CliUsageError && error.message === "--attach requires a path",
+  );
+});
+
+test("admitJudgeInvocation rejects blank project override before resolve", async () => {
+  await withTempHome(async (home) => {
+    await assert.rejects(
+      () =>
+        admitJudgeInvocation({
+          home,
+          cwd: home,
+          instruction: "task",
+          attachmentPaths: [],
+          project: "",
+        }),
+      (error: unknown) =>
+        error instanceof CliUsageError && error.message === "--project requires a path",
+    );
+  });
+});
+
 test("admitJudgeInvocation freezes regular-file attachments against later mutation", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
