@@ -27,7 +27,11 @@ commit/tag identity, per-file digests and git blob OIDs, and attribution under
   remains usable without Matt setup files, does not modify project governance
   as setup, preserves Standards/Spec axes, and never turns scratch probes into
   product repairs (#111)
-- `resolving-merge-conflicts` — later method-bearing role ticket
+- `resolving-merge-conflicts` — shipped under `resources/methods/resolving-merge-conflicts/` from
+  upstream `skills/engineering/resolving-merge-conflicts` at the same commit/tag, with
+  package adaptation `merger-merge-only-escalate-new-intent` so Merger stays merge-only,
+  escalates new intent/authority instead of guessing, and does not inherit upstream
+  unconditional-resolution or rebase workflow (#114)
 
 The complete upstream MIT license text follows.
 

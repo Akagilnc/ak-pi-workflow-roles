@@ -41,6 +41,12 @@ import {
   REVIEWER_CHILD_TOOLS,
   REVIEWER_PREREQUISITES,
 } from "../reviewer-admission.ts";
+import { createProductionMergerGitState } from "../merger-git-state.ts";
+import type { MergerGitState } from "../merger-git-state.ts";
+import {
+  validateMergerInput,
+  type MergerInput,
+} from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -146,13 +152,31 @@ export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly baseRevision?: string;
 };
 
+/** Mechanical envelope derived from the active ordinary two-parent merge. */
+export type DerivedMergerEnvelope = {
+  readonly targetObjectId: string;
+  readonly sourceObjectId: string;
+  readonly automaticMergeTreeId: string;
+  readonly expectedConflictPaths: readonly string[];
+  readonly resolutionScope: readonly string[];
+};
+
+export type AdmittedMergerInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "merger";
+  /** Durable internal merger-input JSON path for --ak-merger-input. */
+  readonly mergerInputPath: string;
+  /** Adapter-derived mechanical facts (not public packet fields). */
+  readonly derived: DerivedMergerEnvelope;
+};
+
 export type AdmittedRoleInvocation =
   | AdmittedJudgeInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
   | AdmittedDoctorInvocation
-  | AdmittedReviewerInvocation;
+  | AdmittedReviewerInvocation
+  | AdmittedMergerInvocation;
 
 export type ParseJudgeArgvResult = {
   instruction: string;
@@ -201,6 +225,23 @@ export type ParseReviewerArgvResult = {
   baseRevision?: string;
   project?: string;
 };
+
+export type ParseMergerArgvResult = {
+  instruction: string;
+  attachmentPaths: string[];
+  project?: string;
+};
+
+/** Honest activation-class failure while deriving the active-merge envelope. */
+export class MergerEnvelopeDerivationError extends Error {
+  readonly code = "merger-envelope-derivation" as const;
+  /** Typed cause for #107 classifyPostAdmissionFailure (isTypedActivationError). */
+  readonly knownCause = "activation" as const;
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "MergerEnvelopeDerivationError";
+  }
+}
 
 /** Reject missing/blank path values so empty overrides cannot silently degrade. */
 function requireOptionPath(
@@ -1816,6 +1857,276 @@ export function buildReviewerTransportPrompt(
       `Admitted base revision: ${admitted.baseRevision}`,
     );
   }
+  if (admitted.attachments.length > 0) {
+    lines.push("");
+    lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");
+    for (const attachment of admitted.attachments) {
+      lines.push(`- ${attachment.frozenPath}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Parse Merger-specific argv after the `merger` token.
+ * Common Invocation flags only: --attach / --project.
+ * Parents, conflicts, scope, and internal merger-input are never public fields.
+ */
+export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult {
+  const attachmentPaths: string[] = [];
+  let project: string | undefined;
+  const positional: string[] = [];
+  const tokens = [...args];
+
+  while (tokens.length > 0) {
+    const token = tokens.shift()!;
+    if (token === "--") {
+      positional.push(...tokens);
+      break;
+    }
+    if (token === "--attach") {
+      attachmentPaths.push(requireOptionPath("--attach", tokens.shift()));
+      continue;
+    }
+    if (token.startsWith("--attach=")) {
+      attachmentPaths.push(
+        requireOptionPath("--attach", token.slice("--attach=".length)),
+      );
+      continue;
+    }
+    if (token === "--project") {
+      project = requireOptionPath("--project", tokens.shift());
+      continue;
+    }
+    if (token.startsWith("--project=")) {
+      project = requireOptionPath("--project", token.slice("--project=".length));
+      continue;
+    }
+    // Reject internal / mechanical packet fields on the public face.
+    if (
+      token === "--ak-merger-input" ||
+      token.startsWith("--ak-merger-input=") ||
+      token === "--targetObjectId" ||
+      token.startsWith("--targetObjectId=") ||
+      token === "--sourceObjectId" ||
+      token.startsWith("--sourceObjectId=") ||
+      token === "--expectedConflictPaths" ||
+      token.startsWith("--expectedConflictPaths=") ||
+      token === "--resolutionScope" ||
+      token.startsWith("--resolutionScope=")
+    ) {
+      throw new CliUsageError(
+        "merger does not accept public packet fields; the adapter derives the active-merge envelope",
+      );
+    }
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown merger option: ${token}`);
+    }
+    positional.push(token);
+  }
+
+  return {
+    instruction: positional.join(" "),
+    attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+  };
+}
+
+function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["task"] {
+  const bytes = Buffer.from(text, "utf8");
+  return Object.freeze({
+    bytesBase64: bytes.toString("base64"),
+    sha256: sha256Hex(bytes),
+  });
+}
+
+/**
+ * Derive the mechanical Merger envelope from an already-active ordinary merge.
+ * Uses the production Git seam (HEAD, sole MERGE_HEAD, AUTO_MERGE, unmerged set).
+ * Failures are activation-class facts — not CLI semantic guesses.
+ */
+export async function deriveMergerEnvelopeFromActiveMerge(
+  projectRoot: string,
+  gitState: MergerGitState = createProductionMergerGitState(projectRoot),
+): Promise<DerivedMergerEnvelope> {
+  let state;
+  try {
+    state = await gitState.activeMerge();
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message.trim() !== ""
+        ? error.message
+        : "Assigned repository does not have one ordinary in-progress merge";
+    throw new MergerEnvelopeDerivationError(message, { cause: error });
+  }
+  if (state.unmergedPaths.length === 0) {
+    throw new MergerEnvelopeDerivationError(
+      "Assigned repository does not have one ordinary in-progress merge with a complete conflict set",
+    );
+  }
+  const expectedConflictPaths = Object.freeze([...state.unmergedPaths]);
+  // Scope is derived as the complete conflict set; the role may not broaden it.
+  const resolutionScope = Object.freeze([...state.unmergedPaths]);
+  return Object.freeze({
+    targetObjectId: state.targetObjectId,
+    sourceObjectId: state.sourceObjectId,
+    automaticMergeTreeId: state.automaticMergeTreeId,
+    expectedConflictPaths,
+    resolutionScope,
+  });
+}
+
+export type AdmitMergerInvocationOptions = {
+  home: string;
+  cwd: string;
+  instruction: string;
+  attachmentPaths: readonly string[];
+  project?: string;
+  createRunId?: () => string;
+  /** Test seam; production binds createProductionMergerGitState(projectRoot). */
+  gitState?: MergerGitState;
+};
+
+/**
+ * Admit a Merger Role run on the common Invocation request.
+ * Mechanical envelope (parents, AUTO_MERGE, conflicts, scope) is derived from
+ * the active merge — callers never supply public packet fields for those facts.
+ */
+export async function admitMergerInvocation(
+  options: AdmitMergerInvocationOptions,
+): Promise<AdmittedMergerInvocation> {
+  if (options.project !== undefined) {
+    requireOptionPath("--project", options.project);
+  }
+  const instruction = options.instruction;
+  if (instruction.trim() === "") {
+    throw new CliUsageError("merger requires a nonblank task instruction");
+  }
+
+  const projectRoot = resolve(options.project ?? options.cwd);
+  // Derive mechanical envelope before placing a run identity so no-merge/drift
+  // fails honestly without orphan ledger rows or guessed packet fields.
+  const derived = await deriveMergerEnvelopeFromActiveMerge(
+    projectRoot,
+    options.gitState ?? createProductionMergerGitState(projectRoot),
+  );
+
+  const bookKey = resolveBookKeyFromGit(projectRoot);
+  const ledgerHome = resolveActivationLedgerHome(() => options.home);
+  const runId = (options.createRunId ?? uuidv7)();
+  const runDirectory = join(
+    activationBookDirectory(ledgerHome, bookKey),
+    "runs",
+    `${runId}@merger`,
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  const sessionFile = roleRunSessionFile(sessionDirectory);
+  const attachmentsDirectory = join(runDirectory, "attachments");
+  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+
+  const attachments: FrozenAttachment[] = [];
+  for (let i = 0; i < options.attachmentPaths.length; i += 1) {
+    attachments.push(
+      await freezeRegularFileAttachment(
+        options.attachmentPaths[i]!,
+        attachmentsDirectory,
+        i,
+      ),
+    );
+  }
+
+  // Intent materials seed primary-source investigation; the method owns the work.
+  const targetIntent = mergerMaterialFromUtf8(
+    `Investigate primary sources for target parent ${derived.targetObjectId}. Do not invent intent.`,
+  );
+  const sourceIntent = mergerMaterialFromUtf8(
+    `Investigate primary sources for source parent ${derived.sourceObjectId}. Do not invent intent.`,
+  );
+  const taskMaterial = mergerMaterialFromUtf8(instruction);
+  const authorityMaterial = mergerMaterialFromUtf8(instruction);
+
+  const mergerInput = validateMergerInput({
+    version: 1,
+    attemptId: runId,
+    targetObjectId: derived.targetObjectId,
+    sourceObjectId: derived.sourceObjectId,
+    materials: {
+      task: taskMaterial,
+      authority: authorityMaterial,
+      targetIntent,
+      sourceIntent,
+    },
+    expectedConflictPaths: [...derived.expectedConflictPaths],
+    resolutionScope: [...derived.resolutionScope],
+    // Authorized checks remain available on the assignment; default none.
+    authorizedChecks: [],
+  });
+
+  const mergerInputPath = join(runDirectory, "merger-input.json");
+  await writeFile(
+    mergerInputPath,
+    `${JSON.stringify(mergerInput, null, 2)}\n`,
+    "utf8",
+  );
+
+  const admitted = {
+    role: "merger" as const,
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    mergerInputPath,
+    derived: {
+      targetObjectId: derived.targetObjectId,
+      sourceObjectId: derived.sourceObjectId,
+      automaticMergeTreeId: derived.automaticMergeTreeId,
+      expectedConflictPaths: [...derived.expectedConflictPaths],
+      resolutionScope: [...derived.resolutionScope],
+    },
+    attachments: attachments.map((a) => ({
+      provenancePath: a.provenancePath,
+      frozenPath: a.frozenPath,
+      byteLength: a.byteLength,
+      sha256: a.sha256,
+      mediaKind: a.mediaKind,
+    })),
+  };
+  const admittedRequestPath = join(runDirectory, "admitted-request.json");
+  await writeFile(
+    admittedRequestPath,
+    `${JSON.stringify(admitted, null, 2)}\n`,
+    "utf8",
+  );
+
+  return {
+    role: "merger",
+    runId,
+    bookKey,
+    projectRoot,
+    instruction,
+    instructionEmpty: false,
+    attachments,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+    admittedRequestPath,
+    mergerInputPath,
+    derived: admitted.derived,
+  };
+}
+
+/**
+ * Build the Pi prompt transport for an admitted Merger request.
+ * Every invocation forces package merge-only method expansion before conflict work.
+ */
+export function buildMergerTransportPrompt(
+  admitted: AdmittedMergerInvocation,
+): string {
+  const lines: string[] = [
+    `/skill:resolving-merge-conflicts ${admitted.instruction}`,
+  ];
   if (admitted.attachments.length > 0) {
     lines.push("");
     lines.push("Admitted Attachments (frozen snapshot paths; read these bytes):");

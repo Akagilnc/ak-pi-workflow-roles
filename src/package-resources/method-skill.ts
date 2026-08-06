@@ -25,7 +25,11 @@ export class PackagedMethodSkillUnavailableError extends Error {
 }
 
 /** Method Skill names shipped as package resources under resources/methods/. */
-export type PackagedMethodSkillName = "tdd" | "diagnosing-bugs" | "code-review";
+export type PackagedMethodSkillName =
+  | "tdd"
+  | "diagnosing-bugs"
+  | "code-review"
+  | "resolving-merge-conflicts";
 
 export type PackagedMethodFileProvenance = Readonly<{
   sha256: string;
@@ -82,6 +86,7 @@ const REQUIRED_COMPANIONS: Readonly<
   tdd: ["tests.md", "mocking.md", "agents/openai.yaml"],
   "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"],
   "code-review": ["agents/openai.yaml"],
+  "resolving-merge-conflicts": ["agents/openai.yaml"],
 };
 
 /**
