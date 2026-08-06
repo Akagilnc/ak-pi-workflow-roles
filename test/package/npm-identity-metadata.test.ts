@@ -186,6 +186,81 @@ test("packed artifact ships package-owned tdd method with companions and provena
   });
 });
 
+test("packed artifact ships package-owned diagnosing-bugs method with adapted boundary", async () => {
+  await withExtractedPack(async (extracted) => {
+    const required = [
+      "resources/methods/diagnosing-bugs/SKILL.md",
+      "resources/methods/diagnosing-bugs/agents/openai.yaml",
+      "resources/methods/diagnosing-bugs/scripts/hitl-loop.template.sh",
+      "resources/methods/diagnosing-bugs/provenance.json",
+    ];
+    for (const path of required) {
+      assert.ok(
+        extracted.paths.includes(path),
+        `npm pack must include ${path}`,
+      );
+      await access(resolve(extracted.root, "package", path));
+    }
+    const provenance = JSON.parse(
+      await readFile(
+        resolve(
+          extracted.root,
+          "package/resources/methods/diagnosing-bugs/provenance.json",
+        ),
+        "utf8",
+      ),
+    ) as {
+      name: string;
+      packageAdaptation: string;
+      upstream: {
+        repository: string;
+        path: string;
+        commit: string;
+        tag: string;
+        attribution: string;
+        license: string;
+      };
+      files: Record<
+        string,
+        { sha256: string; byteLength: number; gitBlob: string }
+      >;
+    };
+    assert.equal(provenance.name, "diagnosing-bugs");
+    assert.equal(
+      provenance.packageAdaptation,
+      "fixer-boundary-no-external-skill-chain",
+    );
+    assert.equal(
+      provenance.upstream.repository,
+      "https://github.com/mattpocock/skills",
+    );
+    assert.equal(
+      provenance.upstream.path,
+      "skills/engineering/diagnosing-bugs",
+    );
+    assert.equal(
+      provenance.upstream.commit,
+      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+    );
+    assert.equal(provenance.upstream.tag, "v1.2.2");
+    assert.equal(provenance.upstream.attribution, "mattpocock/skills");
+    assert.equal(provenance.upstream.license, "MIT");
+    assert.equal(typeof provenance.files["SKILL.md"]?.sha256, "string");
+    assert.equal(provenance.files["SKILL.md"]!.sha256.length, 64);
+    assert.equal(typeof provenance.files["agents/openai.yaml"]?.gitBlob, "string");
+    assert.equal(
+      typeof provenance.files["scripts/hitl-loop.template.sh"]?.gitBlob,
+      "string",
+    );
+    const skill = await readFile(
+      resolve(extracted.root, "package/resources/methods/diagnosing-bugs/SKILL.md"),
+      "utf8",
+    );
+    assert.equal(skill.includes("hand off to the `/improve-codebase-architecture`"), false);
+    assert.equal(skill.includes("Do **not** launch"), true);
+  });
+});
+
 test("packed artifact name is the registry-settled identity", async () => {
   await withExtractedPack(async (extracted) => {
     assert.equal(extracted.packageJson.name, SETTLED_PACKAGE_NAME);

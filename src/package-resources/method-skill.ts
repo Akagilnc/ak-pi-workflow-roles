@@ -25,7 +25,7 @@ export class PackagedMethodSkillUnavailableError extends Error {
 }
 
 /** Method Skill names shipped as package resources under resources/methods/. */
-export type PackagedMethodSkillName = "tdd";
+export type PackagedMethodSkillName = "tdd" | "diagnosing-bugs";
 
 export type PackagedMethodFileProvenance = Readonly<{
   sha256: string;
@@ -80,6 +80,7 @@ const REQUIRED_COMPANIONS: Readonly<
   Record<PackagedMethodSkillName, readonly string[]>
 > = {
   tdd: ["tests.md", "mocking.md", "agents/openai.yaml"],
+  "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"],
 };
 
 /**
@@ -88,17 +89,17 @@ const REQUIRED_COMPANIONS: Readonly<
  * requires this sealed identity to match, so rewriting package bytes together
  * with the adjacent manifest cannot preserve the claim.
  */
-export const SEALED_UNCHANGED_METHOD_PINS: Readonly<
-  Record<
-    PackagedMethodSkillName,
-    Readonly<{
-      commit: string;
-      tag: string;
-      path: string;
-      files: Readonly<Record<string, PackagedMethodFileProvenance>>;
-    }>
-  >
-> = Object.freeze({
+type SealedUnchangedMethodPin = Readonly<{
+  commit: string;
+  tag: string;
+  path: string;
+  files: Readonly<Record<string, PackagedMethodFileProvenance>>;
+}>;
+
+/** Only unchanged-pinned-snapshot methods carry sealed offline pins. */
+export const SEALED_UNCHANGED_METHOD_PINS: Readonly<{
+  readonly tdd: SealedUnchangedMethodPin;
+}> = Object.freeze({
   tdd: Object.freeze({
     commit: "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
     tag: "v1.2.2",
@@ -282,7 +283,12 @@ function assertSealedUnchangedUpstreamPin(
   provenance: PackagedMethodSkillProvenance,
 ): void {
   if (provenance.packageAdaptation !== UNCHANGED_PINNED_SNAPSHOT) return;
-  const sealed = SEALED_UNCHANGED_METHOD_PINS[provenance.name];
+  if (provenance.name !== "tdd") {
+    throw new Error(
+      `Packaged method ${provenance.name} claims unchanged-pinned-snapshot without a sealed pin`,
+    );
+  }
+  const sealed = SEALED_UNCHANGED_METHOD_PINS.tdd;
   if (provenance.upstream.commit !== sealed.commit) {
     throw new Error(
       `Packaged method ${provenance.name} upstream.commit does not match sealed unchanged pin`,
@@ -405,4 +411,46 @@ export async function loadPackagedMethodSkillMaterial(
     provenance,
     companionRelativePaths: Object.freeze([...companionRelativePaths]),
   });
+}
+
+/** Observed Pi-native method Skill expansion (structured skill block, not free prose). */
+export type ObservedPackagedMethodSkillInvocation = Readonly<{
+  name: PackagedMethodSkillName;
+  location: string;
+}>;
+
+/**
+ * Observe one Pi-native packaged method Skill expansion from a user-turn text.
+ * Matches the structured `<skill name location>` block format only; rejects ambient
+ * home locations that are not in the allowed package path set.
+ */
+export function observePackagedMethodSkillInvocation(
+  text: string,
+  expected: {
+    readonly name: PackagedMethodSkillName;
+    readonly allowedLocations: readonly string[];
+  },
+): ObservedPackagedMethodSkillInvocation | undefined {
+  // Structured skill-block grammar (same shape Pi expands); not free-text classification.
+  if (!text.startsWith("<skill name=\"")) return undefined;
+  const nameStart = "<skill name=\"".length;
+  const nameEnd = text.indexOf("\"", nameStart);
+  if (nameEnd <= nameStart) return undefined;
+  const name = text.slice(nameStart, nameEnd);
+  if (name !== expected.name) return undefined;
+  const locationMarker = "\" location=\"";
+  if (!text.startsWith(locationMarker, nameEnd)) return undefined;
+  const locationStart = nameEnd + locationMarker.length;
+  const locationEnd = text.indexOf("\"", locationStart);
+  if (locationEnd <= locationStart) return undefined;
+  const location = text.slice(locationStart, locationEnd);
+  const openTail = ">\n";
+  if (!text.startsWith(openTail, locationEnd + 1)) return undefined;
+  const closeTag = "\n</skill>";
+  const closeAt = text.indexOf(closeTag, locationEnd + 1 + openTail.length);
+  if (closeAt === -1) return undefined;
+  const afterClose = text.slice(closeAt + closeTag.length);
+  if (afterClose.length > 0 && !afterClose.startsWith("\n")) return undefined;
+  if (!expected.allowedLocations.includes(location)) return undefined;
+  return Object.freeze({ name: expected.name, location });
 }

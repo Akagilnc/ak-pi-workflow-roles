@@ -25,8 +25,10 @@ import {
  */
 export async function loadPackagedCanonicalSkillBinding(
   packageRoot: string,
-  name: PackagedMethodSkillName,
+  name: Extract<PackagedMethodSkillName, CanonicalSkillName>,
 ): Promise<CanonicalSkillBinding<Extract<CanonicalSkillName, PackagedMethodSkillName>>> {
+  // Forced expansion bindings are only defined for canonical completion-gated skills.
+  // Optional Fixer diagnosing-bugs stays available via --skill without this binding.
   const material = await loadPackagedMethodSkillMaterial(packageRoot, name);
   const configuredPath = resolvePackagedMethodSkillPath(packageRoot, name);
   const snapshot = Object.freeze({
