@@ -24,6 +24,87 @@ var COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
 
 // src/package-contracts/judge-output.ts
 var JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hasExactKeys(value, expected) {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
+}
+function validateAcceptedJudgeDetails(verdict) {
+  if (!isRecord(verdict)) throw new Error("Judge verdict must be an object");
+  if (verdict.note !== void 0 && (typeof verdict.note !== "string" || verdict.note.trim().length === 0)) {
+    throw new Error("Judge note must be a non-blank string when provided");
+  }
+  const withOptionalFields = (keys) => [
+    ...keys,
+    ...verdict.note === void 0 ? [] : ["note"],
+    ...verdict.evidence === void 0 ? [] : ["evidence"]
+  ];
+  const note = verdict.note === void 0 ? {} : { note: verdict.note };
+  const evidence = verdict.evidence === void 0 ? {} : { evidence: verdict.evidence };
+  const validClasses = (value) => {
+    if (!Array.isArray(value) || value.length === 0) return false;
+    const names = /* @__PURE__ */ new Set();
+    return value.every((entry) => {
+      if (!isRecord(entry) || !hasExactKeys(entry, ["name", "owner", "boundary", "disposition"])) {
+        return false;
+      }
+      for (const key of ["name", "owner", "boundary", "disposition"]) {
+        if (typeof entry[key] !== "string" || entry[key].trim().length === 0) {
+          return false;
+        }
+      }
+      if (entry.name.includes(",") || names.has(entry.name)) {
+        return false;
+      }
+      names.add(entry.name);
+      return true;
+    });
+  };
+  if (verdict.judgeStatus === "converged") {
+    const expectedKeys = withOptionalFields(["judgeStatus"]);
+    if (!hasExactKeys(verdict, expectedKeys)) {
+      const extraKeys = Object.keys(verdict).filter(
+        (key) => !expectedKeys.includes(key)
+      );
+      throw new Error(`Judge converged forbids extra keys: ${extraKeys.join(", ")}`);
+    }
+    return { judgeStatus: "converged", ...note, ...evidence };
+  }
+  if (verdict.judgeStatus === "continue") {
+    if (!hasExactKeys(verdict, withOptionalFields(["judgeStatus", "fix", "classes"])) || !isRecord(verdict.fix) || !hasExactKeys(verdict.fix, ["summary"]) || typeof verdict.fix.summary !== "string" || verdict.fix.summary.trim().length === 0 || !validClasses(verdict.classes)) {
+      throw new Error("Judge continue requires fix.summary and nonempty unique comma-free classes");
+    }
+    return {
+      judgeStatus: "continue",
+      fix: { summary: verdict.fix.summary },
+      classes: verdict.classes.map((entry) => ({ ...entry })),
+      ...note,
+      ...evidence
+    };
+  }
+  if (verdict.judgeStatus === "escalate") {
+    const gate = verdict.decisionGate;
+    if (!hasExactKeys(
+      verdict,
+      withOptionalFields(["judgeStatus", "decisionGate"])
+    ) || !isRecord(gate) || !hasExactKeys(gate, ["question", "options"]) || typeof gate.question !== "string" || gate.question.trim().length === 0 || !Array.isArray(gate.options) || gate.options.length === 0 || !gate.options.every(
+      (option) => typeof option === "string" && option.trim().length > 0
+    )) {
+      throw new Error(
+        "Judge escalate requires only a non-blank decisionGate question and options"
+      );
+    }
+    return {
+      judgeStatus: "escalate",
+      decisionGate: { question: gate.question, options: [...gate.options] },
+      ...note,
+      ...evidence
+    };
+  }
+  throw new Error("Judge verdict has an invalid status");
+}
 
 // src/exact-utf8.ts
 var decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -8789,6 +8870,12 @@ function renderPublicAkRoleCommand(target) {
 function encodeTerminalField(value) {
   return JSON.stringify(value);
 }
+function isLawfulTypedTerminalOutcome(outcome) {
+  return outcome.kind === "accepted" || outcome.kind === "audit_escalation";
+}
+function exitCodeForTerminalOutcome(outcome) {
+  return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
 function recommendationNavigatorFact(input) {
   void input.modelCommand;
   const command = renderPublicAkRoleCommand(input.next);
@@ -8810,9 +8897,15 @@ function recommendationNavigatorFact(input) {
 function formatTerminalResult(result2) {
   const lines = [];
   lines.push("role	outcome	status");
+  const outcomeStatus = result2.roleOutcome.kind === "failure" ? result2.roleOutcome.cause : result2.roleOutcome.status;
   lines.push(
-    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${encodeTerminalField(result2.roleOutcome.status)}`
+    `${result2.roleOutcome.role}	${result2.roleOutcome.kind}	${encodeTerminalField(outcomeStatus)}`
   );
+  if (result2.roleOutcome.kind === "failure") {
+    lines.push(
+      `diagnostic	${encodeTerminalField(result2.roleOutcome.diagnostic)}`
+    );
+  }
   const facts = result2.roleOutcome.decisiveFacts;
   for (const [key, value] of Object.entries(facts)) {
     if (value === void 0) continue;
@@ -8840,32 +8933,135 @@ function formatTerminalResult(result2) {
 }
 
 // src/public-cli/settlement.ts
+function conciseChildDiagnostic(stderr, fallback) {
+  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (/^at\s+/.test(line)) continue;
+    if (/^\s*at\s+/.test(line)) continue;
+    if (line.startsWith("event:")) continue;
+    if (/\btokens?=/.test(line)) continue;
+    if (/\btool_calls?=/.test(line)) continue;
+    return line.replace(/^Error:\s*/i, "").trim() || fallback;
+  }
+  return fallback;
+}
+function formatCliDiagnostic(message) {
+  return `ak-role: ${message}
+`;
+}
+function formatFailureStderrDiagnostic(failure) {
+  return formatCliDiagnostic(failure.diagnostic);
+}
+function presentStructuralRejection(error, io) {
+  io.stderr(formatCliDiagnostic(error.message));
+}
+async function inspectJudgeSession(sessionDirectory) {
+  try {
+    const files = (await readdir(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
+    if (files.length === 0) return { state: "missing" };
+    await readFile3(join5(sessionDirectory, files.at(-1)), "utf8");
+    return { state: "present" };
+  } catch (error) {
+    return {
+      state: "unreadable",
+      diagnostic: error instanceof Error ? error.message || error.name : String(error)
+    };
+  }
+}
+function thrownIdentity(error) {
+  const identity = {
+    name: error.name
+  };
+  const code = error.code;
+  if (typeof code === "string" || typeof code === "number") {
+    identity.code = code;
+  }
+  return identity;
+}
+function classifyPostAdmissionFailure(input) {
+  if (input.thrown !== void 0) {
+    const error = input.thrown;
+    if (error instanceof Error) {
+      const identity = thrownIdentity(error);
+      const tagged = error.failureCause;
+      const cause = tagged === "provider" || tagged === "activation" || tagged === "session" || tagged === "output" || tagged === "timeout" ? tagged : "unrecognized";
+      return {
+        cause,
+        diagnostic: error.message || error.name || "unrecognized exception",
+        identity
+      };
+    }
+    return {
+      cause: "unrecognized",
+      diagnostic: String(error)
+    };
+  }
+  if (input.timedOut) {
+    return {
+      cause: "timeout",
+      diagnostic: "judge role run timed out",
+      details: { timedOut: true, code: input.code }
+    };
+  }
+  if (input.knownCause !== void 0) {
+    const fallback = input.knownCause === "provider" ? "provider failure" : input.knownCause === "session" ? "session unreadable" : input.knownCause === "output" ? "Judge Role run completed without a lawful typed terminal result" : `judge role run failed (${input.knownCause})`;
+    return {
+      cause: input.knownCause,
+      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+      details: { code: input.code }
+    };
+  }
+  if (input.code !== 0) {
+    const fallback = `judge role run failed with exit ${input.code ?? "null"}`;
+    return {
+      cause: "activation",
+      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+      details: { code: input.code }
+    };
+  }
+  if (input.session?.state === "missing") {
+    return {
+      cause: "session",
+      diagnostic: "Judge Role run left no readable session transcript",
+      details: { code: input.code, session: "missing" }
+    };
+  }
+  if (input.session?.state === "unreadable") {
+    return {
+      cause: "session",
+      diagnostic: input.session.diagnostic,
+      details: { code: input.code, session: "unreadable" }
+    };
+  }
+  return {
+    cause: "output",
+    diagnostic: "Judge Role run completed without a lawful typed terminal result",
+    details: { code: input.code }
+  };
+}
 async function readLatestSessionEntries(sessionDirectory) {
   const files = (await readdir(sessionDirectory)).filter((file) => file.endsWith(".jsonl")).sort();
   if (files.length === 0) return [];
   const text = await readFile3(join5(sessionDirectory, files.at(-1)), "utf8");
   return text.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
-function isRecord(value) {
+function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function judgeDecisiveFacts(details) {
-  const facts = {};
-  if (typeof details.judgeStatus === "string") facts.judgeStatus = details.judgeStatus;
-  if (isRecord(details.fix) && typeof details.fix.summary === "string") {
-    facts.fixSummary = details.fix.summary;
+function judgeDecisiveFacts(verdict) {
+  const facts = {
+    judgeStatus: verdict.judgeStatus
+  };
+  if (verdict.judgeStatus === "continue") {
+    facts.fixSummary = verdict.fix.summary;
+    facts.classCount = verdict.classes.length;
+    facts.classNames = verdict.classes.map((entry) => entry.name).join(",");
   }
-  if (Array.isArray(details.classes)) {
-    facts.classCount = details.classes.length;
-    const names = details.classes.map((entry) => isRecord(entry) && typeof entry.name === "string" ? entry.name : void 0).filter((name) => name !== void 0);
-    if (names.length > 0) facts.classNames = names.join(",");
+  if (verdict.judgeStatus === "escalate") {
+    facts.decisionQuestion = verdict.decisionGate.question;
   }
-  if (isRecord(details.decisionGate)) {
-    if (typeof details.decisionGate.question === "string") {
-      facts.decisionQuestion = details.decisionGate.question;
-    }
-  }
-  if (typeof details.note === "string") facts.note = details.note;
+  if (verdict.note !== void 0) facts.note = verdict.note;
   return facts;
 }
 function extractJudgeRoleOutcome(entries) {
@@ -8882,17 +9078,20 @@ function extractJudgeRoleOutcome(entries) {
         kind: "audit_escalation",
         role: "judge",
         status: "audit_escalation",
-        decisiveFacts: isRecord(details) ? { ...details } : {}
+        decisiveFacts: { ...details }
       };
     }
-    if (!isRecord(details)) continue;
-    const status = typeof details.judgeStatus === "string" ? details.judgeStatus : "accepted";
-    return {
-      kind: "accepted",
-      role: "judge",
-      status,
-      decisiveFacts: judgeDecisiveFacts(details)
-    };
+    try {
+      const verdict = validateAcceptedJudgeDetails(details);
+      return {
+        kind: "accepted",
+        role: "judge",
+        status: verdict.judgeStatus,
+        decisiveFacts: judgeDecisiveFacts(verdict)
+      };
+    } catch {
+      continue;
+    }
   }
   return void 0;
 }
@@ -8905,11 +9104,11 @@ function extractNavigatorFact(entries) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
       const details = entry.message?.details ?? entry.details;
-      if (!isRecord(details)) continue;
+      if (!isRecord2(details)) continue;
       const disposition = details.disposition;
       if (disposition === "recommendation") {
         const next = details.next;
-        if (!isRecord(next) || typeof next.role !== "string") {
+        if (!isRecord2(next) || typeof next.role !== "string") {
           return {
             disposition: "unavailable",
             source: "unknown",
@@ -8917,7 +9116,7 @@ function extractNavigatorFact(entries) {
           };
         }
         const reason = typeof details.reason === "string" ? details.reason : "";
-        const route = Array.isArray(details.route) ? details.route.filter(isRecord).map((target) => ({
+        const route = Array.isArray(details.route) ? details.route.filter(isRecord2).map((target) => ({
           role: String(target.role),
           phase: navigatorPhaseValue(target.phase)
         })) : void 0;
@@ -9009,6 +9208,99 @@ async function settleJudgeTerminalResult(admitted) {
     runId: admitted.runId
   };
 }
+async function trySettleJudgeTerminalResult(admitted) {
+  try {
+    return await settleJudgeTerminalResult(admitted);
+  } catch {
+    return void 0;
+  }
+}
+async function publishFailureArtifacts(admitted, failure) {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const errorPath = join5(artifactsDir, "error.json");
+  const evidencePath = join5(artifactsDir, "evidence.json");
+  await writeFile3(
+    errorPath,
+    `${JSON.stringify(
+      {
+        kind: "error",
+        role: "judge",
+        runId: admitted.runId,
+        cause: failure.cause,
+        diagnostic: failure.diagnostic,
+        ...failure.identity === void 0 ? {} : { identity: failure.identity },
+        ...failure.details === void 0 ? {} : { details: failure.details }
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  await writeFile3(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        sessionDirectory: admitted.sessionDirectory,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength
+        })),
+        failureCause: failure.cause
+      },
+      null,
+      2
+    )}
+`,
+    "utf8"
+  );
+  return [
+    { kind: "error", path: errorPath },
+    { kind: "evidence", path: evidencePath }
+  ];
+}
+async function settleJudgeFailureTerminalResult(admitted, failure, navigator = { disposition: "no-advice" }) {
+  const artifacts = await publishFailureArtifacts(admitted, failure);
+  const decisiveFacts = {
+    cause: failure.cause,
+    diagnostic: failure.diagnostic
+  };
+  if (failure.identity?.name !== void 0) {
+    decisiveFacts.errorName = failure.identity.name;
+  }
+  if (failure.identity?.code !== void 0) {
+    decisiveFacts.errorCode = failure.identity.code;
+  }
+  const roleOutcome = {
+    kind: "failure",
+    role: "judge",
+    cause: failure.cause,
+    diagnostic: failure.diagnostic,
+    decisiveFacts
+  };
+  return {
+    roleOutcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId
+  };
+}
+function presentFailureTerminal(terminal, io) {
+  if (terminal.roleOutcome.kind !== "failure") {
+    throw new TypeError("presentFailureTerminal requires a failure role outcome");
+  }
+  io.stdout(formatTerminalResult(terminal));
+  io.stderr(
+    formatFailureStderrDiagnostic({
+      cause: terminal.roleOutcome.cause,
+      diagnostic: terminal.roleOutcome.diagnostic
+    })
+  );
+}
 
 // src/public-cli/judge-run.ts
 function buildModelArgs(model) {
@@ -9040,16 +9332,38 @@ function buildJudgeActivationExtraArgs(admitted, options = {}) {
     prompt
   ];
 }
-async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
-  const parsed = parseJudgeArgv2(argv);
-  const admitted = await admitJudgeInvocation({
-    home: env.home,
-    cwd: env.cwd,
-    instruction: parsed.instruction,
-    attachmentPaths: parsed.attachmentPaths,
-    ...parsed.project === void 0 ? {} : { project: parsed.project },
-    ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+async function presentControlledFailure(admitted, failureInput, io) {
+  const session = failureInput.thrown === void 0 && !failureInput.timedOut ? await inspectJudgeSession(admitted.sessionDirectory) : void 0;
+  const failure = classifyPostAdmissionFailure({
+    ...failureInput,
+    ...session === void 0 ? {} : { session }
   });
+  const terminal = await settleJudgeFailureTerminalResult(admitted, failure);
+  presentFailureTerminal(terminal, io);
+  return {
+    exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
+    admitted
+  };
+}
+async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
+  let admitted;
+  try {
+    const parsed = parseJudgeArgv2(argv);
+    admitted = await admitJudgeInvocation({
+      home: env.home,
+      cwd: env.cwd,
+      instruction: parsed.instruction,
+      attachmentPaths: parsed.attachmentPaths,
+      ...parsed.project === void 0 ? {} : { project: parsed.project },
+      ...env.createRunId === void 0 ? {} : { createRunId: env.createRunId }
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
   const extraArgs = buildJudgeActivationExtraArgs(admitted, {
     ...env.model === void 0 ? {} : { model: env.model },
     ...env.extraPiArgs === void 0 ? {} : { extraPiArgs: env.extraPiArgs }
@@ -9064,41 +9378,52 @@ async function runPublicJudge(argv, env, io, parseJudgeArgv2) {
   if (env.correlationId !== void 0 && env.correlationId.trim() !== "") {
     childEnv.AK_CORRELATION_ID = env.correlationId;
   }
-  const result2 = await runExplicitInternalActivation({
-    packageRoot: env.packageRoot,
-    extraArgs,
-    cwd: admitted.projectRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    env: childEnv,
-    ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
-    ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
-  });
+  let result2;
+  try {
+    result2 = await runExplicitInternalActivation({
+      packageRoot: env.packageRoot,
+      extraArgs,
+      cwd: admitted.projectRoot,
+      home: env.home,
+      agentDir: env.agentDir,
+      env: childEnv,
+      ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+      ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
+    });
+  } catch (error) {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error
+      },
+      io
+    );
+  }
   await writeFile4(
     join6(admitted.runDirectory, "stderr.log"),
     result2.stderr,
     "utf8"
   );
-  if (result2.timedOut) {
-    io.stderr("ak-role: judge role run timed out\n");
-    return { exitCode: 1, admitted };
+  const lawful = await trySettleJudgeTerminalResult(admitted);
+  if (lawful !== void 0 && isLawfulTypedTerminalOutcome(lawful.roleOutcome)) {
+    io.stdout(formatTerminalResult(lawful));
+    return {
+      exitCode: exitCodeForTerminalOutcome(lawful.roleOutcome),
+      admitted
+    };
   }
-  if (result2.code !== 0) {
-    const last = result2.stderr.trim() === "" ? "" : `: ${result2.stderr.trim().split("\n").at(-1)}`;
-    io.stderr(`ak-role: judge role run failed${last}
-`);
-    return { exitCode: 1, admitted };
-  }
-  try {
-    const terminal = await settleJudgeTerminalResult(admitted);
-    io.stdout(formatTerminalResult(terminal));
-    return { exitCode: 0, admitted };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr(`ak-role: ${message}
-`);
-    return { exitCode: 1, admitted };
-  }
+  return await presentControlledFailure(
+    admitted,
+    {
+      timedOut: result2.timedOut,
+      code: result2.code,
+      stderr: result2.stderr
+    },
+    io
+  );
 }
 
 // src/public-cli/cli.ts
@@ -9406,13 +9731,15 @@ async function runAkRole(argv, env) {
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
     if (error instanceof CliUsageError) {
-      io.stderr(`ak-role: ${error.message}
-`);
+      presentStructuralRejection(error, io);
       return { exitCode: 2 };
     }
-    const message = error instanceof Error ? error.message : String(error);
-    io.stderr(`ak-role: ${message}
-`);
+    if (error instanceof Error) {
+      const label = error.name !== "" && error.name !== "Error" ? `${error.name}: ${error.message}` : error.message;
+      io.stderr(formatCliDiagnostic(label || error.name || "unrecognized exception"));
+      return { exitCode: 1 };
+    }
+    io.stderr(formatCliDiagnostic(String(error)));
     return { exitCode: 1 };
   }
 }

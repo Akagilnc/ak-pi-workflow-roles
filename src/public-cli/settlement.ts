@@ -1,27 +1,224 @@
 /**
  * Shared settlement for public Role runs: role outcome + Navigator fact + artifacts
- * into one Terminal result (ADR 0052 / #106 / #101).
+ * into one Terminal result (ADR 0052 / #106 / #107 / #101).
+ * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../package-contracts/judge-output.ts";
+import {
+  JUDGE_OUTPUT_TOOL_NAME,
+  validateAcceptedJudgeDetails,
+  type JudgeVerdict,
+} from "../package-contracts/judge-output.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
 import {
+  exitCodeForTerminalOutcome,
   formatTerminalResult,
+  isLawfulTypedTerminalOutcome,
   recommendationNavigatorFact,
+  type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalNavigatorFact,
   type TerminalResult,
   type TerminalRoleOutcome,
 } from "./terminal.ts";
 
-export { formatTerminalResult };
+export type { ControlledFailureCause };
+
+export {
+  exitCodeForTerminalOutcome,
+  formatTerminalResult,
+  isLawfulTypedTerminalOutcome,
+};
+
+/** Preserved post-admission failure cause (not a role Receipt). */
+export type ControlledFailure = {
+  readonly cause: ControlledFailureCause;
+  readonly diagnostic: string;
+  readonly identity?: {
+    readonly name?: string;
+    readonly code?: string | number;
+  };
+  readonly details?: Readonly<Record<string, unknown>>;
+};
+
+/**
+ * Pick one concise diagnostic line from child stderr without stacks/events/tokens.
+ * Prefers the last nonblank line that does not look like a frame or event flood.
+ */
+export function conciseChildDiagnostic(
+  stderr: string,
+  fallback: string,
+): string {
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]!;
+    if (/^at\s+/.test(line)) continue;
+    if (/^\s*at\s+/.test(line)) continue;
+    if (line.startsWith("event:")) continue;
+    if (/\btokens?=/.test(line)) continue;
+    if (/\btool_calls?=/.test(line)) continue;
+    // Strip a leading "Error:" label but keep the message identity.
+    return line.replace(/^Error:\s*/i, "").trim() || fallback;
+  }
+  return fallback;
+}
+
+export function formatCliDiagnostic(message: string): string {
+  return `ak-role: ${message}\n`;
+}
+
+export function formatFailureStderrDiagnostic(failure: ControlledFailure): string {
+  return formatCliDiagnostic(failure.diagnostic);
+}
+
+/** Pre-admission structural rejection: stderr only, no run, no Terminal. */
+export function presentStructuralRejection(
+  error: { message: string },
+  io: { stderr: (text: string) => void },
+): void {
+  io.stderr(formatCliDiagnostic(error.message));
+}
+
+/** Session readiness after an admitted activation attempt. */
+export type SessionReadiness =
+  | { readonly state: "missing" }
+  | { readonly state: "unreadable"; readonly diagnostic: string }
+  | { readonly state: "present" };
+
+export async function inspectJudgeSession(
+  sessionDirectory: string,
+): Promise<SessionReadiness> {
+  try {
+    const files = (await readdir(sessionDirectory))
+      .filter((file) => file.endsWith(".jsonl"))
+      .sort();
+    if (files.length === 0) return { state: "missing" };
+    await readFile(join(sessionDirectory, files.at(-1)!), "utf8");
+    return { state: "present" };
+  } catch (error) {
+    return {
+      state: "unreadable",
+      diagnostic:
+        error instanceof Error
+          ? error.message || error.name
+          : String(error),
+    };
+  }
+}
+
+function thrownIdentity(error: Error): {
+  name?: string;
+  code?: string | number;
+} {
+  const identity: { name?: string; code?: string | number } = {
+    name: error.name,
+  };
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" || typeof code === "number") {
+    identity.code = code;
+  }
+  return identity;
+}
+
+/**
+ * Classify a controlled post-admission failure without washing unrecognized identities.
+ * Cause classes are closed; diagnostic text retains the original identity when known.
+ *
+ * Order: thrown → timeout → knownCause → activation (nonzero) → session → output.
+ */
+export function classifyPostAdmissionFailure(input: {
+  timedOut: boolean;
+  code: number | null;
+  stderr: string;
+  thrown?: unknown;
+  session?: SessionReadiness;
+  /** Upstream-typed cause when the failure origin is already known. */
+  knownCause?: ControlledFailureCause;
+}): ControlledFailure {
+  if (input.thrown !== undefined) {
+    const error = input.thrown;
+    if (error instanceof Error) {
+      const identity = thrownIdentity(error);
+      const tagged = (error as { failureCause?: unknown }).failureCause;
+      const cause: ControlledFailureCause =
+        tagged === "provider" ||
+        tagged === "activation" ||
+        tagged === "session" ||
+        tagged === "output" ||
+        tagged === "timeout"
+          ? tagged
+          : "unrecognized";
+      return {
+        cause,
+        diagnostic: error.message || error.name || "unrecognized exception",
+        identity,
+      };
+    }
+    return {
+      cause: "unrecognized",
+      diagnostic: String(error),
+    };
+  }
+  if (input.timedOut) {
+    return {
+      cause: "timeout",
+      diagnostic: "judge role run timed out",
+      details: { timedOut: true, code: input.code },
+    };
+  }
+  if (input.knownCause !== undefined) {
+    const fallback =
+      input.knownCause === "provider"
+        ? "provider failure"
+        : input.knownCause === "session"
+          ? "session unreadable"
+          : input.knownCause === "output"
+            ? "Judge Role run completed without a lawful typed terminal result"
+            : `judge role run failed (${input.knownCause})`;
+    return {
+      cause: input.knownCause,
+      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+      details: { code: input.code },
+    };
+  }
+  if (input.code !== 0) {
+    const fallback = `judge role run failed with exit ${input.code ?? "null"}`;
+    return {
+      cause: "activation",
+      diagnostic: conciseChildDiagnostic(input.stderr, fallback),
+      details: { code: input.code },
+    };
+  }
+  if (input.session?.state === "missing") {
+    return {
+      cause: "session",
+      diagnostic: "Judge Role run left no readable session transcript",
+      details: { code: input.code, session: "missing" },
+    };
+  }
+  if (input.session?.state === "unreadable") {
+    return {
+      cause: "session",
+      diagnostic: input.session.diagnostic,
+      details: { code: input.code, session: "unreadable" },
+    };
+  }
+  return {
+    cause: "output",
+    diagnostic: "Judge Role run completed without a lawful typed terminal result",
+    details: { code: input.code },
+  };
+}
 
 /** Post-role Navigator delivery grace (Issue #11 / #101 / #106). */
 export const NAVIGATOR_POST_ROLE_GRACE_MS = 3_000;
@@ -61,31 +258,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function judgeDecisiveFacts(details: Record<string, unknown>): Record<string, unknown> {
-  const facts: Record<string, unknown> = {};
-  if (typeof details.judgeStatus === "string") facts.judgeStatus = details.judgeStatus;
-  if (isRecord(details.fix) && typeof details.fix.summary === "string") {
-    facts.fixSummary = details.fix.summary;
+function judgeDecisiveFacts(verdict: JudgeVerdict): Record<string, unknown> {
+  const facts: Record<string, unknown> = {
+    judgeStatus: verdict.judgeStatus,
+  };
+  if (verdict.judgeStatus === "continue") {
+    facts.fixSummary = verdict.fix.summary;
+    facts.classCount = verdict.classes.length;
+    facts.classNames = verdict.classes.map((entry) => entry.name).join(",");
   }
-  if (Array.isArray(details.classes)) {
-    facts.classCount = details.classes.length;
-    const names = details.classes
-      .map((entry) => (isRecord(entry) && typeof entry.name === "string" ? entry.name : undefined))
-      .filter((name): name is string => name !== undefined);
-    if (names.length > 0) facts.classNames = names.join(",");
+  if (verdict.judgeStatus === "escalate") {
+    facts.decisionQuestion = verdict.decisionGate.question;
   }
-  if (isRecord(details.decisionGate)) {
-    if (typeof details.decisionGate.question === "string") {
-      facts.decisionQuestion = details.decisionGate.question;
-    }
-  }
-  if (typeof details.note === "string") facts.note = details.note;
+  if (verdict.note !== undefined) facts.note = verdict.note;
   return facts;
 }
 
+/** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
+export type LawfulJudgeRoleOutcome = Extract<
+  TerminalRoleOutcome,
+  { kind: "accepted" } | { kind: "audit_escalation" }
+>;
+
 export function extractJudgeRoleOutcome(
   entries: readonly SessionEntry[],
-): TerminalRoleOutcome | undefined {
+): LawfulJudgeRoleOutcome | undefined {
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type !== "message") continue;
@@ -99,18 +296,21 @@ export function extractJudgeRoleOutcome(
         kind: "audit_escalation",
         role: "judge",
         status: "audit_escalation",
-        decisiveFacts: isRecord(details) ? { ...details } : {},
+        decisiveFacts: { ...details },
       };
     }
-    if (!isRecord(details)) continue;
-    const status =
-      typeof details.judgeStatus === "string" ? details.judgeStatus : "accepted";
-    return {
-      kind: "accepted",
-      role: "judge",
-      status,
-      decisiveFacts: judgeDecisiveFacts(details),
-    };
+    // Ordinary details must pass the package Judge verdict validator (ADR 0043 / #107 AC4).
+    try {
+      const verdict = validateAcceptedJudgeDetails(details);
+      return {
+        kind: "accepted",
+        role: "judge",
+        status: verdict.judgeStatus,
+        decisiveFacts: judgeDecisiveFacts(verdict),
+      };
+    } catch {
+      continue;
+    }
   }
   return undefined;
 }
@@ -250,6 +450,125 @@ export async function settleJudgeTerminalResult(
     artifacts,
     runId: admitted.runId,
   };
+}
+
+/**
+ * Try to settle a lawful typed terminal result from the admitted session.
+ * Returns undefined when no lawful outcome exists (caller takes failure path).
+ */
+export async function trySettleJudgeTerminalResult(
+  admitted: AdmittedJudgeInvocation,
+): Promise<TerminalResult | undefined> {
+  try {
+    return await settleJudgeTerminalResult(admitted);
+  } catch {
+    return undefined;
+  }
+}
+
+export async function publishFailureArtifacts(
+  admitted: AdmittedJudgeInvocation,
+  failure: ControlledFailure,
+): Promise<TerminalArtifactRef[]> {
+  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const errorPath = join(artifactsDir, "error.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    errorPath,
+    `${JSON.stringify(
+      {
+        kind: "error",
+        role: "judge",
+        runId: admitted.runId,
+        cause: failure.cause,
+        diagnostic: failure.diagnostic,
+        ...(failure.identity === undefined ? {} : { identity: failure.identity }),
+        ...(failure.details === undefined ? {} : { details: failure.details }),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        sessionDirectory: admitted.sessionDirectory,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+        failureCause: failure.cause,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "error", path: errorPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
+/**
+ * Durably record a controlled failure (Error Artifact first), then return the
+ * Terminal aggregate. Presentation must happen only after this resolves.
+ */
+export async function settleJudgeFailureTerminalResult(
+  admitted: AdmittedJudgeInvocation,
+  failure: ControlledFailure,
+  navigator: TerminalNavigatorFact = { disposition: "no-advice" },
+): Promise<TerminalResult> {
+  const artifacts = await publishFailureArtifacts(admitted, failure);
+  const decisiveFacts: Record<string, unknown> = {
+    cause: failure.cause,
+    diagnostic: failure.diagnostic,
+  };
+  if (failure.identity?.name !== undefined) {
+    decisiveFacts.errorName = failure.identity.name;
+  }
+  if (failure.identity?.code !== undefined) {
+    decisiveFacts.errorCode = failure.identity.code;
+  }
+  const roleOutcome: TerminalRoleOutcome = {
+    kind: "failure",
+    role: "judge",
+    cause: failure.cause,
+    diagnostic: failure.diagnostic,
+    decisiveFacts,
+  };
+  return {
+    roleOutcome,
+    navigator,
+    artifacts,
+    runId: admitted.runId,
+  };
+}
+
+/**
+ * Emit one complete failure Terminal on stdout and one concise stderr diagnostic.
+ * Artifacts are already durable on the TerminalResult.
+ */
+export function presentFailureTerminal(
+  terminal: TerminalResult,
+  io: { stdout: (text: string) => void; stderr: (text: string) => void },
+): void {
+  if (terminal.roleOutcome.kind !== "failure") {
+    throw new TypeError("presentFailureTerminal requires a failure role outcome");
+  }
+  io.stdout(formatTerminalResult(terminal));
+  io.stderr(
+    formatFailureStderrDiagnostic({
+      cause: terminal.roleOutcome.cause,
+      diagnostic: terminal.roleOutcome.diagnostic,
+    }),
+  );
 }
 
 /**
