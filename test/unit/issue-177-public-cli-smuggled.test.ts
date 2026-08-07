@@ -1288,10 +1288,17 @@ test("escalate face keeps judge decisionGate options when bookkeeping is unreada
         toolResult.details,
       );
       // Seam-level: both gates and conflicts present before public settle.
-      const details = toolResult.details as Record<string, unknown>;
+      const details = toolResult.details;
       assert.deepEqual(details.decisionGate, verdict.decisionGate);
       assert.deepEqual(details.conflicts, decision.conflicts);
       assert.deepEqual(details.auditDecisionGate, decision.decisionGate);
+      // Human text reads audit-owned home only — role question is not the audit Question.
+      const human = toolResult.content[0].text;
+      assert.equal(
+        human.includes(`Question: ${roleGate.question}`),
+        false,
+        "role question must not be presented as the audit Question",
+      );
     });
 
     const result = await runAkRole(
@@ -1342,21 +1349,5 @@ test("escalate face keeps judge decisionGate options when bookkeeping is unreada
       false,
       "must not show Judge verdict accepted",
     );
-
-    // Negative: dropping either option text from the face must fail the same checks.
-    for (const dropped of roleGate.options) {
-      const stripped = face.replace(dropped, "");
-      assert.equal(
-        stripped.includes(dropped),
-        false,
-        `negative: stripped face must not still contain ${dropped}`,
-      );
-      assert.equal(
-        stripped.includes(roleGate.options[0]!) &&
-          stripped.includes(roleGate.options[1]!),
-        false,
-        "negative: removing one option text must break dual-presence",
-      );
-    }
   });
 });
