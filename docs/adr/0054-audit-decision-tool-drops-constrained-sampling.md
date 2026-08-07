@@ -1,6 +1,6 @@
 # 审刑院决策工具关闭约束采样
 
-Status: proposed
+Status: accepted
 
 `createComplianceDecisionTool`（`src/compliance-transport.ts`）不再声明 `constrainedSampling`。
 

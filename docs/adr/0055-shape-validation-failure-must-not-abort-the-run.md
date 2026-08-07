@@ -1,6 +1,6 @@
 # 形状校验失败不得中止本局
 
-Status: proposed
+Status: accepted
 
 代码不得因**形状校验**失败中止本局（「形状校验」定义见 CONTEXT.md）。角色已交付的输出原样交调用者，情形以既有 typed failure cause 如实标明（`src/public-cli/terminal.ts` 的 `ControlledFailureCause`）。
 
