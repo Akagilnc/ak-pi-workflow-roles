@@ -1,6 +1,6 @@
 # 打回须给理由的要求由 runtime 迁至四席审刑院 soul
 
-Status: proposed
+Status: accepted
 
 **这是对 [ADR 0033](0033-compliance-decisions-only-require-fields-needed-by-the-status.md) 的具名修订，不是默删。**
 

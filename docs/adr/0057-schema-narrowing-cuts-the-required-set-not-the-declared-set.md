@@ -1,6 +1,6 @@
 # 交卷 schema 零 `required`，声明全保留
 
-Status: proposed
+Status: accepted
 
 交卷工具 schema 的改造为：**`required` 数组清空**（含记账位）；字段**保留声明、保留 description**；顶层允许额外属性。记账位的精确 key 与取值域写在 `description` 里——那是**要求**，不是校验。删除的是手写校验器与跨字段状态机，不是字段声明。
 
