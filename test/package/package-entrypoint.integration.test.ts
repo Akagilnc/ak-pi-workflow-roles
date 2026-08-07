@@ -525,7 +525,7 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         // encoded the destruction this ticket forbids.
         assert.equal(result.details.kind, "audit_escalation");
         assert.deepEqual(result.details.conflicts, escalation.conflicts);
-        assert.deepEqual(result.details.decisionGate, escalation.decisionGate);
+        assert.deepEqual(result.details.auditDecisionGate, escalation.decisionGate);
         for (const [key, value] of Object.entries(outputs[role])) {
           assert.deepEqual(
             (result.details as Record<string, unknown>)[key],
@@ -1814,7 +1814,7 @@ test("packaged judge escalation emits one typed human decision", async () => {
         assert.deepEqual(toolResult.details.conflicts, [
           "Soul authority conflicts with controlling authority",
         ]);
-        assert.deepEqual(toolResult.details.decisionGate, {
+        assert.deepEqual(toolResult.details.auditDecisionGate, {
           question: "Which authority governs this verdict?",
           options: ["Soul", "Controlling authority"],
         });

@@ -4,13 +4,22 @@ import type { ComplianceDecision } from "./compliance-transport.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
+/**
+ * Escalation delivery face.
+ * `kind` / `conflicts` / `auditDecisionGate` are audit-owned and fixed-shape.
+ * Role-delivered fields ride beside them as open content (ADR 0055) — including
+ * a role `decisionGate` when present. The index signature tells that truth so
+ * callers never need a cast to retain role output.
+ */
 export type AuditEscalationResult = {
   readonly kind: typeof AUDIT_ESCALATION_KIND;
   readonly conflicts: readonly unknown[];
-  readonly decisionGate: {
+  /** Audit-owned gate — single fixed home, never the role's gate. */
+  readonly auditDecisionGate: {
     readonly question: string;
     readonly options: readonly unknown[];
   };
+  readonly [key: string]: unknown;
 };
 
 export type AuditEscalationToolResult = {
@@ -25,18 +34,21 @@ export type AuditEscalationToolResult = {
  * Role-delivered fields ride under the escalation discriminator (ADR 0055).
  * `kind` always wins so the discriminator cannot be laundered.
  * `conflicts` always come from the audit (why we escalated).
- * `decisionGate`: the role's own gate is never overwritten. When the role
- * brought one, the audit gate is carried beside it in full as
- * `auditDecisionGate` so neither side is folded or dropped; when the role
- * brought none, the audit gate occupies the canonical key.
+ * `auditDecisionGate` is always the audit's own gate — one fixed home.
+ * A role `decisionGate`, when present, stays at its own key via spread and is
+ * never overwritten (not folded, not dropped, not swapped into the audit home).
  */
 export function buildAuditEscalationResult(
   decision: Extract<ComplianceDecision, { status: "escalate" }>,
   deliveredOutput?: unknown,
 ): AuditEscalationResult {
-  const auditGate = {
-    question: decision.decisionGate.question,
-    options: [...decision.decisionGate.options],
+  const auditOwned = {
+    kind: AUDIT_ESCALATION_KIND,
+    conflicts: [...decision.conflicts],
+    auditDecisionGate: {
+      question: decision.decisionGate.question,
+      options: [...decision.decisionGate.options],
+    },
   };
   if (
     deliveredOutput !== undefined &&
@@ -44,39 +56,24 @@ export function buildAuditEscalationResult(
     typeof deliveredOutput === "object" &&
     !Array.isArray(deliveredOutput)
   ) {
-    const delivered = deliveredOutput as Record<string, unknown>;
-    if (Object.hasOwn(delivered, "decisionGate")) {
-      // Role gate stays at decisionGate; audit gate rides beside it.
-      // Cast via unknown: spread carries decisionGate, which tsc cannot see.
-      return {
-        ...delivered,
-        kind: AUDIT_ESCALATION_KIND,
-        conflicts: [...decision.conflicts],
-        auditDecisionGate: auditGate,
-      } as unknown as AuditEscalationResult;
-    }
     return {
-      ...delivered,
-      kind: AUDIT_ESCALATION_KIND,
-      conflicts: [...decision.conflicts],
-      decisionGate: auditGate,
-    } as AuditEscalationResult;
+      ...(deliveredOutput as Record<string, unknown>),
+      ...auditOwned,
+    };
   }
-  return {
-    kind: AUDIT_ESCALATION_KIND,
-    conflicts: [...decision.conflicts],
-    decisionGate: auditGate,
-  };
+  return auditOwned;
 }
 
 function humanDecisionText(result: AuditEscalationResult): string {
+  // Read only the audit-owned, fixed-shape gate. Role payload is not assumed
+  // to be a {question, options} object — that assumption is what threw.
   return [
     "Human decision required: compliance audit escalation.",
     "Conflicts:",
     ...result.conflicts.map((conflict) => `- ${conflict}`),
-    `Question: ${result.decisionGate.question}`,
+    `Question: ${result.auditDecisionGate.question}`,
     "Options:",
-    ...result.decisionGate.options.map((option) => `- ${option}`),
+    ...result.auditDecisionGate.options.map((option) => `- ${option}`),
   ].join("\n");
 }
 
