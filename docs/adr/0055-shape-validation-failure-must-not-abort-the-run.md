@@ -2,7 +2,7 @@
 
 Status: proposed
 
-代码不得因**形状校验**失败中止本局（「形状校验」定义见 CONTEXT.md）。角色已交付的输出原样交调用者，并在终局结果中标明未判或审计未完成。
+代码不得因**形状校验**失败中止本局（「形状校验」定义见 CONTEXT.md）。角色已交付的输出原样交调用者，情形以既有 typed failure cause 如实标明（`src/public-cli/terminal.ts` 的 `ControlledFailureCause`）。
 
 语义核验与现场事实核验不属形状校验，不在本条射程；其失败按失败诚实宪法与 [ADR 0052](0052-public-cli-is-the-only-supported-external-role-interface.md) 走响亮终结，不得静默放行。**保留项判据的唯一真源在仓级 `CLAUDE.md` 第 0 条，本 ADR 只引用、不另列名单。**
 
