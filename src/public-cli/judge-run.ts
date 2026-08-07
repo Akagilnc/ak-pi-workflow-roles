@@ -300,9 +300,7 @@ async function dispatchAdmittedJudge(input: {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...(env.timeoutMs === undefined
-          ? { timeoutMs: 600_000 }
-          : { timeoutMs: env.timeoutMs }),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(env.piRunner === undefined ? {} : { runner: env.piRunner }),
       });
     } catch (error) {

@@ -443,6 +443,16 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+    // #177 S2: reviewer axis report text is legally withheld from decisiveFacts;
+    // the durable receipt on the report artifact carries the full reports map.
+    const reviewerReportBody = await readFile(
+      terminal.artifacts.find((a) => a.kind === "report")!.path,
+      "utf8",
+    );
+    assert.ok(
+      reviewerReportBody.includes("standards report"),
+      "reviewer standards report text must live in artifact receipt",
+    );
 
     const evidence = JSON.parse(
       await readFile(

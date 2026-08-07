@@ -4,6 +4,7 @@
  * this adapter (or an intentional developer `pi -e`) crosses that boundary.
  */
 import { spawn } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
@@ -134,33 +135,58 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
 ) => {
   const command = options.env.PI_BINARY ?? "pi";
   return await new Promise((resolveResult, reject) => {
-    const child = spawn(command, [...args], {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
+    // Redirect child stdout to /dev/null — do not pipe/accumulate (CLAUDE.md Role
+    // invocation evidence; result.stdout has zero consumers in src/). Using the
+    // literal stdio value "ignore" breaks shebang scripts on macOS posix_spawn;
+    // an opened /dev/null fd keeps the child runnable without buffering.
+    // Open /dev/null for child stdout. Keep the parent fd open until the child
+    // exits — closing early races posix_spawn inheritance on macOS and can leave
+    // shebang scripts unable to start. Never pipe stdout into memory.
+    const stdoutFd = openSync("/dev/null", "w");
+    const releaseStdoutFd = (): void => {
+      try {
+        closeSync(stdoutFd);
+      } catch {
+        // already closed
+      }
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(command, [...args], {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: ["ignore", stdoutFd, "pipe"],
+      });
+    } catch (error) {
+      releaseStdoutFd();
+      reject(error);
+      return;
+    }
     let stderr = "";
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs ?? 30_000);
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
+    // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
+    // SIGKILL is unconditionally forbidden (host constitution art. 9) — graceful SIGTERM only.
+    const timer =
+      options.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            child.kill("SIGTERM");
+          }, options.timeoutMs);
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
+      releaseStdoutFd();
       reject(error);
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
+      releaseStdoutFd();
       resolveResult({
         code,
-        stdout,
+        stdout: "",
         stderr,
         timedOut,
         args: [...args],
