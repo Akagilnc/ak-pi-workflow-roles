@@ -520,11 +520,19 @@ test("role outputs run nested audits through pass, revise, and escalation", asyn
         const escalationTool = escalated.harness.tools.get(tool.name);
         const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, outputContext(tool.name, `${role}-escalate`));
         assert.equal(result.terminate, true);
-        assert.deepEqual(result.details, {
-          kind: "audit_escalation",
-          conflicts: escalation.conflicts,
-          decisionGate: escalation.decisionGate,
-        });
+        // Escalation face carries audit kind/conflicts/gate AND the seat's
+        // already-delivered fields (ADR 0055). Old "exactly three keys" deepEqual
+        // encoded the destruction this ticket forbids.
+        assert.equal(result.details.kind, "audit_escalation");
+        assert.deepEqual(result.details.conflicts, escalation.conflicts);
+        assert.deepEqual(result.details.decisionGate, escalation.decisionGate);
+        for (const [key, value] of Object.entries(outputs[role])) {
+          assert.deepEqual(
+            (result.details as Record<string, unknown>)[key],
+            value,
+            `${role} delivered field ${key} must ride the escalate face`,
+          );
+        }
         assert.equal(isAuditEscalationResult(result.details), true);
         assert.throws(
           () => terminating.validateAcceptedDetails(acceptedNames[role], result.details),
@@ -1801,14 +1809,19 @@ test("packaged judge escalation emits one typed human decision", async () => {
         }
         const toolResult = result.message;
         assert.equal(toolResult.isError, false);
-        assert.deepEqual(toolResult.details, {
-          kind: "audit_escalation",
-          conflicts: ["Soul authority conflicts with controlling authority"],
-          decisionGate: {
-            question: "Which authority governs this verdict?",
-            options: ["Soul", "Controlling authority"],
-          },
+        // Audit face + delivered judge verdict retained together (ADR 0055).
+        assert.equal(toolResult.details.kind, "audit_escalation");
+        assert.deepEqual(toolResult.details.conflicts, [
+          "Soul authority conflicts with controlling authority",
+        ]);
+        assert.deepEqual(toolResult.details.decisionGate, {
+          question: "Which authority governs this verdict?",
+          options: ["Soul", "Controlling authority"],
         });
+        assert.equal(
+          (toolResult.details as { judgeStatus?: unknown }).judgeStatus,
+          "converged",
+        );
         assert.equal(isAuditEscalationResult(toolResult.details), true);
         assert.throws(
           () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, toolResult.details),

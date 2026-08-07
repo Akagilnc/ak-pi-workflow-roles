@@ -9745,30 +9745,25 @@ var defaultExplicitInternalPiRunner = async (args, options) => {
     const child = spawn(command, [...args], {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "ignore", "pipe"]
     });
-    let stdout = "";
     let stderr = "";
     let timedOut = false;
-    const timer = setTimeout(() => {
+    const timer = options.timeoutMs === void 0 ? void 0 : setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs ?? 3e4);
-    child.stdout.setEncoding("utf8").on("data", (chunk) => {
-      stdout += chunk;
-    });
+      child.kill("SIGTERM");
+    }, options.timeoutMs);
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
+      if (timer !== void 0) clearTimeout(timer);
       reject(error);
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (timer !== void 0) clearTimeout(timer);
       resolveResult({
         code,
-        stdout,
         stderr,
         timedOut,
         args: [...args]
@@ -10062,17 +10057,7 @@ function isAuditEscalationResult(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const result2 = value;
-  const gate = result2.decisionGate;
-  if (result2.kind !== AUDIT_ESCALATION_KIND || !Array.isArray(result2.conflicts) || result2.conflicts.length === 0 || !result2.conflicts.every(
-    (conflict) => typeof conflict === "string" && conflict.trim().length > 0
-  ) || typeof gate !== "object" || gate === null || Array.isArray(gate)) {
-    return false;
-  }
-  const gateRecord = gate;
-  return typeof gateRecord.question === "string" && gateRecord.question.trim().length > 0 && Array.isArray(gateRecord.options) && gateRecord.options.length > 0 && gateRecord.options.every(
-    (option) => typeof option === "string" && option.trim().length > 0
-  );
+  return value.kind === AUDIT_ESCALATION_KIND;
 }
 
 // src/package-contracts/terminating-tools.ts
@@ -13341,11 +13326,19 @@ function judgeDecisiveFacts(verdict) {
     facts.fixSummary = verdict.fix.summary;
     facts.classCount = verdict.classes.length;
     facts.classNames = verdict.classes.map((entry) => entry.name).join(",");
+    facts.classes = verdict.classes.map((entry) => ({
+      name: entry.name,
+      owner: entry.owner,
+      boundary: entry.boundary,
+      disposition: entry.disposition
+    }));
   }
   if (verdict.judgeStatus === "escalate") {
     facts.decisionQuestion = verdict.decisionGate.question;
+    facts.decisionOptions = [...verdict.decisionGate.options];
   }
   if (verdict.note !== void 0) facts.note = verdict.note;
+  if (verdict.evidence !== void 0) facts.evidence = verdict.evidence;
   return facts;
 }
 function coderDecisiveFacts(output) {
@@ -14589,10 +14582,24 @@ async function publishFailureArtifacts(admitted, failure) {
     { kind: "evidence", path: evidenceWrite.path }
   ];
 }
+function redactDecisiveFactValue(value, runId) {
+  if (typeof value === "string") return redactExactRunId(value, runId);
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactDecisiveFactValue(entry, runId));
+  }
+  if (typeof value === "object" && value !== null) {
+    const out = {};
+    for (const [key, child] of Object.entries(value)) {
+      out[key] = redactDecisiveFactValue(child, runId);
+    }
+    return out;
+  }
+  return value;
+}
 function redactDecisiveFactsForPublicTerminal(facts, runId) {
   const out = {};
   for (const [key, value] of Object.entries(facts)) {
-    out[key] = typeof value === "string" ? redactExactRunId(value, runId) : value;
+    out[key] = redactDecisiveFactValue(value, runId);
   }
   return out;
 }
@@ -14805,7 +14812,7 @@ async function dispatchAdmittedJudge(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -15100,7 +15107,7 @@ async function dispatchAdmittedCoder(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -15405,7 +15412,7 @@ async function dispatchAdmittedCollector(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -15614,7 +15621,7 @@ async function dispatchAdmittedDoctor(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -15746,15 +15753,18 @@ function buildModelArgs5(model) {
 }
 function buildFixerActivationExtraArgs(admitted, options) {
   const prompt = buildFixerTransportPrompt(admitted);
-  const skillPath = resolvePackagedMethodSkillPath(
+  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs"
   );
+  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
   const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
   return [
     "--no-skills",
     "--skill",
-    skillPath,
+    diagnosisSkillPath,
+    "--skill",
+    tddSkillPath,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
@@ -15777,15 +15787,18 @@ function buildFixerActivationExtraArgs(admitted, options) {
   ];
 }
 function buildFixerResumeActivationExtraArgs(admitted, options) {
-  const skillPath = resolvePackagedMethodSkillPath(
+  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs"
   );
+  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
   const prerequisiteArgs = admitted.prerequisitesPath === void 0 ? [] : ["--ak-fixer-prerequisites", admitted.prerequisitesPath];
   return [
     "--no-skills",
     "--skill",
-    skillPath,
+    diagnosisSkillPath,
+    "--skill",
+    tddSkillPath,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
@@ -15870,7 +15883,7 @@ async function dispatchAdmittedFixer(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16215,7 +16228,7 @@ async function dispatchAdmittedMerger(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {
@@ -16655,7 +16668,7 @@ async function dispatchAdmittedReviewer(input) {
         home: env.home,
         agentDir: env.agentDir,
         env: childEnv,
-        ...env.timeoutMs === void 0 ? { timeoutMs: 6e5 } : { timeoutMs: env.timeoutMs },
+        ...env.timeoutMs === void 0 ? {} : { timeoutMs: env.timeoutMs },
         ...env.piRunner === void 0 ? {} : { runner: env.piRunner }
       });
     } catch (error) {

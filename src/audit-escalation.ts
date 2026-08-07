@@ -22,35 +22,51 @@ export type AuditEscalationToolResult = {
 
 /**
  * Build the escalation delivery face.
- * When the role already delivered output, spread it under the escalation
- * discriminator so callers still receive the original fields (ADR 0055).
- * Escalation keys win on clash so kind/conflicts/decisionGate cannot be
- * laundered by role-output field names.
+ * Role-delivered fields ride under the escalation discriminator (ADR 0055).
+ * `kind` always wins so the discriminator cannot be laundered.
+ * `conflicts` always come from the audit (why we escalated).
+ * `decisionGate`: the role's own gate is never overwritten. When the role
+ * brought one, the audit gate is carried beside it in full as
+ * `auditDecisionGate` so neither side is folded or dropped; when the role
+ * brought none, the audit gate occupies the canonical key.
  */
 export function buildAuditEscalationResult(
   decision: Extract<ComplianceDecision, { status: "escalate" }>,
   deliveredOutput?: unknown,
 ): AuditEscalationResult {
-  const escalation = {
-    kind: AUDIT_ESCALATION_KIND,
-    conflicts: [...decision.conflicts],
-    decisionGate: {
-      question: decision.decisionGate.question,
-      options: [...decision.decisionGate.options],
-    },
-  } as const;
+  const auditGate = {
+    question: decision.decisionGate.question,
+    options: [...decision.decisionGate.options],
+  };
   if (
     deliveredOutput !== undefined &&
     deliveredOutput !== null &&
     typeof deliveredOutput === "object" &&
     !Array.isArray(deliveredOutput)
   ) {
+    const delivered = deliveredOutput as Record<string, unknown>;
+    if (Object.hasOwn(delivered, "decisionGate")) {
+      // Role gate stays at decisionGate; audit gate rides beside it.
+      // Cast via unknown: spread carries decisionGate, which tsc cannot see.
+      return {
+        ...delivered,
+        kind: AUDIT_ESCALATION_KIND,
+        conflicts: [...decision.conflicts],
+        auditDecisionGate: auditGate,
+      } as unknown as AuditEscalationResult;
+    }
     return {
-      ...(deliveredOutput as Record<string, unknown>),
-      ...escalation,
+      ...delivered,
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: [...decision.conflicts],
+      decisionGate: auditGate,
     } as AuditEscalationResult;
   }
-  return escalation;
+  return {
+    kind: AUDIT_ESCALATION_KIND,
+    conflicts: [...decision.conflicts],
+    decisionGate: auditGate,
+  };
 }
 
 function humanDecisionText(result: AuditEscalationResult): string {
