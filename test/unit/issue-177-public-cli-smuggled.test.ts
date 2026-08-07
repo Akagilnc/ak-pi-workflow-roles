@@ -1226,3 +1226,137 @@ test("S4: compliance decision causally gates judge verdict on public CLI termina
     });
   }
 });
+
+test("escalate face keeps judge decisionGate options when bookkeeping is unreadable", async () => {
+  // Class 1 r3: blind escalation spread must not eat the role's own gate.
+  // Public CLI entrance; unreadable fallthrough; assert content only.
+  const roleGate = {
+    question: "删除还是保留 600s 墙钟？",
+    options: ["A 全删", "B 保留并指定 owner"] as string[],
+  };
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io, stdout } = captureIo();
+    const verdict = {
+      judgeStatus: "escalate" as const,
+      decisionGate: {
+        question: roleGate.question,
+        options: [...roleGate.options],
+      },
+    };
+
+    let sessionPayload = "";
+    await withPersistedSession(async (sessionManager) => {
+      const auditor = createPiJudgeAuditor(async () =>
+        // Missing status → unreadable bookkeeping fallthrough (empty gate).
+        judgeAuditMessage({}),
+      );
+      const decision = await auditor(
+        {
+          soul: "THE JUDGE LAW",
+          transcript: "THE ADJUDICATION RECORD",
+          verdict,
+        },
+        { context: complianceContext(sessionManager) },
+      );
+      assert.equal(decision.status, "escalate");
+      if (decision.status !== "escalate") {
+        throw new Error("expected unreadable fallthrough escalate");
+      }
+      assert.ok(
+        decision.conflicts.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE),
+      );
+      assert.deepEqual(decision.decisionGate.options, []);
+
+      const toolResult = await disposeComplianceDecision(
+        decision,
+        {
+          pass: () => {
+            throw new Error("must not pass");
+          },
+          revise: () => {
+            throw new Error("must not revise");
+          },
+          escalate: (result) => result,
+        },
+        verdict,
+      );
+      sessionPayload = sessionToolResultLine(
+        JUDGE_OUTPUT_TOOL_NAME,
+        toolResult.details,
+      );
+      // Seam-level: both gates and conflicts present before public settle.
+      const details = toolResult.details as Record<string, unknown>;
+      assert.deepEqual(details.decisionGate, verdict.decisionGate);
+      assert.deepEqual(details.conflicts, decision.conflicts);
+      assert.deepEqual(details.auditDecisionGate, decision.decisionGate);
+    });
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "escalate options must survive unreadable"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-r3-escalate-gate-retention",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(
+            join(sessionDir, "session.jsonl"),
+            sessionPayload,
+            "utf8",
+          );
+          return {
+            code: 0,
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+          };
+        },
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "audit_escalation");
+    const face = stdout.join("");
+    const presented = formatTerminalResult(result.terminal!);
+    assert.equal(face, presented);
+
+    // Option texts appear in full, in input order (content only — not key names).
+    const firstIdx = face.indexOf(roleGate.options[0]!);
+    const secondIdx = face.indexOf(roleGate.options[1]!);
+    assert.ok(firstIdx >= 0, "first option text must appear on the terminal face");
+    assert.ok(secondIdx >= 0, "second option text must appear on the terminal face");
+    assert.ok(firstIdx < secondIdx, "option order must match input");
+    assert.ok(
+      face.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE),
+      "audit conflicts label must remain on the face",
+    );
+    assert.equal(
+      face.includes(JUDGE_ACCEPTED_TEXT),
+      false,
+      "must not show Judge verdict accepted",
+    );
+
+    // Negative: dropping either option text from the face must fail the same checks.
+    for (const dropped of roleGate.options) {
+      const stripped = face.replace(dropped, "");
+      assert.equal(
+        stripped.includes(dropped),
+        false,
+        `negative: stripped face must not still contain ${dropped}`,
+      );
+      assert.equal(
+        stripped.includes(roleGate.options[0]!) &&
+          stripped.includes(roleGate.options[1]!),
+        false,
+        "negative: removing one option text must break dual-presence",
+      );
+    }
+  });
+});

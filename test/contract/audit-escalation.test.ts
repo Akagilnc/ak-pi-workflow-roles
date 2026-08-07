@@ -262,7 +262,65 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
   );
   assert.equal((result.details as { note?: unknown }).note, "keep-me");
   assert.deepEqual(result.details.conflicts, ["conflict"]);
+  // Role brought no decisionGate — audit gate occupies the canonical key.
+  assert.deepEqual(result.details.decisionGate, decision.decisionGate);
   // Without delivered output, verdict fields are absent (negative control).
   const stripped = projectAuditEscalation(decision).details;
   assert.equal((stripped as { note?: unknown }).note, undefined);
+});
+
+test("escalate face keeps role decisionGate and audit gate side by side", async () => {
+  const roleGate = {
+    question: "删除还是保留 600s 墙钟？",
+    options: ["A 全删", "B 保留并指定 owner"],
+  };
+  const decision = {
+    status: "escalate" as const,
+    conflicts: ["审刑院记账位不可读"],
+    decisionGate: { question: "", options: [] as unknown[] },
+  };
+  const delivered = {
+    judgeStatus: "escalate" as const,
+    reasoning: "need owner choice",
+    decisionGate: roleGate,
+    classes: [] as unknown[],
+  };
+  const result = await disposeComplianceDecision(
+    decision,
+    {
+      pass: () => {
+        throw new Error("pass");
+      },
+      revise: () => {
+        throw new Error("revise");
+      },
+      escalate: (value) => value,
+    },
+    delivered,
+  );
+  const details = result.details as Record<string, unknown>;
+  assert.equal(details.kind, AUDIT_ESCALATION_KIND);
+  assert.equal(details.judgeStatus, "escalate");
+  assert.equal(details.reasoning, "need owner choice");
+  assert.deepEqual(details.classes, []);
+  // Role's options survive in full, in order — not eaten by empty audit gate.
+  assert.deepEqual(details.decisionGate, roleGate);
+  assert.deepEqual(details.conflicts, decision.conflicts);
+  // Audit gate remains readable beside the role gate (neither folded).
+  assert.deepEqual(details.auditDecisionGate, decision.decisionGate);
+  // kind cannot be laundered by a role field of the same name.
+  const launder = await disposeComplianceDecision(
+    decision,
+    {
+      pass: () => {
+        throw new Error("pass");
+      },
+      revise: () => {
+        throw new Error("revise");
+      },
+      escalate: (value) => value,
+    },
+    { kind: "not-escalation", decisionGate: roleGate },
+  );
+  assert.equal(launder.details.kind, AUDIT_ESCALATION_KIND);
 });
