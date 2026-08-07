@@ -290,23 +290,26 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
   }
 });
 
-test("Codex decision schema is an object with every property required", () => {
+test("Codex decision schema is an object with empty required and four declared properties", () => {
   assert.equal(complianceDecisionSchema.type, "object");
   assert.equal((complianceDecisionSchema as { anyOf?: unknown }).anyOf, undefined);
-  assert.deepEqual(
-    complianceDecisionSchema.required,
-    Object.keys(complianceDecisionSchema.properties),
-  );
-  assert.deepEqual(Object.keys(complianceDecisionSchema.properties), [
-    "status",
-    "violations",
+  const required = (complianceDecisionSchema as { required?: string[] }).required ?? [];
+  assert.deepEqual(required, []);
+  assert.deepEqual(Object.keys(complianceDecisionSchema.properties ?? {}).sort(), [
     "conflicts",
     "decisionGate",
+    "status",
+    "violations",
   ]);
+  assert.notEqual(
+    (complianceDecisionSchema as { additionalProperties?: unknown }).additionalProperties,
+    false,
+  );
 });
 
-test("status-dependent decision combinations are validated at the shared parser seam", async () => {
-  const invalidArguments = [
+test("status-dependent and loose decision shapes are accepted without aborting the run", async () => {
+  // Former reject matrix (#177 S4 / ADR 0055-0057): runtime no longer shape-rejects.
+  const looseArguments = [
     { status: "pass", violations: [], conflicts: ["unexpected"], decisionGate: null },
     { status: "pass", violations: [], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
     { status: "pass", violations: ["unexpected"], conflicts: [], decisionGate: null },
@@ -317,18 +320,23 @@ test("status-dependent decision combinations are validated at the shared parser 
     { status: "escalate", violations: ["unexpected"], conflicts: ["conflict"], decisionGate: { question: "Choose", options: ["A"] } },
     { status: "escalate", violations: [], conflicts: ["conflict"], decisionGate: null },
     { status: "pass" },
+    // #179 glm-5.2: arrays written as strings
+    { status: "pass", violations: "[]", conflicts: "[]", decisionGate: null },
   ];
 
-  for (const [index, arguments_] of invalidArguments.entries()) {
+  for (const [index, arguments_] of looseArguments.entries()) {
     await withPersistedSession(async (sessionManager) => {
-      await assert.rejects(
-        audit(
-          response(`invalid-status-${index}`, [
-            fauxToolCall(decisionToolName, arguments_),
-          ]),
-          sessionManager,
-        ),
-        (error: unknown) => error instanceof Error && error.name === "ComplianceDecisionContractError",
+      const decision = await audit(
+        response(`loose-status-${index}`, [
+          fauxToolCall(decisionToolName, arguments_),
+        ]),
+        sessionManager,
+      );
+      assert.ok(
+        decision.status === "pass" ||
+          decision.status === "revise" ||
+          decision.status === "escalate",
+        `variant ${index} must resolve without throwing`,
       );
     });
   }
@@ -387,26 +395,15 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       errorPresent: false,
     },
     {
-      id: "malformed-arguments",
+      // Non-object arguments still rejected (out of #177; object-guard retained).
+      id: "malformed-arguments-not-object",
       content: [
-        fauxToolCall(decisionToolName, {
-          status: "pass",
-          violations: ["pass must be empty"],
-          conflicts: [],
-          decisionGate: null,
-        }),
+        fauxToolCall(decisionToolName, "not-an-object" as unknown as Record<string, unknown>),
       ],
-      stopReason: "error" as const,
-      diagnostics: [
-        {
-          type: "schema-diagnostic",
-          timestamp: 11,
-          details: { source: "test" },
-        },
-      ],
+      stopReason: "toolUse" as const,
       expectedCount: 1,
       expectedNames: [decisionToolName],
-      errorPresent: true,
+      errorPresent: false,
     },
   ];
 

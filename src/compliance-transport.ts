@@ -8,8 +8,7 @@ import {
   type Usage,
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import { Value } from "typebox/value";
+import { Type } from "typebox";
 
 import {
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
@@ -64,32 +63,68 @@ export type ComplianceDispatch = {
   };
 };
 
-const nonblank = Type.String({ minLength: 1, pattern: "\\S" });
-const decisionGateSchema = Type.Object(
-  {
-    question: nonblank,
-    options: Type.Array(nonblank, { minItems: 1 }),
-  },
-  { additionalProperties: false },
-);
-
 /**
- * Codex requires the registered function parameters to be an object at the
- * root. Status-dependent field combinations are checked by the shared parser
- * below because JSON Schema cannot express this contract without a root union.
+ * Compliance decision tool parameters (ADR 0057):
+ * - four field declarations + descriptions retained as model guidance
+ * - required array empty (including bookkeeping `status`)
+ * - additional properties allowed
+ * Runtime must not reject for missing/extra/wrong-typed fields (CLAUDE.md art. 0).
  */
 export const complianceDecisionSchema = Type.Object(
   {
-    status: Type.Union([
-      Type.Literal("pass"),
-      Type.Literal("revise"),
-      Type.Literal("escalate"),
-    ]),
-    violations: Type.Array(nonblank),
-    conflicts: Type.Array(nonblank),
-    decisionGate: Type.Union([decisionGateSchema, Type.Null()]),
+    status: Type.Optional(
+      Type.Union(
+        [
+          Type.Literal("pass"),
+          Type.Literal("revise"),
+          Type.Literal("escalate"),
+        ],
+        {
+          description:
+            "Bookkeeping discriminator. Exact key and domain pass|revise|escalate are guidance for the model, not machine-enforced required checks.",
+        },
+      ),
+    ),
+    violations: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          "When status is revise, list each violation reason. Empty is allowed at runtime (soul-enforced per ADR 0056).",
+      }),
+    ),
+    conflicts: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          "When status is escalate, list each conflict the human gate must resolve.",
+      }),
+    ),
+    decisionGate: Type.Optional(
+      Type.Union(
+        [
+          Type.Object(
+            {
+              question: Type.Optional(
+                Type.String({
+                  description: "Non-blank human decision question",
+                }),
+              ),
+              options: Type.Optional(
+                Type.Array(Type.String(), {
+                  description: "One or more non-blank options",
+                }),
+              ),
+            },
+            { additionalProperties: true },
+          ),
+          Type.Null(),
+        ],
+        {
+          description:
+            "When status is escalate, human decision gate with question and options; otherwise null.",
+        },
+      ),
+    ),
   },
-  { additionalProperties: false },
+  { additionalProperties: true },
 );
 
 const complianceDecisionArgumentInstructions = [
@@ -99,8 +134,6 @@ const complianceDecisionArgumentInstructions = [
   'escalate: {"status":"escalate","violations":[],"conflicts":["non-blank conflict"],"decisionGate":{"question":"non-blank question","options":["non-blank option"]}}',
   "Use the neutral values shown for fields not used by the selected status.",
 ].join("\n");
-
-type ComplianceDecisionArguments = Static<typeof complianceDecisionSchema>;
 
 type ComplianceToolChoice =
   | "any"
@@ -270,78 +303,38 @@ function malformedComplianceDecision(
   );
 }
 
-function isArrayOfStrings(value: unknown): value is readonly string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+/** Coerce model-provided list fields: real arrays, JSON array strings, or empty. */
+function coerceStringArray(value: unknown): readonly string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string");
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return [];
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item): item is string => typeof item === "string");
+      }
+    } catch {
+      // Non-JSON string: keep as a single degraded entry when non-blank.
+    }
+    return [value];
+  }
+  return [];
 }
 
-type ValidComplianceDecisionArguments =
-  | { status: "pass"; violations: readonly string[] }
-  | { status: "revise"; violations: readonly string[] }
-  | {
-    status: "escalate";
-    conflicts: readonly string[];
-    decisionGate: { question: string; options: readonly string[] };
-  };
-
-function validateStatusDependentDecision(
-  decision: ComplianceDecisionArguments,
-  response: AssistantMessage,
-  toolName: string,
-  invalidLabel: string,
-  calls: readonly Extract<AssistantMessage["content"][number], { type: "toolCall" }>[],
-): ValidComplianceDecisionArguments {
-  const reject = (reason: string): never => {
-    throw malformedComplianceDecision(
-      response,
-      toolName,
-      invalidLabel,
-      reason,
-      calls,
-    );
-  };
-
-  switch (decision.status) {
-    case "pass": {
-      const { violations, conflicts, decisionGate } = decision;
-      if (
-        !isArrayOfStrings(violations) ||
-        !isArrayOfStrings(conflicts) ||
-        violations.length !== 0 ||
-        conflicts.length !== 0 ||
-        decisionGate !== null
-      ) {
-        reject("arguments do not match the pass decision contract");
-      }
-      return { status: "pass", violations };
-    }
-    case "revise": {
-      const { violations, conflicts, decisionGate } = decision;
-      if (
-        !isArrayOfStrings(violations) ||
-        !isArrayOfStrings(conflicts) ||
-        violations.length === 0 ||
-        conflicts.length !== 0 ||
-        decisionGate !== null
-      ) {
-        reject("arguments do not match the revise decision contract");
-      }
-      return { status: "revise", violations };
-    }
-    case "escalate": {
-      const { violations, conflicts, decisionGate } = decision;
-      if (
-        !isArrayOfStrings(violations) ||
-        !isArrayOfStrings(conflicts) ||
-        violations.length !== 0 ||
-        conflicts.length === 0 ||
-        decisionGate === null
-      ) {
-        reject("arguments do not match the escalate decision contract");
-      }
-      const validDecisionGate = decisionGate ?? reject("arguments do not match the escalate decision contract");
-      return { status: "escalate", conflicts, decisionGate: validDecisionGate };
-    }
+/** Read whatever decisionGate shape arrived; missing pieces degrade, never reject. */
+function coerceDecisionGate(
+  value: unknown,
+): { question: string; options: readonly string[] } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { question: "", options: [] };
   }
+  const record = value as Record<string, unknown>;
+  const question = typeof record.question === "string" ? record.question : "";
+  const options = coerceStringArray(record.options);
+  return { question, options };
 }
 
 /**
@@ -412,6 +405,7 @@ export function readComplianceDecision(
     arguments_ === null ||
     Array.isArray(arguments_)
   ) {
+    // Out of #177 scope: no fields readable → owned by #182 failure-honesty line.
     throw malformedComplianceDecision(
       response,
       toolName,
@@ -420,39 +414,28 @@ export function readComplianceDecision(
       calls,
     );
   }
-  if (!Value.Check(complianceDecisionSchema, arguments_)) {
-    throw malformedComplianceDecision(
-      response,
-      toolName,
-      invalidLabel,
-      "arguments do not match the decision schema",
-      calls,
-    );
+  // ADR 0055/0057: shape is guidance, not a reject gate. Read what arrived.
+  const args = arguments_ as Record<string, unknown>;
+  const status = args.status;
+  if (status === "revise") {
+    return {
+      status: "revise",
+      violations: coerceStringArray(args.violations),
+      usage: response.usage,
+    };
   }
-  const decision = validateStatusDependentDecision(
-    arguments_ as ComplianceDecisionArguments,
-    response,
-    toolName,
-    invalidLabel,
-    calls,
-  );
-  switch (decision.status) {
-    case "pass":
-      return { status: "pass", usage: response.usage };
-    case "revise":
-      return {
-        status: "revise",
-        violations: decision.violations,
-        usage: response.usage,
-      };
-    case "escalate":
-      return {
-        status: "escalate",
-        conflicts: decision.conflicts,
-        decisionGate: decision.decisionGate,
-        usage: response.usage,
-      };
+  if (status === "escalate") {
+    return {
+      status: "escalate",
+      conflicts: coerceStringArray(args.conflicts),
+      decisionGate: coerceDecisionGate(args.decisionGate),
+      usage: response.usage,
+    };
   }
+  // pass, missing status, or unknown bookkeeping value: do not abort the run
+  // (CONTEXT.md bookkeeping-bit rule + ADR 0040). Degrade to pass so the
+  // already-delivered role output can be retained.
+  return { status: "pass", usage: response.usage };
 }
 
 function throwIfStreamIdleTimedOut(reason: unknown): void {

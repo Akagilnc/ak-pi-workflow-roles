@@ -381,6 +381,19 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     );
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
+    // #177 S2: merger report is legally withheld from decisiveFacts; receipt holds it.
+    assert.equal(
+      Object.hasOwn(terminal.roleOutcome.decisiveFacts, "report"),
+      false,
+    );
+    const mergerReportBody = await readFile(
+      terminal.artifacts.find((a) => a.kind === "report")!.path,
+      "utf8",
+    );
+    assert.ok(
+      mergerReportBody.includes(receipt.report),
+      "merger report text must live in artifact receipt",
+    );
 
     const evidence = JSON.parse(
       await readFile(

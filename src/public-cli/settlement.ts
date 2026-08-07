@@ -551,11 +551,22 @@ function judgeDecisiveFacts(verdict: JudgeVerdict): Record<string, unknown> {
     facts.fixSummary = verdict.fix.summary;
     facts.classCount = verdict.classes.length;
     facts.classNames = verdict.classes.map((entry) => entry.name).join(",");
+    // Full class rows: owner/boundary/disposition have no artifact surface on judge.
+    facts.classes = verdict.classes.map((entry) => ({
+      name: entry.name,
+      owner: entry.owner,
+      boundary: entry.boundary,
+      disposition: entry.disposition,
+    }));
   }
   if (verdict.judgeStatus === "escalate") {
     facts.decisionQuestion = verdict.decisionGate.question;
+    // Preserve every option text in order — do not join/summarize (issue #177 S1).
+    facts.decisionOptions = [...verdict.decisionGate.options];
   }
   if (verdict.note !== undefined) facts.note = verdict.note;
+  // evidence has no durable artifact surface on the judge path — present when present.
+  if (verdict.evidence !== undefined) facts.evidence = verdict.evidence;
   return facts;
 }
 
@@ -2430,14 +2441,30 @@ export async function publishFailureArtifacts(
  * Durably record a controlled failure (Error Artifact first), then return the
  * Terminal aggregate. Presentation must happen only after this resolves.
  */
-/** Redact exact run ID from string-valued decisive facts at the public Terminal boundary. */
+/** Redact exact run ID from any string leaves inside decisive facts (arrays/objects included). */
+function redactDecisiveFactValue(value: unknown, runId: string): unknown {
+  if (typeof value === "string") return redactExactRunId(value, runId);
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactDecisiveFactValue(entry, runId));
+  }
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = redactDecisiveFactValue(child, runId);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Redact exact run ID from decisive facts at the public Terminal boundary. */
 function redactDecisiveFactsForPublicTerminal(
   facts: Readonly<Record<string, unknown>>,
   runId: string,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(facts)) {
-    out[key] = typeof value === "string" ? redactExactRunId(value, runId) : value;
+    out[key] = redactDecisiveFactValue(value, runId);
   }
   return out;
 }

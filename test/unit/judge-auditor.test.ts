@@ -119,25 +119,24 @@ test("Pi judge auditor accepts an exact revise decision", async () => {
   );
 });
 
-test("Pi judge auditor rejects malformed and contradictory decisions", async (t) => {
-  const cases: Array<[string, Record<string, unknown>]> = [
-    ["pass with violations", { status: "pass", violations: ["contradiction"] }],
-    ["empty revise", { status: "revise", violations: [] }],
-    ["blank violation", { status: "revise", violations: ["  "] }],
-    ["mixed violation values", { status: "revise", violations: ["real", 4] }],
-    ["non-array violations", { status: "revise", violations: "rule 1" }],
-    ["unknown key", { status: "pass", violations: [], explanation: "extra" }],
-    ["missing violations", { status: "pass" }],
-    ["unknown status", { status: "maybe", violations: [] }],
+test("Pi judge auditor accepts formerly shape-rejected decisions without aborting (#177 S4)", async (t) => {
+  // ADR 0055/0056/0057: runtime no longer shape-rejects compliance decisions.
+  const cases: Array<[string, Record<string, unknown>, "pass" | "revise"]> = [
+    ["pass with violations", { status: "pass", violations: ["contradiction"] }, "pass"],
+    ["empty revise", { status: "revise", violations: [] }, "revise"],
+    ["blank violation", { status: "revise", violations: ["  "] }, "revise"],
+    ["mixed violation values", { status: "revise", violations: ["real", 4] }, "revise"],
+    ["non-array violations", { status: "revise", violations: "rule 1" }, "revise"],
+    ["unknown key", { status: "pass", violations: [], explanation: "extra" }, "pass"],
+    ["missing violations", { status: "pass" }, "pass"],
+    ["unknown status", { status: "maybe", violations: [] }, "pass"],
   ];
 
-  for (const [name, decision] of cases) {
+  for (const [name, decision, expected] of cases) {
     await t.test(name, async () => {
       const auditor = createPiJudgeAuditor(async () => auditResponse(decision));
-      await assert.rejects(
-        auditor(auditInput, { context: auditContext() }),
-        /invalid soul audit decision/,
-      );
+      const result = await auditor(auditInput, { context: auditContext() });
+      assert.equal(result.status, expected);
     });
   }
 });
