@@ -12,7 +12,7 @@
 - **形状校验(Shape validation)**:拒收理由**只涉数据的排布**——在场/缺席、键拼写、基数、类型、跨字段组合。一旦拒收理由需要引用**外部可观察事实或世界规则**(现场 Git 状态、字节重算、路径授权、对象同一性),即**非**形状校验。代码对角色输出的形状校验拒收权与中止权归零,见 CLAUDE.md 第 0 条。
 - **记账位(Ledger slot)**:每份角色输出唯一一个精确 key 及取值域(如 `judgeStatus`),供落账、呈现与渲染分支。**不是编排控制流**——上一代编排器按三态派下一个 worker,本包无 runner,组合与顺序归调用者([ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md))。判定其有效性归 [ADR 0040](docs/adr/0040-keep-only-required-execution-discriminators.md);无效时不得中止本局。
 - **未判(Unadjudicated)/审计未完成(Audit incomplete)**:**不是第四种判词**,是「本次运行未产生判词」/「判词未经审计」。角色已交付输出,故仍属合法 typed 终局、退 0;该事实须在终局结果中显式可见,不得静默。
-- **承接者判据(Successor test)**:删与留之争的可核验判据——**删掉之后,那一类失败还有没有人接?有人接,删就是正事;没人接,保留就是容错。**「容错」本身不可核验(任何多余机制都能自称容错),承接者可以:去代码里看该失败类别的处理路径是否与既有机制相交。本判据不倒置 [ADR 0036](docs/adr/0036-format-validation-defaults-to-delete.md) 的举证责任——举证仍在保留方,只是把「特别理由」的内容钉成「指出无替代承接者」。
+- **承接者判据(Successor test)**:删与留之争的可核验判据——**删掉之后,那一类失败还有没有人接?有人接,删就是正事;没人接,保留就是容错。**「容错」本身不可核验(任何多余机制都能自称容错),承接者可以:去代码里看该失败类别的处理路径是否与既有机制相交。本判据不倒置 [ADR 0036](docs/adr/0036-format-validation-defaults-to-delete.md) 的举证责任——举证仍在保留方,只是把「特别理由」的内容钉成「指出无替代承接者」。**无承接者是保留的必要条件,不是充分条件**:仍须过宿主全局宪法的护栏三问(出事概率、后果轻重、下游兜底),且不得落入 ADR 0036 的失格类别(看不见收益 / 仅统一写法 / **仅预防廉价且会响的失败**)。
 - **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围扫描全仓;清单 ID 与已知文件只是不完全实例和证据索引,不是施工白名单。施工后按同一类别重新扫描残余,保留项逐类说明特别理由。
 - **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。规范见 [ADR 0021](docs/adr/0021-collector-manifest-validates-semantics-not-json-spelling.md)。
 - **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。规范见 [ADR 0022](docs/adr/0022-delete-unconsumed-collector-manifest-schema.md)。

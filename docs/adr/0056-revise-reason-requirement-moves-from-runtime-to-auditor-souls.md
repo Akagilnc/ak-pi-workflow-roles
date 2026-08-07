@@ -8,6 +8,8 @@ Status: proposed
 
 为何不能默删：它防的是「打回却不说理由」。配合 [ADR 0007](0007-no-audit-retry-brake.md)「审计重交不设重试帽」，一个空 `violations` 的 revise 即无理由死循环——真实可复现的失败，护栏三问全过。删除它必须有承接者（CONTEXT.md「承接者判据」）。
 
+准入依据：仓级 `CLAUDE.md` Soul 准入检查第 2 题已同批限定为「能否由 schema 或 runtime **合法且**更准确地表达或强制（第 0 条禁止的形状拒收不算『能』）」——本要求在 runtime 侧的强制形态正是第 0 条所禁的形状拒收，故第 2 题答「否」，内容合法进入 bundled Soul。
+
 承接接缝为四席，因 `createComplianceDecisionTool` 被 `judge-auditor` / `reviewer-auditor` / `fixer-auditor` / `doctor-auditor` 共用同一 schema 与同一校验器，删除 runtime 检查对四席同时生效。四席 soul 现状与所需补法：
 
 | soul | 现状 | 补法 |

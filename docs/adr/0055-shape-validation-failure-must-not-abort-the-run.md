@@ -4,7 +4,7 @@ Status: proposed
 
 代码不得因**形状校验**失败中止本局（「形状校验」定义见 CONTEXT.md）。角色已交付的输出原样交调用者，并在终局结果中标明未判或审计未完成。
 
-语义核验与现场事实核验不属形状校验，不在本条射程；其失败按失败诚实宪法与 [ADR 0052](0052-public-cli-is-the-only-supported-external-role-interface.md) 走响亮终结，不得静默放行。具名保留：[ADR 0018](0018-activation-fails-closed.md) 的激活闸、[ADR 0023](0023-judge-and-merger-use-one-output-schema-owner.md) 与 [ADR 0037](0037-keep-live-target-authority-and-evidence-binding.md) 的现场事实核验。
+语义核验与现场事实核验不属形状校验，不在本条射程；其失败按失败诚实宪法与 [ADR 0052](0052-public-cli-is-the-only-supported-external-role-interface.md) 走响亮终结，不得静默放行。**保留项判据的唯一真源在仓级 `CLAUDE.md` 第 0 条，本 ADR 只引用、不另列名单。**
 
 理由：一个 LLM 没交出合格 typed 输出，不该毁掉另一个 LLM 已经完成的劳动。实证——同一份卷上两条对照腿的判词（其一点名生产路径违反宿主全局宪法第 9 条）因审刑院自身的形状校验失败被连带 abort，零留存。正确模式仓内已有三处：`reviewer-role.ts` 与 `collector-role.ts` 的 fatal/非 fatal 分流、README 的 Navigator 契约「never invalidates the role result」。
 
