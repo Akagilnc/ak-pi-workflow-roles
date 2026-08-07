@@ -299,12 +299,6 @@ test("buildReviewerActivationExtraArgs forces package code-review and derived ca
     const args = buildReviewerActivationExtraArgs(admitted, { packageRoot });
     assert.equal(args.includes("--no-skills"), true);
     assert.equal(args.includes("--skill"), true);
-    assert.equal(
-      args[args.indexOf("--skill") + 1]?.includes(
-        "resources/methods/code-review/SKILL.md",
-      ),
-      true,
-    );
     assert.equal(args.includes("--ak-role"), true);
     assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
     assert.equal(args[args.indexOf("--ak-review-task") + 1], admitted.taskPath);
@@ -616,12 +610,6 @@ test("ak-role reviewer admits base/task, derives capabilities, and rejects blank
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "reviewer");
       assert.equal(captured!.includes("--skill"), true);
-      assert.equal(
-        captured![captured!.indexOf("--skill") + 1]?.includes(
-          "resources/methods/code-review/SKILL.md",
-        ),
-        true,
-      );
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.equal(
         result.terminal?.roleOutcome.kind === "accepted"

@@ -292,19 +292,22 @@ test("shared compliance transport retains valid nested decisions verbatim", asyn
 
 test("Codex decision schema is an object with empty required and four declared properties", () => {
   assert.equal(complianceDecisionSchema.type, "object");
-  assert.equal((complianceDecisionSchema as { anyOf?: unknown }).anyOf, undefined);
-  const required = (complianceDecisionSchema as { required?: string[] }).required ?? [];
-  assert.deepEqual(required, []);
+  // JSON round-trip reads wire shape without fighting TObject's `required: undefined` typing.
+  const wire = JSON.parse(JSON.stringify(complianceDecisionSchema)) as {
+    anyOf?: unknown;
+    required?: string[];
+    properties?: Record<string, unknown>;
+    additionalProperties?: unknown;
+  };
+  assert.equal(wire.anyOf, undefined);
+  assert.deepEqual(wire.required ?? [], []);
   assert.deepEqual(Object.keys(complianceDecisionSchema.properties ?? {}).sort(), [
     "conflicts",
     "decisionGate",
     "status",
     "violations",
   ]);
-  assert.notEqual(
-    (complianceDecisionSchema as { additionalProperties?: unknown }).additionalProperties,
-    false,
-  );
+  assert.notEqual(wire.additionalProperties, false);
 });
 
 test("status-dependent and loose decision shapes are accepted without aborting the run", async () => {
@@ -443,7 +446,16 @@ test("status-dependent and loose decision shapes are accepted without aborting t
 });
 
 test("malformed nested decisions retain raw responses and report typed facts", async () => {
-  const cases = [
+  const cases: Array<{
+    id: string;
+    content: AssistantMessage["content"];
+    stopReason: AssistantMessage["stopReason"];
+    errorMessage?: string;
+    diagnostics?: AssistantMessage["diagnostics"];
+    expectedCount: number;
+    expectedNames: string[];
+    errorPresent: boolean;
+  }> = [
     {
       id: "terminal-error-with-valid-call",
       content: [

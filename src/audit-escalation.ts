@@ -20,17 +20,37 @@ export type AuditEscalationToolResult = {
   usage?: Usage;
 };
 
+/**
+ * Build the escalation delivery face.
+ * When the role already delivered output, spread it under the escalation
+ * discriminator so callers still receive the original fields (ADR 0055).
+ * Escalation keys win on clash so kind/conflicts/decisionGate cannot be
+ * laundered by role-output field names.
+ */
 export function buildAuditEscalationResult(
   decision: Extract<ComplianceDecision, { status: "escalate" }>,
+  deliveredOutput?: unknown,
 ): AuditEscalationResult {
-  return {
+  const escalation = {
     kind: AUDIT_ESCALATION_KIND,
     conflicts: [...decision.conflicts],
     decisionGate: {
       question: decision.decisionGate.question,
       options: [...decision.decisionGate.options],
     },
-  };
+  } as const;
+  if (
+    deliveredOutput !== undefined &&
+    deliveredOutput !== null &&
+    typeof deliveredOutput === "object" &&
+    !Array.isArray(deliveredOutput)
+  ) {
+    return {
+      ...(deliveredOutput as Record<string, unknown>),
+      ...escalation,
+    } as AuditEscalationResult;
+  }
+  return escalation;
 }
 
 function humanDecisionText(result: AuditEscalationResult): string {
@@ -46,8 +66,9 @@ function humanDecisionText(result: AuditEscalationResult): string {
 
 export function projectAuditEscalation(
   decision: Extract<ComplianceDecision, { status: "escalate" }>,
+  deliveredOutput?: unknown,
 ): AuditEscalationToolResult {
-  const details = buildAuditEscalationResult(decision);
+  const details = buildAuditEscalationResult(decision, deliveredOutput);
   return {
     content: [{ type: "text", text: humanDecisionText(details) }],
     details,
@@ -56,38 +77,17 @@ export function projectAuditEscalation(
   };
 }
 
+/**
+ * Discriminator-only recognition (ADR 0040). Shape of conflicts/options/gate
+ * is not a reject gate — element types and cardinality are delivery content.
+ */
 export function isAuditEscalationResult(
   value: unknown,
 ): value is AuditEscalationResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const result = value as Record<string, unknown>;
-  const gate = result.decisionGate;
-  if (
-    result.kind !== AUDIT_ESCALATION_KIND ||
-    !Array.isArray(result.conflicts) ||
-    result.conflicts.length === 0 ||
-    !result.conflicts.every(
-      (conflict) => typeof conflict === "string" && conflict.trim().length > 0,
-    ) ||
-    typeof gate !== "object" ||
-    gate === null ||
-    Array.isArray(gate)
-  ) {
-    return false;
-  }
-  const gateRecord = gate as Record<string, unknown>;
-  return (
-    typeof gateRecord.question === "string" &&
-    gateRecord.question.trim().length > 0 &&
-    Array.isArray(gateRecord.options) &&
-    gateRecord.options.length > 0 &&
-    gateRecord.options.every(
-      (option: unknown) =>
-        typeof option === "string" && option.trim().length > 0,
-    )
-  );
+  return (value as Record<string, unknown>).kind === AUDIT_ESCALATION_KIND;
 }
 
 export type ComplianceDecisionHandlers<T> = {
@@ -100,6 +100,8 @@ export type ComplianceDecisionHandlers<T> = {
 export async function disposeComplianceDecision<T>(
   decision: ComplianceDecision,
   handlers: ComplianceDecisionHandlers<T>,
+  /** Role output already delivered; preserved on the escalate face (ADR 0055). */
+  deliveredOutput?: unknown,
 ): Promise<Awaited<T>> {
   switch (decision.status) {
     case "pass":
@@ -107,6 +109,8 @@ export async function disposeComplianceDecision<T>(
     case "revise":
       return await handlers.revise(decision.violations);
     case "escalate":
-      return await handlers.escalate(projectAuditEscalation(decision));
+      return await handlers.escalate(
+        projectAuditEscalation(decision, deliveredOutput),
+      );
   }
 }

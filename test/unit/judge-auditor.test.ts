@@ -166,7 +166,8 @@ test("Pi judge auditor accepts formerly shape-rejected decisions without abortin
       }
       if (expected === "escalate" && result.status === "escalate") {
         assert.ok(result.conflicts.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE));
-        assert.equal(result.decisionGate.question, COMPLIANCE_BOOKKEEPING_UNREADABLE);
+        // Empty gate is lawful — no forged option/question required for recognition.
+        assert.deepEqual(result.decisionGate, { question: "", options: [] });
       }
     });
   }

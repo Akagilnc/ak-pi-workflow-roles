@@ -430,13 +430,14 @@ export function readComplianceDecision(
   }
   // Missing or unknown bookkeeping value: do not abort (CONTEXT.md), and do not
   // launder into pass (ADR 0040/0055). Reuse escalate as the existing hand-to-human
-  // channel, labeled only with the unreadable fact — never a forged auditor decision.
+  // channel, labeled only with the unreadable fact — never a forged auditor decision
+  // and never a placeholder option (recogniser no longer demands non-empty gate).
   return {
     status: "escalate",
     conflicts: [COMPLIANCE_BOOKKEEPING_UNREADABLE],
     decisionGate: {
-      question: COMPLIANCE_BOOKKEEPING_UNREADABLE,
-      options: [COMPLIANCE_BOOKKEEPING_UNREADABLE],
+      question: "",
+      options: [],
     },
     usage: response.usage,
   };

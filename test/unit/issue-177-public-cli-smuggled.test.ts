@@ -819,16 +819,23 @@ test("S4: unknown or missing compliance status is marked unreadable, not pass", 
             decision.conflicts.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE),
             name,
           );
+          // Unreadable path: honest conflict only — no forged option (class 2).
+          assert.deepEqual(decision.decisionGate.options, []);
         }
-        const toolResult = await disposeComplianceDecision(decision, {
-          pass: () => {
-            throw new Error(`${name}: must not take the pass path`);
+        // Same seam judge-role uses: pass the already-delivered verdict through.
+        const toolResult = await disposeComplianceDecision(
+          decision,
+          {
+            pass: () => {
+              throw new Error(`${name}: must not take the pass path`);
+            },
+            revise: () => {
+              throw new Error(`${name}: must not take the revise path`);
+            },
+            escalate: (result) => result,
           },
-          revise: () => {
-            throw new Error(`${name}: must not take the revise path`);
-          },
-          escalate: (result) => result,
-        });
+          verdict,
+        );
         sessionPayload = sessionToolResultLine(
           JUDGE_OUTPUT_TOOL_NAME,
           toolResult.details,
@@ -836,6 +843,10 @@ test("S4: unknown or missing compliance status is marked unreadable, not pass", 
         assert.ok(
           sessionPayload.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE),
           `${name}: unreadable marker must land in the session produced by this decision`,
+        );
+        assert.ok(
+          sessionPayload.includes(note),
+          `${name}: delivered verdict note must survive into session bytes`,
         );
         assert.equal(
           sessionPayload.includes(JUDGE_ACCEPTED_TEXT),
@@ -873,10 +884,21 @@ test("S4: unknown or missing compliance status is marked unreadable, not pass", 
       assert.equal(result.exitCode, 0, name);
       assert.ok(result.terminal, name);
       assert.equal(result.terminal!.roleOutcome.kind, "audit_escalation", name);
+      const facts = result.terminal!.roleOutcome.decisiveFacts as Record<
+        string,
+        unknown
+      >;
+      // ADR 0055: delivered verdict fields arrive on the terminal face, not destroyed.
+      assert.equal(facts.judgeStatus, "converged", name);
+      assert.equal(facts.note, note, name);
       const face = stdout.join("");
       assert.ok(
         face.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE),
         `${name}: terminal face must mark bookkeeping unreadable`,
+      );
+      assert.ok(
+        face.includes(note),
+        `${name}: terminal face must keep the delivered verdict note`,
       );
       assert.equal(
         face.includes(JUDGE_ACCEPTED_TEXT),
@@ -885,6 +907,175 @@ test("S4: unknown or missing compliance status is marked unreadable, not pass", 
       );
     });
   }
+});
+
+test("S4: escalate recogniser keeps mixed-type and empty-gate upgrades lawful on public CLI", async () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    [
+      "non-string conflict",
+      {
+        kind: "audit_escalation",
+        conflicts: ["ok", 4],
+        decisionGate: { question: "Q", options: ["A"] },
+        report: "fixer-delivered-report-mixed-conflict",
+        status: "completed",
+      },
+    ],
+    [
+      "non-string option",
+      {
+        kind: "audit_escalation",
+        conflicts: ["c"],
+        decisionGate: { question: "Q", options: ["A", 7] },
+        report: "fixer-delivered-report-mixed-option",
+        status: "completed",
+      },
+    ],
+    [
+      "empty decisionGate",
+      {
+        kind: "audit_escalation",
+        conflicts: ["only-conflict"],
+        decisionGate: { question: "", options: [] },
+        report: "fixer-delivered-report-empty-gate",
+        status: "completed",
+      },
+    ],
+  ];
+
+  for (const [name, details] of cases) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout } = captureIo();
+      const sessionPayload = sessionToolResultLine(
+        FIXER_OUTPUT_TOOL_NAME,
+        details,
+      );
+
+      const result = await runAkRole(
+        ["fixer", "apply", "--project", project, `escalation shape ${name}`],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () =>
+            `run-s4-escalate-shape-${name.replace(/\s+/g, "-")}`,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              sessionPayload,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+
+      assert.equal(result.exitCode, 0, name);
+      assert.ok(result.terminal, `${name}: must produce a terminal result`);
+      assert.equal(
+        result.terminal!.roleOutcome.kind,
+        "audit_escalation",
+        `${name}: must be recognised as audit_escalation, not controlled failure`,
+      );
+      const facts = result.terminal!.roleOutcome.decisiveFacts as Record<
+        string,
+        unknown
+      >;
+      assert.deepEqual(facts.conflicts, details.conflicts, name);
+      assert.deepEqual(facts.decisionGate, details.decisionGate, name);
+      // Shared-seam proof: fixer-delivered fields ride the same escalate face.
+      assert.equal(facts.report, details.report, name);
+      assert.equal(facts.status, details.status, name);
+      const face = stdout.join("");
+      assert.ok(
+        face.includes("audit_escalation"),
+        `${name}: face names the escalation kind`,
+      );
+      assert.equal(
+        result.terminal!.roleOutcome.kind === "audit_escalation",
+        true,
+      );
+    });
+  }
+});
+
+test("S4: stripping delivered verdict from escalate path fails the retention assertion", async () => {
+  // Negative: if buildAuditEscalationResult stops merging delivered output,
+  // this test goes red — not a self-proving rewrite of the positive path.
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io } = captureIo();
+    const note = "大理寺判词保留-negative-strip";
+    const verdict = { judgeStatus: "converged" as const, note };
+    const decision = {
+      status: "escalate" as const,
+      conflicts: [COMPLIANCE_BOOKKEEPING_UNREADABLE],
+      decisionGate: { question: "", options: [] as unknown[] },
+    };
+    // Deliberately omit delivered output — the retention seam under test.
+    const toolResult = await disposeComplianceDecision(decision, {
+      pass: () => {
+        throw new Error("must not pass");
+      },
+      revise: () => {
+        throw new Error("must not revise");
+      },
+      escalate: (result) => result,
+    });
+    const sessionPayload = sessionToolResultLine(
+      JUDGE_OUTPUT_TOOL_NAME,
+      toolResult.details,
+    );
+    assert.equal(
+      sessionPayload.includes(note),
+      false,
+      "negative control: stripped path must not contain the verdict note",
+    );
+
+    const result = await runAkRole(
+      ["judge", "--project", project, "negative strip verdict"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-s4-negative-strip",
+        io,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), sessionPayload, "utf8");
+          return { code: 0, stderr: "", timedOut: false, args: [...args] };
+        },
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal!.roleOutcome.kind, "audit_escalation");
+    const facts = result.terminal!.roleOutcome.decisiveFacts as Record<
+      string,
+      unknown
+    >;
+    assert.equal(facts.note, undefined);
+    assert.equal(facts.judgeStatus, undefined);
+    // The positive suite asserts these fields ARE present when verdict is piped;
+    // this negative proves the assertion is load-bearing, not tautological.
+    assert.notDeepEqual(verdict, {
+      judgeStatus: facts.judgeStatus,
+      note: facts.note,
+    });
+  });
 });
 
 test("S4: compliance decision causally gates judge verdict on public CLI terminal", async () => {

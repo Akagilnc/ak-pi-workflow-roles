@@ -266,18 +266,22 @@ export function createFixerRoleRuntime(
               if (hostActions !== undefined) hostActions.failInfrastructure(error, ctx, toolCallId);
               throw error;
             }
-            return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
-              pass: (usage) => ({
-                content: [{ type: "text" as const, text: "Fixer report accepted" }],
-                details: output,
-                terminate: true as const,
-                ...(usage === undefined ? {} : { usage }),
-              }),
-              revise: (violations) => {
-                throw new Error(`Fixer output violates its law: ${violations.join("; ")}`);
+            return disposeComplianceDecision<AgentToolResult<unknown>>(
+              audit,
+              {
+                pass: (usage) => ({
+                  content: [{ type: "text" as const, text: "Fixer report accepted" }],
+                  details: output,
+                  terminate: true as const,
+                  ...(usage === undefined ? {} : { usage }),
+                }),
+                revise: (violations) => {
+                  throw new Error(`Fixer output violates its law: ${violations.join("; ")}`);
+                },
+                escalate: (result) => result,
               },
-              escalate: (result) => result,
-            });
+              output,
+            );
           },
         });
         pi.on("tool_call", (event) => {
