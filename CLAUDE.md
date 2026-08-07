@@ -1,9 +1,25 @@
 # ak-pi-workflow-roles
 
+## 0. 代码拒收裁量
+
+**代码对角色交上来的东西没有拒收权，也不得因形状不合中止本局**
+
+**审刑院、大理寺等 LLM 角色**不在本条禁止之列，角色打回走重交通道，不掐局。
+
+**「要求 X」不是授权代码检查 X**——ADR、schema、prompt 一律如此。主语是代码、动词是拒收或中止的句子才是检查。漏了由下游角色在内容层找他麻烦。key 名字不必逐字相同。
+
+**读取与呈现不设上限**：代码可以读任意字段。代码仍拥有两件事：受理**唯一一次**交卷，交卷后**终止本局**。
+
+**记账位**：每份角色输出有精确 key 及取值域（如 `judgeStatus`），供落账与呈现。
+
 ## 全局宪法（先读）
 
 本机全局规则在 `~/.claude/CLAUDE.md`（与 `~/.codex/AGENTS.md` byte-identical）。**pi session 默认不读全局 CLAUDE.md / AGENTS.md**——凡在本仓工作的 agent（含 pi 起的角色腿与驱动 session），视全局文件为本文件的一部分，开工先读。
 
+
+## 法源优先
+
+各 ADR 已落定的具体决策，在本仓优先于宪法的通用条文；其中违反宪法者，须绑陛下原话与 decision key。
 
 ## Soul 内容纪律
 
@@ -15,18 +31,18 @@
 | --- | --- |
 | 角色不可约的职责、判断方法与专业原则 | Soul |
 | 字段名称、类型、可选性和字段语义 | Tool / output schema |
-| 唯一调用、非空、状态组合、终止和其他机械不变式 | TypeScript runtime |
+| 唯一调用与终止 | TypeScript runtime |
 | CLI 参数、安装方式和调用方使用说明 | README / CLI help |
 | 特定任务方法、仓库惯例或业务规则 | Skill / host overlay |
 
-不要在 Soul 中重复 schema、runtime、README 或宿主 overlay 已经拥有的内容。机械上能约束的规则优先机械化；只是 transport/API 说明的内容留在 schema；只对某个宿主成立的内容不得进入 bundled Soul。
+不要在 Soul 中重复 schema、runtime、README 或宿主 overlay 已经拥有的内容。只是 transport/API 说明的内容留在 schema；只对某个宿主成立的内容不得进入 bundled Soul。
 
 ### Soul 准入检查
 
 向 Soul 增加一句话前，依次问：
 
 1. 没有它，角色是否会缺失一项不可约的专业判断能力？
-2. 它能否由 schema 或 runtime 更准确地表达或强制？
+2. 它能否由 schema 或 runtime **合法且**更准确地表达或强制？（第 0 条禁止的形状拒收不算「能」）
 3. 它是否只是字段、CLI、transport、阶段装配或错误处理说明？
 4. 它是否只属于某个任务、仓库或业务域？
 5. 能否删除、合并或缩成更短的原则而不损失角色能力？

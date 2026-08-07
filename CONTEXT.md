@@ -9,6 +9,9 @@
 - **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其 typed 产物,是角色劳动成果的唯一法定出口;散文不构成交卷。并非每个角色都有交卷工具。
 - **格式契约(Format contract)**:在一个具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,并且有明确 owner 与 consumer 的格式不变式。同一契约的多种表达不是多个契约;重复真源、校验缺口、已删除或不可达的格式也不是契约。
 - **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的;除此之外一概不管。
+- **形状校验(Shape validation)**:拒收理由**只涉数据的排布**——在场/缺席、键拼写、基数、类型、跨字段组合。一旦拒收理由需要引用**外部可观察事实或世界规则**(现场 Git 状态、字节重算、路径授权、对象同一性),即**非**形状校验。代码对角色输出的形状校验拒收权与中止权归零,见 CLAUDE.md 第 0 条。**该禁令只约束代码**——审刑院等 LLM 角色据此打回不在禁止之列,它们走既有重交通道、不掐局。
+- **记账位(Ledger slot)**:每份角色输出唯一一个精确 key 及取值域(如 `judgeStatus`),供落账、呈现与渲染分支。**不是编排控制流**——上一代编排器按三态派下一个 worker,本包无 runner,组合与顺序归调用者([ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md))。判定其有效性归 [ADR 0040](docs/adr/0040-keep-only-required-execution-discriminators.md);无效时不得中止本局。
+- **承接者判据(Successor test)**:删与留之争的可核验判据——**删掉之后,那一类失败还有没有人接?有人接,删就是正事;没人接,保留就是容错。**「容错」本身不可核验(任何多余机制都能自称容错),承接者可以:去代码里看该失败类别的处理路径是否与既有机制相交。本判据不倒置 [ADR 0036](docs/adr/0036-format-validation-defaults-to-delete.md) 的举证责任——举证仍在保留方,只是把「特别理由」的内容钉成「指出无替代承接者」。**无承接者是保留的必要条件,不是充分条件**:仍须过宿主全局宪法的护栏三问(出事概率、后果轻重、下游兜底),且不得落入 ADR 0036 的失格类别(看不见收益 / 仅统一写法 / **仅预防廉价且会响的失败**)。
 - **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围扫描全仓;清单 ID 与已知文件只是不完全实例和证据索引,不是施工白名单。施工后按同一类别重新扫描残余,保留项逐类说明特别理由。
 - **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。规范见 [ADR 0021](docs/adr/0021-collector-manifest-validates-semantics-not-json-spelling.md)。
 - **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。规范见 [ADR 0022](docs/adr/0022-delete-unconsumed-collector-manifest-schema.md)。
@@ -22,7 +25,7 @@
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
 - **Collector(门下省)**:单次调用内独立观察外部 GitHub PR 评审腿、可选请求、判定收集终态并提交自包含回执的角色;不评审、不裁决、不修复、不路由,也没有“轮数”概念。v1 仅支持 `github.com`,无默认腿清单。
 - **评审腿(Review leg)**:Reviewer 内部 `Agent` 形成的独立评审上下文;它不是角色派单或工作流边。Collector 的配置腿是外部 GitHub 作者集合,与 Reviewer 内部 Agent 腿不同。
-- **Soul 审刑院(Soul-compliance audit)**:交卷被接受前的第二次模型调用,只审「大理寺是否可证地按 soul 办了案」,不得替换大理寺的实质裁决。
+- **Soul 审刑院(Soul-compliance audit)**:交卷受理链上的第二次模型调用,只审「大理寺是否可证地按 soul 办了案」,不得替换大理寺的实质裁决。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md)。
 - **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。
 - **Navigator(游奕使)**:由共享角色生命周期自动旁听包角色结算的独立领航席；依据工作 subject、controlling authority 与自身路线记忆建议最低成本且安全的下一包角色/phase，并在首次或路线变化时给出完整简洁路线。不裁决、不授权、不执行，普通建议允许调用者偏离；角色推理、工具轨迹和施工细节不进入其上下文。
 - **Assisted Runner(辅助运行器)**:历史术语。Issue #28 已删除该 wrapper 及其专属公开面；当前 Navigator attendance 只由共享角色生命周期提供。
