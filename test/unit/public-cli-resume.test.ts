@@ -251,7 +251,6 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
           });
           return {
             code: 1,
-            stdout: "",
             stderr: "activation wrapper exited nonzero\n",
             timedOut: false,
             args: [...args],
@@ -329,7 +328,6 @@ test("quota-like prose without typed 429 is not resumable", async () => {
           });
           return {
             code: 1,
-            stdout: "",
             stderr: "HTTP 429 rate limited\n",
             timedOut: false,
             args: [...args],
@@ -392,7 +390,6 @@ test("lawful terminal result wins over typed 429 observation", async () => {
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -452,7 +449,6 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
           });
           return {
             code: 1,
-            stdout: "",
             stderr: "provider_error\n",
             timedOut: false,
             args: [...args],
@@ -519,7 +515,6 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "provider_error\n",
               timedOut: false,
               args: [...args],
@@ -565,7 +560,6 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
         // Deliberately do not write a fresh 429 observation.
         return {
           code: 1,
-          stdout: "",
           stderr: "upstream timeout\n",
           timedOut: true,
           args: [...args],
@@ -636,7 +630,6 @@ test("lawful result with publication failure is not resumable even with attempt 
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -699,7 +692,6 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
           });
           return {
             code: 1,
-            stdout: "",
             stderr: `provider refused run ${runId} with HTTP 429\n`,
             timedOut: false,
             args: [...args],
@@ -807,7 +799,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "fail\n",
               timedOut: false,
               args: [...args],
@@ -881,7 +872,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -951,7 +941,6 @@ test("resume model override is temporary and does not rewrite persistent config"
           });
           return {
             code: 1,
-            stdout: "",
             stderr: "x\n",
             timedOut: false,
             args: [...args],
@@ -984,7 +973,6 @@ test("resume model override is temporary and does not rewrite persistent config"
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -1016,7 +1004,6 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
       dispatches += 1;
       return {
         code: 0,
-        stdout: "",
         stderr: "",
         timedOut: false,
         args: [...args],
@@ -1054,7 +1041,6 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
           await mkdir(sessionDir, { recursive: true });
           return {
             code: 1,
-            stdout: "",
             stderr: "activation boom\n",
             timedOut: false,
             args: [...args],
@@ -1112,7 +1098,6 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
         });
         return {
           code: 1,
-          stdout: "",
           stderr: "x\n",
           timedOut: false,
           args: [...args],
@@ -1143,7 +1128,6 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
           dispatches += 1;
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1265,7 +1249,6 @@ test("initial activation and resume bind the exact Pi session file principal", a
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "fail\n",
               timedOut: false,
               args: [...args],
@@ -1321,7 +1304,6 @@ test("initial activation and resume bind the exact Pi session file principal", a
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -1401,7 +1383,6 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
         dispatches += 1;
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -1445,7 +1426,6 @@ test("typed 429 without a session principal is not offered as resumable", async 
           });
           return {
             code: 1,
-            stdout: "",
             stderr: "fail\n",
             timedOut: false,
             args: [...args],

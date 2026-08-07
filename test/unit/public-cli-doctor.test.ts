@@ -549,7 +549,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           return {
             code: 0,
             timedOut: false,
-            stdout: "",
             stderr: "",
             args: [...args],
           };
@@ -611,7 +610,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
           return {
             code: 0,
             timedOut: false,
-            stdout: "",
             stderr: "",
             args: [...args],
           };

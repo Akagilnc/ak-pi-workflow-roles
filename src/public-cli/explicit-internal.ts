@@ -4,7 +4,6 @@
  * this adapter (or an intentional developer `pi -e`) crosses that boundary.
  */
 import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE } from "./registry.ts";
@@ -77,7 +76,6 @@ export function knownFailureFromProviderStop(input: {
 
 export type ExplicitInternalPiResult = {
   code: number | null;
-  stdout: string;
   stderr: string;
   timedOut: boolean;
   /** Full argv passed to the Pi process (includes explicit -e load). */
@@ -135,33 +133,13 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
 ) => {
   const command = options.env.PI_BINARY ?? "pi";
   return await new Promise((resolveResult, reject) => {
-    // Redirect child stdout to /dev/null — do not pipe/accumulate (CLAUDE.md Role
-    // invocation evidence; result.stdout has zero consumers in src/). Using the
-    // literal stdio value "ignore" breaks shebang scripts on macOS posix_spawn;
-    // an opened /dev/null fd keeps the child runnable without buffering.
-    // Open /dev/null for child stdout. Keep the parent fd open until the child
-    // exits — closing early races posix_spawn inheritance on macOS and can leave
-    // shebang scripts unable to start. Never pipe stdout into memory.
-    const stdoutFd = openSync("/dev/null", "w");
-    const releaseStdoutFd = (): void => {
-      try {
-        closeSync(stdoutFd);
-      } catch {
-        // already closed
-      }
-    };
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(command, [...args], {
-        cwd: options.cwd,
-        env: options.env,
-        stdio: ["ignore", stdoutFd, "pipe"],
-      });
-    } catch (error) {
-      releaseStdoutFd();
-      reject(error);
-      return;
-    }
+    // Child stdout is discarded at the stdio seam (CLAUDE.md Role invocation
+    // evidence). Do not pipe or accumulate it. stderr stays piped for diagnostics.
+    const child = spawn(command, [...args], {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
     let stderr = "";
     let timedOut = false;
     // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
@@ -178,15 +156,12 @@ export const defaultExplicitInternalPiRunner: ExplicitInternalPiRunner = async (
     });
     child.on("error", (error) => {
       if (timer !== undefined) clearTimeout(timer);
-      releaseStdoutFd();
       reject(error);
     });
     child.on("close", (code) => {
       if (timer !== undefined) clearTimeout(timer);
-      releaseStdoutFd();
       resolveResult({
         code,
-        stdout: "",
         stderr,
         timedOut,
         args: [...args],

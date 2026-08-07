@@ -527,7 +527,6 @@ test("runAkRole judge rejects burden selector before admission", async () => {
         ran = true;
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -608,7 +607,6 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -738,7 +736,6 @@ test("runAkRole judge empty request does not invent semantic task content on the
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],

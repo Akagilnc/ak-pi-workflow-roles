@@ -592,7 +592,6 @@ test("runAkRole collector rejects malformed grammar before admission and does no
           return {
             code: 0,
             timedOut: false,
-            stdout: "",
             stderr: "",
             args: [...args],
           };
@@ -669,7 +668,6 @@ test("runAkRole collector settles lawful receipt bound to admitted identity with
           return {
             code: 0,
             timedOut: false,
-            stdout: "",
             stderr: "",
             args: [...args],
           };

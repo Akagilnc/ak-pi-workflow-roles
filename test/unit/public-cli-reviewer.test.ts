@@ -605,7 +605,6 @@ test("ak-role reviewer admits base/task, derives capabilities, and rejects blank
             );
             return {
               code: 0,
-              stdout: "",
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -694,7 +693,6 @@ test("ak-role resume continues reviewer with derived capabilities and package sk
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "quota",
               timedOut: false,
               args: [...args],
@@ -780,7 +778,6 @@ test("ak-role resume continues reviewer with derived capabilities and package sk
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],

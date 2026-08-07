@@ -27,31 +27,31 @@ import {
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
-  complianceDecisionSchema,
+  COMPLIANCE_BOOKKEEPING_UNREADABLE,
   createComplianceDecisionTool,
   runComplianceAudit,
 } from "../../src/compliance-transport.ts";
+import { disposeComplianceDecision } from "../../src/audit-escalation.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { loadCollectorManifest } from "../../src/collector-config.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
-import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import {
+  JUDGE_ACCEPTED_TEXT,
+  JUDGE_OUTPUT_TOOL_NAME,
+} from "../../src/package-contracts/judge-output.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/fixer-output.ts";
-import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
-import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
+import {
+  createPiJudgeAuditor,
+  JUDGE_AUDIT_TOOL_NAME,
+} from "../../src/judge-auditor.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   defaultExplicitInternalPiRunner,
   runExplicitInternalActivation,
 } from "../../src/public-cli/explicit-internal.ts";
-import {
-  extractMergerRoleOutcome,
-  extractReviewerRoleOutcome,
-  publishMergerArtifacts,
-  publishReviewerArtifacts,
-} from "../../src/public-cli/settlement.ts";
 import { formatTerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -151,7 +151,6 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -171,15 +170,23 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
     assert.ok(secondIdx >= 0, "second option text must appear");
     assert.ok(firstIdx < secondIdx, "option order must match input");
 
-    // Negative: a presented face missing either option text fails the contract.
-    for (const option of REAL_ESCALATE_GATE.options) {
-      const stripped = presented.replace(option, "");
-      assert.equal(
-        stripped.includes(option),
-        false,
-        "removing one option text must make the assertion fail",
-      );
-    }
+    // Real negative: decisiveFacts missing one option fails the same face checks.
+    const incomplete = {
+      ...result.terminal!,
+      roleOutcome: {
+        ...result.terminal!.roleOutcome,
+        decisiveFacts: {
+          ...result.terminal!.roleOutcome.decisiveFacts,
+          decisionOptions: [REAL_ESCALATE_GATE.options[0]],
+        },
+      },
+    };
+    const incompletePresented = formatTerminalResult(incomplete);
+    assert.equal(
+      incompletePresented.includes(REAL_ESCALATE_GATE.options[1]),
+      false,
+      "face built without the second option must fail the option-presence check",
+    );
   });
 });
 
@@ -218,7 +225,6 @@ test("S2: judge continue prints class owner/boundary/disposition and evidence", 
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -269,7 +275,6 @@ test("S2: coder report is legally withheld — artifact receipt carries full rep
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -324,7 +329,6 @@ test("S2: fixer report is legally withheld — artifact receipt carries full rep
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -423,7 +427,6 @@ test("S2: doctor findings are legally withheld — artifact receipt carries find
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -538,7 +541,6 @@ test("S2: collector leg rationale is legally withheld — artifact receipt carri
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -562,16 +564,8 @@ test("S2: collector leg rationale is legally withheld — artifact receipt carri
   });
 });
 
-test("S2: reviewer report text and merger report are legally withheld on receipt face", () => {
-  // Reviewer/merger share the same publish*Artifacts receipt pattern as coder/fixer.
-  // Decisive face keeps ids/flags; full report text is on the receipt body.
-  assert.equal(typeof extractReviewerRoleOutcome, "function");
-  assert.equal(typeof extractMergerRoleOutcome, "function");
-  assert.equal(typeof publishReviewerArtifacts, "function");
-  assert.equal(typeof publishMergerArtifacts, "function");
-  assert.equal(REVIEWER_OUTPUT_TOOL_NAME.length > 0, true);
-  assert.equal(MERGER_OUTPUT_TOOL_NAME.length > 0, true);
-});
+// Reviewer/merger S2 withheld coverage lives in public-cli-reviewer.test.ts and
+// public-cli-merger.test.ts (artifact receipt body), not a typeof/length stand-in.
 
 // ─── S3 ──────────────────────────────────────────────────────────────────────
 
@@ -607,7 +601,7 @@ process.exit(0);
 
 test(
   "S3: explicit short timeoutMs sends SIGTERM not SIGKILL; pre-timeout session still settles",
-  { timeout: 20_000 },
+  { timeout: 30_000 },
   async () => {
     await withTempHome(async (home) => {
       const signalFile = join(home, "signal.txt");
@@ -638,6 +632,7 @@ const mark = (sig) => {
 };
 process.on("SIGTERM", () => { mark("SIGTERM"); process.exit(143); });
 process.on("SIGINT", () => { mark("SIGINT"); process.exit(130); });
+// Idle forever — any positive budget still finds the loop running (no "short enough" constraint).
 setInterval(() => {}, 1000);
 `,
       );
@@ -648,17 +643,16 @@ setInterval(() => {}, 1000);
         cwd: home,
         home,
         agentDir: join(home, ".pi", "agent"),
-        // Budget long enough for shebang+node cold start under test load, short
-        // enough that the stub's idle loop is still running when SIGTERM lands.
-        timeoutMs: 1_000,
+        // Cold-start headroom under parallel load (handler install observed ~0.5s cold).
+        // Stub loops forever, so a wider budget does not race past idle.
+        timeoutMs: 8_000,
         env: { PI_BINARY: stub },
       });
       assert.equal(direct.timedOut, true);
       assert.notEqual(direct.code, 0);
-      // Child stderr proves the stub body ran (not killed before start).
-      assert.ok(direct.stderr.length >= 0);
       await new Promise((r) => setTimeout(r, 200));
       const signal = await readFile(signalFile, "utf8").catch(() => "NONE");
+      // signalFile content is the observable proof the stub body ran and handled SIGTERM.
       assert.notEqual(signal, "SIGKILL");
       assert.equal(signal, "SIGTERM");
 
@@ -691,8 +685,9 @@ process.exit(0);
         cwd: home,
         env: { ...process.env, PI_BINARY: stub },
       });
+      // Child started and finished (exit 0) with stderr recovered; stdout is not a result field.
       assert.equal(result.code, 0);
-      assert.equal(result.stdout, "");
+      assert.equal(Object.hasOwn(result, "stdout"), false);
       assert.ok(result.stderr.includes("stderr-ok"));
     });
   },
@@ -735,145 +730,308 @@ async function withPersistedSession<T>(
   );
 }
 
-function auditMessage(arguments_: Record<string, unknown>) {
-  return fauxAssistantMessage([fauxToolCall(decisionToolName, arguments_)], {
-    stopReason: "toolUse",
-  });
+function judgeAuditMessage(arguments_: Record<string, unknown>) {
+  return fauxAssistantMessage(
+    [fauxToolCall(JUDGE_AUDIT_TOOL_NAME, arguments_)],
+    { stopReason: "toolUse" },
+  );
 }
 
-test("S4: complianceDecisionSchema keeps four field declarations with empty required", () => {
-  assert.equal(complianceDecisionSchema.type, "object");
-  assert.deepEqual(
-    Object.keys(complianceDecisionSchema.properties ?? {}).sort(),
-    ["conflicts", "decisionGate", "status", "violations"],
-  );
-  const required =
-    (complianceDecisionSchema as { required?: string[] }).required ?? [];
-  assert.deepEqual(required, []);
-  assert.notEqual(
-    (complianceDecisionSchema as { additionalProperties?: unknown })
-      .additionalProperties,
-    false,
-  );
+test("S4: mixed violations keep every entry; #179 string-array pass does not abort", async () => {
+  await withPersistedSession(async (sessionManager) => {
+    const revise = await runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      runCompletion: async () =>
+        fauxAssistantMessage(
+          [
+            fauxToolCall(decisionToolName, {
+              status: "revise",
+              violations: ["real", 4],
+            }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+      context: complianceContext(sessionManager),
+    });
+    assert.equal(revise.status, "revise");
+    if (revise.status === "revise") {
+      assert.deepEqual(revise.violations, ["real", 4]);
+    }
+
+    const pass = await runComplianceAudit({
+      tool: decisionTool,
+      systemPrompt: "audit system",
+      serializedInput: "audit input",
+      roleLabel: "Compliance",
+      invalidDecisionLabel: "invalid compliance decision",
+      runCompletion: async () =>
+        fauxAssistantMessage(
+          [
+            fauxToolCall(decisionToolName, {
+              status: "pass",
+              violations: "[]",
+              conflicts: "[]",
+              decisionGate: null,
+            }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+      context: complianceContext(sessionManager),
+    });
+    assert.equal(pass.status, "pass");
+  });
 });
 
-test("S4: four decision variants do not reject at the shared compliance seam", async () => {
-  const variants: Record<string, unknown>[] = [
-    {
-      status: "pass",
-      violations: "[]",
-      conflicts: "[]",
-      decisionGate: null,
-    },
-    { status: "pass" },
-    {
-      status: "pass",
-      violations: [],
-      conflicts: [],
-      decisionGate: null,
-      extraModelKey: "harmless",
-    },
-    {
-      status: "revise",
-      violations: [],
-      conflicts: [],
-      decisionGate: null,
-    },
+test("S4: unknown or missing compliance status is marked unreadable, not pass", async () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["unknown status", { status: "maybe", violations: [] }],
+    ["missing status", {}],
   ];
+  for (const [name, arguments_] of cases) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout } = captureIo();
+      const note = `大理寺判词保留-${name}`;
+      const verdict = { judgeStatus: "converged" as const, note };
 
-  for (const [index, arguments_] of variants.entries()) {
-    await withPersistedSession(async (sessionManager) => {
-      const decision = await runComplianceAudit({
-        tool: decisionTool,
-        systemPrompt: "audit system",
-        serializedInput: "audit input",
-        roleLabel: "Compliance",
-        invalidDecisionLabel: "invalid compliance decision",
-        runCompletion: async () => auditMessage(arguments_),
-        context: complianceContext(sessionManager),
+      let sessionPayload = "";
+      await withPersistedSession(async (sessionManager) => {
+        const auditor = createPiJudgeAuditor(async () =>
+          judgeAuditMessage(arguments_),
+        );
+        const decision = await auditor(
+          {
+            soul: "THE JUDGE LAW",
+            transcript: "THE ADJUDICATION RECORD",
+            verdict,
+          },
+          { context: complianceContext(sessionManager) },
+        );
+        assert.equal(decision.status, "escalate", name);
+        if (decision.status === "escalate") {
+          assert.ok(
+            decision.conflicts.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE),
+            name,
+          );
+        }
+        const toolResult = await disposeComplianceDecision(decision, {
+          pass: () => {
+            throw new Error(`${name}: must not take the pass path`);
+          },
+          revise: () => {
+            throw new Error(`${name}: must not take the revise path`);
+          },
+          escalate: (result) => result,
+        });
+        sessionPayload = sessionToolResultLine(
+          JUDGE_OUTPUT_TOOL_NAME,
+          toolResult.details,
+        );
+        assert.ok(
+          sessionPayload.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE),
+          `${name}: unreadable marker must land in the session produced by this decision`,
+        );
+        assert.equal(
+          sessionPayload.includes(JUDGE_ACCEPTED_TEXT),
+          false,
+          `${name}: must not accept the verdict`,
+        );
       });
-      assert.ok(
-        decision.status === "pass" || decision.status === "revise",
-        `variant ${index} must not throw; got ${decision.status}`,
+
+      const result = await runAkRole(
+        ["judge", "--project", project, `unreadable bookkeeping ${name}`],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => `run-s4-unreadable-${name.replace(/\s+/g, "-")}`,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              sessionPayload,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
       );
-      if (index === 3) {
-        assert.equal(decision.status, "revise");
-      } else {
-        assert.equal(decision.status, "pass");
-      }
+
+      assert.equal(result.exitCode, 0, name);
+      assert.ok(result.terminal, name);
+      assert.equal(result.terminal!.roleOutcome.kind, "audit_escalation", name);
+      const face = stdout.join("");
+      assert.ok(
+        face.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE),
+        `${name}: terminal face must mark bookkeeping unreadable`,
+      );
+      assert.equal(
+        face.includes(JUDGE_ACCEPTED_TEXT),
+        false,
+        `${name}: must not show Judge verdict accepted`,
+      );
     });
   }
 });
 
-test("S4: string-array pass lets judge verdict survive on public CLI terminal", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const { io, stdout } = captureIo();
-    const note = "大理寺判词完整留存-S4";
-
-    await withPersistedSession(async (sessionManager) => {
-      const decision = await runComplianceAudit({
-        tool: decisionTool,
-        systemPrompt: "audit",
-        serializedInput: "input",
-        roleLabel: "Judge soul",
-        invalidDecisionLabel: "invalid",
-        runCompletion: async () =>
-          auditMessage({
-            status: "pass",
-            violations: "[]",
-            conflicts: "[]",
-            decisionGate: null,
-          }),
-        context: complianceContext(sessionManager),
-      });
-      assert.equal(decision.status, "pass");
-    });
-
-    const result = await runAkRole(
-      ["judge", "--project", project, "verdict must survive string-array audit"],
+test("S4: compliance decision causally gates judge verdict on public CLI terminal", async () => {
+  const variants: Array<[string, Record<string, unknown>, "pass" | "revise"]> = [
+    [
+      "string-array pass (#179)",
       {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-s4-verdict-survives",
-        io,
-        piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await writeFile(
-            join(sessionDir, "session.jsonl"),
-            sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, {
-              judgeStatus: "converged",
-              note,
-            }),
-            "utf8",
-          );
-          return {
-            code: 0,
-            stdout: "",
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
+        status: "pass",
+        violations: "[]",
+        conflicts: "[]",
+        decisionGate: null,
       },
-    );
+      "pass",
+    ],
+    ["status-only pass", { status: "pass" }, "pass"],
+    [
+      "extra-key pass",
+      {
+        status: "pass",
+        violations: [],
+        conflicts: [],
+        decisionGate: null,
+        extraModelKey: "harmless",
+      },
+      "pass",
+    ],
+    [
+      "empty-violations revise",
+      {
+        status: "revise",
+        violations: [],
+        conflicts: [],
+        decisionGate: null,
+      },
+      "revise",
+    ],
+  ];
 
-    assert.equal(result.exitCode, 0);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "accepted");
-    assert.equal(
-      result.terminal!.roleOutcome.kind === "accepted"
-        ? result.terminal!.roleOutcome.status
-        : undefined,
-      "converged",
-    );
-    assert.ok(
-      stdout.join("").includes(note),
-      "judge verdict note must appear intact",
-    );
-  });
+  for (const [name, auditArgs, expectedStatus] of variants) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout } = captureIo();
+      const note = `大理寺判词完整留存-S4-${name}`;
+      const verdict = { judgeStatus: "converged" as const, note };
+
+      // Session bytes are produced only from this decision — not an independent fixture.
+      let sessionPayload: string | undefined;
+      await withPersistedSession(async (sessionManager) => {
+        const auditor = createPiJudgeAuditor(async () =>
+          judgeAuditMessage(auditArgs),
+        );
+        const decision = await auditor(
+          {
+            soul: "THE JUDGE LAW",
+            transcript: "THE ADJUDICATION RECORD",
+            verdict,
+          },
+          { context: complianceContext(sessionManager) },
+        );
+        assert.equal(decision.status, expectedStatus, name);
+
+        // Same dispose path judge-role uses: only pass writes accepted details.
+        if (decision.status === "pass") {
+          const toolResult = await disposeComplianceDecision(decision, {
+            pass: (usage) => ({
+              content: [
+                { type: "text" as const, text: JUDGE_ACCEPTED_TEXT },
+              ],
+              details: verdict,
+              terminate: true as const,
+              ...(usage === undefined ? {} : { usage }),
+            }),
+            revise: () => {
+              throw new Error(`${name}: pass variant must not revise`);
+            },
+            escalate: () => {
+              throw new Error(`${name}: pass variant must not escalate`);
+            },
+          });
+          sessionPayload = sessionToolResultLine(
+            JUDGE_OUTPUT_TOOL_NAME,
+            toolResult.details,
+          );
+          assert.ok(
+            sessionPayload.includes(note),
+            `${name}: verdict note must land in the session this decision produced`,
+          );
+        } else {
+          // revise: compliance did not abort; accepted verdict is not written.
+          sessionPayload = undefined;
+        }
+      });
+
+      if (expectedStatus === "revise") {
+        assert.equal(
+          sessionPayload,
+          undefined,
+          `${name}: revise must not produce an accepted session payload`,
+        );
+        return;
+      }
+
+      assert.ok(sessionPayload, name);
+      const result = await runAkRole(
+        ["judge", "--project", project, `verdict survives ${name}`],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () =>
+            `run-s4-${name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
+          io,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            // Settle the SAME session bytes the compliance decision produced.
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              sessionPayload!,
+              "utf8",
+            );
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        },
+      );
+
+      assert.equal(result.exitCode, 0, name);
+      assert.ok(result.terminal, name);
+      assert.equal(result.terminal!.roleOutcome.kind, "accepted", name);
+      assert.equal(
+        result.terminal!.roleOutcome.kind === "accepted"
+          ? result.terminal!.roleOutcome.status
+          : undefined,
+        "converged",
+        name,
+      );
+      assert.ok(
+        stdout.join("").includes(note),
+        `${name}: judge verdict note must appear intact on the public CLI face`,
+      );
+    });
+  }
 });

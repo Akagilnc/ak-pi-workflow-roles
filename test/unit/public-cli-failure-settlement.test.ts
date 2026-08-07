@@ -206,7 +206,6 @@ test("malformed CLI structure rejects before admission with no model dispatch", 
           ran = true;
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -239,7 +238,6 @@ test("empty --project= rejects structurally before admission with no model dispa
         dispatched += 1;
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -293,7 +291,6 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -527,7 +524,6 @@ test("controlled failure emits one stdout Terminal and one concise stderr diagno
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "event flood\n".repeat(100),
             stderr: floodStderr(),
             timedOut: false,
             args: [...args],
@@ -578,7 +574,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
             return {
               code: 1,
-              stdout: "",
               stderr: realisticJsonlFloodStderr(),
               timedOut: false,
               args: [...args],
@@ -620,7 +615,6 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
             return {
               code: 1,
-              stdout: "",
               stderr: oversizedDiagnosticStderr(),
               timedOut: false,
               args: [...args],
@@ -693,7 +687,6 @@ test("audit_escalation is a lawful typed terminal result exiting zero without be
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -763,7 +756,6 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -891,7 +883,6 @@ test("artifact publication EISDIR retains unrecognized identity (not washed to o
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -946,7 +937,6 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: null,
-            stdout: "",
             stderr: "still running\n",
             timedOut: true,
             args: [...args],
@@ -1093,7 +1083,6 @@ test("zero-exit missing session classifies as session cause via public entry", a
           // Admitted session directory exists but holds no transcript.
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1142,7 +1131,6 @@ test("zero-exit invalid judge details classifies as output cause via public entr
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1181,7 +1169,6 @@ test("production knownFailure channel reaches settlement as provider with typed 
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             // Deliberately misleading prose — cause must come from knownFailure only.
             stderr: "activation wrapper exited nonzero\n",
             timedOut: false,
@@ -1279,7 +1266,6 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             stderr: [
               "No API key found for the selected model.",
               "",
@@ -1413,7 +1399,6 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
           );
           return {
             code: 1,
-            stdout: "",
             stderr: "late host noise\n",
             timedOut: false,
             args: [...args],
@@ -1456,7 +1441,6 @@ test("Error Artifact primary collision retains original failure cause with Termi
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             stderr: "Error: original activation boom\n",
             timedOut: false,
             args: [...args],
@@ -1525,7 +1509,6 @@ test("exhausted fixed Error Artifact names still settle original cause via uniqu
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             stderr: "Error: original activation boom\n",
             timedOut: false,
             args: [...args],
@@ -1584,7 +1567,6 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
           await writeFile(join(sessionDir, "session.jsonl"), "{not-json\n", "utf8");
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1650,7 +1632,6 @@ test("unwritable run directory retains activation cause with durable Error Artif
             await chmod(runDir, 0o555);
             return {
               code: 1,
-              stdout: "",
               stderr: "Error: boom\n",
               timedOut: false,
               args: [...args],
@@ -1724,7 +1705,6 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
           return {
             code: 1,
-            stdout: "",
             stderr: "Error: child failed after admission\n",
             timedOut: false,
             args: [...args],
@@ -1868,7 +1848,6 @@ test("session provider-stop produces provider cause without injected knownFailur
           );
           return {
             code: 1,
-            stdout: "",
             // Deliberately misleading prose — cause must come from session stop, not stderr.
             stderr: "activation wrapper exited nonzero\n",
             timedOut: false,
@@ -2050,7 +2029,6 @@ test("zero-exit session provider-stop retains provider cause (not washed to outp
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -2135,7 +2113,6 @@ test("timedOut with session provider-stop retains provider identity (AC2)", asyn
           );
           return {
             code: null,
-            stdout: "",
             stderr: "still running\n",
             timedOut: true,
             args: [...args],
@@ -2233,7 +2210,6 @@ test("older provider error then later end_turn settles as output not provider (A
           );
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
