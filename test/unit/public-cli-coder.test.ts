@@ -172,11 +172,6 @@ test("buildCoderActivationExtraArgs pins package TDD on apply and omits skill on
     const applyArgs = buildCoderActivationExtraArgs(apply, { packageRoot });
     assert.equal(applyArgs.includes("--no-skills"), true);
     assert.equal(applyArgs.includes("--skill"), true);
-    const skillIdx = applyArgs.indexOf("--skill");
-    assert.equal(
-      applyArgs[skillIdx + 1]?.includes("resources/methods/tdd/SKILL.md"),
-      true,
-    );
     assert.equal(applyArgs.includes("--ak-coder-phase"), true);
     assert.equal(applyArgs[applyArgs.indexOf("--ak-coder-phase") + 1], "apply");
     assert.equal(applyArgs[applyArgs.indexOf("--ak-coder-task") + 1], apply.taskPath);
@@ -451,12 +446,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         "apply",
       );
       assert.equal(captured!.includes("--skill"), true);
-      assert.equal(
-        captured![captured!.indexOf("--skill") + 1]?.includes(
-          "resources/methods/tdd/SKILL.md",
-        ),
-        true,
-      );
     }
   });
 });

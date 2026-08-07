@@ -187,20 +187,24 @@ export function createJudgeRoleRuntime(
             } catch (error) {
               hostActions.failInfrastructure(error, ctx, toolCallId);
             }
-            return disposeComplianceDecision<AgentToolResult<unknown>>(audit, {
-              pass: (usage) => ({
-                content: [{ type: "text" as const, text: "Judge verdict accepted" }],
-                details: verdict,
-                terminate: true as const,
-                ...(usage === undefined ? {} : { usage }),
-              }),
-              revise: (violations) => {
-                throw new Error(
-                  `Judge verdict violates its soul: ${violations.join("; ")}`,
-                );
+            return disposeComplianceDecision<AgentToolResult<unknown>>(
+              audit,
+              {
+                pass: (usage) => ({
+                  content: [{ type: "text" as const, text: "Judge verdict accepted" }],
+                  details: verdict,
+                  terminate: true as const,
+                  ...(usage === undefined ? {} : { usage }),
+                }),
+                revise: (violations) => {
+                  throw new Error(
+                    `Judge verdict violates its soul: ${violations.join("; ")}`,
+                  );
+                },
+                escalate: (result) => result,
               },
-              escalate: (result) => result,
-            });
+              verdict,
+            );
           },
         });
         pi.on("before_agent_start", (event) => {

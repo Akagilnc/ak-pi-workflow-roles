@@ -204,3 +204,65 @@ test("escalation projects one terminating human decision and is not an accepted 
   );
   assert.deepEqual(projectAuditEscalation(decision).details, result.details);
 });
+
+test("isAuditEscalationResult recognises by kind only — mixed elements and empty gate stay lawful", () => {
+  const shapes = [
+    {
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: ["ok", 4],
+      decisionGate: { question: "Q", options: ["A"] },
+    },
+    {
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: ["c"],
+      decisionGate: { question: "Q", options: ["A", 7] },
+    },
+    {
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: ["only"],
+      decisionGate: { question: "", options: [] },
+    },
+    {
+      kind: AUDIT_ESCALATION_KIND,
+      conflicts: [],
+      decisionGate: { question: "", options: [] },
+    },
+  ];
+  for (const shape of shapes) {
+    assert.equal(isAuditEscalationResult(shape), true, JSON.stringify(shape));
+  }
+  assert.equal(isAuditEscalationResult({ kind: "other" }), false);
+  assert.equal(isAuditEscalationResult({ conflicts: ["c"] }), false);
+});
+
+test("disposeComplianceDecision preserves delivered role output on escalate face", async () => {
+  const decision = {
+    status: "escalate" as const,
+    conflicts: ["conflict"],
+    decisionGate: { question: "", options: [] as unknown[] },
+  };
+  const delivered = { judgeStatus: "converged" as const, note: "keep-me" };
+  const result = await disposeComplianceDecision(
+    decision,
+    {
+      pass: () => {
+        throw new Error("pass");
+      },
+      revise: () => {
+        throw new Error("revise");
+      },
+      escalate: (value) => value,
+    },
+    delivered,
+  );
+  assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
+  assert.equal(
+    (result.details as { judgeStatus?: unknown }).judgeStatus,
+    "converged",
+  );
+  assert.equal((result.details as { note?: unknown }).note, "keep-me");
+  assert.deepEqual(result.details.conflicts, ["conflict"]);
+  // Without delivered output, verdict fields are absent (negative control).
+  const stripped = projectAuditEscalation(decision).details;
+  assert.equal((stripped as { note?: unknown }).note, undefined);
+});

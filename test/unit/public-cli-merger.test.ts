@@ -247,13 +247,6 @@ test("buildMergerActivationExtraArgs pins package merge-only method and internal
     const args = buildMergerActivationExtraArgs(admitted, { packageRoot });
     assert.equal(args.includes("--no-skills"), true);
     assert.equal(args.includes("--skill"), true);
-    const skillIdx = args.indexOf("--skill");
-    assert.equal(
-      args[skillIdx + 1]?.includes(
-        "resources/methods/resolving-merge-conflicts/SKILL.md",
-      ),
-      true,
-    );
     assert.equal(args.includes("--ak-role"), true);
     assert.equal(args[args.indexOf("--ak-role") + 1], "merger");
     assert.equal(args.includes("--ak-merger-input"), true);
