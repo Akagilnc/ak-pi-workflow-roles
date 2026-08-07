@@ -1,6 +1,20 @@
 # ADR 0007 的射程限于 Pi 已覆盖的失败类别
 
-Status: proposed（陛下 2026-08-07 立场原话：「删掉是洁癖。保留是容错。」；具体 decision key 待陛下绑定）
+Status: accepted
+
+## Authority
+
+陛下 2026-08-07 直接决定。原话逐字，两段：
+
+> 删掉是洁癖。保留是容错。我这样回答你们是不是同意？
+
+> 后来出的方案我觉得没问题。就按照这个方案做
+
+第一段是陛下就本条给出的判断框架并交庭上作答；大理寺当庭裁定保留（法理走射程不走例外），并请求把该框架落成可核验判据——即 CONTEXT.md「承接者判据」。第二段是陛下阅过该批方案后的照办令。
+
+**明确 decision key**：**保留这一层 idle 重交**（`DEFAULT_COMPLIANCE_IDLE_MAX_RETRIES`）。
+
+其余形状（三条限定、取数口径、provenance 更正）不属陛下 authority，由大理寺五轮判词裁定，末轮 `converged`、审刑院 `pass`。
 
 **这是对 [ADR 0007](0007-no-audit-retry-brake.md) 末句的具名限缩，不是无声例外。**
 
