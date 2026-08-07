@@ -1,6 +1,6 @@
 /**
- * #110 public Fixer path — common Invocation, structural prerequisites,
- * optional package diagnosing-bugs (available, not forced), shared Terminal.
+ * #110/#177 public Fixer path — common Invocation, structural prerequisites,
+ * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
  */
 import assert from "node:assert/strict";
 import {
@@ -203,7 +203,35 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
   });
 });
 
-test("buildFixerActivationExtraArgs pins package diagnosing-bugs without forcing skill text in prompt", async () => {
+/** Collect --skill path values from activation argv (order-preserving). */
+function skillPathsFromArgs(args: readonly string[]): string[] {
+  const paths: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--skill" && typeof args[i + 1] === "string") {
+      paths.push(args[i + 1]!);
+    }
+  }
+  return paths;
+}
+
+/** Load packaged method names reachable from mounted --skill paths. */
+async function methodNamesFromSkillPaths(
+  paths: readonly string[],
+): Promise<Set<string>> {
+  const names = new Set<string>();
+  for (const skillPath of paths) {
+    for (const name of ["diagnosing-bugs", "tdd"] as const) {
+      const expected = resolvePackagedMethodSkillPath(packageRoot, name);
+      if (skillPath === expected) {
+        const material = await loadPackagedMethodSkillMaterial(packageRoot, name);
+        names.add(material.name);
+      }
+    }
+  }
+  return names;
+}
+
+test("buildFixerActivationExtraArgs makes diagnosing-bugs and tdd available without forcing skill text", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -219,18 +247,17 @@ test("buildFixerActivationExtraArgs pins package diagnosing-bugs without forcing
     });
     const applyArgs = buildFixerActivationExtraArgs(apply, { packageRoot });
     assert.equal(applyArgs.includes("--no-skills"), true);
-    assert.equal(applyArgs.includes("--skill"), true);
-    const skillIdx = applyArgs.indexOf("--skill");
-    assert.equal(
-      applyArgs[skillIdx + 1]?.includes("resources/methods/diagnosing-bugs/SKILL.md"),
-      true,
-    );
+    // External fact: both package methods load from the mounted skill paths.
+    const applyNames = await methodNamesFromSkillPaths(skillPathsFromArgs(applyArgs));
+    assert.equal(applyNames.has("diagnosing-bugs"), true);
+    assert.equal(applyNames.has("tdd"), true);
     assert.equal(applyArgs.includes("--ak-fixer-phase"), true);
     assert.equal(applyArgs[applyArgs.indexOf("--ak-fixer-phase") + 1], "apply");
     assert.equal(applyArgs[applyArgs.indexOf("--ak-fix-packet") + 1], apply.packetPath);
-    // Diagnosis is available but not forced into the first prompt transport.
+    // Methods are available but not forced into the first prompt transport.
     const prompt = applyArgs[applyArgs.length - 1]!;
     assert.equal(prompt.includes("/skill:diagnosing-bugs"), false);
+    assert.equal(prompt.includes("/skill:tdd"), false);
     assert.equal(prompt.includes("Apply the approved repair."), true);
     assert.equal(
       applyArgs.some((a) => a.includes(".agents/skills")),
@@ -253,7 +280,9 @@ test("buildFixerActivationExtraArgs pins package diagnosing-bugs without forcing
       createRunId: () => "run-fixer-plan-args",
     });
     const planArgs = buildFixerActivationExtraArgs(plan, { packageRoot });
-    assert.equal(planArgs.includes("--skill"), true);
+    const planNames = await methodNamesFromSkillPaths(skillPathsFromArgs(planArgs));
+    assert.equal(planNames.has("diagnosing-bugs"), true);
+    assert.equal(planNames.has("tdd"), true);
     assert.equal(planArgs[planArgs.indexOf("--ak-fixer-phase") + 1], "plan");
     assert.equal(planArgs.includes("--ak-fixer-prerequisites"), true);
     assert.equal(
@@ -264,7 +293,9 @@ test("buildFixerActivationExtraArgs pins package diagnosing-bugs without forcing
     const resume = buildFixerResumeActivationExtraArgs(apply, { packageRoot });
     assert.equal(resume.includes(RESUME_TRANSPORT_ENVELOPE), true);
     assert.equal(resume.includes(apply.instruction), false);
-    assert.equal(resume.includes("--skill"), true);
+    const resumeNames = await methodNamesFromSkillPaths(skillPathsFromArgs(resume));
+    assert.equal(resumeNames.has("diagnosing-bugs"), true);
+    assert.equal(resumeNames.has("tdd"), true);
     assert.equal(resume[resume.indexOf("--ak-fixer-phase") + 1], "apply");
   });
 });
@@ -509,7 +540,6 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
             );
             return {
               code: 0,
-              stdout: "",
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -520,16 +550,18 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       assert.equal(result.exitCode, 0, stdout.join("") || "fixer plan failed");
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "plan");
-      assert.equal(captured!.includes("--skill"), true);
-      assert.equal(
-        captured![captured!.indexOf("--skill") + 1]?.includes(
-          "resources/methods/diagnosing-bugs/SKILL.md",
-        ),
-        true,
+      const planMounted = await methodNamesFromSkillPaths(
+        skillPathsFromArgs(captured!),
       );
+      assert.equal(planMounted.has("diagnosing-bugs"), true);
+      assert.equal(planMounted.has("tdd"), true);
       // Not forced: first prompt must not auto-inject skill invocation.
       assert.equal(
         captured![captured!.length - 1]?.includes("/skill:diagnosing-bugs"),
+        false,
+      );
+      assert.equal(
+        captured![captured!.length - 1]?.includes("/skill:tdd"),
         false,
       );
       assert.equal(result.terminal?.roleOutcome.role, "fixer");
@@ -567,7 +599,6 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
             captured = [...args];
             return {
               code: 1,
-              stdout: "",
               stderr: "forced stop before model",
               timedOut: false,
               args: [...args],
@@ -577,13 +608,11 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       );
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-fixer-phase") + 1], "apply");
-      assert.equal(captured!.includes("--skill"), true);
-      assert.equal(
-        captured![captured!.indexOf("--skill") + 1]?.includes(
-          "resources/methods/diagnosing-bugs/SKILL.md",
-        ),
-        true,
+      const applyMounted = await methodNamesFromSkillPaths(
+        skillPathsFromArgs(captured!),
       );
+      assert.equal(applyMounted.has("diagnosing-bugs"), true);
+      assert.equal(applyMounted.has("tdd"), true);
     }
   });
 });
@@ -617,7 +646,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "quota",
               timedOut: false,
               args: [...args],
@@ -681,7 +709,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],
@@ -829,7 +856,6 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
           await writeFile(sessionFile, fixerSessionLine(receipt), "utf8");
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -1093,7 +1119,6 @@ test("public Fixer unfinished/refused/partially_completed/audit_escalation hand 
           await writeFile(sessionFile, fixerSessionLine(row.details), "utf8");
           return {
             code: 0,
-            stdout: "",
             stderr: "",
             timedOut: false,
             args: [...args],

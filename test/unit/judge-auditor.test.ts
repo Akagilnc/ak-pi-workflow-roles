@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { SessionManager, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { COMPLIANCE_BOOKKEEPING_UNREADABLE } from "../../src/compliance-transport.ts";
 import { createPiJudgeAuditor } from "../../src/judge-auditor.ts";
 
 const usage = {
@@ -121,22 +122,52 @@ test("Pi judge auditor accepts an exact revise decision", async () => {
 
 test("Pi judge auditor accepts formerly shape-rejected decisions without aborting (#177 S4)", async (t) => {
   // ADR 0055/0056/0057: runtime no longer shape-rejects compliance decisions.
-  const cases: Array<[string, Record<string, unknown>, "pass" | "revise"]> = [
+  const cases: Array<
+    [string, Record<string, unknown>, "pass" | "revise" | "escalate", unknown?]
+  > = [
     ["pass with violations", { status: "pass", violations: ["contradiction"] }, "pass"],
-    ["empty revise", { status: "revise", violations: [] }, "revise"],
-    ["blank violation", { status: "revise", violations: ["  "] }, "revise"],
-    ["mixed violation values", { status: "revise", violations: ["real", 4] }, "revise"],
-    ["non-array violations", { status: "revise", violations: "rule 1" }, "revise"],
+    ["empty revise", { status: "revise", violations: [] }, "revise", []],
+    ["blank violation", { status: "revise", violations: ["  "] }, "revise", ["  "]],
+    [
+      "mixed violation values",
+      { status: "revise", violations: ["real", 4] },
+      "revise",
+      ["real", 4],
+    ],
+    [
+      "non-array violations",
+      { status: "revise", violations: "rule 1" },
+      "revise",
+      ["rule 1"],
+    ],
     ["unknown key", { status: "pass", violations: [], explanation: "extra" }, "pass"],
     ["missing violations", { status: "pass" }, "pass"],
-    ["unknown status", { status: "maybe", violations: [] }, "pass"],
+    [
+      "unknown status",
+      { status: "maybe", violations: [] },
+      "escalate",
+      COMPLIANCE_BOOKKEEPING_UNREADABLE,
+    ],
+    [
+      "missing status",
+      {},
+      "escalate",
+      COMPLIANCE_BOOKKEEPING_UNREADABLE,
+    ],
   ];
 
-  for (const [name, decision, expected] of cases) {
+  for (const [name, decision, expected, content] of cases) {
     await t.test(name, async () => {
       const auditor = createPiJudgeAuditor(async () => auditResponse(decision));
       const result = await auditor(auditInput, { context: auditContext() });
       assert.equal(result.status, expected);
+      if (expected === "revise" && result.status === "revise" && content !== undefined) {
+        assert.deepEqual(result.violations, content);
+      }
+      if (expected === "escalate" && result.status === "escalate") {
+        assert.ok(result.conflicts.includes(COMPLIANCE_BOOKKEEPING_UNREADABLE));
+        assert.equal(result.decisionGate.question, COMPLIANCE_BOOKKEEPING_UNREADABLE);
+      }
     });
   }
 });

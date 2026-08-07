@@ -157,7 +157,6 @@ test("every public callable role is a completed path (no deferred slice)", async
         io,
         piRunner: async (args) => ({
           code: 1,
-          stdout: "",
           stderr: "forced runner stop",
           timedOut: false,
           args: [...args],

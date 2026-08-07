@@ -608,7 +608,6 @@ test("ak-role merger derives envelope, pins method, and fails activation honestl
             );
             return {
               code: 0,
-              stdout: "",
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -670,7 +669,6 @@ test("ak-role resume continues merger with package method and exact session", as
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "quota",
               timedOut: false,
               args: [...args],
@@ -748,7 +746,6 @@ test("ak-role resume continues merger with package method and exact session", as
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],

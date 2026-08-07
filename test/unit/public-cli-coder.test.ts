@@ -387,7 +387,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
             );
             return {
               code: 0,
-              stdout: "",
               stderr: "",
               timedOut: false,
               args: [...args],
@@ -439,7 +438,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
             captured = [...args];
             return {
               code: 1,
-              stdout: "",
               stderr: "forced stop before model",
               timedOut: false,
               args: [...args],
@@ -492,7 +490,6 @@ test("ak-role resume continues coder with preserved plan phase and exact session
             });
             return {
               code: 1,
-              stdout: "",
               stderr: "quota",
               timedOut: false,
               args: [...args],
@@ -556,7 +553,6 @@ test("ak-role resume continues coder with preserved plan phase and exact session
         );
         return {
           code: 0,
-          stdout: "",
           stderr: "",
           timedOut: false,
           args: [...args],

@@ -44,13 +44,16 @@ export type ComplianceCompletion = (
   options: ProviderStreamOptions,
 ) => Promise<AssistantMessage>;
 
+/** Honest label when compliance bookkeeping `status` is missing or outside pass|revise|escalate. */
+export const COMPLIANCE_BOOKKEEPING_UNREADABLE = "审刑院记账位不可读" as const;
+
 export type ComplianceDecision =
   | { status: "pass"; usage?: Usage }
-  | { status: "revise"; violations: readonly string[]; usage?: Usage }
+  | { status: "revise"; violations: readonly unknown[]; usage?: Usage }
   | {
     status: "escalate";
-    conflicts: readonly string[];
-    decisionGate: { question: string; options: readonly string[] };
+    conflicts: readonly unknown[];
+    decisionGate: { question: string; options: readonly unknown[] };
     usage?: Usage;
   };
 
@@ -303,37 +306,27 @@ function malformedComplianceDecision(
   );
 }
 
-/** Coerce model-provided list fields: real arrays, JSON array strings, or empty. */
-function coerceStringArray(value: unknown): readonly string[] {
-  if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === "string");
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed.length === 0) return [];
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        return parsed.filter((item): item is string => typeof item === "string");
-      }
-    } catch {
-      // Non-JSON string: keep as a single degraded entry when non-blank.
-    }
-    return [value];
-  }
-  return [];
+/**
+ * Read a compliance list field without dropping or inventing entries.
+ * Array → as-is (including non-string elements). Otherwise present the whole
+ * value as one entry; no JSON.parse guess and no silent filter.
+ */
+function readListField(value: unknown): readonly unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value === undefined) return [];
+  return [value];
 }
 
 /** Read whatever decisionGate shape arrived; missing pieces degrade, never reject. */
 function coerceDecisionGate(
   value: unknown,
-): { question: string; options: readonly string[] } {
+): { question: string; options: readonly unknown[] } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { question: "", options: [] };
   }
   const record = value as Record<string, unknown>;
   const question = typeof record.question === "string" ? record.question : "";
-  const options = coerceStringArray(record.options);
+  const options = readListField(record.options);
   return { question, options };
 }
 
@@ -417,25 +410,36 @@ export function readComplianceDecision(
   // ADR 0055/0057: shape is guidance, not a reject gate. Read what arrived.
   const args = arguments_ as Record<string, unknown>;
   const status = args.status;
+  if (status === "pass") {
+    return { status: "pass", usage: response.usage };
+  }
   if (status === "revise") {
     return {
       status: "revise",
-      violations: coerceStringArray(args.violations),
+      violations: readListField(args.violations),
       usage: response.usage,
     };
   }
   if (status === "escalate") {
     return {
       status: "escalate",
-      conflicts: coerceStringArray(args.conflicts),
+      conflicts: readListField(args.conflicts),
       decisionGate: coerceDecisionGate(args.decisionGate),
       usage: response.usage,
     };
   }
-  // pass, missing status, or unknown bookkeeping value: do not abort the run
-  // (CONTEXT.md bookkeeping-bit rule + ADR 0040). Degrade to pass so the
-  // already-delivered role output can be retained.
-  return { status: "pass", usage: response.usage };
+  // Missing or unknown bookkeeping value: do not abort (CONTEXT.md), and do not
+  // launder into pass (ADR 0040/0055). Reuse escalate as the existing hand-to-human
+  // channel, labeled only with the unreadable fact — never a forged auditor decision.
+  return {
+    status: "escalate",
+    conflicts: [COMPLIANCE_BOOKKEEPING_UNREADABLE],
+    decisionGate: {
+      question: COMPLIANCE_BOOKKEEPING_UNREADABLE,
+      options: [COMPLIANCE_BOOKKEEPING_UNREADABLE],
+    },
+    usage: response.usage,
+  };
 }
 
 function throwIfStreamIdleTimedOut(reason: unknown): void {

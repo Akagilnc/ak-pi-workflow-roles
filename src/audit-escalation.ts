@@ -6,10 +6,10 @@ export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
 export type AuditEscalationResult = {
   readonly kind: typeof AUDIT_ESCALATION_KIND;
-  readonly conflicts: readonly string[];
+  readonly conflicts: readonly unknown[];
   readonly decisionGate: {
     readonly question: string;
-    readonly options: readonly string[];
+    readonly options: readonly unknown[];
   };
 };
 
@@ -92,7 +92,7 @@ export function isAuditEscalationResult(
 
 export type ComplianceDecisionHandlers<T> = {
   pass: (usage: Usage | undefined) => T | PromiseLike<T>;
-  revise: (violations: readonly string[]) => T | PromiseLike<T>;
+  revise: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
 };
 

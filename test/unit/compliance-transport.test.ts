@@ -309,35 +309,135 @@ test("Codex decision schema is an object with empty required and four declared p
 
 test("status-dependent and loose decision shapes are accepted without aborting the run", async () => {
   // Former reject matrix (#177 S4 / ADR 0055-0057): runtime no longer shape-rejects.
-  const looseArguments = [
-    { status: "pass", violations: [], conflicts: ["unexpected"], decisionGate: null },
-    { status: "pass", violations: [], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "pass", violations: ["unexpected"], conflicts: [], decisionGate: null },
-    { status: "revise", violations: [], conflicts: [], decisionGate: null },
-    { status: "revise", violations: ["real"], conflicts: ["unexpected"], decisionGate: null },
-    { status: "revise", violations: ["real"], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "escalate", violations: [], conflicts: [], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "escalate", violations: ["unexpected"], conflicts: ["conflict"], decisionGate: { question: "Choose", options: ["A"] } },
-    { status: "escalate", violations: [], conflicts: ["conflict"], decisionGate: null },
-    { status: "pass" },
-    // #179 glm-5.2: arrays written as strings
-    { status: "pass", violations: "[]", conflicts: "[]", decisionGate: null },
+  // Each variant asserts its concrete status and retained content (no tautology over the union).
+  const looseArguments: Array<{
+    arguments: Record<string, unknown>;
+    expect: {
+      status: "pass" | "revise" | "escalate";
+      violations?: readonly unknown[];
+      conflicts?: readonly unknown[];
+      decisionGate?: { question: string; options: readonly unknown[] };
+    };
+  }> = [
+    {
+      arguments: { status: "pass", violations: [], conflicts: ["unexpected"], decisionGate: null },
+      expect: { status: "pass" },
+    },
+    {
+      arguments: {
+        status: "pass",
+        violations: [],
+        conflicts: [],
+        decisionGate: { question: "Choose", options: ["A"] },
+      },
+      expect: { status: "pass" },
+    },
+    {
+      arguments: { status: "pass", violations: ["unexpected"], conflicts: [], decisionGate: null },
+      expect: { status: "pass" },
+    },
+    {
+      arguments: { status: "revise", violations: [], conflicts: [], decisionGate: null },
+      expect: { status: "revise", violations: [] },
+    },
+    {
+      arguments: {
+        status: "revise",
+        violations: ["real"],
+        conflicts: ["unexpected"],
+        decisionGate: null,
+      },
+      expect: { status: "revise", violations: ["real"] },
+    },
+    {
+      arguments: {
+        status: "revise",
+        violations: ["real"],
+        conflicts: [],
+        decisionGate: { question: "Choose", options: ["A"] },
+      },
+      expect: { status: "revise", violations: ["real"] },
+    },
+    {
+      arguments: {
+        status: "revise",
+        violations: ["real", 4],
+        conflicts: [],
+        decisionGate: null,
+      },
+      expect: { status: "revise", violations: ["real", 4] },
+    },
+    {
+      arguments: {
+        status: "escalate",
+        violations: [],
+        conflicts: [],
+        decisionGate: { question: "Choose", options: ["A"] },
+      },
+      expect: {
+        status: "escalate",
+        conflicts: [],
+        decisionGate: { question: "Choose", options: ["A"] },
+      },
+    },
+    {
+      arguments: {
+        status: "escalate",
+        violations: ["unexpected"],
+        conflicts: ["conflict"],
+        decisionGate: { question: "Choose", options: ["A"] },
+      },
+      expect: {
+        status: "escalate",
+        conflicts: ["conflict"],
+        decisionGate: { question: "Choose", options: ["A"] },
+      },
+    },
+    {
+      // Empty gate escalate: degrade in place, never reject.
+      arguments: {
+        status: "escalate",
+        violations: [],
+        conflicts: ["conflict"],
+        decisionGate: null,
+      },
+      expect: {
+        status: "escalate",
+        conflicts: ["conflict"],
+        decisionGate: { question: "", options: [] },
+      },
+    },
+    {
+      arguments: { status: "pass" },
+      expect: { status: "pass" },
+    },
+    {
+      // #179 glm-5.2: arrays written as strings — pass path does not read them.
+      arguments: { status: "pass", violations: "[]", conflicts: "[]", decisionGate: null },
+      expect: { status: "pass" },
+    },
   ];
 
-  for (const [index, arguments_] of looseArguments.entries()) {
+  for (const [index, entry] of looseArguments.entries()) {
     await withPersistedSession(async (sessionManager) => {
       const decision = await audit(
         response(`loose-status-${index}`, [
-          fauxToolCall(decisionToolName, arguments_),
+          fauxToolCall(decisionToolName, entry.arguments),
         ]),
         sessionManager,
       );
-      assert.ok(
-        decision.status === "pass" ||
-          decision.status === "revise" ||
-          decision.status === "escalate",
-        `variant ${index} must resolve without throwing`,
-      );
+      assert.equal(decision.status, entry.expect.status, `variant ${index}`);
+      if (entry.expect.status === "revise" && decision.status === "revise") {
+        assert.deepEqual(decision.violations, entry.expect.violations, `variant ${index}`);
+      }
+      if (entry.expect.status === "escalate" && decision.status === "escalate") {
+        assert.deepEqual(decision.conflicts, entry.expect.conflicts, `variant ${index}`);
+        assert.deepEqual(
+          decision.decisionGate,
+          entry.expect.decisionGate,
+          `variant ${index} empty-gate degrade must be asserted`,
+        );
+      }
     });
   }
 });

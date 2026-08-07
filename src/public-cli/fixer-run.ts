@@ -1,6 +1,6 @@
 /**
  * Public Fixer Role run: admit → explicit Internal activate → settle Terminal result.
- * #110: optional package-owned diagnosing-bugs method (available, not forced),
+ * #110/#177: package-owned diagnosing-bugs and tdd methods (available, not forced),
  * common Invocation + structural prerequisites, default apply / explicit plan,
  * shared #106 success interface. Controlled-failure settlement reuses #107.
  */
@@ -95,7 +95,7 @@ function buildModelArgs(model: SeatModelConfig | undefined): string[] {
 
 /**
  * Build Internal activation extra-args for an admitted Fixer run.
- * Package diagnosing-bugs Skill is available via --skill on every phase
+ * Package diagnosing-bugs and tdd Skills are available via --skill on every phase
  * (not forced into the first prompt). Ambient home skills stay disabled.
  */
 export function buildFixerActivationExtraArgs(
@@ -107,10 +107,11 @@ export function buildFixerActivationExtraArgs(
   },
 ): string[] {
   const prompt = buildFixerTransportPrompt(admitted);
-  const skillPath = resolvePackagedMethodSkillPath(
+  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs",
   );
+  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
   const prerequisiteArgs =
     admitted.prerequisitesPath === undefined
       ? []
@@ -118,7 +119,9 @@ export function buildFixerActivationExtraArgs(
   return [
     "--no-skills",
     "--skill",
-    skillPath,
+    diagnosisSkillPath,
+    "--skill",
+    tddSkillPath,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
@@ -143,7 +146,7 @@ export function buildFixerActivationExtraArgs(
 
 /**
  * Reopen the exact Fixer Pi session for resume. Preserves admitted phase,
- * prerequisites, and package diagnosis availability; does not resubmit instruction.
+ * prerequisites, and package diagnosis/tdd availability; does not resubmit instruction.
  */
 export function buildFixerResumeActivationExtraArgs(
   admitted: AdmittedFixerInvocation,
@@ -153,10 +156,11 @@ export function buildFixerResumeActivationExtraArgs(
     extraPiArgs?: readonly string[];
   },
 ): string[] {
-  const skillPath = resolvePackagedMethodSkillPath(
+  const diagnosisSkillPath = resolvePackagedMethodSkillPath(
     options.packageRoot,
     "diagnosing-bugs",
   );
+  const tddSkillPath = resolvePackagedMethodSkillPath(options.packageRoot, "tdd");
   const prerequisiteArgs =
     admitted.prerequisitesPath === undefined
       ? []
@@ -164,7 +168,9 @@ export function buildFixerResumeActivationExtraArgs(
   return [
     "--no-skills",
     "--skill",
-    skillPath,
+    diagnosisSkillPath,
+    "--skill",
+    tddSkillPath,
     "--no-prompt-templates",
     "--no-themes",
     "--no-context-files",
