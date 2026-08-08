@@ -10067,6 +10067,7 @@ import { dirname as dirname4, relative as relative2, resolve as resolve3, sep as
 
 // src/audit-escalation.ts
 var AUDIT_ESCALATION_KIND = "audit_escalation";
+var AUDIT_ESCALATION_PROJECTION_BRAND = Object.freeze(/* @__PURE__ */ Object.create(null));
 function isAuditEscalationResult(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;

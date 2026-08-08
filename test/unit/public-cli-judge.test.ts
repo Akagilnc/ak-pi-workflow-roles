@@ -645,6 +645,7 @@ test("real persisted Judge escalation remains bound to the retained audit respon
           ),
         ]);
         let observedNavigator: ReturnType<typeof publicNavigatorSettlement>;
+        let liveToolResultDetails: unknown;
         await withInProcessPi({
           cwd: project,
           agentDir,
@@ -653,6 +654,7 @@ test("real persisted Judge escalation remains bound to the retained audit respon
           extensionFactories: [((pi) => {
             pi.on("tool_result", (event) => {
               if (event.toolName === JUDGE_OUTPUT_TOOL_NAME) {
+                liveToolResultDetails = event.details;
                 observedNavigator = publicNavigatorSettlement("judge", null, event);
               }
             });
@@ -668,6 +670,16 @@ test("real persisted Judge escalation remains bound to the retained audit respon
         assert.deepEqual(
           observedNavigator,
           { kind: "human_decision", role: "judge", phase: null, status: "audit_escalation" },
+        );
+        assert.ok(liveToolResultDetails && typeof liveToolResultDetails === "object");
+        assert.notEqual(
+          publicNavigatorSettlement("judge", null, {
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: false,
+            details: { ...(liveToolResultDetails as Record<string, unknown>) },
+          })?.kind,
+          "human_decision",
+          "a copy of the real live tool_result must not retain audit ownership",
         );
         const liveTerminal = sessionManager.getEntries().find((entry) =>
           entry.type === "message" && entry.message.role === "toolResult" &&
@@ -697,13 +709,15 @@ test("real persisted Judge escalation remains bound to the retained audit respon
     assert.equal(isAuditEscalationResult(terminal.message?.details), true);
     assert.deepEqual((terminal.message?.details as any).conflicts, conflicts);
     assert.deepEqual((terminal.message?.details as any).auditDecisionGate, decisionGate);
-    assert.deepEqual(
+    // Persisted/replayed details have no live object brand; the retained
+    // response binder below owns persisted authenticity instead.
+    assert.notEqual(
       publicNavigatorSettlement("judge", null, {
         toolName: JUDGE_OUTPUT_TOOL_NAME,
         isError: false,
         details: terminal.message?.details,
-      }),
-      { kind: "human_decision", role: "judge", phase: null, status: "audit_escalation" },
+      })?.kind,
+      "human_decision",
     );
     assert.notEqual(
       publicNavigatorSettlement("judge", null, {

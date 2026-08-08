@@ -1,9 +1,9 @@
 export const AUDIT_ESCALATION_KIND = "audit_escalation";
 // Live Navigator settlement may consume only the projection produced by this
-// owner. The typed owner marker survives Pi's session serialization; role
-// output schemas cannot author it, while the public persisted binder still
-// re-authenticates retained audit evidence.
-const AUDIT_ESCALATION_PROJECTION_ID = "audit-escalation-projection-v1";
+// owner. Its private object prototype is process-local and cannot be authored
+// by role output; persisted/replayed records are re-authenticated by the
+// retained audit evidence binder instead.
+const AUDIT_ESCALATION_PROJECTION_BRAND = Object.freeze(Object.create(null));
 /**
  * Build the escalation delivery face.
  * Role-delivered fields ride under the escalation discriminator (ADR 0055).
@@ -16,7 +16,6 @@ const AUDIT_ESCALATION_PROJECTION_ID = "audit-escalation-projection-v1";
 export function buildAuditEscalationResult(decision, deliveredOutput) {
     const auditOwned = {
         kind: AUDIT_ESCALATION_KIND,
-        auditProjection: AUDIT_ESCALATION_PROJECTION_ID,
         conflicts: [...decision.conflicts],
         auditDecisionGate: {
             question: decision.decisionGate.question,
@@ -31,15 +30,23 @@ export function buildAuditEscalationResult(decision, deliveredOutput) {
             ...deliveredOutput,
             ...auditOwned,
         };
+        Object.setPrototypeOf(result, AUDIT_ESCALATION_PROJECTION_BRAND);
         return result;
     }
     const result = auditOwned;
+    Object.setPrototypeOf(result, AUDIT_ESCALATION_PROJECTION_BRAND);
     return result;
 }
-/** True only for the audit-owned projection, never for role-shaped data. */
+/** True only for the audit-owned live projection, never for role-shaped data. */
 export function isAuditEscalationProjection(value) {
-    return isAuditEscalationResult(value) &&
-        value.auditProjection === AUDIT_ESCALATION_PROJECTION_ID;
+    if (!isAuditEscalationResult(value))
+        return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype !== Object.prototype &&
+        prototype !== null &&
+        Object.getPrototypeOf(prototype) === null &&
+        Reflect.ownKeys(prototype).length === 0 &&
+        Object.isFrozen(prototype);
 }
 function humanDecisionText(result) {
     // Read only the audit-owned, fixed-shape gate. Role payload is not assumed

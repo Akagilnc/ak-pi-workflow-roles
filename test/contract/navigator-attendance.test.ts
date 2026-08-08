@@ -321,12 +321,13 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
       { kind: "human_decision", role: seat.role, phase: seat.phase, status: "audit_escalation" },
       seat.role,
     );
-    // Same visible shape, including a role-owned payload, is not an audit identity.
+    // The same visible shape, including every audit-owned field/value, is
+    // still only role-authored data after the object identity is copied.
     assert.notEqual(
       publicNavigatorSettlement(seat.role, seat.phase, {
         toolName: seat.toolName,
         isError: false,
-        details: { ...projected, auditProjection: undefined },
+        details: { ...projected },
       })?.kind,
       "human_decision",
       `${seat.role}: copied role-shaped details must not escalate Navigator`,
@@ -342,7 +343,7 @@ test("Navigator accepts only the audit-owned in-memory projection across all fou
         publicNavigatorSettlement(seat.role, seat.phase, {
           toolName: seat.toolName,
           isError: false,
-          details: { ...forged, auditProjection: undefined },
+          details: { ...forged },
         })?.kind,
         "human_decision",
         `${seat.role}: forged audit evidence must not escalate Navigator`,
