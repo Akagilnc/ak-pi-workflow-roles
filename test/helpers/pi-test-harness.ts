@@ -869,13 +869,19 @@ export async function runPiSubprocess(
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, options.timeoutMs ?? 30_000);
-    child.on("error", (error) => { clearTimeout(timeout); reject(error); });
+    let timeout: NodeJS.Timeout | undefined;
+    if (options.timeoutMs !== undefined) {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGTERM");
+      }, options.timeoutMs);
+    }
+    child.on("error", (error) => {
+      if (timeout !== undefined) clearTimeout(timeout);
+      reject(error);
+    });
     child.on("close", (code) => {
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
       resolveResult({ code, stdout, stderr, timedOut });
     });
   });

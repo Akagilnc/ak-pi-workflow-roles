@@ -1197,14 +1197,17 @@ test("audit escalation requires the retained seat-bound response across all four
       { role },
     );
     const details = JSON.parse(JSON.stringify(projected));
-    assert.deepEqual(
+    // Persisted/replayed details have no live object brand. The retained
+    // seat-bound response below, not Navigator shape recognition, owns this
+    // escalation's authenticity.
+    assert.notEqual(
       publicNavigatorSettlement(role, role === "fixer" ? "apply" : null, {
         toolName: seat.output,
         isError: false,
         details,
-      }),
-      { kind: "human_decision", role, phase: role === "fixer" ? "apply" : null, status: "audit_escalation" },
-      `${role}: persisted genuine projection`,
+      })?.kind,
+      "human_decision",
+      `${role}: persisted genuine projection must not impersonate live identity`,
     );
     const result = {
       type: "message",
