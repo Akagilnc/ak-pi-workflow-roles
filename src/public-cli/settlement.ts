@@ -851,11 +851,6 @@ function isComplianceAuditIncomplete(value: unknown): value is ComplianceAuditIn
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }
-  if (observation.kind === "escalate-material-unreadable") {
-    return observation.reason === "conflicts-missing" ||
-      observation.reason === "decisionGate-missing" ||
-      observation.reason === "decisionGate-invalid";
-  }
   return observation.kind === "non-object-arguments" && [
     "null",
     "array",
@@ -973,12 +968,6 @@ function sameAuditValue(left: unknown, right: unknown): boolean {
   return false;
 }
 
-function sameAuditList(left: readonly unknown[], right: readonly unknown[]): boolean {
-  return left.length === right.length && left.every((value, index) =>
-    sameAuditValue(value, right[index]),
-  );
-}
-
 /**
  * Bind the public escalation face to the one retained response that sits inside
  * the same role output call/result interval. A `kind` field alone is never a
@@ -1010,14 +999,14 @@ function boundAuditEscalationForResult(
   if (decision.status !== "escalate") return undefined;
   const details = message.details;
   if (!isAuditEscalationResult(details) || !isRecord(details)) return undefined;
-  const gate = details.auditDecisionGate;
-  if (!Array.isArray(details.conflicts) || !isRecord(gate)) return undefined;
-  if (!sameAuditList(details.conflicts, decision.conflicts)) return undefined;
-  if (gate.question !== decision.decisionGate.question ||
-    !sameAuditList(
-      Array.isArray(gate.options) ? gate.options : [],
-      decision.decisionGate.options,
-    )) return undefined;
+  const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
+  const hasDetailsConflicts = Object.hasOwn(details, "conflicts");
+  if (hasDecisionConflicts !== hasDetailsConflicts) return undefined;
+  if (hasDecisionConflicts && !sameAuditValue(details.conflicts, decision.conflicts)) return undefined;
+  const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
+  const hasDetailsGate = Object.hasOwn(details, "auditDecisionGate");
+  if (hasDecisionGate !== hasDetailsGate) return undefined;
+  if (hasDecisionGate && !sameAuditValue(details.auditDecisionGate, decision.decisionGate)) return undefined;
   return { decision, details };
 }
 

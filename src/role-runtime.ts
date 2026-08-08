@@ -378,13 +378,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
     : {};
   // Live Navigator consumes only the audit-owned projection; persisted/replayed
   // records are re-authenticated by settlement against retained audit evidence.
-  if (
-    isAuditEscalationProjection(event.details) &&
-    Array.isArray(details.conflicts) &&
-    typeof details.auditDecisionGate === "object" &&
-    details.auditDecisionGate !== null &&
-    !Array.isArray(details.auditDecisionGate)
-  ) {
+  if (isAuditEscalationProjection(event.details)) {
     return { kind: "human_decision", role, phase, status: "audit_escalation" };
   }
   const status = typeof details.status === "string"

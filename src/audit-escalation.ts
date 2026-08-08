@@ -8,26 +8,23 @@ import type {
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
 // Live Navigator settlement may consume only the projection produced by this
-// owner. Its private object prototype is process-local and cannot be authored
-// by role output; persisted/replayed records are re-authenticated by the
-// retained audit evidence binder instead.
-const AUDIT_ESCALATION_PROJECTION_BRAND = Object.freeze(Object.create(null));
+// owner. Its private WeakSet cannot be authored by role output; persisted/
+// replayed records are re-authenticated by the retained audit evidence binder.
+const AUDIT_ESCALATION_LIVE_REGISTRY = new WeakSet<object>();
 
 /**
  * Escalation delivery face.
- * `kind` / `conflicts` / `auditDecisionGate` are audit-owned and fixed-shape.
+ * `kind` / `conflicts` / `auditDecisionGate` are audit-owned fields.
  * Role-delivered fields ride beside them as open content (ADR 0055) — including
  * a role `decisionGate` when present. The index signature tells that truth so
  * callers never need a cast to retain role output.
  */
 export type AuditEscalationResult = {
   readonly kind: typeof AUDIT_ESCALATION_KIND;
-  readonly conflicts: readonly unknown[];
-  /** Audit-owned gate — single fixed home, never the role's gate. */
-  readonly auditDecisionGate: {
-    readonly question: string;
-    readonly options: readonly unknown[];
-  };
+  /** Raw audit-owned conflicts field, when the auditor supplied one. */
+  readonly conflicts?: unknown;
+  /** Raw audit-owned gate field, when the auditor supplied one. */
+  readonly auditDecisionGate?: unknown;
   readonly [key: string]: unknown;
 };
 
@@ -49,8 +46,8 @@ export type AuditIncompleteToolResult = {
  * Build the escalation delivery face.
  * Role-delivered fields ride under the escalation discriminator (ADR 0055).
  * `kind` always wins so the discriminator cannot be laundered.
- * `conflicts` always come from the audit (why we escalated).
- * `auditDecisionGate` is always the audit's own gate — one fixed home.
+ * `conflicts` and `auditDecisionGate`, when present, always come from the
+ * audit (why we escalated and its gate). Raw ancillary values are not repaired.
  * A role `decisionGate`, when present, stays at its own key via spread and is
  * never overwritten (not folded, not dropped, not swapped into the audit home).
  */
@@ -58,29 +55,30 @@ export function buildAuditEscalationResult(
   decision: Extract<ComplianceDecision, { status: "escalate" }>,
   deliveredOutput?: unknown,
 ): AuditEscalationResult {
-  const auditOwned = {
+  const auditOwned: Record<string, unknown> = {
     kind: AUDIT_ESCALATION_KIND,
-    conflicts: [...decision.conflicts],
-    auditDecisionGate: {
-      question: decision.decisionGate.question,
-      options: [...decision.decisionGate.options],
-    },
   };
-  if (
+  if (Object.hasOwn(decision, "conflicts")) {
+    auditOwned.conflicts = decision.conflicts;
+  }
+  if (Object.hasOwn(decision, "decisionGate")) {
+    auditOwned.auditDecisionGate = decision.decisionGate;
+  }
+  const deliveredFields =
     deliveredOutput !== undefined &&
     deliveredOutput !== null &&
     typeof deliveredOutput === "object" &&
     !Array.isArray(deliveredOutput)
-  ) {
-    const result = {
-      ...(deliveredOutput as Record<string, unknown>),
-      ...auditOwned,
-    } as AuditEscalationResult;
-    Object.setPrototypeOf(result, AUDIT_ESCALATION_PROJECTION_BRAND);
-    return result;
-  }
-  const result = auditOwned as AuditEscalationResult;
-  Object.setPrototypeOf(result, AUDIT_ESCALATION_PROJECTION_BRAND);
+      ? { ...(deliveredOutput as Record<string, unknown>) }
+      : {};
+  // Role output cannot fill an absent audit-owned field.
+  delete deliveredFields.conflicts;
+  delete deliveredFields.auditDecisionGate;
+  const result = {
+    ...deliveredFields,
+    ...auditOwned,
+  } as AuditEscalationResult;
+  AUDIT_ESCALATION_LIVE_REGISTRY.add(result);
   return result;
 }
 
@@ -89,25 +87,23 @@ export function isAuditEscalationProjection(
   value: unknown,
 ): value is AuditEscalationResult {
   if (!isAuditEscalationResult(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype !== Object.prototype &&
-    prototype !== null &&
-    Object.getPrototypeOf(prototype) === null &&
-    Reflect.ownKeys(prototype).length === 0 &&
-    Object.isFrozen(prototype);
+  return AUDIT_ESCALATION_LIVE_REGISTRY.has(value);
 }
 
 function humanDecisionText(result: AuditEscalationResult): string {
-  // Read only the audit-owned, fixed-shape gate. Role payload is not assumed
-  // to be a {question, options} object — that assumption is what threw.
-  return [
-    "Human decision required: compliance audit escalation.",
-    "Conflicts:",
-    ...result.conflicts.map((conflict) => `- ${conflict}`),
-    `Question: ${result.auditDecisionGate.question}`,
-    "Options:",
-    ...result.auditDecisionGate.options.map((option) => `- ${option}`),
-  ].join("\n");
+  const lines = ["Human decision required: compliance audit escalation."];
+  if (Array.isArray(result.conflicts)) {
+    lines.push("Conflicts:", ...result.conflicts.map((conflict) => `- ${conflict}`));
+  }
+  const gate = result.auditDecisionGate;
+  if (gate !== null && typeof gate === "object" && !Array.isArray(gate)) {
+    const record = gate as Record<string, unknown>;
+    if (typeof record.question === "string") lines.push(`Question: ${record.question}`);
+    if (Array.isArray(record.options)) {
+      lines.push("Options:", ...record.options.map((option) => `- ${option}`));
+    }
+  }
+  return lines.join("\n");
 }
 
 export function projectAuditEscalation(

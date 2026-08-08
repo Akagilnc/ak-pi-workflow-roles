@@ -150,12 +150,6 @@ function readListField(value) {
         return [];
     return [value];
 }
-/** Read whatever object-shaped decisionGate content arrived without inventing values. */
-function coerceDecisionGate(value) {
-    const question = typeof value.question === "string" ? value.question : "";
-    const options = readListField(value.options);
-    return { question, options };
-}
 /**
  * Interpret one retained compliance candidate. This is the single owner for
  * escalation material semantics; settlement reuses it rather than making a
@@ -190,37 +184,10 @@ export function readComplianceCandidate(arguments_, usage) {
         };
     }
     if (status === "escalate") {
-        if (!Object.hasOwn(args, "conflicts") || args.conflicts === undefined) {
-            return {
-                status: "audit-incomplete",
-                observation: { kind: "escalate-material-unreadable", reason: "conflicts-missing" },
-                candidate: arguments_,
-                ...(usage === undefined ? {} : { usage }),
-            };
-        }
-        if (!Object.hasOwn(args, "decisionGate") || args.decisionGate === undefined) {
-            return {
-                status: "audit-incomplete",
-                observation: { kind: "escalate-material-unreadable", reason: "decisionGate-missing" },
-                candidate: arguments_,
-                ...(usage === undefined ? {} : { usage }),
-            };
-        }
-        if (args.decisionGate !== null &&
-            (typeof args.decisionGate !== "object" || Array.isArray(args.decisionGate))) {
-            return {
-                status: "audit-incomplete",
-                observation: { kind: "escalate-material-unreadable", reason: "decisionGate-invalid" },
-                candidate: arguments_,
-                ...(usage === undefined ? {} : { usage }),
-            };
-        }
         return {
             status: "escalate",
-            conflicts: readListField(args.conflicts),
-            decisionGate: args.decisionGate === null
-                ? { question: "", options: [] }
-                : coerceDecisionGate(args.decisionGate),
+            ...(Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {}),
+            ...(Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {}),
             ...(usage === undefined ? {} : { usage }),
         };
     }
@@ -267,7 +234,7 @@ export function readComplianceDecision(response, toolName, invalidLabel) {
     }
     const arguments_ = call.arguments;
     // ADR 0055/0057: shape is guidance, not a reject gate. Read what arrived;
-    // unusable escalation material becomes a retained audit residual.
+    // known status owns disposition even when ancillary fields are unusable.
     return readComplianceCandidate(arguments_, response.usage);
 }
 function throwIfStreamIdleTimedOut(reason) {

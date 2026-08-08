@@ -10089,7 +10089,6 @@ import { dirname as dirname4, relative as relative2, resolve as resolve3, sep as
 
 // src/audit-escalation.ts
 var AUDIT_ESCALATION_KIND = "audit_escalation";
-var AUDIT_ESCALATION_PROJECTION_BRAND = Object.freeze(/* @__PURE__ */ Object.create(null));
 function isAuditEscalationResult(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
@@ -13062,11 +13061,6 @@ function readListField(value) {
   if (value === void 0) return [];
   return [value];
 }
-function coerceDecisionGate(value) {
-  const question = typeof value.question === "string" ? value.question : "";
-  const options = readListField(value.options);
-  return { question, options };
-}
 function readComplianceCandidate(arguments_, usage) {
   if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
     const type = arguments_ === null ? "null" : Array.isArray(arguments_) ? "array" : typeof arguments_;
@@ -13090,34 +13084,10 @@ function readComplianceCandidate(arguments_, usage) {
     };
   }
   if (status === "escalate") {
-    if (!Object.hasOwn(args, "conflicts") || args.conflicts === void 0) {
-      return {
-        status: "audit-incomplete",
-        observation: { kind: "escalate-material-unreadable", reason: "conflicts-missing" },
-        candidate: arguments_,
-        ...usage === void 0 ? {} : { usage }
-      };
-    }
-    if (!Object.hasOwn(args, "decisionGate") || args.decisionGate === void 0) {
-      return {
-        status: "audit-incomplete",
-        observation: { kind: "escalate-material-unreadable", reason: "decisionGate-missing" },
-        candidate: arguments_,
-        ...usage === void 0 ? {} : { usage }
-      };
-    }
-    if (args.decisionGate !== null && (typeof args.decisionGate !== "object" || Array.isArray(args.decisionGate))) {
-      return {
-        status: "audit-incomplete",
-        observation: { kind: "escalate-material-unreadable", reason: "decisionGate-invalid" },
-        candidate: arguments_,
-        ...usage === void 0 ? {} : { usage }
-      };
-    }
     return {
       status: "escalate",
-      conflicts: readListField(args.conflicts),
-      decisionGate: args.decisionGate === null ? { question: "", options: [] } : coerceDecisionGate(args.decisionGate),
+      ...Object.hasOwn(args, "conflicts") ? { conflicts: args.conflicts } : {},
+      ...Object.hasOwn(args, "decisionGate") ? { decisionGate: args.decisionGate } : {},
       ...usage === void 0 ? {} : { usage }
     };
   }
@@ -13469,7 +13439,7 @@ function buildAuditIncompleteTerminalOutcome(input) {
       auditCandidate: audit.candidate,
       auditObservation: audit.observation,
       observationKind: audit.observation.kind,
-      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.kind === "object-status-unreadable" ? audit.observation.status : audit.observation.reason,
+      observationType: audit.observation.kind === "non-object-arguments" ? audit.observation.type : audit.observation.status,
       acceptedReceipt: false
     }
   };
@@ -13957,9 +13927,6 @@ function isComplianceAuditIncomplete(value) {
   if (observation.kind === "object-status-unreadable") {
     return observation.status === "missing" || observation.status === "unknown";
   }
-  if (observation.kind === "escalate-material-unreadable") {
-    return observation.reason === "conflicts-missing" || observation.reason === "decisionGate-missing" || observation.reason === "decisionGate-invalid";
-  }
   return observation.kind === "non-object-arguments" && [
     "null",
     "array",
@@ -14035,11 +14002,6 @@ function sameAuditValue(left, right) {
   }
   return false;
 }
-function sameAuditList(left, right) {
-  return left.length === right.length && left.every(
-    (value, index) => sameAuditValue(value, right[index])
-  );
-}
 function boundAuditEscalationForResult(entries, resultIndex, message, role, outputToolName) {
   const roleCall = boundRoleToolCallForResult(
     entries,
@@ -14059,13 +14021,14 @@ function boundAuditEscalationForResult(entries, resultIndex, message, role, outp
   if (decision.status !== "escalate") return void 0;
   const details = message.details;
   if (!isAuditEscalationResult(details) || !isRecord5(details)) return void 0;
-  const gate = details.auditDecisionGate;
-  if (!Array.isArray(details.conflicts) || !isRecord5(gate)) return void 0;
-  if (!sameAuditList(details.conflicts, decision.conflicts)) return void 0;
-  if (gate.question !== decision.decisionGate.question || !sameAuditList(
-    Array.isArray(gate.options) ? gate.options : [],
-    decision.decisionGate.options
-  )) return void 0;
+  const hasDecisionConflicts = Object.hasOwn(decision, "conflicts");
+  const hasDetailsConflicts = Object.hasOwn(details, "conflicts");
+  if (hasDecisionConflicts !== hasDetailsConflicts) return void 0;
+  if (hasDecisionConflicts && !sameAuditValue(details.conflicts, decision.conflicts)) return void 0;
+  const hasDecisionGate = Object.hasOwn(decision, "decisionGate");
+  const hasDetailsGate = Object.hasOwn(details, "auditDecisionGate");
+  if (hasDecisionGate !== hasDetailsGate) return void 0;
+  if (hasDecisionGate && !sameAuditValue(details.auditDecisionGate, decision.decisionGate)) return void 0;
   return { decision, details };
 }
 function auditIncompleteFromCandidate(candidate) {
