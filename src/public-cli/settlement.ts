@@ -52,7 +52,10 @@ import {
   type ObservedPackagedMethodSkillInvocation,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
-import { currentInvocationPrincipalFromSession } from "../navigator-invocation-identity.ts";
+import {
+  currentInvocationPrincipalFromSession,
+  isAcceptedPackagedRoleTerminalResult,
+} from "../navigator-invocation-identity.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   PACKAGED_ROLE_REGISTRY,
@@ -825,7 +828,8 @@ export function extractJudgeRoleOutcome(
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== JUDGE_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    // Shared classifier owns accepted/human vs non-Receipt terminal discriminant.
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     if (isAuditEscalationResult(details)) {
       return {
@@ -1245,7 +1249,7 @@ export function extractCoderRoleOutcome(
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== CODER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const output = validateAcceptedCoderDetails(message.details);
       const outcome: LawfulCoderRoleOutcome = {
@@ -1566,7 +1570,7 @@ export function extractFixerRoleOutcome(
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== FIXER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     // #107 owns generic audit presentation; hand off typed escalate without re-owning.
     if (isAuditEscalationResult(details)) {
@@ -1729,7 +1733,7 @@ export function extractCollectorRoleOutcome(
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== COLLECTOR_OUTPUT_TOOL) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const receipt = validateAcceptedCollectorReceipt(message.details);
       const outcome: LawfulCollectorRoleOutcome = {
@@ -1885,7 +1889,7 @@ export function extractDoctorRoleOutcome(
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== DOCTOR_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     const details = message.details;
     if (isAuditEscalationResult(details)) {
       return {
@@ -2137,7 +2141,7 @@ export function extractReviewerRoleOutcome(
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== REVIEWER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const receipt = validateRuntimeReviewerReceipt(message.details);
       const outcome: LawfulReviewerRoleOutcome = {
@@ -2361,7 +2365,7 @@ export function extractMergerRoleOutcome(
     const message = entry.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== MERGER_OUTPUT_TOOL_NAME) continue;
-    if (message.isError === true) continue;
+    if (!isAcceptedPackagedRoleTerminalResult(message)) continue;
     try {
       const output = validateMergerOutput(message.details);
       const outcome: LawfulMergerRoleOutcome = {
