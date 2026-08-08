@@ -338,7 +338,7 @@ test("Terminal free-text encoding preserves newlines/tabs and rejects forged art
 });
 
 test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {
-  const invocationId = "inv-no-advice";
+  const invocationId = "019f8c2a-1111-7111-8111-111111111111";
   const correlated = {
     version: 1,
     invocationId,
@@ -714,7 +714,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
     type: "custom",
     customType: "ak-navigator-invocation",
     data: {
-      invocationId: "coder-session:1",
+      invocationId: "019f8c2a-2222-7222-8222-222222222222",
       role: "coder",
       phase: "plan",
       subjectKey,
@@ -726,7 +726,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
       coderInvocation,
       coderTerminal,
       attendance({
-        invocationId: "coder-session:1",
+        invocationId: "019f8c2a-2222-7222-8222-222222222222",
         role: "coder",
         phase: "apply",
         subjectKey,
@@ -744,7 +744,7 @@ test("extractNavigatorFact correlates attendance to exact independent invocation
       coderInvocation,
       coderTerminal,
       attendance({
-        invocationId: "coder-session:1",
+        invocationId: "019f8c2a-2222-7222-8222-222222222222",
         role: "coder",
         phase: "plan",
         subjectKey,
@@ -761,7 +761,7 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
       type: "custom",
       customType: "ak-navigator-invocation",
       data: {
-        invocationId: "inv-1",
+        invocationId: "019f8c2a-3333-7333-8333-333333333333",
         role: "judge",
         phase: null,
         subjectKey: "/repo/.ak/work",
@@ -787,7 +787,7 @@ test("settlement extracts Judge outcome and Navigator recommendation without mod
         details: {
           version: 1,
           disposition: "recommendation",
-          invocationId: "inv-1",
+          invocationId: "019f8c2a-3333-7333-8333-333333333333",
           role: "judge",
           phase: null,
           subjectKey: "/repo/.ak/work",
@@ -825,7 +825,7 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
       type: "custom",
       customType: "ak-navigator-invocation",
       data: {
-        invocationId: "inv-continue",
+        invocationId: "019f8c2a-4444-7444-8444-444444444444",
         role: "judge",
         phase: null,
         subjectKey: "/repo/.ak/work",
@@ -852,7 +852,7 @@ test("settlement extractors keep newline/tab receipt facts on typed TerminalResu
         details: {
           version: 1,
           disposition: "recommendation",
-          invocationId: "inv-continue",
+          invocationId: "019f8c2a-4444-7444-8444-444444444444",
           role: "judge",
           phase: null,
           subjectKey: "/repo/.ak/work",
@@ -1032,7 +1032,7 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
               type: "custom",
               customType: "ak-navigator-invocation",
               data: {
-                invocationId: "inv-cli",
+                invocationId: "019f8c2a-5555-7555-8555-555555555555",
                 role: "judge",
                 phase: null,
                 subjectKey,
@@ -1054,7 +1054,7 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
                 details: {
                   version: 1,
                   disposition: "recommendation",
-                  invocationId: "inv-cli",
+                  invocationId: "019f8c2a-5555-7555-8555-555555555555",
                   role: "judge",
                   phase: null,
                   // Matches admitted projectRoot work identity.
