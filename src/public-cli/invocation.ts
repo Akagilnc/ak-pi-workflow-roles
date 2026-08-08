@@ -178,6 +178,28 @@ export type AdmittedRoleInvocation =
   | AdmittedReviewerInvocation
   | AdmittedMergerInvocation;
 
+type RoleInvocationLedgerIdentity = Pick<
+  AdmittedRoleInvocationBase,
+  "runId" | "bookKey" | "projectRoot" | "runDirectory" | "sessionDirectory" | "sessionFile"
+> & {
+  readonly role: AdmittedRoleInvocation["role"];
+};
+
+/**
+ * Persist the one public-run identity page consumed by trajectory readers.
+ * Admission is the sole source for every field; callers never provide an
+ * independent invocation identity or a second ledger shape.
+ */
+async function writeRoleInvocationLedger(
+  identity: RoleInvocationLedgerIdentity,
+): Promise<void> {
+  await writeFile(
+    join(identity.runDirectory, "invocation.json"),
+    `${JSON.stringify(identity, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 export type ParseJudgeArgvResult = {
   instruction: string;
   attachmentPaths: string[];
@@ -538,6 +560,15 @@ export async function admitJudgeInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger({
+    role: admitted.role,
+    runId: admitted.runId,
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+  });
 
   return {
     role: "judge",
@@ -691,6 +722,15 @@ export async function admitCoderInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger({
+    role: admitted.role,
+    runId: admitted.runId,
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+  });
 
   return {
     role: "coder",
@@ -845,6 +885,15 @@ export async function admitFixerInvocation(
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeFile(admittedRequestPath, `${JSON.stringify(admitted, null, 2)}\n`, "utf8");
+  await writeRoleInvocationLedger({
+    role: admitted.role,
+    runId: admitted.runId,
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+  });
 
   return {
     role: "fixer",
@@ -1239,6 +1288,15 @@ export async function admitCollectorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
+  await writeRoleInvocationLedger({
+    role: admitted.role,
+    runId: admitted.runId,
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+  });
 
   return {
     role: "collector",
@@ -1579,6 +1637,15 @@ export async function admitDoctorInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
+  await writeRoleInvocationLedger({
+    role: admitted.role,
+    runId: admitted.runId,
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+  });
 
   return {
     role: "doctor",
@@ -1820,6 +1887,15 @@ export async function admitReviewerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
+  await writeRoleInvocationLedger({
+    role: admitted.role,
+    runId: admitted.runId,
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+  });
 
   return {
     role: "reviewer",
@@ -2099,6 +2175,15 @@ export async function admitMergerInvocation(
     `${JSON.stringify(admitted, null, 2)}\n`,
     "utf8",
   );
+  await writeRoleInvocationLedger({
+    role: admitted.role,
+    runId: admitted.runId,
+    bookKey: admitted.bookKey,
+    projectRoot: admitted.projectRoot,
+    runDirectory,
+    sessionDirectory,
+    sessionFile,
+  });
 
   return {
     role: "merger",

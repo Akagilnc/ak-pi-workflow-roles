@@ -4492,14 +4492,36 @@ async function waitForChromeDevTools(
   }
 }
 
-async function stopChromeGracefully(chromeProc: ReturnType<typeof spawn>): Promise<void> {
-  if (chromeProc.exitCode !== null || chromeProc.signalCode !== null) return;
-  const closed = new Promise<void>((resolve) => chromeProc.once("close", () => resolve()));
-  if (!chromeProc.kill("SIGTERM")) {
-    if (chromeProc.exitCode !== null || chromeProc.signalCode !== null) return;
-    throw new Error("Chrome graceful shutdown could not be requested");
+async function stopChromeGracefully(
+  chromeProc: ReturnType<typeof spawn>,
+  stderr: () => string = () => "",
+): Promise<void> {
+  const validateClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+    if (code === 0 && signal === null) return;
+    const diagnostics = stderr().trim();
+    throw new Error(
+      `Chrome cleanup observed an unsuccessful close (code=${code ?? "none"}, signal=${signal ?? "none"})${
+        diagnostics ? `; Chrome stderr:\n${diagnostics}` : ""
+      }`,
+    );
+  };
+
+  if (chromeProc.exitCode !== null || chromeProc.signalCode !== null) {
+    validateClose(chromeProc.exitCode, chromeProc.signalCode);
+    return;
   }
-  await closed;
+
+  const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+    chromeProc.once("close", (code, signal) => resolve({ code, signal })),
+  );
+  if (!chromeProc.kill("SIGTERM")) {
+    // A false return is a normal close/kill race only after the process exposes
+    // its terminal code/signal. Never infer success from kill(false) itself.
+    validateClose(chromeProc.exitCode, chromeProc.signalCode);
+    return;
+  }
+  const result = await closed;
+  validateClose(result.code, result.signal);
 }
 
 function closeWebSocketGracefully(ws: WebSocket): void {
@@ -4538,11 +4560,65 @@ test("Chrome lifecycle waits for browser readiness and exits gracefully", async 
     };
     assert.equal(version.webSocketDebuggerUrl, endpoint.webSocketDebuggerUrl);
   } finally {
-    await stopChromeGracefully(chromeProc);
+    await stopChromeGracefully(chromeProc, () => stderr);
     await rm(workspace, { recursive: true, force: true });
   }
   assert.equal(chromeProc.signalCode, null, "graceful lifecycle must not signal-kill Chrome");
   assert.equal(chromeProc.exitCode, 0, "Chrome must close successfully after the probe");
+});
+
+test("Chrome cleanup preserves unsuccessful close code, signal, and stderr", async () => {
+  const waitForClose = (child: ReturnType<typeof spawn>): Promise<void> =>
+    new Promise((resolve) => child.once("close", () => resolve()));
+  const scenarios = [
+    {
+      name: "nonzero close",
+      args: ["-e", "process.stderr.write('code-diagnostic\\n'); process.exit(23)"],
+      expected: "code=23",
+      diagnostic: "code-diagnostic",
+    },
+    {
+      name: "signal close",
+      args: ["-e", "process.stderr.write('signal-diagnostic\\n'); setInterval(() => {}, 1000)"],
+      expected: "signal=SIGTERM",
+      diagnostic: "signal-diagnostic",
+    },
+    {
+      name: "kill false close race",
+      args: ["-e", "process.stderr.write('race-diagnostic\\n'); process.exit(29)"],
+      expected: "code=29",
+      diagnostic: "race-diagnostic",
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const child = spawn(process.execPath, scenario.args, {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    if (scenario.name === "signal close") {
+      await new Promise<void>((resolve) => {
+        if (stderr.includes(scenario.diagnostic)) {
+          resolve();
+          return;
+        }
+        child.stderr?.once("data", () => resolve());
+      });
+      assert.equal(child.kill("SIGTERM"), true);
+    }
+    await waitForClose(child);
+    await assert.rejects(
+      () => stopChromeGracefully(child, () => stderr),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(scenario.expected) &&
+        error.message.includes(scenario.diagnostic),
+    );
+  }
 });
 
 /**
@@ -4708,7 +4784,7 @@ async function ticketStripComputedStyles(
       }
     }
     try {
-      await stopChromeGracefully(chromeProc);
+      await stopChromeGracefully(chromeProc, () => chromeStderr);
     } catch (error) {
       cleanupErrors.push(error);
     }
@@ -4906,7 +4982,7 @@ test("kanban presentation: family options carry mechanical open-child count", as
   }
 });
 
-test("kanban presentation: five-state strip via data-state-strip + browser computed top border", async () => {
+test("kanban presentation computed-style: five-state strip via data-state-strip + browser computed top border", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "factory-board-strip-states-"));
   try {
     const ledgerDir = join(workspace, "ledger");
