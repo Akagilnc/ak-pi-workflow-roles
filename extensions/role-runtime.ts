@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
@@ -113,18 +113,47 @@ export function formatInProcessNavigatorRoleHelp(role: NavigatorTargetRole): str
  * Role-input document bytes win verbatim over work-root file authority when non-empty.
  * Absent or whitespace-only input yields to fileAuthority; neither remains undefined.
  */
+function pathContainedInRealDirectory(directory: string, candidate: string): boolean {
+  const remainder = relative(directory, candidate);
+  return remainder === "" || (remainder !== ".." && !remainder.startsWith(`..${sep}`) && !isAbsolute(remainder));
+}
+
 async function loadReviewerHostMaterialsFromAdmission(): Promise<readonly ReviewerHostMaterial[]> {
-  const runDirectory = process.env.AK_ROLE_RUN_DIR;
-  if (typeof runDirectory !== "string" || runDirectory.trim() === "") return [];
+  const configuredRunDirectory = process.env.AK_ROLE_RUN_DIR;
+  if (typeof configuredRunDirectory !== "string" || configuredRunDirectory.trim() === "") return [];
+
+  const runStat = await lstat(configuredRunDirectory);
+  if (!runStat.isDirectory() || runStat.isSymbolicLink()) throw new Error("public Reviewer run directory is not a real directory");
+  const runDirectory = await realpath(configuredRunDirectory);
+  const configuredAttachmentsPath = resolve(configuredRunDirectory, "attachments");
+  const attachmentsPath = resolve(runDirectory, "attachments");
+  const attachmentsStat = await lstat(attachmentsPath);
+  if (!attachmentsStat.isDirectory() || attachmentsStat.isSymbolicLink()) throw new Error("public Reviewer attachments directory is not a real directory");
+  const attachmentsDirectory = await realpath(attachmentsPath);
+  if (!pathContainedInRealDirectory(runDirectory, attachmentsDirectory)) throw new Error("public Reviewer attachments directory escapes its run");
+
   const raw = JSON.parse(await readFile(resolve(runDirectory, "admitted-request.json"), "utf8")) as Record<string, unknown>;
   if (raw.role !== "reviewer" || !Array.isArray(raw.attachments)) throw new Error("public Reviewer admitted attachments are malformed");
   return Promise.all(raw.attachments.map(async (value) => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("public Reviewer admitted attachment is malformed");
     const attachment = value as Record<string, unknown>;
-    if (typeof attachment.frozenPath !== "string" || typeof attachment.byteLength !== "number" || typeof attachment.sha256 !== "string") {
-      throw new Error("public Reviewer admitted attachment facts are malformed");
-    }
-    const bytes = Uint8Array.from(await readFile(attachment.frozenPath));
+    if (
+      typeof attachment.frozenPath !== "string" ||
+      !isAbsolute(attachment.frozenPath) ||
+      !Number.isInteger(attachment.byteLength) ||
+      (attachment.byteLength as number) < 0 ||
+      typeof attachment.sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(attachment.sha256)
+    ) throw new Error("public Reviewer admitted attachment facts are malformed");
+
+    const lexicalPath = resolve(attachment.frozenPath);
+    if (!pathContainedInRealDirectory(configuredAttachmentsPath, lexicalPath)) throw new Error("public Reviewer frozen attachment is outside this run attachments directory");
+    const attachmentStat = await lstat(attachment.frozenPath);
+    if (!attachmentStat.isFile() || attachmentStat.isSymbolicLink()) throw new Error("public Reviewer frozen attachment is not a real file");
+    const canonicalPath = await realpath(attachment.frozenPath);
+    if (!pathContainedInRealDirectory(attachmentsDirectory, canonicalPath)) throw new Error("public Reviewer frozen attachment escapes its run attachments directory");
+
+    const bytes = Uint8Array.from(await readFile(canonicalPath));
     const utf8Length = bytes.byteLength;
     const sha256 = sha256Hex(bytes);
     if (utf8Length !== attachment.byteLength || sha256 !== attachment.sha256) throw new Error("public Reviewer frozen attachment readback mismatch");
