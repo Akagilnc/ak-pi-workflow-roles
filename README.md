@@ -135,7 +135,7 @@ ak-role fixer plan \
   "Propose the first repair plan."
 ```
 
-Phase defaults to `apply`. Optional `--prerequisites` is a JSON array of `{id,requirement}` objects. Package-owned diagnosis is available from the install; do not bind a home Skill.
+Phase defaults to `apply`. Optional `--prerequisites` is a JSON array of `{id,requirement}` objects. Fixer apply and resume mount both package-owned methods from the installed package: diagnosis at `resources/methods/diagnosing-bugs/` (adapted from Matt Pocock’s `mattpocock/skills` source, MIT-attributed) and test-driven development at `resources/methods/tdd/` (the pinned `mattpocock/skills` source, with testing and mocking material). Neither is forced into the repair prompt.
 
 ### Call Doctor
 

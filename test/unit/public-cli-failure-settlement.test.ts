@@ -974,6 +974,136 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
   });
 });
 
+test("shared audit-incomplete extraction binds every audited seat and rejects ambiguous evidence", () => {
+  const outputTools = {
+    judge: "ak_judge_output",
+    fixer: "ak_fixer_output",
+    reviewer: "ak_reviewer_output",
+    doctor: "ak_doctor_output",
+  } as const;
+  const auditTools = {
+    judge: JUDGE_AUDIT_TOOL_NAME,
+    fixer: FIXER_AUDIT_TOOL_NAME,
+    reviewer: REVIEWER_AUDIT_TOOL_NAME,
+    doctor: DOCTOR_AUDIT_TOOL_NAME,
+  } as const;
+  const extract = (
+    entries: readonly unknown[],
+    role: (typeof AUDITOR_SOUL_ROLES)[number],
+    outputTool: string = outputTools[role],
+  ) => extractComplianceAuditIncompleteRoleOutcome(
+    entries as Parameters<typeof extractComplianceAuditIncompleteRoleOutcome>[0],
+    role,
+    outputTool,
+  );
+
+  for (const role of AUDITOR_SOUL_ROLES) {
+    const roleCallId = `${role}-role-call`;
+    const roleCandidate = { role, status: "candidate" };
+    const auditCandidate = [`malformed-${role}`];
+    const roleCall = {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: roleCallId,
+          name: outputTools[role],
+          arguments: roleCandidate,
+        }],
+      },
+    } as const;
+    const retained = {
+      type: "custom",
+      customType: "ak_compliance_response",
+      data: {
+        version: 1,
+        response: {
+          content: [{
+            type: "toolCall",
+            id: `${role}-audit-call`,
+            name: auditTools[role],
+            arguments: auditCandidate,
+          }],
+        },
+      },
+    } as const;
+    const roleResult = {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: roleCallId,
+        toolName: outputTools[role],
+        isError: false,
+        details: {
+          status: "audit-incomplete",
+          observation: { kind: "non-object-arguments", type: "array" },
+          candidate: auditCandidate,
+        },
+      },
+    } as const;
+    const base = [roleCall, retained, roleResult] as const;
+    const bound = extract(base, role);
+    assert.ok(bound);
+    assert.equal(bound.outcome.kind, "audit_incomplete");
+    assert.equal(bound.outcome.status, "audit-incomplete");
+    assert.equal(bound.outcome.decision, "no-usable-decision");
+    assert.deepEqual(bound.outcome.roleCandidate, roleCandidate);
+    assert.deepEqual(bound.outcome.audit.candidate, auditCandidate);
+    assert.deepEqual(bound.outcome.audit.observation, {
+      kind: "non-object-arguments",
+      type: "array",
+    });
+    assert.equal(bound.outcome.acceptedReceipt, false);
+    assert.deepEqual(bound.outcome.decisiveFacts.roleCandidate, roleCandidate);
+    assert.deepEqual(bound.outcome.decisiveFacts.auditCandidate, auditCandidate);
+
+    const replace = (index: number, entry: unknown): unknown[] =>
+      base.map((current, currentIndex) => currentIndex === index ? entry : current);
+    const wrongAudit = {
+      ...retained,
+      data: { response: { content: [{ type: "toolCall", name: "wrong_audit_tool", arguments: auditCandidate }] } },
+    };
+    assert.equal(extract(replace(1, wrongAudit), role), undefined);
+    assert.equal(extract(base, role, "wrong_output_tool"), undefined);
+    assert.equal(
+      extract(base, role === "judge" ? "fixer" : "judge"),
+      undefined,
+    );
+
+    // The retained response must be inside this role call/result interval;
+    // an unrelated same-value response before or after it cannot bind.
+    assert.equal(extract([retained, roleCall, roleResult], role), undefined);
+    assert.equal(extract([roleCall, roleResult, retained], role), undefined);
+    assert.equal(
+      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolCallId: `${roleCallId}-missing` } }), role),
+      undefined,
+    );
+    assert.equal(
+      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolCallId: undefined } }), role),
+      undefined,
+    );
+    assert.equal(
+      extract(replace(2, { ...roleResult, message: { ...roleResult.message, toolName: "wrong_output_tool" } }), role),
+      undefined,
+    );
+
+    // The one-to-one binding rejects duplicate role calls, results, and
+    // retained custom entries rather than choosing one by position or value.
+    assert.equal(extract([roleCall, roleCall, retained, roleResult], role), undefined);
+    assert.equal(extract([roleCall, retained, roleResult, roleResult], role), undefined);
+    assert.equal(
+      extract([
+        roleCall,
+        retained,
+        { ...retained, data: { response: { content: [{ type: "toolCall", name: auditTools[role], arguments: auditCandidate }] } } },
+        roleResult,
+      ], role),
+      undefined,
+    );
+  }
+});
+
 test("public audit evidence collision returns a typed nonzero Terminal with residual", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
