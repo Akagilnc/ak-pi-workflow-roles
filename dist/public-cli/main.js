@@ -572,10 +572,19 @@ var REVIEWER_STANDARDS_CONCLUSION_LABELS = Object.freeze({
   complexity: "complexity"
 });
 function manifestBytes(entries) {
-  return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map(({ bytes: _bytes, ...identity }) => identity) });
+  return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map((entry) => {
+    const { bytes: _bytes, ...identity } = entry;
+    return identity;
+  }) });
 }
 function verifyBundleIdentity(bundle) {
-  return bundle.entries.every((item) => exactUtf8(Buffer.from(item.bytes), item.id) === item.bytes && Buffer.byteLength(item.bytes) === item.utf8Length && sha256Hex(item.bytes) === item.sha256) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
+  return bundle.entries.every((item) => {
+    if ("bytes" in item) {
+      const bytes = item.bytes;
+      return exactUtf8(Buffer.from(bytes), item.id) === bytes && Buffer.byteLength(bytes) === item.utf8Length && sha256Hex(bytes) === item.sha256;
+    }
+    return typeof item.id === "string" && typeof item.relativeClonePath === "string" && typeof item.origin === "string" && typeof item.sourceIdentity === "string" && Number.isInteger(item.utf8Length) && item.utf8Length >= 0 && /^[0-9a-f]{64}$/.test(item.sha256);
+  }) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
 }
 
 // src/package-contracts/reviewer-output.ts
@@ -613,7 +622,7 @@ function validateRuntimeReviewerReceipt(output) {
     if (expectedAxes2[0] !== "standards" || expectedAxes2.length === 2 && expectedAxes2[1] !== "spec" || expectedLegs.some((leg) => !isRecord3(leg) || !exactKeys(leg, ["axis", "prompt"]) || !isReceiptText(leg.prompt)))
       throw new Error("Invalid Reviewer accepted-leg projection");
     const objectId = (value) => typeof value === "string" && new RegExp(target.objectFormat === "sha1" ? "^[0-9a-f]{40}$" : "^[0-9a-f]{64}$").test(value);
-    if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord3(construction.bundle) || !verifyBundleIdentity(construction.bundle) || !exactKeys(target, ["repositoryRoot", "objectFormat", "targetHead", "refs"]) || typeof target.repositoryRoot !== "string" || target.repositoryRoot.length === 0 || target.objectFormat !== "sha1" && target.objectFormat !== "sha256" || !objectId(target.targetHead) || !isRecord3(target.refs) || Object.values(target.refs).some((ref) => !isRecord3(ref) || !exactKeys(ref, ["objectId", "peeledCommitId"]) || !objectId(ref.objectId) || ref.peeledCommitId !== null && !objectId(ref.peeledCommitId))) throw new Error("Invalid Reviewer construction or target identity");
+    if (!exactKeys(construction, ["recipe", "bundle"]) || construction.recipe !== "reviewer-common-bundle-v1" || !isRecord3(construction.bundle) || !exactKeys(construction.bundle, ["recipeIdentity", "manifestSha256", "entries"]) || !Array.isArray(construction.bundle.entries) || construction.bundle.entries.some((entry) => !isRecord3(entry) || !exactKeys(entry, ["id", "relativeClonePath", "origin", "sourceIdentity", "utf8Length", "sha256"]) || Object.hasOwn(entry, "bytes")) || !verifyBundleIdentity(construction.bundle) || !exactKeys(target, ["repositoryRoot", "objectFormat", "targetHead", "refs"]) || typeof target.repositoryRoot !== "string" || target.repositoryRoot.length === 0 || target.objectFormat !== "sha1" && target.objectFormat !== "sha256" || !objectId(target.targetHead) || !isRecord3(target.refs) || Object.values(target.refs).some((ref) => !isRecord3(ref) || !exactKeys(ref, ["objectId", "peeledCommitId"]) || !objectId(ref.objectId) || ref.peeledCommitId !== null && !objectId(ref.peeledCommitId))) throw new Error("Invalid Reviewer construction or target identity");
   }
   for (const axis of ["standards", "spec"]) {
     const report = output.reports[axis];
@@ -630,7 +639,7 @@ function validateRuntimeReviewerReceipt(output) {
       const entries = bundle.entries;
       if (!isRecord3(materialized) || !exactKeys(materialized, ["leg", "workspaceIdentity", "manifestSha256", "entries"]) || materialized.leg !== axis || typeof materialized.workspaceIdentity !== "string" || materialized.workspaceIdentity.length === 0 || materialized.manifestSha256 !== bundle.manifestSha256 || !Array.isArray(materialized.entries) || materialized.entries.length !== entries.length || materialized.entries.some((entry, index) => {
         const expected = entries[index];
-        return !isRecord3(entry) || !exactKeys(entry, ["id", "relativeClonePath", "utf8Length", "sha256", "verified"]) || entry.verified !== true || entry.id !== expected.id || entry.relativeClonePath !== expected.relativeClonePath || entry.utf8Length !== expected.utf8Length || entry.sha256 !== expected.sha256;
+        return !isRecord3(entry) || !exactKeys(entry, ["id", "relativeClonePath", "utf8Length", "sha256", "verified", "readable"]) || entry.verified !== true || entry.readable !== true || entry.id !== expected.id || entry.relativeClonePath !== expected.relativeClonePath || entry.utf8Length !== expected.utf8Length || entry.sha256 !== expected.sha256;
       })) throw new Error("Reviewer runtime construction evidence disagrees with accepted bundle or leg");
     }
     if (outcome.status === "successful") {

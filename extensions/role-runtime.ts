@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { loadDoctorCase } from "../src/doctor-evidence.ts";
 import { loadAdmittedJudgeRequest } from "../src/public-cli/invocation.ts";
+import { sha256Hex, type ReviewerHostMaterial } from "../src/reviewer-dispatch.ts";
 
 import {
   buildSessionContext,
@@ -112,6 +113,25 @@ export function formatInProcessNavigatorRoleHelp(role: NavigatorTargetRole): str
  * Role-input document bytes win verbatim over work-root file authority when non-empty.
  * Absent or whitespace-only input yields to fileAuthority; neither remains undefined.
  */
+async function loadReviewerHostMaterialsFromAdmission(): Promise<readonly ReviewerHostMaterial[]> {
+  const runDirectory = process.env.AK_ROLE_RUN_DIR;
+  if (typeof runDirectory !== "string" || runDirectory.trim() === "") return [];
+  const raw = JSON.parse(await readFile(resolve(runDirectory, "admitted-request.json"), "utf8")) as Record<string, unknown>;
+  if (raw.role !== "reviewer" || !Array.isArray(raw.attachments)) throw new Error("public Reviewer admitted attachments are malformed");
+  return Promise.all(raw.attachments.map(async (value) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("public Reviewer admitted attachment is malformed");
+    const attachment = value as Record<string, unknown>;
+    if (typeof attachment.frozenPath !== "string" || typeof attachment.byteLength !== "number" || typeof attachment.sha256 !== "string") {
+      throw new Error("public Reviewer admitted attachment facts are malformed");
+    }
+    const bytes = Uint8Array.from(await readFile(attachment.frozenPath));
+    const utf8Length = bytes.byteLength;
+    const sha256 = sha256Hex(bytes);
+    if (utf8Length !== attachment.byteLength || sha256 !== attachment.sha256) throw new Error("public Reviewer frozen attachment readback mismatch");
+    return { id: attachment.frozenPath, path: attachment.frozenPath, bytes, utf8Length, sha256 };
+  }));
+}
+
 export function resolveNavigatorAuthorityMaterial(
   roleInput: string | undefined,
   fileAuthority: string | undefined,
@@ -244,6 +264,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadReviewerTask: (path) => readFile(path),
     loadReviewerCapabilities: (path) => readFile(path),
     createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
+    loadReviewerHostMaterials: loadReviewerHostMaterialsFromAdmission,
     loadCollectorSoul: () => readFile(collectorSoulPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
     collectorPackageExtensionPath: extensionPath,

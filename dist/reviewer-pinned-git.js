@@ -53,13 +53,13 @@ export async function acquireReviewerPinnedEvidence(reader, target, admitted, ho
         evidenceViolation("range-invalid");
     const range = Object.freeze({ ...readRange, commits: Object.freeze([...readRange.commits]) });
     const materials = [];
-    const hostById = new Map(hostMaterials.map((item) => [item.id, item]));
+    const hostByPath = new Map(hostMaterials.map((item) => [item.path, item]));
     for (const item of admitted.materials) {
         let bytes;
         let sourcePath = item.source === "host-input" ? item.sourcePath : item.repositoryPath;
         if (item.source === "host-input") {
-            const supplied = hostById.get(item.id);
-            if (supplied === undefined || supplied.path !== item.sourcePath || supplied.utf8Length !== supplied.bytes.byteLength || sha256Hex(supplied.bytes) !== supplied.sha256)
+            const supplied = hostByPath.get(item.sourcePath);
+            if (supplied === undefined || supplied.path !== item.sourcePath || !(supplied.bytes instanceof Uint8Array) || supplied.utf8Length !== supplied.bytes.byteLength || sha256Hex(supplied.bytes) !== supplied.sha256)
                 evidenceViolation("material-invalid");
             bytes = Uint8Array.from(supplied.bytes);
         }

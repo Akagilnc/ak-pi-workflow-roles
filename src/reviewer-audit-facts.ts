@@ -43,11 +43,11 @@ export function reviewerAuditReadiness(record: ReviewerExecutionRecord): Reviewe
     }
     if (evidence.leg !== axis) missing.push(`${axis}: materialization axis`);
     if (evidence.manifestSha256 !== accepted.bundle.manifestSha256) missing.push(`${axis}: bundle manifest binding`);
-    const readableEntries = evidence.entries.filter((entry) => entry.verified === true && (entry as { readable?: boolean }).readable === true).map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256 }));
+    const readableEntries = evidence.entries.filter((entry) => entry.verified === true && entry.readable === true).map(({ id, relativeClonePath, utf8Length, sha256 }) => ({ id, relativeClonePath, utf8Length, sha256 }));
     if (readableEntries.length !== accepted.bundle.entries.length) missing.push(`${axis}: every bundle entry readable`);
     for (const entry of accepted.bundle.entries) {
       const actual = evidence.entries.find((candidate) => candidate.id === entry.id);
-      if (actual === undefined || actual.relativeClonePath !== entry.relativeClonePath || actual.utf8Length !== entry.utf8Length || actual.sha256 !== entry.sha256 || actual.verified !== true || (actual as { readable?: boolean }).readable !== true) missing.push(`${axis}: ${entry.id} bytes and path binding`);
+      if (actual === undefined || actual.relativeClonePath !== entry.relativeClonePath || actual.utf8Length !== entry.utf8Length || actual.sha256 !== entry.sha256 || actual.verified !== true || actual.readable !== true) missing.push(`${axis}: ${entry.id} bytes and path binding`);
     }
     if (result.report.trim().length === 0) missing.push(`${axis}: non-empty report`);
     facts.push(Object.freeze({ axis, manifestSha256: evidence.manifestSha256, readableEntries: Object.freeze(readableEntries), reportPresent: result.report.trim().length > 0, coverageMustBeJudgedFromReport: true }));

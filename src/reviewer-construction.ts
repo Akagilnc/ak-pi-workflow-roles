@@ -98,13 +98,21 @@ export type PinnedMechanicalBundleV1 = Readonly<{
   manifestSha256: string;
   entries: readonly PinnedMechanicalBundleEntryV1[];
 }>;
+export type MechanicalBundleIdentityV1 = Readonly<{
+  recipeIdentity: ReviewerConstructionIdentity;
+  manifestSha256: string;
+  entries: readonly Readonly<Omit<PinnedMechanicalBundleEntryV1, "bytes">>[];
+}>;
 export type CanonicalSkillIdentity = Readonly<{ sha256: string; utf8Length: number; snapshotIdentity: ReviewerPromptIdentity }>;
 
 function entry(id: string, path: string, origin: MechanicalBundleOrigin, sourceIdentity: string, bytes: string): PinnedMechanicalBundleEntryV1 {
   return Object.freeze({ id, relativeClonePath: path, origin, sourceIdentity, bytes, utf8Length: Buffer.byteLength(bytes), sha256: sha256Hex(bytes) });
 }
-function manifestBytes(entries: readonly PinnedMechanicalBundleEntryV1[]): string {
-  return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map(({ bytes: _bytes, ...identity }) => identity) });
+function manifestBytes(entries: readonly (PinnedMechanicalBundleEntryV1 | Omit<PinnedMechanicalBundleEntryV1, "bytes">)[]): string {
+  return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map((entry) => {
+    const { bytes: _bytes, ...identity } = entry as PinnedMechanicalBundleEntryV1;
+    return identity;
+  }) });
 }
 export function compileMechanicalBundle(input: {
   canonicalSkill: string;
@@ -153,6 +161,19 @@ export class ReviewerConstructionError extends Error {
 export function bundlePromptReferences(bundle: PinnedMechanicalBundleV1): string {
   return bundle.entries.map(({ id, relativeClonePath, origin, sourceIdentity, sha256 }) => `Bundle-Material: ${JSON.stringify({ id, relativeClonePath, origin, sourceIdentity, sha256 })}`).join("\n");
 }
-export function verifyBundleIdentity(bundle: PinnedMechanicalBundleV1): boolean {
-  return bundle.entries.every((item) => exactUtf8(Buffer.from(item.bytes), item.id) === item.bytes && Buffer.byteLength(item.bytes) === item.utf8Length && sha256Hex(item.bytes) === item.sha256) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
+export function projectMechanicalBundleIdentity(bundle: PinnedMechanicalBundleV1): MechanicalBundleIdentityV1 {
+  return Object.freeze({
+    recipeIdentity: bundle.recipeIdentity,
+    manifestSha256: bundle.manifestSha256,
+    entries: Object.freeze(bundle.entries.map(({ bytes: _bytes, ...identity }) => Object.freeze(identity))),
+  });
+}
+export function verifyBundleIdentity(bundle: PinnedMechanicalBundleV1 | MechanicalBundleIdentityV1): boolean {
+  return bundle.entries.every((item) => {
+    if ("bytes" in item) {
+      const bytes = (item as PinnedMechanicalBundleEntryV1).bytes;
+      return exactUtf8(Buffer.from(bytes), item.id) === bytes && Buffer.byteLength(bytes) === item.utf8Length && sha256Hex(bytes) === item.sha256;
+    }
+    return typeof item.id === "string" && typeof item.relativeClonePath === "string" && typeof item.origin === "string" && typeof item.sourceIdentity === "string" && Number.isInteger(item.utf8Length) && item.utf8Length >= 0 && /^[0-9a-f]{64}$/.test(item.sha256);
+  }) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
 }

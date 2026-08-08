@@ -8,7 +8,7 @@ function confined(root, candidate) {
     return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 export async function materializeMechanicalBundle(workspace, leg, bundle) {
-    if (!verifyBundleIdentity(bundle))
+    if (!verifyBundleIdentity(bundle) || bundle.entries.some(({ bytes }) => typeof bytes !== "string"))
         throw new Error("Mechanical bundle digest or manifest mismatch");
     const root = await realpath(workspace);
     const destinations = new Set();

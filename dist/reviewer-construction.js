@@ -69,7 +69,10 @@ function entry(id, path, origin, sourceIdentity, bytes) {
     return Object.freeze({ id, relativeClonePath: path, origin, sourceIdentity, bytes, utf8Length: Buffer.byteLength(bytes), sha256: sha256Hex(bytes) });
 }
 function manifestBytes(entries) {
-    return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map(({ bytes: _bytes, ...identity }) => identity) });
+    return JSON.stringify({ recipeIdentity: REVIEWER_CONSTRUCTION_RECIPE, entries: entries.map((entry) => {
+            const { bytes: _bytes, ...identity } = entry;
+            return identity;
+        }) });
 }
 export function compileMechanicalBundle(input) {
     const skillIdentity = reviewerPromptIdentity(input.canonicalSkill);
@@ -119,6 +122,19 @@ export class ReviewerConstructionError extends Error {
 export function bundlePromptReferences(bundle) {
     return bundle.entries.map(({ id, relativeClonePath, origin, sourceIdentity, sha256 }) => `Bundle-Material: ${JSON.stringify({ id, relativeClonePath, origin, sourceIdentity, sha256 })}`).join("\n");
 }
+export function projectMechanicalBundleIdentity(bundle) {
+    return Object.freeze({
+        recipeIdentity: bundle.recipeIdentity,
+        manifestSha256: bundle.manifestSha256,
+        entries: Object.freeze(bundle.entries.map(({ bytes: _bytes, ...identity }) => Object.freeze(identity))),
+    });
+}
 export function verifyBundleIdentity(bundle) {
-    return bundle.entries.every((item) => exactUtf8(Buffer.from(item.bytes), item.id) === item.bytes && Buffer.byteLength(item.bytes) === item.utf8Length && sha256Hex(item.bytes) === item.sha256) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
+    return bundle.entries.every((item) => {
+        if ("bytes" in item) {
+            const bytes = item.bytes;
+            return exactUtf8(Buffer.from(bytes), item.id) === bytes && Buffer.byteLength(bytes) === item.utf8Length && sha256Hex(bytes) === item.sha256;
+        }
+        return typeof item.id === "string" && typeof item.relativeClonePath === "string" && typeof item.origin === "string" && typeof item.sourceIdentity === "string" && Number.isInteger(item.utf8Length) && item.utf8Length >= 0 && /^[0-9a-f]{64}$/.test(item.sha256);
+    }) && sha256Hex(manifestBytes(bundle.entries)) === bundle.manifestSha256;
 }
