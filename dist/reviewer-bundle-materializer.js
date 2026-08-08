@@ -8,7 +8,7 @@ function confined(root, candidate) {
     return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 export async function materializeMechanicalBundle(workspace, leg, bundle) {
-    if (!verifyBundleIdentity(bundle))
+    if (!verifyBundleIdentity(bundle) || bundle.entries.some(({ bytes }) => typeof bytes !== "string"))
         throw new Error("Mechanical bundle digest or manifest mismatch");
     const root = await realpath(workspace);
     const destinations = new Set();
@@ -70,7 +70,7 @@ export async function materializeMechanicalBundle(workspace, leg, bundle) {
             if (bytes.byteLength !== item.utf8Length || sha256Hex(bytes) !== item.sha256)
                 throw new Error("Mechanical bundle readback mismatch");
         }
-        return Object.freeze({ leg, workspaceIdentity: sha256Hex(root), manifestSha256: bundle.manifestSha256, entries: Object.freeze(bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => Object.freeze({ id, relativeClonePath, utf8Length, sha256, verified: true }))) });
+        return Object.freeze({ leg, workspaceIdentity: sha256Hex(root), manifestSha256: bundle.manifestSha256, entries: Object.freeze(bundle.entries.map(({ id, relativeClonePath, utf8Length, sha256 }) => Object.freeze({ id, relativeClonePath, utf8Length, sha256, verified: true, readable: true }))) });
     }
     catch (error) {
         await Promise.all(staged.map(({ temporary, destination }) => Promise.all([rm(temporary, { force: true }), rm(destination, { force: true })])));

@@ -42,7 +42,7 @@ async function git(root: string, ...args: string[]): Promise<string> {
   }
 }
 function proposal(established = false): ReviewerProposalV1 { return { version: 1, base: { revision: "main~1" }, materials: established ? [{ id: "rules", repositoryPath: "RULES.md" }, { id: "spec", repositoryPath: "SPEC.md" }] : [{ id: "rules", repositoryPath: "RULES.md" }, { id: "absence", repositoryPath: "README.md" }], spec: established ? { state: "established" } : { state: "not-established" }, required: established ? { standards: request, spec: request } : { standards: request } }; }
-function constructionEvidence(dispatch: AcceptedReviewerExecution, leg: AcceptedReviewerLeg) { return { leg: leg.axis, workspaceIdentity: `${leg.axis}-workspace`, manifestSha256: dispatch.bundle.manifestSha256, entries: dispatch.bundle.entries.map(({id,relativeClonePath,utf8Length,sha256})=>({id,relativeClonePath,utf8Length,sha256,verified:true as const})) }; }
+function constructionEvidence(dispatch: AcceptedReviewerExecution, leg: AcceptedReviewerLeg) { return { leg: leg.axis, workspaceIdentity: `${leg.axis}-workspace`, manifestSha256: dispatch.bundle.manifestSha256, entries: dispatch.bundle.entries.map(({id,relativeClonePath,utf8Length,sha256})=>({id,relativeClonePath,utf8Length,sha256,verified:true as const,readable:true as const})) }; }
 function successfulLeg(dispatch: AcceptedReviewerExecution, leg: AcceptedReviewerLeg, report = `${leg.axis} report`) { return { status: "successful" as const, report, usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}, target:pin, prompt:leg.prompt, workspaceDisposition:"deleted" as const, runtimeConstructionEvidence:constructionEvidence(dispatch,leg) }; }
 function harness() {
   const tools = new Map<string, any>(); const flags: Record<string,string> = { "ak-review-task":"/task", "ak-review-capabilities":"/caps" }; const handlers = new Map<string,any>(); let activeTools:string[]=[];
@@ -283,7 +283,7 @@ test("completion audits projected facts and revise can be resubmitted without re
   const out=reviewerHarness.tools.get(REVIEWER_OUTPUT_TOOL_NAME); await assert.rejects(out.execute("one",{status:"completed"},undefined,undefined,outputContext("one")),/aggregate/);
   const done=await out.execute("two",{status:"completed"},undefined,undefined,outputContext("two")); assert.equal(done.terminate,true); assert.equal(reviewerHarness.starts,1); assert.equal(calls,2); assert.equal(reviewerHarness.audits[1]?.record.results.standards?.prompt.text,reviewerHarness.audits[1]?.record.accepted?.legs[0]?.prompt.text);
   const evidence=reviewerHarness.audits[1]?.record.accepted?.materials.find((item:any) => item.id === "absence");
-  assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",text:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
+  assert.deepEqual(evidence,{id:"absence",repositoryPath:"README.md",source:"pinned-git",sourcePath:"README.md",text:"README.md",utf8Length:9,sha256:createHash("sha256").update("README.md").digest("hex")});
 });
 
 test("one failed and one successful sibling are both audited before infrastructure termination", async()=>{

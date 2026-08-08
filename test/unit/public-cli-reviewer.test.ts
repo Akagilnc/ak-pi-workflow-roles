@@ -24,7 +24,7 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { REVIEWER_CHILD_TOOLS, REVIEWER_PREREQUISITES } from "../../src/reviewer-admission.ts";
-import { compileMechanicalBundle } from "../../src/reviewer-construction.ts";
+import { compileMechanicalBundle, projectMechanicalBundleIdentity } from "../../src/reviewer-construction.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -121,6 +121,7 @@ function lawfulReviewerReceipt(
               utf8Length,
               sha256,
               verified: true,
+              readable: true,
             }),
           ),
         },
@@ -139,7 +140,7 @@ function lawfulReviewerReceipt(
     outcomes,
     identities: {
       canonicalSkill: { text: skillText },
-      construction: { recipe: "reviewer-common-bundle-v1", bundle },
+      construction: { recipe: "reviewer-common-bundle-v1", bundle: projectMechanicalBundleIdentity(bundle) },
       target: {
         repositoryRoot: "/repo",
         objectFormat: "sha1",

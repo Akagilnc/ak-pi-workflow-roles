@@ -39,7 +39,7 @@ const evidenceViolation = (code) => {
 const classifyEvidenceRead = (error) => { if (error instanceof ReviewerCorrectablePreflightError)
     throw error; throw error; };
 /** Acquires and normalizes all proposal-dependent bytes against the immutable pin. */
-export async function acquireReviewerPinnedEvidence(reader, target, admitted) {
+export async function acquireReviewerPinnedEvidence(reader, target, admitted, hostMaterials = []) {
     let base;
     let readRange;
     try {
@@ -53,13 +53,23 @@ export async function acquireReviewerPinnedEvidence(reader, target, admitted) {
         evidenceViolation("range-invalid");
     const range = Object.freeze({ ...readRange, commits: Object.freeze([...readRange.commits]) });
     const materials = [];
+    const hostByPath = new Map(hostMaterials.map((item) => [item.path, item]));
     for (const item of admitted.materials) {
         let bytes;
-        try {
-            bytes = await reader.material(item.repositoryPath, target.targetHead);
+        let sourcePath = item.source === "host-input" ? item.sourcePath : item.repositoryPath;
+        if (item.source === "host-input") {
+            const supplied = hostByPath.get(item.sourcePath);
+            if (supplied === undefined || supplied.path !== item.sourcePath || !(supplied.bytes instanceof Uint8Array) || supplied.utf8Length !== supplied.bytes.byteLength || sha256Hex(supplied.bytes) !== supplied.sha256)
+                evidenceViolation("material-invalid");
+            bytes = Uint8Array.from(supplied.bytes);
         }
-        catch (error) {
-            classifyEvidenceRead(error);
+        else {
+            try {
+                bytes = await reader.material(item.repositoryPath, target.targetHead);
+            }
+            catch (error) {
+                classifyEvidenceRead(error);
+            }
         }
         let text;
         try {
@@ -68,7 +78,9 @@ export async function acquireReviewerPinnedEvidence(reader, target, admitted) {
         catch {
             evidenceViolation("material-invalid");
         }
-        materials.push(Object.freeze({ ...item, text: text, utf8Length: bytes.byteLength, sha256: sha256Hex(bytes) }));
+        const utf8Length = bytes.byteLength;
+        const sha256 = sha256Hex(bytes);
+        materials.push(Object.freeze({ id: item.id, repositoryPath: item.repositoryPath, source: item.source, sourcePath, text: text, utf8Length, sha256 }));
     }
     return Object.freeze({ range, materials: Object.freeze(materials) });
 }
