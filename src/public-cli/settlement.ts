@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { loadCollectorManifest } from "../collector-config.ts";
@@ -53,7 +53,10 @@ import {
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
-import { PACKAGED_ROLE_REGISTRY } from "../packaged-role-registry.ts";
+import {
+  PACKAGED_ROLE_REGISTRY,
+  packagedRoleMetadata,
+} from "../packaged-role-registry.ts";
 import {
   ensureRunArtifactsDir,
   type AdmittedCoderInvocation,
@@ -406,7 +409,40 @@ type SessionEntry = {
   customType?: string;
   message?: SessionMessage;
   timestamp?: string;
+  /** Session principal id from the durable header entry. */
+  id?: string;
+  /** Session cwd from the durable header entry. */
+  cwd?: string;
 };
+
+/** Optional independent identity from admitted/shared lifecycle (not attendance self-fields). */
+export type NavigatorAttendanceIdentity = {
+  readonly phase?: NavigatorPhase;
+  readonly subjectKey?: string;
+};
+
+/**
+ * Project/cwd work identity used by Navigator for public CLI / empty-sessionDir runs.
+ * Kept local so settlement does not pull the Navigator preparation graph into the bin.
+ * Equivalent to subjectPath("", projectRoot) in navigator-attendance.ts.
+ */
+function workSubjectKeyFromProjectRoot(projectRoot: string): string {
+  const resolved = resolve(projectRoot, ".");
+  const normalized = resolved.replaceAll("\\", "/");
+  const marker = ".ak/work/issues/";
+  const index = normalized.indexOf(marker);
+  if (index >= 0) {
+    const issue = normalized
+      .slice(index + marker.length)
+      .split("/")[0]
+      ?.split("#")[0];
+    if (issue !== undefined && issue !== "") {
+      return normalized.slice(0, index + marker.length) + issue;
+    }
+  }
+  if (normalized.includes("/.ak/work/")) return resolved;
+  return resolve(projectRoot, ".ak/work");
+}
 
 function isMissingPathError(error: unknown): boolean {
   return (
@@ -858,27 +894,113 @@ function findCurrentRoleTerminal(
 }
 
 /**
- * Attendance must share the current role terminal's identity facts already present
- * on the session event (role + order + invocation/phase/subject). Self-shape alone
- * is not correlation — stale/unrelated well-shaped events are unavailable.
+ * Independent invocation identity already present on the session / admitted lifecycle.
+ * Only fields with a real independent source are populated — never invent authority.
+ */
+function independentAttendanceIdentity(
+  entries: readonly SessionEntry[],
+  terminalRole: string,
+  supplied?: NavigatorAttendanceIdentity,
+): {
+  sessionId?: string;
+  phase?: NavigatorPhase;
+  allowedPhases?: readonly NavigatorPhase[];
+  subjectKey?: string;
+} {
+  const identity: {
+    sessionId?: string;
+    phase?: NavigatorPhase;
+    allowedPhases?: readonly NavigatorPhase[];
+    subjectKey?: string;
+  } = {};
+
+  for (const entry of entries) {
+    if (entry?.type !== "session") continue;
+    if (typeof entry.id === "string" && entry.id.trim() !== "") {
+      identity.sessionId = entry.id;
+    }
+    if (typeof entry.cwd === "string" && entry.cwd.trim() !== "") {
+      identity.subjectKey = workSubjectKeyFromProjectRoot(entry.cwd);
+    }
+    break;
+  }
+
+  if (typeof supplied?.subjectKey === "string") {
+    identity.subjectKey = supplied.subjectKey;
+  }
+
+  // null is a real phase fact (Judge/Reviewer/…); only omit when not independently known.
+  if (supplied !== undefined && Object.hasOwn(supplied, "phase")) {
+    identity.phase = supplied.phase ?? null;
+  } else {
+    const meta = packagedRoleMetadata(terminalRole);
+    if (meta !== undefined) {
+      if (meta.phases.length === 1) {
+        identity.phase = meta.phases[0] as NavigatorPhase;
+      } else {
+        identity.allowedPhases = meta.phases as readonly NavigatorPhase[];
+      }
+    }
+  }
+
+  return identity;
+}
+
+function attendanceIdentityFromAdmitted(
+  admitted: AdmittedRoleInvocation,
+): NavigatorAttendanceIdentity {
+  // Public CLI sessions live under the machine ledger; Navigator derives subject from
+  // the project/cwd work identity, not the per-run session directory spelling.
+  const subjectKey = workSubjectKeyFromProjectRoot(admitted.projectRoot);
+  if (admitted.role === "coder" || admitted.role === "fixer") {
+    return { phase: admitted.phase, subjectKey };
+  }
+  return { phase: null, subjectKey };
+}
+
+/**
+ * Attendance must match the current role terminal and every independently available
+ * invocation/phase/subject fact. Self-shape of attendance fields is not correlation.
  */
 function navigatorAttendanceCorrelatedWithTerminal(
   details: Record<string, unknown>,
   attendanceIndex: number,
   terminal: { index: number; role: string } | undefined,
+  identity: {
+    sessionId?: string;
+    phase?: NavigatorPhase;
+    allowedPhases?: readonly NavigatorPhase[];
+    subjectKey?: string;
+  },
 ): boolean {
   if (terminal === undefined) return false;
   if (attendanceIndex <= terminal.index) return false;
   if (details.version !== 1) return false;
-  if (typeof details.invocationId !== "string" || details.invocationId.trim() === "") {
-    return false;
-  }
-  if (typeof details.role !== "string" || details.role.trim() === "") return false;
+
+  // Role comes from the packaged terminal tool — compare, do not self-validate.
   if (details.role !== terminal.role) return false;
-  if (details.phase !== null && details.phase !== "plan" && details.phase !== "apply") {
-    return false;
+
+  // Invocation principal is session id when the header is present on this session.
+  if (identity.sessionId !== undefined) {
+    if (typeof details.invocationId !== "string") return false;
+    const prefix = `${identity.sessionId}:`;
+    if (!details.invocationId.startsWith(prefix)) return false;
+    if (details.invocationId.slice(prefix.length).trim() === "") return false;
   }
-  if (typeof details.subjectKey !== "string") return false;
+
+  // Phase: exact admitted/registry fact, else role-allowed set — never bare enum shape.
+  if (identity.phase !== undefined) {
+    if (details.phase !== identity.phase) return false;
+  } else if (identity.allowedPhases !== undefined) {
+    if (!identity.allowedPhases.includes(details.phase as NavigatorPhase)) {
+      return false;
+    }
+  }
+
+  if (identity.subjectKey !== undefined) {
+    if (details.subjectKey !== identity.subjectKey) return false;
+  }
+
   return true;
 }
 
@@ -942,9 +1064,14 @@ function parseNavigatorAttendanceDetails(
 
 export function extractNavigatorFact(
   entries: readonly SessionEntry[],
+  identity?: NavigatorAttendanceIdentity,
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
   const terminal = findCurrentRoleTerminal(entries);
+  const independent =
+    terminal === undefined
+      ? {}
+      : independentAttendanceIdentity(entries, terminal.role, identity);
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i];
     if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
@@ -956,7 +1083,7 @@ export function extractNavigatorFact(
           reason: "Navigator attendance is unparseable",
         };
       }
-      if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal)) {
+      if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal, independent)) {
         return {
           disposition: "unavailable",
           source: "unknown",
@@ -984,7 +1111,7 @@ async function extractNavigatorFactFromAdmittedSession(
 ): Promise<TerminalNavigatorFact> {
   try {
     const entries = await readBoundSessionEntries(admitted.sessionFile);
-    return extractNavigatorFact(entries);
+    return extractNavigatorFact(entries, attendanceIdentityFromAdmitted(admitted));
   } catch (error) {
     if (isMissingPathError(error)) {
       return {
@@ -1216,7 +1343,10 @@ async function settleLawfulJudgeTerminalResult(
   if (roleOutcome === undefined) {
     return undefined;
   }
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   // Lawful outcome exists — artifact publication keeps original errno/name.
   const artifacts = await publishJudgeArtifacts(
     admitted,
@@ -1269,7 +1399,10 @@ async function settleLawfulCoderTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractCoderRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const artifacts = await publishCoderArtifacts(
     admitted,
     extracted.outcome,
@@ -1486,7 +1619,10 @@ async function settleLawfulFixerTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractFixerRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const methodInvocations = extractFixerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -1642,7 +1778,10 @@ async function settleLawfulCollectorTerminalResult(
     admitted,
     admittedManifest.legs.map((leg) => leg.id),
   );
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const artifacts = await publishCollectorArtifacts(
     admitted,
     extracted.outcome,
@@ -1810,7 +1949,10 @@ async function settleLawfulDoctorTerminalResult(
       throw error;
     }
   }
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const artifacts = await publishDoctorArtifacts(
     admitted,
     extracted.outcome,
@@ -2036,7 +2178,10 @@ async function settleLawfulReviewerTerminalResult(
   if (entries === undefined) return undefined;
   const extracted = extractReviewerRoleOutcome(entries);
   if (extracted === undefined) return undefined;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const methodInvocations = extractReviewerMethodInvocations(entries, {
     allowedLocations: [
       options.methodSkillPath,
@@ -2265,7 +2410,10 @@ async function settleLawfulMergerTerminalResult(
   });
   // Every invocation must expand the merge-only method before conflict work.
   if (methodInvocations.length === 0) return undefined;
-  const navigator = extractNavigatorFact(entries);
+  const navigator = extractNavigatorFact(
+    entries,
+    attendanceIdentityFromAdmitted(admitted),
+  );
   const artifacts = await publishMergerArtifacts(
     admitted,
     extracted.outcome,

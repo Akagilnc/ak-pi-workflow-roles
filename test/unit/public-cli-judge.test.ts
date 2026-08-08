@@ -414,20 +414,14 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   assert.equal(badDisposition.disposition, "unavailable");
 });
 
-test("extractNavigatorFact rejects stale/unrelated well-shaped attendance; accepts current correlation", () => {
-  const staleAttendance = {
-    type: "custom_message",
-    customType: "ak-navigator-attendance",
-    message: {
-      details: {
-        version: 1,
-        invocationId: "inv-stale",
-        role: "judge",
-        phase: null,
-        subjectKey: "/repo/.ak/work",
-        disposition: "no-advice",
-      },
-    },
+test("extractNavigatorFact correlates attendance to independent session/role identity, not self-shape", () => {
+  const sessionId = "019f-session-current";
+  const cwd = "/repo";
+  const subjectKey = "/repo/.ak/work";
+  const sessionHeader = {
+    type: "session",
+    id: sessionId,
+    cwd,
   };
   const currentTerminal = {
     type: "message",
@@ -438,57 +432,133 @@ test("extractNavigatorFact rejects stale/unrelated well-shaped attendance; accep
       details: {},
     },
   };
-  // Well-shaped attendance before the current role terminal is stale.
-  const stale = extractNavigatorFact([staleAttendance, currentTerminal]);
-  assert.equal(stale.disposition, "unavailable");
-  if (stale.disposition === "unavailable") {
-    assert.equal(stale.source, "unknown");
-    assert.match(stale.reason, /uncorrelated/i);
+  const attendance = (details: Record<string, unknown>) => ({
+    type: "custom_message",
+    customType: "ak-navigator-attendance",
+    message: { details: { version: 1, disposition: "no-advice", ...details } },
+  });
+  const matched = {
+    invocationId: `${sessionId}:1`,
+    role: "judge",
+    phase: null,
+    subjectKey,
+  };
+
+  // Attendance before the current role terminal is an old-round/stale fact.
+  const beforeTerminal = extractNavigatorFact([
+    sessionHeader,
+    attendance(matched),
+    currentTerminal,
+  ]);
+  assert.equal(beforeTerminal.disposition, "unavailable");
+  if (beforeTerminal.disposition === "unavailable") {
+    assert.match(beforeTerminal.reason, /uncorrelated/i);
   }
 
   // Well-shaped attendance for a different role is unrelated.
   const wrongRole = extractNavigatorFact([
+    sessionHeader,
     currentTerminal,
-    {
-      type: "custom_message",
-      customType: "ak-navigator-attendance",
-      message: {
-        details: {
-          version: 1,
-          invocationId: "inv-wrong-role",
-          role: "fixer",
-          phase: "apply",
-          subjectKey: "/repo/.ak/work",
-          disposition: "no-advice",
-        },
-      },
-    },
+    attendance({ ...matched, role: "fixer", phase: "apply" }),
   ]);
   assert.equal(wrongRole.disposition, "unavailable");
   if (wrongRole.disposition === "unavailable") {
     assert.match(wrongRole.reason, /uncorrelated/i);
   }
 
-  // Current terminal + matching attendance after it correlates.
-  const current = extractNavigatorFact([
-    staleAttendance,
+  // Wrong invocation id (different session principal) is not this call.
+  const wrongInvocation = extractNavigatorFact([
+    sessionHeader,
     currentTerminal,
-    {
-      type: "custom_message",
-      customType: "ak-navigator-attendance",
-      message: {
-        details: {
-          version: 1,
-          invocationId: "inv-current",
-          role: "judge",
-          phase: null,
-          subjectKey: "/repo/.ak/work",
-          disposition: "no-advice",
-        },
-      },
-    },
+    attendance({ ...matched, invocationId: "other-session:1" }),
+  ]);
+  assert.equal(wrongInvocation.disposition, "unavailable");
+  if (wrongInvocation.disposition === "unavailable") {
+    assert.match(wrongInvocation.reason, /uncorrelated/i);
+  }
+
+  // Judge has independent phase=null; well-shaped apply is still uncorrelated.
+  const wrongPhase = extractNavigatorFact([
+    sessionHeader,
+    currentTerminal,
+    attendance({ ...matched, phase: "apply" }),
+  ]);
+  assert.equal(wrongPhase.disposition, "unavailable");
+  if (wrongPhase.disposition === "unavailable") {
+    assert.match(wrongPhase.reason, /uncorrelated/i);
+  }
+
+  // Subject must match the independent session-derived work identity.
+  const wrongSubject = extractNavigatorFact([
+    sessionHeader,
+    currentTerminal,
+    attendance({ ...matched, subjectKey: "/other/work" }),
+  ]);
+  assert.equal(wrongSubject.disposition, "unavailable");
+  if (wrongSubject.disposition === "unavailable") {
+    assert.match(wrongSubject.reason, /uncorrelated/i);
+  }
+
+  // Current terminal + attendance matching independent identity correlates.
+  const current = extractNavigatorFact([
+    sessionHeader,
+    attendance({
+      invocationId: `${sessionId}:0`,
+      role: "judge",
+      phase: null,
+      subjectKey,
+    }),
+    currentTerminal,
+    attendance(matched),
   ]);
   assert.equal(current.disposition, "no-advice");
+
+  // Coder/fixer exact phase comes from admitted lifecycle identity, not self-enum.
+  const coderTerminal = {
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolName: "ak_coder_output",
+      isError: false,
+      details: { status: "completed" },
+    },
+  };
+  const coderSession = {
+    type: "session",
+    id: "coder-session",
+    cwd,
+  };
+  const wrongCoderPhase = extractNavigatorFact(
+    [
+      coderSession,
+      coderTerminal,
+      attendance({
+        invocationId: "coder-session:1",
+        role: "coder",
+        phase: "apply",
+        subjectKey,
+      }),
+    ],
+    { phase: "plan", subjectKey },
+  );
+  assert.equal(wrongCoderPhase.disposition, "unavailable");
+  if (wrongCoderPhase.disposition === "unavailable") {
+    assert.match(wrongCoderPhase.reason, /uncorrelated/i);
+  }
+  const coderMatched = extractNavigatorFact(
+    [
+      coderSession,
+      coderTerminal,
+      attendance({
+        invocationId: "coder-session:1",
+        role: "coder",
+        phase: "plan",
+        subjectKey,
+      }),
+    ],
+    { phase: "plan", subjectKey },
+  );
+  assert.equal(coderMatched.disposition, "no-advice");
 });
 
 test("settlement extracts Judge outcome and Navigator recommendation without model command prose", () => {
@@ -762,7 +832,8 @@ test("runAkRole judge admits, activates Internal, and publishes one Terminal res
                   invocationId: "inv-cli",
                   role: "judge",
                   phase: null,
-                  subjectKey: "/repo/.ak/work",
+                  // Matches admitted projectRoot work identity (no session header here).
+                  subjectKey: join(project, ".ak/work"),
                   next: { role: "reviewer", phase: null },
                   reason: "review next",
                   command: "Usage: pi --ak-role reviewer --help",
