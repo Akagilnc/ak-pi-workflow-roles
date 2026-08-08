@@ -26,6 +26,7 @@ import { createPiJudgeAuditor, JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-aud
 import { createPiReviewerAuditor, REVIEWER_AUDIT_TOOL_NAME } from "../../src/reviewer-auditor.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
+  AcceptedDetailsContractError,
   validateAcceptedDetails,
 } from "../../src/package-contracts/terminating-tools.ts";
 
@@ -201,6 +202,7 @@ test("escalation projects one terminating human decision and is not an accepted 
     pass: () => { passCalls += 1; throw new Error("pass branch used"); },
     revise: () => { reviseCalls += 1; throw new Error("revise branch used"); },
     escalate: (value) => value,
+    auditIncomplete: () => { throw new Error("audit-incomplete branch used"); },
   });
   assert.equal(passCalls, 0);
   assert.equal(reviseCalls, 0);
@@ -216,4 +218,34 @@ test("escalation projects one terminating human decision and is not an accepted 
     /not an accepted role receipt/,
   );
   assert.deepEqual(projectAuditEscalation(decision).details, result.details);
+});
+
+test("audit-incomplete crosses disposition without entering a role decision handler", async () => {
+  const decision = {
+    status: "audit-incomplete" as const,
+    observation: { kind: "non-object-arguments" as const, type: "array" as const },
+    candidate: ["provider candidate"],
+  };
+  let passCalls = 0;
+  let reviseCalls = 0;
+  let escalateCalls = 0;
+  let auditIncompleteCalls = 0;
+  const result = await disposeComplianceDecision<import("../../src/audit-escalation.ts").AuditIncompleteToolResult>(decision, {
+    pass: () => { passCalls += 1; throw new Error("pass branch used"); },
+    revise: () => { reviseCalls += 1; throw new Error("revise branch used"); },
+    escalate: () => { escalateCalls += 1; throw new Error("escalate branch used"); },
+    auditIncomplete: (value) => { auditIncompleteCalls += 1; return value; },
+  });
+  assert.equal(passCalls, 0);
+  assert.equal(reviseCalls, 0);
+  assert.equal(escalateCalls, 0);
+  assert.equal(auditIncompleteCalls, 1);
+  assert.equal(result.terminate, true);
+  assert.equal(result.details.status, "audit-incomplete");
+  assert.deepEqual(result.details.observation, decision.observation);
+  assert.deepEqual(result.details.candidate, decision.candidate);
+  assert.throws(
+    () => validateAcceptedDetails(JUDGE_OUTPUT_TOOL_NAME, result.details),
+    AcceptedDetailsContractError,
+  );
 });
