@@ -6,6 +6,7 @@
  * extra rows or shift column boundaries (note / fix.summary / decision question / reason).
  */
 import { renderPublicAkRoleCommand } from "./command-renderer.ts";
+import type { ComplianceAuditIncomplete } from "../compliance-transport.ts";
 import type { NavigatorPhase } from "../navigator-attendance.ts";
 
 /** Encode one free-text Terminal cell. JSON string form cannot embed raw tab/newline. */
@@ -52,6 +53,35 @@ export type TerminalRoleName =
   | "reviewer"
   | "merger";
 
+export type AuditIncompleteTerminalOutcome = {
+  kind: "audit_incomplete";
+  role: TerminalRoleName;
+  status: "audit-incomplete";
+  decision: "no-usable-decision";
+  /** The original role submission arguments, retained independently. */
+  roleCandidate: unknown;
+  /** The malformed auditor candidate and observation retained by compliance transport. */
+  audit: ComplianceAuditIncomplete;
+  acceptedReceipt: false;
+  decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+/** JSON-safe public stand-in for an omitted tool-call `arguments` member. */
+export const JSON_SAFE_UNDEFINED_ARGUMENT = Object.freeze({
+  kind: "json-safe-sentinel",
+  type: "undefined",
+} as const);
+
+export type AuditIncompleteResidual = {
+  readonly roleCandidate: unknown;
+  readonly audit: ComplianceAuditIncomplete;
+  readonly acceptedReceipt: false;
+};
+
+export function jsonSafeComplianceCandidate(value: unknown): unknown {
+  return value === undefined ? JSON_SAFE_UNDEFINED_ARGUMENT : value;
+}
+
 export type TerminalRoleOutcome =
   | {
       kind: "accepted";
@@ -66,6 +96,7 @@ export type TerminalRoleOutcome =
       status: "audit_escalation";
       decisiveFacts: Readonly<Record<string, unknown>>;
     }
+  | AuditIncompleteTerminalOutcome
   | {
       kind: "failure";
       role: TerminalRoleName;
@@ -74,6 +105,8 @@ export type TerminalRoleOutcome =
       /** Original diagnostic identity retained for the caller. */
       diagnostic: string;
       decisiveFacts: Readonly<Record<string, unknown>>;
+      /** Retained audit residual when publication itself failed. */
+      auditResidual?: AuditIncompleteResidual;
     };
 
 /** Lawful typed terminal results exit zero (including audit_escalation). */
@@ -87,6 +120,36 @@ export function exitCodeForTerminalOutcome(
   outcome: TerminalRoleOutcome,
 ): number {
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
+}
+
+export function buildAuditIncompleteTerminalOutcome(input: {
+  role: TerminalRoleName;
+  roleCandidate: unknown;
+  audit: ComplianceAuditIncomplete;
+}): AuditIncompleteTerminalOutcome {
+  const roleCandidate = jsonSafeComplianceCandidate(input.roleCandidate);
+  const audit = {
+    ...input.audit,
+    candidate: jsonSafeComplianceCandidate(input.audit.candidate),
+  };
+  return {
+    kind: "audit_incomplete",
+    role: input.role,
+    status: "audit-incomplete",
+    decision: "no-usable-decision",
+    roleCandidate,
+    audit,
+    acceptedReceipt: false,
+    decisiveFacts: {
+      decision: "no-usable-decision",
+      roleCandidate,
+      auditCandidate: audit.candidate,
+      auditObservation: audit.observation,
+      observationKind: audit.observation.kind,
+      observationType: audit.observation.type,
+      acceptedReceipt: false,
+    },
+  };
 }
 
 export type TerminalNavigatorFact =

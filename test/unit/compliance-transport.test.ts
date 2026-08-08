@@ -342,6 +342,49 @@ test("transport accepts known statuses without shape rejection and escalates unr
   }
 });
 
+test("successful non-object decision arguments retain a typed residual without aborting", async () => {
+  const cases: Array<{ id: string; arguments: unknown }> = [
+    { id: "non-object-null", arguments: null },
+    { id: "non-object-array", arguments: ["provider candidate"] },
+    { id: "non-object-primitive", arguments: "provider candidate" },
+  ];
+
+  for (const candidate of cases) {
+    await withPersistedSession(async (sessionManager) => {
+      const nested = response(candidate.id, [
+        fauxToolCall(
+          decisionToolName,
+          candidate.arguments as Record<string, unknown>,
+        ),
+      ]);
+      const decision = await audit(nested, sessionManager);
+
+      assert.equal(decision.status, "audit-incomplete");
+      if (decision.status !== "audit-incomplete") return;
+      assert.deepEqual(decision.observation, {
+        kind: "non-object-arguments",
+        type: candidate.arguments === null
+          ? "null"
+          : Array.isArray(candidate.arguments)
+            ? "array"
+            : typeof candidate.arguments,
+      });
+      assert.deepEqual(decision.candidate, candidate.arguments);
+      assert.equal(sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === COMPLIANCE_RESPONSE_ENTRY_TYPE).length, 1);
+      assert.deepEqual(
+        JSON.parse(JSON.stringify(persistedResponse(sessionManager, candidate.id))),
+        JSON.parse(JSON.stringify(nested)),
+        `${candidate.id} raw response/candidate must survive the residual path`,
+      );
+      assert.equal(
+        sessionManager.getEntries().some((entry) => entry.type === "message"),
+        false,
+        `${candidate.id} must not create an accepted receipt`,
+      );
+    });
+  }
+});
+
 test("malformed nested decisions retain raw responses and report typed facts", async () => {
   const cases = [
     {
@@ -415,17 +458,6 @@ test("malformed nested decisions retain raw responses and report typed facts", a
       expectedCount: 1,
       expectedNames: [decisionToolName],
       errorPresent: true,
-    },
-    {
-      // No fields are readable when tool arguments are not an object.
-      id: "malformed-arguments-not-object",
-      content: [
-        fauxToolCall(decisionToolName, "not-an-object" as unknown as Record<string, unknown>),
-      ],
-      stopReason: "toolUse" as const,
-      expectedCount: 1,
-      expectedNames: [decisionToolName],
-      errorPresent: false,
     },
   ];
 

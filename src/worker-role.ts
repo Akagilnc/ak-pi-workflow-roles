@@ -279,6 +279,7 @@ export function createFixerRoleRuntime(
                   throw new Error(`Fixer output violates its law: ${violations.join("; ")}`);
                 },
                 escalate: (result) => result,
+                auditIncomplete: (result) => result,
               },
               output,
             );

@@ -49,6 +49,14 @@ export function projectAuditEscalation(decision, deliveredOutput) {
         ...(decision.usage === undefined ? {} : { usage: decision.usage }),
     };
 }
+export function projectAuditIncomplete(decision) {
+    return {
+        content: [{ type: "text", text: "Compliance audit incomplete; no role receipt was formed." }],
+        details: decision,
+        terminate: true,
+        ...(decision.usage === undefined ? {} : { usage: decision.usage }),
+    };
+}
 /**
  * Discriminator-only recognition (ADR 0040). Shape of conflicts/options/gate
  * is not a reject gate — element types and cardinality are delivery content.
@@ -70,5 +78,10 @@ deliveredOutput) {
             return await handlers.revise(decision.violations);
         case "escalate":
             return await handlers.escalate(projectAuditEscalation(decision, deliveredOutput));
+        case "audit-incomplete":
+            if (handlers.auditIncomplete === undefined) {
+                throw new Error("Compliance audit-incomplete handler is unavailable");
+            }
+            return await handlers.auditIncomplete(projectAuditIncomplete(decision));
     }
 }

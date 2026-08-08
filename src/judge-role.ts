@@ -202,6 +202,7 @@ export function createJudgeRoleRuntime(
                   );
                 },
                 escalate: (result) => result,
+                auditIncomplete: (result) => result,
               },
               verdict,
             );
