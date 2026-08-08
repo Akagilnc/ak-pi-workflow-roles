@@ -317,8 +317,8 @@ function createNavigatorAttendance(options) {
   let contextError = options.contextError;
   let sessionDir = options.sessionDir;
   let candidates;
-  let invocationNumber = 0;
-  let activeInvocationId;
+  const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
+  let activeInvocationId = invocationPrincipal;
   let previousRoute;
   let outputSink;
   let settlementTail = Promise.resolve();
@@ -348,18 +348,8 @@ function createNavigatorAttendance(options) {
     };
   };
   const prepare = async () => {
-    const invocationId = mintNavigatorInvocationId(
-      options.context.sessionManager.getSessionId(),
-      ++invocationNumber
-    );
+    const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
-    const roleSession = options.context.sessionManager;
-    roleSession.appendCustomEntry?.(INVOCATION_ENTRY, {
-      invocationId,
-      role: options.role,
-      phase: options.phase,
-      subjectKey
-    });
     if (contextError !== void 0) throw navigatorUnavailableError("context", contextError);
     if (typeof authority !== "string" || authority.trim() === "") {
       throw navigatorUnavailableError(
@@ -569,10 +559,7 @@ ${helpContext}
     }
   };
   async function settleOnce(settlement) {
-    const invocationId = activeInvocationId ?? mintNavigatorInvocationId(
-      options.context.sessionManager.getSessionId(),
-      invocationNumber || 1
-    );
+    const invocationId = activeInvocationId ?? invocationPrincipal;
     let report;
     if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
       if (sessionReady !== void 0) {

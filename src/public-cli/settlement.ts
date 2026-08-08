@@ -888,21 +888,21 @@ type IndependentAttendanceIdentity = {
 /**
  * Independent invocation identity already present on the session / admitted lifecycle.
  * Only fields with a real independent source are populated — never invent authority.
- * Exact invocation principal comes from ak-navigator-invocation on the role session
- * (written by Navigator lifecycle at prepare), never from attendance self-fields or a
- * bare session-id prefix.
+ * Exact invocation principal comes from the nearest ak-navigator-invocation marker
+ * strictly before the current packaged role terminal (shared lifecycle via pi.appendEntry),
+ * never from attendance self-fields, markers after the terminal, or stale fallback.
  */
 function independentAttendanceIdentity(
   entries: readonly SessionEntry[],
   terminalRole: string,
-  attendanceIndex: number,
+  terminalIndex: number,
   supplied?: NavigatorAttendanceIdentity,
 ): IndependentAttendanceIdentity {
   const identity: IndependentAttendanceIdentity = {};
 
   const invocationId = currentInvocationPrincipalFromSession(
     entries,
-    attendanceIndex,
+    terminalIndex,
   );
   if (invocationId !== undefined) {
     identity.invocationId = invocationId;
@@ -1066,11 +1066,11 @@ export function extractNavigatorFact(
           reason: "Navigator attendance is unparseable",
         };
       }
-      // Exact invocation principal is scoped to entries before this attendance index.
+      // Exact invocation principal is the nearest marker before the current terminal.
       const independent =
         terminal === undefined
           ? {}
-          : independentAttendanceIdentity(entries, terminal.role, i, identity);
+          : independentAttendanceIdentity(entries, terminal.role, terminal.index, identity);
       if (!navigatorAttendanceCorrelatedWithTerminal(details, i, terminal, independent)) {
         return {
           disposition: "unavailable",

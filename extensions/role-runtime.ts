@@ -319,6 +319,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
         sessionDirectory: (subjectKey) => navigatorSessionDirectory(options.context, subjectKey),
         subject: options.subject,
         authority: options.authority,
+        invocationId: options.invocationId,
         loadSoul: () => readFile(navigatorSoulPath, "utf8"),
         // In-process help: subprocess pi --help is reserved for cold-install proofs.
         // N child pi processes cannot fit the accepted 3s post-role grace under CI load.

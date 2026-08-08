@@ -107,6 +107,7 @@ function extensionHarness(
   const flags = new Map<string, unknown>();
   const allToolNames = new Set(registeredToolNames);
   const activeToolSets: string[][] = [];
+  const appendedEntries: Array<{ customType: string; data?: unknown }> = [];
   const pi = {
     registerFlag(name: string, options: unknown) {
       flags.set(name, options);
@@ -128,8 +129,12 @@ function extensionHarness(
     setActiveTools(names: string[]) {
       activeToolSets.push([...names]);
     },
+    /** Production seam: shared lifecycle persists principal via pi.appendEntry. */
+    appendEntry(customType: string, data?: unknown) {
+      appendedEntries.push({ customType, data });
+    },
   };
-  return { pi, handlers, tools, flags, activeToolSets };
+  return { pi, handlers, tools, flags, activeToolSets, appendedEntries };
 }
 
 function toolCallContext(

@@ -221,6 +221,8 @@ export type NavigatorAttendanceOptions = {
   authority: string;
   contextError?: unknown;
   sessionDirectory?: (subjectKey: string) => string;
+  /** Exact principal owned by shared role lifecycle; attendance never overrides it. */
+  invocationId?: string;
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
 };
 
@@ -528,8 +530,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let contextError = options.contextError;
   let sessionDir = options.sessionDir;
   let candidates: NavigatorCandidate[] | undefined;
-  let invocationNumber = 0;
-  let activeInvocationId: string | undefined;
+  // Shared lifecycle owns the principal when supplied; otherwise mint once per attendance.
+  const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
+  let activeInvocationId: string | undefined = invocationPrincipal;
   let previousRoute: NavigatorRouteTarget[] | undefined;
   let outputSink: ((value: PrepareOutput) => void) | undefined;
   let settlementTail: Promise<void> = Promise.resolve();
@@ -564,22 +567,11 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
   };
   const prepare = async (): Promise<NavigatorCandidate[]> => {
-    const invocationId = mintNavigatorInvocationId(
-      options.context.sessionManager.getSessionId(),
-      ++invocationNumber,
-    );
+    // Exact principal is owned by shared lifecycle (or one mint per attendance).
+    // Model/tool/advice paths cannot override it; role-session persistence is
+    // pi.appendEntry at lifecycle start — not optional sessionManager probing.
+    const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
-    // Independent principal on the role session — Terminal settlement compares
-    // attendance.invocationId by equality against this fact, not self-shape.
-    const roleSession = options.context.sessionManager as {
-      appendCustomEntry?: (customType: string, data?: unknown) => string;
-    };
-    roleSession.appendCustomEntry?.(INVOCATION_ENTRY, {
-      invocationId,
-      role: options.role,
-      phase: options.phase,
-      subjectKey,
-    });
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
     if (typeof authority !== "string" || authority.trim() === "") {
       throw navigatorUnavailableError(
@@ -793,10 +785,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   };
 
   async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
-      const invocationId = activeInvocationId ?? mintNavigatorInvocationId(
-        options.context.sessionManager.getSessionId(),
-        invocationNumber || 1,
-      );
+      const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
       if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
         // Contract: lawful human/role outcomes emit affirmative typed no-advice when

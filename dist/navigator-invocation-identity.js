@@ -1,9 +1,10 @@
+import { uuidv7 } from "./uuidv7.js";
 const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation";
-function mintNavigatorInvocationId(sessionId, sequence) {
-  return `${sessionId}:${sequence}`;
+function mintNavigatorInvocationId() {
+  return uuidv7();
 }
 function invocationIdFromData(data) {
-  if (data === null || typeof data !== "object") return void 0;
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return void 0;
   const invocationId = data.invocationId;
   if (typeof invocationId !== "string") return void 0;
   const trimmed = invocationId.trim();
@@ -15,8 +16,7 @@ function currentInvocationPrincipalFromSession(entries, beforeIndex = entries.le
     const entry = entries[i];
     if (entry?.type !== "custom") continue;
     if (entry.customType !== NAVIGATOR_INVOCATION_ENTRY) continue;
-    const id = invocationIdFromData(entry.data);
-    if (id !== void 0) return id;
+    return invocationIdFromData(entry.data);
   }
   return void 0;
 }
