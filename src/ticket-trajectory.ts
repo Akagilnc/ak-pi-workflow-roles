@@ -340,7 +340,7 @@ type InvocationInfo = {
   thinking?: string;
 };
 
-export async function readInvocation(runDir: string): Promise<InvocationInfo | undefined> {
+async function readInvocation(runDir: string): Promise<InvocationInfo | undefined> {
   try {
     const raw = await readFile(join(runDir, "invocation.json"), "utf8");
     const parsed: unknown = JSON.parse(raw);
